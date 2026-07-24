@@ -32,11 +32,22 @@ export function TestDetailView() {
   const { runs, run, stopRun } = useRecorder();
   const [renameOpen, setRenameOpen] = React.useState(false);
   const [renameValue, setRenameValue] = React.useState("");
+  const [editingName, setEditingName] = React.useState(false);
+  const [nameDraft, setNameDraft] = React.useState("");
 
   const testQuery = useQuery({ queryKey: ["test", id], queryFn: () => api.tests.get(id) });
   const scriptQuery = useQuery({ queryKey: ["script", id], queryFn: () => api.tests.getScript(id) });
   const test = testQuery.data;
   const runInfo = runs[id];
+
+  const saveName = async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || trimmed === test?.name) return;
+    await api.tests.rename(id, trimmed);
+    qc.invalidateQueries({ queryKey: ["tests"] });
+    qc.invalidateQueries({ queryKey: ["test", id] });
+    qc.invalidateQueries({ queryKey: ["script", id] });
+  };
 
   if (!test) {
     return (
@@ -54,7 +65,38 @@ export function TestDetailView() {
     <div className="flex h-full flex-col">
       <Toolbar>
         <ToolbarContent>
-          <ToolbarTitle>{test.name}</ToolbarTitle>
+          {editingName ? (
+            <Input
+              size="small"
+              variant="filled"
+              autoFocus
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              className="h-6 pl-1.5 -ml-1.5 text-[15px] font-medium"
+              onBlur={() => {
+                setEditingName(false);
+                saveName(nameDraft);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  setEditingName(false);
+                  saveName(nameDraft);
+                } else if (e.key === "Escape") {
+                  setEditingName(false);
+                }
+              }}
+            />
+          ) : (
+            <ToolbarTitle
+              className="cursor-text"
+              onClick={() => {
+                setNameDraft(test.name);
+                setEditingName(true);
+              }}
+            >
+              {test.name}
+            </ToolbarTitle>
+          )}
           <ToolbarDescription>{test.url}</ToolbarDescription>
         </ToolbarContent>
         <ToolbarActions>
@@ -131,12 +173,7 @@ export function TestDetailView() {
         title="Rename test"
         confirmLabel="Save"
         confirmDisabled={renameValue.trim().length === 0}
-        onConfirm={async () => {
-          await api.tests.rename(id, renameValue.trim());
-          qc.invalidateQueries({ queryKey: ["tests"] });
-          qc.invalidateQueries({ queryKey: ["test", id] });
-          qc.invalidateQueries({ queryKey: ["script", id] });
-        }}
+        onConfirm={() => saveName(renameValue)}
       >
         <Field label="Name" orientation="vertical">
           <Input value={renameValue} onChange={(e) => setRenameValue(e.target.value)} autoFocus />
