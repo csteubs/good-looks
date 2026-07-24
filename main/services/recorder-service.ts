@@ -160,17 +160,55 @@ export const recorderService = {
 
     const wc = recWindow.webContents;
 
-    wc.setWindowOpenHandler(({ url: target }) => {
-      if (recWindow && !recWindow.isDestroyed() && /^https?:/i.test(target)) {
-        void recWindow.loadURL(target);
-      }
+    // Force navigation into the recorder window. `loadNavInWindow` re-issues the
+    // navigation via loadURL; the guard stops that programmatic load from being
+    // intercepted again (which would loop).
+    let selfLoad: string | null = null;
+    const loadNavInWindow = (target: string): void => {
+      if (!recWindow || recWindow.isDestroyed()) return;
+      selfLoad = target;
+      void recWindow.webContents
+        .loadURL(target)
+        .catch(() => {})
+        .finally(() => {
+          if (selfLoad === target) selfLoad = null;
+        });
+    };
+
+    // window.open / target=_blank that reach the native layer: keep in-window.
+    wc.setWindowOpenHandler((details) => {
+      if (/^https?:/i.test(details?.url ?? "")) loadNavInWindow(details.url);
       return { action: "deny" };
     });
 
+    // Backstop: if a child window is ever created despite the deny above, close it.
+    wc.on("did-create-window", (child) => {
+      try {
+        (child as BrowserWindow).close();
+      } catch {
+        /* ignore */
+      }
+    });
+
     wc.on("dom-ready", () => void injectCapture());
-    // Drain before/after navigations so the click that triggers a navigation
-    // (pushed synchronously to the DOM queue) is not lost when the document swaps.
-    wc.on("will-navigate", () => void drain());
+
+    // Glaze routes cross-origin main-frame link navigations to the system
+    // browser by default. Intercept them and load in the recorder window so all
+    // navigation stays inside the trainer. Same-document (SPA) navigations are
+    // left alone. Drain first so the click that triggered the nav isn't lost.
+    wc.on("will-navigate", (details) => {
+      void drain();
+      const target = details.url;
+      if (!details.isMainFrame || details.isSameDocument) return;
+      if (!/^https?:/i.test(target)) return;
+      if (selfLoad === target) {
+        selfLoad = null;
+        return;
+      }
+      details.preventDefault();
+      loadNavInWindow(target);
+    });
+
     wc.on("did-navigate", () => void drain());
 
     recWindow.once("ready-to-show", () => recWindow?.show());
