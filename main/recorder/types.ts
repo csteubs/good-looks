@@ -61,6 +61,8 @@ export interface TestRecord {
   steps: Step[];
   /** absolute path to the generated .spec.ts file */
   scriptPath: string;
+  /** true once the script has been hand-edited, so it's no longer regenerated from steps */
+  scriptEdited?: boolean;
 }
 
 export interface RecorderState {
@@ -71,4 +73,6 @@ export interface RecorderState {
   testId: string | null;
   url: string | null;
   name: string | null;
+  /** true when continuing/extending an existing test rather than recording a new one */
+  editing: boolean;
 }

@@ -12,6 +12,7 @@ import {
   TabsContent,
   TabsRoot,
   TabsTrigger,
+  Text,
   Toolbar,
   ToolbarActions,
   ToolbarContent,
@@ -29,11 +30,13 @@ export function TestDetailView() {
   const { id } = useParams({ from: "/test/$id" });
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { runs, run, stopRun } = useRecorder();
+  const { runs, run, stopRun, start } = useRecorder();
   const [renameOpen, setRenameOpen] = React.useState(false);
   const [renameValue, setRenameValue] = React.useState("");
   const [editingName, setEditingName] = React.useState(false);
   const [nameDraft, setNameDraft] = React.useState("");
+  const [editingScript, setEditingScript] = React.useState(false);
+  const [scriptDraft, setScriptDraft] = React.useState("");
 
   const testQuery = useQuery({ queryKey: ["test", id], queryFn: () => api.tests.get(id) });
   const scriptQuery = useQuery({ queryKey: ["script", id], queryFn: () => api.tests.getScript(id) });
@@ -47,6 +50,13 @@ export function TestDetailView() {
     qc.invalidateQueries({ queryKey: ["tests"] });
     qc.invalidateQueries({ queryKey: ["test", id] });
     qc.invalidateQueries({ queryKey: ["script", id] });
+  };
+
+  const saveScript = async () => {
+    await api.tests.updateScript(id, scriptDraft);
+    qc.invalidateQueries({ queryKey: ["script", id] });
+    qc.invalidateQueries({ queryKey: ["test", id] });
+    setEditingScript(false);
   };
 
   if (!test) {
@@ -100,6 +110,20 @@ export function TestDetailView() {
           <ToolbarDescription>{test.url}</ToolbarDescription>
         </ToolbarContent>
         <ToolbarActions>
+          {test.scriptEdited ? (
+            <AlertDialog
+              trigger={<Button variant="glass">Edit in Trainer</Button>}
+              title="Discard manual script edits?"
+              description="Continuing this recording regenerates the script from the recorded steps, which will overwrite the edits you made directly in the script."
+              confirmLabel="Continue"
+              confirmVariant="destructive"
+              onConfirm={() => start(test.url, test.name, test.id)}
+            />
+          ) : (
+            <Button variant="glass" onClick={() => start(test.url, test.name, test.id)}>
+              Edit in Trainer
+            </Button>
+          )}
           <Button
             iconOnly
             variant="glass"
@@ -156,12 +180,52 @@ export function TestDetailView() {
             </div>
           </ScrollArea>
         </TabsContent>
-        <TabsContent value="script" className="min-h-0 flex-1">
-          <ScrollArea className="h-full">
-            <pre className="text-small-mono whitespace-pre-wrap break-words p-4 text-primary">
-              {scriptQuery.data ?? ""}
-            </pre>
-          </ScrollArea>
+        <TabsContent value="script" className="flex min-h-0 flex-1 flex-col">
+          <div className="flex items-center justify-end gap-2 border-b border-separator px-4 py-2">
+            {editingScript ? (
+              <>
+                <Button size="small" variant="glass" onClick={() => setEditingScript(false)}>
+                  Cancel
+                </Button>
+                <Button size="small" variant="accent" onClick={saveScript}>
+                  Save
+                </Button>
+              </>
+            ) : (
+              <>
+                {test.scriptEdited ? (
+                  <Text variant="small" color="secondary">
+                    Edited manually
+                  </Text>
+                ) : null}
+                <Button
+                  size="small"
+                  variant="glass"
+                  onClick={() => {
+                    setScriptDraft(scriptQuery.data ?? "");
+                    setEditingScript(true);
+                  }}
+                >
+                  Edit script
+                </Button>
+              </>
+            )}
+          </div>
+          {editingScript ? (
+            <textarea
+              autoFocus
+              spellCheck={false}
+              value={scriptDraft}
+              onChange={(e) => setScriptDraft(e.target.value)}
+              className="text-small-mono min-h-0 flex-1 resize-none overflow-auto bg-transparent p-4 text-primary outline-none"
+            />
+          ) : (
+            <ScrollArea className="h-full">
+              <pre className="text-small-mono whitespace-pre-wrap break-words p-4 text-primary">
+                {scriptQuery.data ?? ""}
+              </pre>
+            </ScrollArea>
+          )}
         </TabsContent>
       </TabsRoot>
 

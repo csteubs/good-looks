@@ -44,8 +44,10 @@ export function registerHandlers(): void {
   });
 
   // ── Recorder handlers ───────────────────────────────────────────────
-  ipcMain.handle("recorder:start", async (_e, params: { url: string; name?: string }) =>
-    recorderService.start(params),
+  ipcMain.handle(
+    "recorder:start",
+    async (_e, params: { url: string; name?: string; testId?: string }) =>
+      recorderService.start(params),
   );
   ipcMain.handle("recorder:pause", async () => recorderService.pause());
   ipcMain.handle("recorder:resume", async () => recorderService.resume());
@@ -74,8 +76,22 @@ export function registerHandlers(): void {
     if (!rec) throw new Error("Test not found: " + params.id);
     rec.name = params.name.trim() || rec.name;
     rec.updatedAt = Date.now();
-    const source = generateSpec({ name: rec.name, url: rec.url, steps: rec.steps });
-    rec.scriptPath = testStore.writeScript(rec.id, source);
+    // A hand-edited script is no longer regenerated from steps, so a rename
+    // must not clobber it — just update the title metadata.
+    if (!rec.scriptEdited) {
+      const source = generateSpec({ name: rec.name, url: rec.url, steps: rec.steps });
+      rec.scriptPath = testStore.writeScript(rec.id, source);
+    }
+    testStore.save(rec);
+    return rec;
+  });
+
+  ipcMain.handle("tests:updateScript", async (_e, params: { id: string; source: string }) => {
+    const rec = testStore.get(params.id);
+    if (!rec) throw new Error("Test not found: " + params.id);
+    rec.scriptPath = testStore.writeScript(rec.id, params.source);
+    rec.scriptEdited = true;
+    rec.updatedAt = Date.now();
     testStore.save(rec);
     return rec;
   });

@@ -14,8 +14,8 @@ function ipc(): Ipc {
 
 export const api = {
   recorder: {
-    start: (url: string, name: string) =>
-      ipc().invoke<RecorderState>("recorder:start", { url, name }),
+    start: (url: string, name: string, testId?: string) =>
+      ipc().invoke<RecorderState>("recorder:start", { url, name, testId }),
     pause: () => ipc().invoke<RecorderState>("recorder:pause"),
     resume: () => ipc().invoke<RecorderState>("recorder:resume"),
     setAssert: (mode: AssertKind | null) =>
@@ -32,6 +32,8 @@ export const api = {
     remove: (id: string) => ipc().invoke<void>("tests:delete", { id }),
     rename: (id: string, name: string) =>
       ipc().invoke<TestRecord>("tests:rename", { id, name }),
+    updateScript: (id: string, source: string) =>
+      ipc().invoke<TestRecord>("tests:updateScript", { id, source }),
   },
   runner: {
     run: (id: string, headed: boolean) =>

@@ -41,6 +41,7 @@ export interface TestRecord {
   updatedAt: number;
   steps: Step[];
   scriptPath: string;
+  scriptEdited?: boolean;
 }
 
 export interface RecorderState {
@@ -51,4 +52,5 @@ export interface RecorderState {
   testId: string | null;
   url: string | null;
   name: string | null;
+  editing: boolean;
 }

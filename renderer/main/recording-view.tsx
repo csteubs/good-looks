@@ -23,7 +23,7 @@ export function RecordingView() {
     <div className="flex h-full flex-col">
       <Toolbar>
         <ToolbarContent>
-          <ToolbarTitle>Recording</ToolbarTitle>
+          <ToolbarTitle>{state.editing ? "Editing recording" : "Recording"}</ToolbarTitle>
         </ToolbarContent>
         <ToolbarActions>
           <Button variant="destructive" onClick={stop}>
@@ -34,7 +34,7 @@ export function RecordingView() {
 
       <div className="flex items-center gap-3 border-b border-separator px-4 py-3">
         <Status variant={state.paused ? "warning" : "error"}>
-          {state.paused ? "Paused" : "Recording"}
+          {state.paused ? "Paused" : state.editing ? "Editing" : "Recording"}
         </Status>
         <Text variant="small" color="secondary" truncate className="min-w-0">
           {state.url}

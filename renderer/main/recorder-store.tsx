@@ -23,13 +23,14 @@ const EMPTY_STATE: RecorderState = {
   testId: null,
   url: null,
   name: null,
+  editing: false,
 };
 
 interface RecorderContextValue {
   state: RecorderState;
   liveSteps: Step[];
   runs: Record<string, RunInfo>;
-  start: (url: string, name: string) => Promise<void>;
+  start: (url: string, name: string, testId?: string) => Promise<void>;
   pause: () => void;
   resume: () => void;
   stop: () => void;
@@ -90,9 +91,9 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     };
   }, [navigate, qc]);
 
-  const start = React.useCallback(async (url: string, name: string) => {
+  const start = React.useCallback(async (url: string, name: string, testId?: string) => {
     setLiveSteps([]);
-    await api.recorder.start(url, name);
+    await api.recorder.start(url, name, testId);
   }, []);
   const pause = React.useCallback(() => void api.recorder.pause(), []);
   const resume = React.useCallback(() => void api.recorder.resume(), []);

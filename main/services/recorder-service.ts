@@ -30,6 +30,10 @@ interface Session {
   steps: Step[];
   paused: boolean;
   assertMode: AssertKind | null;
+  /** continuing/extending an existing test rather than recording a new one */
+  editing: boolean;
+  /** preserved from the original record when editing, else the session start time */
+  createdAt: number;
 }
 
 const POLL_INTERVAL_MS = 250;
@@ -47,6 +51,7 @@ function currentState(): RecorderState {
     testId: session?.testId ?? null,
     url: session?.url ?? null,
     name: session?.name ?? null,
+    editing: session?.editing ?? false,
   };
 }
 
@@ -128,32 +133,57 @@ export const recorderService = {
     return currentState();
   },
 
-  async start(params: { url: string; name?: string }): Promise<RecorderState> {
+  async start(params: { url: string; name?: string; testId?: string }): Promise<RecorderState> {
     if (session) {
       recWindow?.focus();
       return currentState();
     }
 
-    const url = normalizeUrl(params.url);
-    const testId = randomUUID();
+    let testId: string = randomUUID();
+    let url = normalizeUrl(params.url);
+    let name = params.name?.trim() || "Recorded test";
+    let existingSteps: Step[] = [];
+    let editing = false;
+    let createdAt = Date.now();
+
+    if (params.testId) {
+      const rec = testStore.get(params.testId);
+      if (rec) {
+        editing = true;
+        testId = rec.id;
+        url = rec.url;
+        name = rec.name;
+        existingSteps = rec.steps;
+        createdAt = rec.createdAt;
+      }
+    }
+
     session = {
       testId,
       url,
-      name: params.name?.trim() || "Recorded test",
-      steps: [],
+      name,
+      steps: [...existingSteps],
       paused: false,
       assertMode: null,
+      editing,
+      createdAt,
     };
 
+    // Replay the existing steps to the renderer so the trainer's live list shows
+    // full context while extending. They're already in session.steps above, so
+    // this is a push-only notification, not another addStep.
+    for (const step of existingSteps) sendToMain("recorder:step", step);
+
     // Initial navigation is the first step; later navigations are consequences of
-    // recorded interactions (the window has no address bar).
-    addStep({ type: "goto", url });
+    // recorded interactions (the window has no address bar). Skip when editing —
+    // the existing steps already start with one.
+    if (!editing) addStep({ type: "goto", url });
 
     recWindow = new BrowserWindow({
       windowKey: "recorder",
       width: 1200,
       height: 820,
-      title: "Recording — " + url,
+      title: (editing ? "Editing — " : "Recording — ") + url,
       titleBarStyle: "default", // native draggable frame for an external page
       show: false,
     });
@@ -214,7 +244,11 @@ export const recorderService = {
     recWindow.once("ready-to-show", () => recWindow?.show());
     recWindow.on("closed", () => void finalize());
 
-    await recWindow.loadURL(url);
+    // A same-origin redirect on load (e.g. adding a trailing slash) can retrigger
+    // the will-navigate interceptor above, which re-issues its own loadURL and
+    // interrupts this one — the window still ends up on the right page via that
+    // second load, so the interruption itself is not a real failure.
+    await recWindow.loadURL(url).catch(() => {});
     startPolling();
     broadcastState();
     return currentState();
@@ -273,17 +307,17 @@ async function finalize(): Promise<void> {
     return;
   }
 
-  const now = Date.now();
   const source = generateSpec({ name: s.name, url: s.url, steps: s.steps });
   const scriptPath = testStore.writeScript(s.testId, source);
   const record: TestRecord = {
     id: s.testId,
     name: s.name,
     url: s.url,
-    createdAt: now,
-    updatedAt: now,
+    createdAt: s.createdAt,
+    updatedAt: Date.now(),
     steps: s.steps,
     scriptPath,
+    scriptEdited: false,
   };
   testStore.save(record);
 
