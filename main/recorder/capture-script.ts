@@ -29,6 +29,32 @@ export const CAPTURE_SCRIPT = `
   root.setAttribute("${ATTR_INSTALLED}", "1");
   if (root.getAttribute("${ATTR_QUEUE}") == null) root.setAttribute("${ATTR_QUEUE}", "[]");
 
+  // Keep navigation inside the recorder window: default any target-less link to
+  // the current frame instead of a new window/tab.
+  try {
+    if (!document.querySelector("base[data-pw-base]")) {
+      var pwBase = document.createElement("base");
+      pwBase.setAttribute("target", "_self");
+      pwBase.setAttribute("data-pw-base", "1");
+      (document.head || document.documentElement).appendChild(pwBase);
+    }
+  } catch (e) {}
+
+  // Rewrite an element's (or its ancestor link/form) target to _self so a click
+  // navigates within this window rather than opening another browser window.
+  function keepInWindow(el) {
+    try {
+      var a = el.closest ? el.closest("a[target], area[target]") : null;
+      if (a && a.getAttribute("target") && a.getAttribute("target") !== "_self") {
+        a.setAttribute("target", "_self");
+      }
+      var f = el.closest ? el.closest("form[target]") : null;
+      if (f && f.getAttribute("target") && f.getAttribute("target") !== "_self") {
+        f.setAttribute("target", "_self");
+      }
+    } catch (er) {}
+  }
+
   function isPaused() { return document.documentElement.getAttribute("${ATTR_PAUSED}") === "1"; }
   function assertMode() {
     var v = document.documentElement.getAttribute("${ATTR_ASSERT}");
@@ -208,6 +234,9 @@ export const CAPTURE_SCRIPT = `
     var el = target && target.nodeType === 1 ? target : (target ? target.parentElement : null);
     if (!el) return;
 
+    // Always keep navigation in-window, regardless of pause/assert state.
+    keepInWindow(el);
+
     var mode = assertMode();
     if (mode) {
       e.preventDefault();
@@ -259,6 +288,8 @@ export const CAPTURE_SCRIPT = `
   }
 
   function onKeydown(e) {
+    var kt = e.target;
+    if (kt && kt.nodeType === 1) keepInWindow(kt);
     if (isPaused() || assertMode()) return;
     var k = e.key;
     if (k === "Enter" || k === "Escape") {
