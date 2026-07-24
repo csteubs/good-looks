@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-router";
 import { HomeView } from "./home-view";
 import { RootView } from "./root-view";
+import { TestDetailView } from "./test-detail-view";
 import { QueryClient } from "@tanstack/react-query";
 import { ErrorBoundaryView } from "@glaze/core/components";
 
@@ -33,7 +34,16 @@ const homeRoute = createRoute({
   },
 });
 
-const routeTree = rootRoute.addChildren([homeRoute]);
+const testRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/test/$id",
+  component: TestDetailView,
+  staticData: {
+    title: "Test",
+  },
+});
+
+const routeTree = rootRoute.addChildren([homeRoute, testRoute]);
 
 const queryClient = new QueryClient();
 

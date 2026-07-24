@@ -13,6 +13,7 @@ import { app, BrowserWindow, Menu, logger, initDevToolsButtonState } from "@glaz
 import { registerHandlers } from "./handlers/index.js";
 import { getPreloadPath, getWindowUrl } from "./windows/window-paths.js";
 import { openSettingsWindow } from "./windows/settings-window.js";
+import { setMainWindow } from "./services/app-window.js";
 
 // Get directory paths
 const __filename = fileURLToPath(import.meta.url);
@@ -98,6 +99,10 @@ async function createMainWindow() {
     timestamp: new Date().toISOString(),
     duration_ms: browserWindowEndTime - browserWindowStartTime,
   });
+
+  // Share the main window with backend services so they can push events.
+  setMainWindow(mainWindow);
+  mainWindow.on("closed", () => setMainWindow(null));
 
   // Wait for ready-to-show event before showing window (prevents flickering)
   mainWindow.once("ready-to-show", () => {
