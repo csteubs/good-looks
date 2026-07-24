@@ -38,7 +38,13 @@
  * Only expose what your app actually needs!
  */
 
-import { ipcRenderer, contextBridge, createWebUtilsAPI, installDisplayMediaCompat } from "@glaze/core/preload";
+import {
+  ipcRenderer,
+  contextBridge,
+  createClipboardAPI,
+  createWebUtilsAPI,
+  installDisplayMediaCompat,
+} from "@glaze/core/preload";
 
 // @ts-ignore dev-only parity probes; in renderer/dev/ (excluded from scaffolded apps)
 import { registerParityProbes } from "./dev/parity-preload.js";
@@ -255,11 +261,10 @@ const glazeAPI = {
   webUtils,
 
   // -------------------------------------------------------------------------
-  // Clipboard APIs - ⚠️ SENSITIVE: Not exposed by default
-  // Uncomment ONLY if your app needs clipboard access
-  // Also add createClipboardAPI to the @glaze/core/preload import above.
+  // Clipboard APIs - used to copy failed test run output for pasting into
+  // an external LLM (e.g. Ollama) to debug the failure.
   // -------------------------------------------------------------------------
-  // clipboard: createClipboardAPI(ipcRenderer.invoke.bind(ipcRenderer)),
+  clipboard: createClipboardAPI(ipcRenderer.invoke.bind(ipcRenderer)),
 
   // -------------------------------------------------------------------------
   // Native Theme APIs - For theme detection and switching
