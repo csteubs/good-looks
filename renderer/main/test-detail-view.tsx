@@ -88,7 +88,7 @@ export function TestDetailView() {
             />
           ) : (
             <ToolbarTitle
-              className="cursor-text"
+              className="cursor-text no-drag"
               onClick={() => {
                 setNameDraft(test.name);
                 setEditingName(true);
