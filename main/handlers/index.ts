@@ -12,6 +12,7 @@ import { getSettingsWindow, openSettingsWindow } from "../windows/settings-windo
 import { recorderService } from "../services/recorder-service.js";
 import { playwrightRunner } from "../services/playwright-runner.js";
 import { testStore } from "../services/test-store.js";
+import { importService } from "../services/import-service.js";
 import { generateSpec } from "../services/script-generator.js";
 import type { AssertKind } from "../recorder/types.js";
 
@@ -95,6 +96,12 @@ export function registerHandlers(): void {
     testStore.save(rec);
     return rec;
   });
+
+  // ── Import handlers ─────────────────────────────────────────────────
+  ipcMain.handle("tests:importFiles", async () => importService.importFromFiles());
+  ipcMain.handle("tests:importGit", async (_e, params: { url: string }) =>
+    importService.importFromGit(params?.url ?? ""),
+  );
 
   // ── Runner handlers ─────────────────────────────────────────────────
   ipcMain.handle("runner:run", async (_e, params: { id: string; headed?: boolean }) =>

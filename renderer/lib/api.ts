@@ -3,6 +3,12 @@
 
 import type { AssertKind, RecorderState, TestRecord } from "./recorder-types";
 
+export interface ImportResult {
+  imported: number;
+  names: string[];
+  ids: string[];
+}
+
 interface Ipc {
   invoke<T = unknown>(channel: string, ...args: unknown[]): Promise<T>;
   on(channel: string, cb: (...args: unknown[]) => void): () => void;
@@ -34,6 +40,8 @@ export const api = {
       ipc().invoke<TestRecord>("tests:rename", { id, name }),
     updateScript: (id: string, source: string) =>
       ipc().invoke<TestRecord>("tests:updateScript", { id, source }),
+    importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),
+    importGit: (url: string) => ipc().invoke<ImportResult>("tests:importGit", { url }),
   },
   runner: {
     run: (id: string, headed: boolean) =>
