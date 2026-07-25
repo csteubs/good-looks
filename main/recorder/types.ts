@@ -52,6 +52,8 @@ export interface RawStep {
   text?: string;
 }
 
+export type TestSpeed = "slow" | "medium" | "fast";
+
 export interface TestRecord {
   id: string;
   name: string;
@@ -63,6 +65,8 @@ export interface TestRecord {
   scriptPath: string;
   /** true once the script has been hand-edited, so it's no longer regenerated from steps */
   scriptEdited?: boolean;
+  /** playback speed for runs (adds a slowMo delay between actions); defaults to "fast" (no delay) */
+  speed?: TestSpeed;
 }
 
 export interface RecorderState {

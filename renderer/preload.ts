@@ -242,11 +242,13 @@ const glazeAPI = {
     //   options?: { activate?: boolean; workingDirectory?: string; logUsage?: boolean },
     // ): Promise<boolean> =>
     //   ipcRenderer.invoke("shell:openExternalWithResult", url, options),
-    //
-    // showItemInFolder(fullPath: string): void {
-    //   void ipcRenderer.invoke("shell:showItemInFolder", fullPath).catch(() => {});
-    // },
-    //
+
+    // SAFE-ish: reveals a file the user already owns in Finder; used by the
+    // test library's "Reveal in Finder" context menu action.
+    showItemInFolder(fullPath: string): void {
+      void ipcRenderer.invoke("shell:showItemInFolder", fullPath).catch(() => {});
+    },
+
     // /** @deprecated Use showItemInFolder() for fire-and-forget behavior. */
     // showItemInFolderAsync: (fullPath: string): Promise<void> =>
     //   ipcRenderer.invoke("shell:showItemInFolder", fullPath),

@@ -33,6 +33,8 @@ export interface Step {
   timestamp: number;
 }
 
+export type TestSpeed = "slow" | "medium" | "fast";
+
 export interface TestRecord {
   id: string;
   name: string;
@@ -42,6 +44,7 @@ export interface TestRecord {
   steps: Step[];
   scriptPath: string;
   scriptEdited?: boolean;
+  speed?: TestSpeed;
 }
 
 export interface RecorderState {

@@ -14,7 +14,7 @@ import { playwrightRunner } from "../services/playwright-runner.js";
 import { testStore } from "../services/test-store.js";
 import { importService } from "../services/import-service.js";
 import { generateSpec } from "../services/script-generator.js";
-import type { AssertKind } from "../recorder/types.js";
+import type { AssertKind, TestSpeed } from "../recorder/types.js";
 
 import { ipcMain, logger } from "@glaze/core/backend";
 
@@ -83,6 +83,19 @@ export function registerHandlers(): void {
       const source = generateSpec({ name: rec.name, url: rec.url, steps: rec.steps });
       rec.scriptPath = testStore.writeScript(rec.id, source);
     }
+    testStore.save(rec);
+    return rec;
+  });
+
+  ipcMain.handle("tests:setSpeed", async (_e, params: { id: string; speed: unknown }) => {
+    const speed = params.speed;
+    if (speed !== "slow" && speed !== "medium" && speed !== "fast") {
+      throw new Error("Invalid speed: " + String(speed));
+    }
+    const rec = testStore.get(params.id);
+    if (!rec) throw new Error("Test not found: " + params.id);
+    rec.speed = speed as TestSpeed;
+    rec.updatedAt = Date.now();
     testStore.save(rec);
     return rec;
   });

@@ -11,8 +11,14 @@ import { app, logger } from "@glaze/core/backend";
 
 import { sendToMain } from "./app-window.js";
 import { getScriptsDir, testStore } from "./test-store.js";
+import type { TestSpeed } from "../recorder/types.js";
 
 const RUN_TIMEOUT_MS = 5 * 60 * 1000;
+
+// Delay (ms) Playwright inserts between actions via launchOptions.slowMo, so a
+// "slow" run is easy to follow with the naked eye and "fast" matches today's
+// default (no artificial delay).
+const SLOW_MO_MS: Record<TestSpeed, number> = { fast: 0, medium: 400, slow: 1200 };
 
 interface RunHandle {
   child: ChildProcess;
@@ -76,6 +82,28 @@ function ensureModuleResolution(scriptsDir: string, nodeModules: string): void {
       err: String(err),
     });
   }
+}
+
+// Playwright's test CLI has no --slow-mo flag; launchOptions.slowMo only comes
+// from config. Write a minimal config once, alongside the specs, that reads
+// the delay from an env var so each run can pick its own speed.
+function ensureConfig(scriptsDir: string): string {
+  const configPath = path.join(scriptsDir, "playwright.config.ts");
+  if (!fs.existsSync(configPath)) {
+    fs.writeFileSync(
+      configPath,
+      'import { defineConfig } from "@playwright/test";\n\n' +
+        "export default defineConfig({\n" +
+        "  use: {\n" +
+        "    launchOptions: {\n" +
+        "      slowMo: Number(process.env.PW_SLOWMO_MS || 0),\n" +
+        "    },\n" +
+        "  },\n" +
+        "});\n",
+      "utf-8",
+    );
+  }
+  return configPath;
 }
 
 function isChromiumInstalled(): boolean {
@@ -151,6 +179,7 @@ export const playwrightRunner = {
         const { cliPath, nodeModules } = resolvePlaywright();
         const scriptsDir = getScriptsDir();
         ensureModuleResolution(scriptsDir, nodeModules);
+        const configPath = ensureConfig(scriptsDir);
         const env = baseEnv(nodeModules);
 
         if (!isChromiumInstalled()) {
@@ -158,15 +187,21 @@ export const playwrightRunner = {
           await runCli(runId, ["install", "chromium"], cliPath, scriptsDir, env);
         }
 
+        const slowMo = SLOW_MO_MS[rec.speed ?? "fast"];
         emitOutput(runId, "system", "Running " + path.basename(rec.scriptPath) + "…\n");
         const args = [
           "test",
           rec.scriptPath,
+          "--config",
+          configPath,
           "--reporter=line",
           "--workers=1",
         ];
         if (params.headed) args.push("--headed");
-        exitCode = await runCli(runId, args, cliPath, scriptsDir, env);
+        exitCode = await runCli(runId, args, cliPath, scriptsDir, {
+          ...env,
+          PW_SLOWMO_MS: String(slowMo),
+        });
       } catch (err) {
         emitOutput(runId, "system", "\nError: " + String(err) + "\n");
       } finally {

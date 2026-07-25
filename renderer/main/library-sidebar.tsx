@@ -3,17 +3,93 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Button,
+  CustomContextMenu,
+  CustomContextMenuContent,
+  CustomContextMenuItem,
+  CustomContextMenuSeparator,
+  CustomContextMenuSub,
+  CustomContextMenuSubContent,
+  CustomContextMenuSubTrigger,
+  CustomContextMenuTrigger,
   Sidebar,
   SidebarList,
   SidebarListItem,
+  Slider,
   Text,
   toast,
 } from "@glaze/core/components";
-import { Plus, FlaskConical } from "lucide-react";
+import { Plus, FlaskConical, FolderOpen, Gauge } from "lucide-react";
 
 import { api } from "../lib/api";
+import type { TestRecord, TestSpeed } from "../lib/recorder-types";
 import { NewRecordingDialog } from "./new-recording-dialog";
 import { ImportGitDialog } from "./import-git-dialog";
+
+const SPEEDS: TestSpeed[] = ["slow", "medium", "fast"];
+const SPEED_LABEL: Record<TestSpeed, string> = { slow: "Slow", medium: "Medium", fast: "Fast" };
+
+interface NativeShell {
+  showItemInFolder: (fullPath: string) => void;
+}
+function nativeShell(): NativeShell {
+  return (window as unknown as { glazeAPI: { shell: NativeShell } }).glazeAPI.shell;
+}
+
+/** Slider embedded in the "Adjust Test Speed" submenu — snaps to 3 named speeds
+ * rather than an arbitrary ms value, since that's what a Playwright slowMo delay
+ * usefully supports. Pointer/keyboard events are stopped from bubbling so Radix's
+ * menu roving-focus doesn't hijack the drag. */
+function TestSpeedSlider({ test }: { test: TestRecord }) {
+  const qc = useQueryClient();
+  const initial = Math.max(0, SPEEDS.indexOf(test.speed ?? "fast"));
+  const [index, setIndex] = React.useState(initial);
+  const lastCommitted = React.useRef(initial);
+
+  // Commit on every discrete step change rather than waiting for
+  // onValueCommit (drag-end) — with only 3 stops, a plain click never
+  // produces a drag gesture, so onValueCommit would never fire.
+  const handleChange = ([v]: number[]) => {
+    setIndex(v);
+    if (lastCommitted.current === v) return;
+    lastCommitted.current = v;
+    void (async () => {
+      try {
+        await api.tests.setSpeed(test.id, SPEEDS[v]);
+        qc.invalidateQueries({ queryKey: ["tests"] });
+        qc.invalidateQueries({ queryKey: ["test", test.id] });
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to update test speed.");
+      }
+    })();
+  };
+
+  return (
+    <div
+      className="w-52 px-2 py-2"
+      onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => e.stopPropagation()}
+    >
+      <div className="mb-2 flex items-center justify-between">
+        <Text variant="small" color="secondary">
+          Speed
+        </Text>
+        <Text variant="small">{SPEED_LABEL[SPEEDS[index]]}</Text>
+      </div>
+      <Slider
+        variant="filled"
+        size="small"
+        min={0}
+        max={2}
+        step={1}
+        ticks={3}
+        value={[index]}
+        startContent="Slow"
+        endContent="Fast"
+        onValueChange={handleChange}
+      />
+    </div>
+  );
+}
 
 function hostOf(url: string): string {
   try {
@@ -105,14 +181,33 @@ export function LibrarySidebar() {
       ) : (
         <SidebarList>
           {tests.map((t) => (
-            <SidebarListItem
-              key={t.id}
-              icon={<FlaskConical className="size-4" />}
-              title={t.name}
-              subtitle={hostOf(t.url)}
-              selected={t.id === selectedId}
-              onClick={() => navigate({ to: "/test/$id", params: { id: t.id } })}
-            />
+            <CustomContextMenu key={t.id}>
+              <CustomContextMenuTrigger asChild>
+                <SidebarListItem
+                  icon={<FlaskConical className="size-4" />}
+                  title={t.name}
+                  subtitle={hostOf(t.url)}
+                  selected={t.id === selectedId}
+                  onClick={() => navigate({ to: "/test/$id", params: { id: t.id } })}
+                />
+              </CustomContextMenuTrigger>
+              <CustomContextMenuContent>
+                <CustomContextMenuItem onSelect={() => nativeShell().showItemInFolder(t.scriptPath)}>
+                  <FolderOpen className="size-4" />
+                  Reveal in Finder
+                </CustomContextMenuItem>
+                <CustomContextMenuSeparator />
+                <CustomContextMenuSub>
+                  <CustomContextMenuSubTrigger value={SPEED_LABEL[t.speed ?? "fast"]}>
+                    <Gauge className="size-4" />
+                    Adjust Test Speed
+                  </CustomContextMenuSubTrigger>
+                  <CustomContextMenuSubContent>
+                    <TestSpeedSlider test={t} />
+                  </CustomContextMenuSubContent>
+                </CustomContextMenuSub>
+              </CustomContextMenuContent>
+            </CustomContextMenu>
           ))}
         </SidebarList>
       )}

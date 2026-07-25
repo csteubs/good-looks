@@ -1,7 +1,7 @@
 // Typed wrappers over the exposed window.glazeAPI IPC bridge. Renderer code
 // never touches ipcRenderer directly.
 
-import type { AssertKind, RecorderState, TestRecord } from "./recorder-types";
+import type { AssertKind, RecorderState, TestRecord, TestSpeed } from "./recorder-types";
 
 export interface ImportResult {
   imported: number;
@@ -40,6 +40,8 @@ export const api = {
       ipc().invoke<TestRecord>("tests:rename", { id, name }),
     updateScript: (id: string, source: string) =>
       ipc().invoke<TestRecord>("tests:updateScript", { id, source }),
+    setSpeed: (id: string, speed: TestSpeed) =>
+      ipc().invoke<TestRecord>("tests:setSpeed", { id, speed }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),
     importGit: (url: string) => ipc().invoke<ImportResult>("tests:importGit", { url }),
   },
