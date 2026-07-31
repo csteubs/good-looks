@@ -1,6 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Button,
+  Input,
   Label,
   RadioGroup,
   RadioGroupItem,
@@ -31,6 +32,11 @@ export function SettingsView() {
   const [model, setModel] = useState<string | null>(null);
   const [llmStatus, setLlmStatus] = useState<LlmProviderStatus | null>(null);
   const [testing, setTesting] = useState(false);
+  const [baseUrl, setBaseUrl] = useState<string>("");
+  const autoFetchInflight = useRef(0);
+
+  const defaultUrlFor = (p: LlmProvider) =>
+    p === "lmstudio" ? "http://127.0.0.1:1234" : "http://127.0.0.1:11434";
 
   // ── Trainer settings ─────────────────────────────────────────────────
   const [showUrlBar, setShowUrlBar] = useState(true);
@@ -41,6 +47,7 @@ export function SettingsView() {
       .then((cfg) => {
         setProvider(cfg.provider);
         setModel(cfg.model);
+        setBaseUrl((cfg.baseUrls?.[cfg.provider] ?? "").trim() || defaultUrlFor(cfg.provider));
       })
       .catch(() => {
         /* fall back to defaults */
@@ -67,10 +74,24 @@ export function SettingsView() {
     setProvider(next);
     setLlmStatus(null);
     setModel(null);
+    const nextUrl = defaultUrlFor(next);
+    setBaseUrl(nextUrl);
     try {
-      await api.llm.setConfig({ provider: next, model: null });
+      // Switching providers resets the newly-selected provider to its default URL.
+      await api.llm.setConfig({ provider: next, model: null, baseUrls: { [next]: "" } });
     } catch (error) {
       toast.error(`Failed to save provider: ${error}`);
+    }
+  };
+
+  const handleBaseUrlChange = async (value: string) => {
+    setBaseUrl(value);
+    const trimmed = value.trim();
+    const override = trimmed && trimmed !== defaultUrlFor(provider) ? trimmed : "";
+    try {
+      await api.llm.setConfig({ baseUrls: { [provider]: override } });
+    } catch (error) {
+      toast.error(`Failed to save server URL: ${error}`);
     }
   };
 
@@ -99,6 +120,34 @@ export function SettingsView() {
       setTesting(false);
     }
   };
+
+  // Auto-fetch available models whenever the provider or server URL changes,
+  // so the model list populates without a manual "Test connection" click.
+  useEffect(() => {
+    if (!baseUrl) return;
+    const handle = ++autoFetchInflight.current;
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await api.llm.status(provider);
+        if (cancelled || handle !== autoFetchInflight.current) return;
+        setLlmStatus(status);
+        if (status.reachable) {
+          const stillValid = status.models.some((m) => m.id === model);
+          const nextModel = stillValid ? model : (status.models[0]?.id ?? null);
+          if (nextModel !== model) {
+            setModel(nextModel);
+            await api.llm.setConfig({ model: nextModel });
+          }
+        }
+      } catch {
+        /* ignore — user can retry with Test connection */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [provider, baseUrl]);
 
   const handleModelChange = async (value: string) => {
     setModel(value);
@@ -247,20 +296,12 @@ export function SettingsView() {
 
             <Field orientation="horizontal">
               <FieldContent>
-                <FieldLabel>Connection</FieldLabel>
-                {llmStatus ? (
-                  <p className="text-sm text-muted-foreground">
-                    {llmStatus.reachable
-                      ? `Connected at ${llmStatus.baseUrl}`
-                      : (llmStatus.error ?? "Not reachable")}
-                  </p>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    {provider === "ollama"
-                      ? "Default: http://127.0.0.1:11434"
-                      : "Default: http://127.0.0.1:1234"}
-                  </p>
-                )}
+                <FieldLabel htmlFor="llm-server-url">Server URL</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  {llmStatus && !llmStatus.reachable
+                    ? (llmStatus.error ?? "Not reachable")
+                    : `Default: ${defaultUrlFor(provider)}`}
+                </p>
               </FieldContent>
               <div className="flex items-center gap-2">
                 {llmStatus && (
@@ -272,6 +313,22 @@ export function SettingsView() {
                   {testing ? "Testing…" : "Test connection"}
                 </Button>
               </div>
+            </Field>
+
+            <Field orientation="horizontal">
+              <FieldContent>
+                <Input
+                  id="llm-server-url"
+                  className="w-72"
+                  spellCheck={false}
+                  autoCapitalize="off"
+                  autoCorrect="off"
+                  placeholder={defaultUrlFor(provider)}
+                  value={baseUrl}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                  onBlur={(e) => handleBaseUrlChange(e.target.value)}
+                />
+              </FieldContent>
             </Field>
 
             {llmStatus?.reachable && llmStatus.models.length > 0 && (
