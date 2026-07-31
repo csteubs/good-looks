@@ -7,6 +7,7 @@ import * as React from "react";
 import { AlertDialog, Button, Dialog, ScrollArea, Status, toast } from "@glaze/core/components";
 import { Check, Copy, RotateCcw, Square, Wand2 } from "lucide-react";
 
+import { api } from "../lib/api";
 import { buildDebugMessages } from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
 import type { TestSpeed } from "../lib/recorder-types";
@@ -68,7 +69,25 @@ export function AiDebugDialog({
   const { content, status, error, start, stop } = useLlmChat();
   const [copied, setCopied] = React.useState(false);
   const [applied, setApplied] = React.useState(false);
+  const [modelName, setModelName] = React.useState<string | null>(null);
   const startedKeyRef = React.useRef<string | null>(null);
+
+  // Fetch the configured LLM model name for the dialog title.
+  React.useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api.llm
+      .getConfig()
+      .then((cfg) => {
+        if (!cancelled) setModelName(cfg.model);
+      })
+      .catch(() => {
+        if (!cancelled) setModelName(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   const runDiagnosis = React.useCallback(
     () => start(buildDebugMessages({ testName, testUrl, script, output, imported, speed })),
@@ -112,7 +131,13 @@ export function AiDebugDialog({
   const segments = parseResponse(content);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange} title="Debug with AI" description={testName} size="xl">
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={modelName ? `Debugging with ${modelName}` : "Debugging with AI"}
+      description={testName}
+      size="xl"
+    >
       <div className="flex h-[50vh] flex-col gap-3">
         <div className="flex items-center gap-2">
           {status === "streaming" ? <Status variant="loading">Thinking</Status> : null}
