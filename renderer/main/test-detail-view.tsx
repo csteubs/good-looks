@@ -73,6 +73,18 @@ export function TestDetailView() {
     );
   }
 
+  // Save any in-progress script edits, then open the trainer so the manually
+  // edited script is preserved on disk before the trainer can regenerate it.
+  const saveAndEditInTrainer = async () => {
+    if (editingScript) {
+      await api.tests.updateScript(id, scriptDraft);
+      qc.invalidateQueries({ queryKey: ["script", id] });
+      qc.invalidateQueries({ queryKey: ["test", id] });
+      setEditingScript(false);
+    }
+    start(test.url, test.name, test.id);
+  };
+
   return (
     <div className="flex h-full flex-col">
       <Toolbar>
@@ -113,13 +125,17 @@ export function TestDetailView() {
         </ToolbarContent>
         <ToolbarActions>
           {test.scriptEdited ? (
-            <AlertDialog
+            <Dialog
               trigger={<Button variant="glass">Edit in Trainer</Button>}
-              title="Discard manual script edits?"
-              description="Continuing this recording regenerates the script from the recorded steps, which will overwrite the edits you made directly in the script."
-              confirmLabel="Continue"
-              confirmVariant="destructive"
-              onConfirm={() => start(test.url, test.name, test.id)}
+              title="Edit in Trainer"
+              description="This test has manual script edits. Opening the trainer will regenerate the script from the recorded steps when you stop, overwriting those edits."
+              confirmLabel="Save & continue"
+              confirmVariant="accent"
+              onConfirm={saveAndEditInTrainer}
+              destructiveAction={{
+                label: "Continue without saving",
+                onClick: () => start(test.url, test.name, test.id),
+              }}
             />
           ) : (
             <Button variant="glass" onClick={() => start(test.url, test.name, test.id)}>
