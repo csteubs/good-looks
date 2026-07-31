@@ -25,7 +25,7 @@ import { api } from "../lib/api";
 import { useRecorder } from "./recorder-store";
 import { AiDebugDialog } from "./ai-debug-panel";
 import { RunOutput } from "./run-output";
-import { ScriptView } from "./script-view";
+import { ScriptEditor, ScriptView } from "./script-view";
 import { StepRow } from "./step-row";
 
 export function TestDetailView() {
@@ -238,13 +238,7 @@ export function TestDetailView() {
                 )}
               </div>
               {editingScript ? (
-                <textarea
-                  autoFocus
-                  spellCheck={false}
-                  value={scriptDraft}
-                  onChange={(e) => setScriptDraft(e.target.value)}
-                  className="text-small-mono min-h-0 flex-1 resize-none overflow-auto bg-transparent p-4 text-primary outline-none"
-                />
+                <ScriptEditor value={scriptDraft} onChange={setScriptDraft} />
               ) : (
                 <ScriptView code={scriptQuery.data ?? ""} />
               )}
