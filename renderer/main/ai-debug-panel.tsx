@@ -1,11 +1,14 @@
 // Streams an AI diagnosis of a failed test run (script + run output) via the
 // local LLM chat API (main/services/llm-service.ts). Auto-starts when opened.
+// Renders the response with code changes as distinct, copyable blocks, and — when
+// the model returns a complete corrected spec — offers to apply it to the script.
 
 import * as React from "react";
-import { Button, Dialog, ScrollArea, Status } from "@glaze/core/components";
-import { Check, Copy, RotateCcw, Square } from "lucide-react";
+import { AlertDialog, Button, Dialog, ScrollArea, Status, toast } from "@glaze/core/components";
+import { Check, Copy, RotateCcw, Square, Wand2 } from "lucide-react";
 
 import { buildDebugMessages } from "../lib/llm-prompts";
+import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
 import type { TestSpeed } from "../lib/recorder-types";
 import { useLlmChat } from "../lib/use-llm-chat";
 
@@ -19,6 +22,27 @@ function friendlyError(message: string): string {
   return message;
 }
 
+// A fenced code block from the response, rendered distinctly with its own copy.
+function CodeBlock({ lang, content }: { lang: string; content: string }) {
+  const [copied, setCopied] = React.useState(false);
+  const copy = async () => {
+    await window.glazeAPI.clipboard.writeText(content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <div className="my-1 overflow-hidden rounded-md border border-separator">
+      <div className="flex items-center justify-between border-b border-separator bg-control-subtle px-3 py-1">
+        <span className="text-small text-secondary">{lang || "code"}</span>
+        <Button iconOnly size="small" variant="transparent" onClick={copy} aria-label="Copy code" title="Copy code">
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </Button>
+      </div>
+      <pre className="text-small-mono overflow-x-auto whitespace-pre-wrap break-words p-3 text-primary">{content}</pre>
+    </div>
+  );
+}
+
 export function AiDebugDialog({
   open,
   onOpenChange,
@@ -28,6 +52,7 @@ export function AiDebugDialog({
   output,
   imported,
   speed,
+  onApplyScript,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -37,9 +62,12 @@ export function AiDebugDialog({
   output: string;
   imported: boolean;
   speed?: TestSpeed;
+  /** Persist an AI-suggested full-file replacement of the test's script. */
+  onApplyScript?: (source: string) => Promise<void>;
 }) {
   const { content, status, error, start, stop } = useLlmChat();
   const [copied, setCopied] = React.useState(false);
+  const [applied, setApplied] = React.useState(false);
   const startedKeyRef = React.useRef<string | null>(null);
 
   const runDiagnosis = React.useCallback(
@@ -57,6 +85,7 @@ export function AiDebugDialog({
     const key = `${testName}:${output.length}`;
     if (startedKeyRef.current === key) return;
     startedKeyRef.current = key;
+    setApplied(false);
     void runDiagnosis();
   }, [open, testName, output.length, runDiagnosis]);
 
@@ -65,6 +94,22 @@ export function AiDebugDialog({
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
+
+  // A full, applyable corrected spec is only offered once streaming finishes.
+  const correctedScript = status === "done" ? extractCorrectedScript(content) : null;
+
+  const applyScript = async () => {
+    if (!correctedScript || !onApplyScript) return;
+    try {
+      await onApplyScript(correctedScript);
+      setApplied(true);
+      toast.success("Applied the suggested fix to the script.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to apply the suggested fix.");
+    }
+  };
+
+  const segments = parseResponse(content);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange} title="Debug with AI" description={testName} size="xl">
@@ -83,6 +128,20 @@ export function AiDebugDialog({
               <RotateCcw className="size-3.5" /> Regenerate
             </Button>
           )}
+          {correctedScript && onApplyScript ? (
+            <AlertDialog
+              trigger={
+                <Button size="small" variant="accent" disabled={applied}>
+                  <Wand2 className="size-3.5" /> {applied ? "Applied" : "Apply to script"}
+                </Button>
+              }
+              title="Apply the suggested fix?"
+              description="This replaces the test's current script with the AI's corrected version. You can still edit or re-record the script afterward."
+              confirmLabel="Apply"
+              confirmVariant="accent"
+              onConfirm={applyScript}
+            />
+          ) : null}
           {content ? (
             <Button
               iconOnly
@@ -101,11 +160,23 @@ export function AiDebugDialog({
           autoScrollToBottom
           autoScrollDeps={[content.length]}
         >
-          <pre className="text-small whitespace-pre-wrap break-words p-3 text-primary">
-            {status === "error" && error
-              ? friendlyError(error)
-              : content || (status === "streaming" ? "Thinking…" : "")}
-          </pre>
+          <div className="flex flex-col gap-1 p-3">
+            {status === "error" && error ? (
+              <pre className="text-small whitespace-pre-wrap break-words text-primary">{friendlyError(error)}</pre>
+            ) : content ? (
+              segments.map((seg, i) =>
+                seg.type === "code" ? (
+                  <CodeBlock key={i} lang={seg.lang} content={seg.content} />
+                ) : (
+                  <p key={i} className="text-small whitespace-pre-wrap break-words text-primary">
+                    {seg.content}
+                  </p>
+                ),
+              )
+            ) : (
+              <p className="text-small text-secondary">{status === "streaming" ? "Thinking…" : ""}</p>
+            )}
+          </div>
         </ScrollArea>
       </div>
     </Dialog>

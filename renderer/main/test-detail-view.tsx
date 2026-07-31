@@ -251,6 +251,11 @@ export function TestDetailView() {
         output={runInfo?.lines.join("") ?? ""}
         imported={Boolean(test.sourceDir)}
         speed={test.speed}
+        onApplyScript={async (source) => {
+          await api.tests.updateScript(id, source);
+          qc.invalidateQueries({ queryKey: ["script", id] });
+          qc.invalidateQueries({ queryKey: ["test", id] });
+        }}
       />
 
       <Dialog
