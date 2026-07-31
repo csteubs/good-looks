@@ -8,9 +8,11 @@ export type StepType =
   | "select"
   | "check"
   | "uncheck"
-  | "assert";
+  | "assert"
+  | "wait"
+  | "viewport";
 
-export type LocatorKind = "testid" | "role" | "label" | "placeholder" | "text" | "css";
+export type LocatorKind = "testid" | "role" | "label" | "placeholder" | "text" | "css" | "xpath";
 
 export interface Locator {
   k: LocatorKind;
@@ -19,7 +21,20 @@ export interface Locator {
   name?: string;
 }
 
-export type AssertKind = "visible" | "text";
+export type AssertKind =
+  | "visible"
+  | "hidden"
+  | "text"
+  | "exactText"
+  | "enabled"
+  | "disabled"
+  | "checked"
+  | "unchecked"
+  | "value"
+  | "attribute"
+  | "count"
+  | "url"
+  | "title";
 
 export interface Step {
   id: string;
@@ -30,7 +45,30 @@ export interface Step {
   url?: string;
   assert?: AssertKind;
   text?: string;
+  soft?: boolean;
+  attr?: string;
+  count?: number;
+  width?: number;
+  height?: number;
+  waitMs?: number;
   timestamp: number;
+}
+
+/** Payload for a manually-added or AI-generated step (no id/timestamp yet). */
+export interface RawStep {
+  type: StepType;
+  locator?: Locator;
+  value?: string;
+  label?: string;
+  url?: string;
+  assert?: AssertKind;
+  text?: string;
+  soft?: boolean;
+  attr?: string;
+  count?: number;
+  width?: number;
+  height?: number;
+  waitMs?: number;
 }
 
 export type TestSpeed = "slow" | "medium" | "fast";
@@ -58,4 +96,6 @@ export interface RecorderState {
   url: string | null;
   name: string | null;
   editing: boolean;
+  assertSoft: boolean;
+  cursor: number;
 }

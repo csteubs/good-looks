@@ -22,9 +22,44 @@ function locatorExpr(loc: Locator): string {
       return "getByPlaceholder(" + q(loc.v ?? "") + ")";
     case "text":
       return "getByText(" + q(loc.v ?? "") + ")";
+    case "xpath":
+      return "locator(" + q("xpath=" + (loc.v ?? "")) + ")";
     case "css":
     default:
       return "locator(" + q(loc.v ?? "") + ")";
+  }
+}
+
+function describeAssert(step: Step, target: string | null): string {
+  const e = step.soft ? "expect.soft" : "expect";
+  if (step.assert === "url") return e + "(page).toHaveURL(" + q(step.value ?? "") + ")";
+  if (step.assert === "title") return e + "(page).toHaveTitle(" + q(step.value ?? "") + ")";
+  if (!target) return "assert";
+  const x = e + "(" + target + ")";
+  switch (step.assert) {
+    case "hidden":
+      return x + ".toBeHidden()";
+    case "text":
+      return x + ".toContainText(" + q(step.text ?? "") + ")";
+    case "exactText":
+      return x + ".toHaveText(" + q(step.text ?? "") + ")";
+    case "enabled":
+      return x + ".toBeEnabled()";
+    case "disabled":
+      return x + ".toBeDisabled()";
+    case "checked":
+      return x + ".toBeChecked()";
+    case "unchecked":
+      return x + ".not.toBeChecked()";
+    case "value":
+      return x + ".toHaveValue(" + q(step.value ?? "") + ")";
+    case "attribute":
+      return x + ".toHaveAttribute(" + q(step.attr ?? "") + ", " + q(step.value ?? "") + ")";
+    case "count":
+      return x + ".toHaveCount(" + (step.count ?? 0) + ")";
+    case "visible":
+    default:
+      return x + ".toBeVisible()";
   }
 }
 
@@ -48,11 +83,13 @@ export function describeStep(step: Step): string {
       return target
         ? target + ".press(" + q(step.value ?? "") + ")"
         : "keyboard.press(" + q(step.value ?? "") + ")";
+    case "wait":
+      if (typeof step.waitMs === "number") return "page.waitForTimeout(" + step.waitMs + ")";
+      return target ? target + ".waitFor()" : "wait";
+    case "viewport":
+      return "page.setViewportSize({ width: " + (step.width ?? 1280) + ", height: " + (step.height ?? 800) + " })";
     case "assert":
-      if (!target) return "assert";
-      return step.assert === "text"
-        ? "expect(" + target + ").toContainText(" + q(step.text ?? "") + ")"
-        : "expect(" + target + ").toBeVisible()";
+      return describeAssert(step, target);
     default:
       return step.type;
   }

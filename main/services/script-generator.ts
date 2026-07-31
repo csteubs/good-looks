@@ -20,9 +20,45 @@ function locatorExpr(loc: Locator): string {
       return "getByPlaceholder(" + q(loc.v ?? "") + ")";
     case "text":
       return "getByText(" + q(loc.v ?? "") + ")";
+    case "xpath":
+      return "locator(" + q("xpath=" + (loc.v ?? "")) + ")";
     case "css":
     default:
       return "locator(" + q(loc.v ?? "") + ")";
+  }
+}
+
+function assertLine(step: Step, target: string | null): string | null {
+  const e = step.soft ? "expect.soft" : "expect";
+  // Page-level assertions don't need an element locator.
+  if (step.assert === "url") return "await " + e + "(page).toHaveURL(" + q(step.value ?? "") + ");";
+  if (step.assert === "title") return "await " + e + "(page).toHaveTitle(" + q(step.value ?? "") + ");";
+  if (!target) return null;
+  const x = e + "(" + target + ")";
+  switch (step.assert) {
+    case "hidden":
+      return "await " + x + ".toBeHidden();";
+    case "text":
+      return "await " + x + ".toContainText(" + q(step.text ?? "") + ");";
+    case "exactText":
+      return "await " + x + ".toHaveText(" + q(step.text ?? "") + ");";
+    case "enabled":
+      return "await " + x + ".toBeEnabled();";
+    case "disabled":
+      return "await " + x + ".toBeDisabled();";
+    case "checked":
+      return "await " + x + ".toBeChecked();";
+    case "unchecked":
+      return "await " + x + ".not.toBeChecked();";
+    case "value":
+      return "await " + x + ".toHaveValue(" + q(step.value ?? "") + ");";
+    case "attribute":
+      return "await " + x + ".toHaveAttribute(" + q(step.attr ?? "") + ", " + q(step.value ?? "") + ");";
+    case "count":
+      return "await " + x + ".toHaveCount(" + (step.count ?? 0) + ");";
+    case "visible":
+    default:
+      return "await " + x + ".toBeVisible();";
   }
 }
 
@@ -46,11 +82,19 @@ function stepLine(step: Step): string | null {
       return target
         ? "await " + target + ".press(" + q(step.value ?? "") + ");"
         : "await page.keyboard.press(" + q(step.value ?? "") + ");";
+    case "wait":
+      if (typeof step.waitMs === "number") return "await page.waitForTimeout(" + step.waitMs + ");";
+      return target ? "await " + target + ".waitFor();" : null;
+    case "viewport":
+      return (
+        "await page.setViewportSize({ width: " +
+        (step.width ?? 1280) +
+        ", height: " +
+        (step.height ?? 800) +
+        " });"
+      );
     case "assert":
-      if (!target) return null;
-      return step.assert === "text"
-        ? "await expect(" + target + ").toContainText(" + q(step.text ?? "") + ");"
-        : "await expect(" + target + ").toBeVisible();";
+      return assertLine(step, target);
     default:
       return null;
   }

@@ -139,3 +139,67 @@ export function buildGenerateMessages(ctx: GenerateContext): LlmMessage[] {
     },
   ];
 }
+
+// ── Test-step generation (structured) ──────────────────────────────────
+// Unlike buildGenerateMessages (which emits raw spec text), this asks the model
+// to emit our structured Step[] schema so the steps land in the trainer's live,
+// editable list — the user can then reorder, edit, and replay them before
+// generating the spec. Mirrors mabl's AI Test Creation Agent building steps.
+
+const GENERATE_STEPS_SYSTEM_PROMPT = `You are an expert QA automation engineer embedded in a Playwright test recorder. Turn a natural-language description into an ordered list of test STEPS as JSON, matching the recorder's own step model exactly.
+
+Output format:
+- Output ONLY a single fenced code block tagged "json" containing a JSON array of step objects. No prose before or after.
+- Each step is an object. Allowed "type" values: "goto", "click", "fill", "press", "select", "check", "uncheck", "assert", "wait", "viewport".
+- Locators use a "locator" object: { "k": <kind>, "v": <value>, "role": <ariaRole>, "name": <accessibleName> }. Locator kinds ("k"): "testid", "role", "label", "placeholder", "text", "css", "xpath". Prefer "role" (with "name"), "label", "placeholder", "text", or "testid" over "css"/"xpath".
+- Step fields by type:
+  - goto: { "type": "goto", "url": "..." }
+  - click/check/uncheck: { "type": "click", "locator": {...} }
+  - fill/select: { "type": "fill", "locator": {...}, "value": "..." }
+  - press: { "type": "press", "value": "Enter", "locator": {...} }  (locator optional)
+  - assert: { "type": "assert", "assert": <kind>, "locator": {...}, "text": "...", "value": "...", "attr": "...", "count": 1, "soft": false }
+    assert kinds: "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked", "unchecked", "value", "attribute", "count", "url", "title". "url"/"title" are page-level and need no locator; use "value" for the expected string. "text"/"exactText" use "text". "value" uses "value". "attribute" uses "attr"+"value". "count" uses "count".
+  - wait: { "type": "wait", "waitMs": 1000 }  (or omit waitMs and give a "locator" to wait for it)
+  - viewport: { "type": "viewport", "width": 1280, "height": 800 }
+
+Rules:
+- Start with a "goto" step to the given URL.
+- Add assertions that verify the user's intent, not just that actions ran.
+- Do not invent selectors you can't justify from the description — prefer visible labels/roles/text.
+
+Example:
+\`\`\`json
+[
+  { "type": "goto", "url": "https://example.com/login" },
+  { "type": "fill", "locator": { "k": "label", "v": "Email" }, "value": "test@example.com" },
+  { "type": "fill", "locator": { "k": "label", "v": "Password" }, "value": "secret123" },
+  { "type": "click", "locator": { "k": "role", "role": "button", "name": "Sign in" } },
+  { "type": "assert", "assert": "visible", "locator": { "k": "text", "v": "Welcome" } }
+]
+\`\`\``;
+
+export interface GenerateStepsContext {
+  /** The user's natural-language description of the test to generate. */
+  prompt: string;
+  /** Starting URL the first goto step should navigate to. */
+  url: string;
+  /** Optional browser viewport hint. */
+  viewport?: { width: number; height: number };
+}
+
+export function buildGenerateStepsMessages(ctx: GenerateStepsContext): LlmMessage[] {
+  const lines: string[] = [`Starting URL: ${ctx.url}`];
+  if (ctx.viewport) {
+    lines.push(`Browser viewport: ${ctx.viewport.width}x${ctx.viewport.height}.`);
+  }
+  return [
+    { role: "system", content: GENERATE_STEPS_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content:
+        lines.join("\n") +
+        `\n\nTest description:\n${ctx.prompt.trim()}\n\n` +
+        `Output the steps as a single fenced \`\`\`json array.`,
+    },
+  ];
+}

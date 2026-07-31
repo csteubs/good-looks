@@ -1,7 +1,7 @@
 // Typed wrappers over the exposed window.glazeAPI IPC bridge. Renderer code
 // never touches ipcRenderer directly.
 
-import type { AssertKind, RecorderState, TestRecord, TestSpeed } from "./recorder-types";
+import type { AssertKind, RawStep, RecorderState, Step, TestRecord, TestSpeed } from "./recorder-types";
 import type {
   LlmChatParams,
   LlmConfig,
@@ -31,10 +31,20 @@ export const api = {
       ipc().invoke<RecorderState>("recorder:start", { url, name, testId }),
     pause: () => ipc().invoke<RecorderState>("recorder:pause"),
     resume: () => ipc().invoke<RecorderState>("recorder:resume"),
-    setAssert: (mode: AssertKind | null) =>
-      ipc().invoke<RecorderState>("recorder:setAssert", { mode }),
+    setAssert: (mode: AssertKind | null, soft = false) =>
+      ipc().invoke<RecorderState>("recorder:setAssert", { mode, soft }),
     deleteStep: (stepId: string) =>
       ipc().invoke<RecorderState>("recorder:deleteStep", { stepId }),
+    insertStep: (step: RawStep, index?: number) =>
+      ipc().invoke<RecorderState>("recorder:insertStep", { step, index }),
+    reorderStep: (stepId: string, toIndex: number) =>
+      ipc().invoke<RecorderState>("recorder:reorderStep", { stepId, toIndex }),
+    updateStep: (stepId: string, patch: Partial<Step>) =>
+      ipc().invoke<RecorderState>("recorder:updateStep", { stepId, patch }),
+    setCursor: (index: number) =>
+      ipc().invoke<RecorderState>("recorder:setCursor", { index }),
+    replayStep: (stepId: string) =>
+      ipc().invoke<{ ok: boolean; error?: string }>("recorder:replayStep", { stepId }),
     stop: () => ipc().invoke<void>("recorder:stop"),
     getState: () => ipc().invoke<RecorderState>("recorder:getState"),
   },

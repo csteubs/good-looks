@@ -16,7 +16,7 @@ import { importService } from "../services/import-service.js";
 import { generateSpec } from "../services/script-generator.js";
 import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
-import type { AssertKind, TestRecord, TestSpeed } from "../recorder/types.js";
+import type { AssertKind, RawStep, Step, TestRecord, TestSpeed } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 
 import { ipcMain, logger } from "@glaze/core/backend";
@@ -73,11 +73,32 @@ export function registerHandlers(): void {
   );
   ipcMain.handle("recorder:pause", async () => recorderService.pause());
   ipcMain.handle("recorder:resume", async () => recorderService.resume());
-  ipcMain.handle("recorder:setAssert", async (_e, params: { mode: AssertKind | null }) =>
-    recorderService.setAssertMode(params?.mode ?? null),
+  ipcMain.handle(
+    "recorder:setAssert",
+    async (_e, params: { mode: AssertKind | null; soft?: boolean }) =>
+      recorderService.setAssertMode(params?.mode ?? null, !!params?.soft),
   );
   ipcMain.handle("recorder:deleteStep", async (_e, params: { stepId: string }) =>
     recorderService.deleteStep(params.stepId),
+  );
+  ipcMain.handle("recorder:insertStep", async (_e, params: { step: RawStep; index?: number }) =>
+    recorderService.insertStep(params.step, params.index),
+  );
+  ipcMain.handle(
+    "recorder:reorderStep",
+    async (_e, params: { stepId: string; toIndex: number }) =>
+      recorderService.reorderStep(params.stepId, params.toIndex),
+  );
+  ipcMain.handle(
+    "recorder:updateStep",
+    async (_e, params: { stepId: string; patch: Partial<Step> }) =>
+      recorderService.updateStep(params.stepId, params.patch),
+  );
+  ipcMain.handle("recorder:setCursor", async (_e, params: { index: number }) =>
+    recorderService.setCursor(params.index),
+  );
+  ipcMain.handle("recorder:replayStep", async (_e, params: { stepId: string }) =>
+    recorderService.replayStep(params.stepId),
   );
   ipcMain.handle("recorder:stop", async () => {
     recorderService.stop();

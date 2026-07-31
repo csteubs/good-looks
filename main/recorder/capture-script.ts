@@ -18,58 +18,13 @@ export const ATTR_INSTALLED = "data-pw-installed";
 export const ATTR_QUEUE = "data-pw-queue";
 export const ATTR_PAUSED = "data-pw-paused";
 export const ATTR_ASSERT = "data-pw-assert";
+export const ATTR_ASSERT_SOFT = "data-pw-assert-soft";
 
-// Plain string (not type-checked against the Node backend lib). No backticks or
-// ${...} inside.
-export const CAPTURE_SCRIPT = `
-(function () {
-  var root = document.documentElement;
-  if (!root) return;
-  if (root.getAttribute("${ATTR_INSTALLED}") === "1") return;
-  root.setAttribute("${ATTR_INSTALLED}", "1");
-  if (root.getAttribute("${ATTR_QUEUE}") == null) root.setAttribute("${ATTR_QUEUE}", "[]");
-
-  // Keep navigation inside the recorder window: default any target-less link to
-  // the current frame instead of a new window/tab.
-  try {
-    if (!document.querySelector("base[data-pw-base]")) {
-      var pwBase = document.createElement("base");
-      pwBase.setAttribute("target", "_self");
-      pwBase.setAttribute("data-pw-base", "1");
-      (document.head || document.documentElement).appendChild(pwBase);
-    }
-  } catch (e) {}
-
-  // Rewrite an element's (or its ancestor link/form) target to _self so a click
-  // navigates within this window rather than opening another browser window.
-  function keepInWindow(el) {
-    try {
-      var a = el.closest ? el.closest("a[target], area[target]") : null;
-      if (a && a.getAttribute("target") && a.getAttribute("target") !== "_self") {
-        a.setAttribute("target", "_self");
-      }
-      var f = el.closest ? el.closest("form[target]") : null;
-      if (f && f.getAttribute("target") && f.getAttribute("target") !== "_self") {
-        f.setAttribute("target", "_self");
-      }
-    } catch (er) {}
-  }
-
-  function isPaused() { return document.documentElement.getAttribute("${ATTR_PAUSED}") === "1"; }
-  function assertMode() {
-    var v = document.documentElement.getAttribute("${ATTR_ASSERT}");
-    return v === "visible" || v === "text" ? v : null;
-  }
-  function clearAssert() { document.documentElement.setAttribute("${ATTR_ASSERT}", ""); }
-
-  function push(step) {
-    var e = document.documentElement;
-    var q;
-    try { q = JSON.parse(e.getAttribute("${ATTR_QUEUE}") || "[]"); } catch (err) { q = []; }
-    q.push(step);
-    e.setAttribute("${ATTR_QUEUE}", JSON.stringify(q));
-  }
-
+// Pure DOM helper functions shared verbatim by the capture script (which builds
+// a locator FROM an element) and the step replayer (which finds an element FROM
+// a locator). Kept as one string so the two injected scripts can't drift. No
+// backticks or ${...} inside except the escaped whitespace regex.
+export const DOM_HELPERS = `
   function cssEscape(s) {
     try { return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s); }
     catch (e) { return String(s); }
@@ -156,6 +111,67 @@ export const CAPTURE_SCRIPT = `
     }
     return parts.join(" > ");
   }
+`;
+
+// Plain string (not type-checked against the Node backend lib). No backticks or
+// ${...} inside.
+export const CAPTURE_SCRIPT = `
+(function () {
+  var root = document.documentElement;
+  if (!root) return;
+  if (root.getAttribute("${ATTR_INSTALLED}") === "1") return;
+  root.setAttribute("${ATTR_INSTALLED}", "1");
+  if (root.getAttribute("${ATTR_QUEUE}") == null) root.setAttribute("${ATTR_QUEUE}", "[]");
+
+  // Keep navigation inside the recorder window: default any target-less link to
+  // the current frame instead of a new window/tab.
+  try {
+    if (!document.querySelector("base[data-pw-base]")) {
+      var pwBase = document.createElement("base");
+      pwBase.setAttribute("target", "_self");
+      pwBase.setAttribute("data-pw-base", "1");
+      (document.head || document.documentElement).appendChild(pwBase);
+    }
+  } catch (e) {}
+
+  // Rewrite an element's (or its ancestor link/form) target to _self so a click
+  // navigates within this window rather than opening another browser window.
+  function keepInWindow(el) {
+    try {
+      var a = el.closest ? el.closest("a[target], area[target]") : null;
+      if (a && a.getAttribute("target") && a.getAttribute("target") !== "_self") {
+        a.setAttribute("target", "_self");
+      }
+      var f = el.closest ? el.closest("form[target]") : null;
+      if (f && f.getAttribute("target") && f.getAttribute("target") !== "_self") {
+        f.setAttribute("target", "_self");
+      }
+    } catch (er) {}
+  }
+
+  function isPaused() { return document.documentElement.getAttribute("${ATTR_PAUSED}") === "1"; }
+  function assertMode() {
+    var v = document.documentElement.getAttribute("${ATTR_ASSERT}");
+    var ok = ["visible","hidden","text","exactText","enabled","disabled","checked","unchecked"];
+    return ok.indexOf(v) >= 0 ? v : null;
+  }
+  function assertSoft() {
+    return document.documentElement.getAttribute("${ATTR_ASSERT_SOFT}") === "1";
+  }
+  function clearAssert() {
+    document.documentElement.setAttribute("${ATTR_ASSERT}", "");
+    document.documentElement.setAttribute("${ATTR_ASSERT_SOFT}", "0");
+  }
+
+  function push(step) {
+    var e = document.documentElement;
+    var q;
+    try { q = JSON.parse(e.getAttribute("${ATTR_QUEUE}") || "[]"); } catch (err) { q = []; }
+    q.push(step);
+    e.setAttribute("${ATTR_QUEUE}", JSON.stringify(q));
+  }
+
+  ${DOM_HELPERS}
 
   function interactiveTarget(el) {
     var node = el;
@@ -243,7 +259,8 @@ export const CAPTURE_SCRIPT = `
       e.stopPropagation();
       e.stopImmediatePropagation();
       var payload = { type: "assert", assert: mode, locator: locatorFor(el) };
-      if (mode === "text") payload.text = txt(el).slice(0, 120);
+      if (mode === "text" || mode === "exactText") payload.text = txt(el).slice(0, 120);
+      if (assertSoft()) payload.soft = true;
       push(payload);
       clearAssert();
       clearHi();

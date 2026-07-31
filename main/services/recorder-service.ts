@@ -14,10 +14,12 @@ import { BrowserWindow, logger } from "@glaze/core/backend";
 
 import {
   ATTR_ASSERT,
+  ATTR_ASSERT_SOFT,
   ATTR_PAUSED,
   CAPTURE_SCRIPT,
   DRAIN_SCRIPT,
 } from "../recorder/capture-script.js";
+import { buildReplayScript } from "./step-replayer.js";
 import type { AssertKind, RawStep, RecorderState, Step, TestRecord } from "../recorder/types.js";
 import { sendToMain } from "./app-window.js";
 import { generateSpec } from "./script-generator.js";
@@ -30,6 +32,10 @@ interface Session {
   steps: Step[];
   paused: boolean;
   assertMode: AssertKind | null;
+  /** the pending assertion is soft (expect.soft) */
+  assertSoft: boolean;
+  /** index at which newly captured/inserted steps land (defaults to the end) */
+  cursor: number;
   /** continuing/extending an existing test rather than recording a new one */
   editing: boolean;
   /** preserved from the original record when editing, else the session start time */
@@ -52,6 +58,8 @@ function currentState(): RecorderState {
     url: session?.url ?? null,
     name: session?.name ?? null,
     editing: session?.editing ?? false,
+    assertSoft: session?.assertSoft ?? false,
+    cursor: session?.cursor ?? 0,
   };
 }
 
@@ -59,17 +67,32 @@ function broadcastState(): void {
   sendToMain("recorder:state", currentState());
 }
 
+// The step list is now fully mutable (insert / reorder / update / delete), so
+// rather than streaming individual appends we broadcast the whole list after
+// every change and let the renderer replace its copy.
+function broadcastSteps(): void {
+  sendToMain("recorder:steps", session?.steps ?? []);
+}
+
+function clampCursor(index: number): number {
+  const n = session?.steps.length ?? 0;
+  return Math.max(0, Math.min(n, index));
+}
+
 function addStep(raw: RawStep): void {
   if (!session) return;
   const step: Step = { id: randomUUID(), timestamp: Date.now(), ...raw };
-  session.steps.push(step);
-  sendToMain("recorder:step", step);
+  const at = clampCursor(session.cursor);
+  session.steps.splice(at, 0, step);
+  session.cursor = at + 1;
 
   // The capture script self-clears assert mode after capturing an assertion;
   // keep backend + UI in sync.
   if (raw.type === "assert" && session.assertMode) {
     session.assertMode = null;
+    session.assertSoft = false;
   }
+  broadcastSteps();
   broadcastState();
 }
 
@@ -95,10 +118,12 @@ async function applyStateAttributes(): Promise<void> {
   const wc = recWindow.webContents;
   const paused = session.paused ? "1" : "0";
   const assert = session.assertMode ?? "";
+  const soft = session.assertSoft ? "1" : "0";
   await wc.executeJavaScript(
     '(function(){var e=document.documentElement;' +
       'e.setAttribute("' + ATTR_PAUSED + '","' + paused + '");' +
       'e.setAttribute("' + ATTR_ASSERT + '","' + assert + '");' +
+      'e.setAttribute("' + ATTR_ASSERT_SOFT + '","' + soft + '");' +
       'try{if(document.body)document.body.style.cursor=' +
       (session.assertMode ? '"crosshair"' : '""') +
       ";}catch(_){}})()",
@@ -165,14 +190,16 @@ export const recorderService = {
       steps: [...existingSteps],
       paused: false,
       assertMode: null,
+      assertSoft: false,
+      cursor: existingSteps.length,
       editing,
       createdAt,
     };
 
-    // Replay the existing steps to the renderer so the trainer's live list shows
+    // Push the existing steps to the renderer so the trainer's live list shows
     // full context while extending. They're already in session.steps above, so
     // this is a push-only notification, not another addStep.
-    for (const step of existingSteps) sendToMain("recorder:step", step);
+    broadcastSteps();
 
     // Initial navigation is the first step; later navigations are consequences of
     // recorded interactions (the window has no address bar). Skip when editing —
@@ -272,9 +299,10 @@ export const recorderService = {
     return currentState();
   },
 
-  async setAssertMode(mode: AssertKind | null): Promise<RecorderState> {
+  async setAssertMode(mode: AssertKind | null, soft = false): Promise<RecorderState> {
     if (session) {
       session.assertMode = mode;
+      session.assertSoft = mode ? soft : false;
       await applyStateAttributes();
       if (mode && recWindow && !recWindow.isDestroyed()) recWindow.focus();
       broadcastState();
@@ -284,10 +312,119 @@ export const recorderService = {
 
   deleteStep(stepId: string): RecorderState {
     if (session) {
+      const idx = session.steps.findIndex((s) => s.id === stepId);
       session.steps = session.steps.filter((s) => s.id !== stepId);
+      // Keep the insert cursor stable relative to the removed step.
+      if (idx >= 0 && idx < session.cursor) session.cursor -= 1;
+      session.cursor = clampCursor(session.cursor);
+      broadcastSteps();
       broadcastState();
     }
     return currentState();
+  },
+
+  /** Insert a manually-added or AI-generated step at `index` (default: cursor). */
+  insertStep(raw: RawStep, index?: number): RecorderState {
+    if (session) {
+      const step: Step = { id: randomUUID(), timestamp: Date.now(), ...raw };
+      const at = index == null ? clampCursor(session.cursor) : clampCursor(index);
+      session.steps.splice(at, 0, step);
+      session.cursor = at + 1;
+      broadcastSteps();
+      broadcastState();
+    }
+    return currentState();
+  },
+
+  /** Move a step to a new index (drag-to-reorder). */
+  reorderStep(stepId: string, toIndex: number): RecorderState {
+    if (session) {
+      const from = session.steps.findIndex((s) => s.id === stepId);
+      if (from >= 0) {
+        const [moved] = session.steps.splice(from, 1);
+        const to = Math.max(0, Math.min(session.steps.length, toIndex));
+        session.steps.splice(to, 0, moved);
+        broadcastSteps();
+        broadcastState();
+      }
+    }
+    return currentState();
+  },
+
+  /** Shallow-merge editable fields of a step (inline editing). */
+  updateStep(stepId: string, patch: Partial<Step>): RecorderState {
+    if (session) {
+      const step = session.steps.find((s) => s.id === stepId);
+      if (step) {
+        const allowed: (keyof Step)[] = [
+          "value",
+          "text",
+          "url",
+          "attr",
+          "count",
+          "width",
+          "height",
+          "waitMs",
+          "soft",
+          "assert",
+          "locator",
+          "label",
+        ];
+        const target = step as unknown as Record<string, unknown>;
+        const src = patch as Record<string, unknown>;
+        for (const key of allowed) {
+          if (key in patch) target[key] = src[key];
+        }
+        broadcastSteps();
+        broadcastState();
+      }
+    }
+    return currentState();
+  },
+
+  /** Set the index at which the next captured/inserted step will land. */
+  setCursor(index: number): RecorderState {
+    if (session) {
+      session.cursor = clampCursor(index);
+      broadcastState();
+    }
+    return currentState();
+  },
+
+  /**
+   * Best-effort in-window preview of a single step: resolve its locator in the
+   * live page and perform the action / evaluate the assertion via injected JS.
+   * This is a synthetic-event preview, NOT Playwright's actionability engine, so
+   * results can differ from a real run. Capture is paused for the duration so a
+   * replayed interaction is not re-recorded.
+   */
+  async replayStep(stepId: string): Promise<{ ok: boolean; error?: string }> {
+    if (!session) return { ok: false, error: "No active recording session." };
+    if (!recWindow || recWindow.isDestroyed()) {
+      return { ok: false, error: "Recorder window is not open." };
+    }
+    const step = session.steps.find((s) => s.id === stepId);
+    if (!step) return { ok: false, error: "Step not found." };
+
+    const wc = recWindow.webContents;
+    const wasPaused = session.paused;
+    try {
+      // Suppress capture so the replayed interaction isn't recorded as a step.
+      session.paused = true;
+      await applyStateAttributes();
+      const result = (await wc.executeJavaScript(buildReplayScript(step))) as {
+        ok: boolean;
+        error?: string;
+      };
+      return result && typeof result.ok === "boolean"
+        ? result
+        : { ok: false, error: "Replay produced no result." };
+    } catch (err) {
+      return { ok: false, error: String(err) };
+    } finally {
+      session.paused = wasPaused;
+      await applyStateAttributes().catch(() => {});
+    }
   },
 
   stop(): void {
