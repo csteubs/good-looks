@@ -113,13 +113,14 @@ export function TestDetailView() {
             />
           ) : (
             <ToolbarTitle
-              className="cursor-text no-drag"
+              className="cursor-text no-drag inline-flex items-center gap-1.5"
               onClick={() => {
                 setNameDraft(test.name);
                 setEditingName(true);
               }}
             >
               {test.name}
+              <Pencil className="size-3.5 text-tertiary" />
             </ToolbarTitle>
           )}
           <ToolbarDescription>{test.url}</ToolbarDescription>
@@ -143,18 +144,6 @@ export function TestDetailView() {
               Edit in Trainer
             </Button>
           )}
-          <Button
-            iconOnly
-            variant="glass"
-            size="large"
-            aria-label="Rename test"
-            onClick={() => {
-              setRenameValue(test.name);
-              setRenameOpen(true);
-            }}
-          >
-            <Pencil className="size-5" />
-          </Button>
           <AlertDialog
             trigger={
               <Button iconOnly variant="glass" size="large" aria-label="Delete test">
