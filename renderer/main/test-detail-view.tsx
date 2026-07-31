@@ -164,76 +164,79 @@ export function TestDetailView() {
         </ToolbarActions>
       </Toolbar>
 
-      <TabsRoot
-        defaultValue={test.steps.length > 0 ? "steps" : "script"}
-        className="flex min-h-0 flex-1 flex-col"
-      >
-        <div className="px-4 pt-2">
-          <Tabs variant="filled" size="large">
-            {test.steps.length > 0 ? (
-              <TabsTrigger value="steps">Steps ({test.steps.length})</TabsTrigger>
-            ) : (
-              <TabsTrigger value="script">Script</TabsTrigger>
-            )}
-          </Tabs>
-        </div>
-        <TabsContent value="steps" className="min-h-0 flex-1">
-          <ScrollArea className="h-full">
-            <div className="flex flex-col gap-1 p-3">
-              {test.steps.map((s, i) => (
-                <StepRow key={s.id} index={i} step={s} />
-              ))}
+      {/* Imported tests (sourceDir set) are script-only; the verbatim file is
+          the source of truth. Tests created in the app show Steps AND Script. */}
+      {(() => {
+        const imported = Boolean(test.sourceDir);
+        const showSteps = !imported && test.steps.length > 0;
+        const defaultValue = showSteps ? "steps" : "script";
+        return (
+          <TabsRoot defaultValue={defaultValue} className="flex min-h-0 flex-1 flex-col">
+            <div className="px-4 pt-2">
+              <Tabs variant="filled" size="large">
+                {showSteps ? <TabsTrigger value="steps">Steps ({test.steps.length})</TabsTrigger> : null}
+                <TabsTrigger value="script">Script</TabsTrigger>
+              </Tabs>
             </div>
-          </ScrollArea>
-        </TabsContent>
-        <TabsContent value="script" className="flex min-h-0 flex-1 flex-col">
-          <div className="flex items-center justify-end gap-2 border-b border-separator px-4 py-2">
-            {editingScript ? (
-              <>
-                <Button size="small" variant="glass" onClick={() => setEditingScript(false)}>
-                  Cancel
-                </Button>
-                <Button size="small" variant="accent" onClick={saveScript}>
-                  Save
-                </Button>
-              </>
-            ) : (
-              <>
-                {test.scriptEdited ? (
-                  <Text variant="small" color="secondary">
-                    Edited manually
-                  </Text>
-                ) : null}
-                <Button
-                  size="small"
-                  variant="glass"
-                  onClick={() => {
-                    setScriptDraft(scriptQuery.data ?? "");
-                    setEditingScript(true);
-                  }}
-                >
-                  Edit script
-                </Button>
-              </>
-            )}
-          </div>
-          {editingScript ? (
-            <textarea
-              autoFocus
-              spellCheck={false}
-              value={scriptDraft}
-              onChange={(e) => setScriptDraft(e.target.value)}
-              className="text-small-mono min-h-0 flex-1 resize-none overflow-auto bg-transparent p-4 text-primary outline-none"
-            />
-          ) : (
-            <ScrollArea className="h-full">
-              <pre className="text-small-mono whitespace-pre-wrap break-words p-4 text-primary">
-                {scriptQuery.data ?? ""}
-              </pre>
-            </ScrollArea>
-          )}
-        </TabsContent>
-      </TabsRoot>
+            <TabsContent value="steps" className="min-h-0 flex-1">
+              <ScrollArea className="h-full">
+                <div className="flex flex-col gap-1 p-3">
+                  {test.steps.map((s, i) => (
+                    <StepRow key={s.id} index={i} step={s} />
+                  ))}
+                </div>
+              </ScrollArea>
+            </TabsContent>
+            <TabsContent value="script" className="flex min-h-0 flex-1 flex-col">
+              <div className="flex items-center justify-end gap-2 border-b border-separator px-4 py-2">
+                {editingScript ? (
+                  <>
+                    <Button size="small" variant="glass" onClick={() => setEditingScript(false)}>
+                      Cancel
+                    </Button>
+                    <Button size="small" variant="accent" onClick={saveScript}>
+                      Save
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    {test.scriptEdited ? (
+                      <Text variant="small" color="secondary">
+                        Edited manually
+                      </Text>
+                    ) : null}
+                    <Button
+                      size="small"
+                      variant="glass"
+                      onClick={() => {
+                        setScriptDraft(scriptQuery.data ?? "");
+                        setEditingScript(true);
+                      }}
+                    >
+                      Edit script
+                    </Button>
+                  </>
+                )}
+              </div>
+              {editingScript ? (
+                <textarea
+                  autoFocus
+                  spellCheck={false}
+                  value={scriptDraft}
+                  onChange={(e) => setScriptDraft(e.target.value)}
+                  className="text-small-mono min-h-0 flex-1 resize-none overflow-auto bg-transparent p-4 text-primary outline-none"
+                />
+              ) : (
+                <ScrollArea className="h-full">
+                  <pre className="text-small-mono whitespace-pre-wrap break-words p-4 text-primary">
+                    {scriptQuery.data ?? ""}
+                  </pre>
+                </ScrollArea>
+              )}
+            </TabsContent>
+          </TabsRoot>
+        );
+      })()}
 
       {runInfo ? <RunOutput info={runInfo} /> : null}
 
