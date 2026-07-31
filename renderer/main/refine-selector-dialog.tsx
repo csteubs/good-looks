@@ -1,12 +1,12 @@
 // Review dialog for the "Refine Selector" picker. Shows the element the user
 // picked in the training window — its candidate locators (best-first) plus CSS
-// context — and inserts a "Find element" step (assert visible) using the chosen
-// locator. Closing either way resumes the paused training session.
+// context — and applies the chosen locator to the step being refined. Closing
+// either way resumes the paused training session.
 
 import * as React from "react";
 import { Badge, Dialog, Text } from "@glaze/core/components";
 
-import type { Locator, PickedElement, RawStep } from "../lib/recorder-types";
+import type { Locator, PickedElement } from "../lib/recorder-types";
 
 /** Playwright-style label for a locator candidate. */
 function formatLocator(l: Locator): string {
@@ -44,11 +44,14 @@ const KIND_LABEL: Record<Locator["k"], string> = {
 
 export function RefineSelectorDialog({
   picked,
-  onInsert,
+  stepLabel,
+  onApply,
   onClose,
 }: {
   picked: PickedElement;
-  onInsert: (step: RawStep) => void;
+  /** short description of the step whose selector is being refined */
+  stepLabel?: string;
+  onApply: (locator: Locator) => void;
   onClose: () => void;
 }) {
   const [selected, setSelected] = React.useState(0);
@@ -61,9 +64,9 @@ export function RefineSelectorDialog({
   const candidates = picked.candidates ?? [];
   const cssEntries = Object.entries(picked.css ?? {});
 
-  function insert() {
+  function apply() {
     const loc = candidates[selected];
-    if (loc) onInsert({ type: "assert", assert: "visible", locator: loc });
+    if (loc) onApply(loc);
     onClose();
   }
 
@@ -73,10 +76,16 @@ export function RefineSelectorDialog({
       onOpenChange={(o) => !o && onClose()}
       title="Refine Selector"
       size="large"
-      onConfirm={insert}
-      confirmLabel="Insert Find step"
+      onConfirm={apply}
+      confirmLabel="Update selector"
     >
       <div className="flex flex-col gap-4">
+        {stepLabel ? (
+          <Text variant="small" color="secondary">
+            Refining selector for: <span className="font-mono text-primary">{stepLabel}</span>
+          </Text>
+        ) : null}
+
         <div className="flex flex-col gap-1">
           <Text variant="small" color="secondary">
             Picked element
@@ -144,8 +153,7 @@ export function RefineSelectorDialog({
         ) : null}
 
         <Text variant="small" color="tertiary">
-          Inserting adds a “Find element” assertion at the current insert point, then resumes
-          recording.
+          Updating replaces this step’s locator with the chosen one, then resumes recording.
         </Text>
       </div>
     </Dialog>

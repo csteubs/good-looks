@@ -45,7 +45,9 @@ interface RecorderContextValue {
   setCursor: (index: number) => void;
   replayStep: (id: string) => Promise<{ ok: boolean; error?: string }>;
   picked: PickedElement | null;
-  startRefine: () => void;
+  /** id of the step currently being refined (Refine Selector), or null */
+  refiningStepId: string | null;
+  startRefine: (stepId?: string | null) => void;
   endRefine: () => void;
   clearPicked: () => void;
   run: (id: string) => void;
@@ -64,6 +66,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = React.useState<RecorderState>(EMPTY_STATE);
   const [liveSteps, setLiveSteps] = React.useState<Step[]>([]);
   const [picked, setPicked] = React.useState<PickedElement | null>(null);
+  const [refiningStepId, setRefiningStepId] = React.useState<string | null>(null);
   const [runs, setRuns] = React.useState<Record<string, RunInfo>>({});
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -134,8 +137,14 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   );
   const setCursor = React.useCallback((index: number) => void api.recorder.setCursor(index), []);
   const replayStep = React.useCallback((id: string) => api.recorder.replayStep(id), []);
-  const startRefine = React.useCallback(() => void api.recorder.startRefine(), []);
-  const endRefine = React.useCallback(() => void api.recorder.endRefine(), []);
+  const startRefine = React.useCallback((stepId: string | null = null) => {
+    setRefiningStepId(stepId);
+    void api.recorder.startRefine();
+  }, []);
+  const endRefine = React.useCallback(() => {
+    setRefiningStepId(null);
+    void api.recorder.endRefine();
+  }, []);
   const clearPicked = React.useCallback(() => setPicked(null), []);
   const run = React.useCallback((id: string) => {
     setRuns((prev) => ({ ...prev, [id]: { lines: [], running: true, code: null } }));
@@ -159,6 +168,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     setCursor,
     replayStep,
     picked,
+    refiningStepId,
     startRefine,
     endRefine,
     clearPicked,

@@ -14,6 +14,7 @@ import {
 import { ChevronDown, Crosshair, ListPlus, Pause, Play, Plus, Wand2, X } from "lucide-react";
 
 import type { AssertKind, RawStep } from "../lib/recorder-types";
+import { describeStep } from "../lib/describe-step";
 import { useRecorder } from "./recorder-store";
 import { StepRow } from "./step-row";
 import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "./add-step-dialog";
@@ -98,6 +99,7 @@ export function RecordingView() {
     setCursor,
     replayStep,
     picked,
+    refiningStepId,
     startRefine,
     endRefine,
     clearPicked,
@@ -218,13 +220,6 @@ export function RecordingView() {
           <Button size="small" variant="muted" onClick={openAddStepMenu}>
             <Plus className="size-3.5" /> Add step
           </Button>
-          <Button
-            size="small"
-            variant={state.refineMode ? "accent" : "muted"}
-            onClick={() => (state.refineMode ? endRefine() : startRefine())}
-          >
-            <Crosshair className="size-3.5" /> Refine selector
-          </Button>
           <Button size="small" variant="muted" onClick={() => setAiOpen(true)}>
             <Wand2 className="size-3.5" /> AI steps
           </Button>
@@ -265,6 +260,7 @@ export function RecordingView() {
                     step={s}
                     onDelete={() => deleteStep(s.id)}
                     onReplay={() => replayStep(s.id)}
+                    onRefine={() => startRefine(s.id)}
                     onEdit={(patch) => updateStep(s.id, patch)}
                     drag={{
                       onDragStart: () => setDragId(s.id),
@@ -299,7 +295,13 @@ export function RecordingView() {
       {picked ? (
         <RefineSelectorDialog
           picked={picked}
-          onInsert={(step) => insertStep(step)}
+          stepLabel={(() => {
+            const s = liveSteps.find((x) => x.id === refiningStepId);
+            return s ? describeStep(s) : undefined;
+          })()}
+          onApply={(loc) => {
+            if (refiningStepId) updateStep(refiningStepId, { locator: loc });
+          }}
           onClose={() => {
             clearPicked();
             endRefine();

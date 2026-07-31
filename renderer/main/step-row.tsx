@@ -5,7 +5,7 @@
 
 import * as React from "react";
 import { Badge, Button, Input, Text } from "@glaze/core/components";
-import { Check, GripVertical, Loader2, Pencil, Play, X } from "lucide-react";
+import { Check, Crosshair, GripVertical, Loader2, Pencil, Play, X } from "lucide-react";
 
 import { describeStep } from "../lib/describe-step";
 import type { Step, StepType } from "../lib/recorder-types";
@@ -57,6 +57,7 @@ export function StepRow({
   step,
   onDelete,
   onReplay,
+  onRefine,
   onEdit,
   drag,
 }: {
@@ -64,6 +65,7 @@ export function StepRow({
   step: Step;
   onDelete?: () => void;
   onReplay?: () => Promise<{ ok: boolean; error?: string }>;
+  onRefine?: () => void;
   onEdit?: (patch: Partial<Step>) => void;
   drag?: StepDragProps;
 }) {
@@ -199,6 +201,19 @@ export function StepRow({
               aria-label="Edit step"
             >
               <Pencil className="size-3.5" />
+            </Button>
+          ) : null}
+          {onRefine && step.locator ? (
+            <Button
+              iconOnly
+              variant="transparent"
+              size="small"
+              className="opacity-0 group-hover:opacity-100"
+              onClick={onRefine}
+              aria-label="Refine selector"
+              title="Refine selector — pick this step's element in the browser"
+            >
+              <Crosshair className="size-3.5" />
             </Button>
           ) : null}
           {onDelete ? (
