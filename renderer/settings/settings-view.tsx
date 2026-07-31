@@ -1,9 +1,11 @@
 import { useState, useEffect } from "react";
 import {
+  Button,
   Label,
   RadioGroup,
   RadioGroupItem,
   ScrollArea,
+  Status,
   Toolbar,
   ToolbarContent,
   ToolbarTitle,
@@ -16,9 +18,77 @@ import {
 } from "@glaze/core/components";
 import type { NativeThemeInfo } from "@glaze/core/ipc";
 
+import { api } from "../lib/api";
+import type { LlmProvider, LlmProviderStatus } from "../lib/llm-types";
+
 export function SettingsView() {
   const [themeInfo, setThemeInfo] = useState<NativeThemeInfo | null>(null);
   const [_isLoading, setIsLoading] = useState(true);
+
+  // ── Local LLM provider settings ─────────────────────────────────────
+  const [provider, setProvider] = useState<LlmProvider>("ollama");
+  const [model, setModel] = useState<string | null>(null);
+  const [llmStatus, setLlmStatus] = useState<LlmProviderStatus | null>(null);
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    api.llm
+      .getConfig()
+      .then((cfg) => {
+        setProvider(cfg.provider);
+        setModel(cfg.model);
+      })
+      .catch(() => {
+        /* fall back to defaults */
+      });
+  }, []);
+
+  const handleProviderChange = async (value: string) => {
+    const next = value === "lmstudio" ? "lmstudio" : "ollama";
+    setProvider(next);
+    setLlmStatus(null);
+    setModel(null);
+    try {
+      await api.llm.setConfig({ provider: next, model: null });
+    } catch (error) {
+      toast.error(`Failed to save provider: ${error}`);
+    }
+  };
+
+  const handleTestConnection = async () => {
+    setTesting(true);
+    try {
+      const status = await api.llm.status(provider);
+      setLlmStatus(status);
+      if (status.reachable) {
+        // Keep the chosen model if it's still present, else default to the first.
+        const stillValid = status.models.some((m) => m.id === model);
+        const nextModel = stillValid ? model : (status.models[0]?.id ?? null);
+        setModel(nextModel);
+        await api.llm.setConfig({ model: nextModel });
+        toast.success(
+          status.models.length
+            ? `Connected. ${status.models.length} model${status.models.length === 1 ? "" : "s"} available.`
+            : "Connected, but no models are loaded.",
+        );
+      } else {
+        toast.error(status.error ?? "Connection failed.");
+      }
+    } catch (error) {
+      toast.error(`Connection failed: ${error}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const handleModelChange = async (value: string) => {
+    setModel(value);
+    try {
+      await api.llm.setConfig({ model: value });
+    } catch (error) {
+      toast.error(`Failed to save model: ${error}`);
+    }
+  };
 
   // Close settings window on Escape, unless an interactive element is focused or a popover is open
   useEffect(() => {
@@ -109,6 +179,78 @@ export function SettingsView() {
                 </Label>
               </RadioGroup>
             </Field>
+          </FieldGroup>
+        </FieldSet>
+
+        <FieldSet>
+          <FieldGroup>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="llm-provider">Local AI provider</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Use a local LLM running on your machine. No data leaves your computer.
+                </p>
+              </FieldContent>
+              <RadioGroup
+                value={provider}
+                onValueChange={handleProviderChange}
+                orientation="horizontal"
+              >
+                <Label>
+                  <RadioGroupItem value="ollama" />
+                  Ollama
+                </Label>
+                <Label>
+                  <RadioGroupItem value="lmstudio" />
+                  LM Studio
+                </Label>
+              </RadioGroup>
+            </Field>
+
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel>Connection</FieldLabel>
+                {llmStatus ? (
+                  <p className="text-sm text-muted-foreground">
+                    {llmStatus.reachable
+                      ? `Connected at ${llmStatus.baseUrl}`
+                      : (llmStatus.error ?? "Not reachable")}
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    {provider === "ollama"
+                      ? "Default: http://127.0.0.1:11434"
+                      : "Default: http://127.0.0.1:1234"}
+                  </p>
+                )}
+              </FieldContent>
+              <div className="flex items-center gap-2">
+                {llmStatus && (
+                  <Status variant={llmStatus.reachable ? "success" : "error"}>
+                    {llmStatus.reachable ? "Online" : "Offline"}
+                  </Status>
+                )}
+                <Button variant="muted" onClick={handleTestConnection} disabled={testing}>
+                  {testing ? "Testing…" : "Test connection"}
+                </Button>
+              </div>
+            </Field>
+
+            {llmStatus?.reachable && llmStatus.models.length > 0 && (
+              <Field orientation="horizontal">
+                <FieldContent>
+                  <FieldLabel>Model</FieldLabel>
+                </FieldContent>
+                <RadioGroup value={model ?? ""} onValueChange={handleModelChange}>
+                  {llmStatus.models.map((m) => (
+                    <Label key={m.id}>
+                      <RadioGroupItem value={m.id} />
+                      {m.label}
+                    </Label>
+                  ))}
+                </RadioGroup>
+              </Field>
+            )}
           </FieldGroup>
         </FieldSet>
       </div>

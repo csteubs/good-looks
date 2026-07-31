@@ -14,9 +14,30 @@ import { playwrightRunner } from "../services/playwright-runner.js";
 import { testStore } from "../services/test-store.js";
 import { importService } from "../services/import-service.js";
 import { generateSpec } from "../services/script-generator.js";
+import { llmService } from "../services/llm-service.js";
+import { llmConfigStore } from "../services/llm-config-store.js";
 import type { AssertKind, TestSpeed } from "../recorder/types.js";
+import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 
 import { ipcMain, logger } from "@glaze/core/backend";
+
+function asProvider(v: unknown): LlmProvider {
+  if (v === "ollama" || v === "lmstudio") return v;
+  throw new Error("Invalid LLM provider: " + String(v));
+}
+
+function asMessages(v: unknown): LlmMessage[] {
+  if (!Array.isArray(v)) throw new Error("messages must be an array");
+  return v.map((m) => {
+    const role = (m as { role?: unknown })?.role;
+    const content = (m as { content?: unknown })?.content;
+    if (role !== "system" && role !== "user" && role !== "assistant") {
+      throw new Error("Invalid message role: " + String(role));
+    }
+    if (typeof content !== "string") throw new Error("Message content must be a string");
+    return { role, content };
+  });
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -127,6 +148,48 @@ export function registerHandlers(): void {
   ipcMain.handle("tests:repairImports", async (_e, params: { id: string }) => {
     const copied = importService.repairImports(params.id);
     return { copied };
+  });
+
+  // ── Local LLM handlers (Ollama / LM Studio) ─────────────────────────
+  ipcMain.handle("llm:getConfig", async () => llmConfigStore.get());
+  ipcMain.handle(
+    "llm:setConfig",
+    async (_e, params: { provider?: unknown; model?: unknown; baseUrls?: unknown }) => {
+      const update: Partial<LlmConfig> = {};
+      if (params?.provider !== undefined) update.provider = asProvider(params.provider);
+      if (params?.model !== undefined) {
+        update.model = params.model === null ? null : String(params.model);
+      }
+      if (params?.baseUrls && typeof params.baseUrls === "object") {
+        update.baseUrls = params.baseUrls as LlmConfig["baseUrls"];
+      }
+      return llmConfigStore.set(update);
+    },
+  );
+  ipcMain.handle("llm:status", async (_e, params: { provider?: unknown }) =>
+    llmService.status(asProvider(params?.provider)),
+  );
+  ipcMain.handle("llm:detect", async () => llmService.detect());
+  ipcMain.handle("llm:listModels", async (_e, params: { provider?: unknown }) =>
+    llmService.listModels(asProvider(params?.provider)),
+  );
+  ipcMain.handle(
+    "llm:chat",
+    async (
+      _e,
+      params: { messages?: unknown; provider?: unknown; model?: unknown; temperature?: unknown },
+    ) => {
+      const requestId = llmService.chat({
+        messages: asMessages(params?.messages),
+        provider: params?.provider === undefined ? undefined : asProvider(params.provider),
+        model: params?.model === undefined ? undefined : String(params.model),
+        temperature: typeof params?.temperature === "number" ? params.temperature : undefined,
+      });
+      return { requestId };
+    },
+  );
+  ipcMain.handle("llm:cancel", async (_e, params: { requestId?: unknown }) => {
+    llmService.cancel(String(params?.requestId ?? ""));
   });
 
   // ── Runner handlers ─────────────────────────────────────────────────

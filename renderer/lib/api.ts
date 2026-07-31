@@ -2,6 +2,13 @@
 // never touches ipcRenderer directly.
 
 import type { AssertKind, RecorderState, TestRecord, TestSpeed } from "./recorder-types";
+import type {
+  LlmChatParams,
+  LlmConfig,
+  LlmModel,
+  LlmProvider,
+  LlmProviderStatus,
+} from "./llm-types";
 
 export interface ImportResult {
   imported: number;
@@ -51,6 +58,17 @@ export const api = {
     run: (id: string, headed: boolean) =>
       ipc().invoke<{ runId: string }>("runner:run", { id, headed }),
     stop: (runId: string) => ipc().invoke<void>("runner:stop", { runId }),
+  },
+  llm: {
+    getConfig: () => ipc().invoke<LlmConfig>("llm:getConfig"),
+    setConfig: (update: Partial<LlmConfig>) => ipc().invoke<LlmConfig>("llm:setConfig", update),
+    status: (provider: LlmProvider) =>
+      ipc().invoke<LlmProviderStatus>("llm:status", { provider }),
+    detect: () => ipc().invoke<LlmProviderStatus[]>("llm:detect"),
+    listModels: (provider: LlmProvider) =>
+      ipc().invoke<LlmModel[]>("llm:listModels", { provider }),
+    chat: (params: LlmChatParams) => ipc().invoke<{ requestId: string }>("llm:chat", params),
+    cancel: (requestId: string) => ipc().invoke<void>("llm:cancel", { requestId }),
   },
   /** Subscribe to a backend push event. Returns an unsubscribe function. */
   on<T>(channel: string, cb: (payload: T) => void): () => void {

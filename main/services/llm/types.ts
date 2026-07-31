@@ -1,0 +1,50 @@
+// Shared types for the local LLM integration (Ollama / LM Studio).
+// Both runtimes expose an OpenAI-compatible /v1/chat/completions endpoint;
+// only health-check + model-listing differ per provider.
+
+export type LlmProvider = "ollama" | "lmstudio";
+
+/** A model available on a provider, normalized across the two APIs. */
+export interface LlmModel {
+  /** Identifier passed back in chat requests (Ollama: name, LM Studio: id). */
+  id: string;
+  /** Human-readable label (same as id for now). */
+  label: string;
+}
+
+export interface LlmMessage {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+
+/** Result of probing a provider's local server. */
+export interface LlmProviderStatus {
+  provider: LlmProvider;
+  /** Whether the local server responded. */
+  reachable: boolean;
+  /** Models the server reported (empty when unreachable). */
+  models: LlmModel[];
+  /** The base URL that was probed. */
+  baseUrl: string;
+  /** Friendly failure reason when not reachable. */
+  error?: string;
+}
+
+/** Persisted user selection. */
+export interface LlmConfig {
+  provider: LlmProvider;
+  /** Chosen model id, or null if none picked yet. */
+  model: string | null;
+  /** Optional per-provider base URL overrides (empty = use defaults). */
+  baseUrls: Partial<Record<LlmProvider, string>>;
+}
+
+/** Parameters for a streaming chat completion. */
+export interface LlmChatParams {
+  messages: LlmMessage[];
+  /** Defaults to the configured provider. */
+  provider?: LlmProvider;
+  /** Defaults to the configured model. */
+  model?: string;
+  temperature?: number;
+}
