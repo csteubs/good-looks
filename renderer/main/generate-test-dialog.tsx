@@ -97,6 +97,25 @@ export function GenerateTestDialog({
   const [viewportId, setViewportId] = React.useState<string>("default");
   const [created, setCreated] = React.useState(false);
   const [copied, setCopied] = React.useState(false);
+  // Configured default model name, shown in the "Thinking with {model}…"
+  // placeholder while the LLM is generating.
+  const [modelName, setModelName] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api.llm
+      .getConfig()
+      .then((cfg) => {
+        if (!cancelled) setModelName(cfg.model);
+      })
+      .catch(() => {
+        if (!cancelled) setModelName(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
   // Track whether we've kicked off a generation for the current prompt so
   // reopening the dialog doesn't auto-refire — the user edits the prompt and
   // clicks Generate explicitly. Reset when the prompt changes.
@@ -255,7 +274,9 @@ export function GenerateTestDialog({
 
         {/* Action row */}
         <div className="flex items-center gap-2">
-          {status === "streaming" ? <Status variant="loading">Generating</Status> : null}
+          {status === "streaming" ? (
+            <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
+          ) : null}
           {status === "error" ? <Status variant="error">Error</Status> : null}
           {status === "done" ? <Status variant="success">Done</Status> : null}
           {status === "cancelled" ? <Status variant="neutral">Stopped</Status> : null}
@@ -309,7 +330,9 @@ export function GenerateTestDialog({
                   ),
                 )
               ) : (
-                <p className="text-small text-secondary">{status === "streaming" ? "Generating…" : ""}</p>
+                <p className="text-small text-secondary">
+                  {status === "streaming" ? (modelName ? `Thinking with ${modelName}…` : "Thinking…") : ""}
+                </p>
               )}
             </div>
           </ScrollArea>

@@ -357,7 +357,9 @@ export function AiDebugDialog({
     >
       <div className="flex h-[50vh] flex-col gap-3">
         <div className="flex items-center gap-2">
-          {status === "streaming" ? <Status variant="loading">Thinking</Status> : null}
+          {status === "streaming" ? (
+            <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
+          ) : null}
           {status === "error" ? <Status variant="error">Error</Status> : null}
           {status === "done" ? <Status variant="success">Done</Status> : null}
           {status === "cancelled" ? <Status variant="neutral">Stopped</Status> : null}
@@ -423,7 +425,9 @@ export function AiDebugDialog({
                 ),
               )
             ) : (
-              <p className="text-small text-secondary">{status === "streaming" ? "Thinking…" : ""}</p>
+              <p className="text-small text-secondary">
+                {status === "streaming" ? (modelName ? `Thinking with ${modelName}…` : "Thinking…") : ""}
+              </p>
             )}
           </div>
         </ScrollArea>

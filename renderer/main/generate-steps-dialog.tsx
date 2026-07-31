@@ -24,6 +24,7 @@ import {
 } from "@glaze/core/components";
 import { Crosshair, Square, Wand2, X } from "lucide-react";
 
+import { api } from "../lib/api";
 import { buildGenerateStepsMessages } from "../lib/llm-prompts";
 import { extractStepsJson } from "../lib/parse-llm-response";
 import type { Locator, PickedElement, RawStep } from "../lib/recorder-types";
@@ -62,8 +63,27 @@ export function GenerateStepsDialog({
   // the PickedElement here before promoting the chosen candidate to `selector`.
   const [reviewing, setReviewing] = React.useState<PickedElement | null>(null);
   const [candidateIdx, setCandidateIdx] = React.useState(0);
+  // Configured default model name, shown in the "Thinking with {model}…"
+  // placeholder while the LLM is generating.
+  const [modelName, setModelName] = React.useState<string | null>(null);
 
   const recorder = useRecorder();
+
+  React.useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api.llm
+      .getConfig()
+      .then((cfg) => {
+        if (!cancelled) setModelName(cfg.model);
+      })
+      .catch(() => {
+        if (!cancelled) setModelName(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
   // True when THIS dialog triggered pick mode (so we don't clobber a step-refine
   // session). Distinguishes our pick from a step-row Refine Selector pick.
   const [pickingForAi, setPickingForAi] = React.useState(false);
@@ -280,7 +300,9 @@ export function GenerateStepsDialog({
         </div>
 
         <div className="flex items-center gap-2">
-          {status === "streaming" ? <Status variant="loading">Generating</Status> : null}
+          {status === "streaming" ? (
+            <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
+          ) : null}
           {status === "error" ? <Status variant="error">Error</Status> : null}
           {status === "done" ? (
             <Status variant={flowSteps ? "success" : "warning"}>
@@ -326,7 +348,7 @@ export function GenerateStepsDialog({
                 ))
               ) : (
                 <pre className="text-small-mono whitespace-pre-wrap break-words text-secondary">
-                  {content || (status === "streaming" ? "Generating…" : "")}
+                  {content || (status === "streaming" ? (modelName ? `Thinking with ${modelName}…` : "Thinking…") : "")}
                 </pre>
               )}
             </div>
