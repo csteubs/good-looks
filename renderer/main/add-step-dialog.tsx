@@ -4,6 +4,8 @@
 
 import * as React from "react";
 import {
+  Badge,
+  Button,
   Dialog,
   Field,
   Input,
@@ -16,8 +18,10 @@ import {
   SelectValue,
   Text,
 } from "@glaze/core/components";
+import { Crosshair, X } from "lucide-react";
 
-import type { AssertKind, Locator, LocatorKind, RawStep } from "../lib/recorder-types";
+import type { AssertKind, Locator, PickedElement, RawStep } from "../lib/recorder-types";
+import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 
 export type AddStepKind = "assertion" | "wait" | "goto" | "press" | "find" | "viewport";
 
@@ -29,17 +33,6 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   find: "Find element",
   viewport: "Set viewport",
 };
-
-// Locator kinds a user can pick for a manually-added step.
-const LOCATOR_KINDS: { value: LocatorKind; label: string }[] = [
-  { value: "css", label: "CSS selector" },
-  { value: "xpath", label: "XPath" },
-  { value: "text", label: "Text" },
-  { value: "testid", label: "Test ID" },
-  { value: "label", label: "Label" },
-  { value: "placeholder", label: "Placeholder" },
-  { value: "role", label: "Role" },
-];
 
 // assert kind → what operands it needs.
 type Need = "none" | "text" | "value" | "attr" | "count";
@@ -64,53 +57,102 @@ const ASSERT_OPTIONS: {
   { value: "title", label: "Page title is", need: "value", pageLevel: true },
 ];
 
-function LocatorFields({
-  locator,
+// "Target element" picker — reuses the same crosshair element-picker as the
+// per-step "Refine selector" flow. Instead of typing a CSS selector + value by
+// hand, the user clicks a button, picks an element in the training browser, and
+// chooses one of its candidate locators (best-first). Mirrors RefineSelectorDialog
+// but inline so the rest of the Add-step form stays in one dialog.
+function TargetElementPicker({
+  picked,
   onChange,
+  onStartPick,
+  onClearPick,
 }: {
-  locator: Locator;
+  picked: PickedElement | null;
   onChange: (loc: Locator) => void;
+  onStartPick: () => void;
+  onClearPick: () => void;
 }) {
+  const [selected, setSelected] = React.useState(0);
+  const candidates = picked?.candidates ?? [];
+
+  // Seed the locator from the best candidate when a fresh element arrives.
+  React.useEffect(() => {
+    setSelected(0);
+    if (candidates[0]) onChange(candidates[0]);
+    // onChange/candidates derive from picked; re-seed only on a new pick.
+  }, [picked]);
+
+  if (!picked || candidates.length === 0) {
+    return (
+      <Field label="Target element" orientation="vertical">
+        <Button variant="secondary" size="small" onClick={onStartPick} className="w-fit">
+          <Crosshair className="size-3.5" />
+          {picked ? "No locator found — pick another" : "Pick element in browser"}
+        </Button>
+        {picked ? (
+          <Text variant="small" color="tertiary">
+            No locator could be derived for the picked element. Try another element.
+          </Text>
+        ) : null}
+      </Field>
+    );
+  }
+
   return (
-    <div className="grid grid-cols-2 gap-3">
-      <Field label="Locator" orientation="vertical">
-        <Select value={locator.k} onValueChange={(k) => onChange({ ...locator, k: k as LocatorKind })}>
-          <SelectTrigger size="small">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {LOCATOR_KINDS.map((l) => (
-              <SelectItem key={l.value} value={l.value}>
-                {l.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </Field>
-      <Field label={locator.k === "role" ? "Role" : "Value"} orientation="vertical">
-        <Input
-          size="small"
-          placeholder={locator.k === "css" ? ".btn-primary" : locator.k === "xpath" ? "//button" : ""}
-          value={locator.k === "role" ? locator.role ?? "" : locator.v ?? ""}
-          onChange={(e) =>
-            onChange(
-              locator.k === "role"
-                ? { ...locator, role: e.target.value }
-                : { ...locator, v: e.target.value },
-            )
-          }
-        />
-      </Field>
-      {locator.k === "role" ? (
-        <Field label="Accessible name (optional)" orientation="vertical" className="col-span-2">
-          <Input
+    <Field label="Target element" orientation="vertical">
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-center gap-2">
+          <code className="min-w-0 flex-1 truncate rounded bg-background-secondary px-2 py-1 font-mono text-xs text-primary">
+            {picked.description || picked.tag || "element"}
+          </code>
+          <Button
+            iconOnly
+            variant="transparent"
             size="small"
-            value={locator.name ?? ""}
-            onChange={(e) => onChange({ ...locator, name: e.target.value })}
-          />
-        </Field>
-      ) : null}
-    </div>
+            onClick={onClearPick}
+            aria-label="Clear picked element"
+            title="Clear"
+          >
+            <X className="size-3.5" />
+          </Button>
+        </div>
+        <div className="flex flex-col gap-1">
+          {candidates.map((l, i) => {
+            const active = i === selected;
+            return (
+              <button
+                key={`${l.k}-${i}`}
+                type="button"
+                onClick={() => {
+                  setSelected(i);
+                  onChange(l);
+                }}
+                className={`flex items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
+                  active ? "border-accent bg-accent/10" : "border-separator hover:bg-background-secondary"
+                }`}
+              >
+                <span
+                  className={`size-3.5 shrink-0 rounded-full border ${
+                    active ? "border-accent bg-accent" : "border-separator"
+                  }`}
+                />
+                <Badge color={active ? "blue" : "secondary"} className="shrink-0">
+                  {KIND_LABEL[l.k]}
+                </Badge>
+                <code className="min-w-0 flex-1 truncate font-mono text-xs text-primary">
+                  {formatLocator(l)}
+                </code>
+              </button>
+            );
+          })}
+        </div>
+        <Button variant="ghost" size="small" onClick={onStartPick} className="w-fit">
+          <Crosshair className="size-3.5" />
+          Pick a different element
+        </Button>
+      </div>
+    </Field>
   );
 }
 
@@ -119,13 +161,22 @@ export function AddStepDialog({
   kind,
   onOpenChange,
   onAdd,
+  picked,
+  onStartPick,
+  onClearPick,
 }: {
   open: boolean;
   kind: AddStepKind;
   onOpenChange: (open: boolean) => void;
   onAdd: (step: RawStep) => void;
+  /** Element the user picked in the training browser via the Target Element flow, if any. */
+  picked: PickedElement | null;
+  /** Enter pick mode — pauses the session so the user can click an element. */
+  onStartPick: () => void;
+  /** Clear the current pick (and leave pick mode). */
+  onClearPick: () => void;
 }) {
-  const [locator, setLocator] = React.useState<Locator>({ k: "css", v: "" });
+  const [locator, setLocator] = React.useState<Locator | null>(null);
   const [assert, setAssert] = React.useState<AssertKind>("visible");
   const [text, setText] = React.useState("");
   const [value, setValue] = React.useState("");
@@ -144,7 +195,7 @@ export function AddStepDialog({
   // Reset transient fields whenever a fresh dialog opens.
   React.useEffect(() => {
     if (open) {
-      setLocator({ k: kind === "find" ? "css" : "css", v: "" });
+      setLocator(null);
       setAssert("visible");
       setText("");
       setValue("");
@@ -172,12 +223,14 @@ export function AddStepDialog({
         return {
           type: "press",
           value: key || "Enter",
-          ...(pressTarget === "element" ? { locator } : {}),
+          ...(pressTarget === "element" && locator ? { locator } : {}),
         };
       case "wait":
         return waitMode === "time"
           ? { type: "wait", waitMs: Number(waitMs) || 0 }
-          : { type: "wait", locator };
+          : locator
+            ? { type: "wait", locator }
+            : null;
       case "viewport": {
         if (viewport === "custom") {
           return { type: "viewport", width: Number(vw) || 1280, height: Number(vh) || 800 };
@@ -186,10 +239,13 @@ export function AddStepDialog({
         return { type: "viewport", width: p?.w ?? 1280, height: p?.h ?? 800 };
       }
       case "find":
-        return { type: "assert", assert: "visible", locator };
+        return locator ? { type: "assert", assert: "visible", locator } : null;
       case "assertion": {
         const step: RawStep = { type: "assert", assert, soft: soft || undefined };
-        if (!opt.pageLevel) step.locator = locator;
+        if (!opt.pageLevel) {
+          if (!locator) return null;
+          step.locator = locator;
+        }
         if (opt.need === "text") step.text = text;
         if (opt.need === "value") step.value = value;
         if (opt.need === "attr") {
@@ -250,7 +306,12 @@ export function AddStepDialog({
               </Field>
             </div>
             {pressTarget === "element" ? (
-              <LocatorFields locator={locator} onChange={setLocator} />
+              <TargetElementPicker
+                picked={picked}
+                onChange={setLocator}
+                onStartPick={onStartPick}
+                onClearPick={onClearPick}
+              />
             ) : null}
           </>
         ) : null}
@@ -277,7 +338,12 @@ export function AddStepDialog({
                 />
               </Field>
             ) : (
-              <LocatorFields locator={locator} onChange={setLocator} />
+              <TargetElementPicker
+                picked={picked}
+                onChange={setLocator}
+                onStartPick={onStartPick}
+                onClearPick={onClearPick}
+              />
             )}
           </>
         ) : null}
@@ -285,9 +351,15 @@ export function AddStepDialog({
         {kind === "find" ? (
           <>
             <Text variant="small" color="secondary">
-              Assert an element is present on the page (Playwright <code>toBeVisible</code>).
+              Assert an element is present on the page (Playwright <code>toBeVisible</code>). Pick the
+              target element in the browser.
             </Text>
-            <LocatorFields locator={locator} onChange={setLocator} />
+            <TargetElementPicker
+              picked={picked}
+              onChange={setLocator}
+              onStartPick={onStartPick}
+              onClearPick={onClearPick}
+            />
           </>
         ) : null}
 
@@ -350,7 +422,14 @@ export function AddStepDialog({
               </Field>
             </div>
 
-            {!opt.pageLevel ? <LocatorFields locator={locator} onChange={setLocator} /> : null}
+            {!opt.pageLevel ? (
+              <TargetElementPicker
+                picked={picked}
+                onChange={setLocator}
+                onStartPick={onStartPick}
+                onClearPick={onClearPick}
+              />
+            ) : null}
 
             {opt.need === "text" ? (
               <Field label="Text" orientation="vertical">

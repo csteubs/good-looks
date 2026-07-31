@@ -224,6 +224,10 @@ export function RecordingView() {
   const [aiOpen, setAiOpen] = React.useState(false);
   const [replayStatus, setReplayStatus] = React.useState<string | null>(null);
   const [selectedStepId, setSelectedStepId] = React.useState<string | null>(null);
+  // True while the Add-step dialog's "Target element" picker is active. The
+  // picked element arrives via the shared `picked` state from the recorder store;
+  // this flag tells us it belongs to the Add-step flow (not a step refine).
+  const [addStepPicking, setAddStepPicking] = React.useState(false);
 
   const onReplayFromStart = async () => {
     setReplayStatus("Replaying from start…");
@@ -445,8 +449,35 @@ export function RecordingView() {
         <AddStepDialog
           open={addKind !== null}
           kind={addKind}
-          onOpenChange={(o) => !o && setAddKind(null)}
-          onAdd={(step: RawStep) => insertStep(step)}
+          onOpenChange={(o) => {
+            if (!o) {
+              setAddKind(null);
+              // Leaving the Add-step dialog: tear down any in-flight pick.
+              if (addStepPicking) {
+                setAddStepPicking(false);
+                endRefine();
+                clearPicked();
+              }
+            }
+          }}
+          onAdd={(step: RawStep) => {
+            insertStep(step);
+            if (addStepPicking) {
+              setAddStepPicking(false);
+              endRefine();
+              clearPicked();
+            }
+          }}
+          picked={addStepPicking ? picked : null}
+          onStartPick={() => {
+            setAddStepPicking(true);
+            startRefine(null);
+          }}
+          onClearPick={() => {
+            setAddStepPicking(false);
+            endRefine();
+            clearPicked();
+          }}
         />
       ) : null}
       <GenerateStepsDialog
