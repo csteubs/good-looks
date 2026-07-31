@@ -9,7 +9,7 @@ import { Badge, Dialog, Text } from "@glaze/core/components";
 import type { Locator, PickedElement } from "../lib/recorder-types";
 
 /** Playwright-style label for a locator candidate. */
-function formatLocator(l: Locator): string {
+export function formatLocator(l: Locator): string {
   switch (l.k) {
     case "testid":
       return `getByTestId(${JSON.stringify(l.v ?? "")})`;
@@ -32,7 +32,7 @@ function formatLocator(l: Locator): string {
   }
 }
 
-const KIND_LABEL: Record<Locator["k"], string> = {
+export const KIND_LABEL: Record<Locator["k"], string> = {
   testid: "Test ID",
   role: "Role",
   label: "Label",

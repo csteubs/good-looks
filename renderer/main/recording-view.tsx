@@ -455,7 +455,7 @@ export function RecordingView() {
         onOpenChange={setAiOpen}
         onInsert={(steps) => steps.forEach((s) => insertStep(s))}
       />
-      {picked ? (
+      {picked && refiningStepId ? (
         <RefineSelectorDialog
           picked={picked}
           stepLabel={(() => {

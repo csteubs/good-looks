@@ -3,7 +3,7 @@
 // it so the same rules apply if test-step generation is ever added.
 
 import type { LlmMessage } from "./llm-types";
-import type { TestSpeed } from "./recorder-types";
+import type { Locator, TestSpeed } from "./recorder-types";
 
 const MAX_SCRIPT_CHARS = 6000;
 const MAX_OUTPUT_CHARS = 8000;
@@ -185,12 +185,45 @@ export interface GenerateStepsContext {
   url: string;
   /** Optional browser viewport hint. */
   viewport?: { width: number; height: number };
+  /** Optional selector the user picked on the page to give the LLM exact context. */
+  selector?: Locator;
+}
+
+// Render a Locator back into the Playwright-style expression the model recognizes,
+// so the prompt's selector context matches the recorder's own locator vocabulary.
+function locatorToPrompt(l: Locator): string {
+  switch (l.k) {
+    case "testid":
+      return `getByTestId(${JSON.stringify(l.v ?? "")})`;
+    case "role":
+      return l.name
+        ? `getByRole(${JSON.stringify(l.role ?? "")}, { name: ${JSON.stringify(l.name)} })`
+        : `getByRole(${JSON.stringify(l.role ?? "")})`;
+    case "label":
+      return `getByLabel(${JSON.stringify(l.v ?? "")})`;
+    case "placeholder":
+      return `getByPlaceholder(${JSON.stringify(l.v ?? "")})`;
+    case "text":
+      return `getByText(${JSON.stringify(l.v ?? "")})`;
+    case "css":
+      return `locator(${JSON.stringify(l.v ?? "")})`;
+    case "xpath":
+      return `locator(${JSON.stringify("xpath=" + (l.v ?? ""))})`;
+    default:
+      return JSON.stringify(l);
+  }
 }
 
 export function buildGenerateStepsMessages(ctx: GenerateStepsContext): LlmMessage[] {
   const lines: string[] = [`Starting URL: ${ctx.url}`];
   if (ctx.viewport) {
     lines.push(`Browser viewport: ${ctx.viewport.width}x${ctx.viewport.height}.`);
+  }
+  if (ctx.selector) {
+    lines.push(
+      `User-provided target selector: ${locatorToPrompt(ctx.selector)}. ` +
+        `The user pointed at this element on the page — prefer this exact locator for the step that targets it, and use it as the anchor when the description refers to that element.`,
+    );
   }
   return [
     { role: "system", content: GENERATE_STEPS_SYSTEM_PROMPT },

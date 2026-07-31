@@ -3,9 +3,16 @@
 // is inserted into the live, editable step list for refinement (reorder / edit /
 // replay) before the spec is generated. Unlike GenerateTestDialog (which emits a
 // whole spec), this produces editable steps.
+//
+// Optionally, the user can pick a selector with the same "Refine Selector" picker
+// used on step rows: clicking the crosshair enters pick mode in the training
+// browser, the chosen element's candidate locators are reviewed here, and the
+// selected locator is passed to the LLM as context so it can target the exact
+// element the user pointed at.
 
 import * as React from "react";
 import {
+  Badge,
   Button,
   Dialog,
   Field,
@@ -15,12 +22,14 @@ import {
   Textarea,
   toast,
 } from "@glaze/core/components";
-import { Square, Wand2 } from "lucide-react";
+import { Crosshair, Square, Wand2, X } from "lucide-react";
 
 import { buildGenerateStepsMessages } from "../lib/llm-prompts";
 import { extractStepsJson } from "../lib/parse-llm-response";
-import type { RawStep } from "../lib/recorder-types";
+import type { Locator, PickedElement, RawStep } from "../lib/recorder-types";
 import { useLlmChat } from "../lib/use-llm-chat";
+import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
+import { useRecorder } from "./recorder-store";
 
 function friendlyError(message: string): string {
   if (/no model selected/i.test(message)) {
@@ -46,18 +55,77 @@ export function GenerateStepsDialog({
   const { content, status, error, start, stop } = useLlmChat();
   const [prompt, setPrompt] = React.useState("");
   const [added, setAdded] = React.useState(false);
+  // Optional selector the user picked to give the LLM as context. Null means
+  // "no selector provided" — generation proceeds without one.
+  const [selector, setSelector] = React.useState<Locator | null>(null);
+  // While the user is reviewing a freshly-picked element's candidates, we hold
+  // the PickedElement here before promoting the chosen candidate to `selector`.
+  const [reviewing, setReviewing] = React.useState<PickedElement | null>(null);
+  const [candidateIdx, setCandidateIdx] = React.useState(0);
+
+  const recorder = useRecorder();
+  // True when THIS dialog triggered pick mode (so we don't clobber a step-refine
+  // session). Distinguishes our pick from a step-row Refine Selector pick.
+  const [pickingForAi, setPickingForAi] = React.useState(false);
 
   React.useEffect(() => {
     if (open) setAdded(false);
   }, [open]);
 
+  // When a pick arrives and we're the one who asked for it, take over the
+  // review instead of letting the step-refine dialog handle it.
+  React.useEffect(() => {
+    if (pickingForAi && recorder.picked) {
+      setReviewing(recorder.picked);
+      setCandidateIdx(0);
+      setPickingForAi(false);
+      // Acknowledge the pick so the step-refine dialog (gated on refiningStepId)
+      // never sees it; we keep refine mode on only while reviewing.
+      recorder.clearPicked();
+    }
+  }, [pickingForAi, recorder.picked, recorder]);
+
+  // Cancel any in-flight pick if the dialog closes.
+  React.useEffect(() => {
+    if (!open && pickingForAi) {
+      setPickingForAi(false);
+      recorder.endRefine();
+    }
+    if (!open && reviewing) {
+      setReviewing(null);
+      recorder.endRefine();
+    }
+  }, [open, pickingForAi, reviewing, recorder]);
+
+  const beginPick = () => {
+    setPickingForAi(true);
+    recorder.startRefine(null);
+  };
+
+  const cancelPick = () => {
+    setPickingForAi(false);
+    setReviewing(null);
+    recorder.endRefine();
+  };
+
+  const confirmSelector = () => {
+    const c = reviewing?.candidates?.[candidateIdx];
+    if (c) setSelector(c);
+    setReviewing(null);
+    recorder.endRefine();
+  };
+
   const generate = React.useCallback(() => {
     if (!prompt.trim()) return;
     setAdded(false);
     void start(
-      buildGenerateStepsMessages({ prompt: prompt.trim(), url: url ?? "" }),
+      buildGenerateStepsMessages({
+        prompt: prompt.trim(),
+        url: url ?? "",
+        selector: selector ?? undefined,
+      }),
     );
-  }, [prompt, url, start]);
+  }, [prompt, url, selector, start]);
 
   const steps = status === "done" ? extractStepsJson(content) : null;
 
@@ -68,6 +136,8 @@ export function GenerateStepsDialog({
     toast.success(steps.length === 1 ? "Added 1 step." : `Added ${steps.length} steps.`);
     onOpenChange(false);
   };
+
+  const candidates = reviewing?.candidates ?? [];
 
   return (
     <Dialog
@@ -95,6 +165,113 @@ export function GenerateStepsDialog({
             onChange={(e) => setPrompt(e.target.value)}
           />
         </Field>
+
+        {/* Optional: pick a selector to give the LLM exact context. */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <Text variant="small" color="secondary">
+              Target element (optional)
+            </Text>
+            <div className="flex-1" />
+            {selector ? (
+              <div className="flex items-center gap-1.5 rounded-md border border-accent/40 bg-accent/5 px-2 py-1">
+                <Badge color="blue" className="shrink-0">
+                  {KIND_LABEL[selector.k]}
+                </Badge>
+                <code className="min-w-0 truncate font-mono text-xs text-primary">
+                  {formatLocator(selector)}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => setSelector(null)}
+                  className="ml-0.5 shrink-0 rounded p-0.5 text-tertiary hover:bg-background-secondary hover:text-primary"
+                  aria-label="Remove selector"
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+            ) : pickingForAi ? (
+              <Button size="small" variant="muted" onClick={cancelPick}>
+                <X className="size-3.5" /> Cancel pick
+              </Button>
+            ) : reviewing ? null : (
+              <Button size="small" variant="transparent" onClick={beginPick}>
+                <Crosshair className="size-3.5" /> Refine selector
+              </Button>
+            )}
+          </div>
+
+          {pickingForAi ? (
+            <div className="flex items-center gap-2 rounded-md border border-accent/30 bg-accent/5 px-3 py-2">
+              <Crosshair className="size-4 shrink-0 text-accent" />
+              <Text variant="small" color="blue" className="min-w-0">
+                Hover a component in the browser and click it to capture its selector. The page won’t respond
+                to clicks.
+              </Text>
+            </div>
+          ) : null}
+
+          {reviewing ? (
+            <div className="flex flex-col gap-2 rounded-md border border-separator p-3">
+              <div className="flex items-center gap-2">
+                <Text variant="small" color="secondary">
+                  Picked element
+                </Text>
+                <code className="min-w-0 flex-1 truncate rounded bg-background-secondary px-2 py-0.5 font-mono text-xs text-primary">
+                  {reviewing.description || reviewing.tag || "element"}
+                </code>
+              </div>
+              {candidates.length === 0 ? (
+                <Text variant="small" color="tertiary">
+                  No locator could be derived for this element.
+                </Text>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  {candidates.map((l, i) => {
+                    const active = i === candidateIdx;
+                    return (
+                      <button
+                        key={`${l.k}-${i}`}
+                        type="button"
+                        onClick={() => setCandidateIdx(i)}
+                        className={`flex items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
+                          active
+                            ? "border-accent bg-accent/10"
+                            : "border-separator hover:bg-background-secondary"
+                        }`}
+                      >
+                        <span
+                          className={`size-3.5 shrink-0 rounded-full border ${
+                            active ? "border-accent bg-accent" : "border-separator"
+                          }`}
+                        />
+                        <Badge color={active ? "blue" : "secondary"} className="shrink-0">
+                          {KIND_LABEL[l.k]}
+                        </Badge>
+                        <code className="min-w-0 flex-1 truncate font-mono text-xs text-primary">
+                          {formatLocator(l)}
+                        </code>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              <div className="flex items-center justify-end gap-2">
+                <Button size="small" variant="transparent" onClick={cancelPick}>
+                  Cancel
+                </Button>
+                <Button
+                  size="small"
+                  variant="accent"
+                  onClick={confirmSelector}
+                  disabled={candidates.length === 0}
+                >
+                  Use this selector
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </div>
 
         <div className="flex items-center gap-2">
           {status === "streaming" ? <Status variant="loading">Generating</Status> : null}
