@@ -16,7 +16,8 @@ import { importService } from "../services/import-service.js";
 import { generateSpec } from "../services/script-generator.js";
 import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
-import type { AssertKind, RawStep, Step, TestRecord, TestSpeed } from "../recorder/types.js";
+import { recorderSettingsStore } from "../services/recorder-settings-store.js";
+import type { AssertKind, RawStep, RecorderSettings, Step, TestRecord, TestSpeed } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 
 import { ipcMain, logger } from "@glaze/core/backend";
@@ -104,6 +105,11 @@ export function registerHandlers(): void {
     recorderService.stop();
   });
   ipcMain.handle("recorder:getState", async () => recorderService.getState());
+  ipcMain.handle("recorder:getSettings", async () => recorderSettingsStore.get());
+  ipcMain.handle(
+    "recorder:setSettings",
+    async (_e, params: Partial<RecorderSettings>) => recorderSettingsStore.set(params ?? {}),
+  );
 
   // ── Test library handlers ───────────────────────────────────────────
   ipcMain.handle("tests:list", async () => testStore.list());

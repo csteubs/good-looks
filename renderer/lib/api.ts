@@ -1,7 +1,15 @@
 // Typed wrappers over the exposed window.glazeAPI IPC bridge. Renderer code
 // never touches ipcRenderer directly.
 
-import type { AssertKind, RawStep, RecorderState, Step, TestRecord, TestSpeed } from "./recorder-types";
+import type {
+  AssertKind,
+  RawStep,
+  RecorderSettings,
+  RecorderState,
+  Step,
+  TestRecord,
+  TestSpeed,
+} from "./recorder-types";
 import type {
   LlmChatParams,
   LlmConfig,
@@ -47,6 +55,9 @@ export const api = {
       ipc().invoke<{ ok: boolean; error?: string }>("recorder:replayStep", { stepId }),
     stop: () => ipc().invoke<void>("recorder:stop"),
     getState: () => ipc().invoke<RecorderState>("recorder:getState"),
+    getSettings: () => ipc().invoke<RecorderSettings>("recorder:getSettings"),
+    setSettings: (update: Partial<RecorderSettings>) =>
+      ipc().invoke<RecorderSettings>("recorder:setSettings", update),
   },
   tests: {
     list: () => ipc().invoke<TestRecord[]>("tests:list"),

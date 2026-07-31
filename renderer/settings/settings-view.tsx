@@ -6,6 +6,7 @@ import {
   RadioGroupItem,
   ScrollArea,
   Status,
+  Switch,
   Toolbar,
   ToolbarContent,
   ToolbarTitle,
@@ -31,6 +32,9 @@ export function SettingsView() {
   const [llmStatus, setLlmStatus] = useState<LlmProviderStatus | null>(null);
   const [testing, setTesting] = useState(false);
 
+  // ── Trainer settings ─────────────────────────────────────────────────
+  const [showUrlBar, setShowUrlBar] = useState(true);
+
   useEffect(() => {
     api.llm
       .getConfig()
@@ -41,7 +45,22 @@ export function SettingsView() {
       .catch(() => {
         /* fall back to defaults */
       });
+    api.recorder
+      .getSettings()
+      .then((settings) => setShowUrlBar(settings.showUrlBar))
+      .catch(() => {
+        /* fall back to default (on) */
+      });
   }, []);
+
+  const handleShowUrlBarChange = async (checked: boolean) => {
+    setShowUrlBar(checked);
+    try {
+      await api.recorder.setSettings({ showUrlBar: checked });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
 
   const handleProviderChange = async (value: string) => {
     const next = value === "lmstudio" ? "lmstudio" : "ollama";
@@ -178,6 +197,25 @@ export function SettingsView() {
                   Dark
                 </Label>
               </RadioGroup>
+            </Field>
+          </FieldGroup>
+        </FieldSet>
+
+        <FieldSet>
+          <FieldGroup>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="show-url-bar">Show URL bar in training window</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Displays the current page's URL in the training window's title bar while
+                  recording.
+                </p>
+              </FieldContent>
+              <Switch
+                id="show-url-bar"
+                checked={showUrlBar}
+                onCheckedChange={handleShowUrlBarChange}
+              />
             </Field>
           </FieldGroup>
         </FieldSet>

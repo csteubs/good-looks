@@ -108,6 +108,12 @@ export interface TestRecord {
   hidden?: boolean;
 }
 
+/** Global trainer preferences, independent of any recording session. */
+export interface RecorderSettings {
+  /** show the current page's URL in the training window's title bar (default true) */
+  showUrlBar: boolean;
+}
+
 export interface RecorderState {
   recording: boolean;
   paused: boolean;

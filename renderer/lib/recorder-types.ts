@@ -87,6 +87,10 @@ export interface TestRecord {
   hidden?: boolean;
 }
 
+export interface RecorderSettings {
+  showUrlBar: boolean;
+}
+
 export interface RecorderState {
   recording: boolean;
   paused: boolean;

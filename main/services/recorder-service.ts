@@ -22,6 +22,7 @@ import {
 import { buildReplayScript } from "./step-replayer.js";
 import type { AssertKind, RawStep, RecorderState, Step, TestRecord } from "../recorder/types.js";
 import { sendToMain } from "./app-window.js";
+import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { generateSpec } from "./script-generator.js";
 import { testStore } from "./test-store.js";
 
@@ -40,6 +41,8 @@ interface Session {
   editing: boolean;
   /** preserved from the original record when editing, else the session start time */
   createdAt: number;
+  /** snapshot of the global "show URL bar" setting for this session's window title */
+  showUrlBar: boolean;
 }
 
 const POLL_INTERVAL_MS = 250;
@@ -141,6 +144,19 @@ async function drain(): Promise<void> {
   }
 }
 
+function windowLabel(): string {
+  return session?.editing ? "Editing" : "Recording";
+}
+
+/** Keep the native title bar showing the current page's URL (the trainer's
+ *  stand-in for an address bar, since an externally-loaded page can't host an
+ *  app-owned toolbar). No-op when the user has turned the setting off. */
+function updateTitle(): void {
+  if (!recWindow || recWindow.isDestroyed() || !session || !session.showUrlBar) return;
+  const current = recWindow.webContents.getURL() || session.url;
+  recWindow.setTitle(`${windowLabel()} — ${current}`);
+}
+
 function startPolling(): void {
   if (pollTimer) return;
   pollTimer = setInterval(() => void drain(), POLL_INTERVAL_MS);
@@ -194,6 +210,7 @@ export const recorderService = {
       cursor: existingSteps.length,
       editing,
       createdAt,
+      showUrlBar: recorderSettingsStore.get().showUrlBar,
     };
 
     // Push the existing steps to the renderer so the trainer's live list shows
@@ -266,7 +283,10 @@ export const recorderService = {
       loadNavInWindow(target);
     });
 
-    wc.on("did-navigate", () => void drain());
+    wc.on("did-navigate", () => {
+      void drain();
+      updateTitle();
+    });
 
     recWindow.once("ready-to-show", () => recWindow?.show());
     recWindow.on("closed", () => void finalize());
