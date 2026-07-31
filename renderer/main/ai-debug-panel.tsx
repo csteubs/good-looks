@@ -195,7 +195,7 @@ function ModelPicker({
           onKeyDown={onKeyDown}
           role="listbox"
           tabIndex={-1}
-          className="absolute left-0 top-full z-50 mt-1 max-h-64 w-72 overflow-auto rounded-md border border-separator bg-control p-1 shadow-lg"
+          className="absolute left-0 top-full z-50 mt-1 max-h-64 w-72 overflow-auto rounded-md border border-separator bg-popover p-1 shadow-lg"
         >
           {models.map((m, i) => (
             <button
