@@ -67,6 +67,9 @@ export interface TestRecord {
   scriptEdited?: boolean;
   /** playback speed for runs (adds a slowMo delay between actions); defaults to "fast" (no delay) */
   speed?: TestSpeed;
+  /** absolute path to the folder a test was imported from, so its sibling
+   *  modules (e.g. `./helpers.js`) can be re-copied into the scripts dir */
+  sourceDir?: string;
 }
 
 export interface RecorderState {

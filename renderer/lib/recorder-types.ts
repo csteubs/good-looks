@@ -45,6 +45,7 @@ export interface TestRecord {
   scriptPath: string;
   scriptEdited?: boolean;
   speed?: TestSpeed;
+  sourceDir?: string;
 }
 
 export interface RecorderState {

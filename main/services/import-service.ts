@@ -14,7 +14,7 @@ import { randomUUID } from "crypto";
 import { dialog, logger } from "@glaze/core/backend";
 
 import type { TestRecord } from "../recorder/types.js";
-import { testStore } from "./test-store.js";
+import { getScriptsDir, testStore } from "./test-store.js";
 import { parseSpec } from "./spec-parser.js";
 
 const execFileAsync = promisify(execFile);
@@ -45,6 +45,95 @@ export interface ImportResult {
 interface FoundTest {
   filePath: string;
   content: string;
+}
+
+/** Extensions we'll copy as relative-import siblings of an imported spec. */
+const SIBLING_EXT = [".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx", ".json"];
+/** Cap the total sibling bytes we'll copy for one import to avoid runaway copies. */
+const MAX_SIBLING_BYTES = 5 * 1024 * 1024;
+
+/** Matches a relative import/export/re-export specifier: `./…` or `../…`. */
+const RELATIVE_SPEC_RE =
+  /(?:import|export|require)\b[^;]*?['"`](\.\.?\/[^'"`]+)['"`]/g;
+
+/** Resolve a relative import specifier to a real file, trying common extensions
+ *  and an `index` when the specifier is a bare directory. Returns null if not found. */
+function resolveSibling(dir: string, spec: string): string | null {
+  const base = path.resolve(dir, spec);
+  // Exact path, or with a tried extension, or as a directory's index file.
+  const tries = [base, ...SIBLING_EXT.map((e) => base + e)];
+  for (const t of tries) {
+    try {
+      if (fs.statSync(t).isFile()) return t;
+    } catch {
+      /* not found — keep trying */
+    }
+  }
+  for (const e of SIBLING_EXT) {
+    const idx = path.join(base, "index" + e);
+    try {
+      if (fs.statSync(idx).isFile()) return idx;
+    } catch {
+      /* not found */
+    }
+  }
+  return null;
+}
+
+/** Copy an imported spec's relative-import siblings into the scripts dir so the
+ *  spec can run standalone (the original folder/git checkout won't be present
+ *  at run time). Recurses into each copied sibling for its own relative imports.
+ *  Returns the list of copied destination paths (excluding the spec itself). */
+function copyRelativeImports(
+  specSource: string,
+  specDir: string,
+  scriptsDir: string,
+): string[] {
+  const copied: string[] = [];
+  const seen = new Set<string>(); // by resolved source path
+  let totalBytes = 0;
+
+  const queue: { src: string; rel: string }[] = [];
+  const enqueue = (spec: string, fromDir: string) => {
+    const resolved = resolveSibling(fromDir, spec);
+    if (!resolved || seen.has(resolved)) return;
+    seen.add(resolved);
+    queue.push({ src: resolved, rel: path.relative(specDir, resolved) });
+  };
+
+  // Seed from the spec's own relative imports.
+  for (const m of specSource.matchAll(RELATIVE_SPEC_RE)) {
+    enqueue(m[1], specDir);
+  }
+
+  while (queue.length > 0) {
+    const { src, rel } = queue.shift()!;
+    let content: string;
+    try {
+      content = fs.readFileSync(src, "utf-8");
+    } catch {
+      continue;
+    }
+    totalBytes += Buffer.byteLength(content);
+    if (totalBytes > MAX_SIBLING_BYTES) {
+      logger.warn("import", "Sibling copy byte cap reached; stopping", { rel });
+      break;
+    }
+    const dest = path.join(scriptsDir, rel);
+    try {
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(src, dest);
+      copied.push(dest);
+    } catch (err) {
+      logger.warn("import", "Could not copy sibling module", { rel, err: String(err) });
+      continue;
+    }
+    // Recurse: this sibling may itself import other local modules.
+    for (const m of content.matchAll(RELATIVE_SPEC_RE)) {
+      enqueue(m[1], path.dirname(src));
+    }
+  }
+  return copied;
 }
 
 function scanDir(root: string): FoundTest[] {
@@ -93,10 +182,18 @@ function extractName(content: string, filePath: string): string {
 
 function importFound(found: FoundTest[]): ImportResult {
   const created: TestRecord[] = [];
+  const scriptsDir = getScriptsDir();
   for (const f of found) {
     const id = randomUUID();
     const scriptPath = testStore.writeScript(id, f.content);
     const now = Date.now();
+    // An imported spec may reference sibling modules (`./fixtures.js`,
+    // `./helpers.js`, …) that live next to it in the source tree. The spec
+    // runs from the scripts dir, where those siblings don't exist — so copy
+    // them in (preserving relative paths) at import time, while the source
+    // folder / git checkout is still on disk.
+    const specDir = path.dirname(f.filePath);
+    const siblings = copyRelativeImports(f.content, specDir, scriptsDir);
     // Analyze the file and translate its test() bodies into the app's Step[]
     // model so the imported test shows up in the Steps view. When nothing
     // could be parsed, leave steps empty and fall back to a script-only
@@ -114,15 +211,37 @@ function importFound(found: FoundTest[]): ImportResult {
       steps,
       scriptPath,
       scriptEdited: true,
+      sourceDir: specDir,
     };
     testStore.save(record);
     created.push(record);
+    if (siblings.length > 0) {
+      logger.info("import", "Copied sibling modules for spec", {
+        id,
+        count: siblings.length,
+      });
+    }
   }
   logger.info("import", "Imported Playwright tests", {
     count: created.length,
     withSteps: created.filter((c) => c.steps.length > 0).length,
   });
   return { imported: created.length, names: created.map((c) => c.name), ids: created.map((c) => c.id) };
+}
+
+/** Re-copy an imported spec's relative-import siblings from its stored
+ *  `sourceDir` into the scripts dir. Used to repair runs that fail because a
+ *  sibling module (e.g. `./helpers.js`) is missing — for records imported
+ *  before sibling-copy existed, or if the scripts dir was reset. Returns the
+ *  list of copied paths. */
+export function repairImports(id: string): string[] {
+  const rec = testStore.get(id);
+  if (!rec) throw new Error("Test not found: " + id);
+  if (!rec.sourceDir) {
+    throw new Error("This test has no recorded source folder, so its sibling modules can't be re-copied.");
+  }
+  const source = testStore.readScript(id);
+  return copyRelativeImports(source, rec.sourceDir, getScriptsDir());
 }
 
 export const importService = {
@@ -181,5 +300,10 @@ export const importService = {
         /* best-effort cleanup */
       }
     }
+  },
+
+  /** Re-copy an imported spec's sibling modules from its recorded source folder. */
+  repairImports(id: string): string[] {
+    return repairImports(id);
   },
 };

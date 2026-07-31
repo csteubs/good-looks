@@ -115,6 +115,10 @@ export function registerHandlers(): void {
   ipcMain.handle("tests:importGit", async (_e, params: { url: string }) =>
     importService.importFromGit(params?.url ?? ""),
   );
+  ipcMain.handle("tests:repairImports", async (_e, params: { id: string }) => {
+    const copied = importService.repairImports(params.id);
+    return { copied };
+  });
 
   // ── Runner handlers ─────────────────────────────────────────────────
   ipcMain.handle("runner:run", async (_e, params: { id: string; headed?: boolean }) =>
