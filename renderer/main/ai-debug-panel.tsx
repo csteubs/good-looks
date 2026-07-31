@@ -8,6 +8,7 @@ import { AlertDialog, Button, Dialog, ScrollArea, Status, toast } from "@glaze/c
 import { Check, Copy, RotateCcw, Square, Wand2 } from "lucide-react";
 
 import { api } from "../lib/api";
+import { diffLines, diffSummary, type DiffLine } from "../lib/line-diff";
 import { buildDebugMessages } from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
 import type { TestSpeed } from "../lib/recorder-types";
@@ -40,6 +41,34 @@ function CodeBlock({ lang, content }: { lang: string; content: string }) {
         </Button>
       </div>
       <pre className="text-small-mono overflow-x-auto whitespace-pre-wrap break-words p-3 text-primary">{content}</pre>
+    </div>
+  );
+}
+
+// Renders a line-level diff between the current script and the AI's corrected
+// spec, shown in the "Apply to script" confirm so the user can review exactly
+// what changes before overwriting the file. Equal lines are dimmed; removed
+// lines (current) get a red tint; added lines (corrected) get a green tint.
+function DiffView({ diff }: { diff: DiffLine[] }) {
+  return (
+    <div className="text-small-mono overflow-auto rounded-md border border-separator">
+      <div className="min-w-max">
+        {diff.map((d, i) => {
+          const sign = d.type === "add" ? "+" : d.type === "remove" ? "-" : " ";
+          const cls =
+            d.type === "add"
+              ? "bg-[var(--color-positive-subtle,rgba(46,196,87,0.12))] text-primary"
+              : d.type === "remove"
+                ? "bg-[var(--color-negative-subtle,rgba(229,72,77,0.12))] text-primary"
+                : "text-secondary";
+          return (
+            <div key={i} className={`whitespace-pre px-2 py-px ${cls}`}>
+              <span className="select-none opacity-60">{sign} </span>
+              {d.text}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -116,6 +145,14 @@ export function AiDebugDialog({
 
   // A full, applyable corrected spec is only offered once streaming finishes.
   const correctedScript = status === "done" ? extractCorrectedScript(content) : null;
+  // Line-level diff between the current script and the AI's corrected spec,
+  // shown in the apply confirm so the user can review the changes. Memoized so
+  // we don't recompute the LCS on every render while the dialog is open.
+  const diff = React.useMemo<DiffLine[] | null>(() => {
+    if (!correctedScript) return null;
+    return diffLines(script, correctedScript);
+  }, [script, correctedScript]);
+  const summary = diff ? diffSummary(diff) : null;
 
   const applyScript = async () => {
     if (!correctedScript || !onApplyScript) return;
@@ -161,11 +198,18 @@ export function AiDebugDialog({
                 </Button>
               }
               title="Apply the suggested fix?"
-              description="This replaces the test's current script with the AI's corrected version. You can still edit or re-record the script afterward."
+              description={
+                summary
+                  ? `This replaces the test's current script with the AI's corrected version (+${summary.added} / -${summary.removed} lines). The Steps tab will update to reflect the new script. You can still edit or re-record the script afterward.`
+                  : "This replaces the test's current script with the AI's corrected version. The Steps tab will update to reflect the new script. You can still edit or re-record the script afterward."
+              }
               confirmLabel="Apply"
               confirmVariant="accent"
+              size="xl"
               onConfirm={applyScript}
-            />
+            >
+              {diff ? <DiffView diff={diff} /> : null}
+            </AlertDialog>
           ) : null}
           {content ? (
             <Button

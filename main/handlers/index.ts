@@ -14,6 +14,7 @@ import { playwrightRunner } from "../services/playwright-runner.js";
 import { testStore } from "../services/test-store.js";
 import { importService } from "../services/import-service.js";
 import { generateSpec } from "../services/script-generator.js";
+import { parseSpec } from "../services/spec-parser.js";
 import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
 import { recorderSettingsStore } from "../services/recorder-settings-store.js";
@@ -171,6 +172,20 @@ export function registerHandlers(): void {
     if (!rec) throw new Error("Test not found: " + params.id);
     rec.scriptPath = testStore.writeScript(rec.id, params.source);
     rec.scriptEdited = true;
+    // Re-parse the steps from the new script so the Steps tab reflects the
+    // edited spec (e.g. after applying an AI-suggested fix). Imported tests
+    // (sourceDir set) stay script-only and keep their verbatim file as the
+    // source of truth, so we don't overwrite their parsed steps.
+    if (!rec.sourceDir) {
+      try {
+        rec.steps = parseSpec(params.source);
+      } catch (err) {
+        logger.warn("handlers", "Failed to re-parse steps from updated script", {
+          id: rec.id,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     rec.updatedAt = Date.now();
     testStore.save(rec);
     return rec;
