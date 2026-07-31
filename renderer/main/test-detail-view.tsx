@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertDialog,
   Button,
+  Callout,
   Dialog,
   Field,
   Input,
@@ -19,7 +20,7 @@ import {
   ToolbarDescription,
   ToolbarTitle,
 } from "@glaze/core/components";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, TriangleAlert, Trash2 } from "lucide-react";
 
 import { api } from "../lib/api";
 import { useRecorder } from "./recorder-store";
@@ -171,6 +172,17 @@ export function TestDetailView() {
           )}
         </ToolbarActions>
       </Toolbar>
+
+      {test.stepsDiverged ? (
+        <div className="px-4 pt-2">
+          <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+            <Callout.Text>
+              Steps may not reflect the script — some statements from the last edit couldn&apos;t be
+              parsed back into steps.
+            </Callout.Text>
+          </Callout>
+        </div>
+      ) : null}
 
       {/* Imported tests (sourceDir set) are script-only; the verbatim file is
           the source of truth. Tests created in the app show Steps AND Script. */}

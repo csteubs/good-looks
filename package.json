@@ -13,6 +13,7 @@
     "dev:renderer": "node glaze.ts dev:renderer",
     "lint": "node glaze.ts lint",
     "type-check": "node glaze.ts type-check",
+    "check:spec-parser": "tsx main/services/__tests__/spec-parser.check.ts",
     "format": "node glaze.ts format"
   },
   "dependencies": {
@@ -62,6 +63,6 @@
     "host": {
       "minVersion": "0.12.0.0"
     },
-    "updatedAt": 1785526899746
+    "updatedAt": 1785532465842
   }
 }

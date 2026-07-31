@@ -14,7 +14,7 @@ import { playwrightRunner } from "../services/playwright-runner.js";
 import { testStore } from "../services/test-store.js";
 import { importService } from "../services/import-service.js";
 import { generateSpec } from "../services/script-generator.js";
-import { parseSpec } from "../services/spec-parser.js";
+import { parseSpecDetailed } from "../services/spec-parser.js";
 import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
 import { recorderSettingsStore } from "../services/recorder-settings-store.js";
@@ -179,7 +179,15 @@ export function registerHandlers(): void {
     // source of truth, so we don't overwrite their parsed steps.
     if (!rec.sourceDir) {
       try {
-        rec.steps = parseSpec(params.source);
+        const { steps, skipped } = parseSpecDetailed(params.source);
+        rec.steps = steps;
+        rec.stepsDiverged = skipped > 0;
+        if (skipped > 0) {
+          logger.warn("handlers", "Script has statements the parser couldn't map to steps", {
+            id: rec.id,
+            skipped,
+          });
+        }
       } catch (err) {
         logger.warn("handlers", "Failed to re-parse steps from updated script", {
           id: rec.id,

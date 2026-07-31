@@ -1,16 +1,21 @@
 // Best-effort parser that reads a Playwright spec file's source and extracts
 // the actions inside its `test(...)` bodies as the app's Step[] model — the
 // reverse of script-generator.ts. Used by the import flow so imported tests
-// show their steps in the Steps view (and only fall back to the Script view
-// when no steps could be parsed).
+// show their steps in the Steps view, and by the LLM-debug-apply path to
+// resync steps after a script edit.
 //
 // This is a pragmatic line-by-line parser, not a full TS parser. It strips
 // comments, then walks the body of each `test(...)`/`test.describe(...)` block
-// looking for the Playwright calls the recorder itself emits (page.goto,
+// looking for the full vocabulary script-generator.ts emits: page.goto,
+// page.waitForTimeout, page.setViewportSize, page.keyboard.press,
 // getByRole/getByLabel/.../locator(...).click/.fill/.selectOption/.check/
-// .uncheck/.press, and expect(...).toBeVisible/.toContainText). Anything it
-// can't classify is silently skipped — the verbatim script is still the
-// runnable artifact, so unrecognized lines don't break anything.
+// .uncheck/.press/.waitFor, and expect(...)/expect.soft(...) assertions
+// (toBeVisible/toBeHidden/toContainText/toHaveText/toBeEnabled/toBeDisabled/
+// toBeChecked/.not.toBeChecked/toHaveValue/toHaveAttribute/toHaveCount, plus
+// page-level toHaveURL/toHaveTitle). A statement that still can't be
+// classified is skipped and counted (see parseSpecDetailed) rather than
+// silently dropped — the verbatim script is still the runnable artifact
+// either way.
 
 import { randomUUID } from "crypto";
 
@@ -167,9 +172,11 @@ function matchParen(s: string, openIdx: number): number {
   return -1;
 }
 
-/** Parse the body of a single test callback into steps. */
-function parseBody(body: string): Step[] {
+/** Parse the body of a single test callback into steps, plus a count of
+ *  statements that looked like actions but couldn't be classified. */
+function parseBody(body: string): { steps: Step[]; skipped: number } {
   const steps: Step[] = [];
+  let skipped = 0;
   const src = stripComments(body);
 
   // A single forward scan. At each position we test the known call shapes;
@@ -203,46 +210,176 @@ function parseBody(body: string): Step[] {
       continue;
     }
 
-    // expect(page.<locator>).toBeVisible() / .toContainText("…")
-    const expectM = rest.match(/^[\s;]*(?:await\s+|return\s+)?expect\s*\(/);
+    // page.waitForTimeout(<ms>)
+    const waitM = rest.match(/^[\s;]*(?:await\s+|return\s+)?page\.waitForTimeout\s*\(/);
+    if (waitM) {
+      const openIdx = i + waitM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const numM = src.slice(openIdx + 1, close).match(/-?\d+(?:\.\d+)?/);
+      steps.push(makeStep("wait", numM ? { waitMs: parseFloat(numM[0]) } : {}));
+      i = close + 1;
+      continue;
+    }
+
+    // page.setViewportSize({ width: …, height: … })
+    const vpM = rest.match(/^[\s;]*(?:await\s+|return\s+)?page\.setViewportSize\s*\(/);
+    if (vpM) {
+      const openIdx = i + vpM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const argsStr = src.slice(openIdx + 1, close);
+      const wM = argsStr.match(/width\s*:\s*(\d+)/);
+      const hM = argsStr.match(/height\s*:\s*(\d+)/);
+      steps.push(
+        makeStep("viewport", {
+          ...(wM ? { width: parseInt(wM[1], 10) } : {}),
+          ...(hM ? { height: parseInt(hM[1], 10) } : {}),
+        }),
+      );
+      i = close + 1;
+      continue;
+    }
+
+    // expect(...)/expect.soft(...) — page-level (toHaveURL/toHaveTitle) or
+    // locator-level (toBeVisible/toBeHidden/toContainText/toHaveText/
+    // toBeEnabled/toBeDisabled/toBeChecked/.not.toBeChecked/toHaveValue/
+    // toHaveAttribute/toHaveCount), mirroring script-generator.ts's assertLine.
+    const expectM = rest.match(/^[\s;]*(?:await\s+|return\s+)?(expect\.soft|expect)\s*\(/);
     if (expectM) {
+      const soft = expectM[1] === "expect.soft";
       const openIdx = i + expectM[0].length - 1;
       const close = matchParen(src, openIdx);
       if (close < 0) break;
       const inner = src.slice(openIdx + 1, close).trim();
-      const locParse = parseLocator(inner);
-      // The assert call follows immediately: `.toBeVisible()` or `.toContainText("…")`.
       const after = src.slice(close + 1);
-      const assertM = after.match(/^\s*\.(toBeVisible|toContainText)\s*\(/);
-      if (locParse && assertM) {
-        const isText = assertM[1] === "toContainText";
-        let text: string | null = null;
-        if (isText) {
+
+      if (inner === "page") {
+        const pageAssertM = after.match(/^\s*\.(toHaveURL|toHaveTitle)\s*\(/);
+        if (pageAssertM) {
+          const aOpen = close + 1 + after.indexOf("(", pageAssertM[0].length - 1);
+          const aClose = matchParen(src, aOpen);
+          if (aClose >= 0) {
+            const value = firstStringLiteral(src.slice(aOpen + 1, aClose));
+            const assert: AssertKind = pageAssertM[1] === "toHaveURL" ? "url" : "title";
+            steps.push(
+              makeStep("assert", {
+                assert,
+                ...(soft ? { soft: true } : {}),
+                ...(value !== null ? { value: unescapeLit(value) } : {}),
+              }),
+            );
+            i = aClose + 1;
+            continue;
+          }
+        }
+        skipped++;
+        i = close + 1;
+        continue;
+      }
+
+      const locParse = parseLocator(inner);
+      if (locParse) {
+        const base = { locator: locParse.locator, ...(soft ? { soft: true } : {}) };
+
+        const notM = after.match(/^\s*\.not\s*\.(toBeChecked)\s*\(/);
+        if (notM) {
+          const aOpen = close + 1 + after.indexOf("(", notM[0].length - 1);
+          const aClose = matchParen(src, aOpen);
+          if (aClose >= 0) {
+            steps.push(makeStep("assert", { ...base, assert: "unchecked" }));
+            i = aClose + 1;
+            continue;
+          }
+        }
+
+        const assertM = after.match(
+          /^\s*\.(toBeVisible|toBeHidden|toContainText|toHaveText|toBeEnabled|toBeDisabled|toBeChecked|toHaveValue|toHaveAttribute|toHaveCount)\s*\(/,
+        );
+        if (assertM) {
+          const method = assertM[1];
           const aOpen = close + 1 + after.indexOf("(", assertM[0].length - 1);
           const aClose = matchParen(src, aOpen);
           if (aClose >= 0) {
-            text = firstStringLiteral(src.slice(aOpen + 1, aClose));
-            // advance past the assert call too
-            const finalClose = aClose;
-            const assert: AssertKind = "text";
-            steps.push(
-              makeStep("assert", {
-                locator: locParse.locator,
-                assert,
-                ...(text !== null ? { text: unescapeLit(text) } : {}),
-              }),
-            );
-            i = finalClose + 1;
+            const argsStr = src.slice(aOpen + 1, aClose);
+            switch (method) {
+              case "toBeVisible":
+                steps.push(makeStep("assert", { ...base, assert: "visible" }));
+                break;
+              case "toBeHidden":
+                steps.push(makeStep("assert", { ...base, assert: "hidden" }));
+                break;
+              case "toBeEnabled":
+                steps.push(makeStep("assert", { ...base, assert: "enabled" }));
+                break;
+              case "toBeDisabled":
+                steps.push(makeStep("assert", { ...base, assert: "disabled" }));
+                break;
+              case "toBeChecked":
+                steps.push(makeStep("assert", { ...base, assert: "checked" }));
+                break;
+              case "toContainText": {
+                const text = firstStringLiteral(argsStr);
+                steps.push(
+                  makeStep("assert", {
+                    ...base,
+                    assert: "text",
+                    ...(text !== null ? { text: unescapeLit(text) } : {}),
+                  }),
+                );
+                break;
+              }
+              case "toHaveText": {
+                const text = firstStringLiteral(argsStr);
+                steps.push(
+                  makeStep("assert", {
+                    ...base,
+                    assert: "exactText",
+                    ...(text !== null ? { text: unescapeLit(text) } : {}),
+                  }),
+                );
+                break;
+              }
+              case "toHaveValue": {
+                const value = firstStringLiteral(argsStr);
+                steps.push(
+                  makeStep("assert", {
+                    ...base,
+                    assert: "value",
+                    ...(value !== null ? { value: unescapeLit(value) } : {}),
+                  }),
+                );
+                break;
+              }
+              case "toHaveAttribute": {
+                const m2 = argsStr.match(/['"`]([^'"`\n]*)['"`]\s*,\s*['"`]([^'"`\n]*)['"`]/);
+                steps.push(
+                  makeStep("assert", {
+                    ...base,
+                    assert: "attribute",
+                    ...(m2 ? { attr: unescapeLit(m2[1]), value: unescapeLit(m2[2]) } : {}),
+                  }),
+                );
+                break;
+              }
+              case "toHaveCount": {
+                const numM = argsStr.match(/-?\d+/);
+                steps.push(
+                  makeStep("assert", {
+                    ...base,
+                    assert: "count",
+                    ...(numM ? { count: parseInt(numM[0], 10) } : {}),
+                  }),
+                );
+                break;
+              }
+            }
+            i = aClose + 1;
             continue;
           }
-        } else {
-          steps.push(makeStep("assert", { locator: locParse.locator, assert: "visible" }));
-          // toBeVisible() has no args; advance past its close paren
-          const aOpen = close + 1 + after.indexOf("(", assertM[0].length - 1);
-          const aClose = matchParen(src, aOpen);
-          i = aClose < 0 ? src.length : aClose + 1;
-          continue;
         }
+        // Locator resolved but the assert method isn't one we round-trip.
+        skipped++;
       }
       i = close + 1;
       continue;
@@ -262,7 +399,7 @@ function parseBody(body: string): Step[] {
       const parsed = parseLocator(src.slice(i, locClose + 1));
       if (parsed) {
         const after = src.slice(locClose + 1);
-        const actionM = after.match(/^\s*\.(click|fill|selectOption|check|uncheck|press)\s*\(/);
+        const actionM = after.match(/^\s*\.(click|fill|selectOption|check|uncheck|press|waitFor)\s*\(/);
         if (actionM) {
           const action = actionM[1];
           const aOpen = locClose + 1 + after.indexOf("(", actionM[0].length - 1);
@@ -275,6 +412,7 @@ function parseBody(body: string): Step[] {
               check: "check",
               uncheck: "uncheck",
               press: "press",
+              waitFor: "wait",
             };
             const value = firstStringLiteral(src.slice(aOpen + 1, aClose));
             steps.push(
@@ -287,16 +425,45 @@ function parseBody(body: string): Step[] {
             continue;
           }
         }
+        // Locator resolved but chained to an action we don't round-trip
+        // (e.g. .hover(), .dblclick()) — count it as a skip.
+        skipped++;
       }
       // Couldn't classify — skip past the locator's close paren to avoid a loop.
       i = locClose + 1;
       continue;
     }
 
+    // Nothing matched. If this looks like an action statement we should have
+    // recognized (a bare `page.<method>(...)` call not covered above), count
+    // it as skipped and jump to the next top-level `;` instead of limping
+    // forward one character at a time and re-triggering this check per char.
+    const skipM = rest.match(/^[\s;]*(?:await\s+|return\s+)?page\.\w+\s*\(/);
+    if (skipM) {
+      skipped++;
+      // Start scanning just past the call's opening paren (depth 1) so a
+      // leftover trailing `;` from the *previous* statement — still sitting
+      // at `i` because every branch above stops right after its own close
+      // paren, before its `;` — isn't mistaken for this statement's end.
+      let depth = 1;
+      let j = i + skipM[0].length;
+      for (; j < src.length; j++) {
+        const c = src[j];
+        if (c === "(") depth++;
+        else if (c === ")") depth--;
+        else if (c === ";" && depth <= 0) {
+          j++;
+          break;
+        }
+      }
+      i = j;
+      continue;
+    }
+
     i++;
   }
 
-  return steps;
+  return { steps, skipped };
 }
 
 /**
@@ -348,11 +515,25 @@ function extractTestBodies(src: string): string[] {
  * stepless (script-only) import.
  */
 export function parseSpec(source: string): Step[] {
+  return parseSpecDetailed(source).steps;
+}
+
+/**
+ * Same as parseSpec, but also reports how many statements looked like
+ * actions/assertions the parser should round-trip but couldn't classify.
+ * `skipped > 0` means the returned steps are an undercount relative to the
+ * script — callers that treat steps as authoritative (e.g. resyncing after
+ * a script edit) should surface that instead of trusting the count silently.
+ */
+export function parseSpecDetailed(source: string): { steps: Step[]; skipped: number } {
   const bodies = extractTestBodies(source);
-  if (bodies.length === 0) return [];
+  if (bodies.length === 0) return { steps: [], skipped: 0 };
   const steps: Step[] = [];
+  let skipped = 0;
   for (const body of bodies) {
-    steps.push(...parseBody(body));
+    const result = parseBody(body);
+    steps.push(...result.steps);
+    skipped += result.skipped;
   }
-  return steps;
+  return { steps, skipped };
 }

@@ -85,6 +85,7 @@ export interface TestRecord {
   speed?: TestSpeed;
   sourceDir?: string;
   hidden?: boolean;
+  stepsDiverged?: boolean;
 }
 
 export interface PickedElement {

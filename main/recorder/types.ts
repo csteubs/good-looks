@@ -106,6 +106,10 @@ export interface TestRecord {
   /** true when the user removed the test from the sidebar view — the record
    *  and its script file are kept on disk; the sidebar just hides it. */
   hidden?: boolean;
+  /** true when the script was resynced to steps (e.g. after an LLM-apply)
+   *  and the parser had to skip statements it couldn't classify — the steps
+   *  count may not fully reflect the script. */
+  stepsDiverged?: boolean;
 }
 
 /** An element captured via the "Refine Selector" picker in the training window. */
