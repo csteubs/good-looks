@@ -50,7 +50,10 @@ function writeAll(records: TestRecord[]): void {
 
 export const testStore = {
   list(): TestRecord[] {
-    return readAll().sort((a, b) => b.createdAt - a.createdAt);
+    // Hidden tests are kept on disk but removed from the sidebar view.
+    return readAll()
+      .filter((t) => !t.hidden)
+      .sort((a, b) => b.createdAt - a.createdAt);
   },
 
   get(id: string): TestRecord | null {
@@ -86,5 +89,16 @@ export const testStore = {
       try { fs.rmSync(rec.scriptPath, { force: true }); } catch { /* ignore */ }
     }
     writeAll(all.filter((t) => t.id !== id));
+  },
+
+  /** Toggle a test's visibility in the sidebar without touching its files. */
+  setHidden(id: string, hidden: boolean): void {
+    const all = readAll();
+    const idx = all.findIndex((t) => t.id === id);
+    if (idx < 0) return;
+    all[idx].hidden = hidden;
+    all[idx].updatedAt = Date.now();
+    writeAll(all);
+    logger.info("recorder", "Set test hidden", { id, hidden });
   },
 };

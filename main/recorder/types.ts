@@ -70,6 +70,9 @@ export interface TestRecord {
   /** absolute path to the folder a test was imported from, so its sibling
    *  modules (e.g. `./helpers.js`) can be re-copied into the scripts dir */
   sourceDir?: string;
+  /** true when the user removed the test from the sidebar view — the record
+   *  and its script file are kept on disk; the sidebar just hides it. */
+  hidden?: boolean;
 }
 
 export interface RecorderState {

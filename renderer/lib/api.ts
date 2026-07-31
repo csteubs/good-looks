@@ -42,6 +42,8 @@ export const api = {
       ipc().invoke<TestRecord>("tests:updateScript", { id, source }),
     setSpeed: (id: string, speed: TestSpeed) =>
       ipc().invoke<TestRecord>("tests:setSpeed", { id, speed }),
+    setHidden: (id: string, hidden: boolean) =>
+      ipc().invoke<TestRecord | null>("tests:setHidden", { id, hidden }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),
     importGit: (url: string) => ipc().invoke<ImportResult>("tests:importGit", { url }),
   },

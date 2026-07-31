@@ -18,7 +18,7 @@ import {
   Text,
   toast,
 } from "@glaze/core/components";
-import { Plus, FlaskConical, FolderOpen, Gauge } from "lucide-react";
+import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff } from "lucide-react";
 
 import { api } from "../lib/api";
 import type { TestRecord, TestSpeed } from "../lib/recorder-types";
@@ -195,6 +195,22 @@ export function LibrarySidebar() {
                 <CustomContextMenuItem onSelect={() => nativeShell().showItemInFolder(t.scriptPath)}>
                   <FolderOpen className="size-4" />
                   Reveal in Finder
+                </CustomContextMenuItem>
+                <CustomContextMenuSeparator />
+                <CustomContextMenuItem
+                  onSelect={async () => {
+                    try {
+                      await api.tests.setHidden(t.id, true);
+                      qc.invalidateQueries({ queryKey: ["tests"] });
+                      if (t.id === selectedId) navigate({ to: "/" });
+                      toast.success("Removed from sidebar.");
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : "Failed to remove test.");
+                    }
+                  }}
+                >
+                  <EyeOff className="size-4" />
+                  Remove from Sidebar
                 </CustomContextMenuItem>
                 <CustomContextMenuSeparator />
                 <CustomContextMenuSub>

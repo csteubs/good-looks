@@ -100,6 +100,15 @@ export function registerHandlers(): void {
     return rec;
   });
 
+  // Hide a test from the sidebar without deleting its record or script file.
+  ipcMain.handle(
+    "tests:setHidden",
+    async (_e, params: { id: string; hidden: boolean }) => {
+      testStore.setHidden(params.id, params.hidden);
+      return testStore.get(params.id);
+    },
+  );
+
   ipcMain.handle("tests:updateScript", async (_e, params: { id: string; source: string }) => {
     const rec = testStore.get(params.id);
     if (!rec) throw new Error("Test not found: " + params.id);
