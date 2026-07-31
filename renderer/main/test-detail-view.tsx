@@ -23,6 +23,7 @@ import { Pencil, Trash2 } from "lucide-react";
 
 import { api } from "../lib/api";
 import { useRecorder } from "./recorder-store";
+import { AiDebugDialog } from "./ai-debug-panel";
 import { RunOutput } from "./run-output";
 import { StepRow } from "./step-row";
 
@@ -37,6 +38,7 @@ export function TestDetailView() {
   const [nameDraft, setNameDraft] = React.useState("");
   const [editingScript, setEditingScript] = React.useState(false);
   const [scriptDraft, setScriptDraft] = React.useState("");
+  const [aiDebugOpen, setAiDebugOpen] = React.useState(false);
 
   const testQuery = useQuery({ queryKey: ["test", id], queryFn: () => api.tests.get(id) });
   const scriptQuery = useQuery({ queryKey: ["script", id], queryFn: () => api.tests.getScript(id) });
@@ -238,7 +240,16 @@ export function TestDetailView() {
         );
       })()}
 
-      {runInfo ? <RunOutput info={runInfo} /> : null}
+      {runInfo ? <RunOutput info={runInfo} onDebug={() => setAiDebugOpen(true)} /> : null}
+
+      <AiDebugDialog
+        open={aiDebugOpen}
+        onOpenChange={setAiDebugOpen}
+        testName={test.name}
+        testUrl={test.url}
+        script={scriptQuery.data ?? ""}
+        output={runInfo?.lines.join("") ?? ""}
+      />
 
       <Dialog
         open={renameOpen}

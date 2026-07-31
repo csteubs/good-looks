@@ -1,11 +1,12 @@
 import { Button, ScrollArea, Status, Text } from "@glaze/core/components";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Sparkles } from "lucide-react";
 import { useState } from "react";
 
 import type { RunInfo } from "./recorder-store";
 
-export function RunOutput({ info }: { info: RunInfo }) {
+export function RunOutput({ info, onDebug }: { info: RunInfo; onDebug?: () => void }) {
   const [copied, setCopied] = useState(false);
+  const failed = !info.running && info.code !== null && info.code !== 0;
 
   async function copyOutput() {
     await window.glazeAPI.clipboard.writeText(info.lines.join(""));
@@ -24,6 +25,18 @@ export function RunOutput({ info }: { info: RunInfo }) {
             {info.code === 0 ? "Passed" : "Failed"}
           </Status>
         )}
+        {failed && onDebug ? (
+          <Button
+            iconOnly
+            variant="transparent"
+            size="small"
+            onClick={onDebug}
+            aria-label="Debug with AI"
+            title="Debug with AI"
+          >
+            <Sparkles className="size-3.5" />
+          </Button>
+        ) : null}
         {!info.running && info.lines.length > 0 ? (
           <Button
             iconOnly
