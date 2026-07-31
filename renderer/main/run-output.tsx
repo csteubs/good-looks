@@ -14,7 +14,7 @@ export function RunOutput({ info }: { info: RunInfo }) {
   }
 
   return (
-    <div className="flex h-56 shrink-0 flex-col border-t border-separator">
+    <div className="bg-background flex h-56 shrink-0 flex-col border-t border-separator">
       <div className="flex items-center gap-2 border-b border-separator px-4 py-2">
         <Text variant="small-strong">Output</Text>
         {info.running ? (
