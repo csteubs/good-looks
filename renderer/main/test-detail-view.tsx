@@ -249,6 +249,8 @@ export function TestDetailView() {
         testUrl={test.url}
         script={scriptQuery.data ?? ""}
         output={runInfo?.lines.join("") ?? ""}
+        imported={Boolean(test.sourceDir)}
+        speed={test.speed}
       />
 
       <Dialog

@@ -5,40 +5,9 @@ import * as React from "react";
 import { Button, Dialog, ScrollArea, Status } from "@glaze/core/components";
 import { Check, Copy, RotateCcw, Square } from "lucide-react";
 
-import type { LlmMessage } from "../lib/llm-types";
+import { buildDebugMessages } from "../lib/llm-prompts";
+import type { TestSpeed } from "../lib/recorder-types";
 import { useLlmChat } from "../lib/use-llm-chat";
-
-const MAX_SCRIPT_CHARS = 6000;
-const MAX_OUTPUT_CHARS = 8000;
-
-// Errors are the most informative part of a long run output, so keep the tail.
-function truncateTail(text: string, max: number): string {
-  return text.length > max ? `…(truncated)…\n${text.slice(-max)}` : text;
-}
-
-function truncateHead(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}\n…(truncated)…` : text;
-}
-
-function buildMessages(testName: string, testUrl: string, script: string, output: string): LlmMessage[] {
-  return [
-    {
-      role: "system",
-      content:
-        "You are an expert Playwright test debugging assistant embedded in a test recorder app. " +
-        "Given a test's script and its failing run output, identify the most likely root cause and " +
-        "suggest a concrete fix. Be concise: a short diagnosis followed by a specific fix. If the " +
-        "output doesn't contain enough detail, say what additional information would help.",
-    },
-    {
-      role: "user",
-      content:
-        `Test: "${testName}"\nTarget URL: ${testUrl}\n\n` +
-        `Playwright spec:\n\`\`\`ts\n${truncateHead(script, MAX_SCRIPT_CHARS)}\n\`\`\`\n\n` +
-        `Run output (failed):\n\`\`\`\n${truncateTail(output, MAX_OUTPUT_CHARS)}\n\`\`\``,
-    },
-  ];
-}
 
 function friendlyError(message: string): string {
   if (/no model selected/i.test(message)) {
@@ -57,6 +26,8 @@ export function AiDebugDialog({
   testUrl,
   script,
   output,
+  imported,
+  speed,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -64,14 +35,16 @@ export function AiDebugDialog({
   testUrl: string;
   script: string;
   output: string;
+  imported: boolean;
+  speed?: TestSpeed;
 }) {
   const { content, status, error, start, stop } = useLlmChat();
   const [copied, setCopied] = React.useState(false);
   const startedKeyRef = React.useRef<string | null>(null);
 
   const runDiagnosis = React.useCallback(
-    () => start(buildMessages(testName, testUrl, script, output)),
-    [start, testName, testUrl, script, output],
+    () => start(buildDebugMessages({ testName, testUrl, script, output, imported, speed })),
+    [start, testName, testUrl, script, output, imported, speed],
   );
 
   React.useEffect(() => {
