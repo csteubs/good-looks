@@ -55,6 +55,8 @@ export interface StepDragProps {
 export function StepRow({
   index,
   step,
+  selected,
+  onSelect,
   onDelete,
   onReplay,
   onRefine,
@@ -63,6 +65,8 @@ export function StepRow({
 }: {
   index: number;
   step: Step;
+  selected?: boolean;
+  onSelect?: () => void;
   onDelete?: () => void;
   onReplay?: () => Promise<{ ok: boolean; error?: string }>;
   onRefine?: () => void;
@@ -114,11 +118,21 @@ export function StepRow({
   return (
     <div
       className={`group flex items-center gap-2 rounded-md px-2 py-1 ${flash} ${
-        drag?.isOver ? "border-t-2 border-accent" : ""
-      } ${drag?.isDragging ? "opacity-50" : ""}`}
+        selected ? "ring-1 ring-inset ring-accent" : ""
+      } ${drag?.isOver ? "border-t-2 border-accent" : ""} ${
+        drag?.isDragging ? "opacity-50" : ""
+      } ${onSelect ? "cursor-pointer" : ""}`}
       onDragEnter={drag ? () => drag.onDragEnter() : undefined}
       onDragOver={drag ? (e) => e.preventDefault() : undefined}
       onDrop={drag ? (e) => e.preventDefault() : undefined}
+      onClick={onSelect ? (e) => {
+        // Don't select when clicking an interactive control inside the row.
+        const target = e.target as HTMLElement;
+        if (target.closest("button, input, [contenteditable]")) return;
+        onSelect();
+      } : undefined}
+      aria-selected={selected ? true : undefined}
+      role={onSelect ? "option" : undefined}
     >
       {drag ? (
         <span

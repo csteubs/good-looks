@@ -49,6 +49,9 @@ interface RecorderContextValue {
     stoppedAtIndex: number;
     error?: string;
   }>;
+  /** Per-step replay outcomes keyed by step id, for the debug panel. */
+  replayResults: Record<string, { ok: boolean; error?: string; at: number }>;
+  clearReplayResult: (id: string) => void;
   picked: PickedElement | null;
   /** id of the step currently being refined (Refine Selector), or null */
   refiningStepId: string | null;
@@ -72,6 +75,9 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const [liveSteps, setLiveSteps] = React.useState<Step[]>([]);
   const [picked, setPicked] = React.useState<PickedElement | null>(null);
   const [refiningStepId, setRefiningStepId] = React.useState<string | null>(null);
+  const [replayResults, setReplayResults] = React.useState<
+    Record<string, { ok: boolean; error?: string; at: number }>
+  >({});
   const [runs, setRuns] = React.useState<Record<string, RunInfo>>({});
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -141,8 +147,35 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     [],
   );
   const setCursor = React.useCallback((index: number) => void api.recorder.setCursor(index), []);
-  const replayStep = React.useCallback((id: string) => api.recorder.replayStep(id), []);
-  const replayFromStart = React.useCallback(() => api.recorder.replayFromStart(), []);
+  const replayStep = React.useCallback(async (id: string) => {
+    const res = await api.recorder.replayStep(id);
+    setReplayResults((prev) => ({
+      ...prev,
+      [id]: { ok: res.ok, error: res.error, at: Date.now() },
+    }));
+    return res;
+  }, []);
+  const replayFromStart = React.useCallback(async () => {
+    const res = await api.recorder.replayFromStart();
+    if (res.stoppedAtIndex >= 0) {
+      const step = liveSteps[res.stoppedAtIndex];
+      if (step) {
+        setReplayResults((prev) => ({
+          ...prev,
+          [step.id]: { ok: res.ok, error: res.error, at: Date.now() },
+        }));
+      }
+    }
+    return res;
+  }, [liveSteps]);
+  const clearReplayResult = React.useCallback((id: string) => {
+    setReplayResults((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }, []);
   const startRefine = React.useCallback((stepId: string | null = null) => {
     setRefiningStepId(stepId);
     void api.recorder.startRefine();
@@ -174,6 +207,8 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     setCursor,
     replayStep,
     replayFromStart,
+    replayResults,
+    clearReplayResult,
     picked,
     refiningStepId,
     startRefine,
