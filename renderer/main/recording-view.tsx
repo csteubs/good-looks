@@ -210,6 +210,8 @@ export function RecordingView() {
     setCursor,
     replayStep,
     replayFromStart,
+    replayAll,
+    replayStepStatus,
     debugEntries,
     clearDebugEntry,
     picked,
@@ -224,6 +226,11 @@ export function RecordingView() {
   const [aiOpen, setAiOpen] = React.useState(false);
   const [replayStatus, setReplayStatus] = React.useState<string | null>(null);
   const [selectedStepId, setSelectedStepId] = React.useState<string | null>(null);
+  // Auto-run state for "Edit in Trainer": controls stay disabled while the
+  // browser window is loading and while the automatic replay is in flight,
+  // then re-enable. `autoRunStarted` guards so we only fire once per session.
+  const [autoRunBusy, setAutoRunBusy] = React.useState(false);
+  const autoRunStartedRef = React.useRef<string | null>(null);
   // True while the Add-step dialog's "Target element" picker is active. The
   // picked element arrives via the shared `picked` state from the recorder store;
   // this flag tells us it belongs to the Add-step flow (not a step refine).
@@ -244,6 +251,36 @@ export function RecordingView() {
     // Clear the status after a few seconds so it doesn't linger.
     window.setTimeout(() => setReplayStatus(null), 6000);
   };
+
+  // Edit in Trainer auto-run: once the browser window has finished loading its
+  // first page, replay every step automatically and highlight each by progress.
+  // Controls stay disabled while the page is loading and while the run is in
+  // flight; they re-enable when it finishes. Fires once per editing session.
+  React.useEffect(() => {
+    if (!state.editing || !state.pageReady || !state.testId) return;
+    if (autoRunStartedRef.current === state.testId) return;
+    autoRunStartedRef.current = state.testId;
+    let cancelled = false;
+    (async () => {
+      setAutoRunBusy(true);
+      const res = await replayAll();
+      if (!cancelled) {
+        setAutoRunBusy(false);
+        if (!res.ok && res.failedAtIndex >= 0) {
+          setReplayStatus(
+            `Auto-run stopped at step ${res.failedAtIndex + 1}: ${res.error || "failed"}`,
+          );
+          window.setTimeout(() => setReplayStatus(null), 6000);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [state.editing, state.pageReady, state.testId, replayAll]);
+
+  // While loading or auto-running, every editing control is inert.
+  const controlsDisabled = !state.pageReady || autoRunBusy;
 
   // Drag-to-reorder bookkeeping.
   const [dragId, setDragId] = React.useState<string | null>(null);
@@ -304,14 +341,20 @@ export function RecordingView() {
       </Toolbar>
 
       <div className="flex items-center gap-3 border-b border-separator px-4 py-3">
-        <Status variant={state.paused ? "warning" : "error"}>
-          {state.paused ? "Paused" : state.editing ? "Editing" : "Recording"}
-        </Status>
+        {controlsDisabled ? (
+          <Status variant={autoRunBusy ? "loading" : "warning"}>
+            {autoRunBusy ? "Running test…" : "Loading page…"}
+          </Status>
+        ) : (
+          <Status variant={state.paused ? "warning" : "error"}>
+            {state.paused ? "Paused" : state.editing ? "Editing" : "Recording"}
+          </Status>
+        )}
         <Text variant="small" color="secondary" truncate className="min-w-0">
           {state.url}
         </Text>
         <div className="ml-auto shrink-0">
-          {state.paused ? (
+          {controlsDisabled ? null : state.paused ? (
             <Button size="small" onClick={resume}>
               <Play className="size-4" /> Resume
             </Button>
@@ -328,6 +371,7 @@ export function RecordingView() {
           size="small"
           variant="muted"
           onClick={onReplayFromStart}
+          disabled={controlsDisabled}
           aria-label="Replay steps from the beginning"
           title="Replay steps from the beginning, pausing after the first success"
         >
@@ -341,11 +385,21 @@ export function RecordingView() {
         <Text variant="small" color="secondary" className="shrink-0">
           Add assertion:
         </Text>
-        <Button size="small" variant="muted" onClick={openAssertMenu}>
+        <Button
+          size="small"
+          variant="muted"
+          onClick={openAssertMenu}
+          disabled={controlsDisabled}
+        >
           {state.assertMode ? ASSERT_LABEL[state.assertMode] : "Choose…"}
           <ChevronDown className="size-3.5" />
         </Button>
-        <SegmentedControl size="small" value={soft ? "soft" : "hard"} onValueChange={onSoftChange}>
+        <SegmentedControl
+          size="small"
+          value={soft ? "soft" : "hard"}
+          onValueChange={onSoftChange}
+          disabled={controlsDisabled}
+        >
           <SegmentedControlItem value="hard">Hard</SegmentedControlItem>
           <SegmentedControlItem value="soft">Soft</SegmentedControlItem>
         </SegmentedControl>
@@ -367,10 +421,20 @@ export function RecordingView() {
         ) : null}
 
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          <Button size="small" variant="muted" onClick={openAddStepMenu}>
+          <Button
+            size="small"
+            variant="muted"
+            onClick={openAddStepMenu}
+            disabled={controlsDisabled}
+          >
             <Plus className="size-3.5" /> Add step
           </Button>
-          <Button size="small" variant="muted" onClick={() => setAiOpen(true)}>
+          <Button
+            size="small"
+            variant="muted"
+            onClick={() => setAiOpen(true)}
+            disabled={controlsDisabled}
+          >
             <Wand2 className="size-3.5" /> AI steps
           </Button>
         </div>
@@ -409,12 +473,13 @@ export function RecordingView() {
                     index={i}
                     step={s}
                     selected={selectedStepId === s.id}
-                    onSelect={() => setSelectedStepId(s.id)}
-                    onDelete={() => deleteStep(s.id)}
-                    onReplay={() => replayStep(s.id)}
-                    onRefine={() => startRefine(s.id)}
-                    onEdit={(patch) => updateStep(s.id, patch)}
-                    drag={{
+                    onSelect={controlsDisabled ? undefined : () => setSelectedStepId(s.id)}
+                    onDelete={controlsDisabled ? undefined : () => deleteStep(s.id)}
+                    onReplay={controlsDisabled ? undefined : () => replayStep(s.id)}
+                    onRefine={controlsDisabled ? undefined : () => startRefine(s.id)}
+                    onEdit={controlsDisabled ? undefined : (patch) => updateStep(s.id, patch)}
+                    runStatus={replayStepStatus[i]}
+                    drag={controlsDisabled ? undefined : {
                       onDragStart: () => setDragId(s.id),
                       onDragEnter: () => setOverIndex(i),
                       onDragEnd: commitDrag,

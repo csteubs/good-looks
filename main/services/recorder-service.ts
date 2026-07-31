@@ -56,6 +56,8 @@ interface Session {
   createdAt: number;
   /** snapshot of the global "show URL bar" setting for this session's window title */
   showUrlBar: boolean;
+  /** true once the trainer window's first page has finished loading */
+  pageReady: boolean;
 }
 
 const POLL_INTERVAL_MS = 250;
@@ -77,6 +79,7 @@ function currentState(): RecorderState {
     assertSoft: session?.assertSoft ?? false,
     cursor: session?.cursor ?? 0,
     refineMode: session?.refineMode ?? false,
+    pageReady: session?.pageReady ?? false,
   };
 }
 
@@ -252,6 +255,7 @@ export const recorderService = {
       editing,
       createdAt,
       showUrlBar: recorderSettingsStore.get().showUrlBar,
+      pageReady: false,
     };
 
     // Push the existing steps to the renderer so the trainer's live list shows
@@ -343,6 +347,7 @@ export const recorderService = {
     // interrupts this one — the window still ends up on the right page via that
     // second load, so the interruption itself is not a real failure.
     await recWindow.loadURL(url).catch(() => {});
+    if (session) session.pageReady = true;
     startPolling();
     broadcastState();
     return currentState();
@@ -611,6 +616,67 @@ export const recorderService = {
       return { ok: true, stoppedAtIndex: -1 };
     } catch (err) {
       return { ok: false, stoppedAtIndex: -1, error: String(err) };
+    } finally {
+      session.paused = wasPaused;
+      await applyStateAttributes().catch(() => {});
+    }
+  },
+
+  /**
+   * Replay every recorded step in order (unlike replayFromStart, which stops
+   * after the first success), emitting a `recorder:replayStep` event before and
+   * after each step so the renderer can highlight progress. Used by the
+   * "Edit in Trainer" auto-run. A soft assertion failure does not stop the run.
+   * Returns the index of the first hard failure (or -1 if all passed).
+   */
+  async replayAll(): Promise<{ ok: boolean; failedAtIndex: number; error?: string }> {
+    if (!session) return { ok: false, failedAtIndex: -1, error: "No active recording session." };
+    if (!recWindow || recWindow.isDestroyed()) {
+      return { ok: false, failedAtIndex: -1, error: "Recorder window is not open." };
+    }
+    const wc = recWindow.webContents;
+    const wasPaused = session.paused;
+    try {
+      session.paused = true;
+      await applyStateAttributes();
+      for (let i = 0; i < session.steps.length; i++) {
+        const step = session.steps[i];
+        sendToMain("recorder:replayStep", { index: i, status: "begin", ok: true });
+        let ok = false;
+        let error: string | undefined;
+        let logs: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[] = [];
+        try {
+          const result = (await wc.executeJavaScript(buildReplayScript(step))) as {
+            ok: boolean;
+            error?: string;
+            logs?: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[];
+          };
+          ok = !!(result && result.ok);
+          error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
+          logs = result?.logs ?? [];
+        } catch (err) {
+          error = String(err);
+          logs = [{ i: 0, t: Date.now(), level: "error", m: String(err) }];
+        }
+        const entry: DebugEntry = {
+          stepId: step.id,
+          stepIndex: i,
+          stepLabel: describeStep(step),
+          ok,
+          error,
+          at: Date.now(),
+          logs,
+        };
+        this.persistDebug(entry);
+        sendToMain("recorder:replayStep", { index: i, status: "end", ok });
+        // A soft assertion reports failure but doesn't stop the run.
+        if (!ok && !step.soft) {
+          return { ok: false, failedAtIndex: i, error };
+        }
+      }
+      return { ok: true, failedAtIndex: -1 };
+    } catch (err) {
+      return { ok: false, failedAtIndex: -1, error: String(err) };
     } finally {
       session.paused = wasPaused;
       await applyStateAttributes().catch(() => {});

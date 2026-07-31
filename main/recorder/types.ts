@@ -174,4 +174,6 @@ export interface RecorderState {
   cursor: number;
   /** true while the "Refine Selector" element picker is active */
   refineMode: boolean;
+  /** true once the trainer browser window has finished loading its first page */
+  pageReady: boolean;
 }

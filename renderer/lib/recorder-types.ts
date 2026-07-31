@@ -130,4 +130,6 @@ export interface RecorderState {
   assertSoft: boolean;
   cursor: number;
   refineMode: boolean;
+  /** true once the trainer browser window has finished loading its first page */
+  pageReady: boolean;
 }

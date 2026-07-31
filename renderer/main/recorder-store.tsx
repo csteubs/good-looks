@@ -38,6 +38,7 @@ const EMPTY_STATE: RecorderState = {
   assertSoft: false,
   cursor: 0,
   refineMode: false,
+  pageReady: false,
 };
 
 interface RecorderContextValue {
@@ -60,6 +61,10 @@ interface RecorderContextValue {
     stoppedAtIndex: number;
     error?: string;
   }>;
+  /** Replay every step in order (auto-run on Edit in Trainer), highlighting each. */
+  replayAll: () => Promise<{ ok: boolean; failedAtIndex: number; error?: string }>;
+  /** Per-step status for an in-flight replayAll, keyed by step index. */
+  replayStepStatus: Record<number, RunStepStatus>;
   /** Persisted per-step debug entries (latest attempt per step), for the debug panel. */
   debugEntries: DebugEntry[];
   /** Remove one step's debug entry (persists via backend). */
@@ -89,6 +94,9 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const [refiningStepId, setRefiningStepId] = React.useState<string | null>(null);
   const [debugEntries, setDebugEntries] = React.useState<DebugEntry[]>([]);
   const [runs, setRuns] = React.useState<Record<string, RunInfo>>({});
+  // Per-step status for an in-flight trainer replayAll (auto-run on Edit in
+  // Trainer), keyed by step index. Cleared when a new run starts.
+  const [replayStepStatus, setReplayStepStatus] = React.useState<Record<number, RunStepStatus>>({});
   const navigate = useNavigate();
   const qc = useQueryClient();
 
@@ -138,6 +146,16 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       "recorder:debugLogs",
       ({ entries }) => setDebugEntries(entries ?? []),
     );
+    const offReplayStep = api.on<{
+      index: number;
+      status: "begin" | "end";
+      ok: boolean;
+    }>("recorder:replayStep", ({ index, status, ok }) => {
+      setReplayStepStatus((prev) => ({
+        ...prev,
+        [index]: status === "begin" ? "running" : ok ? "passed" : "failed",
+      }));
+    });
 
     api.recorder.getState().then(setState).catch(() => {});
 
@@ -150,6 +168,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       offStep();
       offDone();
       offDebug();
+      offReplayStep();
     };
   }, [navigate, qc]);
 
@@ -210,6 +229,14 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     }
     return res;
   }, [state.testId]);
+  const replayAll = React.useCallback(async () => {
+    setReplayStepStatus({});
+    const res = await api.recorder.replayAll();
+    if (state.testId) {
+      api.recorder.getDebugLogs(state.testId).then(setDebugEntries).catch(() => {});
+    }
+    return res;
+  }, [state.testId]);
   const clearDebugEntry = React.useCallback((id: string) => {
     api.recorder.clearDebugLog(id).then(setDebugEntries).catch(() => {});
   }, []);
@@ -244,6 +271,8 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     setCursor,
     replayStep,
     replayFromStart,
+    replayAll,
+    replayStepStatus,
     debugEntries,
     clearDebugEntry,
     picked,
