@@ -88,7 +88,7 @@ export function TestDetailView() {
 
   return (
     <div className="flex h-full flex-col">
-      <Toolbar>
+      <Toolbar className="pt-2">
         <ToolbarContent>
           {editingName ? (
             <Input
