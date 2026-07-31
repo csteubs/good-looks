@@ -15,6 +15,7 @@ import { dialog, logger } from "@glaze/core/backend";
 
 import type { TestRecord } from "../recorder/types.js";
 import { testStore } from "./test-store.js";
+import { parseSpec } from "./spec-parser.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -96,20 +97,31 @@ function importFound(found: FoundTest[]): ImportResult {
     const id = randomUUID();
     const scriptPath = testStore.writeScript(id, f.content);
     const now = Date.now();
+    // Analyze the file and translate its test() bodies into the app's Step[]
+    // model so the imported test shows up in the Steps view. When nothing
+    // could be parsed, leave steps empty and fall back to a script-only
+    // import (scriptEdited stays true so the Script view is the source of
+    // truth). When steps were parsed we still keep scriptEdited true: the
+    // verbatim imported file is the runnable artifact and must not be
+    // regenerated from the (lossy) parsed steps on a rename.
+    const steps = parseSpec(f.content);
     const record: TestRecord = {
       id,
       name: extractName(f.content, f.filePath),
       url: extractUrl(f.content),
       createdAt: now,
       updatedAt: now,
-      steps: [],
+      steps,
       scriptPath,
       scriptEdited: true,
     };
     testStore.save(record);
     created.push(record);
   }
-  logger.info("import", "Imported Playwright tests", { count: created.length });
+  logger.info("import", "Imported Playwright tests", {
+    count: created.length,
+    withSteps: created.filter((c) => c.steps.length > 0).length,
+  });
   return { imported: created.length, names: created.map((c) => c.name), ids: created.map((c) => c.id) };
 }
 

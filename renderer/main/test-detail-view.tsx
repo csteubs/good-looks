@@ -164,11 +164,17 @@ export function TestDetailView() {
         </ToolbarActions>
       </Toolbar>
 
-      <TabsRoot defaultValue="steps" className="flex min-h-0 flex-1 flex-col">
+      <TabsRoot
+        defaultValue={test.steps.length > 0 ? "steps" : "script"}
+        className="flex min-h-0 flex-1 flex-col"
+      >
         <div className="px-4 pt-2">
           <Tabs variant="filled" size="large">
-            <TabsTrigger value="steps">Steps ({test.steps.length})</TabsTrigger>
-            <TabsTrigger value="script">Script</TabsTrigger>
+            {test.steps.length > 0 ? (
+              <TabsTrigger value="steps">Steps ({test.steps.length})</TabsTrigger>
+            ) : (
+              <TabsTrigger value="script">Script</TabsTrigger>
+            )}
           </Tabs>
         </div>
         <TabsContent value="steps" className="min-h-0 flex-1">
