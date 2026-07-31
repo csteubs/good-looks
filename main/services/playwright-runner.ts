@@ -11,6 +11,7 @@ import { app, logger } from "@glaze/core/backend";
 
 import { sendToMain } from "./app-window.js";
 import { getScriptsDir, testStore } from "./test-store.js";
+import { stepReporterSource } from "./step-reporter-source.js";
 import type { TestSpeed } from "../recorder/types.js";
 
 const RUN_TIMEOUT_MS = 5 * 60 * 1000;
@@ -106,6 +107,48 @@ function ensureConfig(scriptsDir: string): string {
   return configPath;
 }
 
+// Write the StepReporter next to the specs so the Playwright CLI can load it.
+// Always rewritten so it stays in sync with the app's current build.
+function ensureReporter(scriptsDir: string): string {
+  const reporterPath = path.join(scriptsDir, "step-reporter.mjs");
+  fs.writeFileSync(reporterPath, stepReporterSource, "utf-8");
+  return reporterPath;
+}
+
+// Build a map from 1-based spec line number → 0-based step index, by scanning
+// the generated spec's test body for indented `await ...` step lines. The
+// StepReporter emits `location.line`; this map turns it into a step index the
+// renderer can highlight. Returns null when the spec can't be mapped (e.g.
+// hand-authored imported scripts with no clean step-per-line structure).
+function buildStepLineMap(scriptPath: string): Map<number, number> | null {
+  let src: string;
+  try {
+    src = fs.readFileSync(scriptPath, "utf-8");
+  } catch {
+    return null;
+  }
+  const lines = src.split("\n");
+  const map = new Map<number, number>();
+  let stepIndex = 0;
+  let inBody = false;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    // The test body starts after the `test("...", async ({ page }) => {` line.
+    if (!inBody) {
+      if (/^\s*test\s*\(/.test(line) && line.includes("async")) inBody = true;
+      continue;
+    }
+    // Body ends at the closing `});`.
+    if (/^\s*}\s*\)/.test(line)) break;
+    // Each step is a single indented line starting with `await `.
+    if (/^\s+await /.test(line)) {
+      map.set(i + 1, stepIndex); // location.line is 1-based
+      stepIndex++;
+    }
+  }
+  return map.size > 0 ? map : null;
+}
+
 function isChromiumInstalled(): boolean {
   const dir = browsersPath();
   try {
@@ -128,6 +171,47 @@ function emitOutput(runId: string, stream: "stdout" | "stderr" | "system", chunk
   sendToMain("runner:output", { runId, stream, chunk });
 }
 
+// Per-run stdout buffer for splitting `__GLAZE_STEP__:` marker lines out of
+// the visible output. Step markers may straddle chunk boundaries, so we hold
+// a trailing partial line until the next chunk completes it.
+const stdoutBuffers = new Map<string, string>();
+const stepLineMaps = new Map<string, Map<number, number> | null>();
+
+function emitStep(runId: string, index: number, status: "begin" | "end", ok: boolean): void {
+  sendToMain("runner:step", { runId, index, status, ok });
+}
+
+// Parse a stdout chunk: extract complete `__GLAZE_STEP__:` lines, map their
+// line number to a step index, emit `runner:step` events, and return the
+// remaining visible text (markers stripped).
+function processStdout(runId: string, chunk: string): string {
+  const map = stepLineMaps.get(runId);
+  if (!map) return chunk; // no step mapping for this run — pass through
+
+  const buf = (stdoutBuffers.get(runId) ?? "") + chunk;
+  const lines = buf.split("\n");
+  // Last element is the partial trailing line (no trailing newline) — hold it.
+  stdoutBuffers.set(runId, lines.pop() ?? "");
+
+  let visible = "";
+  for (const line of lines) {
+    if (line.startsWith("__GLAZE_STEP__:")) {
+      try {
+        const payload = JSON.parse(line.slice("__GLAZE_STEP__:".length));
+        const stepIndex = map.get(payload.line);
+        if (typeof stepIndex === "number") {
+          emitStep(runId, stepIndex, payload.event, payload.ok ?? true);
+        }
+      } catch {
+        // ignore malformed marker
+      }
+    } else {
+      visible += line + "\n";
+    }
+  }
+  return visible;
+}
+
 function runCli(
   runId: string,
   args: string[],
@@ -144,12 +228,23 @@ function runCli(
       child.kill("SIGKILL");
     }, RUN_TIMEOUT_MS);
 
-    child.stdout?.on("data", (d: Buffer) => emitOutput(runId, "stdout", d.toString()));
+    child.stdout?.on("data", (d: Buffer) => {
+      const visible = processStdout(runId, d.toString());
+      if (visible) emitOutput(runId, "stdout", visible);
+    });
     child.stderr?.on("data", (d: Buffer) => emitOutput(runId, "stderr", d.toString()));
     child.on("error", (err) => {
       emitOutput(runId, "system", "\nFailed to start Playwright: " + String(err) + "\n");
     });
     child.on("close", (code) => {
+      // Flush any remaining buffer (treat trailing partial as visible output).
+      const tail = stdoutBuffers.get(runId);
+      if (tail) {
+        const visible = processStdout(runId, "\n");
+        if (visible) emitOutput(runId, "stdout", visible);
+      }
+      stdoutBuffers.delete(runId);
+      stepLineMaps.delete(runId);
       clearTimeout(timer);
       resolve(code ?? -1);
     });
@@ -180,7 +275,12 @@ export const playwrightRunner = {
         const scriptsDir = getScriptsDir();
         ensureModuleResolution(scriptsDir, nodeModules);
         const configPath = ensureConfig(scriptsDir);
+        const reporterPath = ensureReporter(scriptsDir);
         const env = baseEnv(nodeModules);
+
+        // Map spec line numbers → step indices so the StepReporter's markers
+        // can be translated into highlightable step indices for the renderer.
+        stepLineMaps.set(runId, buildStepLineMap(rec.scriptPath));
 
         if (!isChromiumInstalled()) {
           emitOutput(runId, "system", "Installing the test browser (first run only)…\n");
@@ -189,12 +289,15 @@ export const playwrightRunner = {
 
         const slowMo = SLOW_MO_MS[rec.speed ?? "fast"];
         emitOutput(runId, "system", "Running " + path.basename(rec.scriptPath) + "…\n");
+        // Use our custom StepReporter (emits per-step progress markers) plus
+        // the built-in `line` reporter for the human-readable Output panel.
         const args = [
           "test",
           rec.scriptPath,
           "--config",
           configPath,
-          "--reporter=line",
+          "--reporter",
+          `${reporterPath},line`,
           "--workers=1",
         ];
         if (params.headed) args.push("--headed");

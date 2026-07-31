@@ -184,7 +184,7 @@ export function TestDetailView() {
               <ScrollArea className="h-full">
                 <div className="flex flex-col gap-1 p-3">
                   {test.steps.map((s, i) => (
-                    <StepRow key={s.id} index={i} step={s} />
+                    <StepRow key={s.id} index={i} step={s} runStatus={runInfo?.stepStatus[i]} />
                   ))}
                 </div>
               </ScrollArea>

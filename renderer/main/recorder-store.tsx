@@ -16,10 +16,14 @@ import type {
   Step,
 } from "../lib/recorder-types";
 
+export type RunStepStatus = "running" | "passed" | "failed";
+
 export interface RunInfo {
   lines: string[];
   running: boolean;
   code: number | null;
+  /** Per-step run status, keyed by step index (0-based). */
+  stepStatus: Record<number, RunStepStatus>;
 }
 
 const EMPTY_STATE: RecorderState = {
@@ -103,13 +107,30 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     });
     const offOut = api.on<{ runId: string; chunk: string }>("runner:output", ({ runId, chunk }) => {
       setRuns((prev) => {
-        const cur = prev[runId] ?? { lines: [], running: true, code: null };
+        const cur = prev[runId] ?? { lines: [], running: true, code: null, stepStatus: {} };
         return { ...prev, [runId]: { ...cur, lines: [...cur.lines, chunk] } };
+      });
+    });
+    const offStep = api.on<{
+      runId: string;
+      index: number;
+      status: "begin" | "end";
+      ok: boolean;
+    }>("runner:step", ({ runId, index, status, ok }) => {
+      setRuns((prev) => {
+        const cur = prev[runId] ?? { lines: [], running: true, code: null, stepStatus: {} };
+        const stepStatus = { ...cur.stepStatus };
+        if (status === "begin") {
+          stepStatus[index] = "running";
+        } else {
+          stepStatus[index] = ok ? "passed" : "failed";
+        }
+        return { ...prev, [runId]: { ...cur, stepStatus } };
       });
     });
     const offDone = api.on<{ runId: string; code: number }>("runner:done", ({ runId, code }) => {
       setRuns((prev) => {
-        const cur = prev[runId] ?? { lines: [], running: false, code };
+        const cur = prev[runId] ?? { lines: [], running: false, code, stepStatus: {} };
         return { ...prev, [runId]: { ...cur, running: false, code } };
       });
     });
@@ -126,6 +147,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       offPicked();
       offFinished();
       offOut();
+      offStep();
       offDone();
       offDebug();
     };
@@ -201,7 +223,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   }, []);
   const clearPicked = React.useCallback(() => setPicked(null), []);
   const run = React.useCallback((id: string) => {
-    setRuns((prev) => ({ ...prev, [id]: { lines: [], running: true, code: null } }));
+    setRuns((prev) => ({ ...prev, [id]: { lines: [], running: true, code: null, stepStatus: {} } }));
     api.runner.run(id, true).catch(() => {});
   }, []);
   const stopRun = React.useCallback((id: string) => void api.runner.stop(id), []);

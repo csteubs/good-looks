@@ -6,6 +6,7 @@
 import * as React from "react";
 import { Badge, Button, Input, Text } from "@glaze/core/components";
 import { Check, Crosshair, GripVertical, Loader2, Pencil, Play, X } from "lucide-react";
+import type { RunStepStatus } from "./recorder-store";
 
 import { describeStep } from "../lib/describe-step";
 import type { Step, StepType } from "../lib/recorder-types";
@@ -62,6 +63,7 @@ export function StepRow({
   onRefine,
   onEdit,
   drag,
+  runStatus,
 }: {
   index: number;
   step: Step;
@@ -72,6 +74,8 @@ export function StepRow({
   onRefine?: () => void;
   onEdit?: (patch: Partial<Step>) => void;
   drag?: StepDragProps;
+  /** Live run status of this step during a test run, for highlight. */
+  runStatus?: RunStepStatus;
 }) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState("");
@@ -108,8 +112,19 @@ export function StepRow({
     setTimeout(() => setReplay({ status: "idle" }), 2500);
   }
 
-  const flash =
-    replay.status === "ok"
+  // Run highlight takes precedence over the per-row replay flash and hover.
+  const runFlash =
+    runStatus === "running"
+      ? "bg-accent-10 ring-1 ring-inset ring-accent"
+      : runStatus === "passed"
+        ? "bg-support-green-10"
+        : runStatus === "failed"
+          ? "bg-support-red-10"
+          : "";
+
+  const flash = runFlash
+    ? runFlash
+    : replay.status === "ok"
       ? "bg-support-green-10"
       : replay.status === "fail"
         ? "bg-support-red-10"
@@ -118,7 +133,7 @@ export function StepRow({
   return (
     <div
       className={`group flex items-center gap-2 rounded-md px-2 py-1 ${flash} ${
-        selected ? "ring-1 ring-inset ring-accent" : ""
+        selected && !runStatus ? "ring-1 ring-inset ring-accent" : ""
       } ${drag?.isOver ? "border-t-2 border-accent" : ""} ${
         drag?.isDragging ? "opacity-50" : ""
       } ${onSelect ? "cursor-pointer" : ""}`}
@@ -184,6 +199,17 @@ export function StepRow({
 
       {!editing ? (
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          {runStatus ? (
+            <span className="shrink-0" aria-label={`Step ${runStatus}`}>
+              {runStatus === "running" ? (
+                <Loader2 className="size-3.5 animate-spin text-accent" />
+              ) : runStatus === "passed" ? (
+                <Check className="size-3.5 text-support-green" />
+              ) : (
+                <X className="size-3.5 text-support-red" />
+              )}
+            </span>
+          ) : null}
           {onReplay && step.type !== "goto" && step.type !== "viewport" ? (
             <Button
               iconOnly
