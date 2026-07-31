@@ -271,6 +271,12 @@ export const recorderService = {
       title: (editing ? "Editing — " : "Recording — ") + url,
       titleBarStyle: "default", // native draggable frame for an external page
       show: false,
+      webPreferences: {
+        // No "persist:" prefix: an in-memory session unique to this session,
+        // so every training run starts logged out with empty cookies/storage
+        // instead of inheriting state from a previous recording.
+        partition: `recorder-incognito-${randomUUID()}`,
+      },
     });
 
     const wc = recWindow.webContents;
