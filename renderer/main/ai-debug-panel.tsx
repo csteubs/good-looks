@@ -47,11 +47,13 @@ export function AiDebugDialog({
     [start, testName, testUrl, script, output, imported, speed],
   );
 
+  // Auto-start a diagnosis the first time we see a given run output while the
+  // dialog is open. We deliberately do NOT reset `startedKeyRef` on close, so
+  // reopening the dialog for the same run shows the previously streamed
+  // response (the `useLlmChat` state survives because the dialog stays
+  // mounted). A new run produces a different `output.length`, which re-fires.
   React.useEffect(() => {
-    if (!open) {
-      startedKeyRef.current = null;
-      return;
-    }
+    if (!open) return;
     const key = `${testName}:${output.length}`;
     if (startedKeyRef.current === key) return;
     startedKeyRef.current = key;
