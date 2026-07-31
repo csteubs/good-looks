@@ -102,6 +102,12 @@ export function registerHandlers(): void {
     recorderService.replayStep(params.stepId),
   );
   ipcMain.handle("recorder:replayFromStart", async () => recorderService.replayFromStart());
+  ipcMain.handle("recorder:getDebugLogs", async (_e, params: { testId: string }) =>
+    recorderService.getDebugLogs(params.testId),
+  );
+  ipcMain.handle("recorder:clearDebugLog", async (_e, params: { stepId: string }) =>
+    recorderService.clearDebugLog(params.stepId),
+  );
   ipcMain.handle("recorder:startRefine", async () => recorderService.startRefine());
   ipcMain.handle("recorder:endRefine", async () => recorderService.endRefine());
   ipcMain.handle("recorder:stop", async () => {

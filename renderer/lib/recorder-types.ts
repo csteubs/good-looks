@@ -99,6 +99,25 @@ export interface RecorderSettings {
   showUrlBar: boolean;
 }
 
+/** A single verbose diagnostic line produced while replaying a step. */
+export interface DebugLogLine {
+  i: number;
+  t: number;
+  level: "info" | "warn" | "error";
+  m: string;
+}
+
+/** Persisted debug entry for a single step's replay attempt. */
+export interface DebugEntry {
+  stepId: string;
+  stepIndex: number;
+  stepLabel: string;
+  ok: boolean;
+  error?: string;
+  at: number;
+  logs: DebugLogLine[];
+}
+
 export interface RecorderState {
   recording: boolean;
   paused: boolean;

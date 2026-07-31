@@ -24,6 +24,7 @@ import {
 import { buildReplayScript } from "./step-replayer.js";
 import type {
   AssertKind,
+  DebugEntry,
   PickedElement,
   RawStep,
   RecorderState,
@@ -31,8 +32,9 @@ import type {
   TestRecord,
 } from "../recorder/types.js";
 import { sendToMain } from "./app-window.js";
+import { recorderDebugStore } from "./recorder-debug-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
-import { generateSpec } from "./script-generator.js";
+import { describeStep, generateSpec } from "./script-generator.js";
 import { testStore } from "./test-store.js";
 
 interface Session {
@@ -482,15 +484,24 @@ export const recorderService = {
    * live page and perform the action / evaluate the assertion via injected JS.
    * This is a synthetic-event preview, NOT Playwright's actionability engine, so
    * results can differ from a real run. Capture is paused for the duration so a
-   * replayed interaction is not re-recorded.
+   * replayed interaction is not re-recorded. Returns a DebugEntry (with verbose
+   * logs) that is also persisted to the per-test debug log store.
    */
-  async replayStep(stepId: string): Promise<{ ok: boolean; error?: string }> {
-    if (!session) return { ok: false, error: "No active recording session." };
-    if (!recWindow || recWindow.isDestroyed()) {
-      return { ok: false, error: "Recorder window is not open." };
-    }
-    const step = session.steps.find((s) => s.id === stepId);
-    if (!step) return { ok: false, error: "Step not found." };
+  async replayStep(stepId: string): Promise<DebugEntry> {
+    const empty = (error: string): DebugEntry => ({
+      stepId,
+      stepIndex: -1,
+      stepLabel: "",
+      ok: false,
+      error,
+      at: Date.now(),
+      logs: [{ i: 0, t: Date.now(), level: "error", m: error }],
+    });
+    if (!session) return empty("No active recording session.");
+    if (!recWindow || recWindow.isDestroyed()) return empty("Recorder window is not open.");
+    const idx = session.steps.findIndex((s) => s.id === stepId);
+    const step = session.steps[idx];
+    if (!step) return empty("Step not found.");
 
     const wc = recWindow.webContents;
     const wasPaused = session.paused;
@@ -501,12 +512,26 @@ export const recorderService = {
       const result = (await wc.executeJavaScript(buildReplayScript(step))) as {
         ok: boolean;
         error?: string;
+        logs?: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[];
       };
-      return result && typeof result.ok === "boolean"
-        ? result
-        : { ok: false, error: "Replay produced no result." };
+      const ok = !!(result && typeof result.ok === "boolean" && result.ok);
+      const error = ok ? undefined : result?.error || "Replay produced no result.";
+      const entry: DebugEntry = {
+        stepId,
+        stepIndex: idx,
+        stepLabel: describeStep(step),
+        ok,
+        error,
+        at: Date.now(),
+        logs: result?.logs ?? [],
+      };
+      if (!ok) logger.info("recorder", "replayStep failed", { stepId, error });
+      this.persistDebug(entry);
+      return entry;
     } catch (err) {
-      return { ok: false, error: String(err) };
+      const entry = empty(String(err));
+      this.persistDebug(entry);
+      return entry;
     } finally {
       session.paused = wasPaused;
       await applyStateAttributes().catch(() => {});
@@ -518,6 +543,7 @@ export const recorderService = {
    * that completes successfully — so the user can continue iterating manually
    * from that point. Like replayStep, capture is suppressed during the run.
    * Returns the index of the step it stopped after (or -1 if all failed / none).
+   * Each replayed step's DebugEntry is persisted along the way.
    */
   async replayFromStart(): Promise<{
     ok: boolean;
@@ -539,17 +565,39 @@ export const recorderService = {
           const result = (await wc.executeJavaScript(buildReplayScript(step))) as {
             ok: boolean;
             error?: string;
+            logs?: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[];
           };
-          if (result && result.ok) {
+          const ok = !!(result && result.ok);
+          const entry: DebugEntry = {
+            stepId: step.id,
+            stepIndex: i,
+            stepLabel: describeStep(step),
+            ok,
+            error: ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`,
+            at: Date.now(),
+            logs: result?.logs ?? [],
+          };
+          this.persistDebug(entry);
+          if (ok) {
             return { ok: true, stoppedAtIndex: i };
           }
           // Step failed — stop here so the user can iterate.
           return {
             ok: false,
             stoppedAtIndex: i,
-            error: result?.error || `Step ${i + 1} failed during replay.`,
+            error: entry.error,
           };
         } catch (err) {
+          const entry: DebugEntry = {
+            stepId: step.id,
+            stepIndex: i,
+            stepLabel: describeStep(step),
+            ok: false,
+            error: String(err),
+            at: Date.now(),
+            logs: [{ i: 0, t: Date.now(), level: "error", m: String(err) }],
+          };
+          this.persistDebug(entry);
           return { ok: false, stoppedAtIndex: i, error: String(err) };
         }
       }
@@ -561,6 +609,26 @@ export const recorderService = {
       session.paused = wasPaused;
       await applyStateAttributes().catch(() => {});
     }
+  },
+
+  /** Persist a debug entry for the current session's test and push to the renderer. */
+  persistDebug(entry: DebugEntry): void {
+    if (!session) return;
+    const all = recorderDebugStore.append(session.testId, entry);
+    sendToMain("recorder:debugLogs", { testId: session.testId, entries: all });
+  },
+
+  /** All persisted debug entries for a test (for the panel on session open). */
+  getDebugLogs(testId: string): DebugEntry[] {
+    return recorderDebugStore.get(testId);
+  },
+
+  /** Remove one step's debug entry for the current session's test. */
+  clearDebugLog(stepId: string): DebugEntry[] {
+    if (!session) return [];
+    const all = recorderDebugStore.remove(session.testId, stepId);
+    sendToMain("recorder:debugLogs", { testId: session.testId, entries: all });
+    return all;
   },
 
   stop(): void {

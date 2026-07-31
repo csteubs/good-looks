@@ -128,6 +128,36 @@ export interface RecorderSettings {
   showUrlBar: boolean;
 }
 
+/** A single verbose diagnostic line produced while replaying a step. */
+export interface DebugLogLine {
+  /** monotonic index within the step's log session */
+  i: number;
+  /** ms timestamp (Date.now()) when the line was produced */
+  t: number;
+  /** "info" | "warn" | "error" — controls tone in the panel */
+  level: "info" | "warn" | "error";
+  /** the diagnostic message */
+  m: string;
+}
+
+/** Persisted debug entry for a single step's replay attempt. */
+export interface DebugEntry {
+  /** step id this entry belongs to */
+  stepId: string;
+  /** 1-based step index at the time of replay (for display) */
+  stepIndex: number;
+  /** human-friendly step label at replay time */
+  stepLabel: string;
+  /** replay outcome */
+  ok: boolean;
+  /** short error string (mirrors the legacy `error` field) */
+  error?: string;
+  /** ms timestamp of the replay attempt */
+  at: number;
+  /** verbose, ordered diagnostic lines */
+  logs: DebugLogLine[];
+}
+
 export interface RecorderState {
   recording: boolean;
   paused: boolean;

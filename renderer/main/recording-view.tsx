@@ -13,7 +13,7 @@ import {
 } from "@glaze/core/components";
 import { Bug, ChevronDown, Crosshair, ListPlus, Pause, Play, Plus, Wand2, X } from "lucide-react";
 
-import type { AssertKind, RawStep, Step } from "../lib/recorder-types";
+import type { AssertKind, DebugEntry, RawStep, Step } from "../lib/recorder-types";
 import { describeStep } from "../lib/describe-step";
 import { useRecorder } from "./recorder-store";
 import { StepRow } from "./step-row";
@@ -84,22 +84,22 @@ function CursorGap({ active, onClick }: { active: boolean; onClick: () => void }
   );
 }
 
-/** Bottom panel showing replay/debug info for the selected step. */
+/** Bottom panel showing verbose, persisted replay diagnostics for the selected step. */
 function StepDebugPanel({
   step,
   selectedIndex,
-  result,
+  entry,
   onClear,
 }: {
   step: Step | null;
   selectedIndex: number;
-  result: { ok: boolean; error?: string; at: number } | null;
+  entry: DebugEntry | null;
   onClear: () => void;
 }) {
   if (!step) {
     return (
-      <div className="flex items-center gap-2 border-t border-separator px-4 py-2">
-        <Bug className="size-3.5 text-tertiary" />
+      <div className="flex h-24 items-center justify-center gap-2 border-t border-separator px-4">
+        <Bug className="size-4 text-tertiary" />
         <Text variant="small" color="tertiary">
           Select a step to see replay diagnostics.
         </Text>
@@ -108,12 +108,12 @@ function StepDebugPanel({
   }
   const label = `Step ${selectedIndex + 1}: ${describeStep(step)}`;
   let status: { text: string; tone: "ok" | "fail" | "pending" };
-  if (!result) {
+  if (!entry) {
     status = { text: "not yet replayed", tone: "pending" };
-  } else if (result.ok) {
+  } else if (entry.ok) {
     status = { text: "replayed successfully", tone: "ok" };
   } else {
-    status = { text: result.error || "failed", tone: "fail" };
+    status = { text: entry.error || "failed", tone: "fail" };
   }
   const toneClass =
     status.tone === "ok"
@@ -121,32 +121,76 @@ function StepDebugPanel({
       : status.tone === "fail"
         ? "text-support-red"
         : "text-tertiary";
+  const time = entry ? new Date(entry.at).toLocaleTimeString() : null;
   return (
-    <div className="flex items-start gap-2 border-t border-separator px-4 py-2">
-      <Bug className={`mt-0.5 size-3.5 shrink-0 ${toneClass}`} />
-      <div className="min-w-0 flex-1">
-        <Text variant="small" className="truncate" title={label}>
-          {label}
-        </Text>
-        <Text variant="small" color="secondary" className="break-words">
-          <span className={toneClass}>
-            {status.tone === "fail" ? `Step ${selectedIndex + 1}: ${status.text}` : status.text}
-          </span>
-        </Text>
+    <div className="flex h-56 flex-col border-t border-separator">
+      <div className="flex items-center justify-between gap-2 px-4 pt-2.5 pb-1.5">
+        <div className="flex min-w-0 items-center gap-2">
+          <Bug className={`size-4 shrink-0 ${toneClass}`} />
+          <Text variant="small" className="truncate" title={label}>
+            {label}
+          </Text>
+          <Text variant="small" color="tertiary" className="shrink-0">
+            <span className={toneClass}>
+              {status.tone === "fail"
+                ? `Step ${selectedIndex + 1}: ${status.text}`
+                : status.text}
+            </span>
+            {time ? ` · ${time}` : ""}
+          </Text>
+        </div>
+        {entry ? (
+          <Button
+            iconOnly
+            variant="transparent"
+            size="small"
+            className="shrink-0"
+            onClick={onClear}
+            aria-label="Clear replay diagnostic"
+            title="Clear replay diagnostic"
+          >
+            <X className="size-3.5" />
+          </Button>
+        ) : null}
       </div>
-      {result ? (
-        <Button
-          iconOnly
-          variant="transparent"
-          size="small"
-          className="mt-0.5 shrink-0"
-          onClick={onClear}
-          aria-label="Clear replay diagnostic"
-          title="Clear replay diagnostic"
-        >
-          <X className="size-3.5" />
-        </Button>
-      ) : null}
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="px-4 pb-3 pt-0.5">
+          {entry && entry.logs.length > 0 ? (
+            <div className="font-mono text-[11px] leading-relaxed">
+              {entry.logs.map((ln) => {
+                const tone =
+                  ln.level === "error"
+                    ? "text-support-red"
+                    : ln.level === "warn"
+                      ? "text-support-yellow"
+                      : "text-secondary";
+                return (
+                  <div key={ln.i} className="flex gap-2">
+                    <span className="shrink-0 select-none text-tertiary">
+                      {new Date(ln.t).toLocaleTimeString(undefined, {
+                        hour12: false,
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })}
+                    </span>
+                    <span className={`shrink-0 select-none uppercase ${tone}`}>
+                      {ln.level}
+                    </span>
+                    <span className={`whitespace-pre-wrap break-words ${tone}`}>
+                      {ln.m}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <Text variant="small" color="tertiary">
+              No diagnostic lines. Run ▶ replay to capture verbose output.
+            </Text>
+          )}
+        </div>
+      </ScrollArea>
     </div>
   );
 }
@@ -166,8 +210,8 @@ export function RecordingView() {
     setCursor,
     replayStep,
     replayFromStart,
-    replayResults,
-    clearReplayResult,
+    debugEntries,
+    clearDebugEntry,
     picked,
     refiningStepId,
     startRefine,
@@ -387,9 +431,13 @@ export function RecordingView() {
           selectedStepId ? liveSteps.find((s) => s.id === selectedStepId) ?? null : null
         }
         selectedIndex={selectedStepId ? liveSteps.findIndex((s) => s.id === selectedStepId) : -1}
-        result={selectedStepId ? replayResults[selectedStepId] ?? null : null}
+        entry={
+          selectedStepId
+            ? debugEntries.find((e) => e.stepId === selectedStepId) ?? null
+            : null
+        }
         onClear={() => {
-          if (selectedStepId) clearReplayResult(selectedStepId);
+          if (selectedStepId) clearDebugEntry(selectedStepId);
         }}
       />
 

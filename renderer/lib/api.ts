@@ -3,6 +3,7 @@
 
 import type {
   AssertKind,
+  DebugEntry,
   RawStep,
   RecorderSettings,
   RecorderState,
@@ -52,11 +53,15 @@ export const api = {
     setCursor: (index: number) =>
       ipc().invoke<RecorderState>("recorder:setCursor", { index }),
     replayStep: (stepId: string) =>
-      ipc().invoke<{ ok: boolean; error?: string }>("recorder:replayStep", { stepId }),
+      ipc().invoke<DebugEntry>("recorder:replayStep", { stepId }),
     replayFromStart: () =>
       ipc().invoke<{ ok: boolean; stoppedAtIndex: number; error?: string }>(
         "recorder:replayFromStart",
       ),
+    getDebugLogs: (testId: string) =>
+      ipc().invoke<DebugEntry[]>("recorder:getDebugLogs", { testId }),
+    clearDebugLog: (stepId: string) =>
+      ipc().invoke<DebugEntry[]>("recorder:clearDebugLog", { stepId }),
     startRefine: () => ipc().invoke<RecorderState>("recorder:startRefine"),
     endRefine: () => ipc().invoke<RecorderState>("recorder:endRefine"),
     stop: () => ipc().invoke<void>("recorder:stop"),

@@ -7,7 +7,14 @@ import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../lib/api";
-import type { AssertKind, PickedElement, RawStep, RecorderState, Step } from "../lib/recorder-types";
+import type {
+  AssertKind,
+  DebugEntry,
+  PickedElement,
+  RawStep,
+  RecorderState,
+  Step,
+} from "../lib/recorder-types";
 
 export interface RunInfo {
   lines: string[];
@@ -43,15 +50,16 @@ interface RecorderContextValue {
   reorderStep: (id: string, toIndex: number) => void;
   updateStep: (id: string, patch: Partial<Step>) => void;
   setCursor: (index: number) => void;
-  replayStep: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  replayStep: (id: string) => Promise<DebugEntry>;
   replayFromStart: () => Promise<{
     ok: boolean;
     stoppedAtIndex: number;
     error?: string;
   }>;
-  /** Per-step replay outcomes keyed by step id, for the debug panel. */
-  replayResults: Record<string, { ok: boolean; error?: string; at: number }>;
-  clearReplayResult: (id: string) => void;
+  /** Persisted per-step debug entries (latest attempt per step), for the debug panel. */
+  debugEntries: DebugEntry[];
+  /** Remove one step's debug entry (persists via backend). */
+  clearDebugEntry: (id: string) => void;
   picked: PickedElement | null;
   /** id of the step currently being refined (Refine Selector), or null */
   refiningStepId: string | null;
@@ -75,9 +83,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const [liveSteps, setLiveSteps] = React.useState<Step[]>([]);
   const [picked, setPicked] = React.useState<PickedElement | null>(null);
   const [refiningStepId, setRefiningStepId] = React.useState<string | null>(null);
-  const [replayResults, setReplayResults] = React.useState<
-    Record<string, { ok: boolean; error?: string; at: number }>
-  >({});
+  const [debugEntries, setDebugEntries] = React.useState<DebugEntry[]>([]);
   const [runs, setRuns] = React.useState<Record<string, RunInfo>>({});
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -107,6 +113,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
         return { ...prev, [runId]: { ...cur, running: false, code } };
       });
     });
+    const offDebug = api.on<{ testId: string; entries: DebugEntry[] }>(
+      "recorder:debugLogs",
+      ({ entries }) => setDebugEntries(entries ?? []),
+    );
 
     api.recorder.getState().then(setState).catch(() => {});
 
@@ -117,8 +127,19 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       offFinished();
       offOut();
       offDone();
+      offDebug();
     };
   }, [navigate, qc]);
+
+  // Load persisted debug logs whenever the active session's test changes, so
+  // the panel shows prior replay diagnostics after reopening the trainer.
+  React.useEffect(() => {
+    if (!state.testId) {
+      setDebugEntries([]);
+      return;
+    }
+    api.recorder.getDebugLogs(state.testId).then(setDebugEntries).catch(() => {});
+  }, [state.testId]);
 
   const start = React.useCallback(async (url: string, name: string, testId?: string) => {
     setLiveSteps([]);
@@ -148,33 +169,27 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   );
   const setCursor = React.useCallback((index: number) => void api.recorder.setCursor(index), []);
   const replayStep = React.useCallback(async (id: string) => {
-    const res = await api.recorder.replayStep(id);
-    setReplayResults((prev) => ({
-      ...prev,
-      [id]: { ok: res.ok, error: res.error, at: Date.now() },
-    }));
-    return res;
+    const entry = await api.recorder.replayStep(id);
+    // The backend pushes the full list via recorder:debugLogs, but update
+    // locally too so the panel reacts before the push round-trips.
+    setDebugEntries((prev) => {
+      const next = prev.filter((e) => e.stepId !== entry.stepId);
+      next.push(entry);
+      return next;
+    });
+    return entry;
   }, []);
   const replayFromStart = React.useCallback(async () => {
     const res = await api.recorder.replayFromStart();
-    if (res.stoppedAtIndex >= 0) {
-      const step = liveSteps[res.stoppedAtIndex];
-      if (step) {
-        setReplayResults((prev) => ({
-          ...prev,
-          [step.id]: { ok: res.ok, error: res.error, at: Date.now() },
-        }));
-      }
+    // The backend persists + pushes per-step entries during the run; refresh
+    // from the store so the panel reflects every replayed step.
+    if (state.testId) {
+      api.recorder.getDebugLogs(state.testId).then(setDebugEntries).catch(() => {});
     }
     return res;
-  }, [liveSteps]);
-  const clearReplayResult = React.useCallback((id: string) => {
-    setReplayResults((prev) => {
-      if (!prev[id]) return prev;
-      const next = { ...prev };
-      delete next[id];
-      return next;
-    });
+  }, [state.testId]);
+  const clearDebugEntry = React.useCallback((id: string) => {
+    api.recorder.clearDebugLog(id).then(setDebugEntries).catch(() => {});
   }, []);
   const startRefine = React.useCallback((stepId: string | null = null) => {
     setRefiningStepId(stepId);
@@ -207,8 +222,8 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     setCursor,
     replayStep,
     replayFromStart,
-    replayResults,
-    clearReplayResult,
+    debugEntries,
+    clearDebugEntry,
     picked,
     refiningStepId,
     startRefine,
