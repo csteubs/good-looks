@@ -150,10 +150,9 @@ const GENERATE_STEPS_SYSTEM_PROMPT = `You are an expert QA automation engineer e
 
 Output format:
 - Output ONLY a single fenced code block tagged "json" containing a JSON array of step objects. No prose before or after.
-- Each step is an object. Allowed "type" values: "goto", "click", "fill", "press", "select", "check", "uncheck", "assert", "wait", "viewport".
+- Each step is an object. Allowed "type" values: "click", "fill", "press", "select", "check", "uncheck", "assert", "wait", "viewport".
 - Locators use a "locator" object: { "k": <kind>, "v": <value>, "role": <ariaRole>, "name": <accessibleName> }. Locator kinds ("k"): "testid", "role", "label", "placeholder", "text", "css", "xpath". Prefer "role" (with "name"), "label", "placeholder", "text", or "testid" over "css"/"xpath".
 - Step fields by type:
-  - goto: { "type": "goto", "url": "..." }
   - click/check/uncheck: { "type": "click", "locator": {...} }
   - fill/select: { "type": "fill", "locator": {...}, "value": "..." }
   - press: { "type": "press", "value": "Enter", "locator": {...} }  (locator optional)
@@ -163,14 +162,13 @@ Output format:
   - viewport: { "type": "viewport", "width": 1280, "height": 800 }
 
 Rules:
-- Start with a "goto" step to the given URL.
+- Do NOT output a "goto" step. The test already starts by navigating to its URL (that is a test-level setting the user controls separately); you are only generating the steps that come AFTER navigation. Assume the page is already loaded at the starting URL.
 - Add assertions that verify the user's intent, not just that actions ran.
 - Do not invent selectors you can't justify from the description — prefer visible labels/roles/text.
 
 Example:
 \`\`\`json
 [
-  { "type": "goto", "url": "https://example.com/login" },
   { "type": "fill", "locator": { "k": "label", "v": "Email" }, "value": "test@example.com" },
   { "type": "fill", "locator": { "k": "label", "v": "Password" }, "value": "secret123" },
   { "type": "click", "locator": { "k": "role", "role": "button", "name": "Sign in" } },
@@ -181,7 +179,7 @@ Example:
 export interface GenerateStepsContext {
   /** The user's natural-language description of the test to generate. */
   prompt: string;
-  /** Starting URL the first goto step should navigate to. */
+  /** Starting URL — already handled by the test's Step 1 (Navigate to URL); provided as context only, not to be emitted as a step. */
   url: string;
   /** Optional browser viewport hint. */
   viewport?: { width: number; height: number };
@@ -215,7 +213,9 @@ function locatorToPrompt(l: Locator): string {
 }
 
 export function buildGenerateStepsMessages(ctx: GenerateStepsContext): LlmMessage[] {
-  const lines: string[] = [`Starting URL: ${ctx.url}`];
+  const lines: string[] = [
+    `Starting URL: ${ctx.url} (the test already navigates here as its first step — do NOT emit a "goto" step for it; assume the page is already loaded at this URL).`,
+  ];
   if (ctx.viewport) {
     lines.push(`Browser viewport: ${ctx.viewport.width}x${ctx.viewport.height}.`);
   }

@@ -128,12 +128,18 @@ export function GenerateStepsDialog({
   }, [prompt, url, selector, start]);
 
   const steps = status === "done" ? extractStepsJson(content) : null;
+  // Step 1 ("Navigate to URL") is a test-level setting the user controls in the
+  // Step 1 URL editor — the AI must only add the steps that come AFTER it. Drop
+  // any goto the model emits despite the prompt telling it not to.
+  const flowSteps = steps ? steps.filter((s) => s.type !== "goto") : null;
 
   const addSteps = () => {
-    if (!steps || steps.length === 0) return;
-    onInsert(steps);
+    if (!flowSteps || flowSteps.length === 0) return;
+    onInsert(flowSteps);
     setAdded(true);
-    toast.success(steps.length === 1 ? "Added 1 step." : `Added ${steps.length} steps.`);
+    toast.success(
+      flowSteps.length === 1 ? "Added 1 step." : `Added ${flowSteps.length} steps.`,
+    );
     onOpenChange(false);
   };
 
@@ -144,7 +150,7 @@ export function GenerateStepsDialog({
       open={open}
       onOpenChange={onOpenChange}
       title="Generate steps with AI"
-      description="Describe the flow. The local LLM proposes trainer steps you can reorder, edit, and replay before generating the spec."
+      description="Describe the flow after the starting URL. The local LLM proposes trainer steps (the test already navigates to its URL as Step 1) you can reorder, edit, and replay before generating the spec."
       size="large"
     >
       <div className="flex flex-col gap-4">
@@ -277,8 +283,8 @@ export function GenerateStepsDialog({
           {status === "streaming" ? <Status variant="loading">Generating</Status> : null}
           {status === "error" ? <Status variant="error">Error</Status> : null}
           {status === "done" ? (
-            <Status variant={steps ? "success" : "warning"}>
-              {steps ? `${steps.length} steps` : "No steps parsed"}
+            <Status variant={flowSteps ? "success" : "warning"}>
+              {flowSteps ? `${flowSteps.length} steps` : "No steps parsed"}
             </Status>
           ) : null}
           <div className="flex-1" />
@@ -291,9 +297,9 @@ export function GenerateStepsDialog({
               <Wand2 className="size-3.5" /> {content ? "Regenerate" : "Generate"}
             </Button>
           )}
-          {steps && steps.length > 0 ? (
+          {flowSteps && flowSteps.length > 0 ? (
             <Button size="small" variant="accent" onClick={addSteps} disabled={added}>
-              {added ? "Added" : `Add ${steps.length} steps`}
+              {added ? "Added" : `Add ${flowSteps.length} steps`}
             </Button>
           ) : null}
         </div>
@@ -309,8 +315,8 @@ export function GenerateStepsDialog({
                 <pre className="text-small whitespace-pre-wrap break-words text-primary">
                   {friendlyError(error)}
                 </pre>
-              ) : steps ? (
-                steps.map((s, i) => (
+              ) : flowSteps ? (
+                flowSteps.map((s, i) => (
                   <Text key={i} variant="small-mono" className="truncate">
                     {i + 1}. {s.type}
                     {s.locator ? ` · ${s.locator.k}:${s.locator.v ?? s.locator.role ?? ""}` : ""}
