@@ -11,13 +11,14 @@ import {
   ToolbarContent,
   ToolbarTitle,
 } from "@glaze/core/components";
-import { ChevronDown, ListPlus, Pause, Play, Plus, Wand2, X } from "lucide-react";
+import { ChevronDown, Crosshair, ListPlus, Pause, Play, Plus, Wand2, X } from "lucide-react";
 
 import type { AssertKind, RawStep } from "../lib/recorder-types";
 import { useRecorder } from "./recorder-store";
 import { StepRow } from "./step-row";
 import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "./add-step-dialog";
 import { GenerateStepsDialog } from "./generate-steps-dialog";
+import { RefineSelectorDialog } from "./refine-selector-dialog";
 
 // Assertions that can be captured by clicking an element in the page. Operand
 // assertions (value/attribute/count/url/title) need typed input, so they live in
@@ -96,6 +97,10 @@ export function RecordingView() {
     updateStep,
     setCursor,
     replayStep,
+    picked,
+    startRefine,
+    endRefine,
+    clearPicked,
   } = useRecorder();
 
   const [soft, setSoft] = React.useState(false);
@@ -213,11 +218,31 @@ export function RecordingView() {
           <Button size="small" variant="muted" onClick={openAddStepMenu}>
             <Plus className="size-3.5" /> Add step
           </Button>
+          <Button
+            size="small"
+            variant={state.refineMode ? "accent" : "muted"}
+            onClick={() => (state.refineMode ? endRefine() : startRefine())}
+          >
+            <Crosshair className="size-3.5" /> Refine selector
+          </Button>
           <Button size="small" variant="muted" onClick={() => setAiOpen(true)}>
             <Wand2 className="size-3.5" /> AI steps
           </Button>
         </div>
       </div>
+
+      {state.refineMode ? (
+        <div className="flex items-center gap-2 border-b border-separator bg-accent/5 px-4 py-2">
+          <Crosshair className="size-4 text-accent" />
+          <Text variant="small" color="blue" className="min-w-0">
+            Refine selector active — hover a component in the browser and click it to capture its
+            selector. The page won’t respond to clicks.
+          </Text>
+          <Button size="small" variant="transparent" className="ml-auto" onClick={endRefine}>
+            <X className="size-4" /> Cancel
+          </Button>
+        </div>
+      ) : null}
 
       <ScrollArea className="min-h-0 flex-1" autoScrollToBottom autoScrollDeps={[liveSteps.length]}>
         <div className="flex flex-col p-3">
@@ -271,6 +296,16 @@ export function RecordingView() {
         onOpenChange={setAiOpen}
         onInsert={(steps) => steps.forEach((s) => insertStep(s))}
       />
+      {picked ? (
+        <RefineSelectorDialog
+          picked={picked}
+          onInsert={(step) => insertStep(step)}
+          onClose={() => {
+            clearPicked();
+            endRefine();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

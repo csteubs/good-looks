@@ -108,6 +108,20 @@ export interface TestRecord {
   hidden?: boolean;
 }
 
+/** An element captured via the "Refine Selector" picker in the training window. */
+export interface PickedElement {
+  /** lowercase tag name, e.g. "button" */
+  tag: string;
+  /** human-readable descriptor, e.g. "button#submit.btn-primary" */
+  description: string;
+  /** every locator strategy that applies, best-first */
+  candidates: Locator[];
+  /** curated slice of computed styles */
+  css: Record<string, string>;
+  /** curated element attributes */
+  attributes: Record<string, string>;
+}
+
 /** Global trainer preferences, independent of any recording session. */
 export interface RecorderSettings {
   /** show the current page's URL in the training window's title bar (default true) */
@@ -128,4 +142,6 @@ export interface RecorderState {
   assertSoft: boolean;
   /** index new steps are inserted at (defaults to the end of the list) */
   cursor: number;
+  /** true while the "Refine Selector" element picker is active */
+  refineMode: boolean;
 }

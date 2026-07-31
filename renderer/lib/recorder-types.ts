@@ -87,6 +87,14 @@ export interface TestRecord {
   hidden?: boolean;
 }
 
+export interface PickedElement {
+  tag: string;
+  description: string;
+  candidates: Locator[];
+  css: Record<string, string>;
+  attributes: Record<string, string>;
+}
+
 export interface RecorderSettings {
   showUrlBar: boolean;
 }
@@ -102,4 +110,5 @@ export interface RecorderState {
   editing: boolean;
   assertSoft: boolean;
   cursor: number;
+  refineMode: boolean;
 }

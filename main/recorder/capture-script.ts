@@ -19,6 +19,10 @@ export const ATTR_QUEUE = "data-pw-queue";
 export const ATTR_PAUSED = "data-pw-paused";
 export const ATTR_ASSERT = "data-pw-assert";
 export const ATTR_ASSERT_SOFT = "data-pw-assert-soft";
+// "1" while the "Refine Selector" element picker is active.
+export const ATTR_REFINE = "data-pw-refine";
+// JSON of the picked element (candidates + css + attributes), drained by backend.
+export const ATTR_PICKED = "data-pw-picked";
 
 // Pure DOM helper functions shared verbatim by the capture script (which builds
 // a locator FROM an element) and the step replayer (which finds an element FROM
@@ -162,6 +166,9 @@ export const CAPTURE_SCRIPT = `
     document.documentElement.setAttribute("${ATTR_ASSERT}", "");
     document.documentElement.setAttribute("${ATTR_ASSERT_SOFT}", "0");
   }
+  function refineMode() {
+    return document.documentElement.getAttribute("${ATTR_REFINE}") === "1";
+  }
 
   function push(step) {
     var e = document.documentElement;
@@ -220,6 +227,136 @@ export const CAPTURE_SCRIPT = `
     return { k: "css", v: cssPath(el) };
   }
 
+  // ----- Refine Selector: hover bounding box + rich element capture -----
+
+  // Human-readable element tag, e.g. "button#submit.btn-primary".
+  function describeEl(el) {
+    var tag = el.tagName ? el.tagName.toLowerCase() : "?";
+    var s = tag;
+    if (el.id) {
+      s += "#" + el.id;
+    } else if (el.className && typeof el.className === "string") {
+      var cls = el.className.trim().split(/\\s+/).slice(0, 2).filter(Boolean);
+      if (cls.length) s += "." + cls.join(".");
+    }
+    return s;
+  }
+
+  // Absolute XPath for an element (id shortcut when unique, else positional).
+  function xpathFor(el) {
+    if (el.id && isUniqueId(el.id)) return "//*[@id=" + JSON.stringify(el.id) + "]";
+    var parts = [];
+    var node = el;
+    while (node && node.nodeType === 1) {
+      var tag = node.tagName.toLowerCase();
+      var ix = 1;
+      var sib = node.previousElementSibling;
+      while (sib) {
+        if (sib.tagName === node.tagName) ix++;
+        sib = sib.previousElementSibling;
+      }
+      parts.unshift(tag + "[" + ix + "]");
+      if (tag === "html") break;
+      node = node.parentElement;
+    }
+    return "/" + parts.join("/");
+  }
+
+  // Every locator strategy that applies to this element, best-first.
+  function candidatesFor(el) {
+    var out = [];
+    var tid =
+      (el.getAttribute && (el.getAttribute("data-testid") ||
+        el.getAttribute("data-test-id") ||
+        el.getAttribute("data-test"))) || "";
+    if (tid) out.push({ k: "testid", v: tid });
+    var role = roleOf(el);
+    var nm = accName(el);
+    if (role && nm) out.push({ k: "role", role: role, name: nm });
+    var lab = labelFor(el);
+    if (lab) out.push({ k: "label", v: lab });
+    var ph = el.getAttribute ? el.getAttribute("placeholder") : null;
+    if (ph) out.push({ k: "placeholder", v: ph });
+    var t = txt(el);
+    if (t && t.length <= 40) out.push({ k: "text", v: t });
+    if (role && !nm) out.push({ k: "role", role: role });
+    out.push({ k: "css", v: cssPath(el) });
+    out.push({ k: "xpath", v: xpathFor(el) });
+    return out;
+  }
+
+  // A curated slice of computed styles, for the review dialog's context.
+  function cssPropsOf(el) {
+    var out = {};
+    try {
+      var cs = window.getComputedStyle(el);
+      var keys = ["display", "position", "color", "backgroundColor", "fontSize",
+        "fontWeight", "width", "height", "visibility", "border"];
+      for (var i = 0; i < keys.length; i++) {
+        var v = cs[keys[i]];
+        if (v) out[keys[i]] = String(v);
+      }
+    } catch (e) {}
+    return out;
+  }
+
+  function attrsOf(el) {
+    var out = {};
+    var names = ["id", "class", "type", "name", "role", "href", "placeholder", "aria-label"];
+    for (var i = 0; i < names.length; i++) {
+      var v = el.getAttribute ? el.getAttribute(names[i]) : null;
+      if (v) out[names[i]] = v;
+    }
+    return out;
+  }
+
+  function buildPicked(el) {
+    return {
+      tag: el.tagName ? el.tagName.toLowerCase() : "",
+      description: describeEl(el),
+      candidates: candidatesFor(el),
+      css: cssPropsOf(el),
+      attributes: attrsOf(el),
+    };
+  }
+
+  // Floating overlay that tracks the hovered element in refine mode.
+  var refineBox = null;
+  function ensureBox() {
+    if (refineBox && refineBox.isConnected) return refineBox;
+    refineBox = document.createElement("div");
+    refineBox.setAttribute("data-pw-refine-box", "1");
+    refineBox.style.cssText =
+      "position:fixed;z-index:2147483647;pointer-events:none;box-sizing:border-box;" +
+      "border:2px solid #0a84ff;background:rgba(10,132,255,0.12);border-radius:2px;" +
+      "box-shadow:0 0 0 1px rgba(255,255,255,0.6);";
+    var lbl = document.createElement("div");
+    lbl.setAttribute("data-pw-refine-label", "1");
+    lbl.style.cssText =
+      "position:absolute;top:-20px;left:-2px;font:11px/16px -apple-system,system-ui,sans-serif;" +
+      "background:#0a84ff;color:#fff;padding:1px 6px;border-radius:3px;white-space:nowrap;" +
+      "max-width:360px;overflow:hidden;text-overflow:ellipsis;";
+    refineBox.appendChild(lbl);
+    (document.body || document.documentElement).appendChild(refineBox);
+    return refineBox;
+  }
+  function showBox(el) {
+    var b = ensureBox();
+    var r = el.getBoundingClientRect();
+    b.style.left = r.left + "px";
+    b.style.top = r.top + "px";
+    b.style.width = Math.max(0, r.width) + "px";
+    b.style.height = Math.max(0, r.height) + "px";
+    b.style.display = "block";
+    if (b.firstChild) b.firstChild.textContent = describeEl(el);
+  }
+  function hideBox() {
+    if (refineBox) refineBox.style.display = "none";
+  }
+  function isOverlay(el) {
+    return !!(el && el.getAttribute && el.getAttribute("data-pw-refine-box"));
+  }
+
   // assert-mode hover highlight
   var lastHi = null;
   function clearHi() {
@@ -229,9 +366,10 @@ export const CAPTURE_SCRIPT = `
     }
   }
   function onOver(e) {
-    if (!assertMode()) return;
     var el = e.target;
-    if (!el || el.nodeType !== 1) return;
+    if (!el || el.nodeType !== 1 || isOverlay(el)) return;
+    if (refineMode()) { showBox(el); return; }
+    if (!assertMode()) return;
     clearHi();
     lastHi = el;
     try {
@@ -241,6 +379,7 @@ export const CAPTURE_SCRIPT = `
     } catch (er) {}
   }
   function onOut() {
+    if (refineMode()) return; // box tracks via mouseover; keep it visible
     if (!assertMode()) return;
     clearHi();
   }
@@ -252,6 +391,21 @@ export const CAPTURE_SCRIPT = `
 
     // Always keep navigation in-window, regardless of pause/assert state.
     keepInWindow(el);
+
+    // Refine Selector: capture the element (no page interaction) and hand its
+    // locator candidates + CSS back to the app, then leave refine mode.
+    if (refineMode()) {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      try {
+        document.documentElement.setAttribute("${ATTR_PICKED}", JSON.stringify(buildPicked(el)));
+      } catch (er) {}
+      document.documentElement.setAttribute("${ATTR_REFINE}", "0");
+      hideBox();
+      try { if (document.body) document.body.style.cursor = ""; } catch (er) {}
+      return;
+    }
 
     var mode = assertMode();
     if (mode) {
@@ -335,5 +489,17 @@ export const DRAIN_SCRIPT = `
   var q = e.getAttribute("${ATTR_QUEUE}") || "[]";
   e.setAttribute("${ATTR_QUEUE}", "[]");
   return q;
+})()
+`;
+
+// Reads and clears the element picked in refine mode. Returns "" when nothing
+// has been picked since the last drain.
+export const DRAIN_PICKED_SCRIPT = `
+(function () {
+  var e = document.documentElement;
+  if (!e) return "";
+  var p = e.getAttribute("${ATTR_PICKED}") || "";
+  if (p) e.setAttribute("${ATTR_PICKED}", "");
+  return p;
 })()
 `;

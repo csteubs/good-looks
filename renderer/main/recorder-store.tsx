@@ -7,7 +7,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../lib/api";
-import type { AssertKind, RawStep, RecorderState, Step } from "../lib/recorder-types";
+import type { AssertKind, PickedElement, RawStep, RecorderState, Step } from "../lib/recorder-types";
 
 export interface RunInfo {
   lines: string[];
@@ -26,6 +26,7 @@ const EMPTY_STATE: RecorderState = {
   editing: false,
   assertSoft: false,
   cursor: 0,
+  refineMode: false,
 };
 
 interface RecorderContextValue {
@@ -43,6 +44,10 @@ interface RecorderContextValue {
   updateStep: (id: string, patch: Partial<Step>) => void;
   setCursor: (index: number) => void;
   replayStep: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  picked: PickedElement | null;
+  startRefine: () => void;
+  endRefine: () => void;
+  clearPicked: () => void;
   run: (id: string) => void;
   stopRun: (id: string) => void;
 }
@@ -58,6 +63,7 @@ export function useRecorder(): RecorderContextValue {
 export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = React.useState<RecorderState>(EMPTY_STATE);
   const [liveSteps, setLiveSteps] = React.useState<Step[]>([]);
+  const [picked, setPicked] = React.useState<PickedElement | null>(null);
   const [runs, setRuns] = React.useState<Record<string, RunInfo>>({});
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -67,6 +73,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     // The backend now owns step ordering (insert/reorder/edit), so it broadcasts
     // the whole list after every change and we replace our copy.
     const offSteps = api.on<Step[]>("recorder:steps", (steps) => setLiveSteps(steps ?? []));
+    const offPicked = api.on<PickedElement>("recorder:picked", (p) => setPicked(p));
     const offFinished = api.on<{ testId: string }>("recorder:finished", ({ testId }) => {
       setLiveSteps([]);
       qc.invalidateQueries({ queryKey: ["tests"] });
@@ -92,6 +99,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     return () => {
       offState();
       offSteps();
+      offPicked();
       offFinished();
       offOut();
       offDone();
@@ -126,6 +134,9 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   );
   const setCursor = React.useCallback((index: number) => void api.recorder.setCursor(index), []);
   const replayStep = React.useCallback((id: string) => api.recorder.replayStep(id), []);
+  const startRefine = React.useCallback(() => void api.recorder.startRefine(), []);
+  const endRefine = React.useCallback(() => void api.recorder.endRefine(), []);
+  const clearPicked = React.useCallback(() => setPicked(null), []);
   const run = React.useCallback((id: string) => {
     setRuns((prev) => ({ ...prev, [id]: { lines: [], running: true, code: null } }));
     api.runner.run(id, true).catch(() => {});
@@ -147,6 +158,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     updateStep,
     setCursor,
     replayStep,
+    picked,
+    startRefine,
+    endRefine,
+    clearPicked,
     run,
     stopRun,
   };

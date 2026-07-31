@@ -53,6 +53,8 @@ export const api = {
       ipc().invoke<RecorderState>("recorder:setCursor", { index }),
     replayStep: (stepId: string) =>
       ipc().invoke<{ ok: boolean; error?: string }>("recorder:replayStep", { stepId }),
+    startRefine: () => ipc().invoke<RecorderState>("recorder:startRefine"),
+    endRefine: () => ipc().invoke<RecorderState>("recorder:endRefine"),
     stop: () => ipc().invoke<void>("recorder:stop"),
     getState: () => ipc().invoke<RecorderState>("recorder:getState"),
     getSettings: () => ipc().invoke<RecorderSettings>("recorder:getSettings"),

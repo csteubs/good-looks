@@ -16,11 +16,20 @@ import {
   ATTR_ASSERT,
   ATTR_ASSERT_SOFT,
   ATTR_PAUSED,
+  ATTR_REFINE,
   CAPTURE_SCRIPT,
+  DRAIN_PICKED_SCRIPT,
   DRAIN_SCRIPT,
 } from "../recorder/capture-script.js";
 import { buildReplayScript } from "./step-replayer.js";
-import type { AssertKind, RawStep, RecorderState, Step, TestRecord } from "../recorder/types.js";
+import type {
+  AssertKind,
+  PickedElement,
+  RawStep,
+  RecorderState,
+  Step,
+  TestRecord,
+} from "../recorder/types.js";
 import { sendToMain } from "./app-window.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { generateSpec } from "./script-generator.js";
@@ -37,6 +46,8 @@ interface Session {
   assertSoft: boolean;
   /** index at which newly captured/inserted steps land (defaults to the end) */
   cursor: number;
+  /** the "Refine Selector" element picker is active in the training window */
+  refineMode: boolean;
   /** continuing/extending an existing test rather than recording a new one */
   editing: boolean;
   /** preserved from the original record when editing, else the session start time */
@@ -63,6 +74,7 @@ function currentState(): RecorderState {
     editing: session?.editing ?? false,
     assertSoft: session?.assertSoft ?? false,
     cursor: session?.cursor ?? 0,
+    refineMode: session?.refineMode ?? false,
   };
 }
 
@@ -122,15 +134,38 @@ async function applyStateAttributes(): Promise<void> {
   const paused = session.paused ? "1" : "0";
   const assert = session.assertMode ?? "";
   const soft = session.assertSoft ? "1" : "0";
+  const refine = session.refineMode ? "1" : "0";
+  const crosshair = session.assertMode || session.refineMode;
   await wc.executeJavaScript(
     '(function(){var e=document.documentElement;' +
       'e.setAttribute("' + ATTR_PAUSED + '","' + paused + '");' +
       'e.setAttribute("' + ATTR_ASSERT + '","' + assert + '");' +
       'e.setAttribute("' + ATTR_ASSERT_SOFT + '","' + soft + '");' +
+      'e.setAttribute("' + ATTR_REFINE + '","' + refine + '");' +
       'try{if(document.body)document.body.style.cursor=' +
-      (session.assertMode ? '"crosshair"' : '""') +
-      ";}catch(_){}})()",
+      (crosshair ? '"crosshair"' : '""') +
+      ';}catch(_){}' +
+      'try{if("' + refine + '"!=="1"){var b=document.querySelector("[data-pw-refine-box]");if(b)b.style.display="none";}}catch(_){}' +
+      "})()",
   );
+}
+
+/** Read and clear an element picked in refine mode; forward it to the app. */
+async function drainPicked(): Promise<void> {
+  if (!recWindow || recWindow.isDestroyed() || !session || !session.refineMode) return;
+  try {
+    const json = (await recWindow.webContents.executeJavaScript(DRAIN_PICKED_SCRIPT)) as string;
+    if (!json) return;
+    const picked = JSON.parse(json) as PickedElement;
+    // The page already left refine mode on click; mirror it in the session and
+    // drop the overlay. Stay paused until the review dialog resolves (endRefine).
+    session.refineMode = false;
+    await applyStateAttributes();
+    sendToMain("recorder:picked", picked);
+    broadcastState();
+  } catch {
+    // Page may be mid-navigation; the next poll retries.
+  }
 }
 
 async function drain(): Promise<void> {
@@ -159,7 +194,10 @@ function updateTitle(): void {
 
 function startPolling(): void {
   if (pollTimer) return;
-  pollTimer = setInterval(() => void drain(), POLL_INTERVAL_MS);
+  pollTimer = setInterval(() => {
+    void drain();
+    void drainPicked();
+  }, POLL_INTERVAL_MS);
 }
 
 function stopPolling(): void {
@@ -207,6 +245,7 @@ export const recorderService = {
       paused: false,
       assertMode: null,
       assertSoft: false,
+      refineMode: false,
       cursor: existingSteps.length,
       editing,
       createdAt,
@@ -325,6 +364,33 @@ export const recorderService = {
       session.assertSoft = mode ? soft : false;
       await applyStateAttributes();
       if (mode && recWindow && !recWindow.isDestroyed()) recWindow.focus();
+      broadcastState();
+    }
+    return currentState();
+  },
+
+  /** Enter "Refine Selector" mode: pause capture and let the user pick an
+   *  element in the training window without interacting with the page. */
+  async startRefine(): Promise<RecorderState> {
+    if (session) {
+      session.refineMode = true;
+      session.paused = true;
+      session.assertMode = null;
+      session.assertSoft = false;
+      await applyStateAttributes();
+      if (recWindow && !recWindow.isDestroyed()) recWindow.focus();
+      broadcastState();
+    }
+    return currentState();
+  },
+
+  /** Leave refine mode and resume the recording session (after the review
+   *  dialog resolves, or when the user cancels the picker). */
+  async endRefine(): Promise<RecorderState> {
+    if (session) {
+      session.refineMode = false;
+      session.paused = false;
+      await applyStateAttributes();
       broadcastState();
     }
     return currentState();

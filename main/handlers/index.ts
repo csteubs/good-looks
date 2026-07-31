@@ -101,6 +101,8 @@ export function registerHandlers(): void {
   ipcMain.handle("recorder:replayStep", async (_e, params: { stepId: string }) =>
     recorderService.replayStep(params.stepId),
   );
+  ipcMain.handle("recorder:startRefine", async () => recorderService.startRefine());
+  ipcMain.handle("recorder:endRefine", async () => recorderService.endRefine());
   ipcMain.handle("recorder:stop", async () => {
     recorderService.stop();
   });
