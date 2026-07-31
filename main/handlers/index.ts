@@ -16,7 +16,7 @@ import { importService } from "../services/import-service.js";
 import { generateSpec } from "../services/script-generator.js";
 import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
-import type { AssertKind, TestSpeed } from "../recorder/types.js";
+import type { AssertKind, TestRecord, TestSpeed } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 
 import { ipcMain, logger } from "@glaze/core/backend";
@@ -139,6 +139,36 @@ export function registerHandlers(): void {
     testStore.save(rec);
     return rec;
   });
+
+  // Create a new test from an LLM-generated spec (prompt-driven generation).
+  // Unlike a recorded test, there are no captured steps — the script is the
+  // source of truth, so it's saved as scriptEdited with an empty steps array.
+  ipcMain.handle(
+    "tests:createFromPrompt",
+    async (
+      _e,
+      params: { name: string; url: string; speed?: TestSpeed; source: string },
+    ) => {
+      const { randomUUID } = await import("crypto");
+      const id = randomUUID();
+      const now = Date.now();
+      const name = params.name.trim() || "Generated test";
+      const rec: TestRecord = {
+        id,
+        name,
+        url: params.url.trim(),
+        createdAt: now,
+        updatedAt: now,
+        steps: [],
+        scriptPath: testStore.writeScript(id, params.source),
+        scriptEdited: true,
+        speed: params.speed ?? "fast",
+      };
+      testStore.save(rec);
+      logger.info("handlers", "Created test from prompt", { id, name });
+      return rec;
+    },
+  );
 
   // ── Import handlers ─────────────────────────────────────────────────
   ipcMain.handle("tests:importFiles", async () => importService.importFromFiles());

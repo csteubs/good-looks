@@ -47,6 +47,12 @@ export const api = {
       ipc().invoke<TestRecord>("tests:rename", { id, name }),
     updateScript: (id: string, source: string) =>
       ipc().invoke<TestRecord>("tests:updateScript", { id, source }),
+    createFromPrompt: (params: {
+      name: string;
+      url: string;
+      speed?: TestSpeed;
+      source: string;
+    }) => ipc().invoke<TestRecord>("tests:createFromPrompt", params),
     setSpeed: (id: string, speed: TestSpeed) =>
       ipc().invoke<TestRecord>("tests:setSpeed", { id, speed }),
     setHidden: (id: string, hidden: boolean) =>

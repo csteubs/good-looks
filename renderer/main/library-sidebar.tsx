@@ -23,6 +23,7 @@ import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff } from "lucide-react";
 import { api } from "../lib/api";
 import type { TestRecord, TestSpeed } from "../lib/recorder-types";
 import { NewRecordingDialog } from "./new-recording-dialog";
+import { GenerateTestDialog } from "./generate-test-dialog";
 import { ImportGitDialog } from "./import-git-dialog";
 
 const SPEEDS: TestSpeed[] = ["slow", "medium", "fast"];
@@ -123,6 +124,7 @@ export function LibrarySidebar() {
   const params = useParams({ strict: false }) as { id?: string };
   const selectedId = params.id;
   const [dialogOpen, setDialogOpen] = React.useState(false);
+  const [generateOpen, setGenerateOpen] = React.useState(false);
   const [gitDialogOpen, setGitDialogOpen] = React.useState(false);
 
   const { data: tests = [] } = useQuery({ queryKey: ["tests"], queryFn: api.tests.list });
@@ -147,13 +149,15 @@ export function LibrarySidebar() {
       x: Math.round(rect.left),
       y: Math.round(rect.bottom),
       items: [
-        { label: "Create New", commandId: 1 },
+        { label: "Train manually", commandId: 1 },
+        { label: "Generate from prompt", commandId: 4 },
         { type: "separator" },
         { label: "Select from files", commandId: 2 },
         { label: "From URL", commandId: 3 },
       ],
     });
     if (res.commandId === 1) setDialogOpen(true);
+    else if (res.commandId === 4) setGenerateOpen(true);
     else if (res.commandId === 2) void importFromFiles();
     else if (res.commandId === 3) setGitDialogOpen(true);
   };
@@ -175,7 +179,7 @@ export function LibrarySidebar() {
       {tests.length === 0 ? (
         <div className="px-3 py-2">
           <Text variant="small" color="secondary">
-            No tests yet. Click + to record, import, or clone your first one.
+            No tests yet. Click + to train, generate, import, or clone your first one.
           </Text>
         </div>
       ) : (
@@ -228,6 +232,7 @@ export function LibrarySidebar() {
         </SidebarList>
       )}
       <NewRecordingDialog open={dialogOpen} onOpenChange={setDialogOpen} />
+      <GenerateTestDialog open={generateOpen} onOpenChange={setGenerateOpen} />
       <ImportGitDialog open={gitDialogOpen} onOpenChange={setGitDialogOpen} />
     </Sidebar>
   );

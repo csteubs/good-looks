@@ -77,3 +77,65 @@ export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
     },
   ];
 }
+
+// ── Test generation by prompt ──────────────────────────────────────────
+// A separate system prompt for generating a brand-new Playwright spec from a
+// natural-language description, reusing the same locator conventions as the
+// recorder so generated tests match hand-recorded ones.
+
+const GENERATE_SYSTEM_PROMPT = `You are an expert QA automation engineer embedded in a Playwright test recorder app. Your task is to write a complete, runnable @playwright/test spec from a natural-language description.
+
+This app's generated specs always follow these conventions — follow them exactly:
+- Locators prefer getByRole, getByTestId, getByLabel, getByPlaceholder, or getByText over a raw CSS locator(). Use a raw locator() only when no better handle exists.
+  Bad:  await page.click('.btn-submit');
+  Good: await page.getByRole('button', { name: 'Submit' }).click();
+- No page.waitForTimeout(). Waits must be web-first assertions, e.g. expect(locator).toBeVisible() or expect(locator).toContainText().
+- Start every test by navigating to the requested URL with await page.goto(...).
+- Add assertions that verify the user's intent, not just that actions ran.
+
+Output format:
+- Output ONLY the complete spec file inside a single fenced code block with a "ts" language tag. No prose before or after the block.
+- The file must start with the import line and contain exactly one test(...) call, ready to save and run as-is.
+- If the prompt is too vague to produce a runnable test, output a single fenced block containing a one-line comment explaining what's missing instead — do not guess.`;
+
+export interface GenerateContext {
+  /** The user's natural-language description of the test to generate. */
+  prompt: string;
+  /** Starting URL to navigate to (the test's first step). */
+  url: string;
+  /** Test name / title for the test(...) call. */
+  name: string;
+  /** Playback speed hint — affects how the test will be run, not the code. */
+  speed?: TestSpeed;
+  /** Optional browser viewport (width x height) the test should assume. */
+  viewport?: { width: number; height: number };
+}
+
+export function buildGenerateMessages(ctx: GenerateContext): LlmMessage[] {
+  const optLines: string[] = [
+    `Test name: ${ctx.name}`,
+    `Starting URL: ${ctx.url}`,
+  ];
+  if (ctx.speed && ctx.speed !== "fast") {
+    const slowMo = SLOW_MO_MS[ctx.speed];
+    optLines.push(
+      `Playback speed: "${ctx.speed}" — the runner inserts an artificial ${slowMo}ms delay between actions, so the test does not need its own waits.`,
+    );
+  }
+  if (ctx.viewport) {
+    optLines.push(
+      `Browser viewport: ${ctx.viewport.width}x${ctx.viewport.height} (the test should assume this window size).`,
+    );
+  }
+
+  return [
+    { role: "system", content: GENERATE_SYSTEM_PROMPT },
+    {
+      role: "user",
+      content:
+        optLines.join("\n") +
+        `\n\nTest description:\n${ctx.prompt.trim()}\n\n` +
+        `Output the complete spec in a single fenced \`\`\`ts block.`,
+    },
+  ];
+}
