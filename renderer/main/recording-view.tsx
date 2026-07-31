@@ -98,6 +98,7 @@ export function RecordingView() {
     updateStep,
     setCursor,
     replayStep,
+    replayFromStart,
     picked,
     refiningStepId,
     startRefine,
@@ -108,6 +109,23 @@ export function RecordingView() {
   const [soft, setSoft] = React.useState(false);
   const [addKind, setAddKind] = React.useState<AddStepKind | null>(null);
   const [aiOpen, setAiOpen] = React.useState(false);
+  const [replayStatus, setReplayStatus] = React.useState<string | null>(null);
+
+  const onReplayFromStart = async () => {
+    setReplayStatus("Replaying from start…");
+    const res = await replayFromStart();
+    if (res.stoppedAtIndex < 0) {
+      setReplayStatus(res.ok ? "No steps to replay." : res.error || "Replay failed.");
+    } else {
+      setReplayStatus(
+        res.ok
+          ? `Replayed through step ${res.stoppedAtIndex + 1} — paused. Iterate manually.`
+          : `Paused at step ${res.stoppedAtIndex + 1}: ${res.error || "failed"}`,
+      );
+    }
+    // Clear the status after a few seconds so it doesn't linger.
+    window.setTimeout(() => setReplayStatus(null), 6000);
+  };
 
   // Drag-to-reorder bookkeeping.
   const [dragId, setDragId] = React.useState<string | null>(null);
@@ -188,6 +206,20 @@ export function RecordingView() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-b border-separator px-4 py-2">
+        <Button
+          size="small"
+          variant="muted"
+          onClick={onReplayFromStart}
+          aria-label="Replay steps from the beginning"
+          title="Replay steps from the beginning, pausing after the first success"
+        >
+          <Play className="size-3.5" /> Replay from start
+        </Button>
+        {replayStatus ? (
+          <Text variant="small" color="secondary" className="shrink-0">
+            {replayStatus}
+          </Text>
+        ) : null}
         <Text variant="small" color="secondary" className="shrink-0">
           Add assertion:
         </Text>

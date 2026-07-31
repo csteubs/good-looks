@@ -513,6 +513,56 @@ export const recorderService = {
     }
   },
 
+  /**
+   * Replay recorded steps from the beginning, stopping after the first step
+   * that completes successfully — so the user can continue iterating manually
+   * from that point. Like replayStep, capture is suppressed during the run.
+   * Returns the index of the step it stopped after (or -1 if all failed / none).
+   */
+  async replayFromStart(): Promise<{
+    ok: boolean;
+    stoppedAtIndex: number;
+    error?: string;
+  }> {
+    if (!session) return { ok: false, stoppedAtIndex: -1, error: "No active recording session." };
+    if (!recWindow || recWindow.isDestroyed()) {
+      return { ok: false, stoppedAtIndex: -1, error: "Recorder window is not open." };
+    }
+    const wc = recWindow.webContents;
+    const wasPaused = session.paused;
+    try {
+      session.paused = true;
+      await applyStateAttributes();
+      for (let i = 0; i < session.steps.length; i++) {
+        const step = session.steps[i];
+        try {
+          const result = (await wc.executeJavaScript(buildReplayScript(step))) as {
+            ok: boolean;
+            error?: string;
+          };
+          if (result && result.ok) {
+            return { ok: true, stoppedAtIndex: i };
+          }
+          // Step failed — stop here so the user can iterate.
+          return {
+            ok: false,
+            stoppedAtIndex: i,
+            error: result?.error || `Step ${i + 1} failed during replay.`,
+          };
+        } catch (err) {
+          return { ok: false, stoppedAtIndex: i, error: String(err) };
+        }
+      }
+      // No steps to replay.
+      return { ok: true, stoppedAtIndex: -1 };
+    } catch (err) {
+      return { ok: false, stoppedAtIndex: -1, error: String(err) };
+    } finally {
+      session.paused = wasPaused;
+      await applyStateAttributes().catch(() => {});
+    }
+  },
+
   stop(): void {
     if (recWindow && !recWindow.isDestroyed()) {
       recWindow.close();

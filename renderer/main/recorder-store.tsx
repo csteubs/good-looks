@@ -44,6 +44,11 @@ interface RecorderContextValue {
   updateStep: (id: string, patch: Partial<Step>) => void;
   setCursor: (index: number) => void;
   replayStep: (id: string) => Promise<{ ok: boolean; error?: string }>;
+  replayFromStart: () => Promise<{
+    ok: boolean;
+    stoppedAtIndex: number;
+    error?: string;
+  }>;
   picked: PickedElement | null;
   /** id of the step currently being refined (Refine Selector), or null */
   refiningStepId: string | null;
@@ -137,6 +142,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   );
   const setCursor = React.useCallback((index: number) => void api.recorder.setCursor(index), []);
   const replayStep = React.useCallback((id: string) => api.recorder.replayStep(id), []);
+  const replayFromStart = React.useCallback(() => api.recorder.replayFromStart(), []);
   const startRefine = React.useCallback((stepId: string | null = null) => {
     setRefiningStepId(stepId);
     void api.recorder.startRefine();
@@ -167,6 +173,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     updateStep,
     setCursor,
     replayStep,
+    replayFromStart,
     picked,
     refiningStepId,
     startRefine,
