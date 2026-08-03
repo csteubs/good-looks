@@ -11,6 +11,7 @@ import { app, logger } from "@glaze/core/backend";
 
 import { sendToMain } from "./app-window.js";
 import { getScriptsDir, testStore } from "./test-store.js";
+import { runHistoryStore } from "./run-history-store.js";
 import { stepReporterSource } from "./step-reporter-source.js";
 import type { TestSpeed } from "../recorder/types.js";
 
@@ -168,6 +169,8 @@ function baseEnv(nodeModules: string): NodeJS.ProcessEnv {
 }
 
 function emitOutput(runId: string, stream: "stdout" | "stderr" | "system", chunk: string): void {
+  const buf = logBuffers.get(runId);
+  if (buf) buf.push(chunk);
   sendToMain("runner:output", { runId, stream, chunk });
 }
 
@@ -176,6 +179,10 @@ function emitOutput(runId: string, stream: "stdout" | "stderr" | "system", chunk
 // a trailing partial line until the next chunk completes it.
 const stdoutBuffers = new Map<string, string>();
 const stepLineMaps = new Map<string, Map<number, number> | null>();
+
+// Per-run accumulation of the visible console output (markers stripped), so a
+// completed run can be persisted to the run-history log database.
+const logBuffers = new Map<string, string[]>();
 
 function emitStep(runId: string, index: number, status: "begin" | "end", ok: boolean): void {
   sendToMain("runner:step", { runId, index, status, ok });
@@ -268,6 +275,9 @@ export const playwrightRunner = {
       throw new Error("Test not found: " + params.testId);
     }
 
+    const startedAt = Date.now();
+    logBuffers.set(runId, []);
+
     void (async () => {
       let exitCode = -1;
       try {
@@ -309,6 +319,26 @@ export const playwrightRunner = {
         emitOutput(runId, "system", "\nError: " + String(err) + "\n");
       } finally {
         runs.delete(runId);
+        // Persist this run to the log database (metadata + raw output).
+        const logText = (logBuffers.get(runId) ?? []).join("");
+        logBuffers.delete(runId);
+        try {
+          runHistoryStore.append(
+            {
+              testId: rec.id,
+              testName: rec.name,
+              url: rec.url,
+              status: exitCode === 0 ? "passed" : "failed",
+              exitCode,
+              startedAt,
+              finishedAt: Date.now(),
+            },
+            logText,
+          );
+          sendToMain("runs:changed", {});
+        } catch (err) {
+          logger.warn("runner", "Failed to persist run history", { err: String(err) });
+        }
         sendToMain("runner:done", { runId, code: exitCode });
       }
     })();

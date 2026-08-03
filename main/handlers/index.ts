@@ -11,6 +11,7 @@ import { appHandlers } from "./app.js";
 import { getSettingsWindow, openSettingsWindow } from "../windows/settings-window.js";
 import { recorderService } from "../services/recorder-service.js";
 import { playwrightRunner } from "../services/playwright-runner.js";
+import { runHistoryStore } from "../services/run-history-store.js";
 import { testStore } from "../services/test-store.js";
 import { importService } from "../services/import-service.js";
 import { generateSpec } from "../services/script-generator.js";
@@ -293,6 +294,29 @@ export function registerHandlers(): void {
     running: playwrightRunner.isRunning(params.runId),
     browserInstalled: playwrightRunner.isBrowserInstalled(),
   }));
+
+  // ── Run history / stats handlers ────────────────────────────────────
+  ipcMain.handle("runs:list", async () => runHistoryStore.list());
+  ipcMain.handle("runs:getLog", async (_e, params: { id: string }) =>
+    runHistoryStore.readLog(params.id),
+  );
+  ipcMain.handle("runs:searchLogs", async (_e, params: { query: string }) =>
+    runHistoryStore.searchLogs(params?.query ?? ""),
+  );
+  ipcMain.handle("runs:resetStats", async () => runHistoryStore.resetStats());
+  ipcMain.handle("runs:deleteAll", async () => runHistoryStore.deleteAll());
+  ipcMain.handle(
+    "runs:deleteRange",
+    async (_e, params: { fromMs: number; toMs: number }) => {
+      const from = Number(params?.fromMs);
+      const to = Number(params?.toMs);
+      if (!Number.isFinite(from) || !Number.isFinite(to)) {
+        throw new Error("Invalid date range");
+      }
+      return runHistoryStore.deleteRange(Math.min(from, to), Math.max(from, to));
+    },
+  );
+  ipcMain.handle("runs:logsDir", async () => runHistoryStore.logsDirPath());
 
   logger.info("handlers", "✓ IPC handlers registered");
 }

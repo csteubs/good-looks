@@ -4,9 +4,11 @@
 import type {
   AssertKind,
   DebugEntry,
+  LogSearchResult,
   RawStep,
   RecorderSettings,
   RecorderState,
+  RunRecord,
   Step,
   TestRecord,
   TestSpeed,
@@ -100,6 +102,17 @@ export const api = {
     run: (id: string, headed: boolean) =>
       ipc().invoke<{ runId: string }>("runner:run", { id, headed }),
     stop: (runId: string) => ipc().invoke<void>("runner:stop", { runId }),
+  },
+  runs: {
+    list: () => ipc().invoke<RunRecord[]>("runs:list"),
+    getLog: (id: string) => ipc().invoke<string>("runs:getLog", { id }),
+    searchLogs: (query: string) =>
+      ipc().invoke<LogSearchResult[]>("runs:searchLogs", { query }),
+    resetStats: () => ipc().invoke<{ removed: number }>("runs:resetStats"),
+    deleteAll: () => ipc().invoke<{ removed: number }>("runs:deleteAll"),
+    deleteRange: (fromMs: number, toMs: number) =>
+      ipc().invoke<{ removed: number }>("runs:deleteRange", { fromMs, toMs }),
+    logsDir: () => ipc().invoke<string>("runs:logsDir"),
   },
   llm: {
     getConfig: () => ipc().invoke<LlmConfig>("llm:getConfig"),

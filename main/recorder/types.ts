@@ -135,6 +135,40 @@ export interface TestRecord {
   stepsDiverged?: boolean;
 }
 
+/** A single completed test run, persisted to run-history.json. The raw console
+ *  output for the run lives in a sibling .log file (see logFile) so large
+ *  outputs stay out of the JSON index. */
+export interface RunRecord {
+  /** unique per run (not the testId — one test has many runs) */
+  id: string;
+  testId: string;
+  testName: string;
+  url: string;
+  status: "passed" | "failed";
+  exitCode: number;
+  /** epoch ms */
+  startedAt: number;
+  /** epoch ms */
+  finishedAt: number;
+  durationMs: number;
+  /** absolute path to the raw console-output .log file for this run */
+  logFile: string;
+  /** size of the log file in bytes (0 if the raw log was deleted but the
+   *  record kept, or if the log could not be read) */
+  logBytes: number;
+}
+
+/** A hit from searching the raw run logs. */
+export interface LogSearchResult {
+  runId: string;
+  testName: string;
+  status: "passed" | "failed";
+  startedAt: number;
+  matchCount: number;
+  /** a short excerpt of the log around the first match */
+  snippet: string;
+}
+
 /** An element captured via the "Refine Selector" picker in the training window. */
 export interface PickedElement {
   /** lowercase tag name, e.g. "button" */

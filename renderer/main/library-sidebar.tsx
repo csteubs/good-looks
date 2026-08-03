@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Button,
@@ -18,7 +18,7 @@ import {
   Text,
   toast,
 } from "@glaze/core/components";
-import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff } from "lucide-react";
+import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3 } from "lucide-react";
 
 import { api } from "../lib/api";
 import type { TestRecord, TestSpeed } from "../lib/recorder-types";
@@ -123,6 +123,7 @@ export function LibrarySidebar() {
   const qc = useQueryClient();
   const params = useParams({ strict: false }) as { id?: string };
   const selectedId = params.id;
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [generateOpen, setGenerateOpen] = React.useState(false);
   const [gitDialogOpen, setGitDialogOpen] = React.useState(false);
@@ -176,6 +177,15 @@ export function LibrarySidebar() {
         </Button>
       }
     >
+      <SidebarList>
+        <SidebarListItem
+          icon={<BarChart3 className="size-4" />}
+          title="Stats"
+          subtitle="Run history & logs"
+          selected={pathname === "/stats"}
+          onClick={() => navigate({ to: "/stats" })}
+        />
+      </SidebarList>
       {tests.length === 0 ? (
         <div className="px-3 py-2">
           <Text variant="small" color="secondary">

@@ -105,6 +105,31 @@ export interface TestRecord {
   stepsDiverged?: boolean;
 }
 
+/** A single completed test run (mirror of main/recorder/types.ts RunRecord). */
+export interface RunRecord {
+  id: string;
+  testId: string;
+  testName: string;
+  url: string;
+  status: "passed" | "failed";
+  exitCode: number;
+  startedAt: number;
+  finishedAt: number;
+  durationMs: number;
+  logFile: string;
+  logBytes: number;
+}
+
+/** A hit from searching the raw run logs. */
+export interface LogSearchResult {
+  runId: string;
+  testName: string;
+  status: "passed" | "failed";
+  startedAt: number;
+  matchCount: number;
+  snippet: string;
+}
+
 export interface PickedElement {
   tag: string;
   description: string;
