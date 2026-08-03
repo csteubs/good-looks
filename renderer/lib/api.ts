@@ -135,6 +135,18 @@ export const api = {
     readShot: (testId: string, runId: string, file: string) =>
       ipc().invoke<string | null>("artifacts:readShot", { testId, runId, file }),
   },
+  visual: {
+    getThreshold: (testId: string) =>
+      ipc().invoke<number>("visual:getThreshold", { testId }),
+    setThreshold: (testId: string, threshold: number) =>
+      ipc().invoke<number>("visual:setThreshold", { testId, threshold }),
+    acceptRun: (testId: string, runId: string) =>
+      ipc().invoke<RunReplay | null>("visual:acceptRun", { testId, runId }),
+    acceptStep: (testId: string, runId: string, stepId: string) =>
+      ipc().invoke<RunReplay | null>("visual:acceptStep", { testId, runId, stepId }),
+    baselineShot: (testId: string, stepId: string) =>
+      ipc().invoke<string | null>("visual:baselineShot", { testId, stepId }),
+  },
   llm: {
     getConfig: () => ipc().invoke<LlmConfig>("llm:getConfig"),
     setConfig: (update: Partial<LlmConfig>) => ipc().invoke<LlmConfig>("llm:setConfig", update),

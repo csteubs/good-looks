@@ -1,11 +1,14 @@
 import * as React from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Badge,
   Button,
   Callout,
   EmptyState,
+  NumberInput,
   ScrollArea,
+  SegmentedControl,
+  SegmentedControlItem,
   Text,
   Toolbar,
   ToolbarContent,
@@ -16,7 +19,10 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleSlash,
+  Diff,
+  Eye,
   ImageOff,
+  Stamp,
   TriangleAlert,
   X,
 } from "lucide-react";
@@ -27,6 +33,8 @@ import type {
   ReplayStepStatus,
   RunReplay,
   RunReplaySummary,
+  VisualDiff,
+  VisualDiffState,
 } from "../lib/recorder-types";
 
 // ── Formatting ─────────────────────────────────────────────────────────
@@ -37,6 +45,13 @@ function fmtDateTime(ms: number): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function fmtPct(ratio: number): string {
+  const pct = ratio * 100;
+  if (pct === 0) return "0%";
+  if (pct < 0.01) return "<0.01%";
+  return `${pct.toFixed(2)}%`;
 }
 
 // ── Status → colors/labels ─────────────────────────────────────────────
@@ -65,25 +80,76 @@ function statusLabel(status: ReplayStepStatus): string {
   return "Not reported";
 }
 
-// ── Screenshot pane for the currently-selected step ─────────────────────
+// ── Visual-diff → badge ─────────────────────────────────────────────────
+function diffBadgeColor(state: VisualDiffState): "green" | "orange" | "yellow" | "secondary" {
+  switch (state) {
+    case "match":
+      return "green";
+    case "changed":
+      return "orange";
+    case "unable":
+      return "yellow";
+    default:
+      return "secondary";
+  }
+}
+
+function DiffBadge({ diff }: { diff: VisualDiff }) {
+  let label: string;
+  switch (diff.state) {
+    case "new-baseline":
+      label = "Baseline set";
+      break;
+    case "match":
+      label = "Visual match";
+      break;
+    case "changed":
+      label = `Changed ${fmtPct(diff.ratio ?? 0)}`;
+      break;
+    default:
+      label = "Can’t compare";
+  }
+  return (
+    <Badge color={diffBadgeColor(diff.state)} className="shrink-0" title={diff.reason}>
+      {label}
+    </Badge>
+  );
+}
+
+// ── Screenshot pane (current / baseline / diff-overlay) ─────────────────
+type ShotMode = "current" | "baseline" | "diff";
+
 function StepScreenshot({
   testId,
   runId,
   step,
+  mode,
 }: {
   testId: string;
   runId: string;
   step: ReplayStep;
+  mode: ShotMode;
 }) {
-  const file = step.screenshot;
-  const shotQuery = useQuery({
+  // Resolve the image source for the active view mode.
+  const file =
+    mode === "diff" ? (step.diff?.diffFile ?? null) : mode === "current" ? step.screenshot : null;
+
+  const runShotQuery = useQuery({
     queryKey: ["shot", testId, runId, file],
     queryFn: () => api.artifacts.readShot(testId, runId, file as string),
-    enabled: Boolean(file),
+    enabled: mode !== "baseline" && Boolean(file),
+    staleTime: 5 * 60 * 1000,
+  });
+  const baselineQuery = useQuery({
+    queryKey: ["baselineShot", testId, step.stepId],
+    queryFn: () => api.visual.baselineShot(testId, step.stepId),
+    enabled: mode === "baseline",
     staleTime: 5 * 60 * 1000,
   });
 
-  if (!file) {
+  const query = mode === "baseline" ? baselineQuery : runShotQuery;
+
+  if (mode === "current" && !file) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
         <ImageOff className="size-8 text-tertiary" />
@@ -97,34 +163,82 @@ function StepScreenshot({
     );
   }
 
-  if (shotQuery.isLoading) {
+  if (query.isLoading) {
     return <div className="h-full w-full animate-pulse rounded-md bg-control-subtle" />;
   }
 
-  const src = shotQuery.data;
+  const src = query.data;
   if (!src) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
         <ImageOff className="size-8 text-tertiary" />
-        <Text color="secondary">Screenshot not available</Text>
+        <Text color="secondary">
+          {mode === "baseline" ? "No baseline for this step" : "Image not available"}
+        </Text>
         <Text variant="small" color="tertiary">
-          The artifact may have been pruned by retention.
+          {mode === "baseline"
+            ? "This step has no pinned baseline yet."
+            : "The artifact may have been pruned by retention."}
         </Text>
       </div>
     );
   }
 
+  const alt =
+    mode === "baseline"
+      ? `Baseline for step ${step.index + 1}`
+      : mode === "diff"
+        ? `Visual diff for step ${step.index + 1}`
+        : `Screenshot for step ${step.index + 1}`;
   return (
     <img
       src={src}
-      alt={`Screenshot for step ${step.index + 1}`}
+      alt={alt}
       className="max-h-full max-w-full rounded-md object-contain shadow-sm ring-1 ring-inset ring-token-border"
     />
   );
 }
 
+// ── Per-test threshold control ──────────────────────────────────────────
+function ThresholdControl({ testId }: { testId: string }) {
+  const qc = useQueryClient();
+  const thresholdQuery = useQuery({
+    queryKey: ["visualThreshold", testId],
+    queryFn: () => api.visual.getThreshold(testId),
+  });
+  const setThreshold = useMutation({
+    mutationFn: (v: number) => api.visual.setThreshold(testId, v),
+    onSuccess: (v) => qc.setQueryData(["visualThreshold", testId], v),
+  });
+
+  return (
+    <div
+      className="flex items-center gap-1.5"
+      title="Percent of pixels allowed to change before a step is flagged. Applies to future runs."
+    >
+      <Text variant="small" color="tertiary" className="shrink-0">
+        Threshold
+      </Text>
+      <NumberInput
+        value={thresholdQuery.data ?? null}
+        onValueChange={(v) => {
+          if (v !== null) setThreshold.mutate(v);
+        }}
+        unit="%"
+        min={0}
+        max={100}
+        step={0.1}
+        size="small"
+        className="w-24"
+        disabled={thresholdQuery.isLoading}
+      />
+    </div>
+  );
+}
+
 // ── Right pane: the scrubber/timeline for one run ───────────────────────
 function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
+  const qc = useQueryClient();
   const replayQuery = useQuery<RunReplay | null>({
     queryKey: ["replay", summary.testId, summary.runId],
     queryFn: () => api.artifacts.getReplay(summary.testId, summary.runId),
@@ -132,10 +246,15 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   const replay = replayQuery.data;
 
   const [current, setCurrent] = React.useState(0);
-  // When a run loads (or changes), jump straight to the failure — the main
-  // debugging value — or to the first step for a passing run.
+  const [mode, setMode] = React.useState<ShotMode>("current");
+  // When a run first loads, jump straight to the failure — the main debugging
+  // value — or to the first step for a passing run. Guard on runId so later
+  // replay mutations (e.g. accepting a baseline) don't yank the user away from
+  // the step they're on.
+  const jumpedRunId = React.useRef<string | null>(null);
   React.useEffect(() => {
-    if (!replay) return;
+    if (!replay || jumpedRunId.current === replay.runId) return;
+    jumpedRunId.current = replay.runId;
     setCurrent(replay.failedIndex ?? 0);
   }, [replay]);
 
@@ -144,6 +263,26 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
     (i: number) => Math.max(0, Math.min(steps.length - 1, i)),
     [steps.length],
   );
+
+  const patchReplay = React.useCallback(
+    (next: RunReplay | null) => {
+      if (!next) return;
+      qc.setQueryData(["replay", summary.testId, summary.runId], next);
+      // The baseline changed, so cached baseline images are stale.
+      qc.invalidateQueries({ queryKey: ["baselineShot", summary.testId] });
+      qc.invalidateQueries({ queryKey: ["replays"] });
+    },
+    [qc, summary.testId, summary.runId],
+  );
+
+  const acceptRun = useMutation({
+    mutationFn: () => api.visual.acceptRun(summary.testId, summary.runId),
+    onSuccess: patchReplay,
+  });
+  const acceptStep = useMutation({
+    mutationFn: (stepId: string) => api.visual.acceptStep(summary.testId, summary.runId, stepId),
+    onSuccess: patchReplay,
+  });
 
   if (replayQuery.isLoading) {
     return (
@@ -163,8 +302,16 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
     );
   }
 
-  const step = steps[clamp(current)];
   const idx = clamp(current);
+  const step = steps[idx];
+  const changedCount = steps.filter((s) => s.diff?.state === "changed").length;
+  const canDiff = Boolean(step.diff?.diffFile);
+  const hasBaselineView =
+    step.diff !== undefined && step.diff.state !== "unable" && Boolean(step.screenshot);
+
+  // Reset the view mode when moving to a step that can't show the active mode.
+  const effectiveMode: ShotMode =
+    (mode === "diff" && !canDiff) || (mode === "baseline" && !hasBaselineView) ? "current" : mode;
 
   return (
     <div
@@ -188,11 +335,17 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
             <Badge color={replay.status === "passed" ? "green" : "red"} className="shrink-0">
               {replay.status}
             </Badge>
+            {changedCount > 0 ? (
+              <Badge color="orange" className="shrink-0">
+                {changedCount} visual {changedCount === 1 ? "change" : "changes"}
+              </Badge>
+            ) : null}
           </div>
           <Text variant="small" color="tertiary">
             {fmtDateTime(replay.startedAt)}
           </Text>
         </div>
+        <ThresholdControl testId={summary.testId} />
         <div className="flex shrink-0 items-center gap-1">
           <Button
             iconOnly
@@ -244,10 +397,61 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         </div>
       ) : null}
 
+      {/* Visual-change banner */}
+      {changedCount > 0 ? (
+        <div className="px-4 pt-3">
+          <Callout
+            color="orange"
+            icon={<Eye className="size-4" />}
+            actions={
+              <Button
+                size="small"
+                variant="glass"
+                disabled={acceptRun.isPending}
+                onClick={() => acceptRun.mutate()}
+              >
+                <Stamp className="size-3.5" />
+                Accept run as baseline
+              </Button>
+            }
+          >
+            Visual change detected in {changedCount} {changedCount === 1 ? "step" : "steps"} (over{" "}
+            {fmtPct((replay.visualThreshold ?? 0) / 100)} threshold). Accept the run to pin these as
+            the new baselines.
+          </Callout>
+        </div>
+      ) : null}
+
       {/* Screenshot */}
       <div className="min-h-0 flex-1 p-4">
-        <div className="flex h-full items-center justify-center rounded-lg border border-token-border bg-token-surface p-3">
-          <StepScreenshot testId={summary.testId} runId={summary.runId} step={step} />
+        <div className="relative flex h-full items-center justify-center rounded-lg border border-token-border bg-token-surface p-3">
+          {/* View-mode toggle — only when there's a baseline to compare against */}
+          {hasBaselineView ? (
+            <div className="absolute right-3 top-3 z-10">
+              <SegmentedControl
+                type="single"
+                size="small"
+                variant="glass"
+                value={effectiveMode}
+                onValueChange={(v) => v && setMode(v as ShotMode)}
+              >
+                <SegmentedControlItem value="current">Current</SegmentedControlItem>
+                <SegmentedControlItem value="baseline">Baseline</SegmentedControlItem>
+                {canDiff ? (
+                  <SegmentedControlItem value="diff">
+                    <Diff className="size-3.5" />
+                    Diff
+                  </SegmentedControlItem>
+                ) : null}
+              </SegmentedControl>
+            </div>
+          ) : null}
+          <StepScreenshot
+            testId={summary.testId}
+            runId={summary.runId}
+            step={step}
+            mode={effectiveMode}
+          />
         </div>
       </div>
 
@@ -260,9 +464,23 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         <Text variant="small-mono" className="min-w-0 flex-1 truncate" title={step.label}>
           {step.label}
         </Text>
-        <Text variant="small" color="tertiary" className="shrink-0">
-          {statusLabel(step.status)}
-        </Text>
+        {step.diff ? <DiffBadge diff={step.diff} /> : null}
+        {step.diff?.state === "changed" ? (
+          <Button
+            size="small"
+            variant="glass"
+            className="shrink-0"
+            disabled={acceptStep.isPending}
+            onClick={() => acceptStep.mutate(step.stepId)}
+          >
+            <Stamp className="size-3.5" />
+            Accept as baseline
+          </Button>
+        ) : (
+          <Text variant="small" color="tertiary" className="shrink-0">
+            {statusLabel(step.status)}
+          </Text>
+        )}
       </div>
 
       {/* Timeline scrubber */}
@@ -272,25 +490,32 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
             {steps.map((s) => {
               const active = s.index === idx;
               const failed = s.index === replay.failedIndex;
+              const changed = s.diff?.state === "changed";
               return (
                 <button
                   key={s.index}
                   type="button"
                   onClick={() => setCurrent(s.index)}
-                  aria-label={`Step ${s.index + 1}: ${statusLabel(s.status)}`}
+                  aria-label={`Step ${s.index + 1}: ${statusLabel(s.status)}${
+                    changed ? ", visual change" : ""
+                  }`}
                   aria-current={active ? "true" : undefined}
-                  title={`${s.index + 1}. ${s.label}`}
+                  title={`${s.index + 1}. ${s.label}${changed ? " · visual change" : ""}`}
                   className={`group flex min-w-[22px] shrink-0 flex-col items-center gap-1 rounded-md px-1 pb-1 pt-0.5 ${
                     active ? "bg-accent-10 ring-1 ring-inset ring-accent" : "hover:bg-control-subtle"
                   }`}
                 >
                   <span className="flex h-4 items-center justify-center">
-                    {failed ? <TriangleAlert className="size-3.5 text-support-red" /> : null}
+                    {failed ? (
+                      <TriangleAlert className="size-3.5 text-support-red" />
+                    ) : changed ? (
+                      <Eye className="size-3.5 text-support-orange" />
+                    ) : null}
                   </span>
                   <span
                     className={`w-full rounded-sm ${statusBar(s.status)} ${
-                      failed ? "h-7" : "h-5"
-                    }`}
+                      failed || changed ? "h-7" : "h-5"
+                    } ${changed && !failed ? "ring-1 ring-inset ring-support-orange" : ""}`}
                   />
                   <Text
                     variant="small-mono"
@@ -341,6 +566,9 @@ function RunList({
                 <Text variant="small" className="min-w-0 flex-1 truncate font-medium">
                   {r.testName}
                 </Text>
+                {r.changedSteps > 0 ? (
+                  <Eye className="size-3.5 shrink-0 text-support-orange" aria-label="visual change" />
+                ) : null}
               </div>
               <Text variant="small" color="tertiary">
                 {fmtDateTime(r.startedAt)} · {r.stepCount} steps
@@ -383,7 +611,7 @@ export function VisualView() {
       {runs.length === 0 ? (
         <EmptyState
           title="No captured runs yet"
-          description="Turn on “Capture screenshots” when you run a test, then come back here to replay it step by step and see where it failed."
+          description="Turn on “Capture screenshots” when you run a test, then come back here to replay it step by step, compare against a baseline, and see where it failed."
         />
       ) : (
         <div className="flex min-h-0 flex-1">

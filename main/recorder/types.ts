@@ -133,7 +133,16 @@ export interface TestRecord {
    *  and the parser had to skip statements it couldn't classify — the steps
    *  count may not fully reflect the script. */
   stepsDiverged?: boolean;
+  /** Visual-diff sensitivity for capture runs (Phase 3): the percent of pixels
+   *  (0–100) allowed to change vs the pinned baseline before a step is flagged
+   *  "visual change detected". Absent → DEFAULT_VISUAL_THRESHOLD. */
+  visualThreshold?: number;
 }
+
+/** Default visual-diff threshold (percent of pixels changed) when a test has
+ *  none set. 0.1% tolerates trivial antialiasing noise while flagging real
+ *  layout/content changes. */
+export const DEFAULT_VISUAL_THRESHOLD = 0.1;
 
 /** A single completed test run, persisted to run-history.json. The raw console
  *  output for the run lives in a sibling .log file (see logFile) so large

@@ -13,6 +13,8 @@ import { recorderService } from "../services/recorder-service.js";
 import { playwrightRunner } from "../services/playwright-runner.js";
 import { runHistoryStore } from "../services/run-history-store.js";
 import { artifactStore } from "../services/artifact-store.js";
+import { baselineStore } from "../services/baseline-store.js";
+import { acceptRunBaseline, acceptStepBaseline } from "../services/visual-baseline-ops.js";
 import { testStore } from "../services/test-store.js";
 import { importService } from "../services/import-service.js";
 import { generateSpec } from "../services/script-generator.js";
@@ -21,6 +23,7 @@ import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
 import { anthropicKeyStore } from "../services/anthropic-key-store.js";
 import { recorderSettingsStore } from "../services/recorder-settings-store.js";
+import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import type { AssertKind, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 
@@ -144,8 +147,9 @@ export function registerHandlers(): void {
   );
   ipcMain.handle("tests:delete", async (_e, params: { id: string }) => {
     testStore.remove(params.id);
-    // Drop any captured visual-testing artifacts for this test.
+    // Drop any captured visual-testing artifacts + pinned baselines for this test.
     artifactStore.deleteTest(params.id);
+    baselineStore.deleteTest(params.id);
   });
   ipcMain.handle("tests:rename", async (_e, params: { id: string; name: string }) => {
     const rec = testStore.get(params.id);
@@ -367,6 +371,46 @@ export function registerHandlers(): void {
       const buf = artifactStore.readShot(params.testId, params.runId, params.file);
       return buf ? `data:image/png;base64,${buf.toString("base64")}` : null;
     },
+  );
+
+  // ── Visual-diff handlers (Phase 3) ──────────────────────────────────
+  // A test's visual-diff threshold (percent of pixels), falling back to default.
+  ipcMain.handle("visual:getThreshold", async (_e, params: { testId: string }) => {
+    const rec = testStore.get(params.testId);
+    return rec?.visualThreshold ?? DEFAULT_VISUAL_THRESHOLD;
+  });
+  // Set a test's threshold (clamped 0–100). Returns the stored value.
+  ipcMain.handle(
+    "visual:setThreshold",
+    async (_e, params: { testId: string; threshold: number }) => {
+      const rec = testStore.get(params.testId);
+      if (!rec) throw new Error("Test not found: " + params.testId);
+      const t = Number.isFinite(params.threshold)
+        ? Math.min(100, Math.max(0, params.threshold))
+        : DEFAULT_VISUAL_THRESHOLD;
+      rec.visualThreshold = t;
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return t;
+    },
+  );
+  // Pin an entire run's screenshots as the new baselines. Returns patched replay.
+  ipcMain.handle(
+    "visual:acceptRun",
+    async (_e, params: { testId: string; runId: string }) =>
+      acceptRunBaseline(params.testId, params.runId),
+  );
+  // Pin one step's screenshot as its new baseline. Returns patched replay.
+  ipcMain.handle(
+    "visual:acceptStep",
+    async (_e, params: { testId: string; runId: string; stepId: string }) =>
+      acceptStepBaseline(params.testId, params.runId, params.stepId),
+  );
+  // A step's pinned baseline screenshot as a data URL (for side-by-side), or null.
+  ipcMain.handle(
+    "visual:baselineShot",
+    async (_e, params: { testId: string; stepId: string }) =>
+      baselineStore.readShotDataUrl(params.testId, params.stepId),
   );
 
   logger.info("handlers", "✓ IPC handlers registered");

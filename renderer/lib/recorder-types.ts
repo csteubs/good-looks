@@ -123,13 +123,31 @@ export interface RunRecord {
 /** Per-run visual-testing replay model (mirror of main/services/artifact-store.ts). */
 export type ReplayStepStatus = "passed" | "failed" | "skipped" | "unknown";
 
+/** Visual-diff outcome for a step (Phase 3). */
+export type VisualDiffState = "new-baseline" | "match" | "changed" | "unable";
+
+export interface VisualDiff {
+  state: VisualDiffState;
+  /** fraction of pixels changed (0–1), for match/changed. */
+  ratio?: number;
+  /** threshold (percent, 0–100) this step was compared at. */
+  threshold?: number;
+  /** why the comparison couldn't run, for state "unable". */
+  reason?: string;
+  /** diff-overlay filename (e.g. "3.diff.png") in the run dir, for "changed". */
+  diffFile?: string;
+}
+
 export interface ReplayStep {
   index: number;
+  /** stable Step.id — the key baselines are pinned under. */
+  stepId: string;
   label: string;
   type: string;
   status: ReplayStepStatus;
   /** filename within the run dir (e.g. "3.png"), or null when uncaptured. */
   screenshot: string | null;
+  diff?: VisualDiff;
 }
 
 export interface RunReplay {
@@ -141,6 +159,7 @@ export interface RunReplay {
   startedAt: number;
   finishedAt: number;
   failedIndex: number | null;
+  visualThreshold?: number;
   steps: ReplayStep[];
 }
 
@@ -153,6 +172,7 @@ export interface RunReplaySummary {
   finishedAt: number;
   stepCount: number;
   failedIndex: number | null;
+  changedSteps: number;
 }
 
 /** A hit from searching the raw run logs. */

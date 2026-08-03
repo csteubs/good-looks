@@ -45,14 +45,38 @@ export interface ArtifactManifest {
  *  was skipped/never ran, or the capture failed). */
 export type ReplayStepStatus = "passed" | "failed" | "skipped" | "unknown";
 
+/** Visual-diff outcome for a step (Phase 3), persisted in replay.json.
+ *  - "new-baseline": no prior baseline existed, so this shot seeded it.
+ *  - "match": changed pixels within the test's threshold.
+ *  - "changed": changed pixels exceeded the threshold — flagged in the UI.
+ *  - "unable": couldn't compare (corrupt image, or size mismatch from a
+ *    viewport/responsive change) — never a false flag. */
+export type VisualDiffState = "new-baseline" | "match" | "changed" | "unable";
+
+export interface VisualDiff {
+  state: VisualDiffState;
+  /** fraction of pixels changed (0–1), for match/changed. */
+  ratio?: number;
+  /** threshold (percent, 0–100) this step was compared at. */
+  threshold?: number;
+  /** why the comparison couldn't run, for state "unable". */
+  reason?: string;
+  /** diff-overlay filename (e.g. "3.diff.png") in the run dir, for "changed". */
+  diffFile?: string;
+}
+
 export interface ReplayStep {
   /** 0-based index into the test's Step[] at run time. */
   index: number;
+  /** stable Step.id — the key baselines are pinned under. */
+  stepId: string;
   /** human-friendly label (mirrors describeStep). */
   label: string;
   type: string;
   status: ReplayStepStatus;
   screenshot: string | null;
+  /** visual-diff result for this step's screenshot, when captured (Phase 3). */
+  diff?: VisualDiff;
 }
 
 /** The canonical replay model persisted per run (replay.json). The runner
@@ -69,6 +93,8 @@ export interface RunReplay {
   finishedAt: number;
   /** 0-based Step[] index of the first failed step, or null when the run passed. */
   failedIndex: number | null;
+  /** threshold (percent, 0–100) this run's visual diffs used, when captured. */
+  visualThreshold?: number;
   steps: ReplayStep[];
 }
 
@@ -82,6 +108,8 @@ export interface RunReplaySummary {
   finishedAt: number;
   stepCount: number;
   failedIndex: number | null;
+  /** how many steps exceeded the visual threshold this run (Phase 3). */
+  changedSteps: number;
 }
 
 function artifactsDir(): string {
@@ -230,6 +258,7 @@ export const artifactStore = {
           finishedAt: r.finishedAt,
           stepCount: r.steps.length,
           failedIndex: r.failedIndex,
+          changedSteps: r.steps.filter((s) => s.diff?.state === "changed").length,
         });
       }
     }
@@ -237,14 +266,31 @@ export const artifactStore = {
   },
 
   /** Read a single screenshot's raw PNG bytes. `file` is validated to a bare
-   *  "<index>.png" so it can't escape the run directory. */
+   *  "<index>.png" or diff-overlay "<index>.diff.png" so it can't escape the
+   *  run directory. */
   readShot(testId: string, runId: string, file: string): Buffer | null {
-    if (!/^\d+\.png$/.test(file)) return null;
+    if (!/^\d+(\.diff)?\.png$/.test(file)) return null;
     try {
       return fs.readFileSync(path.join(this.runDir(testId, runId), file));
     } catch {
       return null;
     }
+  },
+
+  /** Write a diff-overlay PNG for a step (Phase 3). Returns the bare filename. */
+  writeDiff(testId: string, runId: string, index: number, png: Buffer): string {
+    const file = `${index}.diff.png`;
+    try {
+      fs.writeFileSync(path.join(this.runDir(testId, runId), file), png);
+    } catch (err) {
+      logger.warn("artifacts", "Failed to write diff overlay", {
+        testId,
+        runId,
+        index,
+        err: String(err),
+      });
+    }
+    return file;
   },
 
   /** Delete all artifacts for a test (e.g. when the test is deleted). Best-effort. */

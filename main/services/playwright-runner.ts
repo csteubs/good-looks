@@ -17,7 +17,10 @@ import { stepReporterSource } from "./step-reporter-source.js";
 import { captureFixtureSource } from "./capture-fixture-source.js";
 import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 import type { ReplayStep, ReplayStepStatus, RunReplay } from "./artifact-store.js";
+import { baselineStore } from "./baseline-store.js";
+import { diffPngBuffers } from "./visual-diff.js";
 import { describeStep } from "./script-generator.js";
+import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import type { Step, TestSpeed } from "../recorder/types.js";
 
 // Module Playwright specs import test/expect from — redirected to the capture
@@ -333,7 +336,14 @@ function buildReplay(params: {
     else if (failedIdx !== null && i === failedIdx) status = "failed";
     else if (failedIdx !== null && i > failedIdx) status = "skipped";
     else status = "passed";
-    return { index: i, label: describeStep(s), type: s.type, status, screenshot: shotByStep[i] };
+    return {
+      index: i,
+      stepId: s.id,
+      label: describeStep(s),
+      type: s.type,
+      status,
+      screenshot: shotByStep[i],
+    };
   });
   const failedIndex = steps.find((s) => s.status === "failed")?.index ?? null;
   return {
@@ -347,6 +357,47 @@ function buildReplay(params: {
     failedIndex,
     steps,
   };
+}
+
+// Phase 3 — visual-diff enrichment. For each captured step, compare its
+// screenshot against the PINNED baseline (keyed by Step.id, not URL). If no
+// baseline exists yet, this run's shot seeds it ("new-baseline"). Mutates each
+// step's `diff`. Best-effort: any failure degrades to "unable" — a diff must
+// never throw into the run's finally block or false-flag a change.
+function enrichWithVisualDiffs(replay: RunReplay, threshold: number): void {
+  replay.visualThreshold = threshold;
+  for (const step of replay.steps) {
+    if (!step.screenshot) continue; // asserts/waits/skipped — nothing to compare
+    const next = artifactStore.readShot(replay.testId, replay.runId, step.screenshot);
+    if (!next) {
+      step.diff = { state: "unable", reason: "screenshot unreadable", threshold };
+      continue;
+    }
+    if (!baselineStore.has(replay.testId, step.stepId)) {
+      // First captured run for this step — seed the pinned baseline.
+      baselineStore.set(replay.testId, step.stepId, next, {
+        runId: replay.runId,
+        label: step.label,
+      });
+      step.diff = { state: "new-baseline", threshold };
+      continue;
+    }
+    const baseline = baselineStore.readShot(replay.testId, step.stepId);
+    if (!baseline) {
+      step.diff = { state: "unable", reason: "baseline unreadable", threshold };
+      continue;
+    }
+    const outcome = diffPngBuffers(baseline, next, threshold);
+    if (outcome.state === "unable") {
+      step.diff = { state: "unable", reason: outcome.reason, threshold };
+    } else if (outcome.state === "changed") {
+      const shotIndex = Number.parseInt(step.screenshot, 10);
+      const diffFile = artifactStore.writeDiff(replay.testId, replay.runId, shotIndex, outcome.diffPng);
+      step.diff = { state: "changed", ratio: outcome.ratio, threshold, diffFile };
+    } else {
+      step.diff = { state: "match", ratio: outcome.ratio, threshold };
+    }
+  }
 }
 
 // Parse a stdout chunk: extract complete `__GLAZE_STEP__:` lines, map their
@@ -549,21 +600,20 @@ export const playwrightRunner = {
         stepStatusMaps.delete(runId);
         if (capturingRun) {
           try {
-            artifactStore.writeReplay(
-              rec.id,
-              recordId,
-              buildReplay({
-                testId: rec.id,
-                runId: recordId,
-                testName: rec.name,
-                url: rec.url,
-                status: runStatus,
-                startedAt,
-                finishedAt,
-                steps: rec.steps,
-                statuses,
-              }),
-            );
+            const replay = buildReplay({
+              testId: rec.id,
+              runId: recordId,
+              testName: rec.name,
+              url: rec.url,
+              status: runStatus,
+              startedAt,
+              finishedAt,
+              steps: rec.steps,
+              statuses,
+            });
+            // Phase 3 — diff each captured shot against the pinned baseline.
+            enrichWithVisualDiffs(replay, rec.visualThreshold ?? DEFAULT_VISUAL_THRESHOLD);
+            artifactStore.writeReplay(rec.id, recordId, replay);
           } catch (err) {
             logger.warn("runner", "Failed to persist replay model", { err: String(err) });
           }
