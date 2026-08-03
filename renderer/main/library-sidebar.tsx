@@ -112,6 +112,7 @@ interface NativeMenu {
     items: MenuPopupItem[];
     x?: number;
     y?: number;
+    coordinateSpace?: "screen" | "view";
   }) => Promise<{ commandId?: number }>;
 }
 function nativeMenu(): NativeMenu {
@@ -149,6 +150,7 @@ export function LibrarySidebar() {
     const res = await nativeMenu().popup({
       x: Math.round(rect.left),
       y: Math.round(rect.bottom),
+      coordinateSpace: "view",
       items: [
         { label: "Train manually", commandId: 1 },
         { label: "Generate from prompt", commandId: 4 },

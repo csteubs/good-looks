@@ -77,7 +77,12 @@ interface MenuPopupItem {
   commandId?: number;
 }
 interface NativeMenu {
-  popup: (options: { items: MenuPopupItem[]; x?: number; y?: number }) => Promise<{ commandId?: number }>;
+  popup: (options: {
+    items: MenuPopupItem[];
+    x?: number;
+    y?: number;
+    coordinateSpace?: "screen" | "view";
+  }) => Promise<{ commandId?: number }>;
 }
 function nativeMenu(): NativeMenu {
   return (window as unknown as { glazeAPI: { Menu: NativeMenu } }).glazeAPI.Menu;
@@ -562,6 +567,7 @@ export function RecordingView() {
     const res = await nativeMenu().popup({
       x: Math.round(rect.left),
       y: Math.round(rect.bottom),
+      coordinateSpace: "view",
       items: [
         ...ASSERT_PICKABLE.map((a, i) => ({ label: a.label, commandId: i })),
         { type: "separator" as const },
@@ -579,6 +585,7 @@ export function RecordingView() {
     const res = await nativeMenu().popup({
       x: Math.round(rect.left),
       y: Math.round(rect.bottom),
+      coordinateSpace: "view",
       items: ADD_STEP_KINDS.map((k, i) => ({ label: ADD_STEP_LABEL[k], commandId: i })),
     });
     if (typeof res.commandId === "number" && ADD_STEP_KINDS[res.commandId]) {

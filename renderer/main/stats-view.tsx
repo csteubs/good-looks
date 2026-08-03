@@ -37,7 +37,12 @@ interface MenuPopupItem {
   commandId?: number;
 }
 interface NativeMenu {
-  popup: (options: { items: MenuPopupItem[]; x?: number; y?: number }) => Promise<{
+  popup: (options: {
+    items: MenuPopupItem[];
+    x?: number;
+    y?: number;
+    coordinateSpace?: "screen" | "view";
+  }) => Promise<{
     commandId?: number;
   }>;
 }
@@ -279,6 +284,7 @@ export function StatsView() {
     const res = await nativeMenu().popup({
       x: Math.round(rect.left),
       y: Math.round(rect.bottom),
+      coordinateSpace: "view",
       items: [
         { label: "Reset stats (keep logs)", commandId: 1 },
         { label: "Delete stats & logs…", commandId: 2 },
