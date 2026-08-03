@@ -12,15 +12,18 @@ import {
   CustomContextMenuSubTrigger,
   CustomContextMenuTrigger,
   Sidebar,
+  SidebarFooter,
   SidebarList,
   SidebarListItem,
   Slider,
+  Status,
   Text,
   toast,
 } from "@glaze/core/components";
 import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3 } from "lucide-react";
 
 import { api } from "../lib/api";
+import type { LlmProvider } from "../lib/llm-types";
 import type { TestRecord, TestSpeed } from "../lib/recorder-types";
 import { NewRecordingDialog } from "./new-recording-dialog";
 import { GenerateTestDialog } from "./generate-test-dialog";
@@ -119,6 +122,68 @@ function nativeMenu(): NativeMenu {
   return (window as unknown as { glazeAPI: { Menu: NativeMenu } }).glazeAPI.Menu;
 }
 
+function openSettingsWindow(): void {
+  (window as unknown as { glazeAPI: { glaze: { ipc: { invoke: (c: string) => Promise<void> } } } })
+    .glazeAPI.glaze.ipc.invoke("window:openSettings")
+    .catch(() => {});
+}
+
+const PROVIDER_LABEL: Record<LlmProvider, string> = {
+  ollama: "Ollama",
+  lmstudio: "LM Studio",
+  anthropic: "Claude",
+};
+
+/** Subtle sidebar footer indicator shown when an AI provider is connected.
+ * Clicking it opens the Settings window on the AI provider section. Re-checks
+ * on window focus so a connection just made in Settings is reflected here. */
+function AiConnectionFooter() {
+  const [label, setLabel] = React.useState<string | null>(null);
+
+  const check = React.useCallback(async () => {
+    try {
+      const cfg = await api.llm.getConfig();
+      const status = await api.llm.status(cfg.provider);
+      if (!status.reachable) {
+        setLabel(null);
+        return;
+      }
+      const providerName = PROVIDER_LABEL[cfg.provider] ?? cfg.provider;
+      setLabel(`${providerName} connected`);
+    } catch {
+      setLabel(null);
+    }
+  }, []);
+
+  React.useEffect(() => {
+    void check();
+    const onFocus = () => void check();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
+  }, [check]);
+
+  if (!label) return null;
+
+  return (
+    <SidebarFooter>
+      <button
+        type="button"
+        onClick={openSettingsWindow}
+        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-fill-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <Status variant="success" aria-label="AI provider connected" />
+        <Text variant="small" color="secondary" className="truncate">
+          {label}
+        </Text>
+      </button>
+    </SidebarFooter>
+  );
+}
+
 export function LibrarySidebar() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -167,6 +232,7 @@ export function LibrarySidebar() {
 
   return (
     <Sidebar
+      footer={<AiConnectionFooter />}
       actions={
         <Button
           iconOnly
