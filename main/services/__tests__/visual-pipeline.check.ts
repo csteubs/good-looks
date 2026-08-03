@@ -1,0 +1,269 @@
+// End-to-end regression check for the whole visual-testing pipeline (the
+// contract Phases 0–4 built toward), exercised in ONE contiguous path against
+// a real temp filesystem — no Playwright, no browser, deterministic.
+//
+// It drives the REAL modules (buildReplay/enrichWithVisualDiffs, artifactStore,
+// baselineStore, visual-baseline-ops, annotationStore, visual-diff); only
+// `@glaze/core/backend` is aliased to a test stub (see glaze-backend-stub.ts)
+// so `app.getPath("userData")` points at a throwaway dir. Same convention as
+// spec-parser.check.ts: plain assertions + a non-zero exit on failure.
+//
+// Run (bundle with the alias, then node — tsx/plain node can't resolve
+// @glaze/core/backend, and esbuild+node needs no listen socket so it's
+// sandbox-safe):
+//   npm run check:visual-pipeline
+
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+import { randomUUID } from "crypto";
+import { PNG } from "pngjs";
+
+import { artifactStore } from "../artifact-store.js";
+import type { ArtifactManifest } from "../artifact-store.js";
+import { baselineStore } from "../baseline-store.js";
+import { buildReplay, enrichWithVisualDiffs } from "../replay-builder.js";
+import { acceptRunBaseline, acceptStepBaseline } from "../visual-baseline-ops.js";
+import { annotationStore } from "../annotation-store.js";
+import { DEFAULT_VISUAL_THRESHOLD } from "../../recorder/types.js";
+import type { Step } from "../../recorder/types.js";
+
+// ── temp userData (must be set BEFORE the stores resolve paths) ────────────
+// The stub reads GLAZE_TEST_USERDATA at import; the check's runner sets it,
+// but default here too so a direct invocation still isolates to a fresh dir.
+const DATA_ROOT =
+  process.env.GLAZE_TEST_USERDATA ??
+  fs.mkdtempSync(path.join(os.tmpdir(), "glaze-visual-e2e-"));
+process.env.GLAZE_TEST_USERDATA = DATA_ROOT;
+
+let failures = 0;
+function check(cond: boolean, label: string): void {
+  if (cond) {
+    console.log(`ok   ${label}`);
+  } else {
+    failures++;
+    console.error(`FAIL ${label}`);
+  }
+}
+function eq<T>(actual: T, expected: T, label: string): void {
+  check(
+    JSON.stringify(actual) === JSON.stringify(expected),
+    `${label} (expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)})`,
+  );
+}
+
+// A deterministic solid-color PNG (equal dims so diffs are pixel-driven,
+// never size-mismatch "unable").
+function solidPng(r: number, g: number, b: number, w = 24, h = 24): Buffer {
+  const png = new PNG({ width: w, height: h });
+  for (let i = 0; i < w * h; i++) {
+    const o = i * 4;
+    png.data[o] = r;
+    png.data[o + 1] = g;
+    png.data[o + 2] = b;
+    png.data[o + 3] = 255;
+  }
+  return PNG.sync.write(png);
+}
+
+const RED = solidPng(220, 40, 40);
+const RED_AGAIN = solidPng(220, 40, 40); // identical to RED → should "match"
+const BLUE = solidPng(40, 60, 220); // wholly different → should be "changed"
+
+const testId = randomUUID();
+const threshold = DEFAULT_VISUAL_THRESHOLD;
+
+// The test's Step[] — a goto + fill + click (all capture screenshots) plus a
+// trailing assert (no screenshot). Mirrors a real app-generated test.
+function step(partial: Partial<Step> & Pick<Step, "type">): Step {
+  return { id: randomUUID(), timestamp: 0, ...partial } as Step;
+}
+const steps: Step[] = [
+  step({ type: "goto", url: "https://example.com" }),
+  step({ type: "fill", locator: { k: "label", v: "Search" }, value: "glaze" }),
+  step({ type: "click", locator: { k: "role", role: "button", name: "Go" } }),
+  step({ type: "assert", locator: { k: "text", v: "Results" }, assert: "visible" }),
+];
+const capturedStepIds = [steps[0].id, steps[1].id, steps[2].id]; // goto/fill/click
+
+// Simulate what the capture fixture writes to a run dir: <index>.png for each
+// page action, in execution order, plus manifest.json. `action` must match
+// captureMethod(step) so buildReplay correlates shots to steps.
+function seedRunArtifacts(runId: string, shots: Buffer[]): void {
+  const dir = artifactStore.ensureRunDir(testId, runId);
+  const actions = ["goto", "fill", "click"];
+  shots.forEach((buf, i) => fs.writeFileSync(path.join(dir, `${i}.png`), buf));
+  const manifest: ArtifactManifest = {
+    testId,
+    runId,
+    status: "passed",
+    steps: actions.map((action, i) => ({
+      index: i,
+      action,
+      target: "",
+      ok: true,
+      ts: Date.now(),
+    })),
+  };
+  fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(manifest, null, 2));
+}
+
+function runReplay(runId: string): ReturnType<typeof buildReplay> {
+  const replay = buildReplay({
+    testId,
+    runId,
+    testName: "E2E pipeline",
+    url: "https://example.com",
+    status: "passed",
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+    steps,
+    statuses: { 3: "passed" }, // the assert is reporter-visible
+  });
+  enrichWithVisualDiffs(replay, threshold);
+  artifactStore.writeReplay(testId, runId, replay);
+  return replay;
+}
+
+// ── 1. Toggle on → run produces artifacts, replay correlates correctly ─────
+const run1 = randomUUID();
+seedRunArtifacts(run1, [RED, RED, RED]);
+const replay1 = runReplay(run1);
+eq(replay1.steps.length, 4, "replay has one entry per Step[] step");
+eq(replay1.failedIndex, null, "passing run has no failed step");
+eq(
+  replay1.steps.map((s) => s.screenshot !== null),
+  [true, true, true, false],
+  "captured steps have a screenshot; the assert does not",
+);
+eq(
+  replay1.steps.map((s) => s.status),
+  ["passed", "passed", "passed", "passed"],
+  "every step is passed",
+);
+check(
+  replay1.steps.every((s) => s.label.length > 0),
+  "every step has a human-readable label",
+);
+
+// replay round-trips from disk (the UI reads it back).
+const readBack = artifactStore.readReplay(testId, run1);
+eq(readBack?.steps.length, 4, "replay.json round-trips from disk");
+
+// ── 2. First run seeds pinned baselines (no false flag) ────────────────────
+eq(
+  replay1.steps.slice(0, 3).map((s) => s.diff?.state),
+  ["new-baseline", "new-baseline", "new-baseline"],
+  "first captured run seeds baselines (never a change)",
+);
+check(
+  capturedStepIds.every((id) => baselineStore.has(testId, id)),
+  "a pinned baseline PNG exists for every captured step",
+);
+eq(
+  artifactStore.listReplays().find((r) => r.runId === run1)?.changedSteps,
+  0,
+  "run 1 reports zero changed steps",
+);
+
+// ── 3. A second run with an intentional change is flagged ──────────────────
+const run2 = randomUUID();
+seedRunArtifacts(run2, [RED_AGAIN, BLUE, RED_AGAIN]); // step 1 (fill) changed
+const replay2 = runReplay(run2);
+eq(
+  replay2.steps.slice(0, 3).map((s) => s.diff?.state),
+  ["match", "changed", "match"],
+  "unchanged shots match; the altered shot is flagged changed",
+);
+const changedStep = replay2.steps[1];
+check((changedStep.diff?.ratio ?? 0) > threshold / 100, "changed ratio exceeds the threshold");
+check(
+  !!changedStep.diff?.diffFile &&
+    fs.existsSync(path.join(artifactStore.runDir(testId, run2), changedStep.diff.diffFile)),
+  "a diff-overlay PNG was written for the changed step",
+);
+eq(
+  artifactStore.listReplays().find((r) => r.runId === run2)?.changedSteps,
+  1,
+  "run 2 reports exactly one changed step",
+);
+
+// ── 4. Baseline approval clears the flag ───────────────────────────────────
+// (a) per-step accept flips just that step.
+const afterStepAccept = acceptStepBaseline(testId, run2, changedStep.stepId);
+eq(
+  afterStepAccept?.steps[1].diff?.state,
+  "match",
+  "per-step accept flips the changed step to match",
+);
+check(
+  Buffer.compare(baselineStore.readShot(testId, changedStep.stepId) ?? Buffer.alloc(0), BLUE) === 0,
+  "per-step accept re-pins the new (BLUE) screenshot as the baseline",
+);
+
+// (b) per-run accept clears any remaining flag and persists to disk.
+const afterRunAccept = acceptRunBaseline(testId, run2);
+eq(
+  afterRunAccept?.steps.filter((s) => s.diff?.state === "changed").length,
+  0,
+  "per-run accept leaves zero changed steps",
+);
+eq(
+  artifactStore.readReplay(testId, run2)?.steps.filter((s) => s.diff?.state === "changed").length,
+  0,
+  "the cleared flag persists in replay.json on disk",
+);
+// Re-diffing the same run against the now-updated baselines confirms the flag stays clear.
+const replay2Reconfirm = runReplay(run2);
+eq(
+  replay2Reconfirm.steps.slice(0, 3).map((s) => s.diff?.state),
+  ["match", "match", "match"],
+  "a re-run after approval no longer flags the change",
+);
+
+// ── 5. Annotations persist and display ─────────────────────────────────────
+const noteStepId = steps[2].id;
+const saved = annotationStore.upsert(testId, run2, noteStepId, "  investigate this button  ");
+check(saved !== null && saved.text === "investigate this button", "note is trimmed and stored");
+const listed = annotationStore.list(testId, run2);
+eq(listed.length, 1, "the saved note is listed for the run");
+eq(listed[0]?.stepId, noteStepId, "the note is linked to the right step");
+check(
+  fs.existsSync(path.join(DATA_ROOT, "recorder", "annotations.json")),
+  "the note persisted to annotations.json on disk",
+);
+// Blank text clears it (the app's clear affordance).
+const cleared = annotationStore.upsert(testId, run2, noteStepId, "   ");
+eq(cleared, null, "blank text deletes the note");
+eq(annotationStore.list(testId, run2).length, 0, "the note is gone after clearing");
+
+// ── 6. Retention keeps only the newest N run directories ───────────────────
+const keep = 3;
+for (let i = 0; i < keep + 4; i++) {
+  const rid = `retain-${String(i).padStart(2, "0")}-${randomUUID()}`;
+  seedRunArtifacts(rid, [RED, RED, RED]);
+  // Stagger mtimes so "newest" is unambiguous.
+  const dir = artifactStore.runDir(testId, rid);
+  const t = new Date(Date.now() + i * 1000);
+  fs.utimesSync(dir, t, t);
+}
+artifactStore.pruneRuns(testId, keep);
+const remaining = artifactStore.listRuns(testId).filter((r) => r.startsWith("retain-"));
+eq(remaining.length, keep, `pruneRuns keeps exactly ${keep} retention run dirs`);
+check(
+  baselineStore.has(testId, capturedStepIds[0]),
+  "pruning run dirs never deletes the pinned baseline",
+);
+
+// ── cleanup + verdict ──────────────────────────────────────────────────────
+try {
+  fs.rmSync(DATA_ROOT, { recursive: true, force: true });
+} catch {
+  /* best-effort */
+}
+
+if (failures > 0) {
+  console.error(`\n${failures} check(s) failed`);
+  process.exit(1);
+}
+console.log("\nAll visual-pipeline end-to-end checks passed");

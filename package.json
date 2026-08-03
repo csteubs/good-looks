@@ -14,6 +14,7 @@
     "lint": "node glaze.ts lint",
     "type-check": "node glaze.ts type-check",
     "check:spec-parser": "tsx main/services/__tests__/spec-parser.check.ts",
+    "check:visual-pipeline": "esbuild main/services/__tests__/visual-pipeline.check.ts --bundle --platform=node --format=cjs --alias:@glaze/core/backend=./main/services/__tests__/glaze-backend-stub.ts --outfile=node_modules/.cache/visual-pipeline.check.cjs && node node_modules/.cache/visual-pipeline.check.cjs",
     "format": "node glaze.ts format"
   },
   "dependencies": {
@@ -67,6 +68,6 @@
     "host": {
       "minVersion": "0.12.0.0"
     },
-    "updatedAt": 1785794378681
+    "updatedAt": 1785795177072
   }
 }

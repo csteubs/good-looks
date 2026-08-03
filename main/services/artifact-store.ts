@@ -17,8 +17,19 @@ import * as path from "path";
 
 import { app, logger } from "@glaze/core/backend";
 
-/** Default number of runs whose artifacts are retained per test. */
+/** Default number of runs whose artifacts are retained per test.
+ *  Sized against real usage: a captured run dir is ~0.6 MB for a small test
+ *  (page-level PNGs ~0.1–0.4 MB each), so 10 retained runs is ~6 MB for a
+ *  small test and tens of MB for a large one — recent history for scrubbing/
+ *  diffing without being wasteful. The PINNED baseline lives in a sibling
+ *  `baseline/` dir that pruning never touches (see RESERVED_DIRS), so the
+ *  comparison anchor always survives regardless of this number. */
 export const DEFAULT_RETAINED_RUNS = 10;
+
+/** Subdirectories of a test's artifact dir that are NOT runs and must never be
+ *  listed or pruned as one. `baseline/` holds the pinned Phase 3 baselines —
+ *  deleting it during retention would silently destroy the comparison anchor. */
+const RESERVED_DIRS = new Set(["baseline"]);
 
 export interface ArtifactStepEntry {
   index: number;
@@ -150,7 +161,7 @@ export const artifactStore = {
       return; // nothing to prune
     }
     const runDirs = names
-      .filter((e) => e.isDirectory())
+      .filter((e) => e.isDirectory() && !RESERVED_DIRS.has(e.name))
       .map((e) => {
         const full = path.join(dir, e.name);
         let mtime = 0;
@@ -181,7 +192,7 @@ export const artifactStore = {
     try {
       return fs
         .readdirSync(dir, { withFileTypes: true })
-        .filter((e) => e.isDirectory())
+        .filter((e) => e.isDirectory() && !RESERVED_DIRS.has(e.name))
         .map((e) => {
           const full = path.join(dir, e.name);
           let mtime = 0;
