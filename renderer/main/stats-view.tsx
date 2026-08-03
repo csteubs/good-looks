@@ -141,20 +141,20 @@ function PassFailChart({ buckets }: { buckets: DayBucket[] }) {
         </Text>
         <div className="flex items-center gap-3">
           <span className="flex items-center gap-1.5">
-            <span className="size-2.5 rounded-sm bg-success" />
+            <span className="size-2.5 rounded-sm bg-support-green" />
             <Text variant="small" color="secondary">
               Passed
             </Text>
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="size-2.5 rounded-sm bg-danger" />
+            <span className="size-2.5 rounded-sm bg-support-red" />
             <Text variant="small" color="secondary">
               Failed
             </Text>
           </span>
         </div>
       </div>
-      <div className="flex h-40 items-end gap-1.5 overflow-x-auto">
+      <div className="flex h-40 gap-1.5 overflow-x-auto">
         {buckets.map((b) => {
           const total = b.passed + b.failed;
           const totalPct = (total / maxTotal) * 100;
@@ -167,8 +167,8 @@ function PassFailChart({ buckets }: { buckets: DayBucket[] }) {
                   style={{ height: `${totalPct}%` }}
                   title={`${b.label}: ${b.passed} passed, ${b.failed} failed`}
                 >
-                  <div className="w-full bg-danger" style={{ height: `${100 - passPct}%` }} />
-                  <div className="w-full bg-success" style={{ height: `${passPct}%` }} />
+                  <div className="w-full bg-support-red" style={{ height: `${100 - passPct}%` }} />
+                  <div className="w-full bg-support-green" style={{ height: `${passPct}%` }} />
                 </div>
               </div>
               <Text variant="small" color="tertiary" className="text-[10px]">
