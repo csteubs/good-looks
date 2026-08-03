@@ -2,6 +2,7 @@
 // never touches ipcRenderer directly.
 
 import type {
+  Annotation,
   AssertKind,
   DebugEntry,
   LogSearchResult,
@@ -146,6 +147,12 @@ export const api = {
       ipc().invoke<RunReplay | null>("visual:acceptStep", { testId, runId, stepId }),
     baselineShot: (testId: string, stepId: string) =>
       ipc().invoke<string | null>("visual:baselineShot", { testId, stepId }),
+  },
+  annotations: {
+    list: (testId: string, runId: string) =>
+      ipc().invoke<Annotation[]>("annotations:list", { testId, runId }),
+    upsert: (testId: string, runId: string, stepId: string, text: string) =>
+      ipc().invoke<Annotation | null>("annotations:upsert", { testId, runId, stepId, text }),
   },
   llm: {
     getConfig: () => ipc().invoke<LlmConfig>("llm:getConfig"),

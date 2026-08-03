@@ -175,6 +175,18 @@ export interface RunReplaySummary {
   changedSteps: number;
 }
 
+/** A user-authored note on a replay step (Phase 4). Mirror of
+ *  main/services/annotation-store.ts Annotation. */
+export interface Annotation {
+  id: string;
+  testId: string;
+  runId: string;
+  stepId: string;
+  text: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 /** A hit from searching the raw run logs. */
 export interface LogSearchResult {
   runId: string;

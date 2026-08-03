@@ -10,6 +10,7 @@ import {
   SegmentedControl,
   SegmentedControlItem,
   Text,
+  Textarea,
   Toolbar,
   ToolbarContent,
   ToolbarTitle,
@@ -22,6 +23,7 @@ import {
   Diff,
   Eye,
   ImageOff,
+  MessageSquare,
   Stamp,
   TriangleAlert,
   X,
@@ -29,6 +31,7 @@ import {
 
 import { api } from "../lib/api";
 import type {
+  Annotation,
   ReplayStep,
   ReplayStepStatus,
   RunReplay,
@@ -236,6 +239,97 @@ function ThresholdControl({ testId }: { testId: string }) {
   );
 }
 
+// ── Per-step freeform note (Phase 4) ─────────────────────────────────────
+function StepAnnotation({
+  annotation,
+  onSave,
+  saving,
+}: {
+  annotation: Annotation | null;
+  onSave: (text: string) => void;
+  saving: boolean;
+}) {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState(annotation?.text ?? "");
+
+  if (editing) {
+    return (
+      <div className="flex flex-col gap-2 border-t border-separator px-4 py-2">
+        <Textarea
+          autoFocus
+          size="small"
+          value={draft}
+          placeholder="Add a note for this step…"
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        <div className="flex justify-end gap-1.5">
+          <Button size="small" variant="transparent" onClick={() => setEditing(false)}>
+            Cancel
+          </Button>
+          <Button
+            size="small"
+            variant="glass"
+            disabled={saving || draft.trim() === (annotation?.text ?? "")}
+            onClick={() => {
+              onSave(draft);
+              setEditing(false);
+            }}
+          >
+            Save
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!annotation) {
+    return (
+      <div className="border-t border-separator px-4 py-2">
+        <Button
+          size="small"
+          variant="transparent"
+          onClick={() => {
+            setDraft("");
+            setEditing(true);
+          }}
+        >
+          <MessageSquare className="size-3.5" />
+          Add note
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-start gap-2 border-t border-separator px-4 py-2">
+      <MessageSquare className="mt-0.5 size-3.5 shrink-0 text-tertiary" />
+      <Text variant="small" color="secondary" className="min-w-0 flex-1 whitespace-pre-wrap">
+        {annotation.text}
+      </Text>
+      <Button
+        size="small"
+        variant="transparent"
+        className="shrink-0"
+        onClick={() => {
+          setDraft(annotation.text);
+          setEditing(true);
+        }}
+      >
+        Edit
+      </Button>
+      <Button
+        size="small"
+        variant="transparent"
+        className="shrink-0"
+        disabled={saving}
+        onClick={() => onSave("")}
+      >
+        Clear
+      </Button>
+    </div>
+  );
+}
+
 // ── Right pane: the scrubber/timeline for one run ───────────────────────
 function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   const qc = useQueryClient();
@@ -244,6 +338,26 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
     queryFn: () => api.artifacts.getReplay(summary.testId, summary.runId),
   });
   const replay = replayQuery.data;
+
+  const annotationsQuery = useQuery({
+    queryKey: ["annotations", summary.testId, summary.runId],
+    queryFn: () => api.annotations.list(summary.testId, summary.runId),
+  });
+  const annotationsByStep = React.useMemo(() => {
+    const map = new Map<string, Annotation>();
+    for (const a of annotationsQuery.data ?? []) map.set(a.stepId, a);
+    return map;
+  }, [annotationsQuery.data]);
+  const upsertAnnotation = useMutation({
+    mutationFn: ({ stepId, text }: { stepId: string; text: string }) =>
+      api.annotations.upsert(summary.testId, summary.runId, stepId, text),
+    onSuccess: (saved, { stepId }) => {
+      qc.setQueryData<Annotation[]>(["annotations", summary.testId, summary.runId], (prev) => {
+        const rest = (prev ?? []).filter((a) => a.stepId !== stepId);
+        return saved ? [...rest, saved] : rest;
+      });
+    },
+  });
 
   const [current, setCurrent] = React.useState(0);
   const [mode, setMode] = React.useState<ShotMode>("current");
@@ -483,6 +597,14 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         )}
       </div>
 
+      {/* Step note (Phase 4) */}
+      <StepAnnotation
+        key={step.stepId}
+        annotation={annotationsByStep.get(step.stepId) ?? null}
+        saving={upsertAnnotation.isPending}
+        onSave={(text) => upsertAnnotation.mutate({ stepId: step.stepId, text })}
+      />
+
       {/* Timeline scrubber */}
       <div className="border-t border-separator px-4 py-3">
         <ScrollArea className="w-full">
@@ -491,6 +613,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
               const active = s.index === idx;
               const failed = s.index === replay.failedIndex;
               const changed = s.diff?.state === "changed";
+              const noted = annotationsByStep.has(s.stepId);
               return (
                 <button
                   key={s.index}
@@ -498,9 +621,11 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
                   onClick={() => setCurrent(s.index)}
                   aria-label={`Step ${s.index + 1}: ${statusLabel(s.status)}${
                     changed ? ", visual change" : ""
-                  }`}
+                  }${noted ? ", has a note" : ""}`}
                   aria-current={active ? "true" : undefined}
-                  title={`${s.index + 1}. ${s.label}${changed ? " · visual change" : ""}`}
+                  title={`${s.index + 1}. ${s.label}${changed ? " · visual change" : ""}${
+                    noted ? " · note" : ""
+                  }`}
                   className={`group flex min-w-[22px] shrink-0 flex-col items-center gap-1 rounded-md px-1 pb-1 pt-0.5 ${
                     active ? "bg-accent-10 ring-1 ring-inset ring-accent" : "hover:bg-control-subtle"
                   }`}
@@ -510,6 +635,8 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
                       <TriangleAlert className="size-3.5 text-support-red" />
                     ) : changed ? (
                       <Eye className="size-3.5 text-support-orange" />
+                    ) : noted ? (
+                      <MessageSquare className="size-3.5 text-tertiary" />
                     ) : null}
                   </span>
                   <span

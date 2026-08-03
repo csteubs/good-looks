@@ -15,6 +15,7 @@ import { runHistoryStore } from "../services/run-history-store.js";
 import { artifactStore } from "../services/artifact-store.js";
 import { baselineStore } from "../services/baseline-store.js";
 import { acceptRunBaseline, acceptStepBaseline } from "../services/visual-baseline-ops.js";
+import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
 import { importService } from "../services/import-service.js";
 import { generateSpec } from "../services/script-generator.js";
@@ -150,6 +151,7 @@ export function registerHandlers(): void {
     // Drop any captured visual-testing artifacts + pinned baselines for this test.
     artifactStore.deleteTest(params.id);
     baselineStore.deleteTest(params.id);
+    annotationStore.deleteTest(params.id);
   });
   ipcMain.handle("tests:rename", async (_e, params: { id: string; name: string }) => {
     const rec = testStore.get(params.id);
@@ -411,6 +413,20 @@ export function registerHandlers(): void {
     "visual:baselineShot",
     async (_e, params: { testId: string; stepId: string }) =>
       baselineStore.readShotDataUrl(params.testId, params.stepId),
+  );
+
+  // ── Step annotation handlers (Phase 4) ──────────────────────────────
+  // Every note on steps of one run, for populating the replay timeline.
+  ipcMain.handle(
+    "annotations:list",
+    async (_e, params: { testId: string; runId: string }) =>
+      annotationStore.list(params.testId, params.runId),
+  );
+  // Create/update/clear the note for one step (blank text clears it).
+  ipcMain.handle(
+    "annotations:upsert",
+    async (_e, params: { testId: string; runId: string; stepId: string; text: string }) =>
+      annotationStore.upsert(params.testId, params.runId, params.stepId, params.text),
   );
 
   logger.info("handlers", "✓ IPC handlers registered");
