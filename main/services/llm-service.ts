@@ -1,14 +1,16 @@
-// Provider-agnostic client for local LLM runtimes (Ollama & LM Studio).
+// Client for the app's LLM providers.
 //
-// Detection + model listing differ per provider; chat is unified behind the
-// OpenAI-compatible POST /v1/chat/completions endpoint that both expose.
-// All requests target loopback (127.0.0.1) so macOS never shows a
-// "local network" permission prompt.
+// Local runtimes (Ollama & LM Studio) share the OpenAI-compatible
+// POST /v1/chat/completions endpoint and target loopback (127.0.0.1) so macOS
+// never shows a "local network" permission prompt. Claude (Anthropic) uses the
+// hosted Messages API over HTTPS with a stored API key. Detection, model
+// listing, and chat all branch per provider.
 
 import { randomUUID } from "crypto";
 
 import { logger } from "@glaze/core/backend";
 
+import { anthropicKeyStore } from "./anthropic-key-store.js";
 import { sendToMain } from "./app-window.js";
 import { llmConfigStore } from "./llm-config-store.js";
 import type {
@@ -22,12 +24,43 @@ import type {
 const DEFAULT_BASE_URLS: Record<LlmProvider, string> = {
   ollama: "http://127.0.0.1:11434",
   lmstudio: "http://127.0.0.1:1234",
+  anthropic: "https://api.anthropic.com",
 };
 
 const STATUS_TIMEOUT_MS = 4000;
+const ANTHROPIC_VERSION = "2023-06-01";
+const ANTHROPIC_MAX_TOKENS = 4096;
 
 function providerLabel(provider: LlmProvider): string {
-  return provider === "ollama" ? "Ollama" : "LM Studio";
+  if (provider === "ollama") return "Ollama";
+  if (provider === "lmstudio") return "LM Studio";
+  return "Claude";
+}
+
+function anthropicHeaders(key: string): Record<string, string> {
+  return {
+    "content-type": "application/json",
+    "x-api-key": key,
+    "anthropic-version": ANTHROPIC_VERSION,
+  };
+}
+
+/**
+ * Split app messages into Anthropic's shape: system prompts become a single
+ * top-level `system` string, the rest map to alternating user/assistant turns.
+ */
+function toAnthropicPayload(messages: LlmMessage[]): {
+  system: string;
+  messages: Array<{ role: "user" | "assistant"; content: string }>;
+} {
+  const system = messages
+    .filter((m) => m.role === "system")
+    .map((m) => m.content)
+    .join("\n\n");
+  const rest = messages
+    .filter((m) => m.role !== "system")
+    .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+  return { system, messages: rest };
 }
 
 function baseUrlFor(provider: LlmProvider): string {
@@ -36,6 +69,22 @@ function baseUrlFor(provider: LlmProvider): string {
 }
 
 async function fetchModels(provider: LlmProvider, base: string): Promise<LlmModel[]> {
+  if (provider === "anthropic") {
+    const key = await anthropicKeyStore.getKey();
+    if (!key) return [];
+    const res = await fetch(`${base}/v1/models`, {
+      headers: anthropicHeaders(key),
+      signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
+    });
+    if (res.status === 401) throw new Error("Invalid API key.");
+    if (!res.ok) throw new Error(`Anthropic returned HTTP ${res.status}`);
+    const data = (await res.json()) as {
+      data?: Array<{ id?: string; display_name?: string }>;
+    };
+    return (data.data ?? [])
+      .map((m) => ({ id: (m.id ?? "").trim(), label: (m.display_name ?? m.id ?? "").trim() }))
+      .filter((m) => m.id);
+  }
   if (provider === "ollama") {
     const res = await fetch(`${base}/api/tags`, {
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
@@ -76,23 +125,53 @@ async function runChat(
   const controller = new AbortController();
   activeRequests.set(requestId, controller);
   try {
-    const res = await fetch(`${base}/v1/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages: params.messages,
-        temperature: params.temperature ?? 0.2,
-        stream: true,
-      }),
-      signal: controller.signal,
-    });
+    let res: Response;
+    if (provider === "anthropic") {
+      const key = await anthropicKeyStore.getKey();
+      if (!key) {
+        sendToMain("llm:error", {
+          requestId,
+          message: "Add your Anthropic API key in Settings.",
+        });
+        return;
+      }
+      const { system, messages } = toAnthropicPayload(params.messages);
+      res = await fetch(`${base}/v1/messages`, {
+        method: "POST",
+        headers: anthropicHeaders(key),
+        body: JSON.stringify({
+          model,
+          max_tokens: ANTHROPIC_MAX_TOKENS,
+          ...(system ? { system } : {}),
+          messages,
+          temperature: params.temperature ?? 0.2,
+          stream: true,
+        }),
+        signal: controller.signal,
+      });
+    } else {
+      res = await fetch(`${base}/v1/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages: params.messages,
+          temperature: params.temperature ?? 0.2,
+          stream: true,
+        }),
+        signal: controller.signal,
+      });
+    }
     if (!res.ok || !res.body) {
       const text = await res.text().catch(() => "");
-      throw new Error(`Chat request failed (HTTP ${res.status}). ${text}`.trim());
+      const detail = res.status === 401 && provider === "anthropic" ? "Invalid API key." : text;
+      throw new Error(`Chat request failed (HTTP ${res.status}). ${detail}`.trim());
     }
 
-    // Parse the OpenAI-style SSE stream: lines of `data: {json}` ending in `data: [DONE]`.
+    // Both providers stream Server-Sent Events as `data: {json}` lines; only the
+    // JSON shape differs (OpenAI: choices[].delta.content ending in [DONE];
+    // Anthropic: content_block_delta / error events), so we share the line
+    // reader and branch on extraction.
     const decoder = new TextDecoder();
     let buffer = "";
     for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
@@ -103,15 +182,29 @@ async function runChat(
         buffer = buffer.slice(nl + 1);
         if (!line.startsWith("data:")) continue;
         const data = line.slice(5).trim();
-        if (data === "[DONE]") continue;
+        if (!data || data === "[DONE]") continue;
         try {
-          const json = JSON.parse(data) as {
-            choices?: Array<{ delta?: { content?: string } }>;
-          };
-          const delta = json.choices?.[0]?.delta?.content;
-          if (delta) sendToMain("llm:chunk", { requestId, delta });
-        } catch {
-          // Ignore keep-alive lines / partial JSON between chunks.
+          const json = JSON.parse(data) as Record<string, unknown>;
+          if (provider === "anthropic") {
+            const type = json.type as string | undefined;
+            if (type === "content_block_delta") {
+              const delta = (json.delta as { text?: string } | undefined)?.text;
+              if (delta) sendToMain("llm:chunk", { requestId, delta });
+            } else if (type === "error") {
+              const msg = (json.error as { message?: string } | undefined)?.message;
+              throw new Error(msg || "Anthropic streaming error.");
+            }
+          } else {
+            const delta = (json as { choices?: Array<{ delta?: { content?: string } }> }).choices?.[0]
+              ?.delta?.content;
+            if (delta) sendToMain("llm:chunk", { requestId, delta });
+          }
+        } catch (parseErr) {
+          // Re-throw genuine Anthropic error events; ignore keep-alive lines /
+          // partial JSON split across chunks (which fail as SyntaxError).
+          if (parseErr instanceof Error && !(parseErr instanceof SyntaxError)) {
+            throw parseErr;
+          }
         }
       }
     }
@@ -134,9 +227,29 @@ export const llmService = {
     return DEFAULT_BASE_URLS[provider];
   },
 
-  /** Probe a provider's local server: reachable + available models. Never throws. */
+  /** Probe a provider: reachable + available models. Never throws. */
   async status(provider: LlmProvider): Promise<LlmProviderStatus> {
     const base = baseUrlFor(provider);
+    if (provider === "anthropic") {
+      const hasKey = await anthropicKeyStore.hasKey();
+      if (!hasKey) {
+        return {
+          provider,
+          reachable: false,
+          models: [],
+          baseUrl: base,
+          hasKey: false,
+          error: "Add an Anthropic API key to connect to Claude.",
+        };
+      }
+      try {
+        const models = await fetchModels(provider, base);
+        return { provider, reachable: true, models, baseUrl: base, hasKey: true };
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : String(err);
+        return { provider, reachable: false, models: [], baseUrl: base, hasKey: true, error: raw };
+      }
+    }
     try {
       const models = await fetchModels(provider, base);
       return { provider, reachable: true, models, baseUrl: base };
@@ -150,7 +263,7 @@ export const llmService = {
     }
   },
 
-  /** Probe both providers at once. */
+  /** Probe local providers at once (Claude is probed on demand via status). */
   async detect(): Promise<LlmProviderStatus[]> {
     return Promise.all([this.status("ollama"), this.status("lmstudio")]);
   },

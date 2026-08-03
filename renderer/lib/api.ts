@@ -136,6 +136,10 @@ export const api = {
       ipc().invoke<LlmModel[]>("llm:listModels", { provider }),
     chat: (params: LlmChatParams) => ipc().invoke<{ requestId: string }>("llm:chat", params),
     cancel: (requestId: string) => ipc().invoke<void>("llm:cancel", { requestId }),
+    // Anthropic API key management (key stays backend-side).
+    setApiKey: (key: string) => ipc().invoke<{ hasKey: boolean }>("llm:setApiKey", { key }),
+    clearApiKey: () => ipc().invoke<{ hasKey: boolean }>("llm:clearApiKey"),
+    hasApiKey: () => ipc().invoke<{ hasKey: boolean }>("llm:hasApiKey"),
   },
   /** Subscribe to a backend push event. Returns an unsubscribe function. */
   on<T>(channel: string, cb: (payload: T) => void): () => void {

@@ -1,6 +1,6 @@
 // Renderer-side mirror of the backend LLM types (main/services/llm/types.ts).
 
-export type LlmProvider = "ollama" | "lmstudio";
+export type LlmProvider = "ollama" | "lmstudio" | "anthropic";
 
 export interface LlmModel {
   id: string;
@@ -18,6 +18,7 @@ export interface LlmProviderStatus {
   models: LlmModel[];
   baseUrl: string;
   error?: string;
+  hasKey?: boolean;
 }
 
 export interface LlmConfig {

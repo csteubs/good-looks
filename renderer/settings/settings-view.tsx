@@ -41,8 +41,17 @@ export function SettingsView() {
   const [baseUrl, setBaseUrl] = useState<string>("");
   const autoFetchInflight = useRef(0);
 
+  // ── Claude (Anthropic) API key ──────────────────────────────────────
+  const [apiKeyInput, setApiKeyInput] = useState("");
+  const [hasApiKey, setHasApiKey] = useState(false);
+  const [savingKey, setSavingKey] = useState(false);
+
   const defaultUrlFor = (p: LlmProvider) =>
-    p === "lmstudio" ? "http://127.0.0.1:1234" : "http://127.0.0.1:11434";
+    p === "anthropic"
+      ? "https://api.anthropic.com"
+      : p === "lmstudio"
+        ? "http://127.0.0.1:1234"
+        : "http://127.0.0.1:11434";
 
   // ── Trainer settings ─────────────────────────────────────────────────
   const [showUrlBar, setShowUrlBar] = useState(true);
@@ -63,6 +72,12 @@ export function SettingsView() {
       })
       .catch(() => {
         /* fall back to defaults */
+      });
+    api.llm
+      .hasApiKey()
+      .then(({ hasKey }) => setHasApiKey(hasKey))
+      .catch(() => {
+        /* assume no key */
       });
     api.recorder
       .getSettings()
@@ -125,7 +140,8 @@ export function SettingsView() {
   };
 
   const handleProviderChange = async (value: string) => {
-    const next = value === "lmstudio" ? "lmstudio" : "ollama";
+    const next: LlmProvider =
+      value === "lmstudio" ? "lmstudio" : value === "anthropic" ? "anthropic" : "ollama";
     setProvider(next);
     setLlmStatus(null);
     setModel(null);
@@ -136,6 +152,48 @@ export function SettingsView() {
       await api.llm.setConfig({ provider: next, model: null, baseUrls: { [next]: "" } });
     } catch (error) {
       toast.error(`Failed to save provider: ${error}`);
+    }
+  };
+
+  const handleSaveApiKey = async () => {
+    const key = apiKeyInput.trim();
+    if (!key) return;
+    setSavingKey(true);
+    try {
+      await api.llm.setApiKey(key);
+      setHasApiKey(true);
+      setApiKeyInput(""); // don't hold the key in renderer state
+      // Refresh status so the model list populates.
+      const status = await api.llm.status("anthropic");
+      setLlmStatus(status);
+      if (status.reachable) {
+        const nextModel = status.models.some((m) => m.id === model)
+          ? model
+          : (status.models[0]?.id ?? null);
+        setModel(nextModel);
+        await api.llm.setConfig({ model: nextModel });
+      }
+      toast.success(
+        status.reachable ? "Connected to Claude." : (status.error ?? "Saved, but not reachable."),
+      );
+    } catch (error) {
+      toast.error(`Failed to save API key: ${error}`);
+    } finally {
+      setSavingKey(false);
+    }
+  };
+
+  const handleClearApiKey = async () => {
+    try {
+      await api.llm.clearApiKey();
+      setHasApiKey(false);
+      setApiKeyInput("");
+      setLlmStatus(null);
+      setModel(null);
+      await api.llm.setConfig({ model: null });
+      toast.success("API key removed.");
+    } catch (error) {
+      toast.error(`Failed to remove API key: ${error}`);
     }
   };
 
@@ -409,9 +467,11 @@ export function SettingsView() {
           <FieldGroup>
             <Field orientation="horizontal">
               <FieldContent>
-                <FieldLabel htmlFor="llm-provider">Local AI provider</FieldLabel>
+                <FieldLabel htmlFor="llm-provider">AI provider</FieldLabel>
                 <p className="text-sm text-muted-foreground">
-                  Use a local LLM running on your machine. No data leaves your computer.
+                  {provider === "anthropic"
+                    ? "Use Claude via your Anthropic account. Prompts are sent to api.anthropic.com over HTTPS."
+                    : "Use a local LLM running on your machine. No data leaves your computer."}
                 </p>
               </FieldContent>
               <RadioGroup
@@ -427,45 +487,104 @@ export function SettingsView() {
                   <RadioGroupItem value="lmstudio" />
                   LM Studio
                 </Label>
+                <Label>
+                  <RadioGroupItem value="anthropic" />
+                  Claude
+                </Label>
               </RadioGroup>
             </Field>
 
-            <Field orientation="horizontal">
-              <FieldContent>
-                <FieldLabel htmlFor="llm-server-url">Server URL</FieldLabel>
-                <p className="text-sm text-muted-foreground">
-                  {llmStatus && !llmStatus.reachable
-                    ? (llmStatus.error ?? "Not reachable")
-                    : `Default: ${defaultUrlFor(provider)}`}
-                </p>
-              </FieldContent>
-              <div className="flex items-center gap-2">
-                {llmStatus && (
-                  <Status variant={llmStatus.reachable ? "success" : "error"}>
-                    {llmStatus.reachable ? "Online" : "Offline"}
-                  </Status>
-                )}
-                <Button variant="muted" onClick={handleTestConnection} disabled={testing}>
-                  {testing ? "Testing…" : "Test connection"}
-                </Button>
-              </div>
-            </Field>
+            {provider !== "anthropic" && (
+              <>
+                <Field orientation="horizontal">
+                  <FieldContent>
+                    <FieldLabel htmlFor="llm-server-url">Server URL</FieldLabel>
+                    <p className="text-sm text-muted-foreground">
+                      {llmStatus && !llmStatus.reachable
+                        ? (llmStatus.error ?? "Not reachable")
+                        : `Default: ${defaultUrlFor(provider)}`}
+                    </p>
+                  </FieldContent>
+                  <div className="flex items-center gap-2">
+                    {llmStatus && (
+                      <Status variant={llmStatus.reachable ? "success" : "error"}>
+                        {llmStatus.reachable ? "Online" : "Offline"}
+                      </Status>
+                    )}
+                    <Button variant="muted" onClick={handleTestConnection} disabled={testing}>
+                      {testing ? "Testing…" : "Test connection"}
+                    </Button>
+                  </div>
+                </Field>
 
-            <Field orientation="horizontal">
-              <FieldContent>
-                <Input
-                  id="llm-server-url"
-                  className="w-72"
-                  spellCheck={false}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                  placeholder={defaultUrlFor(provider)}
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  onBlur={(e) => handleBaseUrlChange(e.target.value)}
-                />
-              </FieldContent>
-            </Field>
+                <Field orientation="horizontal">
+                  <FieldContent>
+                    <Input
+                      id="llm-server-url"
+                      className="w-72"
+                      spellCheck={false}
+                      autoCapitalize="off"
+                      autoCorrect="off"
+                      placeholder={defaultUrlFor(provider)}
+                      value={baseUrl}
+                      onChange={(e) => setBaseUrl(e.target.value)}
+                      onBlur={(e) => handleBaseUrlChange(e.target.value)}
+                    />
+                  </FieldContent>
+                </Field>
+              </>
+            )}
+
+            {provider === "anthropic" && (
+              <>
+                <Field orientation="horizontal">
+                  <FieldContent>
+                    <FieldLabel htmlFor="anthropic-key">API key</FieldLabel>
+                    <p className="text-sm text-muted-foreground">
+                      {hasApiKey
+                        ? "Stored encrypted on this Mac. Enter a new key to replace it."
+                        : "Paste a key from console.anthropic.com. Stored encrypted on this Mac."}
+                    </p>
+                  </FieldContent>
+                  <div className="flex items-center gap-2">
+                    {hasApiKey && (
+                      <Status variant={llmStatus?.reachable === false ? "error" : "success"}>
+                        {llmStatus?.reachable === false ? "Not connected" : "Connected"}
+                      </Status>
+                    )}
+                    {hasApiKey && (
+                      <Button variant="muted" onClick={handleClearApiKey}>
+                        Clear
+                      </Button>
+                    )}
+                  </div>
+                </Field>
+
+                <Field orientation="horizontal">
+                  <FieldContent>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="anthropic-key"
+                        type="password"
+                        className="w-72"
+                        spellCheck={false}
+                        autoCapitalize="off"
+                        autoCorrect="off"
+                        placeholder="sk-ant-…"
+                        value={apiKeyInput}
+                        onChange={(e) => setApiKeyInput(e.target.value)}
+                      />
+                      <Button
+                        onClick={handleSaveApiKey}
+                        disabled={savingKey || !apiKeyInput.trim()}
+                      >
+                        {savingKey ? "Saving…" : "Save"}
+                      </Button>
+                    </div>
+                  </FieldContent>
+                </Field>
+              </>
+            )}
 
             {llmStatus?.reachable && llmStatus.models.length > 0 && (
               <Field orientation="horizontal">

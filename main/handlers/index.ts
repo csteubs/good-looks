@@ -18,6 +18,7 @@ import { generateSpec } from "../services/script-generator.js";
 import { parseSpecDetailed } from "../services/spec-parser.js";
 import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
+import { anthropicKeyStore } from "../services/anthropic-key-store.js";
 import { recorderSettingsStore } from "../services/recorder-settings-store.js";
 import type { AssertKind, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
@@ -25,7 +26,7 @@ import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.j
 import { ipcMain, logger } from "@glaze/core/backend";
 
 function asProvider(v: unknown): LlmProvider {
-  if (v === "ollama" || v === "lmstudio") return v;
+  if (v === "ollama" || v === "lmstudio" || v === "anthropic") return v;
   throw new Error("Invalid LLM provider: " + String(v));
 }
 
@@ -293,6 +294,18 @@ export function registerHandlers(): void {
   ipcMain.handle("llm:cancel", async (_e, params: { requestId?: unknown }) => {
     llmService.cancel(String(params?.requestId ?? ""));
   });
+
+  // Anthropic API key — stored encrypted; the key itself never leaves the backend.
+  ipcMain.handle("llm:setApiKey", async (_e, params: { key?: unknown }) => {
+    const key = typeof params?.key === "string" ? params.key : "";
+    await anthropicKeyStore.setKey(key);
+    return { hasKey: true };
+  });
+  ipcMain.handle("llm:clearApiKey", async () => {
+    await anthropicKeyStore.clear();
+    return { hasKey: false };
+  });
+  ipcMain.handle("llm:hasApiKey", async () => ({ hasKey: await anthropicKeyStore.hasKey() }));
 
   // ── Runner handlers ─────────────────────────────────────────────────
   ipcMain.handle("runner:run", async (_e, params: { id: string; headed?: boolean }) =>

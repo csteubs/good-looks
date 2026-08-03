@@ -1,8 +1,9 @@
-// Shared types for the local LLM integration (Ollama / LM Studio).
-// Both runtimes expose an OpenAI-compatible /v1/chat/completions endpoint;
-// only health-check + model-listing differ per provider.
+// Shared types for the LLM integration.
+// Local runtimes (Ollama / LM Studio) expose an OpenAI-compatible
+// /v1/chat/completions endpoint; Claude uses Anthropic's Messages API.
+// Health-check, model-listing, and chat wiring branch per provider.
 
-export type LlmProvider = "ollama" | "lmstudio";
+export type LlmProvider = "ollama" | "lmstudio" | "anthropic";
 
 /** A model available on a provider, normalized across the two APIs. */
 export interface LlmModel {
@@ -28,6 +29,8 @@ export interface LlmProviderStatus {
   baseUrl: string;
   /** Friendly failure reason when not reachable. */
   error?: string;
+  /** For key-based providers (Anthropic): whether an API key is stored. */
+  hasKey?: boolean;
 }
 
 /** Persisted user selection. */
