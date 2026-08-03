@@ -5,15 +5,18 @@ import {
   Button,
   Callout,
   EmptyState,
-  NumberInput,
   ScrollArea,
   SegmentedControl,
   SegmentedControlItem,
+  Slider,
   Text,
   Textarea,
   Toolbar,
   ToolbarContent,
   ToolbarTitle,
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
 } from "@glaze/core/components";
 import {
   Check,
@@ -203,6 +206,23 @@ function StepScreenshot({
 }
 
 // ── Per-test threshold control ──────────────────────────────────────────
+const THRESHOLD_PRESETS = [0, 0.1, 0.5, 1, 5, 10] as const;
+const THRESHOLD_LABELS = ["Strict", "Low", "Medium", "High", "Lenient", "Very lenient"] as const;
+
+function nearestPresetIndex(value: number | undefined): number {
+  if (value === undefined) return 0;
+  let best = 0;
+  let bestDist = Infinity;
+  for (let i = 0; i < THRESHOLD_PRESETS.length; i++) {
+    const d = Math.abs(THRESHOLD_PRESETS[i] - value);
+    if (d < bestDist) {
+      bestDist = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
 function ThresholdControl({ testId }: { testId: string }) {
   const qc = useQueryClient();
   const thresholdQuery = useQuery({
@@ -214,28 +234,55 @@ function ThresholdControl({ testId }: { testId: string }) {
     onSuccess: (v) => qc.setQueryData(["visualThreshold", testId], v),
   });
 
+  const current = thresholdQuery.data;
+  const [index, setIndex] = React.useState(() => nearestPresetIndex(current));
+  const lastCommitted = React.useRef<number | null>(null);
+
+  // Keep the slider in sync when the server value changes (e.g. on first load).
+  React.useEffect(() => {
+    if (current === undefined) return;
+    const nearest = nearestPresetIndex(current);
+    setIndex(nearest);
+    lastCommitted.current = nearest;
+  }, [current]);
+
+  const handleChange = ([v]: number[]) => {
+    setIndex(v);
+    if (lastCommitted.current === v) return;
+    lastCommitted.current = v;
+    setThreshold.mutate(THRESHOLD_PRESETS[v]);
+  };
+
+  const pct = THRESHOLD_PRESETS[index];
+  const label = THRESHOLD_LABELS[index];
+
   return (
-    <div
-      className="flex items-center gap-1.5"
-      title="Percent of pixels allowed to change before a step is flagged. Applies to future runs."
-    >
-      <Text variant="small" color="tertiary" className="shrink-0">
-        Threshold
-      </Text>
-      <NumberInput
-        value={thresholdQuery.data ?? null}
-        onValueChange={(v) => {
-          if (v !== null) setThreshold.mutate(v);
-        }}
-        unit="%"
-        min={0}
-        max={100}
-        step={0.1}
-        size="small"
-        className="w-24"
-        disabled={thresholdQuery.isLoading}
-      />
-    </div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="flex items-center gap-2">
+          <Text variant="small" color="tertiary" className="shrink-0">
+            Threshold
+          </Text>
+          <Slider
+            variant="filled"
+            size="small"
+            min={0}
+            max={THRESHOLD_PRESETS.length - 1}
+            step={1}
+            ticks={THRESHOLD_PRESETS.length}
+            value={[index]}
+            startContent={label}
+            endContent={`${pct}%`}
+            onValueChange={handleChange}
+            disabled={thresholdQuery.isLoading}
+            className="w-44"
+          />
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="max-w-[220px] leading-snug">
+        Percent of pixels allowed to change before a step is flagged. Applies to future runs.
+      </TooltipContent>
+    </Tooltip>
   );
 }
 
