@@ -151,6 +151,7 @@ This app's generated specs always follow these conventions — follow them exact
   Good: await page.getByRole('button', { name: 'Submit' }).click();
 - No page.waitForTimeout(). Waits must be web-first assertions, e.g. expect(locator).toBeVisible() or expect(locator).toContainText().
 - Start every test by navigating to the requested URL with await page.goto(...).
+- If a browser viewport is specified in the user message, the very first line inside the test(...) body (before goto) must be await page.setViewportSize({ width: <w>, height: <h> }) using the exact dimensions given. Never substitute your own default viewport size.
 - Add assertions that verify the user's intent, not just that actions ran.
 
 Output format:
@@ -184,7 +185,10 @@ export function buildGenerateMessages(ctx: GenerateContext): LlmMessage[] {
   }
   if (ctx.viewport) {
     optLines.push(
-      `Browser viewport: ${ctx.viewport.width}x${ctx.viewport.height} (the test should assume this window size).`,
+      `Browser viewport: ${ctx.viewport.width}x${ctx.viewport.height}. ` +
+        `IMPORTANT: the user explicitly selected this window size — the FIRST line inside the test(...) body must be ` +
+        `\`await page.setViewportSize({ width: ${ctx.viewport.width}, height: ${ctx.viewport.height} });\` ` +
+        `so the test runs at exactly this size. Do NOT use any other viewport dimensions, and do NOT omit this call.`,
     );
   }
 
@@ -219,16 +223,18 @@ Output format:
   - assert: { "type": "assert", "assert": <kind>, "locator": {...}, "text": "...", "value": "...", "attr": "...", "count": 1, "soft": false }
     assert kinds: "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked", "unchecked", "value", "attribute", "count", "url", "title". "url"/"title" are page-level and need no locator; use "value" for the expected string. "text"/"exactText" use "text". "value" uses "value". "attribute" uses "attr"+"value". "count" uses "count".
   - wait: { "type": "wait", "waitMs": 1000 }  (or omit waitMs and give a "locator" to wait for it)
-  - viewport: { "type": "viewport", "width": 1280, "height": 800 }
+  - viewport: { "type": "viewport", "width": <width>, "height": <height> } — ALWAYS emit a viewport step FIRST (before any action), using the exact width and height from the "Browser viewport" line in the user message. If no viewport is specified, use 1280x800.
 
 Rules:
 - Do NOT output a "goto" step. The test already starts by navigating to its URL (that is a test-level setting the user controls separately); you are only generating the steps that come AFTER navigation. Assume the page is already loaded at the starting URL.
+- If a "Browser viewport" is specified in the user message, your FIRST step must be a "viewport" step with the exact dimensions given. Never substitute your own default size.
 - Add assertions that verify the user's intent, not just that actions ran.
 - Do not invent selectors you can't justify from the description — prefer visible labels/roles/text.
 
-Example:
+Example (when the user message specifies a 1280x800 viewport):
 \`\`\`json
 [
+  { "type": "viewport", "width": 1280, "height": 800 },
   { "type": "fill", "locator": { "k": "label", "v": "Email" }, "value": "test@example.com" },
   { "type": "fill", "locator": { "k": "label", "v": "Password" }, "value": "secret123" },
   { "type": "click", "locator": { "k": "role", "role": "button", "name": "Sign in" } },
@@ -277,7 +283,10 @@ export function buildGenerateStepsMessages(ctx: GenerateStepsContext): LlmMessag
     `Starting URL: ${ctx.url} (the test already navigates here as its first step — do NOT emit a "goto" step for it; assume the page is already loaded at this URL).`,
   ];
   if (ctx.viewport) {
-    lines.push(`Browser viewport: ${ctx.viewport.width}x${ctx.viewport.height}.`);
+    lines.push(
+      `Browser viewport: ${ctx.viewport.width}x${ctx.viewport.height}. ` +
+        `IMPORTANT: the user explicitly selected this window size — the FIRST step in your output must be a "viewport" step with exactly width=${ctx.viewport.width}, height=${ctx.viewport.height}. Do NOT use any other dimensions.`,
+    );
   }
   if (ctx.selector) {
     lines.push(
