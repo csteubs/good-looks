@@ -10,7 +10,27 @@ export type StepType =
   | "uncheck"
   | "assert"
   | "wait"
-  | "viewport";
+  | "viewport"
+  // Logic layer: `if` opens a conditional block, `endif` closes it. Steps
+  // between them run only when the condition holds; otherwise they're skipped
+  // and the test continues gracefully.
+  | "if"
+  | "endif";
+
+/**
+ * Predicate for an `if` step. Element conditions resolve `Step.locator`; page
+ * conditions (urlContains/titleContains) use `Step.value` as the substring.
+ */
+export type ConditionKind =
+  | "visible"
+  | "hidden"
+  | "exists"
+  | "enabled"
+  | "disabled"
+  | "checked"
+  | "unchecked"
+  | "urlContains"
+  | "titleContains";
 
 export type LocatorKind = "testid" | "role" | "label" | "placeholder" | "text" | "css" | "xpath";
 
@@ -51,6 +71,8 @@ export interface Step {
   url?: string;
   /** assertion kind when type === "assert" */
   assert?: AssertKind;
+  /** condition predicate when type === "if" */
+  cond?: ConditionKind;
   /** assertion text / extra description */
   text?: string;
   /** soft assertion — reports a failure but doesn't stop the test (expect.soft) */
@@ -76,6 +98,7 @@ export interface RawStep {
   label?: string;
   url?: string;
   assert?: AssertKind;
+  cond?: ConditionKind;
   text?: string;
   soft?: boolean;
   attr?: string;

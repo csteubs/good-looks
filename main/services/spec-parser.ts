@@ -19,7 +19,7 @@
 
 import { randomUUID } from "crypto";
 
-import type { AssertKind, Locator, LocatorKind, Step, StepType } from "../recorder/types.js";
+import type { AssertKind, ConditionKind, Locator, LocatorKind, Step, StepType } from "../recorder/types.js";
 
 /**
  * Strip line and block comments from a source snippet. String-aware so a
@@ -172,11 +172,55 @@ function matchParen(s: string, openIdx: number): number {
   return -1;
 }
 
+/** Like matchParen, but for `{ … }`. */
+function matchBrace(s: string, openIdx: number): number {
+  let depth = 0;
+  for (let i = openIdx; i < s.length; i++) {
+    if (s[i] === "{") depth++;
+    else if (s[i] === "}") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Reverse of script-generator.ts's conditionExpr: read an `if (...)` condition
+ * expression back into a `{ cond, locator?, value? }` partial. Returns null for
+ * a condition shape the app doesn't author (e.g. a hand-written foreign `if`).
+ */
+function parseCondition(raw: string): Partial<Step> | null {
+  const c = raw.trim();
+  // Page-level conditions.
+  let m = c.match(/^page\.url\(\)\.includes\(\s*(['"`])([\s\S]*?)\1\s*\)$/);
+  if (m) return { cond: "urlContains", value: unescapeLit(m[2]) };
+  if (/page\.title\(\)/.test(c)) {
+    m = c.match(/\.includes\(\s*(['"`])([\s\S]*?)\1\s*\)\s*$/);
+    if (m) return { cond: "titleContains", value: unescapeLit(m[2]) };
+  }
+  // Element conditions — extract the locator, then map the predicate method.
+  const parsed = parseLocator(c);
+  if (!parsed) return null;
+  const negated = /^!\s*\(/.test(c);
+  let cond: ConditionKind | null = null;
+  if (/\.count\(\)\s*\)?\s*>\s*0/.test(c)) cond = "exists";
+  else if (/\.isVisible\s*\(/.test(c)) cond = "visible";
+  else if (/\.isHidden\s*\(/.test(c)) cond = "hidden";
+  else if (/\.isEnabled\s*\(/.test(c)) cond = "enabled";
+  else if (/\.isDisabled\s*\(/.test(c)) cond = "disabled";
+  else if (/\.isChecked\s*\(/.test(c)) cond = negated ? "unchecked" : "checked";
+  if (!cond) return null;
+  return { cond, locator: parsed.locator };
+}
+
 /** Parse the body of a single test callback into steps, plus a count of
  *  statements that looked like actions but couldn't be classified. */
 function parseBody(body: string): { steps: Step[]; skipped: number } {
   const steps: Step[] = [];
   let skipped = 0;
+  // Depth of recognized `if (...) {` blocks awaiting their closing `}` → endif.
+  let ifDepth = 0;
   const src = stripComments(body);
 
   // A single forward scan. At each position we test the known call shapes;
@@ -185,6 +229,42 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
   let i = 0;
   while (i < src.length) {
     const rest = src.slice(i);
+
+    // Closing brace of a recognized conditional block → endif.
+    const braceM = rest.match(/^[\s;]*\}/);
+    if (braceM && ifDepth > 0) {
+      ifDepth--;
+      steps.push(makeStep("endif", {}));
+      i += braceM[0].length;
+      continue;
+    }
+
+    // if (<condition>) { … } — the logic layer's conditional block.
+    const ifM = rest.match(/^[\s;]*if\s*\(/);
+    if (ifM) {
+      const openIdx = i + ifM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const afterCond = src.slice(close + 1);
+      const braceIdx = afterCond.indexOf("{");
+      const parsed = parseCondition(src.slice(openIdx + 1, close));
+      if (parsed && braceIdx >= 0 && afterCond.slice(0, braceIdx).trim() === "") {
+        steps.push(makeStep("if", parsed));
+        ifDepth++;
+        i = close + 1 + braceIdx + 1; // resume just past the opening brace
+        continue;
+      }
+      // Foreign / unrecognized condition — skip the whole block so we never
+      // emit a half-parsed `if` without its matching `endif`.
+      skipped++;
+      if (braceIdx >= 0) {
+        const blockClose = matchBrace(src, close + 1 + braceIdx);
+        i = blockClose >= 0 ? blockClose + 1 : close + 1 + braceIdx + 1;
+      } else {
+        i = close + 1;
+      }
+      continue;
+    }
 
     // page.goto("…")
     const gotoM = rest.match(/^[\s;]*(?:await\s+|return\s+)?page\.goto\s*\(/);

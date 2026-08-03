@@ -2,7 +2,7 @@
 // leading `await`/trailing `;`), for display in the UI. Mirrors the backend
 // script generator so what the user sees matches the generated script.
 
-import type { Locator, Step } from "./recorder-types";
+import type { Locator, Step, StepType } from "./recorder-types";
 
 function q(s: string): string {
   return JSON.stringify(s ?? "");
@@ -63,7 +63,52 @@ function describeAssert(step: Step, target: string | null): string {
   }
 }
 
+/** Readable phrasing of an `if` condition (mirror of script-generator.ts). */
+export function describeCondition(step: Step): string {
+  const loc = step.locator;
+  const el = loc ? "page." + locatorExpr(loc) : "element";
+  switch (step.cond) {
+    case "urlContains":
+      return "URL contains " + q(step.value ?? "");
+    case "titleContains":
+      return "title contains " + q(step.value ?? "");
+    case "hidden":
+      return el + " is hidden";
+    case "exists":
+      return el + " exists";
+    case "enabled":
+      return el + " is enabled";
+    case "disabled":
+      return el + " is disabled";
+    case "checked":
+      return el + " is checked";
+    case "unchecked":
+      return el + " is unchecked";
+    case "visible":
+    default:
+      return el + " is visible";
+  }
+}
+
+/**
+ * Indentation level per step, so the trainer/detail list can visually nest the
+ * body of a conditional block. `if` rows sit at the enclosing depth, their body
+ * one level deeper, and `endif` closes back to the enclosing depth.
+ */
+export function computeStepDepths(steps: { type: StepType }[]): number[] {
+  const depths: number[] = [];
+  let d = 0;
+  for (const s of steps) {
+    if (s.type === "endif") d = Math.max(0, d - 1);
+    depths.push(d);
+    if (s.type === "if") d += 1;
+  }
+  return depths;
+}
+
 export function describeStep(step: Step): string {
+  if (step.type === "if") return "if " + describeCondition(step);
+  if (step.type === "endif") return "end if";
   const loc = step.locator;
   const target = loc ? "page." + locatorExpr(loc) : null;
   switch (step.type) {

@@ -20,19 +20,34 @@ import {
 } from "@glaze/core/components";
 import { Crosshair, X } from "lucide-react";
 
-import type { AssertKind, Locator, PickedElement, RawStep } from "../lib/recorder-types";
+import type { AssertKind, ConditionKind, Locator, PickedElement, RawStep } from "../lib/recorder-types";
 import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 
-export type AddStepKind = "assertion" | "wait" | "goto" | "press" | "find" | "viewport";
+export type AddStepKind = "assertion" | "condition" | "wait" | "goto" | "press" | "find" | "viewport";
 
 export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   assertion: "Add assertion",
+  condition: "Add condition (if)",
   wait: "Add wait",
   goto: "Go to URL",
   press: "Press key",
   find: "Find element",
   viewport: "Set viewport",
 };
+
+// Condition predicates for an `if` block. Element conditions resolve a picked
+// locator; page conditions match a substring of the current URL / title.
+const CONDITION_OPTIONS: { value: ConditionKind; label: string; page?: boolean }[] = [
+  { value: "visible", label: "Element is visible" },
+  { value: "hidden", label: "Element is hidden" },
+  { value: "exists", label: "Element exists" },
+  { value: "enabled", label: "Element is enabled" },
+  { value: "disabled", label: "Element is disabled" },
+  { value: "checked", label: "Element is checked" },
+  { value: "unchecked", label: "Element is unchecked" },
+  { value: "urlContains", label: "Page URL contains", page: true },
+  { value: "titleContains", label: "Page title contains", page: true },
+];
 
 // assert kind → what operands it needs.
 type Need = "none" | "text" | "value" | "attr" | "count";
@@ -168,7 +183,7 @@ export function AddStepDialog({
   open: boolean;
   kind: AddStepKind;
   onOpenChange: (open: boolean) => void;
-  onAdd: (step: RawStep) => void;
+  onAdd: (steps: RawStep[]) => void;
   /** Element the user picked in the training browser via the Target Element flow, if any. */
   picked: PickedElement | null;
   /** Enter pick mode — pauses the session so the user can click an element. */
@@ -178,6 +193,7 @@ export function AddStepDialog({
 }) {
   const [locator, setLocator] = React.useState<Locator | null>(null);
   const [assert, setAssert] = React.useState<AssertKind>("visible");
+  const [cond, setCond] = React.useState<ConditionKind>("visible");
   const [text, setText] = React.useState("");
   const [value, setValue] = React.useState("");
   const [attr, setAttr] = React.useState("");
@@ -197,6 +213,7 @@ export function AddStepDialog({
     if (open) {
       setLocator(null);
       setAssert("visible");
+      setCond("visible");
       setText("");
       setValue("");
       setAttr("");
@@ -214,32 +231,46 @@ export function AddStepDialog({
   }, [open, kind]);
 
   const opt = ASSERT_OPTIONS.find((o) => o.value === assert)!;
+  const condOpt = CONDITION_OPTIONS.find((c) => c.value === cond)!;
 
-  function build(): RawStep | null {
+  function build(): RawStep[] | null {
     switch (kind) {
       case "goto":
-        return url.trim() ? { type: "goto", url: url.trim() } : null;
+        return url.trim() ? [{ type: "goto", url: url.trim() }] : null;
       case "press":
-        return {
-          type: "press",
-          value: key || "Enter",
-          ...(pressTarget === "element" && locator ? { locator } : {}),
-        };
+        return [
+          {
+            type: "press",
+            value: key || "Enter",
+            ...(pressTarget === "element" && locator ? { locator } : {}),
+          },
+        ];
       case "wait":
         return waitMode === "time"
-          ? { type: "wait", waitMs: Number(waitMs) || 0 }
+          ? [{ type: "wait", waitMs: Number(waitMs) || 0 }]
           : locator
-            ? { type: "wait", locator }
+            ? [{ type: "wait", locator }]
             : null;
       case "viewport": {
         if (viewport === "custom") {
-          return { type: "viewport", width: Number(vw) || 1280, height: Number(vh) || 800 };
+          return [{ type: "viewport", width: Number(vw) || 1280, height: Number(vh) || 800 }];
         }
         const p = VIEWPORTS.find((v) => v.id === viewport);
-        return { type: "viewport", width: p?.w ?? 1280, height: p?.h ?? 800 };
+        return [{ type: "viewport", width: p?.w ?? 1280, height: p?.h ?? 800 }];
       }
       case "find":
-        return locator ? { type: "assert", assert: "visible", locator } : null;
+        return locator ? [{ type: "assert", assert: "visible", locator }] : null;
+      case "condition": {
+        // Insert an empty IF/END-IF pair; the user drags steps between them.
+        const ifStep: RawStep = { type: "if", cond };
+        if (condOpt.page) {
+          ifStep.value = value;
+        } else {
+          if (!locator) return null;
+          ifStep.locator = locator;
+        }
+        return [ifStep, { type: "endif" }];
+      }
       case "assertion": {
         const step: RawStep = { type: "assert", assert, soft: soft || undefined };
         if (!opt.pageLevel) {
@@ -253,7 +284,7 @@ export function AddStepDialog({
           step.value = value;
         }
         if (opt.need === "count") step.count = Number(count) || 0;
-        return step;
+        return [step];
       }
       default:
         return null;
@@ -261,9 +292,9 @@ export function AddStepDialog({
   }
 
   function submit() {
-    const step = build();
-    if (!step) return;
-    onAdd(step);
+    const steps = build();
+    if (!steps || steps.length === 0) return;
+    onAdd(steps);
     onOpenChange(false);
   }
 
@@ -456,6 +487,42 @@ export function AddStepDialog({
                 <Input size="small" type="number" value={count} onChange={(e) => setCount(e.target.value)} />
               </Field>
             ) : null}
+          </>
+        ) : null}
+
+        {kind === "condition" ? (
+          <>
+            <Text variant="small" color="secondary">
+              Wrap steps in a conditional block. Steps you drag between the{" "}
+              <code>if</code> and <code>end if</code> rows run only when this condition is
+              true — otherwise they’re skipped and the test continues.
+            </Text>
+            <Field label="Run the block when" orientation="vertical">
+              <Select value={cond} onValueChange={(v) => setCond(v as ConditionKind)}>
+                <SelectTrigger size="small">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CONDITION_OPTIONS.map((c) => (
+                    <SelectItem key={c.value} value={c.value}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            {condOpt.page ? (
+              <Field label="Substring (or regex)" orientation="vertical">
+                <Input size="small" value={value} onChange={(e) => setValue(e.target.value)} />
+              </Field>
+            ) : (
+              <TargetElementPicker
+                picked={picked}
+                onChange={setLocator}
+                onStartPick={onStartPick}
+                onClearPick={onClearPick}
+              />
+            )}
           </>
         ) : null}
       </div>

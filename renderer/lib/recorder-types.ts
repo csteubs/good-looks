@@ -10,7 +10,22 @@ export type StepType =
   | "uncheck"
   | "assert"
   | "wait"
-  | "viewport";
+  | "viewport"
+  | "if"
+  | "endif";
+
+/** Predicate for an `if` step. Element conditions use `Step.locator`; page
+ *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
+export type ConditionKind =
+  | "visible"
+  | "hidden"
+  | "exists"
+  | "enabled"
+  | "disabled"
+  | "checked"
+  | "unchecked"
+  | "urlContains"
+  | "titleContains";
 
 export type LocatorKind = "testid" | "role" | "label" | "placeholder" | "text" | "css" | "xpath";
 
@@ -44,6 +59,7 @@ export interface Step {
   label?: string;
   url?: string;
   assert?: AssertKind;
+  cond?: ConditionKind;
   text?: string;
   soft?: boolean;
   attr?: string;
@@ -62,6 +78,7 @@ export interface RawStep {
   label?: string;
   url?: string;
   assert?: AssertKind;
+  cond?: ConditionKind;
   text?: string;
   soft?: boolean;
   attr?: string;

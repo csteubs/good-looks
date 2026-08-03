@@ -107,6 +107,54 @@ const unmappableParsed = parseSpecDetailed(unmappable);
 assertEqual(unmappableParsed.steps.length, 1, "only the recognized goto is kept");
 assertEqual(unmappableParsed.skipped, 2, "reload() and hover() are both counted as skipped");
 
+// ── 5. Conditional (if/endif) logic blocks round-trip ─────────────────────
+const condSteps: Step[] = [
+  step({ type: "goto", url: "https://example.com" }),
+  step({ type: "if", cond: "visible", locator: { k: "text", v: "Accept cookies" } }),
+  step({ type: "click", locator: { k: "role", role: "button", name: "Accept" } }),
+  step({ type: "endif" }),
+  step({ type: "if", cond: "urlContains", value: "/checkout" }),
+  step({ type: "assert", locator: { k: "css", v: "#total" }, assert: "visible" }),
+  step({ type: "endif" }),
+];
+const condSource = generateSpec({ name: "cond", url: "https://example.com", steps: condSteps });
+const condParsed = parseSpecDetailed(condSource);
+assertEqual(condParsed.skipped, 0, "conditional blocks produce zero skips");
+assertEqual(
+  condParsed.steps.map((s) => s.type),
+  condSteps.map((s) => s.type),
+  "if/endif block structure round-trips",
+);
+assertEqual(condParsed.steps[1]?.cond, "visible", "element condition kind round-trips");
+assertEqual(condParsed.steps[1]?.locator?.k, "text", "element condition locator round-trips");
+assertEqual(condParsed.steps[4]?.cond, "urlContains", "page condition kind round-trips");
+assertEqual(condParsed.steps[4]?.value, "/checkout", "page condition substring round-trips");
+const clickLine = condSource.split("\n").find((l) => l.includes(".click()"));
+assertEqual(clickLine?.startsWith("    "), true, "conditional body is indented one level deeper");
+
+// ── 6. Nested + negated + count-based conditions round-trip ────────────────
+const nestedCond: Step[] = [
+  step({ type: "if", cond: "exists", locator: { k: "css", v: ".item" } }),
+  step({ type: "if", cond: "unchecked", locator: { k: "testid", v: "agree" } }),
+  step({ type: "check", locator: { k: "testid", v: "agree" } }),
+  step({ type: "endif" }),
+  step({ type: "if", cond: "titleContains", value: "Cart" }),
+  step({ type: "click", locator: { k: "text", v: "Pay" } }),
+  step({ type: "endif" }),
+  step({ type: "endif" }),
+];
+const nestedSource = generateSpec({ name: "nested", url: "x", steps: nestedCond });
+const nestedParsed = parseSpecDetailed(nestedSource);
+assertEqual(nestedParsed.skipped, 0, "nested/negated conditions produce zero skips");
+assertEqual(
+  nestedParsed.steps.map((s) => s.type),
+  nestedCond.map((s) => s.type),
+  "nested if/endif structure round-trips",
+);
+assertEqual(nestedParsed.steps[0]?.cond, "exists", "exists condition round-trips");
+assertEqual(nestedParsed.steps[1]?.cond, "unchecked", "unchecked (negated) condition round-trips");
+assertEqual(nestedParsed.steps[4]?.cond, "titleContains", "titleContains condition round-trips");
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

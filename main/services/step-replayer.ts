@@ -15,6 +15,8 @@ import type { DebugLogLine, Step } from "../recorder/types.js";
 export interface ReplayResult {
   ok: boolean;
   error?: string;
+  /** For an `if` step: whether the condition held (block body should run). */
+  met?: boolean;
   logs: DebugLogLine[];
 }
 
@@ -185,8 +187,46 @@ export function buildReplayScript(step: Step): string {
     }
   }
 
+  function evalCondition() {
+    var c = step.cond || "visible";
+    if (c === "urlContains") {
+      var uMet = ci(location.href).indexOf(ci(step.value || "")) >= 0;
+      log("info", "condition: URL "" + location.href + "" contains "" + (step.value || "") + "" → " + uMet);
+      return uMet;
+    }
+    if (c === "titleContains") {
+      var tiMet = ci(document.title).indexOf(ci(step.value || "")) >= 0;
+      log("info", "condition: title "" + document.title + "" contains "" + (step.value || "") + "" → " + tiMet);
+      return tiMet;
+    }
+    if (c === "exists") {
+      var n = resolveAll(step.locator).length;
+      log("info", "condition: exists → " + n + " match(es) → " + (n > 0));
+      return n > 0;
+    }
+    var el = resolve(step.locator);
+    var met;
+    switch (c) {
+      case "hidden": met = !el || !visible(el); break;
+      case "enabled": met = !!el && !el.disabled; break;
+      case "disabled": met = !!el && !!el.disabled; break;
+      case "checked": met = !!el && !!el.checked; break;
+      case "unchecked": met = !!el && !el.checked; break;
+      case "visible":
+      default: met = !!el && visible(el); break;
+    }
+    log("info", "condition: " + c + " → " + met + (el ? "" : " (element not found)"));
+    return met;
+  }
+
   function run() {
     var t = step.type;
+    if (t === "if") {
+      var met = evalCondition();
+      log("info", met ? "block WILL run" : "block will be SKIPPED");
+      return { ok: true, met: met };
+    }
+    if (t === "endif") { log("info", "end of conditional block"); return { ok: true }; }
     if (t === "goto") { log("info", "goto runs at test start; skipped in preview"); return { ok: true, error: "goto runs at test start; skipped in preview" }; }
     if (t === "viewport") { log("info", "viewport is applied at run time; not previewable"); return { ok: true, error: "viewport is applied at run time; not previewable" }; }
     if (t === "wait") {

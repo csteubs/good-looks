@@ -11,10 +11,17 @@ import type { RunStepStatus } from "./recorder-store";
 import { describeStep } from "../lib/describe-step";
 import type { Step, StepType } from "../lib/recorder-types";
 
-function badgeColor(type: StepType): "green" | "blue" | "secondary" {
+function badgeColor(type: StepType): "green" | "blue" | "secondary" | "purple" {
+  if (type === "if" || type === "endif") return "purple";
   if (type === "assert") return "green";
   if (type === "goto" || type === "viewport" || type === "wait") return "blue";
   return "secondary";
+}
+
+/** Compact badge label — logic delimiters read better than the raw type name. */
+function badgeLabel(type: StepType): string {
+  if (type === "endif") return "end if";
+  return type;
 }
 
 /** The single field a step exposes for quick inline editing, if any. */
@@ -40,6 +47,11 @@ function editableField(
       if (step.assert === "attribute")
         return { key: "value", label: "Expected", value: step.value ?? "" };
       return null;
+    case "if":
+      // Page-condition substring is inline-editable; element conditions edit via Refine.
+      if (step.cond === "urlContains" || step.cond === "titleContains")
+        return { key: "value", label: "Contains", value: step.value ?? "" };
+      return null;
     default:
       return null;
   }
@@ -64,6 +76,7 @@ export function StepRow({
   onEdit,
   drag,
   runStatus,
+  indent = 0,
 }: {
   index: number;
   step: Step;
@@ -76,6 +89,8 @@ export function StepRow({
   drag?: StepDragProps;
   /** Live run status of this step during a test run, for highlight. */
   runStatus?: RunStepStatus;
+  /** Nesting depth inside conditional blocks, for left indentation. */
+  indent?: number;
 }) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState("");
@@ -137,6 +152,7 @@ export function StepRow({
       } ${drag?.isOver ? "border-t-2 border-accent" : ""} ${
         drag?.isDragging ? "opacity-50" : ""
       } ${onSelect ? "cursor-pointer" : ""}`}
+      style={indent ? { marginLeft: indent * 20 } : undefined}
       onDragEnter={drag ? () => drag.onDragEnter() : undefined}
       onDragOver={drag ? (e) => e.preventDefault() : undefined}
       onDrop={drag ? (e) => e.preventDefault() : undefined}
@@ -165,7 +181,7 @@ export function StepRow({
         {index + 1}
       </Text>
       <Badge color={badgeColor(step.type)} className="shrink-0">
-        {step.type}
+        {badgeLabel(step.type)}
       </Badge>
       {step.soft ? (
         <Badge color="secondary" className="shrink-0">
@@ -210,7 +226,7 @@ export function StepRow({
               )}
             </span>
           ) : null}
-          {onReplay && step.type !== "goto" && step.type !== "viewport" ? (
+          {onReplay && step.type !== "goto" && step.type !== "viewport" && step.type !== "endif" ? (
             <Button
               iconOnly
               variant="transparent"

@@ -14,7 +14,7 @@ import {
 import { Bug, ChevronDown, Crosshair, ListPlus, Pause, Play, Plus, Wand2, X } from "lucide-react";
 
 import type { AssertKind, DebugEntry, RawStep, Step } from "../lib/recorder-types";
-import { describeStep } from "../lib/describe-step";
+import { computeStepDepths, describeStep } from "../lib/describe-step";
 import { useRecorder } from "./recorder-store";
 import { StepRow } from "./step-row";
 import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "./add-step-dialog";
@@ -52,7 +52,15 @@ const ASSERT_LABEL: Record<AssertKind, string> = {
 };
 
 // Order matters: index === commandId in the native "+ Add step" menu.
-const ADD_STEP_KINDS: AddStepKind[] = ["assertion", "wait", "goto", "press", "find", "viewport"];
+const ADD_STEP_KINDS: AddStepKind[] = [
+  "assertion",
+  "condition",
+  "wait",
+  "goto",
+  "press",
+  "find",
+  "viewport",
+];
 
 interface MenuPopupItem {
   label?: string;
@@ -327,6 +335,9 @@ export function RecordingView() {
     setOverIndex(null);
   };
 
+  // Indentation level for each row, so conditional block bodies nest visually.
+  const stepDepths = computeStepDepths(liveSteps);
+
   return (
     <div className="flex h-full flex-col">
       <Toolbar>
@@ -479,6 +490,7 @@ export function RecordingView() {
                     onRefine={controlsDisabled ? undefined : () => startRefine(s.id)}
                     onEdit={controlsDisabled ? undefined : (patch) => updateStep(s.id, patch)}
                     runStatus={replayStepStatus[i]}
+                    indent={stepDepths[i]}
                     drag={controlsDisabled ? undefined : {
                       onDragStart: () => setDragId(s.id),
                       onDragEnter: () => setOverIndex(i),
@@ -525,8 +537,8 @@ export function RecordingView() {
               }
             }
           }}
-          onAdd={(step: RawStep) => {
-            insertStep(step);
+          onAdd={(steps: RawStep[]) => {
+            steps.forEach((s) => insertStep(s));
             if (addStepPicking) {
               setAddStepPicking(false);
               endRefine();

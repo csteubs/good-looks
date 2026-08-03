@@ -99,6 +99,36 @@ function clampCursor(index: number): number {
   return Math.max(0, Math.min(n, index));
 }
 
+/**
+ * Given the index of an `if`/`endif` step, return its matching partner index
+ * (respecting nested blocks), or -1 if the step isn't a block delimiter or the
+ * block is unbalanced.
+ */
+function matchingBlockIndex(steps: Step[], index: number): number {
+  const s = steps[index];
+  if (!s) return -1;
+  if (s.type === "if") {
+    let depth = 0;
+    for (let i = index + 1; i < steps.length; i++) {
+      if (steps[i].type === "if") depth++;
+      else if (steps[i].type === "endif") {
+        if (depth === 0) return i;
+        depth--;
+      }
+    }
+  } else if (s.type === "endif") {
+    let depth = 0;
+    for (let i = index - 1; i >= 0; i--) {
+      if (steps[i].type === "endif") depth++;
+      else if (steps[i].type === "if") {
+        if (depth === 0) return i;
+        depth--;
+      }
+    }
+  }
+  return -1;
+}
+
 function addStep(raw: RawStep): void {
   if (!session) return;
   const step: Step = { id: randomUUID(), timestamp: Date.now(), ...raw };
@@ -412,10 +442,16 @@ export const recorderService = {
   deleteStep(stepId: string): RecorderState {
     if (session) {
       const idx = session.steps.findIndex((s) => s.id === stepId);
-      session.steps = session.steps.filter((s) => s.id !== stepId);
-      // Keep the insert cursor stable relative to the removed step.
-      if (idx >= 0 && idx < session.cursor) session.cursor -= 1;
-      session.cursor = clampCursor(session.cursor);
+      if (idx < 0) return currentState();
+      // Deleting one delimiter of a conditional block removes both, so blocks
+      // stay balanced — the enclosed steps simply become un-wrapped.
+      const remove = new Set<number>([idx]);
+      const partner = matchingBlockIndex(session.steps, idx);
+      if (partner >= 0) remove.add(partner);
+      const cursor = session.cursor;
+      const removedBeforeCursor = [...remove].filter((i) => i < cursor).length;
+      session.steps = session.steps.filter((_, i) => !remove.has(i));
+      session.cursor = clampCursor(session.cursor - removedBeforeCursor);
       broadcastSteps();
       broadcastState();
     }
@@ -576,6 +612,7 @@ export const recorderService = {
           const result = (await wc.executeJavaScript(buildReplayScript(step))) as {
             ok: boolean;
             error?: string;
+            met?: boolean;
             logs?: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[];
           };
           const ok = !!(result && result.ok);
@@ -589,6 +626,17 @@ export const recorderService = {
             logs: result?.logs ?? [],
           };
           this.persistDebug(entry);
+          // Structural logic steps never stop the run; a false condition skips
+          // its whole block so downstream steps aren't previewed on a page that
+          // never showed the conditional content.
+          if (step.type === "if") {
+            if (result?.met === false) {
+              const end = matchingBlockIndex(session.steps, i);
+              if (end > i) i = end;
+            }
+            continue;
+          }
+          if (step.type === "endif") continue;
           if (ok) {
             return { ok: true, stoppedAtIndex: i };
           }
@@ -644,14 +692,17 @@ export const recorderService = {
         sendToMain("recorder:replayStep", { index: i, status: "begin", ok: true });
         let ok = false;
         let error: string | undefined;
+        let met: boolean | undefined;
         let logs: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[] = [];
         try {
           const result = (await wc.executeJavaScript(buildReplayScript(step))) as {
             ok: boolean;
             error?: string;
+            met?: boolean;
             logs?: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[];
           };
           ok = !!(result && result.ok);
+          met = result?.met;
           error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
           logs = result?.logs ?? [];
         } catch (err) {
@@ -669,6 +720,14 @@ export const recorderService = {
         };
         this.persistDebug(entry);
         sendToMain("recorder:replayStep", { index: i, status: "end", ok });
+        // Skip the body of a conditional block whose condition didn't hold —
+        // the skipped steps are left un-highlighted (never begun), matching a
+        // real run that branches past them.
+        if (step.type === "if" && met === false) {
+          const end = matchingBlockIndex(session.steps, i);
+          if (end > i) i = end;
+          continue;
+        }
         // A soft assertion reports failure but doesn't stop the run.
         if (!ok && !step.soft) {
           return { ok: false, failedAtIndex: i, error };

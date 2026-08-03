@@ -28,6 +28,7 @@ import { AiDebugDialog } from "./ai-debug-panel";
 import { RunOutput } from "./run-output";
 import { ScriptEditor, ScriptView } from "./script-view";
 import { StepRow } from "./step-row";
+import { computeStepDepths } from "../lib/describe-step";
 
 export function TestDetailView() {
   const { id } = useParams({ from: "/test/$id" });
@@ -201,8 +202,14 @@ export function TestDetailView() {
             <TabsContent value="steps" className="min-h-0 flex-1">
               <ScrollArea className="h-full">
                 <div className="flex flex-col gap-1 p-3">
-                  {test.steps.map((s, i) => (
-                    <StepRow key={s.id} index={i} step={s} runStatus={runInfo?.stepStatus[i]} />
+                  {computeStepDepths(test.steps).map((depth, i) => (
+                    <StepRow
+                      key={test.steps[i].id}
+                      index={i}
+                      step={test.steps[i]}
+                      indent={depth}
+                      runStatus={runInfo?.stepStatus[i]}
+                    />
                   ))}
                 </div>
               </ScrollArea>
