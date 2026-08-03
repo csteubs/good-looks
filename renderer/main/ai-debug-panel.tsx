@@ -229,6 +229,7 @@ export function AiDebugDialog({
   output,
   imported,
   speed,
+  failedStepIndex,
   onApplyScript,
 }: {
   open: boolean;
@@ -239,6 +240,8 @@ export function AiDebugDialog({
   output: string;
   imported: boolean;
   speed?: TestSpeed;
+  /** 0-based index of the step the run failed on, if known — lets the debug prompt skip steps that never ran. */
+  failedStepIndex?: number;
   /** Persist an AI-suggested full-file replacement of the test's script. */
   onApplyScript?: (source: string) => Promise<void>;
 }) {
@@ -303,10 +306,10 @@ export function AiDebugDialog({
       // keep the cached name; the backend will fall back to its own config
     }
     void start(
-      buildDebugMessages({ testName, testUrl, script, output, imported, speed }),
+      buildDebugMessages({ testName, testUrl, script, output, imported, speed, failedStepIndex }),
       { model },
     );
-  }, [start, modelName, testName, testUrl, script, output, imported, speed]);
+  }, [start, modelName, testName, testUrl, script, output, imported, speed, failedStepIndex]);
 
   // Auto-start a diagnosis the first time we see a given run output while the
   // dialog is open. We deliberately do NOT reset `startedKeyRef` on close, so

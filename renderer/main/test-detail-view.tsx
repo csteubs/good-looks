@@ -47,6 +47,15 @@ export function TestDetailView() {
   const scriptQuery = useQuery({ queryKey: ["script", id], queryFn: () => api.tests.getScript(id) });
   const test = testQuery.data;
   const runInfo = runs[id];
+  // Earliest step the run reported as failed, if any — lets the AI debug
+  // prompt skip steps after it, since Playwright never ran them.
+  const failedStepIndex = React.useMemo(() => {
+    if (!runInfo) return undefined;
+    const failed = Object.entries(runInfo.stepStatus)
+      .filter(([, status]) => status === "failed")
+      .map(([index]) => Number(index));
+    return failed.length > 0 ? Math.min(...failed) : undefined;
+  }, [runInfo]);
 
   const saveName = async (name: string) => {
     const trimmed = name.trim();
@@ -266,6 +275,7 @@ export function TestDetailView() {
         output={runInfo?.lines.join("") ?? ""}
         imported={Boolean(test.sourceDir)}
         speed={test.speed}
+        failedStepIndex={failedStepIndex}
         onApplyScript={async (source) => {
           await api.tests.updateScript(id, source);
           qc.invalidateQueries({ queryKey: ["script", id] });
