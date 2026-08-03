@@ -10,12 +10,12 @@ import { Check, ChevronDown, Copy, RotateCcw, Square, Wand2 } from "lucide-react
 import { api } from "../lib/api";
 import { diffLines, diffSummary, type DiffLine } from "../lib/line-diff";
 import type { LlmModel } from "../lib/llm-types";
-import { buildDebugMessages } from "../lib/llm-prompts";
+import { buildDebugMessages, buildStepDebugMessages } from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
 import type { TestSpeed } from "../lib/recorder-types";
 import { useLlmChat } from "../lib/use-llm-chat";
 
-function friendlyError(message: string): string {
+export function friendlyError(message: string): string {
   if (/no model selected/i.test(message)) {
     return `${message} Open Settings (⌘,) → AI provider to pick one.`;
   }
@@ -26,7 +26,7 @@ function friendlyError(message: string): string {
 }
 
 // A fenced code block from the response, rendered distinctly with its own copy.
-function CodeBlock({ lang, content }: { lang: string; content: string }) {
+export function CodeBlock({ lang, content }: { lang: string; content: string }) {
   const [copied, setCopied] = React.useState(false);
   const copy = async () => {
     await window.glazeAPI.clipboard.writeText(content);
@@ -78,7 +78,7 @@ function DiffView({ diff }: { diff: DiffLine[] }) {
 // small floating list of the available models; scrolling or arrow keys cycle
 // the highlighted entry, Enter or click confirms the selection (persisted via
 // llm:setConfig so future prompts use it), Escape closes without changing.
-function ModelPicker({
+export function ModelPicker({
   modelName,
   models,
   onConfirm,
@@ -428,6 +428,183 @@ export function AiDebugDialog({
           <div className="flex flex-col gap-1 p-3">
             {status === "error" && error ? (
               <pre className="text-small whitespace-pre-wrap break-words text-primary">{friendlyError(error)}</pre>
+            ) : content ? (
+              segments.map((seg, i) =>
+                seg.type === "code" ? (
+                  <CodeBlock key={i} lang={seg.lang} content={seg.content} />
+                ) : (
+                  <p key={i} className="text-small whitespace-pre-wrap break-words text-primary">
+                    {seg.content}
+                  </p>
+                ),
+              )
+            ) : (
+              <p className="text-small text-secondary">
+                {status === "streaming" ? (modelName ? `Thinking with ${modelName}…` : "Thinking…") : ""}
+              </p>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
+    </Dialog>
+  );
+}
+
+// ── Per-step replay debugging (trainer Console) ───────────────────────
+// A leaner sibling of AiDebugDialog for diagnosing a SINGLE failed trainer
+// step from the Console tab. Same streaming + rendering machinery, but no
+// "Apply to script" (these are editable steps, not a script file) — just a
+// diagnosis and an optional corrected-expression snippet the user can copy.
+
+export function StepAiDebugDialog({
+  open,
+  onOpenChange,
+  testName,
+  url,
+  stepLabel,
+  locator,
+  error,
+  logs,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  testName: string;
+  url: string;
+  stepLabel: string;
+  locator?: string;
+  error: string;
+  logs: { level: "info" | "warn" | "error"; message: string }[];
+}) {
+  const { content, status, error: chatError, start, stop } = useLlmChat();
+  const [copied, setCopied] = React.useState(false);
+  const [modelName, setModelName] = React.useState<string | null>(null);
+  const [models, setModels] = React.useState<LlmModel[]>([]);
+  const startedKeyRef = React.useRef<string | null>(null);
+
+  React.useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    api.llm
+      .getConfig()
+      .then(async (cfg) => {
+        if (cancelled) return;
+        setModelName(cfg.model);
+        try {
+          const st = await api.llm.status(cfg.provider);
+          if (!cancelled) setModels(st.models);
+        } catch {
+          if (!cancelled) setModels([]);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setModelName(null);
+          setModels([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
+  const confirmModel = React.useCallback(async (model: string) => {
+    setModelName(model);
+    try {
+      await api.llm.setConfig({ model });
+    } catch {
+      // best-effort
+    }
+  }, []);
+
+  const runDiagnosis = React.useCallback(async () => {
+    let model = modelName ?? undefined;
+    try {
+      const cfg = await api.llm.getConfig();
+      setModelName(cfg.model);
+      model = cfg.model ?? undefined;
+    } catch {
+      // keep the cached name
+    }
+    void start(
+      buildStepDebugMessages({ testName, url, stepLabel, locator, error, logs }),
+      { model },
+    );
+  }, [start, modelName, testName, url, stepLabel, locator, error, logs]);
+
+  // Auto-start once per unique failed step while the dialog is open. Like
+  // AiDebugDialog, we don't reset the key on close so reopening for the same
+  // step shows the prior streamed response.
+  React.useEffect(() => {
+    if (!open) return;
+    const key = `${stepLabel}:${error.length}:${logs.length}`;
+    if (startedKeyRef.current === key) return;
+    startedKeyRef.current = key;
+    void runDiagnosis();
+  }, [open, stepLabel, error.length, logs.length, runDiagnosis]);
+
+  const copyResponse = async () => {
+    await window.glazeAPI.clipboard.writeText(content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const segments = parseResponse(content);
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title={
+        models.length > 0 ? (
+          <span className="inline-flex items-baseline gap-1">
+            Debugging step with{" "}
+            <ModelPicker modelName={modelName} models={models} onConfirm={confirmModel} />
+          </span>
+        ) : (
+          modelName ? `Debugging step with ${modelName}` : "Debugging step with AI"
+        )
+      }
+      description={stepLabel}
+      size="xl"
+    >
+      <div className="flex h-[50vh] flex-col gap-3">
+        <div className="flex items-center gap-2">
+          {status === "streaming" ? (
+            <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
+          ) : null}
+          {status === "error" ? <Status variant="error">Error</Status> : null}
+          {status === "done" ? <Status variant="success">Done</Status> : null}
+          {status === "cancelled" ? <Status variant="neutral">Stopped</Status> : null}
+          {status === "streaming" ? (
+            <Button size="small" variant="muted" onClick={stop}>
+              <Square className="size-3.5" /> Stop
+            </Button>
+          ) : (
+            <Button size="small" variant="muted" onClick={runDiagnosis}>
+              <RotateCcw className="size-3.5" /> Regenerate
+            </Button>
+          )}
+          {content ? (
+            <Button
+              iconOnly
+              size="small"
+              variant="transparent"
+              onClick={copyResponse}
+              aria-label="Copy response"
+              title="Copy response"
+            >
+              {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+            </Button>
+          ) : null}
+        </div>
+        <ScrollArea
+          className="min-h-0 flex-1 rounded-md border border-separator"
+          autoScrollToBottom
+          autoScrollDeps={[content.length]}
+        >
+          <div className="flex flex-col gap-1 p-3">
+            {status === "error" && chatError ? (
+              <pre className="text-small whitespace-pre-wrap break-words text-primary">{friendlyError(chatError)}</pre>
             ) : content ? (
               segments.map((seg, i) =>
                 seg.type === "code" ? (

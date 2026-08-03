@@ -17,13 +17,15 @@ import {
   ToolbarContent,
   ToolbarTitle,
 } from "@glaze/core/components";
-import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, Wand2, X } from "lucide-react";
+import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, Sparkles, Wand2, X } from "lucide-react";
 
 import type { AssertKind, DebugEntry, PickedElement, RawStep, Step } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
+import { locatorToPrompt } from "../lib/llm-prompts";
 import { useRecorder, type ReplayRun } from "./recorder-store";
 import { StepRow } from "./step-row";
 import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "./add-step-dialog";
+import { StepAiDebugDialog } from "./ai-debug-panel";
 import { GenerateStepsDialog } from "./generate-steps-dialog";
 import { RefineSelectorDialog } from "./refine-selector-dialog";
 
@@ -171,6 +173,7 @@ function DebugPanel({
   onTabChange,
   autoScroll,
   onAutoScrollChange,
+  onDebugStep,
 }: {
   step: Step | null;
   selectedIndex: number;
@@ -181,6 +184,7 @@ function DebugPanel({
   onTabChange: (v: string) => void;
   autoScroll: boolean;
   onAutoScrollChange: (v: boolean) => void;
+  onDebugStep: (index: number) => void;
 }) {
   const consoleSteps = replayRun?.steps ?? [];
   const ran = replayRun?.ran ?? 0;
@@ -249,7 +253,18 @@ function DebugPanel({
                     </div>
                     <LogLines logs={s.logs} indent />
                     {!s.ok && s.error ? (
-                      <div className="pl-4 text-support-red">{s.error}</div>
+                      <div className="flex items-start gap-2 pl-4">
+                        <span className="min-w-0 flex-1 text-support-red">{s.error}</span>
+                        <button
+                          type="button"
+                          onClick={() => onDebugStep(s.index)}
+                          className="shrink-0 rounded p-0.5 text-tertiary transition-colors hover:bg-background-secondary hover:text-accent"
+                          aria-label="Debug this step with AI"
+                          title="Debug with AI"
+                        >
+                          <Sparkles className="size-3.5" />
+                        </button>
+                      </div>
                     ) : null}
                   </div>
                 ))
@@ -378,6 +393,9 @@ export function RecordingView() {
   // the latest output (on by default; a checkbox lets the user scroll manually).
   const [debugTab, setDebugTab] = React.useState("steps");
   const [autoScroll, setAutoScroll] = React.useState(true);
+  // Index (into replayRun.steps) of the failed console step the user is
+  // debugging with AI. Null when the StepAiDebugDialog is closed.
+  const [debugStepIndex, setDebugStepIndex] = React.useState<number | null>(null);
   // Exit confirmation: "Stop & generate" and the window close button both
   // open this modal instead of immediately finalizing, so the user can keep
   // training or choose whether to save.
@@ -699,6 +717,7 @@ export function RecordingView() {
         onTabChange={setDebugTab}
         autoScroll={autoScroll}
         onAutoScrollChange={setAutoScroll}
+        onDebugStep={setDebugStepIndex}
       />
 
       {addKind ? (
@@ -750,6 +769,37 @@ export function RecordingView() {
         url={state.url}
         onOpenChange={setAiOpen}
         onInsert={(steps) => steps.forEach((s) => insertStep(s))}
+      />
+      <StepAiDebugDialog
+        open={debugStepIndex !== null}
+        onOpenChange={(o) => {
+          if (!o) setDebugStepIndex(null);
+        }}
+        testName={state.name ?? "Test"}
+        url={state.url ?? ""}
+        stepLabel={(() => {
+          const fs = debugStepIndex !== null
+            ? replayRun?.steps.find((x) => x.index === debugStepIndex)
+            : null;
+          return fs?.stepLabel ?? "Step";
+        })()}
+        locator={(() => {
+          if (debugStepIndex === null) return undefined;
+          const ls = liveSteps[debugStepIndex];
+          return ls?.locator ? locatorToPrompt(ls.locator) : undefined;
+        })()}
+        error={(() => {
+          const fs = debugStepIndex !== null
+            ? replayRun?.steps.find((x) => x.index === debugStepIndex)
+            : null;
+          return fs?.error ?? "Replay did not complete.";
+        })()}
+        logs={(() => {
+          const fs = debugStepIndex !== null
+            ? replayRun?.steps.find((x) => x.index === debugStepIndex)
+            : null;
+          return (fs?.logs ?? []).map((l) => ({ level: l.level, message: l.m }));
+        })()}
       />
       {picked && refiningStepId ? (
         <RefineSelectorDialog

@@ -78,6 +78,66 @@ export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
   ];
 }
 
+// ── Per-step replay debugging (trainer Console) ───────────────────────
+// A focused diagnosis of a SINGLE failed trainer step (one step in the live,
+// editable step list), given the step's action + locator, the error that
+// replay produced, and the verbose log lines captured while replaying it.
+// Unlike buildDebugMessages (which gets the whole spec + full run output and
+// can offer a complete corrected file), this is a step in an editable list, so
+// we ask for a plain-prose diagnosis plus an optional fenced ```ts snippet
+// showing just the corrected Playwright expression for this step — not a
+// whole-file replacement.
+
+const STEP_DEBUG_SYSTEM_PROMPT = `You are an expert QA automation engineer embedded in a Playwright test recorder's live trainer. The user replayed a single test step against the live page and it failed. Diagnose why and suggest a concrete fix.
+
+The recorder's steps use Playwright-style locators. Locator kinds: getByRole (with aria role + accessible name), getByLabel, getByPlaceholder, getByText, getByTestId, and raw CSS/XPath locator(). Prefer the semantic kinds over CSS/XPath; a raw CSS locator often means the recorder couldn't find a better handle and is a common source of flaky selectors.
+
+Common causes of a single-step replay failure:
+- The element isn't on the page yet (race condition) — the step ran before the page settled. Suggest a web-first wait (expect(locator).toBeVisible()) or reordering the step.
+- The locator no longer matches the page (the element's role/label/text changed, or it's behind a shadow root). Suggest a more robust locator for the same element.
+- The action itself is wrong for the element (e.g. fill on a non-input, click on a disabled control). Suggest the correct action.
+- A navigation the previous step triggered hasn't completed.
+
+Output format:
+- Start with a 1-2 sentence diagnosis of the most likely root cause, in plain prose. Do not use markdown headings (#) or bold (**).
+- If you can suggest a concrete fix, show the corrected Playwright expression for THIS STEP ONLY in a single fenced code block tagged "ts" — e.g. \`await page.getByRole('button', { name: 'Sign in' }).click();\`. Do NOT output a whole spec file; this is one editable step, not a script.
+- If the logs don't give enough detail to diagnose, say what additional information would help instead of guessing, and do NOT output a code block.`;
+
+export interface StepDebugContext {
+  /** Test name, for context. */
+  testName: string;
+  /** The page URL the trainer has loaded (the step runs against this page). */
+  url: string;
+  /** Human-readable description of the failed step (e.g. "Click button ‘Sign in’"). */
+  stepLabel: string;
+  /** The step's locator rendered as a Playwright-style expression, if it has one. */
+  locator?: string;
+  /** The error message replay produced for this step. */
+  error: string;
+  /** Verbose diagnostic log lines captured while replaying the step (timestamp · level · message). */
+  logs: { level: "info" | "warn" | "error"; message: string }[];
+}
+
+export function buildStepDebugMessages(ctx: StepDebugContext): LlmMessage[] {
+  const logText = ctx.logs.length > 0
+    ? ctx.logs.map((l) => `[${l.level}] ${l.message}`).join("\n")
+    : "(no verbose logs were captured for this step)";
+  const lines = [
+    `Test: "${ctx.testName}"`,
+    `Page URL: ${ctx.url}`,
+    `Failed step: ${ctx.stepLabel}`,
+    ctx.locator ? `Step locator: ${ctx.locator}` : "Step locator: (none — this step has no element locator)",
+  "",
+    `Error from replay:\n${ctx.error}`,
+    "",
+    `Verbose replay logs:\n${truncateTail(logText, MAX_OUTPUT_CHARS)}`,
+  ];
+  return [
+    { role: "system", content: STEP_DEBUG_SYSTEM_PROMPT },
+    { role: "user", content: lines.join("\n") },
+  ];
+}
+
 // ── Test generation by prompt ──────────────────────────────────────────
 // A separate system prompt for generating a brand-new Playwright spec from a
 // natural-language description, reusing the same locator conventions as the
@@ -189,7 +249,7 @@ export interface GenerateStepsContext {
 
 // Render a Locator back into the Playwright-style expression the model recognizes,
 // so the prompt's selector context matches the recorder's own locator vocabulary.
-function locatorToPrompt(l: Locator): string {
+export function locatorToPrompt(l: Locator): string {
   switch (l.k) {
     case "testid":
       return `getByTestId(${JSON.stringify(l.v ?? "")})`;
