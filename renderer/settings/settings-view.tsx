@@ -451,7 +451,7 @@ export function SettingsView() {
                 <FieldLabel htmlFor="auto-heal-timeout">Per-attempt timeout (ms)</FieldLabel>
                 <p className="text-sm text-muted-foreground">
                   How long to wait before a single heal attempt is considered timed-out
-                  (1000–30000).
+                  (1000–30000 ms; 1000 ms = 1 second).
                 </p>
               </FieldContent>
               <Input
