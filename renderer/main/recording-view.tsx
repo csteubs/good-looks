@@ -81,17 +81,26 @@ function nativeMenu(): NativeMenu {
 }
 
 /** Thin clickable strip between rows that moves the insert cursor. */
-function CursorGap({ active, onClick }: { active: boolean; onClick: () => void }) {
+function CursorGap({
+  active,
+  onClick,
+  disabled,
+}: {
+  active: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="group/gap flex h-2 w-full items-center px-2"
+      disabled={disabled}
+      className="group/gap flex h-2 w-full items-center px-2 disabled:cursor-default"
       aria-label="Move insert point here"
     >
       <span
         className={`h-0.5 w-full rounded-full ${
-          active ? "bg-accent" : "bg-transparent group-hover/gap:bg-separator"
+          active ? "bg-accent" : disabled ? "bg-transparent" : "bg-transparent group-hover/gap:bg-separator"
         }`}
       />
     </button>
@@ -347,6 +356,7 @@ export function RecordingView() {
     replayStep,
     replayFromCurrent,
     replayRun,
+    executing,
     replayStepStatus,
     debugEntries,
     clearDebugEntry,
@@ -415,7 +425,10 @@ export function RecordingView() {
     clearContextAction();
   }, [contextAction, clearContextAction]);
 
-  const running = !!replayRun?.running;
+  // "Running" covers ANY in-flight replay (single step or from-current), not
+  // just the streamed run — so the status reads "Running" and step editing is
+  // locked whenever the test is executing.
+  const running = executing || !!replayRun?.running;
 
   // "Replay from current step": run slowly from the currently selected step
   // (or the first step if none is selected) through the end, streaming each
@@ -438,14 +451,14 @@ export function RecordingView() {
     window.setTimeout(() => setReplayStatus(null), 6000);
   };
 
-  // Follow the run: auto-select the step currently being replayed so the Step
-  // details tab and the row highlight track progress.
+  // Follow the streamed run: auto-select the step currently being replayed so
+  // the Step details tab and the row highlight track progress.
   React.useEffect(() => {
-    if (!running || !replayRun || replayRun.steps.length === 0) return;
+    if (!replayRun?.running || replayRun.steps.length === 0) return;
     const last = replayRun.steps[replayRun.steps.length - 1];
     const s = liveSteps[last.index];
     if (s) setSelectedStepId(s.id);
-  }, [running, replayRun, liveSteps]);
+  }, [replayRun, liveSteps]);
 
   // Controls stay inert until the training browser has loaded, and while a
   // "Replay from current step" run is in flight.
@@ -516,7 +529,7 @@ export function RecordingView() {
         {!state.pageReady ? (
           <Status variant="warning">Loading page…</Status>
         ) : running ? (
-          <Status variant="loading">Running test…</Status>
+          <Status variant="loading">Running</Status>
         ) : (
           <Status variant={state.paused ? "warning" : "error"}>
             {state.paused ? "Paused" : state.editing ? "Editing" : "Recording"}
@@ -638,7 +651,7 @@ export function RecordingView() {
             </div>
           ) : (
             <>
-              <CursorGap active={state.cursor === 0} onClick={() => setCursor(0)} />
+              <CursorGap active={state.cursor === 0} onClick={() => setCursor(0)} disabled={controlsDisabled} />
               {liveSteps.map((s, i) => (
                 <React.Fragment key={s.id}>
                   <StepRow
@@ -660,7 +673,7 @@ export function RecordingView() {
                       isOver: overIndex === i && dragId !== null && dragId !== s.id,
                     }}
                   />
-                  <CursorGap active={state.cursor === i + 1} onClick={() => setCursor(i + 1)} />
+                  <CursorGap active={state.cursor === i + 1} onClick={() => setCursor(i + 1)} disabled={controlsDisabled} />
                 </React.Fragment>
               ))}
             </>
@@ -785,7 +798,7 @@ export function RecordingView() {
           /* non-dismissible until the user acknowledges via the button */
         }}
         title="Couldn't open the training browser"
-        description="The training window failed to open within 10 seconds. This can happen on a slow network, a redirect loop, or if the site is unreachable."
+        description="The training window couldn't open. This can happen on a slow network, a redirect loop, or if the site is unreachable."
         confirmLabel="Try again"
         confirmVariant="accent"
         onConfirm={() => {

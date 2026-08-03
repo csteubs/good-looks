@@ -104,6 +104,9 @@ interface RecorderContextValue {
   }>;
   /** Live state of the most recent "Replay from current step" run (or null). */
   replayRun: ReplayRun | null;
+  /** True while ANY replay is executing (single step, from-current, etc.) — the
+   *  trainer shows "Running" and locks step editing while this is true. */
+  executing: boolean;
   /** Per-step status for an in-flight replay, keyed by step index. */
   replayStepStatus: Record<number, RunStepStatus>;
   /** Persisted per-step debug entries (latest attempt per step), for the debug panel. */
@@ -146,6 +149,9 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const [replayStepStatus, setReplayStepStatus] = React.useState<Record<number, RunStepStatus>>({});
   // Live "Replay from current step" run, streamed from the backend.
   const [replayRun, setReplayRun] = React.useState<ReplayRun | null>(null);
+  // True while any replay (single step / from-current) is in flight — drives
+  // the "Running" status and locks step editing.
+  const [executing, setExecuting] = React.useState(false);
   const navigate = useNavigate();
   const qc = useQueryClient();
 
@@ -311,42 +317,62 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   );
   const setCursor = React.useCallback((index: number) => void api.recorder.setCursor(index), []);
   const replayStep = React.useCallback(async (id: string) => {
-    const entry = await api.recorder.replayStep(id);
-    // The backend pushes the full list via recorder:debugLogs, but update
-    // locally too so the panel reacts before the push round-trips.
-    setDebugEntries((prev) => {
-      const next = prev.filter((e) => e.stepId !== entry.stepId);
-      next.push(entry);
-      return next;
-    });
-    return entry;
+    setExecuting(true);
+    try {
+      const entry = await api.recorder.replayStep(id);
+      // The backend pushes the full list via recorder:debugLogs, but update
+      // locally too so the panel reacts before the push round-trips.
+      setDebugEntries((prev) => {
+        const next = prev.filter((e) => e.stepId !== entry.stepId);
+        next.push(entry);
+        return next;
+      });
+      return entry;
+    } finally {
+      setExecuting(false);
+    }
   }, []);
   const replayFromStart = React.useCallback(async () => {
-    const res = await api.recorder.replayFromStart();
-    // The backend persists + pushes per-step entries during the run; refresh
-    // from the store so the panel reflects every replayed step.
-    if (state.testId) {
-      api.recorder.getDebugLogs(state.testId).then(setDebugEntries).catch(() => {});
+    setExecuting(true);
+    try {
+      const res = await api.recorder.replayFromStart();
+      // The backend persists + pushes per-step entries during the run; refresh
+      // from the store so the panel reflects every replayed step.
+      if (state.testId) {
+        api.recorder.getDebugLogs(state.testId).then(setDebugEntries).catch(() => {});
+      }
+      return res;
+    } finally {
+      setExecuting(false);
     }
-    return res;
   }, [state.testId]);
   const replayAll = React.useCallback(async () => {
+    setExecuting(true);
     setReplayStepStatus({});
-    const res = await api.recorder.replayAll();
-    if (state.testId) {
-      api.recorder.getDebugLogs(state.testId).then(setDebugEntries).catch(() => {});
+    try {
+      const res = await api.recorder.replayAll();
+      if (state.testId) {
+        api.recorder.getDebugLogs(state.testId).then(setDebugEntries).catch(() => {});
+      }
+      return res;
+    } finally {
+      setExecuting(false);
     }
-    return res;
   }, [state.testId]);
   const replayFromCurrent = React.useCallback(async (startIndex: number) => {
     // Reset row highlighting for a fresh run; the live console is reset by the
     // backend's "start" replayLog event.
+    setExecuting(true);
     setReplayStepStatus({});
-    const res = await api.recorder.replayFromCurrent(startIndex);
-    if (state.testId) {
-      api.recorder.getDebugLogs(state.testId).then(setDebugEntries).catch(() => {});
+    try {
+      const res = await api.recorder.replayFromCurrent(startIndex);
+      if (state.testId) {
+        api.recorder.getDebugLogs(state.testId).then(setDebugEntries).catch(() => {});
+      }
+      return res;
+    } finally {
+      setExecuting(false);
     }
-    return res;
   }, [state.testId]);
   const clearDebugEntry = React.useCallback((id: string) => {
     api.recorder.clearDebugLog(id).then(setDebugEntries).catch(() => {});
@@ -385,6 +411,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     replayAll,
     replayFromCurrent,
     replayRun,
+    executing,
     replayStepStatus,
     debugEntries,
     clearDebugEntry,

@@ -50,6 +50,17 @@ const REPLAY_STEP_DELAY_MS = 600;
 // pending forever and wedge the whole run with controls disabled; the timeout
 // turns that into a clean per-step failure instead.
 const REPLAY_STEP_TIMEOUT_MS = 8000;
+// How long after creating the recorder window to force it visible if the
+// WebView's own readiness events (`ready-to-show`/`dom-ready`) haven't fired
+// yet. On a cold start (the first recorder window in the app's lifetime) those
+// events can lag many seconds while the WebView subsystem initializes, which
+// left the window hidden behind the main window — the "first click does
+// nothing" bug. A creation-relative timer doesn't depend on those events.
+const SHOW_FALLBACK_MS = 1500;
+// Hard cap on how long we wait for the first page to finish loading before we
+// let the trainer proceed (controls enable). The window itself is shown far
+// earlier (see SHOW_FALLBACK_MS); this only bounds `pageReady`.
+const LOAD_TIMEOUT_MS = 15000;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** Race a page `executeJavaScript` against a timeout so one hanging/navigating
@@ -550,13 +561,22 @@ export const recorderService = {
     // to `dom-ready` (1.5s after creation) so the user sees the window opening
     // promptly instead of a blank background with "Recording" and no window.
     let shown = false;
+    let showFallback: ReturnType<typeof setTimeout> | null = null;
     const showNow = () => {
+      if (showFallback) {
+        clearTimeout(showFallback);
+        showFallback = null;
+      }
       if (shown || !recWindow || recWindow.isDestroyed()) return;
       shown = true;
       recWindow.show();
     };
+    // Prefer the WebView's own readiness signals (no white flash) when they
+    // fire, but guarantee the window appears with a creation-relative fallback
+    // so a cold-start lag in those events can't leave it hidden.
     recWindow.once("ready-to-show", showNow);
-    wc.once("dom-ready", () => setTimeout(showNow, 1500));
+    wc.once("dom-ready", showNow);
+    showFallback = setTimeout(showNow, SHOW_FALLBACK_MS);
     recWindow.on("closed", () => void finalize());
 
     // A same-origin redirect on load (e.g. adding a trailing slash) can retrigger
@@ -574,22 +594,22 @@ export const recorderService = {
       loadNavInWindow(url);
       wc.once("did-finish-load", () => { finishLoad(); resolve(); });
       wc.once("did-fail-load", () => { finishLoad(); resolve(); });
-      // 10s hard timeout: if the window hasn't finished loading, cancel the
-      // session, log the failure to run history (so it shows in Stats), and
-      // push a loadFailed state so the renderer shows an error dialog.
-      setTimeout(() => { finishLoad(); resolve(); }, 10000);
+      // Bound how long controls stay disabled waiting for the first page. The
+      // window itself is already shown far earlier (SHOW_FALLBACK_MS), so this
+      // only gates `pageReady`, not the window opening.
+      setTimeout(() => { finishLoad(); resolve(); }, LOAD_TIMEOUT_MS);
     });
 
     // If the session was already torn down (user closed early), bail.
     if (!session) return currentState();
 
-    // Check whether the window actually loaded. If the window is destroyed or
-    // the load never completed (did-finish-load never fired), treat it as a
-    // load failure: cancel the session and log the issue.
+    // Only a genuine failure now: the window was never shown (couldn't open) or
+    // was destroyed. A slow-but-fine cold-start load no longer trips this — the
+    // window is force-shown within SHOW_FALLBACK_MS regardless of load timing.
     if (!shown || recWindow.isDestroyed()) {
       session.loadFailed = true;
-      const message = `Training window failed to open for ${url} within 10 seconds.`;
-      logger.error("recorder", "Trainer window load timeout", { url, testId });
+      const message = `The training window couldn't open for ${url}.`;
+      logger.error("recorder", "Trainer window failed to open", { url, testId });
       // Log to run history so the failure is visible in Stats.
       try {
         const logText = `${message}\n\nThe training browser window did not open. This can happen on a slow network, a redirect loop, or if the site is unreachable.\n\nTry again, or check Stats → Run history for more details.`;
