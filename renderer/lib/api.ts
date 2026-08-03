@@ -100,6 +100,8 @@ export const api = {
       ipc().invoke<TestRecord>("tests:rename", { id, name }),
     updateScript: (id: string, source: string) =>
       ipc().invoke<TestRecord>("tests:updateScript", { id, source }),
+    updateSteps: (id: string, steps: Step[]) =>
+      ipc().invoke<TestRecord>("tests:updateSteps", { id, steps }),
     createFromPrompt: (params: {
       name: string;
       url: string;

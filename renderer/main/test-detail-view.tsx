@@ -7,6 +7,10 @@ import {
   Callout,
   Checkbox,
   Dialog,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
   Field,
   Input,
   ScrollArea,
@@ -21,11 +25,12 @@ import {
   ToolbarDescription,
   ToolbarTitle,
 } from "@glaze/core/components";
-import { Pencil, TriangleAlert, Trash2 } from "lucide-react";
+import { ChevronDown, Pencil, TriangleAlert, Trash2 } from "lucide-react";
 
 import { api } from "../lib/api";
 import { useRecorder } from "./recorder-store";
 import { AiDebugDialog } from "./ai-debug-panel";
+import { EditStepsView } from "./edit-steps-view";
 import { RunOutput } from "./run-output";
 import { ScriptEditor, ScriptView } from "./script-view";
 import { StepRow } from "./step-row";
@@ -43,6 +48,8 @@ export function TestDetailView() {
   const [editingScript, setEditingScript] = React.useState(false);
   const [scriptDraft, setScriptDraft] = React.useState("");
   const [aiDebugOpen, setAiDebugOpen] = React.useState(false);
+  const [editingSteps, setEditingSteps] = React.useState(false);
+  const [trainerConfirmOpen, setTrainerConfirmOpen] = React.useState(false);
   // Per-run visual-testing gate — off by default so routine runs stay fast.
   // Threaded to the runner; artifact capture itself lands in a later phase.
   const [captureArtifacts, setCaptureArtifacts] = React.useState(false);
@@ -141,9 +148,29 @@ export function TestDetailView() {
           <ToolbarDescription>{test.url}</ToolbarDescription>
         </ToolbarContent>
         <ToolbarActions>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="glass">
+                Edit Test
+                <ChevronDown className="size-3.5" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="bottom" align="end">
+              <DropdownMenuItem onSelect={() => {
+                if (test.scriptEdited) setTrainerConfirmOpen(true);
+                else start(test.url, test.name, test.id);
+              }}>
+                Edit in Trainer
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => setEditingSteps(true)}>
+                Edit Steps
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           {test.scriptEdited ? (
             <Dialog
-              trigger={<Button variant="glass">Edit in Trainer</Button>}
+              open={trainerConfirmOpen}
+              onOpenChange={setTrainerConfirmOpen}
               title="Edit in Trainer"
               description="This test has manual script edits. Opening the trainer will regenerate the script from the recorded steps when you stop, overwriting those edits."
               confirmLabel="Save & continue"
@@ -154,11 +181,7 @@ export function TestDetailView() {
                 onClick: () => start(test.url, test.name, test.id),
               }}
             />
-          ) : (
-            <Button variant="glass" onClick={() => start(test.url, test.name, test.id)}>
-              Edit in Trainer
-            </Button>
-          )}
+          ) : null}
           <AlertDialog
             trigger={
               <Button iconOnly variant="glass" size="large" aria-label="Delete test">
@@ -209,7 +232,19 @@ export function TestDetailView() {
 
       {/* Imported tests (sourceDir set) are script-only; the verbatim file is
           the source of truth. Tests created in the app show Steps AND Script. */}
-      {(() => {
+      {editingSteps ? (
+        <EditStepsView
+          steps={test.steps}
+          onCancel={() => setEditingSteps(false)}
+          onSave={async (steps) => {
+            await api.tests.updateSteps(id, steps);
+            qc.invalidateQueries({ queryKey: ["test", id] });
+            qc.invalidateQueries({ queryKey: ["script", id] });
+            qc.invalidateQueries({ queryKey: ["tests"] });
+            setEditingSteps(false);
+          }}
+        />
+      ) : (() => {
         const imported = Boolean(test.sourceDir);
         const showSteps = !imported && test.steps.length > 0;
         const defaultValue = showSteps ? "steps" : "script";

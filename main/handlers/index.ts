@@ -222,6 +222,29 @@ export function registerHandlers(): void {
     return rec;
   });
 
+  // Update the steps of a saved test directly (no trainer browser). Used by the
+  // "Edit Steps" mode: add / rearrange / remove steps in the detail view, then
+  // regenerate the spec from the new step list (unless the script was hand-edited).
+  ipcMain.handle(
+    "tests:updateSteps",
+    async (_e, params: { id: string; steps: Step[] }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      rec.steps = params.steps;
+      // A hand-edited script is the source of truth — don't clobber it. For
+      // app-generated tests, regenerate from the edited steps so the script
+      // stays in sync. Clear any divergence flag since the steps are now clean.
+      if (!rec.scriptEdited) {
+        const source = generateSpec({ name: rec.name, url: rec.url, steps: rec.steps });
+        rec.scriptPath = testStore.writeScript(rec.id, source);
+        rec.stepsDiverged = false;
+      }
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return rec;
+    },
+  );
+
   // Create a new test from an LLM-generated spec (prompt-driven generation).
   // Unlike a recorded test, there are no captured steps — the script is the
   // source of truth, so it's saved as scriptEdited with an empty steps array.
