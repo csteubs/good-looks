@@ -663,16 +663,14 @@ export function RecordingView() {
             {replayStatus}
           </Text>
         ) : null}
-        <Text variant="small" color="secondary" className="shrink-0">
-          Add assertion:
-        </Text>
         <Button
           size="small"
           variant="muted"
           onClick={openAssertMenu}
           disabled={controlsDisabled}
+          title="Add an assertion step by picking an element in the browser"
         >
-          {state.assertMode ? ASSERT_LABEL[state.assertMode] : "Choose…"}
+          {state.assertMode ? ASSERT_LABEL[state.assertMode] : "New Assertion"}
           <ChevronDown className="size-3.5" />
         </Button>
         <SegmentedControl
@@ -681,8 +679,18 @@ export function RecordingView() {
           onValueChange={onSoftChange}
           disabled={controlsDisabled}
         >
-          <SegmentedControlItem value="hard">Hard</SegmentedControlItem>
-          <SegmentedControlItem value="soft">Soft</SegmentedControlItem>
+          <SegmentedControlItem
+            value="hard"
+            title="Hard — a failed assertion stops the test run immediately. Use for conditions the test depends on."
+          >
+            Hard
+          </SegmentedControlItem>
+          <SegmentedControlItem
+            value="soft"
+            title="Soft — a failed assertion is reported but the run continues. Use for non-critical checks."
+          >
+            Soft
+          </SegmentedControlItem>
         </SegmentedControl>
         {state.assertMode ? (
           <>
