@@ -351,5 +351,23 @@ export function registerHandlers(): void {
   );
   ipcMain.handle("runs:logsDir", async () => runHistoryStore.logsDirPath());
 
+  // ── Visual-testing replay handlers (Phase 2) ────────────────────────
+  // Runs that have persisted screenshot artifacts, newest first.
+  ipcMain.handle("artifacts:list", async () => artifactStore.listReplays());
+  // The canonical per-step replay model for one run (or null if unavailable).
+  ipcMain.handle(
+    "artifacts:getReplay",
+    async (_e, params: { testId: string; runId: string }) =>
+      artifactStore.readReplay(params.testId, params.runId),
+  );
+  // A single step's screenshot as a data URL, or null when there's no artifact.
+  ipcMain.handle(
+    "artifacts:readShot",
+    async (_e, params: { testId: string; runId: string; file: string }) => {
+      const buf = artifactStore.readShot(params.testId, params.runId, params.file);
+      return buf ? `data:image/png;base64,${buf.toString("base64")}` : null;
+    },
+  );
+
   logger.info("handlers", "✓ IPC handlers registered");
 }

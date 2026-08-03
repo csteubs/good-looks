@@ -256,7 +256,7 @@ export function LibrarySidebar() {
         <SidebarListItem
           icon={<Images className="size-4" />}
           title="Visual"
-          subtitle="Coming soon"
+          subtitle="Screenshot replay"
           selected={pathname === "/visual"}
           onClick={() => navigate({ to: "/visual" })}
         />

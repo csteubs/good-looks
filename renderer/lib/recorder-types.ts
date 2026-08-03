@@ -120,6 +120,41 @@ export interface RunRecord {
   logBytes: number;
 }
 
+/** Per-run visual-testing replay model (mirror of main/services/artifact-store.ts). */
+export type ReplayStepStatus = "passed" | "failed" | "skipped" | "unknown";
+
+export interface ReplayStep {
+  index: number;
+  label: string;
+  type: string;
+  status: ReplayStepStatus;
+  /** filename within the run dir (e.g. "3.png"), or null when uncaptured. */
+  screenshot: string | null;
+}
+
+export interface RunReplay {
+  testId: string;
+  runId: string;
+  testName: string;
+  url?: string;
+  status: "passed" | "failed";
+  startedAt: number;
+  finishedAt: number;
+  failedIndex: number | null;
+  steps: ReplayStep[];
+}
+
+export interface RunReplaySummary {
+  testId: string;
+  runId: string;
+  testName: string;
+  status: "passed" | "failed";
+  startedAt: number;
+  finishedAt: number;
+  stepCount: number;
+  failedIndex: number | null;
+}
+
 /** A hit from searching the raw run logs. */
 export interface LogSearchResult {
   runId: string;

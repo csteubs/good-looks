@@ -10,6 +10,8 @@ import type {
   RecorderSettings,
   RecorderState,
   RunRecord,
+  RunReplay,
+  RunReplaySummary,
   Step,
   TestRecord,
   TestSpeed,
@@ -125,6 +127,13 @@ export const api = {
     deleteRange: (fromMs: number, toMs: number) =>
       ipc().invoke<{ removed: number }>("runs:deleteRange", { fromMs, toMs }),
     logsDir: () => ipc().invoke<string>("runs:logsDir"),
+  },
+  artifacts: {
+    list: () => ipc().invoke<RunReplaySummary[]>("artifacts:list"),
+    getReplay: (testId: string, runId: string) =>
+      ipc().invoke<RunReplay | null>("artifacts:getReplay", { testId, runId }),
+    readShot: (testId: string, runId: string, file: string) =>
+      ipc().invoke<string | null>("artifacts:readShot", { testId, runId, file }),
   },
   llm: {
     getConfig: () => ipc().invoke<LlmConfig>("llm:getConfig"),
