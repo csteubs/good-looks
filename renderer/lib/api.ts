@@ -71,6 +71,7 @@ export const api = {
     startRefine: () => ipc().invoke<RecorderState>("recorder:startRefine"),
     endRefine: () => ipc().invoke<RecorderState>("recorder:endRefine"),
     stop: () => ipc().invoke<void>("recorder:stop"),
+    discardExit: () => ipc().invoke<void>("recorder:discardExit"),
     getState: () => ipc().invoke<RecorderState>("recorder:getState"),
     getSettings: () => ipc().invoke<RecorderSettings>("recorder:getSettings"),
     setSettings: (update: Partial<RecorderSettings>) =>

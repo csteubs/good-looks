@@ -241,4 +241,11 @@ export interface RecorderState {
   refineMode: boolean;
   /** true once the trainer browser window has finished loading its first page */
   pageReady: boolean;
+  /** true while the training browser window is opening but hasn't shown yet.
+   *  The renderer shows a loading modal with copy explaining the load; if this
+   *  stays true past the timeout, the session is cancelled and an error shown. */
+  loading: boolean;
+  /** set when the training window failed to open within the timeout; the
+   *  renderer shows an error dialog prompting the user to try again. */
+  loadFailed: boolean;
 }

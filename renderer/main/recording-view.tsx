@@ -1,6 +1,7 @@
 import * as React from "react";
 import {
   Button,
+  Dialog,
   ScrollArea,
   SegmentedControl,
   SegmentedControlItem,
@@ -11,7 +12,7 @@ import {
   ToolbarContent,
   ToolbarTitle,
 } from "@glaze/core/components";
-import { Bug, ChevronDown, Crosshair, ListPlus, Pause, Play, Plus, Wand2, X } from "lucide-react";
+import { Bug, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, Wand2, X } from "lucide-react";
 
 import type { AssertKind, DebugEntry, PickedElement, RawStep, Step } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
@@ -210,6 +211,7 @@ export function RecordingView() {
     pause,
     resume,
     stop,
+    discardExit,
     setAssert,
     deleteStep,
     insertStep,
@@ -236,6 +238,10 @@ export function RecordingView() {
   const [aiOpen, setAiOpen] = React.useState(false);
   const [replayStatus, setReplayStatus] = React.useState<string | null>(null);
   const [selectedStepId, setSelectedStepId] = React.useState<string | null>(null);
+  // Exit confirmation: "Stop & generate" and the window close button both
+  // open this modal instead of immediately finalizing, so the user can keep
+  // training or choose whether to save.
+  const [exitOpen, setExitOpen] = React.useState(false);
   // Auto-run state for "Edit in Trainer": controls stay disabled while the
   // browser window is loading and while the automatic replay is in flight,
   // then re-enable. `autoRunStarted` guards so we only fire once per session.
@@ -385,7 +391,7 @@ export function RecordingView() {
           <ToolbarTitle>{state.editing ? "Editing recording" : "Recording"}</ToolbarTitle>
         </ToolbarContent>
         <ToolbarActions>
-          <Button variant="destructive" onClick={stop}>
+          <Button variant="destructive" onClick={() => setExitOpen(true)}>
             Stop &amp; generate
           </Button>
         </ToolbarActions>
@@ -628,6 +634,89 @@ export function RecordingView() {
           }}
         />
       ) : null}
+
+      {/* Loading overlay: while the training browser window is opening but
+          hasn't finished loading, show a full-area modal with a spinner and
+          copy explaining what's happening. Disappears once pageReady. */}
+      {state.loading ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-background/80">
+          <div className="flex max-w-sm flex-col items-center gap-4 px-8 text-center">
+            <Loader2 className="size-8 animate-spin text-accent" />
+            <div className="flex flex-col gap-1">
+              <Text variant="strong">Opening training browser…</Text>
+              <Text variant="small" color="secondary">
+                Loading <span className="truncate">{state.url}</span>
+              </Text>
+            </div>
+            <Text variant="small" color="tertiary">
+              The training window opens in a separate browser. If it doesn't
+              appear within a few seconds, check your network connection.
+            </Text>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Load-failed error dialog: the training window didn't open within the
+          10s timeout. The failure is logged to Stats; prompt the user to try
+          again or check the run history for details. */}
+      <Dialog
+        open={state.loadFailed}
+        onOpenChange={() => {
+          /* non-dismissible until the user acknowledges via the button */
+        }}
+        title="Couldn't open the training browser"
+        description="The training window failed to open within 10 seconds. This can happen on a slow network, a redirect loop, or if the site is unreachable."
+        confirmLabel="Try again"
+        confirmVariant="accent"
+        onConfirm={() => {
+          // Reset by navigating away and back — the user can click Edit in
+          // Trainer / New recording again.
+          stop();
+        }}
+        destructiveAction={{
+          label: "Check Stats",
+          onClick: () => {
+            stop();
+            // Navigate to Stats via the router (the sidebar handles this).
+            window.location.hash = "#/stats";
+          },
+        }}
+      >
+        <Text variant="small" color="secondary">
+          The failure has been logged to Stats → Run history. You can try
+          again, or check the logs for more details.
+        </Text>
+      </Dialog>
+
+      {/* Exit confirmation: "Stop & generate" opens this instead of
+          immediately finalizing. Three options: keep training (cancel), save
+          changes and exit (finalize + close), or don't save and exit (discard
+          steps + close). */}
+      <Dialog
+        open={exitOpen}
+        onOpenChange={setExitOpen}
+        title="Stop training?"
+        description="You can keep training, save your steps as a test, or exit without saving."
+        confirmLabel="Save Changes and Exit"
+        confirmVariant="accent"
+        onConfirm={() => {
+          setExitOpen(false);
+          stop();
+        }}
+        destructiveAction={{
+          label: "Don't Save and Exit",
+          onClick: () => {
+            setExitOpen(false);
+            discardExit();
+          },
+        }}
+      >
+        <Text variant="small" color="secondary">
+          {liveSteps.length > 0
+            ? `${liveSteps.length} step${liveSteps.length === 1 ? "" : "s"} will be saved to the test when you choose "Save Changes and Exit". "Don't Save and Exit" discards them.`
+            : "No steps have been recorded yet."}
+        </Text>
+      </Dialog>
     </div>
   );
 }

@@ -36,6 +36,7 @@ import type {
 import { sendToMain } from "./app-window.js";
 import { recorderDebugStore } from "./recorder-debug-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
+import { runHistoryStore } from "./run-history-store.js";
 import { describeStep, generateSpec } from "./script-generator.js";
 import { testStore } from "./test-store.js";
 
@@ -92,6 +93,8 @@ interface Session {
   showUrlBar: boolean;
   /** true once the trainer window's first page has finished loading */
   pageReady: boolean;
+  /** set when the window failed to open within the load timeout */
+  loadFailed: boolean;
 }
 
 const POLL_INTERVAL_MS = 250;
@@ -114,6 +117,8 @@ function currentState(): RecorderState {
     cursor: session?.cursor ?? 0,
     refineMode: session?.refineMode ?? false,
     pageReady: session?.pageReady ?? false,
+    loading: !!session && !session.pageReady && !session.loadFailed,
+    loadFailed: session?.loadFailed ?? false,
   };
 }
 
@@ -343,12 +348,16 @@ export const recorderService = {
       createdAt,
       showUrlBar: recorderSettingsStore.get().showUrlBar,
       pageReady: false,
+      loadFailed: false,
     };
 
     // Push the existing steps to the renderer so the trainer's live list shows
     // full context while extending. They're already in session.steps above, so
     // this is a push-only notification, not another addStep.
     broadcastSteps();
+    // Broadcast the initial loading state so the renderer shows the loading
+    // modal immediately — before the window even appears.
+    broadcastState();
 
     // Initial navigation is the first step; later navigations are consequences of
     // recorded interactions (the window has no address bar). Skip when editing —
@@ -501,7 +510,19 @@ export const recorderService = {
       })();
     });
 
-    recWindow.once("ready-to-show", () => recWindow?.show());
+    // Show the window as early as possible. `ready-to-show` fires when the
+    // first page has enough layout to display without a white flash, but on a
+    // slow redirect (e.g. shopify.com → /website/builder) it can lag. Fall back
+    // to `dom-ready` (1.5s after creation) so the user sees the window opening
+    // promptly instead of a blank background with "Recording" and no window.
+    let shown = false;
+    const showNow = () => {
+      if (shown || !recWindow || recWindow.isDestroyed()) return;
+      shown = true;
+      recWindow.show();
+    };
+    recWindow.once("ready-to-show", showNow);
+    wc.once("dom-ready", () => setTimeout(showNow, 1500));
     recWindow.on("closed", () => void finalize());
 
     // A same-origin redirect on load (e.g. adding a trailing slash) can retrigger
@@ -510,16 +531,61 @@ export const recorderService = {
     // recognizes our own programmatic load and lets it through instead of
     // preventDefault()-ing it (which cancelled the first load with
     // NSURLErrorCancelled -999 and left the window blank).
+    let loadDone = false;
+    const finishLoad = () => {
+      if (loadDone) return;
+      loadDone = true;
+    };
     await new Promise<void>((resolve) => {
       loadNavInWindow(url);
-      // loadNavInWindow is fire-and-forget; resolve once on did-finish-load or
-      // a short timeout so pageReady isn't gated on a hung load.
-      const done = () => resolve();
-      wc.once("did-finish-load", done);
-      wc.once("did-fail-load", done);
-      setTimeout(done, 8000);
+      wc.once("did-finish-load", () => { finishLoad(); resolve(); });
+      wc.once("did-fail-load", () => { finishLoad(); resolve(); });
+      // 10s hard timeout: if the window hasn't finished loading, cancel the
+      // session, log the failure to run history (so it shows in Stats), and
+      // push a loadFailed state so the renderer shows an error dialog.
+      setTimeout(() => { finishLoad(); resolve(); }, 10000);
     });
-    if (session) session.pageReady = true;
+
+    // If the session was already torn down (user closed early), bail.
+    if (!session) return currentState();
+
+    // Check whether the window actually loaded. If the window is destroyed or
+    // the load never completed (did-finish-load never fired), treat it as a
+    // load failure: cancel the session and log the issue.
+    if (!shown || recWindow.isDestroyed()) {
+      session.loadFailed = true;
+      const message = `Training window failed to open for ${url} within 10 seconds.`;
+      logger.error("recorder", "Trainer window load timeout", { url, testId });
+      // Log to run history so the failure is visible in Stats.
+      try {
+        const logText = `${message}\n\nThe training browser window did not open. This can happen on a slow network, a redirect loop, or if the site is unreachable.\n\nTry again, or check Stats → Run history for more details.`;
+        runHistoryStore.append(
+          {
+            testId,
+            testName: name,
+            url,
+            status: "failed",
+            exitCode: -1,
+            startedAt: createdAt,
+            finishedAt: Date.now(),
+          },
+          logText,
+        );
+      } catch {
+        /* non-fatal — the error dialog is the primary feedback */
+      }
+      // Tear down the session without finalizing (no steps to save).
+      const failedId = session.testId;
+      session = null;
+      if (recWindow && !recWindow.isDestroyed()) recWindow.close();
+      recWindow = null;
+      stopPolling();
+      broadcastState();
+      sendToMain("recorder:loadFailed", { testId: failedId, message });
+      return currentState();
+    }
+
+    session.pageReady = true;
     startPolling();
     broadcastState();
     return currentState();
@@ -918,6 +984,31 @@ export const recorderService = {
   stop(): void {
     if (recWindow && !recWindow.isDestroyed()) {
       recWindow.close();
+    }
+  },
+
+  /** Close the training window WITHOUT finalizing — discards any steps
+   *  captured this session. Used by the exit confirmation's "Don't Save and
+   *  Exit" action. Tears down the session directly (no spec generation, no
+   *  test record save) and closes the window. */
+  discardExit(): void {
+    if (session) {
+      const s = session;
+      session = null;
+      stopPolling();
+      logger.info("recorder", "Discarded recording (no save)", { id: s.testId, steps: s.steps.length });
+    }
+    if (recWindow && !recWindow.isDestroyed()) {
+      // Prevent the `closed` → finalize() handler from running on a null session.
+      recWindow.removeAllListeners("closed");
+      recWindow.on("closed", () => {
+        recWindow = null;
+        broadcastState();
+      });
+      recWindow.close();
+    } else {
+      recWindow = null;
+      broadcastState();
     }
   },
 };

@@ -40,6 +40,8 @@ const EMPTY_STATE: RecorderState = {
   cursor: 0,
   refineMode: false,
   pageReady: false,
+  loading: false,
+  loadFailed: false,
 };
 
 interface RecorderContextValue {
@@ -50,6 +52,8 @@ interface RecorderContextValue {
   pause: () => void;
   resume: () => void;
   stop: () => void;
+  /** Close the training window without saving (discard steps). */
+  discardExit: () => void;
   setAssert: (mode: AssertKind | null, soft?: boolean) => void;
   deleteStep: (id: string) => void;
   insertStep: (step: RawStep, index?: number) => void;
@@ -201,6 +205,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const pause = React.useCallback(() => void api.recorder.pause(), []);
   const resume = React.useCallback(() => void api.recorder.resume(), []);
   const stop = React.useCallback(() => void api.recorder.stop(), []);
+  const discardExit = React.useCallback(() => void api.recorder.discardExit(), []);
   const setAssert = React.useCallback(
     (mode: AssertKind | null, soft = false) => void api.recorder.setAssert(mode, soft),
     [],
@@ -294,6 +299,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     clearPicked,
     contextAction,
     clearContextAction: () => setContextAction(null),
+    discardExit,
     run,
     stopRun,
   };
