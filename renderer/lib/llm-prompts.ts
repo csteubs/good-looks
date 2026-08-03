@@ -20,43 +20,6 @@ function truncateHead(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}\n…(truncated)…` : text;
 }
 
-// Playwright aborts a test at its first failure, so every step after that
-// point never ran and carries no diagnostic signal. When we know which step
-// failed (from the runner's per-step markers, see main/services/
-// playwright-runner.ts buildStepLineMap), cut the script right after that
-// step's line instead of sending the whole file — this keeps the prompt (and
-// the local LLM's prefill cost) proportional to how far into the test the
-// failure happened, not the test's total length. Mirrors buildStepLineMap's
-// line-matching exactly so the step index lines up with the one the runner
-// reported. Returns null when the heuristic can't find the step (e.g. an
-// imported script with unusual structure) so the caller falls back to sending
-// the full script.
-function cutAtFailedStep(script: string, stepIndex: number): { text: string; skippedSteps: number } | null {
-  const lines = script.split("\n");
-  let inBody = false;
-  let seen = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (!inBody) {
-      if (/^\s*test\s*\(/.test(line) && line.includes("async")) inBody = true;
-      continue;
-    }
-    if (/^\s*}\s*\)/.test(line)) return null;
-    if (/^\s+await /.test(line)) {
-      if (seen === stepIndex) {
-        const skippedSteps = lines.slice(i + 1).filter((l) => /^\s+await /.test(l)).length;
-        const head = lines.slice(0, i + 1).join("\n");
-        return {
-          text: skippedSteps > 0 ? `${head}\n…(truncated — ${skippedSteps} step(s) after this point never ran)…` : head,
-          skippedSteps,
-        };
-      }
-      seen++;
-    }
-  }
-  return null;
-}
-
 const SYSTEM_PROMPT = `You are an expert QA automation engineer embedded in a Playwright test recorder app, helping debug a failed test run.
 
 This app's generated specs always follow these conventions — treat a violation as a likely bug, not a style nit:
@@ -87,10 +50,7 @@ export interface DebugContext {
 
 export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
   const slowMo = SLOW_MO_MS[ctx.speed ?? "fast"];
-  const cut = ctx.failedStepIndex != null ? cutAtFailedStep(ctx.script, ctx.failedStepIndex) : null;
-  const scriptBase = cut ? cut.text : ctx.script;
-  const stepTruncated = Boolean(cut && cut.skippedSteps > 0);
-  const scriptTruncated = stepTruncated || scriptBase.length > MAX_SCRIPT_CHARS;
+  const scriptTruncated = ctx.script.length > MAX_SCRIPT_CHARS;
   const contextLines = [
     `Test: "${ctx.testName}"`,
     `Target URL: ${ctx.testUrl}`,
@@ -100,15 +60,12 @@ export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
     slowMo > 0
       ? `Playback speed: "${ctx.speed}" (Playwright inserts an artificial ${slowMo}ms delay between actions) — timing/race issues are less likely here than on a fast run, so weigh other causes first.`
       : `Playback speed: "fast" (no artificial delay between actions) — timing-sensitive failures (assertions firing before the page settles) are more likely here than on a slowed-down run.`,
-    // If the spec was too long (or was cut right after the failing step) to
-    // include in full, the model can't reproduce a complete file — ask for
-    // just the changed lines so no partial file gets offered as an applyable
-    // full-file replacement.
-    stepTruncated
-      ? `NOTE: the spec below is cut right after the step that failed — the remaining ${cut!.skippedSteps} step(s) never ran because Playwright stops a test at its first failure, so they were omitted to keep this diagnosis fast. Do NOT output a full-file replacement — show only the specific changed lines in a code block instead.`
-      : scriptTruncated
-        ? "NOTE: the spec below was truncated because it is long, so do NOT output a full-file replacement — show only the specific changed lines in a code block instead."
-        : null,
+    // If the spec was too long to include in full, the model can't reproduce
+    // a complete file — ask for just the changed lines so no partial file gets
+    // offered as an applyable full-file replacement.
+    scriptTruncated
+      ? "NOTE: the spec below was truncated because it is long, so do NOT output a full-file replacement — show only the specific changed lines in a code block instead."
+      : null,
   ].filter((line): line is string => line !== null);
 
   return [
@@ -117,7 +74,7 @@ export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
       role: "user",
       content:
         contextLines.join("\n") +
-        `\n\nPlaywright spec:\n\`\`\`ts\n${truncateHead(scriptBase, MAX_SCRIPT_CHARS)}\n\`\`\`\n\n` +
+        `\n\nPlaywright spec:\n\`\`\`ts\n${truncateHead(ctx.script, MAX_SCRIPT_CHARS)}\n\`\`\`\n\n` +
         `Run output (failed):\n\`\`\`\n${truncateTail(ctx.output, MAX_OUTPUT_CHARS)}\n\`\`\``,
     },
   ];
