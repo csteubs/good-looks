@@ -5,7 +5,7 @@
 import * as React from "react";
 
 import { api } from "./api";
-import type { LlmMessage } from "./llm-types";
+import type { LlmMessage, LlmProvider } from "./llm-types";
 
 export type LlmChatStatus = "idle" | "streaming" | "done" | "error" | "cancelled";
 
@@ -36,18 +36,25 @@ export function useLlmChat() {
     };
   }, []);
 
-  const start = React.useCallback(async (messages: LlmMessage[]) => {
-    setContent("");
-    setError(null);
-    setStatus("streaming");
-    try {
-      const { requestId } = await api.llm.chat({ messages });
-      requestIdRef.current = requestId;
-    } catch (err) {
-      setStatus("error");
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
+  // `options` lets callers pin the model (and other per-request params) to the
+  // value they just polled from llm:getConfig, so the displayed "Thinking with
+  // {model}" name matches the model the backend actually uses instead of a
+  // value captured once at dialog open that may have gone stale.
+  const start = React.useCallback(
+    async (messages: LlmMessage[], options?: { model?: string; provider?: LlmProvider; temperature?: number }) => {
+      setContent("");
+      setError(null);
+      setStatus("streaming");
+      try {
+        const { requestId } = await api.llm.chat({ messages, ...options });
+        requestIdRef.current = requestId;
+      } catch (err) {
+        setStatus("error");
+        setError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [],
+  );
 
   const stop = React.useCallback(() => {
     if (requestIdRef.current) void api.llm.cancel(requestIdRef.current);

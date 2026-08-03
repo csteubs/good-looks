@@ -289,10 +289,24 @@ export function AiDebugDialog({
     }
   }, []);
 
-  const runDiagnosis = React.useCallback(
-    () => start(buildDebugMessages({ testName, testUrl, script, output, imported, speed })),
-    [start, testName, testUrl, script, output, imported, speed],
-  );
+  // Poll the live configured model right before sending so the "Thinking with
+  // {model}" placeholder reflects the model the backend will actually use,
+  // even if the default changed (in Settings or another dialog) after this
+  // dialog opened. Falls back to the cached `modelName` if the poll fails.
+  const runDiagnosis = React.useCallback(async () => {
+    let model = modelName ?? undefined;
+    try {
+      const cfg = await api.llm.getConfig();
+      setModelName(cfg.model);
+      model = cfg.model ?? undefined;
+    } catch {
+      // keep the cached name; the backend will fall back to its own config
+    }
+    void start(
+      buildDebugMessages({ testName, testUrl, script, output, imported, speed }),
+      { model },
+    );
+  }, [start, modelName, testName, testUrl, script, output, imported, speed]);
 
   // Auto-start a diagnosis the first time we see a given run output while the
   // dialog is open. We deliberately do NOT reset `startedKeyRef` on close, so

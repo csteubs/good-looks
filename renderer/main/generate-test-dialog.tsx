@@ -149,16 +149,29 @@ export function GenerateTestDialog({
     const key = `${prompt}|${url}|${name}|${speed}|${viewportId}`;
     firedKeyRef.current = key;
     setCreated(false);
-    void start(
-      buildGenerateMessages({
-        prompt: prompt.trim(),
-        url: url.trim(),
-        name: name.trim() || "Generated test",
-        speed,
-        viewport,
-      }),
-    );
-  }, [canGenerate, prompt, url, name, speed, viewportId, viewport, start]);
+    // Poll the live configured model right before sending so the "Thinking
+    // with {model}…" placeholder matches the model the backend actually uses,
+    // even if the default changed after this dialog opened.
+    void api.llm
+      .getConfig()
+      .then((cfg) => {
+        setModelName(cfg.model);
+        return cfg.model ?? undefined;
+      })
+      .catch(() => modelName ?? undefined)
+      .then((model) =>
+        start(
+          buildGenerateMessages({
+            prompt: prompt.trim(),
+            url: url.trim(),
+            name: name.trim() || "Generated test",
+            speed,
+            viewport,
+          }),
+          { model },
+        ),
+      );
+  }, [canGenerate, prompt, url, name, speed, viewportId, viewport, start, modelName]);
 
   // A full, applyable spec is only offered once streaming finishes.
   const generatedScript = status === "done" ? extractCorrectedScript(content) : null;

@@ -138,14 +138,27 @@ export function GenerateStepsDialog({
   const generate = React.useCallback(() => {
     if (!prompt.trim()) return;
     setAdded(false);
-    void start(
-      buildGenerateStepsMessages({
-        prompt: prompt.trim(),
-        url: url ?? "",
-        selector: selector ?? undefined,
-      }),
-    );
-  }, [prompt, url, selector, start]);
+    // Poll the live configured model right before sending so the "Thinking
+    // with {model}…" placeholder matches the model the backend actually uses,
+    // even if the default changed after this dialog opened.
+    void api.llm
+      .getConfig()
+      .then((cfg) => {
+        setModelName(cfg.model);
+        return cfg.model ?? undefined;
+      })
+      .catch(() => modelName ?? undefined)
+      .then((model) =>
+        start(
+          buildGenerateStepsMessages({
+            prompt: prompt.trim(),
+            url: url ?? "",
+            selector: selector ?? undefined,
+          }),
+          { model },
+        ),
+      );
+  }, [prompt, url, selector, start, modelName]);
 
   const steps = status === "done" ? extractStepsJson(content) : null;
   // Step 1 ("Navigate to URL") is a test-level setting the user controls in the
