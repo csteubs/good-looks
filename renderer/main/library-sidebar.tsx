@@ -232,27 +232,7 @@ export function LibrarySidebar() {
 
   return (
     <Sidebar
-      footer={
-        <>
-          <SidebarList>
-            <SidebarListItem
-              icon={<BarChart3 className="size-4" />}
-              title="Stats"
-              subtitle="Run history & logs"
-              selected={pathname === "/stats"}
-              onClick={() => navigate({ to: "/stats" })}
-            />
-            <SidebarListItem
-              icon={<Images className="size-4" />}
-              title="Visual"
-              subtitle="Screenshot replay"
-              selected={pathname === "/visual"}
-              onClick={() => navigate({ to: "/visual" })}
-            />
-          </SidebarList>
-          <AiConnectionFooter />
-        </>
-      }
+      footer={<AiConnectionFooter />}
       actions={
         <Button
           iconOnly
@@ -320,6 +300,29 @@ export function LibrarySidebar() {
           ))}
         </SidebarList>
       )}
+      <div className="mt-auto pt-2">
+        <div className="px-2 pb-1 pt-2">
+          <Text variant="small" color="secondary" className="font-medium">
+            Views
+          </Text>
+        </div>
+        <SidebarList>
+          <SidebarListItem
+            icon={<BarChart3 className="size-4" />}
+            title="Stats"
+            subtitle="Run history & logs"
+            selected={pathname === "/stats"}
+            onClick={() => navigate({ to: "/stats" })}
+          />
+          <SidebarListItem
+            icon={<Images className="size-4" />}
+            title="Visual"
+            subtitle="Screenshot replay"
+            selected={pathname === "/visual"}
+            onClick={() => navigate({ to: "/visual" })}
+          />
+        </SidebarList>
+      </div>
       <NewRecordingDialog open={dialogOpen} onOpenChange={setDialogOpen} />
       <GenerateTestDialog open={generateOpen} onOpenChange={setGenerateOpen} />
       <ImportGitDialog open={gitDialogOpen} onOpenChange={setGitDialogOpen} />
