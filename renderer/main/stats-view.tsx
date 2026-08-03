@@ -109,15 +109,19 @@ function buildDailyBuckets(runs: RunRecord[]): DayBucket[] {
     if (r.status === "passed") b.passed++;
     else b.failed++;
   }
-  // Sort ascending by the earliest run in each day (keys aren't lexicographically
-  // sortable), then keep the most recent 30 days.
-  const buckets = [...map.values()];
-  buckets.sort((a, b) => {
-    const [ay, am, ad] = a.key.split("-").map(Number);
-    const [by, bm, bd] = b.key.split("-").map(Number);
-    return new Date(ay, am - 1, ad).getTime() - new Date(by, bm - 1, bd).getTime();
-  });
-  return buckets.slice(-30);
+  // Always show the last 7 calendar days (inclusive of today), even days with
+  // no runs, so gaps are visible instead of the chart skipping straight to
+  // the next day that has data.
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const buckets: DayBucket[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    buckets.push(map.get(key) ?? { key, label: `${d.getMonth() + 1}/${d.getDate()}`, passed: 0, failed: 0 });
+  }
+  return buckets;
 }
 
 function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
