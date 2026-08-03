@@ -78,6 +78,10 @@ export const runHistoryStore = {
    *  metadata to the index. Returns the persisted record. */
   append(
     run: {
+      /** Pre-minted run id. Pass this when the id was needed at run START (e.g.
+       *  to name the artifacts directory) so logs and artifacts share one id.
+       *  Falls back to a fresh uuid. */
+      id?: string;
       testId: string;
       testName: string;
       url: string;
@@ -90,7 +94,7 @@ export const runHistoryStore = {
     logText: string,
   ): RunRecord {
     ensureDirs();
-    const id = randomUUID();
+    const id = run.id ?? randomUUID();
     const logFile = path.join(logsDir(), id + ".log");
     fs.writeFileSync(logFile, logText, "utf-8");
 

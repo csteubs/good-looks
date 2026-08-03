@@ -3,6 +3,7 @@
 // streamed to the app's main window; each run is tracked by a runId.
 
 import { spawn, type ChildProcess } from "child_process";
+import { randomUUID } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
@@ -13,7 +14,13 @@ import { sendToMain } from "./app-window.js";
 import { getScriptsDir, testStore } from "./test-store.js";
 import { runHistoryStore } from "./run-history-store.js";
 import { stepReporterSource } from "./step-reporter-source.js";
+import { captureFixtureSource } from "./capture-fixture-source.js";
+import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 import type { TestSpeed } from "../recorder/types.js";
+
+// Module Playwright specs import test/expect from — redirected to the capture
+// fixture for a run that captures artifacts.
+const CAPTURE_FIXTURE_FILE = "glaze-capture.mjs";
 
 const RUN_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -114,6 +121,35 @@ function ensureReporter(scriptsDir: string): string {
   const reporterPath = path.join(scriptsDir, "step-reporter.mjs");
   fs.writeFileSync(reporterPath, stepReporterSource, "utf-8");
   return reporterPath;
+}
+
+// Write the capture fixture (glaze-capture.mjs) next to the specs so a
+// capture run's redirected spec can import it. Always rewritten to stay in sync
+// with the app build.
+function ensureCaptureFixture(scriptsDir: string): void {
+  fs.writeFileSync(path.join(scriptsDir, CAPTURE_FIXTURE_FILE), captureFixtureSource, "utf-8");
+}
+
+// For a capture run, produce a temp copy of the spec whose `@playwright/test`
+// import is redirected to the capture fixture, leaving the stored spec pristine.
+// Only line 1's module specifier changes, so line numbers (and the step line
+// map) are preserved. Returns the temp path, or null when the spec doesn't
+// import @playwright/test directly (nothing to redirect → run the original).
+function prepareCaptureSpec(scriptsDir: string, scriptPath: string, runId: string): string | null {
+  let src: string;
+  try {
+    src = fs.readFileSync(scriptPath, "utf-8");
+  } catch {
+    return null;
+  }
+  const redirected = src.replace(
+    /from\s+["']@playwright\/test["']/,
+    `from "./${CAPTURE_FIXTURE_FILE}"`,
+  );
+  if (redirected === src) return null; // no direct import to redirect
+  const tempPath = path.join(scriptsDir, `${runId}.capture.spec.ts`);
+  fs.writeFileSync(tempPath, redirected, "utf-8");
+  return tempPath;
 }
 
 // Build a map from 1-based spec line number → 0-based step index, by scanning
@@ -265,10 +301,12 @@ export const playwrightRunner = {
 
   /** Start a run. Returns immediately; progress streams over runner:* events.
    *
-   * `captureArtifacts` is the per-run visual-testing gate (off by default). It
-   * carries no capture logic yet — it is threaded to the Playwright subprocess
-   * via the GLAZE_CAPTURE_ARTIFACTS env var and recorded on the RunRecord so
-   * later phases can hang screenshot/video capture off it. */
+   * When `captureArtifacts` is set (the per-run visual-testing gate, off by
+   * default) AND the test is app-generated, the run captures a screenshot after
+   * every page action into <userData>/recorder/artifacts/<testId>/<runId>/ via
+   * the glaze-capture fixture (see capture-fixture-source.ts). `runId` here is
+   * the live-stream key (=== testId); the persisted RunRecord/artifact id is a
+   * fresh uuid so a test's runs don't overwrite each other's artifacts. */
   start(params: {
     testId: string;
     headed: boolean;
@@ -286,10 +324,14 @@ export const playwrightRunner = {
     }
 
     const startedAt = Date.now();
+    // Unique per execution — names the artifacts dir and (below) the RunRecord,
+    // so Stats/logs/artifacts all join on one id.
+    const recordId = randomUUID();
     logBuffers.set(runId, []);
 
     void (async () => {
       let exitCode = -1;
+      let tempSpecPath: string | null = null;
       try {
         const { cliPath, nodeModules } = resolvePlaywright();
         const scriptsDir = getScriptsDir();
@@ -298,9 +340,36 @@ export const playwrightRunner = {
         const reporterPath = ensureReporter(scriptsDir);
         const env = baseEnv(nodeModules);
 
+        // Decide whether this run actually captures. Gate BEFORE any capture
+        // work so an off run (or an imported test) pays nothing. Imported specs
+        // are their own source of truth and aren't guaranteed one-action-per-
+        // line, so — like step highlighting — capture is app-generated only.
+        let specToRun = rec.scriptPath;
+        let capturing = false;
+        let artifactDir = "";
+        if (captureArtifacts && !rec.sourceDir) {
+          ensureCaptureFixture(scriptsDir);
+          const prepared = prepareCaptureSpec(scriptsDir, rec.scriptPath, recordId);
+          if (prepared) {
+            tempSpecPath = prepared;
+            specToRun = prepared;
+            capturing = true;
+            // Prune old runs first, then create this run's dir (newest).
+            artifactStore.pruneRuns(rec.id, Math.max(0, DEFAULT_RETAINED_RUNS - 1));
+            artifactDir = artifactStore.ensureRunDir(rec.id, recordId);
+          } else {
+            emitOutput(
+              runId,
+              "system",
+              "Capture skipped: this test doesn't import @playwright/test directly.\n",
+            );
+          }
+        }
+
         // Map spec line numbers → step indices so the StepReporter's markers
         // can be translated into highlightable step indices for the renderer.
-        stepLineMaps.set(runId, buildStepLineMap(rec.scriptPath));
+        // (The redirected capture spec preserves line numbers.)
+        stepLineMaps.set(runId, buildStepLineMap(specToRun));
 
         if (!isChromiumInstalled()) {
           emitOutput(runId, "system", "Installing the test browser (first run only)…\n");
@@ -309,11 +378,12 @@ export const playwrightRunner = {
 
         const slowMo = SLOW_MO_MS[rec.speed ?? "fast"];
         emitOutput(runId, "system", "Running " + path.basename(rec.scriptPath) + "…\n");
+        if (capturing) emitOutput(runId, "system", "Capturing screenshots for this run.\n");
         // Use our custom StepReporter (emits per-step progress markers) plus
         // the built-in `line` reporter for the human-readable Output panel.
         const args = [
           "test",
-          rec.scriptPath,
+          specToRun,
           "--config",
           configPath,
           "--reporter",
@@ -324,18 +394,31 @@ export const playwrightRunner = {
         exitCode = await runCli(runId, args, cliPath, scriptsDir, {
           ...env,
           PW_SLOWMO_MS: String(slowMo),
-          GLAZE_CAPTURE_ARTIFACTS: captureArtifacts ? "1" : "0",
+          GLAZE_CAPTURE_ARTIFACTS: capturing ? "1" : "0",
+          GLAZE_ARTIFACT_DIR: artifactDir,
+          GLAZE_TEST_ID: rec.id,
+          GLAZE_RUN_ID: recordId,
         });
       } catch (err) {
         emitOutput(runId, "system", "\nError: " + String(err) + "\n");
       } finally {
         runs.delete(runId);
-        // Persist this run to the log database (metadata + raw output).
+        // Remove the temp capture spec (best-effort).
+        if (tempSpecPath) {
+          try {
+            fs.rmSync(tempSpecPath, { force: true });
+          } catch {
+            /* ignore */
+          }
+        }
+        // Persist this run to the log database (metadata + raw output). The
+        // record id === the artifacts runId so later phases can join them.
         const logText = (logBuffers.get(runId) ?? []).join("");
         logBuffers.delete(runId);
         try {
           runHistoryStore.append(
             {
+              id: recordId,
               testId: rec.id,
               testName: rec.name,
               url: rec.url,

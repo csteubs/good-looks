@@ -12,6 +12,7 @@ import { getSettingsWindow, openSettingsWindow } from "../windows/settings-windo
 import { recorderService } from "../services/recorder-service.js";
 import { playwrightRunner } from "../services/playwright-runner.js";
 import { runHistoryStore } from "../services/run-history-store.js";
+import { artifactStore } from "../services/artifact-store.js";
 import { testStore } from "../services/test-store.js";
 import { importService } from "../services/import-service.js";
 import { generateSpec } from "../services/script-generator.js";
@@ -143,6 +144,8 @@ export function registerHandlers(): void {
   );
   ipcMain.handle("tests:delete", async (_e, params: { id: string }) => {
     testStore.remove(params.id);
+    // Drop any captured visual-testing artifacts for this test.
+    artifactStore.deleteTest(params.id);
   });
   ipcMain.handle("tests:rename", async (_e, params: { id: string; name: string }) => {
     const rec = testStore.get(params.id);

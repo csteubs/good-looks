@@ -16,15 +16,20 @@ function emit(payload: Record<string, unknown>): void {
 }
 
 export default class StepReporter implements Reporter {
-  onStepBegin(_test: TestCase, _result: TestResult, step: TestStep): void {
+  onStepBegin(test: TestCase, _result: TestResult, step: TestStep): void {
     if (step.category !== "pw:api") return;
+    // Only steps located in the spec file itself map to a highlightable step.
+    // (Screenshot calls injected by the capture fixture live in another file and
+    // could otherwise collide on line number.)
+    if (step.location?.file && test.location?.file && step.location.file !== test.location.file) return;
     const line = step.location?.line;
     if (typeof line !== "number") return;
     emit({ event: "begin", line, title: step.title });
   }
 
-  onStepEnd(_test: TestCase, _result: TestResult, step: TestStep): void {
+  onStepEnd(test: TestCase, _result: TestResult, step: TestStep): void {
     if (step.category !== "pw:api") return;
+    if (step.location?.file && test.location?.file && step.location.file !== test.location.file) return;
     const line = step.location?.line;
     if (typeof line !== "number") return;
     emit({
