@@ -12,6 +12,8 @@ import type {
   ContextAction,
   DebugEntry,
   DebugLogLine,
+  HealSuggestion,
+  Locator,
   PickedElement,
   RawStep,
   RecorderState,
@@ -28,6 +30,8 @@ export interface ReplayConsoleStep {
   ok: boolean;
   error?: string;
   logs: DebugLogLine[];
+  /** Auto-Heal result for this step, if the engine ran. */
+  heal?: HealSuggestion;
 }
 
 /** Live state of a "Replay from current step" run, driven by recorder:replayLog. */
@@ -84,6 +88,8 @@ interface RecorderContextValue {
   insertStep: (step: RawStep, index?: number) => void;
   reorderStep: (id: string, toIndex: number) => void;
   updateStep: (id: string, patch: Partial<Step>) => void;
+  /** Apply a user-chosen Auto-Heal candidate locator to a step. */
+  applyHeal: (stepId: string, locator: Locator) => void;
   setCursor: (index: number) => void;
   replayStep: (id: string) => Promise<DebugEntry>;
   replayFromStart: () => Promise<{
@@ -239,7 +245,14 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
                 passed: prev.passed + (ev.ok ? 1 : 0),
                 steps: [
                   ...prev.steps,
-                  { index: ev.index, stepLabel: ev.stepLabel, ok: ev.ok, error: ev.error, logs: ev.logs },
+                  {
+                    index: ev.index,
+                    stepLabel: ev.stepLabel,
+                    ok: ev.ok,
+                    error: ev.error,
+                    logs: ev.logs,
+                    heal: ev.heal,
+                  },
                 ],
               }
             : prev,
@@ -313,6 +326,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   );
   const updateStep = React.useCallback(
     (id: string, patch: Partial<Step>) => void api.recorder.updateStep(id, patch),
+    [],
+  );
+  const applyHeal = React.useCallback(
+    (stepId: string, locator: Locator) => void api.recorder.applyHeal(stepId, locator),
     [],
   );
   const setCursor = React.useCallback((index: number) => void api.recorder.setCursor(index), []);
@@ -405,6 +422,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     insertStep,
     reorderStep,
     updateStep,
+    applyHeal,
     setCursor,
     replayStep,
     replayFromStart,

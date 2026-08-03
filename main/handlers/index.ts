@@ -19,7 +19,7 @@ import { parseSpecDetailed } from "../services/spec-parser.js";
 import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
 import { recorderSettingsStore } from "../services/recorder-settings-store.js";
-import type { AssertKind, RawStep, RecorderSettings, Step, TestRecord, TestSpeed } from "../recorder/types.js";
+import type { AssertKind, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 
 import { ipcMain, logger } from "@glaze/core/backend";
@@ -97,6 +97,11 @@ export function registerHandlers(): void {
     async (_e, params: { stepId: string; patch: Partial<Step> }) =>
       recorderService.updateStep(params.stepId, params.patch),
   );
+  ipcMain.handle(
+    "recorder:applyHeal",
+    async (_e, params: { stepId: string; locator: Locator }) =>
+      recorderService.applyHeal(params.stepId, params.locator),
+  );
   ipcMain.handle("recorder:setCursor", async (_e, params: { index: number }) =>
     recorderService.setCursor(params.index),
   );
@@ -123,6 +128,7 @@ export function registerHandlers(): void {
     recorderService.discardExit();
   });
   ipcMain.handle("recorder:getState", async () => recorderService.getState());
+  ipcMain.handle("recorder:getSteps", async () => recorderService.getSteps());
   ipcMain.handle("recorder:getSettings", async () => recorderSettingsStore.get());
   ipcMain.handle(
     "recorder:setSettings",

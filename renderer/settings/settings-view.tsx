@@ -48,6 +48,11 @@ export function SettingsView() {
   const [showUrlBar, setShowUrlBar] = useState(true);
   const [defaultRunSpeed, setDefaultRunSpeed] = useState<TestSpeed>("slow");
 
+  // ── Auto-Heal settings ──────────────────────────────────────────────
+  const [autoHealEnabled, setAutoHealEnabled] = useState(true);
+  const [autoHealRetries, setAutoHealRetries] = useState(3);
+  const [autoHealTimeout, setAutoHealTimeout] = useState(4000);
+
   useEffect(() => {
     api.llm
       .getConfig()
@@ -64,6 +69,9 @@ export function SettingsView() {
       .then((settings) => {
         setShowUrlBar(settings.showUrlBar);
         setDefaultRunSpeed(settings.defaultRunSpeed ?? "slow");
+        setAutoHealEnabled(settings.autoHealEnabled ?? true);
+        setAutoHealRetries(settings.autoHealRetries ?? 3);
+        setAutoHealTimeout(settings.autoHealAttemptTimeoutMs ?? 4000);
       })
       .catch(() => {
         /* fall back to defaults */
@@ -85,6 +93,35 @@ export function SettingsView() {
     api.recorder.setSettings({ defaultRunSpeed: next }).catch((error) => {
       toast.error(`Failed to save setting: ${error}`);
     });
+  };
+
+  const handleAutoHealEnabledChange = async (checked: boolean) => {
+    setAutoHealEnabled(checked);
+    try {
+      await api.recorder.setSettings({ autoHealEnabled: checked });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleAutoHealRetriesChange = async (value: string) => {
+    const n = Math.max(1, Math.min(10, Math.round(Number(value) || 3)));
+    setAutoHealRetries(n);
+    try {
+      await api.recorder.setSettings({ autoHealRetries: n });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleAutoHealTimeoutChange = async (value: string) => {
+    const ms = Math.max(1000, Math.min(30000, Math.round(Number(value) || 4000)));
+    setAutoHealTimeout(ms);
+    try {
+      await api.recorder.setSettings({ autoHealAttemptTimeoutMs: ms });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
   };
 
   const handleProviderChange = async (value: string) => {
@@ -306,6 +343,64 @@ export function SettingsView() {
                   </SegmentedControlItem>
                 ))}
               </SegmentedControl>
+            </Field>
+          </FieldGroup>
+        </FieldSet>
+
+        <FieldSet>
+          <FieldGroup>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="auto-heal-enabled">Auto-Heal</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  When a step's locator can't be found during replay, automatically search the page
+                  for alternative target elements using all locator strategies plus context from
+                  past runs. The best match is auto-applied; all candidates appear in the Console
+                  for you to choose from.
+                </p>
+              </FieldContent>
+              <Switch
+                id="auto-heal-enabled"
+                checked={autoHealEnabled}
+                onCheckedChange={handleAutoHealEnabledChange}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="auto-heal-retries">Heal attempts</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  How many times the engine retries finding candidates before giving up (1–10).
+                </p>
+              </FieldContent>
+              <Input
+                id="auto-heal-retries"
+                type="number"
+                min={1}
+                max={10}
+                step={1}
+                className="w-24"
+                value={autoHealRetries}
+                onChange={(e) => handleAutoHealRetriesChange(e.target.value)}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="auto-heal-timeout">Per-attempt timeout (ms)</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  How long to wait before a single heal attempt is considered timed-out
+                  (1000–30000).
+                </p>
+              </FieldContent>
+              <Input
+                id="auto-heal-timeout"
+                type="number"
+                min={1000}
+                max={30000}
+                step={500}
+                className="w-32"
+                value={autoHealTimeout}
+                onChange={(e) => handleAutoHealTimeoutChange(e.target.value)}
+              />
             </Field>
           </FieldGroup>
         </FieldSet>

@@ -24,9 +24,12 @@ import {
   PICK_AT_POINT_SCRIPT,
 } from "../recorder/capture-script.js";
 import { buildReplayScript } from "./step-replayer.js";
+import { healStep } from "./auto-heal.js";
 import type {
   AssertKind,
   DebugEntry,
+  HealResult,
+  Locator,
   PickedElement,
   RawStep,
   RecorderState,
@@ -115,6 +118,86 @@ function verboseErrorLogs(err: unknown, step: Step): DebugEntry["logs"] {
   }
   push("error", "Replay did not complete. The step was not executed in the browser.");
   return lines;
+}
+
+/** Determine whether a step's failure is a "locator didn't resolve" failure
+ *  (element not found) — the only kind Auto-Heal can address. Healing a locator
+ *  won't fix a value-mismatch assertion or a click that threw. */
+function isLocatorFailure(error: string | undefined, step: Step): boolean {
+  if (!step.locator) return false;
+  if (!error) return false;
+  const e = error.toLowerCase();
+  return (
+    e.includes("element not found") ||
+    e.includes("no element") ||
+    e.includes("not found") ||
+    e.includes("0 match") ||
+    e.includes("couldn't resolve") ||
+    e.includes("did not resolve")
+  );
+}
+
+/** Run the Auto-Heal engine for a failed step, then (if candidates were found)
+ *  re-run the step with the best candidate to see if it succeeds. Pushes a
+ *  `recorder:healSuggestion` event to the renderer so the Console can surface
+ *  the candidates as a menu. Returns the heal result and whether the re-run
+ *  with the applied locator succeeded (so the caller can count it as passed).
+ *
+ *  `runWithLocator` re-runs the step with a substituted locator and returns
+ *  `{ ok, error?, logs? }` — supplied by the caller since each replay path has
+ *  its own `execWithTimeout` + `buildReplayScript` wiring. */
+async function tryHeal(
+  wc: { executeJavaScript: (script: string) => Promise<unknown> },
+  step: Step,
+  stepIndex: number,
+  error: string | undefined,
+  runWithLocator: (locator: Step["locator"]) => Promise<{
+    ok: boolean;
+    error?: string;
+    logs?: DebugEntry["logs"];
+  }>,
+): Promise<{ heal: HealResult | null; okWithHeal: boolean; healedLogs?: DebugEntry["logs"] }> {
+  const settings = recorderSettingsStore.get();
+  if (!settings.autoHealEnabled || !isLocatorFailure(error, step)) {
+    return { heal: null, okWithHeal: false };
+  }
+  const pastEntries = session ? recorderDebugStore.get(session.testId) : [];
+  let heal: HealResult;
+  try {
+    heal = await healStep(wc, step, stepIndex, pastEntries, settings);
+  } catch (err) {
+    logger.warn("recorder", "Auto-Heal threw", { stepId: step.id, error: String(err) });
+    return { heal: null, okWithHeal: false };
+  }
+  if (heal.candidates.length === 0) {
+    // No candidates — still surface the (empty) attempt so the UI can show a
+    // "heal tried, found nothing" state if desired. We keep it quiet here.
+    return { heal, okWithHeal: false };
+  }
+  // Try the best candidate first; if it succeeds, auto-apply it.
+  const best = heal.candidates[0];
+  try {
+    const rerun = await runWithLocator(best.locator);
+    if (rerun.ok) {
+      heal.ok = true;
+      heal.appliedLocator = best.locator;
+      heal.autoApplied = true;
+      // Auto-apply the healed locator to the step so future runs use it.
+      if (session) {
+        const idx = session.steps.findIndex((s) => s.id === step.id);
+        if (idx >= 0) {
+          session.steps[idx] = { ...session.steps[idx], locator: best.locator };
+        }
+      }
+      sendToMain("recorder:healSuggestion", heal);
+      return { heal, okWithHeal: true, healedLogs: rerun.logs };
+    }
+  } catch (err) {
+    logger.info("recorder", "Auto-Heal re-run threw", { stepId: step.id, error: String(err) });
+  }
+  // Best candidate didn't auto-succeed — surface all candidates for the user.
+  sendToMain("recorder:healSuggestion", heal);
+  return { heal, okWithHeal: false };
 }
 
 interface Session {
@@ -779,6 +862,13 @@ export const recorderService = {
     return currentState();
   },
 
+  /** Apply a user-chosen Auto-Heal candidate locator to a step. Thin wrapper
+   *  over `updateStep` so the heal menu has a dedicated IPC channel. */
+  applyHeal(stepId: string, locator: Locator): RecorderState {
+    logger.info("recorder", "Applying heal candidate", { stepId, locator });
+    return this.updateStep(stepId, { locator });
+  },
+
   /** Set the index at which the next captured/inserted step will land. */
   setCursor(index: number): RecorderState {
     if (session) {
@@ -1102,6 +1192,39 @@ export const recorderService = {
         }
         ran++;
         if (ok) passed++;
+        let heal: HealResult | null = null;
+        // Auto-Heal: if the step failed because its locator didn't resolve, try
+        // to heal it before reporting the failure. If a candidate auto-succeeds,
+        // count the step as passed and stream the healed result.
+        if (!ok && step.locator) {
+          const healed = await tryHeal(wc, step, i, error, async (locator) => {
+            const healedStep = { ...step, locator: locator! };
+            return (await execWithTimeout(wc, buildReplayScript(healedStep), REPLAY_STEP_TIMEOUT_MS)) as {
+              ok: boolean;
+              error?: string;
+              logs?: DebugEntry["logs"];
+            };
+          });
+          heal = healed.heal;
+          if (healed.okWithHeal) {
+            ok = true;
+            passed++;
+            error = undefined;
+            if (healed.healedLogs) logs = healed.healedLogs;
+            // Persist the healed outcome as the step's debug entry.
+            const healedEntry: DebugEntry = {
+              stepId: step.id,
+              stepIndex: i,
+              stepLabel: describeStep(step),
+              ok: true,
+              error: undefined,
+              at: Date.now(),
+              logs,
+            };
+            this.persistDebug(healedEntry);
+            sendToMain("recorder:replayStep", { index: i, status: "end", ok: true });
+          }
+        }
         sendToMain("recorder:replayLog", {
           phase: "step",
           index: i,
@@ -1109,6 +1232,7 @@ export const recorderService = {
           ok,
           error,
           logs,
+          heal: heal ?? undefined,
         });
         // A soft assertion reports failure but doesn't stop the run.
         if (!ok && !step.soft) {
@@ -1138,6 +1262,11 @@ export const recorderService = {
   /** All persisted debug entries for a test (for the panel on session open). */
   getDebugLogs(testId: string): DebugEntry[] {
     return recorderDebugStore.get(testId);
+  },
+
+  /** Current session's step list (for testing/debugging). */
+  getSteps(): Step[] {
+    return session?.steps ?? [];
   },
 
   /** Remove one step's debug entry for the current session's test. */

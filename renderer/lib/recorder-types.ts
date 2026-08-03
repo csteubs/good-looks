@@ -141,6 +141,36 @@ export interface PickedElement {
 export interface RecorderSettings {
   showUrlBar: boolean;
   defaultRunSpeed: TestSpeed;
+  /** Auto-Heal engine enabled (default true). */
+  autoHealEnabled: boolean;
+  /** how many heal attempts before giving up (default 3). */
+  autoHealRetries: number;
+  /** per-attempt timeout in ms (default 4000). */
+  autoHealAttemptTimeoutMs: number;
+}
+
+/** A single alternative locator the Auto-Heal engine found for a failed step.
+ *  Mirror of main/recorder/types.ts HealCandidate. */
+export interface HealCandidate {
+  locator: Locator;
+  description: string;
+  score: number;
+  matchedPastRun: boolean;
+}
+
+/** Result of a heal attempt for a single failed step. Mirror of backend
+ *  HealResult, with an added `autoApplied` flag from the push event. */
+export interface HealSuggestion {
+  stepId: string;
+  stepIndex: number;
+  stepLabel: string;
+  originalLocator?: Locator;
+  candidates: HealCandidate[];
+  attempts: number;
+  ok: boolean;
+  appliedLocator?: Locator;
+  autoApplied: boolean;
+  error?: string;
 }
 
 /** Payload pushed from the backend when the user picks an item from the
@@ -167,7 +197,7 @@ export interface DebugLogLine {
  *  debug panel's Console tab can show each step's output as it runs. */
 export type ReplayLogEvent =
   | { phase: "start"; startIndex: number; total: number }
-  | { phase: "step"; index: number; stepLabel: string; ok: boolean; error?: string; logs: DebugLogLine[] }
+  | { phase: "step"; index: number; stepLabel: string; ok: boolean; error?: string; logs: DebugLogLine[]; heal?: HealSuggestion }
   | { phase: "done"; ran: number; passed: number; failedAtIndex: number; error?: string };
 
 /** Persisted debug entry for a single step's replay attempt. */

@@ -1,5 +1,6 @@
 import * as React from "react";
 import {
+  Badge,
   Button,
   Checkbox,
   Dialog,
@@ -19,7 +20,7 @@ import {
 } from "@glaze/core/components";
 import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, Sparkles, Wand2, X } from "lucide-react";
 
-import type { AssertKind, DebugEntry, PickedElement, RawStep, Step } from "../lib/recorder-types";
+import type { AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
 import { locatorToPrompt } from "../lib/llm-prompts";
 import { useRecorder, type ReplayRun } from "./recorder-store";
@@ -27,7 +28,7 @@ import { StepRow } from "./step-row";
 import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "./add-step-dialog";
 import { StepAiDebugDialog } from "./ai-debug-panel";
 import { GenerateStepsDialog } from "./generate-steps-dialog";
-import { RefineSelectorDialog } from "./refine-selector-dialog";
+import { RefineSelectorDialog, formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 
 // Assertions that can be captured by clicking an element in the page. Operand
 // assertions (value/attribute/count/url/title) need typed input, so they live in
@@ -156,6 +157,62 @@ function hitRateTone(rate: number): string {
   return "text-support-red";
 }
 
+/** Inline list of Auto-Heal candidate locators for a failed step. The user can
+ *  click any candidate to apply it to the step (updating its locator). Shown
+ *  in the Console tab under the step's error. */
+function HealCandidates({
+  heal,
+  onApply,
+}: {
+  heal: HealSuggestion;
+  onApply: (locator: Locator) => void;
+}) {
+  const [open, setOpen] = React.useState(true);
+  if (heal.autoApplied) return null; // auto-applied — no manual menu needed
+  const hasPastMatch = heal.candidates.some((c) => c.matchedPastRun);
+  return (
+    <div className="mt-1 pl-4">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1 text-[11px] text-accent hover:underline"
+      >
+        <Wand2 className="size-3" />
+        <span>
+          Auto-Heal found {heal.candidates.length} candidate{heal.candidates.length === 1 ? "" : "s"}
+          {hasPastMatch ? " (incl. past-run matches)" : ""}
+        </span>
+        <ChevronDown className={`size-3 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open ? (
+        <div className="mt-1 flex flex-col gap-1">
+          {heal.candidates.map((c, i) => (
+            <button
+              key={`${c.locator.k}-${i}`}
+              type="button"
+              onClick={() => onApply(c.locator)}
+              className="flex items-center gap-2 rounded-md border border-separator px-2 py-1.5 text-left transition-colors hover:border-accent hover:bg-accent/5"
+            >
+              <Badge color="blue" className="shrink-0 text-[10px]">
+                {KIND_LABEL[c.locator.k]}
+              </Badge>
+              <code className="min-w-0 flex-1 truncate font-mono text-[11px] text-primary">
+                {formatLocator(c.locator)}
+              </code>
+              {c.matchedPastRun ? (
+                <span className="shrink-0 text-[10px] text-support-green" title="Matched a past run">
+                  past
+                </span>
+              ) : null}
+              <span className="shrink-0 text-[10px] text-tertiary">{c.description}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * Bottom debug panel with two tabs:
  *  - Console: live streaming output of a "Replay from current step" run — each
@@ -174,6 +231,7 @@ function DebugPanel({
   autoScroll,
   onAutoScrollChange,
   onDebugStep,
+  onApplyHeal,
 }: {
   step: Step | null;
   selectedIndex: number;
@@ -185,6 +243,7 @@ function DebugPanel({
   autoScroll: boolean;
   onAutoScrollChange: (v: boolean) => void;
   onDebugStep: (index: number) => void;
+  onApplyHeal: (stepId: string, locator: Locator) => void;
 }) {
   const consoleSteps = replayRun?.steps ?? [];
   const ran = replayRun?.ran ?? 0;
@@ -250,6 +309,11 @@ function DebugPanel({
                       {s.ok ? <Check className="size-3 shrink-0" /> : <X className="size-3 shrink-0" />}
                       <span className="font-semibold">Step {s.index + 1}</span>
                       <span className="truncate text-secondary">· {s.stepLabel}</span>
+                      {s.ok && s.heal?.autoApplied ? (
+                        <span className="shrink-0 rounded bg-support-green/15 px-1 text-[10px] font-medium text-support-green">
+                          Healed ✓
+                        </span>
+                      ) : null}
                     </div>
                     <LogLines logs={s.logs} indent />
                     {!s.ok && s.error ? (
@@ -265,6 +329,12 @@ function DebugPanel({
                           <Sparkles className="size-3.5" />
                         </button>
                       </div>
+                    ) : null}
+                    {s.heal && s.heal.candidates.length > 0 ? (
+                      <HealCandidates
+                        heal={s.heal}
+                        onApply={(locator) => onApplyHeal(s.heal!.stepId, locator)}
+                      />
                     ) : null}
                   </div>
                 ))
@@ -367,6 +437,7 @@ export function RecordingView() {
     insertStep,
     reorderStep,
     updateStep,
+    applyHeal,
     setCursor,
     replayStep,
     replayFromCurrent,
@@ -718,6 +789,7 @@ export function RecordingView() {
         autoScroll={autoScroll}
         onAutoScrollChange={setAutoScroll}
         onDebugStep={setDebugStepIndex}
+        onApplyHeal={applyHeal}
       />
 
       {addKind ? (

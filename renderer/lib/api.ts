@@ -5,6 +5,7 @@ import type {
   AssertKind,
   DebugEntry,
   LogSearchResult,
+  Locator,
   RawStep,
   RecorderSettings,
   RecorderState,
@@ -84,6 +85,8 @@ export const api = {
     getSettings: () => ipc().invoke<RecorderSettings>("recorder:getSettings"),
     setSettings: (update: Partial<RecorderSettings>) =>
       ipc().invoke<RecorderSettings>("recorder:setSettings", update),
+    applyHeal: (stepId: string, locator: Locator) =>
+      ipc().invoke<RecorderState>("recorder:applyHeal", { stepId, locator }),
   },
   tests: {
     list: () => ipc().invoke<TestRecord[]>("tests:list"),

@@ -191,6 +191,52 @@ export interface RecorderSettings {
    *  actions during runs); persisted so the New Recording dialog remembers the
    *  last choice. Defaults to "slow" so runs are watchable by default. */
   defaultRunSpeed: TestSpeed;
+  /** Auto-Heal engine enabled (default true). When a step's locator fails to
+   *  resolve during replay, the engine probes the page for alternative target
+   *  elements using all locator strategies + context from past runs. */
+  autoHealEnabled: boolean;
+  /** how many heal attempts to make before giving up (default 3). */
+  autoHealRetries: number;
+  /** per-attempt timeout in ms before the attempt is considered timed-out
+   *  (default 4000). */
+  autoHealAttemptTimeoutMs: number;
+}
+
+/** A single alternative locator the Auto-Heal engine found for a failed step. */
+export interface HealCandidate {
+  /** the alternative locator to try */
+  locator: Locator;
+  /** human-readable description of the matched element (e.g. "button#submit") */
+  description: string;
+  /** relevance score (0–1, higher = better match) */
+  score: number;
+  /** true if this candidate matches something seen in past-run debug logs
+   *  for this step (the locator previously resolved successfully). */
+  matchedPastRun: boolean;
+}
+
+/** Result of a heal attempt for a single failed step. */
+export interface HealResult {
+  /** step id this heal was for */
+  stepId: string;
+  /** 0-based step index */
+  stepIndex: number;
+  /** human-friendly step label */
+  stepLabel: string;
+  /** the step's original locator (before healing) */
+  originalLocator: Locator | undefined;
+  /** all candidates the engine found, best-first */
+  candidates: HealCandidate[];
+  /** how many attempts were made */
+  attempts: number;
+  /** true if a candidate was auto-applied and the step succeeded on re-run */
+  ok: boolean;
+  /** the locator that was auto-applied (if ok) */
+  appliedLocator?: Locator;
+  /** true if the best candidate was auto-applied (set by tryHeal) */
+  autoApplied: boolean;
+  /** short error if healing failed entirely */
+  error?: string;
 }
 
 /** A single verbose diagnostic line produced while replaying a step. */
