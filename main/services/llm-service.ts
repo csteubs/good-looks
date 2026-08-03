@@ -81,9 +81,15 @@ async function fetchModels(provider: LlmProvider, base: string): Promise<LlmMode
     const data = (await res.json()) as {
       data?: Array<{ id?: string; display_name?: string }>;
     };
+    // Anthropic returns models newest-first. Bias a balanced Sonnet to the top
+    // so the auto-selected default (models[0]) is a sensible general-purpose
+    // model for test work; a stable sort keeps newest-first within each family.
+    const familyRank = (id: string): number =>
+      /sonnet/i.test(id) ? 0 : /opus/i.test(id) ? 1 : /haiku/i.test(id) ? 2 : 3;
     return (data.data ?? [])
       .map((m) => ({ id: (m.id ?? "").trim(), label: (m.display_name ?? m.id ?? "").trim() }))
-      .filter((m) => m.id);
+      .filter((m) => m.id)
+      .sort((a, b) => familyRank(a.id) - familyRank(b.id));
   }
   if (provider === "ollama") {
     const res = await fetch(`${base}/api/tags`, {
