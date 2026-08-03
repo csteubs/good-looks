@@ -1,8 +1,8 @@
 {
   "id": "2ovdvu33",
-  "name": "test-recorder",
+  "name": "good-looks",
   "version": "1.0.0",
-  "productName": "Test Recorder",
+  "productName": "Good Looks",
   "description": "Record web interactions and generate",
   "iconDescription": "A desktop automation tool that records user interactions on websites—clicks, typing, navigation—and converts them into executable Playwright test scripts. Users enter a URL, the app opens a browser window, records each action as a test step, and generates code they can run locally. Think of a recording button, browser window with a red record indicator, or automated test script code being generated from live interactions.",
   "private": true,
@@ -63,6 +63,6 @@
     "host": {
       "minVersion": "0.12.0.0"
     },
-    "updatedAt": 1785783715902
+    "updatedAt": 1785786293409
   }
 }

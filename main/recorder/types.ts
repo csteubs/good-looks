@@ -156,6 +156,10 @@ export interface RunRecord {
   /** size of the log file in bytes (0 if the raw log was deleted but the
    *  record kept, or if the log could not be read) */
   logBytes: number;
+  /** Whether this run was asked to capture artifacts (screenshots, and later
+   *  video/DOM snapshots). Per-run choice, off by default; the gate every
+   *  visual-testing phase checks. Absent on runs recorded before the toggle. */
+  captureArtifacts?: boolean;
 }
 
 /** A hit from searching the raw run logs. */

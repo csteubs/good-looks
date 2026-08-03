@@ -5,6 +5,7 @@ import {
   AlertDialog,
   Button,
   Callout,
+  Checkbox,
   Dialog,
   Field,
   Input,
@@ -42,6 +43,9 @@ export function TestDetailView() {
   const [editingScript, setEditingScript] = React.useState(false);
   const [scriptDraft, setScriptDraft] = React.useState("");
   const [aiDebugOpen, setAiDebugOpen] = React.useState(false);
+  // Per-run visual-testing gate — off by default so routine runs stay fast.
+  // Threaded to the runner; artifact capture itself lands in a later phase.
+  const [captureArtifacts, setCaptureArtifacts] = React.useState(false);
 
   const testQuery = useQuery({ queryKey: ["test", id], queryFn: () => api.tests.get(id) });
   const scriptQuery = useQuery({ queryKey: ["script", id], queryFn: () => api.tests.getScript(id) });
@@ -171,12 +175,21 @@ export function TestDetailView() {
               navigate({ to: "/" });
             }}
           />
+          <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+            <Checkbox
+              checked={captureArtifacts}
+              onCheckedChange={(v) => setCaptureArtifacts(v === true)}
+              disabled={runInfo?.running}
+              aria-label="Capture screenshots on this run"
+            />
+            Capture screenshots
+          </label>
           {runInfo?.running ? (
             <Button variant="destructive" onClick={() => stopRun(id)}>
               Stop
             </Button>
           ) : (
-            <Button variant="accent" onClick={() => run(id)}>
+            <Button variant="accent" onClick={() => run(id, captureArtifacts)}>
               Run test
             </Button>
           )}

@@ -20,7 +20,7 @@ import {
   Text,
   toast,
 } from "@glaze/core/components";
-import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3 } from "lucide-react";
+import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images } from "lucide-react";
 
 import { api } from "../lib/api";
 import type { LlmProvider } from "../lib/llm-types";
@@ -252,6 +252,13 @@ export function LibrarySidebar() {
           subtitle="Run history & logs"
           selected={pathname === "/stats"}
           onClick={() => navigate({ to: "/stats" })}
+        />
+        <SidebarListItem
+          icon={<Images className="size-4" />}
+          title="Visual"
+          subtitle="Coming soon"
+          selected={pathname === "/visual"}
+          onClick={() => navigate({ to: "/visual" })}
         />
       </SidebarList>
       {tests.length === 0 ? (

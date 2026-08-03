@@ -111,8 +111,8 @@ export const api = {
     importGit: (url: string) => ipc().invoke<ImportResult>("tests:importGit", { url }),
   },
   runner: {
-    run: (id: string, headed: boolean) =>
-      ipc().invoke<{ runId: string }>("runner:run", { id, headed }),
+    run: (id: string, headed: boolean, captureArtifacts?: boolean) =>
+      ipc().invoke<{ runId: string }>("runner:run", { id, headed, captureArtifacts }),
     stop: (runId: string) => ipc().invoke<void>("runner:stop", { runId }),
   },
   runs: {

@@ -308,8 +308,14 @@ export function registerHandlers(): void {
   ipcMain.handle("llm:hasApiKey", async () => ({ hasKey: await anthropicKeyStore.hasKey() }));
 
   // ── Runner handlers ─────────────────────────────────────────────────
-  ipcMain.handle("runner:run", async (_e, params: { id: string; headed?: boolean }) =>
-    playwrightRunner.start({ testId: params.id, headed: params.headed ?? true }),
+  ipcMain.handle(
+    "runner:run",
+    async (_e, params: { id: string; headed?: boolean; captureArtifacts?: boolean }) =>
+      playwrightRunner.start({
+        testId: params.id,
+        headed: params.headed ?? true,
+        captureArtifacts: params.captureArtifacts ?? false,
+      }),
   );
   ipcMain.handle("runner:stop", async (_e, params: { runId: string }) => {
     playwrightRunner.stop(params.runId);

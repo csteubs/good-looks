@@ -263,8 +263,18 @@ export const playwrightRunner = {
     return isChromiumInstalled();
   },
 
-  /** Start a run. Returns immediately; progress streams over runner:* events. */
-  start(params: { testId: string; headed: boolean }): { runId: string } {
+  /** Start a run. Returns immediately; progress streams over runner:* events.
+   *
+   * `captureArtifacts` is the per-run visual-testing gate (off by default). It
+   * carries no capture logic yet — it is threaded to the Playwright subprocess
+   * via the GLAZE_CAPTURE_ARTIFACTS env var and recorded on the RunRecord so
+   * later phases can hang screenshot/video capture off it. */
+  start(params: {
+    testId: string;
+    headed: boolean;
+    captureArtifacts?: boolean;
+  }): { runId: string } {
+    const captureArtifacts = params.captureArtifacts ?? false;
     const runId = params.testId;
     if (runs.has(runId)) {
       return { runId };
@@ -314,6 +324,7 @@ export const playwrightRunner = {
         exitCode = await runCli(runId, args, cliPath, scriptsDir, {
           ...env,
           PW_SLOWMO_MS: String(slowMo),
+          GLAZE_CAPTURE_ARTIFACTS: captureArtifacts ? "1" : "0",
         });
       } catch (err) {
         emitOutput(runId, "system", "\nError: " + String(err) + "\n");
@@ -332,6 +343,7 @@ export const playwrightRunner = {
               exitCode,
               startedAt,
               finishedAt: Date.now(),
+              captureArtifacts,
             },
             logText,
           );

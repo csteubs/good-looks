@@ -85,6 +85,7 @@ export const runHistoryStore = {
       exitCode: number;
       startedAt: number;
       finishedAt: number;
+      captureArtifacts?: boolean;
     },
     logText: string,
   ): RunRecord {
@@ -105,6 +106,7 @@ export const runHistoryStore = {
       durationMs: Math.max(0, run.finishedAt - run.startedAt),
       logFile,
       logBytes: logByteSize(logFile),
+      captureArtifacts: run.captureArtifacts ?? false,
     };
 
     const all = readAll();
