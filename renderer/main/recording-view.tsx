@@ -13,7 +13,7 @@ import {
 } from "@glaze/core/components";
 import { Bug, ChevronDown, Crosshair, ListPlus, Pause, Play, Plus, Wand2, X } from "lucide-react";
 
-import type { AssertKind, DebugEntry, RawStep, Step } from "../lib/recorder-types";
+import type { AssertKind, DebugEntry, PickedElement, RawStep, Step } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
 import { useRecorder } from "./recorder-store";
 import { StepRow } from "./step-row";
@@ -227,6 +227,8 @@ export function RecordingView() {
     startRefine,
     endRefine,
     clearPicked,
+    contextAction,
+    clearContextAction,
   } = useRecorder();
 
   const [soft, setSoft] = React.useState(false);
@@ -243,6 +245,44 @@ export function RecordingView() {
   // picked element arrives via the shared `picked` state from the recorder store;
   // this flag tells us it belongs to the Add-step flow (not a step refine).
   const [addStepPicking, setAddStepPicking] = React.useState(false);
+  // The element captured by a right-click test-tools menu action, with the
+  // assert kind / wait mode / prefills to seed the Add-step dialog. Cleared
+  // when the dialog closes.
+  const [contextPick, setContextPick] = React.useState<{
+    picked: PickedElement | null;
+    assert?: AssertKind;
+    waitMode?: "element" | "hidden" | "time";
+    prefillText?: string;
+    prefillValue?: string;
+  } | null>(null);
+
+  // A right-click test-tools action arrives from the backend: open the Add-step
+  // dialog prefilled. "refine" opens the Refine Selector flow for that element
+  // instead (it updates an existing step, not the Add-step dialog).
+  React.useEffect(() => {
+    if (!contextAction) return;
+    const a = contextAction;
+    if (a.kind === "refine") {
+      // Hand the context-picked element to the Refine Selector flow: seed the
+      // shared `picked` state and enter refine mode targeting a fresh insert.
+      if (a.picked) {
+        // No existing step to refine — treat as "find element": insert a visible
+        // assertion at the cursor via the Add-step dialog instead.
+        setContextPick({ picked: a.picked, assert: "visible", prefillText: a.prefillText, prefillValue: a.prefillValue });
+        setAddKind("assertion");
+      }
+    } else if (a.kind === "assertion") {
+      setContextPick({ picked: a.picked, assert: a.assert, prefillText: a.prefillText, prefillValue: a.prefillValue });
+      setAddKind("assertion");
+    } else if (a.kind === "wait") {
+      setContextPick({ picked: a.picked, waitMode: a.waitMode, prefillText: a.prefillText, prefillValue: a.prefillValue });
+      setAddKind("wait");
+    } else {
+      setContextPick({ picked: a.picked, prefillText: a.prefillText, prefillValue: a.prefillValue });
+      setAddKind(a.kind as AddStepKind);
+    }
+    clearContextAction();
+  }, [contextAction, clearContextAction]);
 
   const onReplayFromStart = async () => {
     setReplayStatus("Replaying from start…");
@@ -529,12 +569,14 @@ export function RecordingView() {
           onOpenChange={(o) => {
             if (!o) {
               setAddKind(null);
-              // Leaving the Add-step dialog: tear down any in-flight pick.
+              // Leaving the Add-step dialog: tear down any in-flight pick and
+              // the context-menu prefill state.
               if (addStepPicking) {
                 setAddStepPicking(false);
                 endRefine();
                 clearPicked();
               }
+              setContextPick(null);
             }
           }}
           onAdd={(steps: RawStep[]) => {
@@ -544,8 +586,11 @@ export function RecordingView() {
               endRefine();
               clearPicked();
             }
+            setContextPick(null);
           }}
-          picked={addStepPicking ? picked : null}
+          // Use the context-menu's pre-resolved element when present (it was
+          // captured at the right-click point); otherwise the in-dialog picker.
+          picked={contextPick?.picked ?? (addStepPicking ? picked : null)}
           onStartPick={() => {
             setAddStepPicking(true);
             startRefine(null);
@@ -555,6 +600,10 @@ export function RecordingView() {
             endRefine();
             clearPicked();
           }}
+          initialAssert={contextPick?.assert}
+          initialWaitMode={contextPick?.waitMode}
+          prefillText={contextPick?.prefillText}
+          prefillValue={contextPick?.prefillValue}
         />
       ) : null}
       <GenerateStepsDialog

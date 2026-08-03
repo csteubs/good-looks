@@ -9,6 +9,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api } from "../lib/api";
 import type {
   AssertKind,
+  ContextAction,
   DebugEntry,
   PickedElement,
   RawStep,
@@ -75,6 +76,11 @@ interface RecorderContextValue {
   startRefine: (stepId?: string | null) => void;
   endRefine: () => void;
   clearPicked: () => void;
+  /** The most recent right-click test-tools action from the training browser
+   *  (assertion/wait/refine/add-step), with the picked element + prefills.
+   *  The trainer opens the Add-step dialog from this; null when idle. */
+  contextAction: ContextAction | null;
+  clearContextAction: () => void;
   run: (id: string) => void;
   stopRun: (id: string) => void;
 }
@@ -92,6 +98,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const [liveSteps, setLiveSteps] = React.useState<Step[]>([]);
   const [picked, setPicked] = React.useState<PickedElement | null>(null);
   const [refiningStepId, setRefiningStepId] = React.useState<string | null>(null);
+  const [contextAction, setContextAction] = React.useState<ContextAction | null>(null);
   const [debugEntries, setDebugEntries] = React.useState<DebugEntry[]>([]);
   const [runs, setRuns] = React.useState<Record<string, RunInfo>>({});
   // Per-step status for an in-flight trainer replayAll (auto-run on Edit in
@@ -106,6 +113,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     // the whole list after every change and we replace our copy.
     const offSteps = api.on<Step[]>("recorder:steps", (steps) => setLiveSteps(steps ?? []));
     const offPicked = api.on<PickedElement>("recorder:picked", (p) => setPicked(p));
+    // Right-click test-tools menu in the training browser: the backend resolves
+    // the element under the cursor and pushes the chosen action; the trainer
+    // opens the Add-step dialog prefilled from it.
+    const offCtx = api.on<ContextAction>("recorder:contextAction", (a) => setContextAction(a));
     const offFinished = api.on<{ testId: string }>("recorder:finished", ({ testId }) => {
       setLiveSteps([]);
       qc.invalidateQueries({ queryKey: ["tests"] });
@@ -163,6 +174,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       offState();
       offSteps();
       offPicked();
+      offCtx();
       offFinished();
       offOut();
       offStep();
@@ -280,6 +292,8 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     startRefine,
     endRefine,
     clearPicked,
+    contextAction,
+    clearContextAction: () => setContextAction(null),
     run,
     stopRun,
   };

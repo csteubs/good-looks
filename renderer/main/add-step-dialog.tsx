@@ -179,6 +179,10 @@ export function AddStepDialog({
   picked,
   onStartPick,
   onClearPick,
+  initialAssert,
+  initialWaitMode,
+  prefillText,
+  prefillValue,
 }: {
   open: boolean;
   kind: AddStepKind;
@@ -190,6 +194,17 @@ export function AddStepDialog({
   onStartPick: () => void;
   /** Clear the current pick (and leave pick mode). */
   onClearPick: () => void;
+  /** When opened from the right-click menu: the assert kind to preselect. */
+  initialAssert?: AssertKind;
+  /** When opened from the right-click menu: the wait mode to preselect
+   *  ("element" / "hidden" both target the picked element; "time" is a duration). */
+  initialWaitMode?: "element" | "hidden" | "time";
+  /** When opened from the right-click menu: prefilled text (the element's
+   *  current text) for text/exactText asserts. */
+  prefillText?: string;
+  /** When opened from the right-click menu: prefilled value (the element's
+   *  current value) for value asserts. */
+  prefillValue?: string;
 }) {
   const [locator, setLocator] = React.useState<Locator | null>(null);
   const [assert, setAssert] = React.useState<AssertKind>("visible");
@@ -208,27 +223,32 @@ export function AddStepDialog({
   const [vw, setVw] = React.useState("1280");
   const [vh, setVh] = React.useState("800");
 
-  // Reset transient fields whenever a fresh dialog opens.
+  // Reset transient fields whenever a fresh dialog opens. When opened from the
+  // right-click menu, seed the assert kind / wait mode / text / value from the
+  // context action so the dialog opens already targeted at the right-clicked
+  // element.
   React.useEffect(() => {
     if (open) {
       setLocator(null);
-      setAssert("visible");
+      setAssert(initialAssert ?? "visible");
       setCond("visible");
-      setText("");
-      setValue("");
+      setText(prefillText ?? "");
+      setValue(prefillValue ?? "");
       setAttr("");
       setCount("1");
       setSoft(false);
       setUrl("");
       setKey("Enter");
-      setWaitMode("time");
+      // "hidden" wait mode targets the element like "element"; the dialog's
+      // internal SegmentedControl only has "time"/"element", so map both.
+      setWaitMode(initialWaitMode && initialWaitMode !== "time" ? "element" : "time");
       setWaitMs("1000");
       setPressTarget("page");
       setViewport("desktop");
       setVw("1280");
       setVh("800");
     }
-  }, [open, kind]);
+  }, [open, kind, initialAssert, initialWaitMode, prefillText, prefillValue]);
 
   const opt = ASSERT_OPTIONS.find((o) => o.value === assert)!;
   const condOpt = CONDITION_OPTIONS.find((c) => c.value === cond)!;

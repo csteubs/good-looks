@@ -10,7 +10,8 @@
 
 import { randomUUID } from "crypto";
 
-import { BrowserWindow, logger } from "@glaze/core/backend";
+import { BrowserWindow, logger, Menu } from "@glaze/core/backend";
+import type { MenuItemConstructorOptions } from "@glaze/core/backend";
 
 import {
   ATTR_ASSERT,
@@ -20,6 +21,7 @@ import {
   CAPTURE_SCRIPT,
   DRAIN_PICKED_SCRIPT,
   DRAIN_SCRIPT,
+  PICK_AT_POINT_SCRIPT,
 } from "../recorder/capture-script.js";
 import { buildReplayScript } from "./step-replayer.js";
 import type {
@@ -250,6 +252,29 @@ function windowLabel(): string {
   return session?.editing ? "Editing" : "Recording";
 }
 
+/** Payload pushed to the main window when the user picks an item from the
+ *  right-click test-tools menu in the training browser. The renderer opens the
+ *  Add-step dialog prefilled with these so the user can tweak before inserting. */
+export interface ContextAction {
+  kind: "assertion" | "wait" | "goto" | "press" | "viewport" | "find" | "refine";
+  /** assert kind when kind === "assertion" */
+  assert?: AssertKind;
+  /** wait mode when kind === "wait" ("element" resolves the locator, "hidden"
+   *  waits for the element to hide, "time" is a fixed duration) */
+  waitMode?: "element" | "hidden" | "time";
+  /** the element under the right-click, with its locator candidates */
+  picked: PickedElement | null;
+  /** the element's current text — prefills text/exactText asserts */
+  prefillText: string;
+  /** the element's current value — prefills value asserts */
+  prefillValue: string;
+}
+
+/** Push a context-menu action to the main window's Add-step dialog. */
+function ctxAction(action: ContextAction): void {
+  sendToMain("recorder:contextAction", action);
+}
+
 /** Keep the native title bar showing the current page's URL (the trainer's
  *  stand-in for an address bar, since an externally-loaded page can't host an
  *  app-owned toolbar). No-op when the user has turned the setting off. */
@@ -401,14 +426,99 @@ export const recorderService = {
       updateTitle();
     });
 
+    // Right-click test-tools menu: resolve the element under the cursor, then
+    // pop a native macOS menu whose assertion/wait/refine items are pre-targeted
+    // at that element. Picking an item pushes a `recorder:contextAction` event
+    // to the main window, which opens the Add-step dialog prefilled so the user
+    // can tweak before inserting. The menu belongs to the recorder window (an
+    // external page we don't own), so it must be a native backend menu, not
+    // in-page React.
+    wc.on("context-menu", (_event, params) => {
+      void (async () => {
+        if (!recWindow || recWindow.isDestroyed() || !session) return;
+        const zoom = wc.getZoomFactor?.() ?? 1;
+        const px = zoom === 1 ? params.x : Math.round(params.x / zoom);
+        const py = zoom === 1 ? params.y : Math.round(params.y / zoom);
+        let resolved: { picked: PickedElement; text: string; value: string } | null = null;
+        try {
+          const json = (await wc.executeJavaScript(`(${PICK_AT_POINT_SCRIPT})(${px}, ${py})`)) as string;
+          if (json) resolved = JSON.parse(json) as { picked: PickedElement; text: string; value: string };
+        } catch {
+          // Page may be mid-navigation; show the menu without a target.
+        }
+        const picked = resolved?.picked ?? null;
+        const prefillText = resolved?.text ?? "";
+        const prefillValue = resolved?.value ?? "";
+        const targetLabel = picked ? picked.description || picked.tag : "No element here";
+
+        // Assert element submenu (element-aware). Text/value kinds prefill the
+        // element's current text so the dialog opens with a sensible default.
+        const assertElItems: MenuItemConstructorOptions[] = [
+          { label: "Is visible", click: () => ctxAction({ kind: "assertion", assert: "visible", picked, prefillText, prefillValue }) },
+          { label: "Is hidden", click: () => ctxAction({ kind: "assertion", assert: "hidden", picked, prefillText, prefillValue }) },
+          { label: "Contains text", click: () => ctxAction({ kind: "assertion", assert: "text", picked, prefillText, prefillValue }) },
+          { label: "Has exact text", click: () => ctxAction({ kind: "assertion", assert: "exactText", picked, prefillText, prefillValue }) },
+          { label: "Is enabled", click: () => ctxAction({ kind: "assertion", assert: "enabled", picked, prefillText, prefillValue }) },
+          { label: "Is disabled", click: () => ctxAction({ kind: "assertion", assert: "disabled", picked, prefillText, prefillValue }) },
+          { label: "Is checked", click: () => ctxAction({ kind: "assertion", assert: "checked", picked, prefillText, prefillValue }) },
+          { label: "Is unchecked", click: () => ctxAction({ kind: "assertion", assert: "unchecked", picked, prefillText, prefillValue }) },
+          { label: "Has value", click: () => ctxAction({ kind: "assertion", assert: "value", picked, prefillText, prefillValue }) },
+          { label: "Has attribute", click: () => ctxAction({ kind: "assertion", assert: "attribute", picked, prefillText, prefillValue }) },
+          { label: "Has count", click: () => ctxAction({ kind: "assertion", assert: "count", picked, prefillText, prefillValue }) },
+        ];
+        const assertPageItems: MenuItemConstructorOptions[] = [
+          { label: "Page URL is…", click: () => ctxAction({ kind: "assertion", assert: "url", picked: null, prefillText: "", prefillValue }) },
+          { label: "Page title is…", click: () => ctxAction({ kind: "assertion", assert: "title", picked: null, prefillText: "", prefillValue }) },
+        ];
+        const waitItems: MenuItemConstructorOptions[] = [
+          { label: "For element visible", click: () => ctxAction({ kind: "wait", waitMode: "element", picked, prefillText: "", prefillValue: "" }) },
+          { label: "For element hidden", click: () => ctxAction({ kind: "wait", waitMode: "hidden", picked, prefillText: "", prefillValue: "" }) },
+          { label: "For duration…", click: () => ctxAction({ kind: "wait", waitMode: "time", picked: null, prefillText: "", prefillValue: "" }) },
+        ];
+        const addStepItems: MenuItemConstructorOptions[] = [
+          { label: "Go to URL", click: () => ctxAction({ kind: "goto", picked: null, prefillText: "", prefillValue: "" }) },
+          { label: "Press key", click: () => ctxAction({ kind: "press", picked: null, prefillText: "", prefillValue: "" }) },
+          { label: "Set viewport", click: () => ctxAction({ kind: "viewport", picked: null, prefillText: "", prefillValue: "" }) },
+          { label: "Find element", click: () => ctxAction({ kind: "find", picked, prefillText: "", prefillValue: "" }) },
+        ];
+
+        const template: MenuItemConstructorOptions[] = [
+          { label: targetLabel, enabled: false },
+          { type: "separator" },
+          { label: "Assert element", submenu: assertElItems },
+          { label: "Assert page", submenu: assertPageItems },
+          { label: "Wait", submenu: waitItems },
+          {
+            label: "Refine selector for this element",
+            enabled: !!picked,
+            click: () => ctxAction({ kind: "refine", picked, prefillText: "", prefillValue: "" }),
+          },
+          { type: "separator" },
+          { label: "Add step", submenu: addStepItems },
+        ];
+        const menu = Menu.buildFromTemplate(template);
+        menu.popup({ window: recWindow, x: params.x, y: params.y });
+      })();
+    });
+
     recWindow.once("ready-to-show", () => recWindow?.show());
     recWindow.on("closed", () => void finalize());
 
     // A same-origin redirect on load (e.g. adding a trailing slash) can retrigger
-    // the will-navigate interceptor above, which re-issues its own loadURL and
-    // interrupts this one — the window still ends up on the right page via that
-    // second load, so the interruption itself is not a real failure.
-    await recWindow.loadURL(url).catch(() => {});
+    // the will-navigate interceptor above. Route the initial load through
+    // loadNavInWindow so `selfLoad` is set — the will-navigate guard then
+    // recognizes our own programmatic load and lets it through instead of
+    // preventDefault()-ing it (which cancelled the first load with
+    // NSURLErrorCancelled -999 and left the window blank).
+    await new Promise<void>((resolve) => {
+      loadNavInWindow(url);
+      // loadNavInWindow is fire-and-forget; resolve once on did-finish-load or
+      // a short timeout so pageReady isn't gated on a hung load.
+      const done = () => resolve();
+      wc.once("did-finish-load", done);
+      wc.once("did-fail-load", done);
+      setTimeout(done, 8000);
+    });
     if (session) session.pageReady = true;
     startPolling();
     broadcastState();
@@ -621,7 +731,7 @@ export const recorderService = {
       this.persistDebug(entry);
       return entry;
     } finally {
-      session.paused = wasPaused;
+      if (session) session.paused = wasPaused;
       await applyStateAttributes().catch(() => {});
     }
   },
@@ -706,7 +816,7 @@ export const recorderService = {
     } catch (err) {
       return { ok: false, stoppedAtIndex: -1, error: String(err) };
     } finally {
-      session.paused = wasPaused;
+      if (session) session.paused = wasPaused;
       await applyStateAttributes().catch(() => {});
     }
   },
@@ -778,7 +888,9 @@ export const recorderService = {
     } catch (err) {
       return { ok: false, failedAtIndex: -1, error: String(err) };
     } finally {
-      session.paused = wasPaused;
+      // The window may have closed (finalize → session = null) while the replay
+      // loop was in flight; guard so we don't crash dereferencing a null session.
+      if (session) session.paused = wasPaused;
       await applyStateAttributes().catch(() => {});
     }
   },

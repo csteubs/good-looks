@@ -503,3 +503,90 @@ export const DRAIN_PICKED_SCRIPT = `
   return p;
 })()
 `;
+
+// Resolve the element under a given (x, y) in CSS client coordinates and return
+// its PickedElement (candidates + css + attributes) plus the element's current
+// text and value, so the right-click test-tools menu can pre-target assertions
+// and waits at that element and prefill text/value asserts. Runs in its own
+// ephemeral content world, so it inlines the DOM helpers it needs (kept in sync
+// with the capture script's versions). Returns "" when nothing is hit.
+export const PICK_AT_POINT_SCRIPT = `
+(function (x, y) {
+  ${DOM_HELPERS}
+  function describeEl(el) {
+    var tag = el.tagName ? el.tagName.toLowerCase() : "?";
+    var s = tag;
+    if (el.id) { s += "#" + el.id; }
+    else if (el.className && typeof el.className === "string") {
+      var cls = el.className.trim().split(/\\s+/).slice(0, 2).filter(Boolean);
+      if (cls.length) s += "." + cls.join(".");
+    }
+    return s;
+  }
+  function xpathFor(el) {
+    if (el.id && isUniqueId(el.id)) return "//*[@id=" + JSON.stringify(el.id) + "]";
+    var parts = [];
+    var node = el;
+    while (node && node.nodeType === 1) {
+      var tag = node.tagName.toLowerCase();
+      var ix = 1;
+      var sib = node.previousElementSibling;
+      while (sib) { if (sib.tagName === node.tagName) ix++; sib = sib.previousElementSibling; }
+      parts.unshift(tag + "[" + ix + "]");
+      if (tag === "html") break;
+      node = node.parentElement;
+    }
+    return "/" + parts.join("/");
+  }
+  function candidatesFor(el) {
+    var out = [];
+    var tid = (el.getAttribute && (el.getAttribute("data-testid") ||
+      el.getAttribute("data-test-id") || el.getAttribute("data-test"))) || "";
+    if (tid) out.push({ k: "testid", v: tid });
+    var role = roleOf(el);
+    var nm = accName(el);
+    if (role && nm) out.push({ k: "role", role: role, name: nm });
+    var lab = labelFor(el);
+    if (lab) out.push({ k: "label", v: lab });
+    var ph = el.getAttribute ? el.getAttribute("placeholder") : null;
+    if (ph) out.push({ k: "placeholder", v: ph });
+    var t = txt(el);
+    if (t && t.length <= 40) out.push({ k: "text", v: t });
+    if (role && !nm) out.push({ k: "role", role: role });
+    out.push({ k: "css", v: cssPath(el) });
+    out.push({ k: "xpath", v: xpathFor(el) });
+    return out;
+  }
+  function cssPropsOf(el) {
+    var out = {};
+    try {
+      var cs = window.getComputedStyle(el);
+      var keys = ["display", "position", "color", "backgroundColor", "fontSize",
+        "fontWeight", "width", "height", "visibility", "border"];
+      for (var i = 0; i < keys.length; i++) { var v = cs[keys[i]]; if (v) out[keys[i]] = String(v); }
+    } catch (e) {}
+    return out;
+  }
+  function attrsOf(el) {
+    var out = {};
+    var names = ["id", "class", "type", "name", "role", "href", "placeholder", "aria-label"];
+    for (var i = 0; i < names.length; i++) {
+      var v = el.getAttribute ? el.getAttribute(names[i]) : null;
+      if (v) out[names[i]] = v;
+    }
+    return out;
+  }
+  var el = document.elementFromPoint(x, y);
+  if (!el || el.nodeType !== 1) return "";
+  // Skip our own overlay elements.
+  if (el.getAttribute && el.getAttribute("data-pw-refine-box")) return "";
+  var picked = {
+    tag: el.tagName ? el.tagName.toLowerCase() : "",
+    description: describeEl(el),
+    candidates: candidatesFor(el),
+    css: cssPropsOf(el),
+    attributes: attrsOf(el),
+  };
+  return JSON.stringify({ picked: picked, text: txt(el).slice(0, 200), value: (el.value != null ? String(el.value).slice(0, 200) : "") });
+})
+`;

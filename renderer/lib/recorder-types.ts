@@ -143,6 +143,18 @@ export interface RecorderSettings {
   defaultRunSpeed: TestSpeed;
 }
 
+/** Payload pushed from the backend when the user picks an item from the
+ *  right-click test-tools menu in the training browser. Mirrors the backend
+ *  `ContextAction` in main/services/recorder-service.ts. */
+export interface ContextAction {
+  kind: "assertion" | "wait" | "goto" | "press" | "viewport" | "find" | "refine";
+  assert?: AssertKind;
+  waitMode?: "element" | "hidden" | "time";
+  picked: PickedElement | null;
+  prefillText: string;
+  prefillValue: string;
+}
+
 /** A single verbose diagnostic line produced while replaying a step. */
 export interface DebugLogLine {
   i: number;
