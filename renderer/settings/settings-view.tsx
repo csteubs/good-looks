@@ -6,6 +6,11 @@ import {
   RadioGroup,
   RadioGroupItem,
   ScrollArea,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   SegmentedControl,
   SegmentedControlItem,
   Status,
@@ -591,14 +596,18 @@ export function SettingsView() {
                 <FieldContent>
                   <FieldLabel>Model</FieldLabel>
                 </FieldContent>
-                <RadioGroup value={model ?? ""} onValueChange={handleModelChange}>
-                  {llmStatus.models.map((m) => (
-                    <Label key={m.id}>
-                      <RadioGroupItem value={m.id} />
-                      {m.label}
-                    </Label>
-                  ))}
-                </RadioGroup>
+                <Select value={model ?? ""} onValueChange={handleModelChange}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a model…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {llmStatus.models.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </Field>
             )}
           </FieldGroup>
