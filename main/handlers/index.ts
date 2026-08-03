@@ -128,7 +128,6 @@ export function registerHandlers(): void {
     recorderService.discardExit();
   });
   ipcMain.handle("recorder:getState", async () => recorderService.getState());
-  ipcMain.handle("recorder:getSteps", async () => recorderService.getSteps());
   ipcMain.handle("recorder:getSettings", async () => recorderSettingsStore.get());
   ipcMain.handle(
     "recorder:setSettings",

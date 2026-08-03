@@ -1264,11 +1264,6 @@ export const recorderService = {
     return recorderDebugStore.get(testId);
   },
 
-  /** Current session's step list (for testing/debugging). */
-  getSteps(): Step[] {
-    return session?.steps ?? [];
-  },
-
   /** Remove one step's debug entry for the current session's test. */
   clearDebugLog(stepId: string): DebugEntry[] {
     if (!session) return [];
