@@ -472,9 +472,9 @@ export function RecordingView() {
   // Index (into replayRun.steps) of the failed console step the user is
   // debugging with AI. Null when the StepAiDebugDialog is closed.
   const [debugStepIndex, setDebugStepIndex] = React.useState<number | null>(null);
-  // Exit confirmation: "Stop & generate" and the window close button both
-  // open this modal instead of immediately finalizing, so the user can keep
-  // training or choose whether to save.
+  // Exit confirmation: the "Save Test" / "Generate Test" toolbar button opens
+  // this modal only when there are unsaved steps; with no steps it saves/exits
+  // directly. Two options: discard edits (close without saving) or save & exit.
   const [exitOpen, setExitOpen] = React.useState(false);
   // True while the Add-step dialog's "Target element" picker is active. The
   // picked element arrives via the shared `picked` state from the recorder store;
@@ -615,8 +615,20 @@ export function RecordingView() {
           <ToolbarTitle>{state.editing ? "Editing recording" : "Recording"}</ToolbarTitle>
         </ToolbarContent>
         <ToolbarActions>
-          <Button variant="destructive" onClick={() => setExitOpen(true)}>
-            Stop &amp; generate
+          <Button
+            variant="destructive"
+            onClick={() => {
+              // No recorded steps = nothing to lose: save/exit directly without
+              // the confirmation warning. Otherwise open the warning so the
+              // user can choose to save or discard their edits.
+              if (liveSteps.length === 0) {
+                stop();
+              } else {
+                setExitOpen(true);
+              }
+            }}
+          >
+            {state.editing ? "Save Test" : "Generate Test"}
           </Button>
         </ToolbarActions>
       </Toolbar>
@@ -958,23 +970,26 @@ export function RecordingView() {
         </Text>
       </Dialog>
 
-      {/* Exit confirmation: "Stop & generate" opens this instead of
-          immediately finalizing. Three options: keep training (cancel), save
-          changes and exit (finalize + close), or don't save and exit (discard
-          steps + close). */}
+      {/* Exit confirmation: shown only when there are unsaved training edits
+          (live steps). Two options: discard the edits (close without saving) or
+          save & exit (finalize + close). */}
       <Dialog
         open={exitOpen}
         onOpenChange={setExitOpen}
-        title="Stop training?"
-        description="You can keep training, save your steps as a test, or exit without saving."
-        confirmLabel="Save Changes and Exit"
+        title={state.editing ? "Save changes to this test?" : "Save this test?"}
+        description={
+          state.editing
+            ? "You have unsaved edits to this test's steps. Save them, or discard your edits and exit."
+            : "You have unsaved recorded steps. Save them as a test, or discard them and exit."
+        }
+        confirmLabel="Save & Exit"
         confirmVariant="accent"
         onConfirm={() => {
           setExitOpen(false);
           stop();
         }}
         destructiveAction={{
-          label: "Don't Save and Exit",
+          label: "Discard Edits",
           onClick: () => {
             setExitOpen(false);
             discardExit();
@@ -982,9 +997,7 @@ export function RecordingView() {
         }}
       >
         <Text variant="small" color="secondary">
-          {liveSteps.length > 0
-            ? `${liveSteps.length} step${liveSteps.length === 1 ? "" : "s"} will be saved to the test when you choose "Save Changes and Exit". "Don't Save and Exit" discards them.`
-            : "No steps have been recorded yet."}
+          {`${liveSteps.length} step${liveSteps.length === 1 ? "" : "s"} will be saved when you choose "Save & Exit". "Discard Edits" closes the trainer without saving.`}
         </Text>
       </Dialog>
     </div>
