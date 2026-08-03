@@ -155,6 +155,24 @@ assertEqual(nestedParsed.steps[0]?.cond, "exists", "exists condition round-trips
 assertEqual(nestedParsed.steps[1]?.cond, "unchecked", "unchecked (negated) condition round-trips");
 assertEqual(nestedParsed.steps[4]?.cond, "titleContains", "titleContains condition round-trips");
 
+// ── 7. "Continue on Failure" (try/catch wrapper) round-trips ───────────────
+const cofSteps: Step[] = [
+  step({ type: "goto", url: "https://example.com" }),
+  step({ type: "click", locator: { k: "role", role: "button", name: "Maybe" }, continueOnFailure: true }),
+  step({ type: "assert", locator: { k: "css", v: "#result" }, assert: "visible", continueOnFailure: true }),
+  step({ type: "click", locator: { k: "role", role: "button", name: "Next" } }),
+];
+const cofSource = generateSpec({ name: "cof", url: "https://example.com", steps: cofSteps });
+const cofParsed = parseSpecDetailed(cofSource);
+assertEqual(cofParsed.skipped, 0, "continue-on-failure wrapper produces zero skips");
+assertEqual(cofParsed.steps.length, cofSteps.length, "continue-on-failure round-trips step count");
+assertEqual(cofParsed.steps[1]?.continueOnFailure, true, "click step continueOnFailure flag round-trips");
+assertEqual(cofParsed.steps[2]?.continueOnFailure, true, "assert step continueOnFailure flag round-trips");
+assertEqual(cofParsed.steps[3]?.continueOnFailure, undefined, "untoggled step has no continueOnFailure flag");
+// The wrapper must actually be emitted in the source.
+const tryLines = cofSource.split("\n").filter((l) => l.includes("try {"));
+assertEqual(tryLines.length, 2, "two try/catch wrappers emitted for two toggled steps");
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

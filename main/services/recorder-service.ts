@@ -849,6 +849,7 @@ export const recorderService = {
           "assert",
           "locator",
           "label",
+          "continueOnFailure",
         ];
         const target = step as unknown as Record<string, unknown>;
         const src = patch as Record<string, unknown>;

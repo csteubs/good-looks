@@ -4,8 +4,19 @@
 // the detail view stays a plain presentational list.
 
 import * as React from "react";
-import { Badge, Button, Input, Text } from "@glaze/core/components";
-import { Check, Crosshair, GripVertical, Loader2, Pencil, Play, X } from "lucide-react";
+import {
+  Badge,
+  Button,
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+  Input,
+  Text,
+} from "@glaze/core/components";
+import { Check, GripVertical, Loader2, MoreHorizontal, Pencil, Play, X } from "lucide-react";
 import type { RunStepStatus } from "./recorder-store";
 
 import { describeStep } from "../lib/describe-step";
@@ -188,6 +199,11 @@ export function StepRow({
           soft
         </Badge>
       ) : null}
+      {step.continueOnFailure ? (
+        <Badge color="secondary" className="shrink-0" title="Continue on Failure — swallow this step's error and keep running">
+          continue on fail
+        </Badge>
+      ) : null}
 
       {editing && field ? (
         <Input
@@ -259,19 +275,47 @@ export function StepRow({
               <Pencil className="size-3.5" />
             </Button>
           ) : null}
-          {onRefine && step.locator ? (
-            <Button
-              iconOnly
-              variant="transparent"
-              size="small"
-              className="opacity-0 group-hover:opacity-100"
-              onClick={onRefine}
-              aria-label="Refine selector"
-              title="Refine selector — pick this step's element in the browser"
-            >
-              <Crosshair className="size-3.5" />
-            </Button>
-          ) : null}
+          {(() => {
+            // "Test step utilities" submenu: groups per-step tools beneath the
+            // row. Currently "Refine Selection" (needs a locator) and "Continue
+            // on Failure" (a toggle for action/assert steps). The kebab trigger
+            // only renders when at least one utility applies to this step.
+            const canRefine = onRefine && step.locator;
+            const canContinue = onEdit && step.type !== "if" && step.type !== "endif";
+            if (!canRefine && !canContinue) return null;
+            return (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    iconOnly
+                    variant="transparent"
+                    size="small"
+                    className="opacity-0 group-hover:opacity-100"
+                    aria-label="Step utilities"
+                    title="Step utilities"
+                  >
+                    <MoreHorizontal className="size-3.5" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="bottom" align="end">
+                  {canRefine ? (
+                    <DropdownMenuItem onSelect={onRefine} icon="crosshair">
+                      Refine Selection
+                    </DropdownMenuItem>
+                  ) : null}
+                  {canRefine && canContinue ? <DropdownMenuSeparator /> : null}
+                  {canContinue ? (
+                    <DropdownMenuCheckboxItem
+                      checked={!!step.continueOnFailure}
+                      onCheckedChange={(checked) => onEdit?.({ continueOnFailure: checked })}
+                    >
+                      Continue on Failure
+                    </DropdownMenuCheckboxItem>
+                  ) : null}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            );
+          })()}
           {onDelete ? (
             <Button
               iconOnly

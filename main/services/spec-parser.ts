@@ -266,6 +266,52 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
       continue;
     }
 
+    // try { <statement> } catch { … } — a "Continue on Failure" wrapper
+    // emitted by script-generator.ts. Parse the inner statement, tag it with
+    // continueOnFailure, then skip past the catch block.
+    const tryM = rest.match(/^[\s;]*try\s*\{/);
+    if (tryM) {
+      const braceOpen = i + tryM[0].length - 1;
+      const braceClose = matchBrace(src, braceOpen);
+      if (braceClose < 0) {
+        skipped++;
+        i = braceOpen + 1;
+        continue;
+      }
+      const inner = src.slice(braceOpen + 1, braceClose);
+      const innerResult = parseBody(inner);
+      if (innerResult.steps.length > 0) {
+        // The wrapper always encloses a single statement; tag it and push.
+        const s = innerResult.steps[0];
+        s.continueOnFailure = true;
+        steps.push(...innerResult.steps);
+        skipped += innerResult.skipped;
+        // Find and skip the matching catch { … } block that follows.
+        const after = src.slice(braceClose + 1);
+        const catchM = after.match(/^[\s;]*catch\s*\{/);
+        if (catchM) {
+          const catchOpen = braceClose + 1 + after.indexOf("{", catchM[0].length - 1);
+          const catchClose = matchBrace(src, catchOpen);
+          i = catchClose >= 0 ? catchClose + 1 : braceClose + 1;
+        } else {
+          i = braceClose + 1;
+        }
+      } else {
+        // Empty or unrecognized try body — count as skipped and move on.
+        skipped++;
+        const after = src.slice(braceClose + 1);
+        const catchM = after.match(/^[\s;]*catch\s*\{/);
+        if (catchM) {
+          const catchOpen = braceClose + 1 + after.indexOf("{", catchM[0].length - 1);
+          const catchClose = matchBrace(src, catchOpen);
+          i = catchClose >= 0 ? catchClose + 1 : braceClose + 1;
+        } else {
+          i = braceClose + 1;
+        }
+      }
+      continue;
+    }
+
     // page.goto("…")
     const gotoM = rest.match(/^[\s;]*(?:await\s+|return\s+)?page\.goto\s*\(/);
     if (gotoM) {

@@ -87,6 +87,10 @@ export interface Step {
   height?: number;
   /** wait duration in ms when type === "wait" (omit to wait for the locator instead) */
   waitMs?: number;
+  /** true when the runner should swallow this step's failure and continue to
+   *  the next step instead of stopping the test. Emitted as a try/catch wrapper
+   *  around the step's line in the generated spec. */
+  continueOnFailure?: boolean;
   timestamp: number;
 }
 

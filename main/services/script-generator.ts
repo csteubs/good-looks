@@ -174,7 +174,17 @@ export function generateSpec(record: Pick<TestRecord, "name" | "url" | "steps">)
     const line = stepLine(step);
     if (line == null) continue;
     if (step.type === "endif") depth = Math.max(1, depth - 1);
-    body.push("  ".repeat(depth) + line);
+    const indent = "  ".repeat(depth);
+    // "Continue on Failure" wraps the step's statement in a try/catch so a
+    // failure is swallowed and the test proceeds to the next step. Only
+    // applies to action/assert steps — structural `if`/`endif` are never wrapped.
+    if (step.continueOnFailure && step.type !== "if" && step.type !== "endif") {
+      body.push(indent + "try {");
+      body.push(indent + "  " + line);
+      body.push(indent + "} catch { /* continue on failure */ }");
+    } else {
+      body.push(indent + line);
+    }
     if (step.type === "if") depth += 1;
   }
   const title = record.name && record.name.trim() ? record.name.trim() : "recorded test";
