@@ -42,7 +42,7 @@ export function buildReplayScript(step: Step): string {
   if (step.type === "fill" || step.type === "select") log("info", "Value: " + (step.value || ""));
   if (step.type === "assert") {
     if (step.assert === "url" || step.assert === "title") log("info", "Expect " + step.assert + " contains: " + (step.value || ""));
-    else if (step.assert === "count") log("info", "Expect count = " + (step.count);
+    else if (step.assert === "count") log("info", "Expect count = " + step.count);
     else if (step.assert === "value" || step.assert === "attribute") log("info", "Expect " + step.assert + " = " + (step.value || ""));
     else if (step.assert === "text" || step.assert === "exactText") log("info", "Expect text: " + (step.text || ""));
     else log("info", "Expect " + step.assert);
@@ -68,14 +68,14 @@ export function buildReplayScript(step: Step): string {
     try {
       if (k === "css") {
         var list = Array.prototype.slice.call(document.querySelectorAll(v));
-        log(list.length ? "info" : "warn", "css querySelectorAll("" + v + "") → " + list.length + " match(es)");
+        log(list.length ? "info" : "warn", "css querySelectorAll(\\"" + v + "\\") → " + list.length + " match(es)");
         return list;
       }
       if (k === "xpath") {
         var out = [];
         var r = document.evaluate(v, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
         for (var i = 0; i < r.snapshotLength; i++) out.push(r.snapshotItem(i));
-        log(out.length ? "info" : "warn", "xpath "" + v + "" → " + out.length + " match(es)");
+        log(out.length ? "info" : "warn", "xpath \\"" + v + "\\" → " + out.length + " match(es)");
         return out;
       }
       if (k === "testid") {
@@ -83,21 +83,21 @@ export function buildReplayScript(step: Step): string {
           var t = el.getAttribute("data-testid") || el.getAttribute("data-test-id") || el.getAttribute("data-test");
           return t === v;
         });
-        log(tid.length ? "info" : "warn", "data-testid="" + v + "" → " + tid.length + " match(es)");
+        log(tid.length ? "info" : "warn", "data-testid=\\"" + v + "\\" → " + tid.length + " match(es)");
         return tid;
       }
       if (k === "placeholder") {
         var ph = Array.prototype.slice.call(document.querySelectorAll("input,textarea")).filter(function (el) {
           return (el.getAttribute("placeholder") || "") === v;
         });
-        log(ph.length ? "info" : "warn", "placeholder="" + v + "" → " + ph.length + " match(es)");
+        log(ph.length ? "info" : "warn", "placeholder=\\"" + v + "\\" → " + ph.length + " match(es)");
         return ph;
       }
       if (k === "label") {
         var lb = Array.prototype.slice.call(document.querySelectorAll("input,textarea,select")).filter(function (el) {
           return labelFor(el) === v;
         });
-        log(lb.length ? "info" : "warn", "label="" + v + "" → " + lb.length + " match(es)");
+        log(lb.length ? "info" : "warn", "label=\\"" + v + "\\" → " + lb.length + " match(es)");
         return lb;
       }
       if (k === "role") {
@@ -108,14 +108,14 @@ export function buildReplayScript(step: Step): string {
           if (name == null || name === "") return true;
           return ci(accName(el)).indexOf(ci(name)) >= 0;
         });
-        log(rb.length ? "info" : "warn", "role=" + role + (name ? " name~"" + name + """ : "") + " → " + rb.length + " match(es)");
+        log(rb.length ? "info" : "warn", "role=" + role + (name ? " name~\\"" + name + "\\"" : "") + " → " + rb.length + " match(es)");
         return rb;
       }
       if (k === "text") {
         var all = Array.prototype.slice.call(document.querySelectorAll("body *"));
         var matches = all.filter(function (el) { return ci(txt(el)).indexOf(ci(v)) >= 0; });
         matches.sort(function (a, b) { return txt(a).length - txt(b).length; });
-        log(matches.length ? "info" : "warn", "text~"" + v + "" → " + matches.length + " match(es)");
+        log(matches.length ? "info" : "warn", "text~\\"" + v + "\\" → " + matches.length + " match(es)");
         return matches;
       }
     } catch (e) { log("error", "resolve " + k + " threw: " + String(e)); }
@@ -128,12 +128,12 @@ export function buildReplayScript(step: Step): string {
     var a = step.assert;
     if (a === "url") {
       var urlOk = ci(location.href).indexOf(ci(step.value || "")) >= 0;
-      log(urlOk ? "info" : "error", "page URL = "" + location.href + ""; expected to contain "" + (step.value || "") + """);
+      log(urlOk ? "info" : "error", "page URL = \\"" + location.href + "\\"; expected to contain \\"" + (step.value || "") + "\\"");
       return { ok: urlOk, error: urlOk ? undefined : "URL is " + location.href };
     }
     if (a === "title") {
       var titleOk = ci(document.title).indexOf(ci(step.value || "")) >= 0;
-      log(titleOk ? "info" : "error", "page title = "" + document.title + ""; expected to contain "" + (step.value || "") + """);
+      log(titleOk ? "info" : "error", "page title = \\"" + document.title + "\\"; expected to contain \\"" + (step.value || "") + "\\"");
       return { ok: titleOk, error: titleOk ? undefined : "Title is " + document.title };
     }
     if (a === "count") {
@@ -159,13 +159,13 @@ export function buildReplayScript(step: Step): string {
       case "text": {
         var got = txt(el).slice(0, 80);
         var tOk = ci(txt(el)).indexOf(ci(step.text || "")) >= 0;
-        log(tOk ? "info" : "error", "text contains "" + (step.text || "") + "": " + (tOk ? "yes" : "no — got "" + got + """));
+        log(tOk ? "info" : "error", "text contains \\"" + (step.text || "") + "\\": " + (tOk ? "yes" : "no — got \\"" + got + "\\""));
         return { ok: tOk, error: tOk ? undefined : "Text is " + got };
       }
       case "exactText": {
         var egot = txt(el).slice(0, 80);
         var eOk = norm(txt(el)) === norm(step.text || "");
-        log(eOk ? "info" : "error", "exact text "" + (step.text || "") + "": " + (eOk ? "yes" : "no — got "" + egot + """));
+        log(eOk ? "info" : "error", "exact text \\"" + (step.text || "") + "\\": " + (eOk ? "yes" : "no — got \\"" + egot + "\\""));
         return { ok: eOk, error: eOk ? undefined : "Text is " + egot };
       }
       case "enabled": { var enOk = !el.disabled; log(enOk ? "info" : "error", "enabled: " + (enOk ? "yes" : "no")); return { ok: enOk }; }
@@ -174,13 +174,13 @@ export function buildReplayScript(step: Step): string {
       case "unchecked": { var uOk = !el.checked; log(uOk ? "info" : "error", "unchecked: " + (uOk ? "yes" : "no")); return { ok: uOk }; }
       case "value": {
         var valOk = (el.value || "") === (step.value || "");
-        log(valOk ? "info" : "error", "value = "" + (el.value || "") + ""; expected "" + (step.value || "") + """);
+        log(valOk ? "info" : "error", "value = \\"" + (el.value || "") + "\\"; expected \\"" + (step.value || "") + "\\"");
         return { ok: valOk, error: valOk ? undefined : "Value is " + (el.value || "") };
       }
       case "attribute": {
         var av = el.getAttribute(step.attr || "") || "";
         var aOk = av === (step.value || "");
-        log(aOk ? "info" : "error", "attr[" + (step.attr || "") + "] = "" + av + ""; expected "" + (step.value || "") + """);
+        log(aOk ? "info" : "error", "attr[" + (step.attr || "") + "] = \\"" + av + "\\"; expected \\"" + (step.value || "") + "\\"");
         return { ok: aOk, error: aOk ? undefined : "Attribute is " + av };
       }
       default: return { ok: visible(el) };
@@ -191,12 +191,12 @@ export function buildReplayScript(step: Step): string {
     var c = step.cond || "visible";
     if (c === "urlContains") {
       var uMet = ci(location.href).indexOf(ci(step.value || "")) >= 0;
-      log("info", "condition: URL "" + location.href + "" contains "" + (step.value || "") + "" → " + uMet);
+      log("info", "condition: URL \\"" + location.href + "\\" contains \\"" + (step.value || "") + "\\" → " + uMet);
       return uMet;
     }
     if (c === "titleContains") {
       var tiMet = ci(document.title).indexOf(ci(step.value || "")) >= 0;
-      log("info", "condition: title "" + document.title + "" contains "" + (step.value || "") + "" → " + tiMet);
+      log("info", "condition: title \\"" + document.title + "\\" contains \\"" + (step.value || "") + "\\" → " + tiMet);
       return tiMet;
     }
     if (c === "exists") {
@@ -253,13 +253,13 @@ export function buildReplayScript(step: Step): string {
         try { el.value = step.value || ""; } catch (e) {}
         el.dispatchEvent(new Event("input", { bubbles: true }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
-        log("info", "filled value="" + (step.value || "") + """);
+        log("info", "filled value=\\"" + (step.value || "") + "\\"");
         return { ok: true };
       }
       if (t === "select") {
         try { el.value = step.value || ""; } catch (e) {}
         el.dispatchEvent(new Event("change", { bubbles: true }));
-        log("info", "selected value="" + (step.value || "") + """);
+        log("info", "selected value=\\"" + (step.value || "") + "\\"");
         return { ok: true };
       }
       if (t === "check") { if (!el.checked) { el.click(); log("info", "checked"); } else log("info", "already checked"); return { ok: true }; }
@@ -269,7 +269,7 @@ export function buildReplayScript(step: Step): string {
         el.focus();
         el.dispatchEvent(new KeyboardEvent("keydown", { key: key, bubbles: true }));
         el.dispatchEvent(new KeyboardEvent("keyup", { key: key, bubbles: true }));
-        log("info", "pressed key "" + key + """);
+        log("info", "pressed key \\"" + key + "\\"");
         return { ok: true };
       }
     } catch (e) { log("error", t + " threw: " + String(e)); return { ok: false, error: String(e) }; }

@@ -37,6 +37,38 @@ import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { describeStep, generateSpec } from "./script-generator.js";
 import { testStore } from "./test-store.js";
 
+/**
+ * Build a verbose, ordered set of debug log lines from a replay error so the
+ * trainer's step debug panel surfaces real diagnostics (error name, message,
+ * stack, step context) instead of a single vague `String(err)` line. Used by
+ * every replay path when `webContents.executeJavaScript` throws or rejects.
+ */
+function verboseErrorLogs(err: unknown, step: Step): DebugEntry["logs"] {
+  const t = Date.now();
+  const lines: DebugEntry["logs"] = [];
+  let i = 0;
+  const push = (level: "info" | "warn" | "error", m: string) =>
+    lines.push({ i: i++, t, level, m: String(m == null ? "" : m) });
+  const e = err as { name?: string; message?: string; stack?: string } | string | undefined;
+  const name = (e && typeof e === "object" && e.name) || "Error";
+  const msg = (e && typeof e === "object" && e.message) || String(e ?? "");
+  push("error", `Replay threw: ${name}: ${msg}`);
+  push("info", `Step: ${step.type}${step.assert ? ` (${step.assert})` : ""}${step.cond ? ` cond=${step.cond}` : ""}`);
+  if (step.locator) {
+    const loc = step.locator;
+    push("info", `Locator: ${loc.k}${loc.v ? `=${loc.v}` : ""}${loc.role ? ` role=${loc.role}` : ""}${loc.name ? ` name=${loc.name}` : ""}`);
+  }
+  if (step.value) push("info", `Value: ${step.value}`);
+  if (step.text) push("info", `Text: ${step.text}`);
+  if (e && typeof e === "object" && e.stack) {
+    // First few stack frames are the useful part — cap to keep the panel readable.
+    const stack = String(e.stack).split("\n").slice(0, 6).join("\n");
+    push("warn", stack);
+  }
+  push("error", "Replay did not complete. The step was not executed in the browser.");
+  return lines;
+}
+
 interface Session {
   testId: string;
   url: string;
@@ -576,7 +608,16 @@ export const recorderService = {
       this.persistDebug(entry);
       return entry;
     } catch (err) {
-      const entry = empty(String(err));
+      const entry: DebugEntry = {
+        stepId,
+        stepIndex: idx,
+        stepLabel: describeStep(step),
+        ok: false,
+        error: String(err),
+        at: Date.now(),
+        logs: verboseErrorLogs(err, step),
+      };
+      logger.info("recorder", "replayStep threw", { stepId, error: String(err) });
       this.persistDebug(entry);
       return entry;
     } finally {
@@ -654,7 +695,7 @@ export const recorderService = {
             ok: false,
             error: String(err),
             at: Date.now(),
-            logs: [{ i: 0, t: Date.now(), level: "error", m: String(err) }],
+            logs: verboseErrorLogs(err, step),
           };
           this.persistDebug(entry);
           return { ok: false, stoppedAtIndex: i, error: String(err) };
@@ -707,7 +748,7 @@ export const recorderService = {
           logs = result?.logs ?? [];
         } catch (err) {
           error = String(err);
-          logs = [{ i: 0, t: Date.now(), level: "error", m: String(err) }];
+          logs = verboseErrorLogs(err, step);
         }
         const entry: DebugEntry = {
           stepId: step.id,
