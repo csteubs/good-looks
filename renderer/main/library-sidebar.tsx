@@ -232,7 +232,27 @@ export function LibrarySidebar() {
 
   return (
     <Sidebar
-      footer={<AiConnectionFooter />}
+      footer={
+        <>
+          <SidebarList>
+            <SidebarListItem
+              icon={<BarChart3 className="size-4" />}
+              title="Stats"
+              subtitle="Run history & logs"
+              selected={pathname === "/stats"}
+              onClick={() => navigate({ to: "/stats" })}
+            />
+            <SidebarListItem
+              icon={<Images className="size-4" />}
+              title="Visual"
+              subtitle="Screenshot replay"
+              selected={pathname === "/visual"}
+              onClick={() => navigate({ to: "/visual" })}
+            />
+          </SidebarList>
+          <AiConnectionFooter />
+        </>
+      }
       actions={
         <Button
           iconOnly
@@ -245,22 +265,6 @@ export function LibrarySidebar() {
         </Button>
       }
     >
-      <SidebarList>
-        <SidebarListItem
-          icon={<BarChart3 className="size-4" />}
-          title="Stats"
-          subtitle="Run history & logs"
-          selected={pathname === "/stats"}
-          onClick={() => navigate({ to: "/stats" })}
-        />
-        <SidebarListItem
-          icon={<Images className="size-4" />}
-          title="Visual"
-          subtitle="Screenshot replay"
-          selected={pathname === "/visual"}
-          onClick={() => navigate({ to: "/visual" })}
-        />
-      </SidebarList>
       {tests.length === 0 ? (
         <div className="px-3 py-2">
           <Text variant="small" color="secondary">
