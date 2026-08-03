@@ -11,13 +11,38 @@ import type {
   AssertKind,
   ContextAction,
   DebugEntry,
+  DebugLogLine,
   PickedElement,
   RawStep,
   RecorderState,
+  ReplayLogEvent,
   Step,
 } from "../lib/recorder-types";
 
 export type RunStepStatus = "running" | "passed" | "failed";
+
+/** One step's result within a live "Replay from current step" run. */
+export interface ReplayConsoleStep {
+  index: number;
+  stepLabel: string;
+  ok: boolean;
+  error?: string;
+  logs: DebugLogLine[];
+}
+
+/** Live state of a "Replay from current step" run, driven by recorder:replayLog. */
+export interface ReplayRun {
+  running: boolean;
+  startIndex: number;
+  total: number;
+  ran: number;
+  passed: number;
+  failedAtIndex: number;
+  steps: ReplayConsoleStep[];
+  startedAt: number;
+  finishedAt: number | null;
+  error?: string;
+}
 
 export interface RunInfo {
   lines: string[];
@@ -68,7 +93,18 @@ interface RecorderContextValue {
   }>;
   /** Replay every step in order (auto-run on Edit in Trainer), highlighting each. */
   replayAll: () => Promise<{ ok: boolean; failedAtIndex: number; error?: string }>;
-  /** Per-step status for an in-flight replayAll, keyed by step index. */
+  /** Replay slowly from `startIndex` through the end, streaming each step's
+   *  output live to the debug panel's Console tab. */
+  replayFromCurrent: (startIndex: number) => Promise<{
+    ok: boolean;
+    ranCount: number;
+    passedCount: number;
+    failedAtIndex: number;
+    error?: string;
+  }>;
+  /** Live state of the most recent "Replay from current step" run (or null). */
+  replayRun: ReplayRun | null;
+  /** Per-step status for an in-flight replay, keyed by step index. */
   replayStepStatus: Record<number, RunStepStatus>;
   /** Persisted per-step debug entries (latest attempt per step), for the debug panel. */
   debugEntries: DebugEntry[];
@@ -108,6 +144,8 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   // Per-step status for an in-flight trainer replayAll (auto-run on Edit in
   // Trainer), keyed by step index. Cleared when a new run starts.
   const [replayStepStatus, setReplayStepStatus] = React.useState<Record<number, RunStepStatus>>({});
+  // Live "Replay from current step" run, streamed from the backend.
+  const [replayRun, setReplayRun] = React.useState<ReplayRun | null>(null);
   const navigate = useNavigate();
   const qc = useQueryClient();
 
@@ -171,6 +209,51 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
         [index]: status === "begin" ? "running" : ok ? "passed" : "failed",
       }));
     });
+    // Live "Replay from current step" streaming: build the run model up as each
+    // phase arrives so the Console tab can show output as the test runs.
+    const offReplayLog = api.on<ReplayLogEvent>("recorder:replayLog", (ev) => {
+      if (ev.phase === "start") {
+        setReplayRun({
+          running: true,
+          startIndex: ev.startIndex,
+          total: ev.total,
+          ran: 0,
+          passed: 0,
+          failedAtIndex: -1,
+          steps: [],
+          startedAt: Date.now(),
+          finishedAt: null,
+        });
+      } else if (ev.phase === "step") {
+        setReplayRun((prev) =>
+          prev
+            ? {
+                ...prev,
+                ran: prev.ran + 1,
+                passed: prev.passed + (ev.ok ? 1 : 0),
+                steps: [
+                  ...prev.steps,
+                  { index: ev.index, stepLabel: ev.stepLabel, ok: ev.ok, error: ev.error, logs: ev.logs },
+                ],
+              }
+            : prev,
+        );
+      } else {
+        setReplayRun((prev) =>
+          prev
+            ? {
+                ...prev,
+                running: false,
+                ran: ev.ran,
+                passed: ev.passed,
+                failedAtIndex: ev.failedAtIndex,
+                finishedAt: Date.now(),
+                error: ev.error,
+              }
+            : prev,
+        );
+      }
+    });
 
     api.recorder.getState().then(setState).catch(() => {});
 
@@ -185,6 +268,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       offDone();
       offDebug();
       offReplayStep();
+      offReplayLog();
     };
   }, [navigate, qc]);
 
@@ -254,6 +338,16 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     }
     return res;
   }, [state.testId]);
+  const replayFromCurrent = React.useCallback(async (startIndex: number) => {
+    // Reset row highlighting for a fresh run; the live console is reset by the
+    // backend's "start" replayLog event.
+    setReplayStepStatus({});
+    const res = await api.recorder.replayFromCurrent(startIndex);
+    if (state.testId) {
+      api.recorder.getDebugLogs(state.testId).then(setDebugEntries).catch(() => {});
+    }
+    return res;
+  }, [state.testId]);
   const clearDebugEntry = React.useCallback((id: string) => {
     api.recorder.clearDebugLog(id).then(setDebugEntries).catch(() => {});
   }, []);
@@ -289,6 +383,8 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     replayStep,
     replayFromStart,
     replayAll,
+    replayFromCurrent,
+    replayRun,
     replayStepStatus,
     debugEntries,
     clearDebugEntry,

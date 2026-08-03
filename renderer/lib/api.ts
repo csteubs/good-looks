@@ -64,6 +64,14 @@ export const api = {
       ipc().invoke<{ ok: boolean; failedAtIndex: number; error?: string }>(
         "recorder:replayAll",
       ),
+    replayFromCurrent: (startIndex: number) =>
+      ipc().invoke<{
+        ok: boolean;
+        ranCount: number;
+        passedCount: number;
+        failedAtIndex: number;
+        error?: string;
+      }>("recorder:replayFromCurrent", { startIndex }),
     getDebugLogs: (testId: string) =>
       ipc().invoke<DebugEntry[]>("recorder:getDebugLogs", { testId }),
     clearDebugLog: (stepId: string) =>

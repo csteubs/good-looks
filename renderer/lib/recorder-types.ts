@@ -163,6 +163,13 @@ export interface DebugLogLine {
   m: string;
 }
 
+/** Live streaming event pushed during a "Replay from current step" run, so the
+ *  debug panel's Console tab can show each step's output as it runs. */
+export type ReplayLogEvent =
+  | { phase: "start"; startIndex: number; total: number }
+  | { phase: "step"; index: number; stepLabel: string; ok: boolean; error?: string; logs: DebugLogLine[] }
+  | { phase: "done"; ran: number; passed: number; failedAtIndex: number; error?: string };
+
 /** Persisted debug entry for a single step's replay attempt. */
 export interface DebugEntry {
   stepId: string;

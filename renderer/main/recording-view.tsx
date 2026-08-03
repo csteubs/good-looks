@@ -1,22 +1,27 @@
 import * as React from "react";
 import {
   Button,
+  Checkbox,
   Dialog,
   ScrollArea,
   SegmentedControl,
   SegmentedControlItem,
   Status,
+  Tabs,
+  TabsContent,
+  TabsRoot,
+  TabsTrigger,
   Text,
   Toolbar,
   ToolbarActions,
   ToolbarContent,
   ToolbarTitle,
 } from "@glaze/core/components";
-import { Bug, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, Wand2, X } from "lucide-react";
+import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, Wand2, X } from "lucide-react";
 
 import type { AssertKind, DebugEntry, PickedElement, RawStep, Step } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
-import { useRecorder } from "./recorder-store";
+import { useRecorder, type ReplayRun } from "./recorder-store";
 import { StepRow } from "./step-row";
 import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "./add-step-dialog";
 import { GenerateStepsDialog } from "./generate-steps-dialog";
@@ -93,113 +98,234 @@ function CursorGap({ active, onClick }: { active: boolean; onClick: () => void }
   );
 }
 
-/** Bottom panel showing verbose, persisted replay diagnostics for the selected step. */
-function StepDebugPanel({
+const LEVEL_TONE: Record<"info" | "warn" | "error", string> = {
+  info: "text-secondary",
+  warn: "text-support-yellow",
+  error: "text-support-red",
+};
+
+const timeHms = (t: number) =>
+  new Date(t).toLocaleTimeString(undefined, {
+    hour12: false,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+
+/** Renders an ordered set of verbose replay diagnostic lines (timestamp · level · message). */
+function LogLines({ logs, indent }: { logs: DebugEntry["logs"]; indent?: boolean }) {
+  return (
+    <>
+      {logs.map((ln) => (
+        <div key={ln.i} className={`flex gap-2 ${indent ? "pl-4" : ""}`}>
+          <span className="shrink-0 select-none text-tertiary">{timeHms(ln.t)}</span>
+          <span className={`shrink-0 select-none uppercase ${LEVEL_TONE[ln.level]}`}>{ln.level}</span>
+          <span className={`whitespace-pre-wrap break-words ${LEVEL_TONE[ln.level]}`}>{ln.m}</span>
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** A one-line, human-readable summary of a step's locator (element location). */
+function locatorSummary(step: Step): string | null {
+  const l = step.locator;
+  if (!l) return null;
+  const parts: string[] = [l.k];
+  if (l.role) parts.push(l.role);
+  if (l.name) parts.push(`“${l.name}”`);
+  if (l.v) parts.push(l.v);
+  return parts.join(" ");
+}
+
+/** Percent hit-rate pill color by score. */
+function hitRateTone(rate: number): string {
+  if (rate >= 100) return "text-support-green";
+  if (rate >= 50) return "text-support-yellow";
+  return "text-support-red";
+}
+
+/**
+ * Bottom debug panel with two tabs:
+ *  - Console: live streaming output of a "Replay from current step" run — each
+ *    step's result + verbose logs as it runs, with an auto-scroll toggle.
+ *  - Step details: the selected step's element-location details, replay status,
+ *    and persisted diagnostics, plus the run's pass/fail % hit rate.
+ */
+function DebugPanel({
   step,
   selectedIndex,
   entry,
   onClear,
+  replayRun,
+  tab,
+  onTabChange,
+  autoScroll,
+  onAutoScrollChange,
 }: {
   step: Step | null;
   selectedIndex: number;
   entry: DebugEntry | null;
   onClear: () => void;
+  replayRun: ReplayRun | null;
+  tab: string;
+  onTabChange: (v: string) => void;
+  autoScroll: boolean;
+  onAutoScrollChange: (v: boolean) => void;
 }) {
-  if (!step) {
-    return (
-      <div className="flex h-24 items-center justify-center gap-2 border-t border-separator px-4">
-        <Bug className="size-4 text-tertiary" />
-        <Text variant="small" color="tertiary">
-          Select a step to see replay diagnostics.
-        </Text>
-      </div>
-    );
-  }
-  const label = `Step ${selectedIndex + 1}: ${describeStep(step)}`;
-  let status: { text: string; tone: "ok" | "fail" | "pending" };
-  if (!entry) {
-    status = { text: "not yet replayed", tone: "pending" };
-  } else if (entry.ok) {
-    status = { text: "replayed successfully", tone: "ok" };
-  } else {
-    status = { text: entry.error || "failed", tone: "fail" };
-  }
-  const toneClass =
-    status.tone === "ok"
-      ? "text-support-green"
-      : status.tone === "fail"
-        ? "text-support-red"
-        : "text-tertiary";
-  const time = entry ? new Date(entry.at).toLocaleTimeString() : null;
+  const consoleSteps = replayRun?.steps ?? [];
+  const ran = replayRun?.ran ?? 0;
+  const passed = replayRun?.passed ?? 0;
+  const hitRate = ran > 0 ? Math.round((passed / ran) * 100) : null;
+  const logCount = consoleSteps.reduce((n, s) => n + s.logs.length, 0);
+
   return (
     <div className="flex h-56 flex-col border-t border-separator">
-      <div className="flex items-center justify-between gap-2 px-4 pt-2.5 pb-1.5">
-        <div className="flex min-w-0 items-center gap-2">
-          <Bug className={`size-4 shrink-0 ${toneClass}`} />
-          <Text variant="small" className="truncate" title={label}>
-            {label}
-          </Text>
-          <Text variant="small" color="tertiary" className="shrink-0">
-            <span className={toneClass}>
-              {status.tone === "fail"
-                ? `Step ${selectedIndex + 1}: ${status.text}`
-                : status.text}
-            </span>
-            {time ? ` · ${time}` : ""}
-          </Text>
+      <TabsRoot value={tab} onValueChange={onTabChange} className="flex min-h-0 flex-1 flex-col">
+        <div className="flex items-center justify-between gap-2 px-3 pt-2">
+          <Tabs variant="filled" size="small">
+            <TabsTrigger value="console">Console</TabsTrigger>
+            <TabsTrigger value="steps">Step details</TabsTrigger>
+          </Tabs>
+          {tab === "console" ? (
+            <label className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 pr-1 text-[11px] text-secondary">
+              <Checkbox
+                checked={autoScroll}
+                onCheckedChange={(v) => onAutoScrollChange(v === true)}
+                aria-label="Auto-scroll console"
+              />
+              Auto-scroll
+            </label>
+          ) : null}
         </div>
-        {entry ? (
-          <Button
-            iconOnly
-            variant="transparent"
-            size="small"
-            className="shrink-0"
-            onClick={onClear}
-            aria-label="Clear replay diagnostic"
-            title="Clear replay diagnostic"
+
+        {/* Console: live run output. */}
+        <TabsContent value="console" className="flex min-h-0 flex-1 flex-col">
+          <div className="flex items-center gap-2 border-b border-separator px-3 py-1.5">
+            {replayRun?.running ? <Loader2 className="size-3.5 shrink-0 animate-spin text-accent" /> : null}
+            <Text variant="small" color="secondary" className="min-w-0 truncate">
+              {!replayRun
+                ? "No run yet — click “Replay from current step”."
+                : replayRun.running
+                  ? `Running… ${ran}/${replayRun.total} steps`
+                  : replayRun.failedAtIndex >= 0
+                    ? `Stopped at step ${replayRun.failedAtIndex + 1} — ${passed}/${ran} passed`
+                    : `Done — ${passed}/${ran} passed`}
+            </Text>
+            {hitRate !== null ? (
+              <span className={`ml-auto shrink-0 text-[11px] font-medium ${hitRateTone(hitRate)}`}>
+                {hitRate}% hit rate
+              </span>
+            ) : null}
+          </div>
+          <ScrollArea
+            className="min-h-0 flex-1"
+            autoScrollToBottom={autoScroll}
+            autoScrollDeps={[logCount, consoleSteps.length]}
           >
-            <X className="size-3.5" />
-          </Button>
-        ) : null}
-      </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="px-4 pb-3 pt-0.5">
-          {entry && entry.logs.length > 0 ? (
-            <div className="font-mono text-[11px] leading-relaxed">
-              {entry.logs.map((ln) => {
-                const tone =
-                  ln.level === "error"
-                    ? "text-support-red"
-                    : ln.level === "warn"
-                      ? "text-support-yellow"
-                      : "text-secondary";
-                return (
-                  <div key={ln.i} className="flex gap-2">
-                    <span className="shrink-0 select-none text-tertiary">
-                      {new Date(ln.t).toLocaleTimeString(undefined, {
-                        hour12: false,
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        second: "2-digit",
-                      })}
-                    </span>
-                    <span className={`shrink-0 select-none uppercase ${tone}`}>
-                      {ln.level}
-                    </span>
-                    <span className={`whitespace-pre-wrap break-words ${tone}`}>
-                      {ln.m}
-                    </span>
+            <div className="px-3 py-2 font-mono text-[11px] leading-relaxed">
+              {consoleSteps.length === 0 ? (
+                <Text variant="small" color="tertiary">
+                  Each step streams its result and verbose output here as the test runs.
+                </Text>
+              ) : (
+                consoleSteps.map((s) => (
+                  <div key={s.index} className="mb-2">
+                    <div
+                      className={`flex items-center gap-1.5 ${s.ok ? "text-support-green" : "text-support-red"}`}
+                    >
+                      {s.ok ? <Check className="size-3 shrink-0" /> : <X className="size-3 shrink-0" />}
+                      <span className="font-semibold">Step {s.index + 1}</span>
+                      <span className="truncate text-secondary">· {s.stepLabel}</span>
+                    </div>
+                    <LogLines logs={s.logs} indent />
+                    {!s.ok && s.error ? (
+                      <div className="pl-4 text-support-red">{s.error}</div>
+                    ) : null}
                   </div>
-                );
-              })}
+                ))
+              )}
+            </div>
+          </ScrollArea>
+        </TabsContent>
+
+        {/* Step details: element location + persisted diagnostics for the selected step. */}
+        <TabsContent value="steps" className="flex min-h-0 flex-1 flex-col">
+          {!step ? (
+            <div className="flex flex-1 items-center justify-center gap-2 px-4">
+              <Bug className="size-4 text-tertiary" />
+              <Text variant="small" color="tertiary">
+                Select a step to see its element details and replay diagnostics.
+              </Text>
             </div>
           ) : (
-            <Text variant="small" color="tertiary">
-              No diagnostic lines. Run ▶ replay to capture verbose output.
-            </Text>
+            (() => {
+              const label = `Step ${selectedIndex + 1}: ${describeStep(step)}`;
+              const status: { text: string; tone: string } = !entry
+                ? { text: "not yet replayed", tone: "text-tertiary" }
+                : entry.ok
+                  ? { text: "replayed successfully", tone: "text-support-green" }
+                  : { text: entry.error || "failed", tone: "text-support-red" };
+              const loc = locatorSummary(step);
+              return (
+                <>
+                  <div className="flex items-center justify-between gap-2 border-b border-separator px-3 py-1.5">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Bug className={`size-4 shrink-0 ${status.tone}`} />
+                      <Text variant="small" className="truncate" title={label}>
+                        {label}
+                      </Text>
+                      <Text variant="small" color="tertiary" className="shrink-0">
+                        <span className={status.tone}>{status.text}</span>
+                        {entry ? ` · ${new Date(entry.at).toLocaleTimeString()}` : ""}
+                      </Text>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {hitRate !== null ? (
+                        <span className={`text-[11px] font-medium ${hitRateTone(hitRate)}`}>
+                          {hitRate}% hit rate
+                        </span>
+                      ) : null}
+                      {entry ? (
+                        <Button
+                          iconOnly
+                          variant="transparent"
+                          size="small"
+                          onClick={onClear}
+                          aria-label="Clear replay diagnostic"
+                          title="Clear replay diagnostic"
+                        >
+                          <X className="size-3.5" />
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                  {loc ? (
+                    <div className="border-b border-separator px-3 py-1.5 text-[11px]">
+                      <span className="text-tertiary">Element locator: </span>
+                      <span className="font-mono text-secondary">{loc}</span>
+                    </div>
+                  ) : null}
+                  <ScrollArea className="min-h-0 flex-1">
+                    <div className="px-3 pb-3 pt-1">
+                      {entry && entry.logs.length > 0 ? (
+                        <div className="font-mono text-[11px] leading-relaxed">
+                          <LogLines logs={entry.logs} />
+                        </div>
+                      ) : (
+                        <Text variant="small" color="tertiary">
+                          No diagnostic lines. Run ▶ replay (or “Replay from current step”) to
+                          capture verbose output.
+                        </Text>
+                      )}
+                    </div>
+                  </ScrollArea>
+                </>
+              );
+            })()
           )}
-        </div>
-      </ScrollArea>
+        </TabsContent>
+      </TabsRoot>
     </div>
   );
 }
@@ -219,8 +345,8 @@ export function RecordingView() {
     updateStep,
     setCursor,
     replayStep,
-    replayFromStart,
-    replayAll,
+    replayFromCurrent,
+    replayRun,
     replayStepStatus,
     debugEntries,
     clearDebugEntry,
@@ -238,15 +364,14 @@ export function RecordingView() {
   const [aiOpen, setAiOpen] = React.useState(false);
   const [replayStatus, setReplayStatus] = React.useState<string | null>(null);
   const [selectedStepId, setSelectedStepId] = React.useState<string | null>(null);
+  // Debug panel: which tab is showing, and whether the Console auto-scrolls to
+  // the latest output (on by default; a checkbox lets the user scroll manually).
+  const [debugTab, setDebugTab] = React.useState("steps");
+  const [autoScroll, setAutoScroll] = React.useState(true);
   // Exit confirmation: "Stop & generate" and the window close button both
   // open this modal instead of immediately finalizing, so the user can keep
   // training or choose whether to save.
   const [exitOpen, setExitOpen] = React.useState(false);
-  // Auto-run state for "Edit in Trainer": controls stay disabled while the
-  // browser window is loading and while the automatic replay is in flight,
-  // then re-enable. `autoRunStarted` guards so we only fire once per session.
-  const [autoRunBusy, setAutoRunBusy] = React.useState(false);
-  const autoRunStartedRef = React.useRef<string | null>(null);
   // True while the Add-step dialog's "Target element" picker is active. The
   // picked element arrives via the shared `picked` state from the recorder store;
   // this flag tells us it belongs to the Add-step flow (not a step refine).
@@ -290,51 +415,41 @@ export function RecordingView() {
     clearContextAction();
   }, [contextAction, clearContextAction]);
 
-  const onReplayFromStart = async () => {
-    setReplayStatus("Replaying from start…");
-    const res = await replayFromStart();
-    if (res.stoppedAtIndex < 0) {
+  const running = !!replayRun?.running;
+
+  // "Replay from current step": run slowly from the currently selected step
+  // (or the first step if none is selected) through the end, streaming each
+  // step's output to the Console tab.
+  const onReplayFromCurrent = async () => {
+    const startIndex = selectedStepId
+      ? Math.max(0, liveSteps.findIndex((s) => s.id === selectedStepId))
+      : 0;
+    setDebugTab("console");
+    setReplayStatus("Replaying…");
+    const res = await replayFromCurrent(startIndex);
+    if (res.ranCount === 0) {
       setReplayStatus(res.ok ? "No steps to replay." : res.error || "Replay failed.");
+    } else if (res.ok) {
+      setReplayStatus(`Replayed ${res.ranCount} step${res.ranCount === 1 ? "" : "s"} — ${res.passedCount} passed.`);
     } else {
-      setReplayStatus(
-        res.ok
-          ? `Replayed through step ${res.stoppedAtIndex + 1} — paused. Iterate manually.`
-          : `Paused at step ${res.stoppedAtIndex + 1}: ${res.error || "failed"}`,
-      );
+      setReplayStatus(`Stopped at step ${res.failedAtIndex + 1}: ${res.error || "failed"}`);
     }
     // Clear the status after a few seconds so it doesn't linger.
     window.setTimeout(() => setReplayStatus(null), 6000);
   };
 
-  // Edit in Trainer auto-run: once the browser window has finished loading its
-  // first page, replay every step automatically and highlight each by progress.
-  // Controls stay disabled while the page is loading and while the run is in
-  // flight; they re-enable when it finishes. Fires once per editing session.
+  // Follow the run: auto-select the step currently being replayed so the Step
+  // details tab and the row highlight track progress.
   React.useEffect(() => {
-    if (!state.editing || !state.pageReady || !state.testId) return;
-    if (autoRunStartedRef.current === state.testId) return;
-    autoRunStartedRef.current = state.testId;
-    let cancelled = false;
-    (async () => {
-      setAutoRunBusy(true);
-      const res = await replayAll();
-      if (!cancelled) {
-        setAutoRunBusy(false);
-        if (!res.ok && res.failedAtIndex >= 0) {
-          setReplayStatus(
-            `Auto-run stopped at step ${res.failedAtIndex + 1}: ${res.error || "failed"}`,
-          );
-          window.setTimeout(() => setReplayStatus(null), 6000);
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [state.editing, state.pageReady, state.testId, replayAll]);
+    if (!running || !replayRun || replayRun.steps.length === 0) return;
+    const last = replayRun.steps[replayRun.steps.length - 1];
+    const s = liveSteps[last.index];
+    if (s) setSelectedStepId(s.id);
+  }, [running, replayRun, liveSteps]);
 
-  // While loading or auto-running, every editing control is inert.
-  const controlsDisabled = !state.pageReady || autoRunBusy;
+  // Controls stay inert until the training browser has loaded, and while a
+  // "Replay from current step" run is in flight.
+  const controlsDisabled = !state.pageReady || running;
 
   // Drag-to-reorder bookkeeping.
   const [dragId, setDragId] = React.useState<string | null>(null);
@@ -398,10 +513,10 @@ export function RecordingView() {
       </Toolbar>
 
       <div className="flex items-center gap-3 border-b border-separator px-4 py-3">
-        {controlsDisabled ? (
-          <Status variant={autoRunBusy ? "loading" : "warning"}>
-            {autoRunBusy ? "Running test…" : "Loading page…"}
-          </Status>
+        {!state.pageReady ? (
+          <Status variant="warning">Loading page…</Status>
+        ) : running ? (
+          <Status variant="loading">Running test…</Status>
         ) : (
           <Status variant={state.paused ? "warning" : "error"}>
             {state.paused ? "Paused" : state.editing ? "Editing" : "Recording"}
@@ -427,12 +542,12 @@ export function RecordingView() {
         <Button
           size="small"
           variant="muted"
-          onClick={onReplayFromStart}
+          onClick={onReplayFromCurrent}
           disabled={controlsDisabled}
-          aria-label="Replay steps from the beginning"
-          title="Replay steps from the beginning, pausing after the first success"
+          aria-label="Replay from the current step"
+          title="Replay slowly from the selected step (or the first step) through the end, streaming each step's output to the Console"
         >
-          <Play className="size-3.5" /> Replay from start
+          <Play className="size-3.5" /> Replay from current step
         </Button>
         {replayStatus ? (
           <Text variant="small" color="secondary" className="shrink-0">
@@ -553,7 +668,7 @@ export function RecordingView() {
         </div>
       </ScrollArea>
 
-      <StepDebugPanel
+      <DebugPanel
         step={
           selectedStepId ? liveSteps.find((s) => s.id === selectedStepId) ?? null : null
         }
@@ -566,6 +681,11 @@ export function RecordingView() {
         onClear={() => {
           if (selectedStepId) clearDebugEntry(selectedStepId);
         }}
+        replayRun={replayRun}
+        tab={debugTab}
+        onTabChange={setDebugTab}
+        autoScroll={autoScroll}
+        onAutoScrollChange={setAutoScroll}
       />
 
       {addKind ? (

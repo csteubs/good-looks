@@ -40,6 +40,40 @@ import { runHistoryStore } from "./run-history-store.js";
 import { describeStep, generateSpec } from "./script-generator.js";
 import { testStore } from "./test-store.js";
 
+// Pacing for the "Replay from current step" run so the user can watch it step
+// through slowly: a short settle after highlighting a row before running it,
+// and a longer pause between steps.
+const REPLAY_SETTLE_MS = 300;
+const REPLAY_STEP_DELAY_MS = 600;
+// A single step's injected script must resolve within this window. A step that
+// triggers a page navigation (or otherwise hangs) would leave executeJavaScript
+// pending forever and wedge the whole run with controls disabled; the timeout
+// turns that into a clean per-step failure instead.
+const REPLAY_STEP_TIMEOUT_MS = 8000;
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Race a page `executeJavaScript` against a timeout so one hanging/navigating
+ *  step can't freeze a replay run. Rejects with a descriptive error on timeout. */
+function execWithTimeout(
+  wc: { executeJavaScript: (script: string) => Promise<unknown> },
+  script: string,
+  ms: number,
+): Promise<unknown> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () =>
+        reject(
+          new Error(
+            `Step timed out after ${Math.round(ms / 1000)}s — it may have triggered a page navigation or the page stopped responding.`,
+          ),
+        ),
+      ms,
+    );
+  });
+  return Promise.race([wc.executeJavaScript(script), timeout]).finally(() => clearTimeout(timer));
+}
+
 /**
  * Build a verbose, ordered set of debug log lines from a replay error so the
  * trainer's step debug panel surfaces real diagnostics (error name, message,
@@ -764,7 +798,7 @@ export const recorderService = {
       // Suppress capture so the replayed interaction isn't recorded as a step.
       session.paused = true;
       await applyStateAttributes();
-      const result = (await wc.executeJavaScript(buildReplayScript(step))) as {
+      const result = (await execWithTimeout(wc, buildReplayScript(step), REPLAY_STEP_TIMEOUT_MS)) as {
         ok: boolean;
         error?: string;
         logs?: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[];
@@ -826,7 +860,7 @@ export const recorderService = {
       for (let i = 0; i < session.steps.length; i++) {
         const step = session.steps[i];
         try {
-          const result = (await wc.executeJavaScript(buildReplayScript(step))) as {
+          const result = (await execWithTimeout(wc, buildReplayScript(step), REPLAY_STEP_TIMEOUT_MS)) as {
             ok: boolean;
             error?: string;
             met?: boolean;
@@ -912,7 +946,7 @@ export const recorderService = {
         let met: boolean | undefined;
         let logs: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[] = [];
         try {
-          const result = (await wc.executeJavaScript(buildReplayScript(step))) as {
+          const result = (await execWithTimeout(wc, buildReplayScript(step), REPLAY_STEP_TIMEOUT_MS)) as {
             ok: boolean;
             error?: string;
             met?: boolean;
@@ -956,6 +990,119 @@ export const recorderService = {
     } finally {
       // The window may have closed (finalize → session = null) while the replay
       // loop was in flight; guard so we don't crash dereferencing a null session.
+      if (session) session.paused = wasPaused;
+      await applyStateAttributes().catch(() => {});
+    }
+  },
+
+  /**
+   * Replay steps from `startIndex` through the end of the list, SLOWLY — a
+   * settle before each step and a pause between them — so the user can watch
+   * the test progress. Streams each step's result + verbose logs live to the
+   * renderer via `recorder:replayLog` (a console/debug panel), and highlights
+   * rows via `recorder:replayStep`. Unlike replayFromStart (which stops after
+   * the first success), this runs the whole remainder; a hard failure stops it.
+   * Capture is suppressed during the run. Structural if/endif steps are honored
+   * (a false condition skips its block) but never counted or streamed.
+   */
+  async replayFromCurrent(startIndex: number): Promise<{
+    ok: boolean;
+    ranCount: number;
+    passedCount: number;
+    failedAtIndex: number;
+    error?: string;
+  }> {
+    if (!session) {
+      return { ok: false, ranCount: 0, passedCount: 0, failedAtIndex: -1, error: "No active recording session." };
+    }
+    if (!recWindow || recWindow.isDestroyed()) {
+      return { ok: false, ranCount: 0, passedCount: 0, failedAtIndex: -1, error: "Recorder window is not open." };
+    }
+    const wc = recWindow.webContents;
+    const wasPaused = session.paused;
+    const from = Math.max(0, Math.min(startIndex, session.steps.length));
+    const total = session.steps
+      .slice(from)
+      .filter((s) => s.type !== "if" && s.type !== "endif").length;
+    let ran = 0;
+    let passed = 0;
+    sendToMain("recorder:replayLog", { phase: "start", startIndex: from, total });
+    try {
+      session.paused = true;
+      await applyStateAttributes();
+      for (let i = from; i < session.steps.length; i++) {
+        // The window may close (finalize → session = null) mid-run.
+        if (!session || !recWindow || recWindow.isDestroyed()) break;
+        const step = session.steps[i];
+        sendToMain("recorder:replayStep", { index: i, status: "begin", ok: true });
+        await sleep(REPLAY_SETTLE_MS);
+        let ok = false;
+        let error: string | undefined;
+        let met: boolean | undefined;
+        let logs: DebugEntry["logs"] = [];
+        try {
+          const result = (await execWithTimeout(wc, buildReplayScript(step), REPLAY_STEP_TIMEOUT_MS)) as {
+            ok: boolean;
+            error?: string;
+            met?: boolean;
+            logs?: DebugEntry["logs"];
+          };
+          ok = !!(result && result.ok);
+          met = result?.met;
+          error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
+          logs = result?.logs ?? [];
+        } catch (err) {
+          error = String(err);
+          logs = verboseErrorLogs(err, step);
+        }
+        const entry: DebugEntry = {
+          stepId: step.id,
+          stepIndex: i,
+          stepLabel: describeStep(step),
+          ok,
+          error,
+          at: Date.now(),
+          logs,
+        };
+        this.persistDebug(entry);
+        sendToMain("recorder:replayStep", { index: i, status: "end", ok });
+        // Structural steps: never counted or streamed; a false `if` skips its
+        // whole block (leaving those steps un-highlighted, like a real run).
+        if (step.type === "if") {
+          if (met === false) {
+            const end = matchingBlockIndex(session.steps, i);
+            if (end > i) i = end;
+          }
+          await sleep(REPLAY_STEP_DELAY_MS);
+          continue;
+        }
+        if (step.type === "endif") {
+          await sleep(REPLAY_STEP_DELAY_MS);
+          continue;
+        }
+        ran++;
+        if (ok) passed++;
+        sendToMain("recorder:replayLog", {
+          phase: "step",
+          index: i,
+          stepLabel: describeStep(step),
+          ok,
+          error,
+          logs,
+        });
+        // A soft assertion reports failure but doesn't stop the run.
+        if (!ok && !step.soft) {
+          sendToMain("recorder:replayLog", { phase: "done", ran, passed, failedAtIndex: i });
+          return { ok: false, ranCount: ran, passedCount: passed, failedAtIndex: i, error };
+        }
+        await sleep(REPLAY_STEP_DELAY_MS);
+      }
+      sendToMain("recorder:replayLog", { phase: "done", ran, passed, failedAtIndex: -1 });
+      return { ok: true, ranCount: ran, passedCount: passed, failedAtIndex: -1 };
+    } catch (err) {
+      sendToMain("recorder:replayLog", { phase: "done", ran, passed, failedAtIndex: -1, error: String(err) });
+      return { ok: false, ranCount: ran, passedCount: passed, failedAtIndex: -1, error: String(err) };
+    } finally {
       if (session) session.paused = wasPaused;
       await applyStateAttributes().catch(() => {});
     }
