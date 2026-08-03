@@ -831,6 +831,10 @@ async function finalize(): Promise<void> {
     steps: s.steps,
     scriptPath,
     scriptEdited: false,
+    // Seed from the persisted default so new recordings inherit the user's
+    // last-chosen run speed (slow by default). Existing tests keep their own
+    // speed; the sidebar "Adjust Test Speed" menu still overrides per-test.
+    speed: recorderSettingsStore.get().defaultRunSpeed,
   };
   testStore.save(record);
 

@@ -187,6 +187,10 @@ export interface PickedElement {
 export interface RecorderSettings {
   /** show the current page's URL in the training window's title bar (default true) */
   showUrlBar: boolean;
+  /** default playback speed for new recordings (adds a slowMo delay between
+   *  actions during runs); persisted so the New Recording dialog remembers the
+   *  last choice. Defaults to "slow" so runs are watchable by default. */
+  defaultRunSpeed: TestSpeed;
 }
 
 /** A single verbose diagnostic line produced while replaying a step. */

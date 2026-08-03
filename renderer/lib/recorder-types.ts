@@ -140,6 +140,7 @@ export interface PickedElement {
 
 export interface RecorderSettings {
   showUrlBar: boolean;
+  defaultRunSpeed: TestSpeed;
 }
 
 /** A single verbose diagnostic line produced while replaying a step. */

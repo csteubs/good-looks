@@ -6,6 +6,8 @@ import {
   RadioGroup,
   RadioGroupItem,
   ScrollArea,
+  SegmentedControl,
+  SegmentedControlItem,
   Status,
   Switch,
   Toolbar,
@@ -22,6 +24,10 @@ import type { NativeThemeInfo } from "@glaze/core/ipc";
 
 import { api } from "../lib/api";
 import type { LlmProvider, LlmProviderStatus } from "../lib/llm-types";
+import type { TestSpeed } from "../lib/recorder-types";
+
+const SPEEDS: TestSpeed[] = ["slow", "medium", "fast"];
+const SPEED_LABEL: Record<TestSpeed, string> = { slow: "Slow", medium: "Medium", fast: "Fast" };
 
 export function SettingsView() {
   const [themeInfo, setThemeInfo] = useState<NativeThemeInfo | null>(null);
@@ -40,6 +46,7 @@ export function SettingsView() {
 
   // ── Trainer settings ─────────────────────────────────────────────────
   const [showUrlBar, setShowUrlBar] = useState(true);
+  const [defaultRunSpeed, setDefaultRunSpeed] = useState<TestSpeed>("slow");
 
   useEffect(() => {
     api.llm
@@ -54,9 +61,12 @@ export function SettingsView() {
       });
     api.recorder
       .getSettings()
-      .then((settings) => setShowUrlBar(settings.showUrlBar))
+      .then((settings) => {
+        setShowUrlBar(settings.showUrlBar);
+        setDefaultRunSpeed(settings.defaultRunSpeed ?? "slow");
+      })
       .catch(() => {
-        /* fall back to default (on) */
+        /* fall back to defaults */
       });
   }, []);
 
@@ -67,6 +77,14 @@ export function SettingsView() {
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
     }
+  };
+
+  const handleDefaultRunSpeedChange = (value: string) => {
+    const next = value as TestSpeed;
+    setDefaultRunSpeed(next);
+    api.recorder.setSettings({ defaultRunSpeed: next }).catch((error) => {
+      toast.error(`Failed to save setting: ${error}`);
+    });
   };
 
   const handleProviderChange = async (value: string) => {
@@ -265,6 +283,29 @@ export function SettingsView() {
                 checked={showUrlBar}
                 onCheckedChange={handleShowUrlBarChange}
               />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="default-run-speed">Default run speed</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Playback speed for new recordings. Adds a delay between actions so runs are
+                  watchable; slow by default. Each test can still be overridden from its sidebar
+                  menu.
+                </p>
+              </FieldContent>
+              <SegmentedControl
+                id="default-run-speed"
+                value={defaultRunSpeed}
+                onValueChange={handleDefaultRunSpeedChange}
+                variant="filled"
+                size="small"
+              >
+                {SPEEDS.map((s) => (
+                  <SegmentedControlItem key={s} value={s}>
+                    {SPEED_LABEL[s]}
+                  </SegmentedControlItem>
+                ))}
+              </SegmentedControl>
             </Field>
           </FieldGroup>
         </FieldSet>
