@@ -4,8 +4,8 @@
 // the model returns a complete corrected spec — offers to apply it to the script.
 
 import * as React from "react";
-import { AlertDialog, Button, Dialog, ScrollArea, Status, toast } from "@glaze/core/components";
-import { Check, ChevronDown, Copy, RotateCcw, Square, Wand2 } from "lucide-react";
+import { AlertDialog, Button, Dialog, Field, ScrollArea, Status, Text, Textarea, toast } from "@glaze/core/components";
+import { Check, ChevronDown, Copy, RotateCcw, Send, Square, Wand2 } from "lucide-react";
 
 import { api } from "../lib/api";
 import { diffLines, diffSummary, type DiffLine } from "../lib/line-diff";
@@ -251,6 +251,11 @@ export function AiDebugDialog({
   const [modelName, setModelName] = React.useState<string | null>(null);
   const [models, setModels] = React.useState<LlmModel[]>([]);
   const startedKeyRef = React.useRef<string | null>(null);
+  // Whether the dialog is showing the prompt-review phase (true) or the
+  // streamed-response phase (false). Starts in review so the user must
+  // explicitly confirm before any request is sent; "Regenerate" returns to
+  // review so the user can adjust context before re-sending.
+  const [reviewing, setReviewing] = React.useState(true);
 
   // Fetch the configured LLM model name for the dialog title and the model
   // picker, then load the available models for that provider so the picker can
@@ -292,11 +297,25 @@ export function AiDebugDialog({
     }
   }, []);
 
+  // The full prompt that will be sent to the model, memoized so it stays
+  // stable across re-renders while the dialog is open. Shown to the user in
+  // the review phase so they can see exactly what the system is sending.
+  const promptMessages = React.useMemo(
+    () => buildDebugMessages({ testName, testUrl, script, output, imported, speed, failedStepIndex }),
+    [testName, testUrl, script, output, imported, speed, failedStepIndex],
+  );
+
+  // Optional extra context the user can add before sending. Appended to the
+  // user message so the model sees it as part of the same diagnostic request.
+  const [additionalContext, setAdditionalContext] = React.useState("");
+
   // Poll the live configured model right before sending so the "Thinking with
   // {model}" placeholder reflects the model the backend will actually use,
   // even if the default changed (in Settings or another dialog) after this
   // dialog opened. Falls back to the cached `modelName` if the poll fails.
-  const runDiagnosis = React.useCallback(async () => {
+  // The user must explicitly confirm by clicking "Send to AI" — the dialog
+  // never sends a request automatically.
+  const sendDiagnosis = React.useCallback(async () => {
     let model = modelName ?? undefined;
     try {
       const cfg = await api.llm.getConfig();
@@ -305,25 +324,31 @@ export function AiDebugDialog({
     } catch {
       // keep the cached name; the backend will fall back to its own config
     }
-    void start(
-      buildDebugMessages({ testName, testUrl, script, output, imported, speed, failedStepIndex }),
-      { model },
-    );
-  }, [start, modelName, testName, testUrl, script, output, imported, speed, failedStepIndex]);
+    const trimmed = additionalContext.trim();
+    const messages =
+      trimmed.length > 0
+        ? promptMessages.map((m, i) =>
+            m.role === "user" && i === promptMessages.length - 1
+              ? { ...m, content: `${m.content}\n\nAdditional context from the user:\n${trimmed}` }
+              : m,
+          )
+        : promptMessages;
+    setReviewing(false);
+    void start(messages, { model });
+  }, [start, modelName, additionalContext, promptMessages]);
 
-  // Auto-start a diagnosis the first time we see a given run output while the
-  // dialog is open. We deliberately do NOT reset `startedKeyRef` on close, so
-  // reopening the dialog for the same run shows the previously streamed
-  // response (the `useLlmChat` state survives because the dialog stays
-  // mounted). A new run produces a different `output.length`, which re-fires.
+  // Reset to the review phase (clear the additional-context box and any prior
+  // streamed response) when the dialog opens for a different run. We do NOT
+  // auto-send — the user must click "Send to AI".
   React.useEffect(() => {
     if (!open) return;
     const key = `${testName}:${output.length}`;
     if (startedKeyRef.current === key) return;
     startedKeyRef.current = key;
     setApplied(false);
-    void runDiagnosis();
-  }, [open, testName, output.length, runDiagnosis]);
+    setAdditionalContext("");
+    setReviewing(true);
+  }, [open, testName, output.length]);
 
   const copyResponse = async () => {
     await window.glazeAPI.clipboard.writeText(content);
@@ -373,81 +398,123 @@ export function AiDebugDialog({
       size="xl"
     >
       <div className="flex h-[50vh] flex-col gap-3">
-        <div className="flex items-center gap-2">
-          {status === "streaming" ? (
-            <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
-          ) : null}
-          {status === "error" ? <Status variant="error">Error</Status> : null}
-          {status === "done" ? <Status variant="success">Done</Status> : null}
-          {status === "cancelled" ? <Status variant="neutral">Stopped</Status> : null}
-          {status === "streaming" ? (
-            <Button size="small" variant="muted" onClick={stop}>
-              <Square className="size-3.5" /> Stop
-            </Button>
-          ) : (
-            <Button size="small" variant="muted" onClick={runDiagnosis}>
-              <RotateCcw className="size-3.5" /> Regenerate
-            </Button>
-          )}
-          {correctedScript && onApplyScript ? (
-            <AlertDialog
-              trigger={
-                <Button size="small" variant="accent" disabled={applied}>
-                  <Wand2 className="size-3.5" /> {applied ? "Applied" : "Apply to script"}
+        {reviewing ? (
+          // Review phase: show the full prompt that will be sent and let the
+          // user add context. Nothing is sent until they click "Send to AI".
+          <>
+            <Text variant="small" color="secondary">
+              Review the prompt that will be sent to the model, then add any context you want and confirm to send. Nothing is sent until you confirm.
+            </Text>
+            <ScrollArea className="min-h-0 flex-1 rounded-md border border-separator">
+              <div className="flex flex-col gap-3 p-3">
+                {promptMessages.map((m, i) => (
+                  <div key={i} className="flex flex-col gap-1">
+                    <Text variant="small-strong" color="secondary">
+                      {m.role === "system" ? "System prompt" : m.role === "user" ? "User prompt" : "Assistant"}
+                    </Text>
+                    <pre className="text-small-mono whitespace-pre-wrap break-words rounded-md bg-control-subtle p-2 text-primary">
+                      {m.content}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+            <Field label="Additional context (optional)" orientation="vertical">
+              <Textarea
+                size="medium"
+                placeholder={"Add anything the model should know — e.g. the site changed recently, this selector is flaky, or you suspect a timing issue."}
+                value={additionalContext}
+                onChange={(e) => setAdditionalContext(e.target.value)}
+              />
+            </Field>
+            <div className="flex items-center justify-end gap-2">
+              <Button size="small" variant="muted" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button size="small" variant="accent" onClick={sendDiagnosis}>
+                <Send className="size-3.5" /> Send to AI
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              {status === "streaming" ? (
+                <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
+              ) : null}
+              {status === "error" ? <Status variant="error">Error</Status> : null}
+              {status === "done" ? <Status variant="success">Done</Status> : null}
+              {status === "cancelled" ? <Status variant="neutral">Stopped</Status> : null}
+              {status === "streaming" ? (
+                <Button size="small" variant="muted" onClick={stop}>
+                  <Square className="size-3.5" /> Stop
                 </Button>
-              }
-              title="Apply the suggested fix?"
-              description={
-                summary
-                  ? `This replaces the test's current script with the AI's corrected version (+${summary.added} / -${summary.removed} lines). The Steps tab will update to reflect the new script. You can still edit or re-record the script afterward.`
-                  : "This replaces the test's current script with the AI's corrected version. The Steps tab will update to reflect the new script. You can still edit or re-record the script afterward."
-              }
-              confirmLabel="Apply"
-              confirmVariant="accent"
-              size="xl"
-              onConfirm={applyScript}
+              ) : (
+                <Button size="small" variant="muted" onClick={() => setReviewing(true)}>
+                  <RotateCcw className="size-3.5" /> Regenerate
+                </Button>
+              )}
+              {correctedScript && onApplyScript ? (
+                <AlertDialog
+                  trigger={
+                    <Button size="small" variant="accent" disabled={applied}>
+                      <Wand2 className="size-3.5" /> {applied ? "Applied" : "Apply to script"}
+                    </Button>
+                  }
+                  title="Apply the suggested fix?"
+                  description={
+                    summary
+                      ? `This replaces the test's current script with the AI's corrected version (+${summary.added} / -${summary.removed} lines). The Steps tab will update to reflect the new script. You can still edit or re-record the script afterward.`
+                      : "This replaces the test's current script with the AI's corrected version. The Steps tab will update to reflect the new script. You can still edit or re-record the script afterward."
+                  }
+                  confirmLabel="Apply"
+                  confirmVariant="accent"
+                  size="xl"
+                  onConfirm={applyScript}
+                >
+                  {diff ? <DiffView diff={diff} /> : null}
+                </AlertDialog>
+              ) : null}
+              {content ? (
+                <Button
+                  iconOnly
+                  size="small"
+                  variant="transparent"
+                  onClick={copyResponse}
+                  aria-label="Copy response"
+                  title="Copy response"
+                >
+                  {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+                </Button>
+              ) : null}
+            </div>
+            <ScrollArea
+              className="min-h-0 flex-1 rounded-md border border-separator"
+              autoScrollToBottom
+              autoScrollDeps={[content.length]}
             >
-              {diff ? <DiffView diff={diff} /> : null}
-            </AlertDialog>
-          ) : null}
-          {content ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="transparent"
-              onClick={copyResponse}
-              aria-label="Copy response"
-              title="Copy response"
-            >
-              {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-            </Button>
-          ) : null}
-        </div>
-        <ScrollArea
-          className="min-h-0 flex-1 rounded-md border border-separator"
-          autoScrollToBottom
-          autoScrollDeps={[content.length]}
-        >
-          <div className="flex flex-col gap-1 p-3">
-            {status === "error" && error ? (
-              <pre className="text-small whitespace-pre-wrap break-words text-primary">{friendlyError(error)}</pre>
-            ) : content ? (
-              segments.map((seg, i) =>
-                seg.type === "code" ? (
-                  <CodeBlock key={i} lang={seg.lang} content={seg.content} />
+              <div className="flex flex-col gap-1 p-3">
+                {status === "error" && error ? (
+                  <pre className="text-small whitespace-pre-wrap break-words text-primary">{friendlyError(error)}</pre>
+                ) : content ? (
+                  segments.map((seg, i) =>
+                    seg.type === "code" ? (
+                      <CodeBlock key={i} lang={seg.lang} content={seg.content} />
+                    ) : (
+                      <p key={i} className="text-small whitespace-pre-wrap break-words text-primary">
+                        {seg.content}
+                      </p>
+                    ),
+                  )
                 ) : (
-                  <p key={i} className="text-small whitespace-pre-wrap break-words text-primary">
-                    {seg.content}
+                  <p className="text-small text-secondary">
+                    {status === "streaming" ? (modelName ? `Thinking with ${modelName}…` : "Thinking…") : ""}
                   </p>
-                ),
-              )
-            ) : (
-              <p className="text-small text-secondary">
-                {status === "streaming" ? (modelName ? `Thinking with ${modelName}…` : "Thinking…") : ""}
-              </p>
-            )}
-          </div>
-        </ScrollArea>
+                )}
+              </div>
+            </ScrollArea>
+          </>
+        )}
       </div>
     </Dialog>
   );
