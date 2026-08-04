@@ -61,35 +61,35 @@ function ThinkingGifOverlay({
   enabled: boolean;
 }) {
   // `expanding` while streaming; `contracting` for the 5s ease-out after the
-  // response arrives; `hidden` once the scale-out completes.
+  // response arrives; `hidden` once the fade-out completes.
   const [phase, setPhase] = React.useState<"hidden" | "expanding" | "contracting">("hidden");
-  // Tracks whether the scaleX target has been applied yet so the CSS transition
-  // actually animates from 0 → 1 (without this, React renders scaleX(1) on the
+  // Tracks whether the opacity target has been applied yet so the CSS transition
+  // actually animates from 0 → 1 (without this, React renders opacity(1) on the
   // first frame and there's nothing to transition from).
-  const [scaledIn, setScaledIn] = React.useState(false);
+  const [fadedIn, setFadedIn] = React.useState(false);
   const phaseRef = React.useRef(phase);
   phaseRef.current = phase;
 
   React.useEffect(() => {
     if (!enabled) {
       setPhase("hidden");
-      setScaledIn(false);
+      setFadedIn(false);
       return;
     }
     if (status === "streaming") {
       setPhase("expanding");
-      // Start at scaleX(0), then on the next frame flip to scaleX(1) so the
+      // Start at opacity 0, then on the next frame fade to opacity 1 so the
       // 5s ease-in transition runs.
-      setScaledIn(false);
+      setFadedIn(false);
       const raf = requestAnimationFrame(() => {
-        requestAnimationFrame(() => setScaledIn(true));
+        requestAnimationFrame(() => setFadedIn(true));
       });
       return () => cancelAnimationFrame(raf);
     }
     // Response received (done/error/cancelled) — start the 0.5s ease-out.
     if (phaseRef.current === "expanding") {
       setPhase("contracting");
-      setScaledIn(false);
+      setFadedIn(false);
       const t = setTimeout(() => setPhase("hidden"), 500);
       return () => clearTimeout(t);
     }
@@ -97,7 +97,7 @@ function ThinkingGifOverlay({
 
   if (!enabled || phase === "hidden") return null;
 
-  const targetScale = phase === "expanding" ? (scaledIn ? 1 : 0) : 0;
+  const targetOpacity = phase === "expanding" ? (fadedIn ? 1 : 0) : 0;
 
   return (
     <div
@@ -108,11 +108,12 @@ function ThinkingGifOverlay({
         <img
           src={glitchGif}
           alt=""
-          className="h-full w-full max-w-none object-contain"
+          className="max-w-none object-contain"
           style={{
-            transform: `scaleX(${targetScale})`,
-            transformOrigin: "center",
-            transition: `transform ${phase === "contracting" ? "0.5s" : "5s"} ease-in-out`,
+            minWidth: "350%",
+            minHeight: "350%",
+            opacity: targetOpacity,
+            transition: `opacity ${phase === "contracting" ? "0.5s" : "5s"} ease-in-out`,
           }}
         />
       </div>
