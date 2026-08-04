@@ -501,7 +501,16 @@ export function AiDebugDialog({
           modelName ? `Debugging with ${modelName}` : "Debugging with AI"
         )
       }
-      description={testName}
+      description={
+        <span className="inline-flex items-center gap-2">
+          {testName}
+          {status === "streaming" ? (
+            <Button size="small" variant="destructive" onClick={stop}>
+              <Square className="size-3.5" /> Stop
+            </Button>
+          ) : null}
+        </span>
+      }
       size="xl"
     >
       <div className="relative flex max-h-[50vh] flex-col gap-3">
@@ -581,15 +590,9 @@ export function AiDebugDialog({
               {status === "error" ? <Status variant="error">Error</Status> : null}
               {status === "done" ? <Status variant="success">Done</Status> : null}
               {status === "cancelled" ? <Status variant="neutral">Stopped</Status> : null}
-              {status === "streaming" ? (
-                <Button size="small" variant="muted" onClick={stop}>
-                  <Square className="size-3.5" /> Stop
-                </Button>
-              ) : (
-                <Button size="small" variant="muted" onClick={() => setReviewing(true)}>
-                  <RotateCcw className="size-3.5" /> Regenerate
-                </Button>
-              )}
+              <Button size="small" variant="muted" onClick={() => setReviewing(true)}>
+                <RotateCcw className="size-3.5" /> Regenerate
+              </Button>
               {correctedScript && onApplyScript ? (
                 <Button size="small" variant="accent" disabled={applied} onClick={applyScript}>
                   <Wand2 className="size-3.5" /> {applied ? "Applied" : "Apply"}
@@ -771,7 +774,16 @@ export function StepAiDebugDialog({
           modelName ? `Debugging step with ${modelName}` : "Debugging step with AI"
         )
       }
-      description={stepLabel}
+      description={
+        <span className="inline-flex items-center gap-2">
+          {stepLabel}
+          {status === "streaming" ? (
+            <Button size="small" variant="destructive" onClick={stop}>
+              <Square className="size-3.5" /> Stop
+            </Button>
+          ) : null}
+        </span>
+      }
       size="xl"
     >
       <div className="relative flex max-h-[50vh] flex-col gap-3">
@@ -784,15 +796,9 @@ export function StepAiDebugDialog({
           {status === "error" ? <Status variant="error">Error</Status> : null}
           {status === "done" ? <Status variant="success">Done</Status> : null}
           {status === "cancelled" ? <Status variant="neutral">Stopped</Status> : null}
-          {status === "streaming" ? (
-            <Button size="small" variant="muted" onClick={stop}>
-              <Square className="size-3.5" /> Stop
-            </Button>
-          ) : (
-            <Button size="small" variant="muted" onClick={runDiagnosis}>
-              <RotateCcw className="size-3.5" /> Regenerate
-            </Button>
-          )}
+          <Button size="small" variant="muted" onClick={runDiagnosis}>
+            <RotateCcw className="size-3.5" /> Regenerate
+          </Button>
           {content ? (
             <Button
               iconOnly
