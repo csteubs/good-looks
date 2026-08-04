@@ -1,4 +1,4 @@
-import { EmptyStateDescription, Toolbar, ToolbarContent, ToolbarTitle } from "@glaze/core/components";
+import { Toolbar, ToolbarContent, ToolbarTitle } from "@glaze/core/components";
 import { useTheme } from "@glaze/core/hooks";
 
 import { BlackHoleLoader } from "./black-hole-loader";
@@ -21,10 +21,10 @@ export function HomeView() {
           {animationEnabled ? <BlackHoleLoader size={440} dark={isDarkMode} /> : null}
           <div className="flex max-w-sm flex-col gap-2">
             <h1 className="text-heading1" style={{ fontSize: "54px" }}>GOOD LOOKS!</h1>
-            <EmptyStateDescription>
+            <p className="text-regular" style={{ padding: "60px 0px" }}>
               Click the + in the sidebar, enter a website, and interact with it. Every click, input, and navigation
               becomes a test step — then generate and run a Playwright script.
-            </EmptyStateDescription>
+            </p>
           </div>
         </div>
       </div>
