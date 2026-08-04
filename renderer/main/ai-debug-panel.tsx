@@ -7,6 +7,8 @@ import * as React from "react";
 import { AlertDialog, Button, Dialog, Field, ScrollArea, Status, Text, Textarea, toast } from "@glaze/core/components";
 import { Check, ChevronDown, Copy, RotateCcw, Send, Square, Wand2 } from "lucide-react";
 
+import glitchGif from "./assets/glitch.gif";
+
 import { api } from "../lib/api";
 import { diffLines, diffSummary, type DiffLine } from "../lib/line-diff";
 import type { LlmModel } from "../lib/llm-types";
@@ -14,6 +16,37 @@ import { buildDebugMessages, buildStepDebugMessages } from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
 import type { TestSpeed } from "../lib/recorder-types";
 import { useLlmChat } from "../lib/use-llm-chat";
+
+// Common failure reasons a user can toggle into the "additional context" box
+// instead of retyping them every time. Each is appended on its own line; clicking
+// an active reason removes its line again.
+const QUICK_CONTEXT_REASONS = [
+  "Flaky selector",
+  "Wrong A/B variant",
+  "Timing / race condition",
+  "Site changed recently",
+  "Auth / login state",
+] as const;
+
+function reasonLine(reason: string): string {
+  return `- ${reason}`;
+}
+
+function isReasonActive(text: string, reason: string): boolean {
+  return text.split("\n").some((l) => l.trim() === reasonLine(reason).trim());
+}
+
+function toggleReason(text: string, reason: string): string {
+  const line = reasonLine(reason);
+  const lines = text.split("\n");
+  const idx = lines.findIndex((l) => l.trim() === line.trim());
+  if (idx >= 0) {
+    const next = lines.filter((_, i) => i !== idx);
+    return next.join("\n").replace(/^\n+/, "").replace(/\n+$/, "\n").replace(/\n+$/, "");
+  }
+  const joined = [text.replace(/\n+$/, ""), line].filter((s) => s.length > 0).join("\n");
+  return joined;
+}
 
 export function friendlyError(message: string): string {
   if (/no model selected/i.test(message)) {
@@ -419,7 +452,31 @@ export function AiDebugDialog({
                 ))}
               </div>
             </ScrollArea>
-            <Field label="Additional context (optional)" orientation="vertical">
+            <Field
+              label={
+                <span className="flex w-full items-center justify-between gap-2">
+                  <span>Anything else you want to include? (Optional)</span>
+                  <span className="flex flex-wrap items-center justify-end gap-1.5">
+                    {QUICK_CONTEXT_REASONS.map((reason) => {
+                      const active = isReasonActive(additionalContext, reason);
+                      return (
+                        <Button
+                          key={reason}
+                          size="small"
+                          variant={active ? "muted" : "transparent"}
+                          radius="full"
+                          className="h-6 px-2 text-small"
+                          onClick={() => setAdditionalContext((prev) => toggleReason(prev, reason))}
+                        >
+                          {reason}
+                        </Button>
+                      );
+                    })}
+                  </span>
+                </span>
+              }
+              orientation="vertical"
+            >
               <Textarea
                 size="medium"
                 placeholder={"Add anything the model should know — e.g. the site changed recently, this selector is flaky, or you suspect a timing issue."}
@@ -440,7 +497,10 @@ export function AiDebugDialog({
           <>
             <div className="flex items-center gap-2">
               {status === "streaming" ? (
-                <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
+                <>
+                  <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
+                  <img src={glitchGif} alt="" className="size-5 shrink-0 rounded-sm" />
+                </>
               ) : null}
               {status === "error" ? <Status variant="error">Error</Status> : null}
               {status === "done" ? <Status variant="success">Done</Status> : null}
@@ -640,7 +700,10 @@ export function StepAiDebugDialog({
       <div className="flex h-[50vh] flex-col gap-3">
         <div className="flex items-center gap-2">
           {status === "streaming" ? (
-            <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
+            <>
+              <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
+              <img src={glitchGif} alt="" className="size-5 shrink-0 rounded-sm" />
+            </>
           ) : null}
           {status === "error" ? <Status variant="error">Error</Status> : null}
           {status === "done" ? <Status variant="success">Done</Status> : null}
