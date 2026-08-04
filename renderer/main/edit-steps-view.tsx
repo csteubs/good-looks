@@ -138,15 +138,18 @@ export function EditStepsView({ steps: initialSteps, onCancel, onSave }: EditSte
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex items-center justify-end gap-2 border-b border-separator px-4 py-2">
+      <div className="flex items-center justify-end gap-3 border-b border-separator px-4 py-2">
         <Text variant="small" color="tertiary" className="mr-auto">
           Reorder by dragging, click the value to edit, or remove with ✕. Element-targeted steps need the trainer.
         </Text>
+        <Button size="small" variant="glass" onClick={openAddMenu}>
+          <Plus className="size-3.5" /> Add step
+        </Button>
         <Button size="small" variant="glass" onClick={onCancel} disabled={saving}>
           Cancel
         </Button>
         <Button size="small" variant="accent" onClick={handleSave} disabled={saving}>
-          {saving ? "Saving…" : "Save steps"}
+          {saving ? "Saving…" : "Save"}
         </Button>
       </div>
       <div className="flex min-h-0 flex-1 flex-col">
@@ -178,11 +181,6 @@ export function EditStepsView({ steps: initialSteps, onCancel, onSave }: EditSte
             ))}
           </div>
         )}
-        <div className="border-t border-separator p-3">
-          <Button size="small" variant="glass" onClick={openAddMenu}>
-            <Plus className="size-3.5" /> Add step
-          </Button>
-        </div>
       </div>
       <EditStepAddDialog
         open={addKind !== null}
