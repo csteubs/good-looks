@@ -104,14 +104,12 @@ function ThinkingGifOverlay({
       className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-md"
       style={{ backgroundColor: "#000000" }}
     >
-      <div className="flex h-full w-full items-center justify-center">
+      <div className="flex h-full w-full items-start justify-center pt-4">
         <img
           src={glitchGif}
           alt=""
-          className="max-w-none object-contain"
+          className="max-h-[300px] max-w-[400px] object-contain"
           style={{
-            minWidth: "350%",
-            minHeight: "350%",
             opacity: targetOpacity,
             transition: `opacity ${phase === "contracting" ? "0.5s" : "5s"} ease-in-out`,
           }}
@@ -512,9 +510,9 @@ export function AiDebugDialog({
           ) : null}
         </span>
       }
-      size="xl"
+      size="2xl"
     >
-      <div className="relative flex max-h-[50vh] flex-col gap-3">
+      <div className="relative flex min-h-[400px] max-h-[70vh] flex-col gap-3">
         <ThinkingGifOverlay status={status} enabled={thinkingGifEnabled} />
         <div className="relative z-10 flex flex-1 flex-col gap-3">
         {reviewing ? (
@@ -525,8 +523,8 @@ export function AiDebugDialog({
               Review the prompt that will be sent to the model, then add any context you want and confirm to send. Nothing is sent until you confirm.
             </Text>
             <ScrollArea
-              className="max-h-[32vh] rounded-md border border-separator"
-              viewportClassName="max-h-[32vh]"
+              className="max-h-[44vh] rounded-md border border-separator"
+              viewportClassName="max-h-[44vh]"
             >
               <div className="flex flex-col gap-3 p-3">
                 {promptMessages.map((m, i) => (
@@ -613,8 +611,8 @@ export function AiDebugDialog({
               ) : null}
             </div>
             <ScrollArea
-              className="max-h-[40vh] rounded-md border border-separator"
-              viewportClassName="max-h-[40vh]"
+              className="max-h-[56vh] rounded-md border border-separator"
+              viewportClassName="max-h-[56vh]"
               autoScrollToBottom
               autoScrollDeps={[content.length]}
             >
@@ -785,9 +783,9 @@ export function StepAiDebugDialog({
           ) : null}
         </span>
       }
-      size="xl"
+      size="2xl"
     >
-      <div className="relative flex max-h-[50vh] flex-col gap-3">
+      <div className="relative flex min-h-[400px] max-h-[70vh] flex-col gap-3">
         <ThinkingGifOverlay status={status} enabled={thinkingGifEnabled} />
         <div className="relative z-10 flex flex-1 flex-col gap-3">
         <div className="flex items-center gap-2">
@@ -814,8 +812,8 @@ export function StepAiDebugDialog({
           ) : null}
         </div>
         <ScrollArea
-          className="max-h-[42vh] rounded-md border border-separator"
-          viewportClassName="max-h-[42vh]"
+          className="max-h-[56vh] rounded-md border border-separator"
+          viewportClassName="max-h-[56vh]"
           autoScrollToBottom
           autoScrollDeps={[content.length]}
         >
