@@ -574,7 +574,7 @@ export function AiDebugDialog({
                 onChange={(e) => setAdditionalContext(e.target.value)}
               />
             </Field>
-            <div className="flex items-center justify-end gap-2">
+            <div className="flex items-center justify-end gap-2 pb-8">
               <Button size="small" variant="muted" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
