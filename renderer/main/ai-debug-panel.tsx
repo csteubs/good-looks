@@ -514,14 +514,14 @@ export function AiDebugDialog({
             <Text variant="small" color="secondary">
               Review the prompt that will be sent to the model, then add any context you want and confirm to send. Nothing is sent until you confirm.
             </Text>
-            <ScrollArea className="max-h-[32vh] rounded-md border border-separator">
+            <ScrollArea className="max-h-[32vh] overflow-hidden rounded-md border border-separator">
               <div className="flex flex-col gap-3 p-3">
                 {promptMessages.map((m, i) => (
                   <div key={i} className="flex flex-col gap-1">
                     <Text variant="small-strong" color="secondary">
                       {m.role === "system" ? "System prompt" : m.role === "user" ? "User prompt" : "Assistant"}
                     </Text>
-                    <pre className="text-small-mono whitespace-pre-wrap break-words rounded-md bg-control-subtle p-2 text-primary">
+                    <pre className="text-small-mono overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-control-subtle p-2 text-primary">
                       {m.content}
                     </pre>
                   </div>
@@ -606,13 +606,13 @@ export function AiDebugDialog({
               ) : null}
             </div>
             <ScrollArea
-              className="max-h-[40vh] rounded-md border border-separator"
+              className="max-h-[40vh] overflow-hidden rounded-md border border-separator"
               autoScrollToBottom
               autoScrollDeps={[content.length]}
             >
               <div className="flex flex-col gap-1 p-3">
                 {status === "error" && error ? (
-                  <pre className="text-small whitespace-pre-wrap break-words text-primary">{friendlyError(error)}</pre>
+                  <pre className="text-small overflow-x-auto whitespace-pre-wrap break-words text-primary">{friendlyError(error)}</pre>
                 ) : content ? (
                   segments.map((seg, i) =>
                     seg.type === "code" ? (
@@ -803,13 +803,13 @@ export function StepAiDebugDialog({
           ) : null}
         </div>
         <ScrollArea
-          className="max-h-[42vh] rounded-md border border-separator"
+          className="max-h-[42vh] overflow-hidden rounded-md border border-separator"
           autoScrollToBottom
           autoScrollDeps={[content.length]}
         >
           <div className="flex flex-col gap-1 p-3">
             {status === "error" && chatError ? (
-              <pre className="text-small whitespace-pre-wrap break-words text-primary">{friendlyError(chatError)}</pre>
+              <pre className="text-small overflow-x-auto whitespace-pre-wrap break-words text-primary">{friendlyError(chatError)}</pre>
             ) : content ? (
               segments.map((seg, i) =>
                 seg.type === "code" ? (
