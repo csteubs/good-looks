@@ -191,6 +191,9 @@ export interface RunRecord {
    *  video/DOM snapshots). Per-run choice, off by default; the gate every
    *  visual-testing phase checks. Absent on runs recorded before the toggle. */
   captureArtifacts?: boolean;
+  /** Whether this run executed headless (no visible browser). Absent on runs
+   *  recorded before the toggle — treated as false (headed) for display. */
+  runHeadless?: boolean;
   /** Distinguishes a real test "run" (default) from a "baseline-update" event
    *  logged when the user accepts screenshots as new baselines. Baseline-update
    *  records are excluded from the pass/fail charts but shown in the history

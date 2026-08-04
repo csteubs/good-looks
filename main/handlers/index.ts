@@ -372,11 +372,15 @@ export function registerHandlers(): void {
   // ── Runner handlers ─────────────────────────────────────────────────
   ipcMain.handle(
     "runner:run",
-    async (_e, params: { id: string; headed?: boolean; captureArtifacts?: boolean }) =>
+    async (
+      _e,
+      params: { id: string; headed?: boolean; captureArtifacts?: boolean; runHeadless?: boolean },
+    ) =>
       playwrightRunner.start({
         testId: params.id,
         headed: params.headed ?? true,
         captureArtifacts: params.captureArtifacts ?? false,
+        runHeadless: params.runHeadless ?? false,
       }),
   );
   ipcMain.handle("runner:stop", async (_e, params: { runId: string }) => {

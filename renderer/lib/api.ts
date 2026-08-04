@@ -120,8 +120,8 @@ export const api = {
     importGit: (url: string) => ipc().invoke<ImportResult>("tests:importGit", { url }),
   },
   runner: {
-    run: (id: string, headed: boolean, captureArtifacts?: boolean) =>
-      ipc().invoke<{ runId: string }>("runner:run", { id, headed, captureArtifacts }),
+    run: (id: string, headed: boolean, captureArtifacts?: boolean, runHeadless?: boolean) =>
+      ipc().invoke<{ runId: string }>("runner:run", { id, headed, captureArtifacts, runHeadless }),
     stop: (runId: string) => ipc().invoke<void>("runner:stop", { runId }),
   },
   runs: {

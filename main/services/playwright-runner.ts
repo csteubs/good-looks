@@ -323,8 +323,10 @@ export const playwrightRunner = {
     testId: string;
     headed: boolean;
     captureArtifacts?: boolean;
+    runHeadless?: boolean;
   }): { runId: string } {
     const captureArtifacts = params.captureArtifacts ?? false;
+    const runHeadless = params.runHeadless ?? false;
     const runId = params.testId;
     if (runs.has(runId)) {
       return { runId };
@@ -471,6 +473,7 @@ export const playwrightRunner = {
               startedAt,
               finishedAt,
               captureArtifacts,
+              runHeadless,
             },
             logText,
           );

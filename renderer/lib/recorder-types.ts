@@ -135,6 +135,7 @@ export interface RunRecord {
   logFile: string;
   logBytes: number;
   captureArtifacts?: boolean;
+  runHeadless?: boolean;
   kind?: RunRecordKind;
   note?: string;
 }

@@ -406,7 +406,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   const run = React.useCallback((id: string, captureArtifacts?: boolean, headless?: boolean) => {
     setRuns((prev) => ({ ...prev, [id]: { lines: [], running: true, code: null, stepStatus: {} } }));
     // headed = not headless — the trainer path is unaffected (separate channel).
-    api.runner.run(id, !headless, captureArtifacts).catch(() => {});
+    api.runner.run(id, !headless, captureArtifacts, headless).catch(() => {});
   }, []);
   const stopRun = React.useCallback((id: string) => void api.runner.stop(id), []);
 

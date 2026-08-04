@@ -25,7 +25,7 @@ import {
   ToolbarTitle,
   toast,
 } from "@glaze/core/components";
-import { Calendar, Check, Copy, MoreHorizontal, Search, Stamp } from "lucide-react";
+import { Calendar, Check, Copy, Globe, MoreHorizontal, MonitorOff, Search, Stamp } from "lucide-react";
 
 import { api } from "../lib/api";
 import type { LogSearchResult, RunRecord } from "../lib/recorder-types";
@@ -456,6 +456,7 @@ export function StatsView() {
                         <TableHead>Test</TableHead>
                         <TableHead>Status</TableHead>
                         <TableHead>Started</TableHead>
+                        <TableHead>Tags</TableHead>
                         <TableHead className="text-right">Duration</TableHead>
                         <TableHead className="text-right">Log</TableHead>
                       </TableRow>
@@ -492,6 +493,21 @@ export function StatsView() {
                             </TableCell>
                             <TableCell className="text-secondary">
                               {fmtDateTime(r.startedAt)}
+                            </TableCell>
+                            <TableCell>
+                              {isBaseline ? (
+                                <span className="text-tertiary">—</span>
+                              ) : r.runHeadless ? (
+                                <Badge color="secondary">
+                                  <MonitorOff className="size-3" />
+                                  Headless
+                                </Badge>
+                              ) : (
+                                <Badge color="secondary">
+                                  <Globe className="size-3" />
+                                  Browser
+                                </Badge>
+                              )}
                             </TableCell>
                             <TableCell className="text-right text-secondary">
                               {isBaseline ? (

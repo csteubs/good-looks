@@ -90,6 +90,7 @@ export const runHistoryStore = {
       startedAt: number;
       finishedAt: number;
       captureArtifacts?: boolean;
+      runHeadless?: boolean;
     },
     logText: string,
   ): RunRecord {
@@ -111,6 +112,7 @@ export const runHistoryStore = {
       logFile,
       logBytes: logByteSize(logFile),
       captureArtifacts: run.captureArtifacts ?? false,
+      runHeadless: run.runHeadless ?? false,
     };
 
     const all = readAll();
