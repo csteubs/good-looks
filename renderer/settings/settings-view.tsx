@@ -61,6 +61,7 @@ export function SettingsView() {
   // ── Trainer settings ─────────────────────────────────────────────────
   const [showUrlBar, setShowUrlBar] = useState(true);
   const [defaultRunSpeed, setDefaultRunSpeed] = useState<TestSpeed>("slow");
+  const [defaultCaptureArtifacts, setDefaultCaptureArtifacts] = useState(false);
 
   // ── Auto-Heal settings ──────────────────────────────────────────────
   const [autoHealEnabled, setAutoHealEnabled] = useState(true);
@@ -89,6 +90,7 @@ export function SettingsView() {
       .then((settings) => {
         setShowUrlBar(settings.showUrlBar);
         setDefaultRunSpeed(settings.defaultRunSpeed ?? "slow");
+        setDefaultCaptureArtifacts(settings.defaultCaptureArtifacts ?? false);
         setAutoHealEnabled(settings.autoHealEnabled ?? true);
         setAutoHealRetries(settings.autoHealRetries ?? 3);
         setAutoHealTimeout(settings.autoHealAttemptTimeoutMs ?? 4000);
@@ -113,6 +115,15 @@ export function SettingsView() {
     api.recorder.setSettings({ defaultRunSpeed: next }).catch((error) => {
       toast.error(`Failed to save setting: ${error}`);
     });
+  };
+
+  const handleDefaultCaptureArtifactsChange = async (checked: boolean) => {
+    setDefaultCaptureArtifacts(checked);
+    try {
+      await api.recorder.setSettings({ defaultCaptureArtifacts: checked });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
   };
 
   const handleAutoHealEnabledChange = async (checked: boolean) => {
@@ -406,6 +417,20 @@ export function SettingsView() {
                   </SegmentedControlItem>
                 ))}
               </SegmentedControl>
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="default-capture-artifacts">Capture screenshots by default</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Default value of the “Capture screenshots” toggle for new tests. Each test
+                  remembers its own choice once you toggle it in the test view.
+                </p>
+              </FieldContent>
+              <Switch
+                id="default-capture-artifacts"
+                checked={defaultCaptureArtifacts}
+                onCheckedChange={handleDefaultCaptureArtifactsChange}
+              />
             </Field>
           </FieldGroup>
         </FieldSet>

@@ -113,6 +113,8 @@ export interface TestRecord {
   sourceDir?: string;
   hidden?: boolean;
   stepsDiverged?: boolean;
+  /** Per-test screenshot-capture preference (mirrors main TestRecord). */
+  captureArtifacts?: boolean;
 }
 
 /** A single completed test run (mirror of main/recorder/types.ts RunRecord). */
@@ -229,6 +231,8 @@ export interface RecorderSettings {
   autoHealRetries: number;
   /** per-attempt timeout in ms (default 4000). */
   autoHealAttemptTimeoutMs: number;
+  /** default value of the per-test "Capture screenshots" toggle (default false). */
+  defaultCaptureArtifacts: boolean;
 }
 
 /** A single alternative locator the Auto-Heal engine found for a failed step.

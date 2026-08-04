@@ -14,6 +14,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   autoHealEnabled: true,
   autoHealRetries: 3,
   autoHealAttemptTimeoutMs: 4000,
+  defaultCaptureArtifacts: false,
 };
 
 function isTestSpeed(v: unknown): v is TestSpeed {
@@ -39,6 +40,10 @@ function read(): RecorderSettings {
         typeof parsed.autoHealAttemptTimeoutMs === "number" && parsed.autoHealAttemptTimeoutMs >= 1000
           ? Math.min(Math.round(parsed.autoHealAttemptTimeoutMs), 30000)
           : DEFAULT_SETTINGS.autoHealAttemptTimeoutMs,
+      defaultCaptureArtifacts:
+        typeof parsed.defaultCaptureArtifacts === "boolean"
+          ? parsed.defaultCaptureArtifacts
+          : DEFAULT_SETTINGS.defaultCaptureArtifacts,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -68,6 +73,10 @@ export const recorderSettingsStore = {
         update.autoHealAttemptTimeoutMs >= 1000
           ? Math.min(Math.round(update.autoHealAttemptTimeoutMs), 30000)
           : current.autoHealAttemptTimeoutMs,
+      defaultCaptureArtifacts:
+        update.defaultCaptureArtifacts !== undefined
+          ? update.defaultCaptureArtifacts
+          : current.defaultCaptureArtifacts,
     };
     fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
     fs.writeFileSync(settingsFile(), JSON.stringify(next, null, 2), "utf-8");
@@ -77,6 +86,7 @@ export const recorderSettingsStore = {
       autoHealEnabled: next.autoHealEnabled,
       autoHealRetries: next.autoHealRetries,
       autoHealAttemptTimeoutMs: next.autoHealAttemptTimeoutMs,
+      defaultCaptureArtifacts: next.defaultCaptureArtifacts,
     });
     return next;
   },

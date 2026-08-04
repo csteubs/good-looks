@@ -1358,6 +1358,9 @@ async function finalize(): Promise<void> {
     // last-chosen run speed (slow by default). Existing tests keep their own
     // speed; the sidebar "Adjust Test Speed" menu still overrides per-test.
     speed: recorderSettingsStore.get().defaultRunSpeed,
+    // Seed the screenshot-capture preference from the global default so new
+    // recordings inherit it; the per-test toggle overrides it thereafter.
+    captureArtifacts: recorderSettingsStore.get().defaultCaptureArtifacts,
   };
   testStore.save(record);
 

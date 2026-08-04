@@ -50,14 +50,28 @@ export function TestDetailView() {
   const [aiDebugOpen, setAiDebugOpen] = React.useState(false);
   const [editingSteps, setEditingSteps] = React.useState(false);
   const [trainerConfirmOpen, setTrainerConfirmOpen] = React.useState(false);
-  // Per-run visual-testing gate — off by default so routine runs stay fast.
-  // Threaded to the runner; artifact capture itself lands in a later phase.
+  // Per-test visual-testing gate — remembers the user's "Capture screenshots"
+  // choice between sessions. Falls back to the global Settings default when the
+  // test has no saved preference yet.
   const [captureArtifacts, setCaptureArtifacts] = React.useState(false);
+  const [captureInited, setCaptureInited] = React.useState(false);
 
   const testQuery = useQuery({ queryKey: ["test", id], queryFn: () => api.tests.get(id) });
   const scriptQuery = useQuery({ queryKey: ["script", id], queryFn: () => api.tests.getScript(id) });
+  const settingsQuery = useQuery({
+    queryKey: ["recorder-settings"],
+    queryFn: () => api.recorder.getSettings(),
+  });
   const test = testQuery.data;
   const runInfo = runs[id];
+
+  // Initialize the toggle from the test record (or the global default) once.
+  React.useEffect(() => {
+    if (captureInited || !test) return;
+    const fallback = settingsQuery.data?.defaultCaptureArtifacts ?? false;
+    setCaptureArtifacts(test.captureArtifacts ?? fallback);
+    setCaptureInited(true);
+  }, [captureInited, test, settingsQuery.data]);
   // Earliest step the run reported as failed, if any — lets the AI debug
   // prompt skip steps after it, since Playwright never ran them.
   const failedStepIndex = React.useMemo(() => {
@@ -201,7 +215,13 @@ export function TestDetailView() {
           <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
             <Checkbox
               checked={captureArtifacts}
-              onCheckedChange={(v) => setCaptureArtifacts(v === true)}
+              onCheckedChange={(v) => {
+                const next = v === true;
+                setCaptureArtifacts(next);
+                api.tests.setCaptureArtifacts(id, next).catch(() => {
+                  /* best-effort persist; the toggle still applies to this run */
+                });
+              }}
               disabled={runInfo?.running}
               aria-label="Capture screenshots on this run"
             />

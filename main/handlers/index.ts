@@ -182,6 +182,20 @@ export function registerHandlers(): void {
     return rec;
   });
 
+  // Persist the per-test "Capture screenshots" toggle so it's remembered
+  // between sessions. Absent → use the global default from RecorderSettings.
+  ipcMain.handle(
+    "tests:setCaptureArtifacts",
+    async (_e, params: { id: string; captureArtifacts: boolean }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      rec.captureArtifacts = params.captureArtifacts;
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return rec;
+    },
+  );
+
   // Hide a test from the sidebar without deleting its record or script file.
   ipcMain.handle(
     "tests:setHidden",
@@ -269,6 +283,7 @@ export function registerHandlers(): void {
         scriptPath: testStore.writeScript(id, params.source),
         scriptEdited: true,
         speed: params.speed ?? "fast",
+        captureArtifacts: recorderSettingsStore.get().defaultCaptureArtifacts,
       };
       testStore.save(rec);
       logger.info("handlers", "Created test from prompt", { id, name });

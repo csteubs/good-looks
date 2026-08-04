@@ -148,6 +148,10 @@ export interface TestRecord {
    *  (0–100) allowed to change vs the pinned baseline before a step is flagged
    *  "visual change detected". Absent → DEFAULT_VISUAL_THRESHOLD. */
   visualThreshold?: number;
+  /** Per-test screenshot-capture preference, remembered between sessions.
+   *  When absent, the global `RecorderSettings.defaultCaptureArtifacts`
+   *  applies. Set from the test detail toolbar's "Capture screenshots" toggle. */
+  captureArtifacts?: boolean;
 }
 
 /** Default visual-diff threshold (percent of pixels changed) when a test has
@@ -233,6 +237,9 @@ export interface RecorderSettings {
   /** per-attempt timeout in ms before the attempt is considered timed-out
    *  (default 4000). */
   autoHealAttemptTimeoutMs: number;
+  /** default value of the per-test "Capture screenshots" toggle for tests
+   *  that haven't set their own preference (default false). */
+  defaultCaptureArtifacts: boolean;
 }
 
 /** A single alternative locator the Auto-Heal engine found for a failed step. */

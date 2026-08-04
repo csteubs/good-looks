@@ -110,6 +110,8 @@ export const api = {
     }) => ipc().invoke<TestRecord>("tests:createFromPrompt", params),
     setSpeed: (id: string, speed: TestSpeed) =>
       ipc().invoke<TestRecord>("tests:setSpeed", { id, speed }),
+    setCaptureArtifacts: (id: string, captureArtifacts: boolean) =>
+      ipc().invoke<TestRecord>("tests:setCaptureArtifacts", { id, captureArtifacts }),
     setHidden: (id: string, hidden: boolean) =>
       ipc().invoke<TestRecord | null>("tests:setHidden", { id, hidden }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),
