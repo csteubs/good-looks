@@ -1,3 +1,9 @@
 {
-  "mcpServers": {}
+  "mcpServers": {
+    "good-looks": {
+      "command": "node",
+      "args": ["mcp/server.mjs"],
+      "cwd": "."
+    }
+  }
 }
