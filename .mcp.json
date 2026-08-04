@@ -2,7 +2,9 @@
   "mcpServers": {
     "good-looks": {
       "command": "node",
-      "args": ["mcp/server.mjs"],
+      "args": [
+        "mcp/server.mjs"
+      ],
       "cwd": "."
     }
   }
