@@ -561,6 +561,21 @@ export function SettingsView() {
                 onCheckedChange={(checked) => handleToggleEnhancement("aiThinkingGif", checked)}
               />
             </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="home-black-hole">Home screen animation</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  A looping hand-drawn black hole animation on the home screen, above the "Record a
+                  Playwright test" text. Switches between a light and dark ink drawing to match the
+                  app theme.
+                </p>
+              </FieldContent>
+              <Switch
+                id="home-black-hole"
+                checked={!disabledEnhancements.includes("homeBlackHole")}
+                onCheckedChange={(checked) => handleToggleEnhancement("homeBlackHole", checked)}
+              />
+            </Field>
           </FieldGroup>
         </FieldSet>
 

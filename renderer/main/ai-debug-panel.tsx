@@ -15,6 +15,7 @@ import type { LlmModel } from "../lib/llm-types";
 import { buildDebugMessages, buildStepDebugMessages } from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
 import type { TestSpeed } from "../lib/recorder-types";
+import { useDisabledEnhancements } from "../lib/use-disabled-enhancements";
 import { useLlmChat } from "../lib/use-llm-chat";
 
 // Common failure reasons a user can toggle into the "additional context" box
@@ -46,21 +47,6 @@ function toggleReason(text: string, reason: string): string {
   }
   const joined = [text.replace(/\n+$/, ""), line].filter((s) => s.length > 0).join("\n");
   return joined;
-}
-
-/** Loads the user's disabled aesthetic-enhancement feature IDs. Returns a
- *  `Set` for O(1) membership checks. Empty = all features enabled. */
-function useDisabledEnhancements(): Set<string> {
-  const [ids, setIds] = React.useState<string[]>([]);
-  React.useEffect(() => {
-    api.recorder
-      .getSettings()
-      .then((s) => setIds(s.disabledAestheticEnhancements ?? []))
-      .catch(() => {
-        /* defaults to all enabled */
-      });
-  }, []);
-  return new Set(ids);
 }
 
 /** Full-bleed glitch gif that eases in to fill the dialog while the model is

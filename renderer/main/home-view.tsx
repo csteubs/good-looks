@@ -1,8 +1,14 @@
 import { EmptyStateTitle, EmptyStateDescription, Toolbar, ToolbarContent, ToolbarTitle } from "@glaze/core/components";
+import { useTheme } from "@glaze/core/hooks";
 
 import { BlackHoleLoader } from "./black-hole-loader";
+import { useDisabledEnhancements } from "../lib/use-disabled-enhancements";
 
 export function HomeView() {
+  const isDarkMode = useTheme();
+  const disabledEnhancements = useDisabledEnhancements();
+  const animationEnabled = !disabledEnhancements.has("homeBlackHole");
+
   return (
     <div className="relative flex h-full flex-col">
       <Toolbar>
@@ -19,7 +25,7 @@ export function HomeView() {
               becomes a test step — then generate and run a Playwright script.
             </EmptyStateDescription>
           </div>
-          <BlackHoleLoader size={220} />
+          {animationEnabled ? <BlackHoleLoader size={440} dark={isDarkMode} /> : null}
         </div>
       </div>
     </div>

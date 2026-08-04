@@ -1,5 +1,6 @@
 import * as React from "react";
-import handInk from "./assets/hand-ink.png";
+import handInkLight from "./assets/hand-ink.png";
+import handInkDark from "./assets/hand-ink-dark.png";
 
 const LOOP_SECONDS = 3;
 const ACCELERATION = 1.2;
@@ -19,13 +20,48 @@ const SQ = 0.55;
 
 const NS = "http://www.w3.org/2000/svg";
 
+interface Variant {
+  strokeColor: string;
+  handSrc: string;
+  handInvert: boolean;
+  handClip: { left: string; top: string; width: string; height: string };
+  ix: number;
+  iy: number;
+  iw: number;
+  ih: number;
+}
+
+const VARIANTS: Record<"light" | "dark", Variant> = {
+  light: {
+    strokeColor: "#141210",
+    handSrc: handInkLight,
+    handInvert: false,
+    handClip: { left: "16.939%", top: "1.543%", width: "48.409%", height: "90.414%" },
+    ix: 463,
+    iy: 211,
+    iw: 563,
+    ih: 1113,
+  },
+  dark: {
+    strokeColor: "#ebedef",
+    handSrc: handInkDark,
+    handInvert: true,
+    handClip: { left: "16.681%", top: "0.975%", width: "48.839%", height: "91.145%" },
+    ix: 460,
+    iy: 204,
+    iw: 568,
+    ih: 1122,
+  },
+};
+
 function smooth(x: number): number {
   const c = Math.max(0, Math.min(1, x));
   return c * c * (3 - 2 * c);
 }
 
 /** Ported from a hand-drawn OkeeDokee export — a procedural SVG funnel animation with no external runtime deps. */
-export function BlackHoleLoader({ size = 220 }: { size?: number }) {
+export function BlackHoleLoader({ size = 220, dark = false }: { size?: number; dark?: boolean }) {
+  const variant = VARIANTS[dark ? "dark" : "light"];
   const rootRef = React.useRef<HTMLDivElement | null>(null);
   const fieldRef = React.useRef<SVGGElement | null>(null);
   const frontRef = React.useRef<SVGGElement | null>(null);
@@ -211,10 +247,7 @@ export function BlackHoleLoader({ size = 220 }: { size?: number }) {
         cutRef.current.setAttribute("d", "M" + cut.map((p) => p[0] + " " + p[1]).join("L") + "Z");
       }
       if (handClipRef.current) {
-        const ix = 463;
-        const iy = 211;
-        const iw = 563;
-        const ih = 1113;
+        const { ix, iy, iw, ih } = variant;
         const poly = cut
           .map(
             (p) =>
@@ -247,7 +280,7 @@ export function BlackHoleLoader({ size = 220 }: { size?: number }) {
     raf = requestAnimationFrame(tick);
 
     return () => cancelAnimationFrame(raf);
-  }, []);
+  }, [variant]);
 
   return (
     <div
@@ -284,9 +317,9 @@ export function BlackHoleLoader({ size = 220 }: { size?: number }) {
         </defs>
         <defs>
           <radialGradient id="okd-holeshadow">
-            <stop offset="0%" stopColor="#141210" stopOpacity={1} />
-            <stop offset="55%" stopColor="#141210" stopOpacity={0.82} />
-            <stop offset="100%" stopColor="#141210" stopOpacity={0} />
+            <stop offset="0%" stopColor={variant.strokeColor} stopOpacity={1} />
+            <stop offset="55%" stopColor={variant.strokeColor} stopOpacity={0.82} />
+            <stop offset="100%" stopColor={variant.strokeColor} stopOpacity={0} />
           </radialGradient>
         </defs>
         <g mask="url(#okd-hand)">
@@ -294,7 +327,7 @@ export function BlackHoleLoader({ size = 220 }: { size?: number }) {
             ref={fieldRef}
             clipPath="url(#okd-panel)"
             fill="none"
-            stroke="#141210"
+            stroke={variant.strokeColor}
             strokeLinecap="round"
             strokeLinejoin="round"
           />
@@ -308,18 +341,38 @@ export function BlackHoleLoader({ size = 220 }: { size?: number }) {
             ry={185}
             opacity={0}
           />
-          <rect x={287.5} y={701.5} width={1120} height={700} fill="none" stroke="#141210" strokeWidth={11} />
+          <rect
+            x={287.5}
+            y={701.5}
+            width={1120}
+            height={700}
+            fill="none"
+            stroke={variant.strokeColor}
+            strokeWidth={11}
+          />
         </g>
       </svg>
       <div
         ref={handClipRef}
-        style={{ position: "absolute", left: "16.939%", top: "1.543%", width: "48.409%", height: "90.414%" }}
+        style={{
+          position: "absolute",
+          left: variant.handClip.left,
+          top: variant.handClip.top,
+          width: variant.handClip.width,
+          height: variant.handClip.height,
+        }}
       >
         <img
           ref={handRef}
-          src={handInk}
+          src={variant.handSrc}
           alt=""
-          style={{ display: "block", width: "100%", height: "100%", willChange: "transform" }}
+          style={{
+            display: "block",
+            width: "100%",
+            height: "100%",
+            willChange: "transform",
+            filter: variant.handInvert ? "invert(1)" : undefined,
+          }}
         />
       </div>
       <svg
@@ -337,7 +390,7 @@ export function BlackHoleLoader({ size = 220 }: { size?: number }) {
           ref={frontRef}
           clipPath="url(#okd-panel-front)"
           fill="none"
-          stroke="#141210"
+          stroke={variant.strokeColor}
           strokeLinecap="round"
           strokeLinejoin="round"
         />
