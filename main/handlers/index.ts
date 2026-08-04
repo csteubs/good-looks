@@ -25,6 +25,7 @@ import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
 import { anthropicKeyStore } from "../services/anthropic-key-store.js";
 import { recorderSettingsStore } from "../services/recorder-settings-store.js";
+import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import type { AssertKind, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
@@ -413,6 +414,11 @@ export function registerHandlers(): void {
     },
   );
   ipcMain.handle("runs:logsDir", async () => runHistoryStore.logsDirPath());
+  // What screenshot capture costs, measured from run history (optionally for
+  // one test — the fair comparison, since different tests do different work).
+  ipcMain.handle("runs:captureOverhead", async (_e, params?: { testId?: string }) =>
+    summarizeCaptureOverhead(runHistoryStore.list(), params?.testId),
+  );
 
   // ── Visual-testing replay handlers (Phase 2) ────────────────────────
   // Runs that have persisted screenshot artifacts, newest first.

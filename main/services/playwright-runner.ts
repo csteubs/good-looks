@@ -470,6 +470,15 @@ export const playwrightRunner = {
         // record id === the artifacts runId so later phases can join them.
         const logText = (logBuffers.get(runId) ?? []).join("");
         logBuffers.delete(runId);
+        // What capture actually cost this run, straight from the fixture's
+        // manifest. Absent for non-capture runs and pre-instrumentation ones.
+        let captureOverheadMs: number | undefined;
+        let shotCount: number | undefined;
+        if (capturingRun) {
+          const manifest = artifactStore.readManifest(rec.id, recordId);
+          captureOverheadMs = manifest?.captureMs;
+          shotCount = manifest?.shotCount ?? manifest?.steps.length;
+        }
         try {
           runHistoryStore.append(
             {
@@ -483,6 +492,8 @@ export const playwrightRunner = {
               finishedAt,
               captureArtifacts,
               runHeadless,
+              captureOverheadMs,
+              shotCount,
             },
             logText,
           );

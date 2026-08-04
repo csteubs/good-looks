@@ -28,7 +28,7 @@ import {
 import { Calendar, Check, Copy, Globe, MoreHorizontal, MonitorOff, Search, Stamp } from "lucide-react";
 
 import { api } from "../lib/api";
-import type { LogSearchResult, RunRecord } from "../lib/recorder-types";
+import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
 
 // ── Native bridges (match library-sidebar patterns) ───────────────────
 interface MenuPopupItem {
@@ -137,6 +137,58 @@ function StatCard({ label, value, hint }: { label: string; value: string; hint?:
           {hint}
         </Text>
       ) : null}
+    </div>
+  );
+}
+
+/** ms → a compact human duration ("380 ms", "1.4 s"). */
+function fmtMs(ms: number): string {
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
+/** What the "Capture screenshots" toggle actually costs, measured rather than
+ *  assumed (the roadmap's cross-cutting performance risk). Hidden entirely
+ *  until at least one instrumented capture run exists. */
+function CaptureOverheadPanel({ summary }: { summary: CaptureOverheadSummary }) {
+  if (summary.capturedRuns === 0) return null;
+  const sharePct = Math.round(summary.captureShareOfRun * 100);
+  const delta =
+    summary.meanUncapturedDurationMs !== null
+      ? summary.meanCapturedDurationMs - summary.meanUncapturedDurationMs
+      : null;
+  return (
+    <div className="rounded-lg border border-token-border bg-token-surface-raised p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <Text variant="small" className="font-medium">
+          Capture overhead
+        </Text>
+        <Text variant="small" color="tertiary">
+          {summary.capturedRuns} captured {summary.capturedRuns === 1 ? "run" : "runs"} ·{" "}
+          {summary.totalShots} screenshots
+        </Text>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <StatCard
+          label="Screenshot time per run"
+          value={fmtMs(summary.meanCaptureMs)}
+          hint={`${sharePct}% of a captured run`}
+        />
+        <StatCard label="Per screenshot" value={fmtMs(summary.meanMsPerShot)} />
+        <StatCard
+          label="Captured vs normal run"
+          value={
+            delta === null
+              ? fmtMs(summary.meanCapturedDurationMs)
+              : `${delta >= 0 ? "+" : "−"}${fmtMs(Math.abs(delta))}`
+          }
+          hint={
+            summary.meanUncapturedDurationMs === null
+              ? "no uncaptured runs to compare"
+              : `${fmtMs(summary.meanCapturedDurationMs)} vs ${fmtMs(summary.meanUncapturedDurationMs)}`
+          }
+        />
+      </div>
     </div>
   );
 }
@@ -258,6 +310,7 @@ export function StatsView() {
   React.useEffect(() => {
     return api.on("runs:changed", () => {
       qc.invalidateQueries({ queryKey: ["runs"] });
+    qc.invalidateQueries({ queryKey: ["captureOverhead"] });
     });
   }, [qc]);
 
@@ -273,6 +326,13 @@ export function StatsView() {
     enabled: debounced.length > 0,
   });
 
+  // Capture overhead is computed backend-side from the same run history, so
+  // the summarizer has one implementation (and one regression check).
+  const overheadQuery = useQuery({
+    queryKey: ["captureOverhead"],
+    queryFn: () => api.runs.captureOverhead(),
+  });
+
   const buckets = React.useMemo(() => buildDailyBuckets(runs), [runs]);
   // Only real test runs count toward pass/fail stats; baseline-update events
   // are shown in the history table but excluded from charts and summary cards.
@@ -283,6 +343,7 @@ export function StatsView() {
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["runs"] });
+    qc.invalidateQueries({ queryKey: ["captureOverhead"] });
     qc.invalidateQueries({ queryKey: ["run-log-search"] });
     qc.invalidateQueries({ queryKey: ["run-log"] });
   };
@@ -387,6 +448,9 @@ export function StatsView() {
                 <StatCard label="Passed" value={String(passed)} />
                 <StatCard label="Failed" value={String(failed)} />
               </div>
+
+              {/* Capture overhead — only once a capture run has been measured */}
+              {overheadQuery.data ? <CaptureOverheadPanel summary={overheadQuery.data} /> : null}
 
               {/* Chart */}
               {buckets.length > 0 ? <PassFailChart buckets={buckets} /> : null}

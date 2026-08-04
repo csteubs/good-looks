@@ -38,6 +38,8 @@ export interface ArtifactStepEntry {
   value?: string;
   ok: boolean;
   ts: number;
+  /** wall-clock ms this one screenshot took (absent on pre-instrumentation runs) */
+  ms?: number;
 }
 
 export interface ArtifactManifest {
@@ -47,6 +49,10 @@ export interface ArtifactManifest {
   status?: string;
   startedAt?: number;
   finishedAt?: number;
+  /** total ms spent taking screenshots this run (absent on older manifests) */
+  captureMs?: number;
+  /** how many screenshots were attempted (absent on older manifests) */
+  shotCount?: number;
   steps: ArtifactStepEntry[];
 }
 

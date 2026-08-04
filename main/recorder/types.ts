@@ -222,6 +222,11 @@ export interface RunRecord {
   /** Whether this run executed headless (no visible browser). Absent on runs
    *  recorded before the toggle — treated as false (headed) for display. */
   runHeadless?: boolean;
+  /** Wall-clock ms this run spent taking screenshots, and how many it took.
+   *  Only present on capture runs from the instrumented fixture onward — the
+   *  raw inputs for the "what does capture cost?" readout in Stats. */
+  captureOverheadMs?: number;
+  shotCount?: number;
   /** Distinguishes a real test "run" (default) from a "baseline-update" event
    *  logged when the user accepts screenshots as new baselines. Baseline-update
    *  records are excluded from the pass/fail charts but shown in the history

@@ -91,6 +91,9 @@ export const runHistoryStore = {
       finishedAt: number;
       captureArtifacts?: boolean;
       runHeadless?: boolean;
+      /** measured screenshot cost for capture runs (see capture-overhead.ts) */
+      captureOverheadMs?: number;
+      shotCount?: number;
     },
     logText: string,
   ): RunRecord {
@@ -113,6 +116,10 @@ export const runHistoryStore = {
       logBytes: logByteSize(logFile),
       captureArtifacts: run.captureArtifacts ?? false,
       runHeadless: run.runHeadless ?? false,
+      // Left undefined (not 0) for non-capture runs so the summarizer can tell
+      // "no capture" apart from "capture that took no measurable time".
+      ...(run.captureOverheadMs !== undefined ? { captureOverheadMs: run.captureOverheadMs } : {}),
+      ...(run.shotCount !== undefined ? { shotCount: run.shotCount } : {}),
     };
 
     const all = readAll();

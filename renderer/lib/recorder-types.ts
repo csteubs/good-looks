@@ -136,6 +136,9 @@ export interface RunRecord {
   logBytes: number;
   captureArtifacts?: boolean;
   runHeadless?: boolean;
+  /** ms spent taking screenshots, and how many — capture runs only. */
+  captureOverheadMs?: number;
+  shotCount?: number;
   kind?: RunRecordKind;
   note?: string;
 }
@@ -208,6 +211,19 @@ export interface VisualMask {
   w: number;
   h: number;
   label?: string;
+}
+
+/** What screenshot capture costs, measured from run history. Mirror of
+ *  main/services/capture-overhead.ts CaptureOverheadSummary. */
+export interface CaptureOverheadSummary {
+  capturedRuns: number;
+  uncapturedRuns: number;
+  meanCaptureMs: number;
+  meanMsPerShot: number;
+  meanCapturedDurationMs: number;
+  meanUncapturedDurationMs: number | null;
+  captureShareOfRun: number;
+  totalShots: number;
 }
 
 /** On-disk footprint of all captured artifacts. Mirror of

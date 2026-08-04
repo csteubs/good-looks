@@ -39,7 +39,7 @@ const LOCATOR_ACTIONS = [
 // Module-level context for the active test. workers=1 + one spec per run means a
 // single test owns this at a time, so the locator-prototype patch (which is
 // global) reads the current run's context safely.
-let ctx = null; // { dir, index, manifest }
+let ctx = null; // { dir, index, manifest, startedAt, captureMs }
 let patched = false;
 
 function describe(target, method, args) {
@@ -58,6 +58,9 @@ async function capture(page, method, target, args) {
   const index = ctx.index++;
   const info = describe(target, method, args);
   let ok = false;
+  // Time the screenshot itself so the runner can report what capture actually
+  // costs, rather than leaving the toggle's overhead to guesswork.
+  const t0 = Date.now();
   try {
     if (page && (!page.isClosed || !page.isClosed())) {
       await page.screenshot({ path: path.join(ctx.dir, index + ".png"), timeout: SHOT_TIMEOUT_MS });
@@ -67,7 +70,9 @@ async function capture(page, method, target, args) {
     // Capture must never fail or alter the test. Log to stderr for diagnosis.
     process.stderr.write("[glaze-capture] step " + index + " (" + method + ") screenshot failed: " + String(err) + "\\n");
   }
-  ctx.manifest.push({ index: index, action: info.action, target: info.target, value: info.value, ok: ok, ts: Date.now() });
+  const ms = Date.now() - t0;
+  ctx.captureMs += ms;
+  ctx.manifest.push({ index: index, action: info.action, target: info.target, value: info.value, ok: ok, ts: Date.now(), ms: ms });
 }
 
 function wrap(obj, method, getPage) {
@@ -97,7 +102,7 @@ function patchOnce(page) {
 export const test = (ON && DIR) ? base.extend({
   page: async ({ page }, use, testInfo) => {
     try { fs.mkdirSync(DIR, { recursive: true }); } catch (e) { /* ignore */ }
-    ctx = { dir: DIR, index: 0, manifest: [], startedAt: Date.now() };
+    ctx = { dir: DIR, index: 0, manifest: [], startedAt: Date.now(), captureMs: 0 };
     patchOnce(page);
     try {
       await use(page);
@@ -111,6 +116,10 @@ export const test = (ON && DIR) ? base.extend({
           status: testInfo.status,
           startedAt: ctx.startedAt,
           finishedAt: Date.now(),
+          // Total wall-clock ms spent taking screenshots this run, and how many
+          // were attempted — the raw inputs for the overhead readout in Stats.
+          captureMs: ctx.captureMs,
+          shotCount: ctx.manifest.length,
           steps: ctx.manifest,
         };
         fs.writeFileSync(path.join(DIR, "manifest.json"), JSON.stringify(manifest, null, 2));

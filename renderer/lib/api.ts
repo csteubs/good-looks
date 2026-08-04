@@ -12,6 +12,7 @@ import type {
   RecorderState,
   RunRecord,
   ArtifactUsage,
+  CaptureOverheadSummary,
   RunReplay,
   RunReplaySummary,
   VisualMask,
@@ -136,6 +137,8 @@ export const api = {
     deleteRange: (fromMs: number, toMs: number) =>
       ipc().invoke<{ removed: number }>("runs:deleteRange", { fromMs, toMs }),
     logsDir: () => ipc().invoke<string>("runs:logsDir"),
+    captureOverhead: (testId?: string) =>
+      ipc().invoke<CaptureOverheadSummary>("runs:captureOverhead", { testId }),
   },
   artifacts: {
     list: () => ipc().invoke<RunReplaySummary[]>("artifacts:list"),
