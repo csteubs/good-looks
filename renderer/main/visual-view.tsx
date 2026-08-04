@@ -453,16 +453,6 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
     [qc, summary.testId, summary.runId],
   );
 
-  const acceptRun = useMutation({
-    mutationFn: () => api.visual.acceptRun(summary.testId, summary.runId),
-    onSuccess: (replay) => {
-      patchReplay(replay);
-      const pinned = replay?.steps.filter((s) => s.screenshot) ?? [];
-      setAcceptedSteps(new Set(pinned.map((s) => s.stepId)));
-      const n = pinned.length;
-      toast.success(`Pinned ${n} screenshot${n === 1 ? "" : "s"} as new baselines. Logged in Stats.`);
-    },
-  });
   const acceptStep = useMutation({
     mutationFn: (stepId: string) => api.visual.acceptStep(summary.testId, summary.runId, stepId),
     onSuccess: (replay, stepId) => {
@@ -493,7 +483,6 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   const idx = clamp(current);
   const step = steps[idx];
   const changedCount = steps.filter((s) => s.diff?.state === "changed").length;
-  const screenshotCount = steps.filter((s) => Boolean(s.screenshot)).length;
   const canDiff = Boolean(step.diff?.diffFile);
   const hasBaselineView =
     step.diff !== undefined && step.diff.state !== "unable" && Boolean(step.screenshot);
@@ -535,21 +524,6 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           </Text>
         </div>
         <ThresholdControl testId={summary.testId} />
-        {screenshotCount > 0 && acceptedSteps.size < screenshotCount ? (
-          <AlertDialog
-            trigger={
-              <Button size="small" variant="glass" disabled={acceptRun.isPending}>
-                <Stamp className="size-3.5" />
-                Accept All & Re-baseline
-              </Button>
-            }
-            title="Accept all screenshots as the new baseline?"
-            description={`This pins all ${screenshotCount} screenshot${screenshotCount === 1 ? "" : "s"} from this run as the new comparison standard for future runs. The per-step "Accept New Baseline" buttons will be hidden afterward. This is logged in Stats.`}
-            confirmLabel="Accept All"
-            confirmVariant="accent"
-            onConfirm={() => acceptRun.mutate()}
-          />
-        ) : null}
         <div className="flex shrink-0 items-center gap-1">
           <Button
             iconOnly
@@ -607,25 +581,10 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           <Callout
             color="orange"
             icon={<Eye className="size-4" />}
-            actions={
-              <AlertDialog
-                trigger={
-                  <Button size="small" variant="glass" disabled={acceptRun.isPending}>
-                    <Stamp className="size-3.5" />
-                    Accept All & Re-baseline
-                  </Button>
-                }
-                title="Accept all screenshots as the new baseline?"
-                description={`This pins all ${screenshotCount} screenshot${screenshotCount === 1 ? "" : "s"} from this run as the new comparison standard for future runs. The per-step "Accept New Baseline" buttons will be hidden afterward. This is logged in Stats.`}
-                confirmLabel="Accept All"
-                confirmVariant="accent"
-                onConfirm={() => acceptRun.mutate()}
-              />
-            }
           >
             Visual change detected in {changedCount} {changedCount === 1 ? "step" : "steps"} (over{" "}
-            {fmtPct((replay.visualThreshold ?? 0) / 100)} threshold). Accept the run to pin these as
-            the new baselines.
+            {fmtPct((replay.visualThreshold ?? 0) / 100)} threshold). Use the per-step "Accept New
+            Baseline" button to re-pin a step.
           </Callout>
         </div>
       ) : null}
@@ -673,7 +632,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           {step.label}
         </Text>
         {step.diff ? <DiffBadge diff={step.diff} /> : null}
-        {step.screenshot && !acceptedSteps.has(step.stepId) ? (
+        {step.screenshot && step.diff?.state === "changed" && !acceptedSteps.has(step.stepId) ? (
           <AlertDialog
             trigger={
               <Button size="small" variant="glass" className="shrink-0" disabled={acceptStep.isPending}>
