@@ -1,4 +1,6 @@
-import { EmptyState, Toolbar, ToolbarContent, ToolbarTitle } from "@glaze/core/components";
+import { EmptyStateTitle, EmptyStateDescription, Toolbar, ToolbarContent, ToolbarTitle } from "@glaze/core/components";
+
+import { BlackHoleLoader } from "./black-hole-loader";
 
 export function HomeView() {
   return (
@@ -8,10 +10,18 @@ export function HomeView() {
           <ToolbarTitle> </ToolbarTitle>
         </ToolbarContent>
       </Toolbar>
-      <EmptyState
-        title="Record a Playwright test"
-        description="Click the + in the sidebar, enter a website, and interact with it. Every click, input, and navigation becomes a test step — then generate and run a Playwright script."
-      />
+      <div className="relative flex-1">
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 overflow-hidden px-8 py-10 text-center">
+          <div className="flex max-w-sm flex-col gap-2">
+            <EmptyStateTitle>Record a Playwright test</EmptyStateTitle>
+            <EmptyStateDescription>
+              Click the + in the sidebar, enter a website, and interact with it. Every click, input, and navigation
+              becomes a test step — then generate and run a Playwright script.
+            </EmptyStateDescription>
+          </div>
+          <BlackHoleLoader size={220} />
+        </div>
+      </div>
     </div>
   );
 }
