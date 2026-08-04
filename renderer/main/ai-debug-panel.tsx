@@ -4,7 +4,7 @@
 // the model returns a complete corrected spec — offers to apply it to the script.
 
 import * as React from "react";
-import { Button, Dialog, Field, ScrollArea, Status, Text, Textarea, toast } from "@glaze/core/components";
+import { Button, Dialog, Field, ScrollArea, Text, Textarea, toast } from "@glaze/core/components";
 import { Check, ChevronDown, Copy, RotateCcw, Send, Square, Wand2 } from "lucide-react";
 
 import glitchGif from "./assets/glitch.gif";
@@ -504,8 +504,30 @@ export function AiDebugDialog({
         <span className="inline-flex items-center gap-2">
           {testName}
           {status === "streaming" ? (
-            <Button size="small" variant="destructive" onClick={stop}>
-              <Square className="size-3.5" /> Stop
+            <Button iconOnly size="small" variant="destructive" onClick={stop} aria-label="Stop" title="Stop">
+              <Square className="size-3.5" />
+            </Button>
+          ) : null}
+          {!reviewing && status !== "streaming" ? (
+            <Button iconOnly size="small" variant="muted" onClick={() => setReviewing(true)} aria-label="Regenerate" title="Regenerate">
+              <RotateCcw className="size-3.5" />
+            </Button>
+          ) : null}
+          {!reviewing && correctedScript && onApplyScript ? (
+            <Button size="small" variant="accent" disabled={applied} onClick={applyScript}>
+              <Wand2 className="size-3.5" /> {applied ? "Applied" : "Apply"}
+            </Button>
+          ) : null}
+          {!reviewing && content ? (
+            <Button
+              iconOnly
+              size="small"
+              variant="transparent"
+              onClick={copyResponse}
+              aria-label="Copy response"
+              title="Copy response"
+            >
+              {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
             </Button>
           ) : null}
         </span>
@@ -582,34 +604,6 @@ export function AiDebugDialog({
           </>
         ) : (
           <>
-            <div className="flex items-center gap-2">
-              {status === "streaming" ? (
-                <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
-              ) : null}
-              {status === "error" ? <Status variant="error">Error</Status> : null}
-              {status === "done" ? <Status variant="success">Done</Status> : null}
-              {status === "cancelled" ? <Status variant="neutral">Stopped</Status> : null}
-              <Button size="small" variant="muted" onClick={() => setReviewing(true)}>
-                <RotateCcw className="size-3.5" /> Regenerate
-              </Button>
-              {correctedScript && onApplyScript ? (
-                <Button size="small" variant="accent" disabled={applied} onClick={applyScript}>
-                  <Wand2 className="size-3.5" /> {applied ? "Applied" : "Apply"}
-                </Button>
-              ) : null}
-              {content ? (
-                <Button
-                  iconOnly
-                  size="small"
-                  variant="transparent"
-                  onClick={copyResponse}
-                  aria-label="Copy response"
-                  title="Copy response"
-                >
-                  {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-                </Button>
-              ) : null}
-            </div>
             <ScrollArea
               className="max-h-[56vh] rounded-md border border-separator"
               viewportClassName="max-h-[56vh]"
@@ -777,27 +771,15 @@ export function StepAiDebugDialog({
         <span className="inline-flex items-center gap-2">
           {stepLabel}
           {status === "streaming" ? (
-            <Button size="small" variant="destructive" onClick={stop}>
-              <Square className="size-3.5" /> Stop
+            <Button iconOnly size="small" variant="destructive" onClick={stop} aria-label="Stop" title="Stop">
+              <Square className="size-3.5" />
             </Button>
           ) : null}
-        </span>
-      }
-      size="2xl"
-    >
-      <div className="relative flex min-h-[400px] max-h-[70vh] flex-col gap-3">
-        <ThinkingGifOverlay status={status} enabled={thinkingGifEnabled} />
-        <div className="relative z-10 flex flex-1 flex-col gap-3">
-        <div className="flex items-center gap-2">
-          {status === "streaming" ? (
-            <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
+          {status !== "streaming" ? (
+            <Button iconOnly size="small" variant="muted" onClick={runDiagnosis} aria-label="Regenerate" title="Regenerate">
+              <RotateCcw className="size-3.5" />
+            </Button>
           ) : null}
-          {status === "error" ? <Status variant="error">Error</Status> : null}
-          {status === "done" ? <Status variant="success">Done</Status> : null}
-          {status === "cancelled" ? <Status variant="neutral">Stopped</Status> : null}
-          <Button size="small" variant="muted" onClick={runDiagnosis}>
-            <RotateCcw className="size-3.5" /> Regenerate
-          </Button>
           {content ? (
             <Button
               iconOnly
@@ -810,7 +792,13 @@ export function StepAiDebugDialog({
               {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
             </Button>
           ) : null}
-        </div>
+        </span>
+      }
+      size="2xl"
+    >
+      <div className="relative flex min-h-[400px] max-h-[70vh] flex-col gap-3">
+        <ThinkingGifOverlay status={status} enabled={thinkingGifEnabled} />
+        <div className="relative z-10 flex flex-1 flex-col gap-3">
         <ScrollArea
           className="max-h-[56vh] rounded-md border border-separator"
           viewportClassName="max-h-[56vh]"

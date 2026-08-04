@@ -145,7 +145,7 @@ export function StepRow({
       : runStatus === "passed"
         ? "bg-support-green-10"
         : runStatus === "failed"
-          ? "bg-support-red-10"
+          ? "bg-support-red/15 ring-1 ring-inset ring-support-red/40"
           : "";
 
   const flash = runFlash
@@ -227,7 +227,7 @@ export function StepRow({
       ) : (
         <Text
           variant="small-mono"
-          className="min-w-0 flex-1 truncate"
+          className={`min-w-0 flex-1 truncate ${runStatus === "failed" ? "text-support-red" : ""}`}
           title={replay.error || describeStep(step)}
         >
           {describeStep(step)}
@@ -243,7 +243,7 @@ export function StepRow({
               ) : runStatus === "passed" ? (
                 <Check className="size-3.5 text-support-green" />
               ) : (
-                <X className="size-3.5 text-support-red" />
+                <X className="size-4 text-support-red" />
               )}
             </span>
           ) : null}
