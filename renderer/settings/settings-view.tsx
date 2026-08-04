@@ -68,6 +68,9 @@ export function SettingsView() {
   const [autoHealRetries, setAutoHealRetries] = useState(3);
   const [autoHealTimeout, setAutoHealTimeout] = useState(4000);
 
+  // ── Aesthetic Enhancement features ──────────────────────────────────
+  const [disabledEnhancements, setDisabledEnhancements] = useState<string[]>([]);
+
   useEffect(() => {
     api.llm
       .getConfig()
@@ -94,6 +97,7 @@ export function SettingsView() {
         setAutoHealEnabled(settings.autoHealEnabled ?? true);
         setAutoHealRetries(settings.autoHealRetries ?? 3);
         setAutoHealTimeout(settings.autoHealAttemptTimeoutMs ?? 4000);
+        setDisabledEnhancements(settings.disabledAestheticEnhancements ?? []);
       })
       .catch(() => {
         /* fall back to defaults */
@@ -150,6 +154,18 @@ export function SettingsView() {
     setAutoHealTimeout(ms);
     try {
       await api.recorder.setSettings({ autoHealAttemptTimeoutMs: ms });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleToggleEnhancement = async (id: string, enabled: boolean) => {
+    const next = enabled
+      ? disabledEnhancements.filter((e) => e !== id)
+      : [...disabledEnhancements, id];
+    setDisabledEnhancements(next);
+    try {
+      await api.recorder.setSettings({ disabledAestheticEnhancements: next });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
     }
@@ -488,6 +504,34 @@ export function SettingsView() {
                 className="w-32"
                 value={autoHealTimeout}
                 onChange={(e) => handleAutoHealTimeoutChange(e.target.value)}
+              />
+            </Field>
+          </FieldGroup>
+        </FieldSet>
+
+        <FieldSet>
+          <FieldGroup>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="ai-thinking-gif">Aesthetic Enhancements</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Optional visual flourishes. Turn any off if you prefer a plainer interface —
+                  more are on the way.
+                </p>
+              </FieldContent>
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="ai-thinking-gif">AI thinking gif</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  While the AI is processing, hide the response border and show the glitch gif
+                  centered at full size instead of the small inline indicator.
+                </p>
+              </FieldContent>
+              <Switch
+                id="ai-thinking-gif"
+                checked={!disabledEnhancements.includes("aiThinkingGif")}
+                onCheckedChange={(checked) => handleToggleEnhancement("aiThinkingGif", checked)}
               />
             </Field>
           </FieldGroup>

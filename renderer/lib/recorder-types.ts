@@ -233,6 +233,9 @@ export interface RecorderSettings {
   autoHealAttemptTimeoutMs: number;
   /** default value of the per-test "Capture screenshots" toggle (default false). */
   defaultCaptureArtifacts: boolean;
+  /** IDs of aesthetic enhancement features the user has disabled.
+   *  Empty = all enabled. Known IDs: "aiThinkingGif". */
+  disabledAestheticEnhancements: string[];
 }
 
 /** A single alternative locator the Auto-Heal engine found for a failed step.

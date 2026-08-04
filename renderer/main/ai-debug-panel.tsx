@@ -48,6 +48,21 @@ function toggleReason(text: string, reason: string): string {
   return joined;
 }
 
+/** Loads the user's disabled aesthetic-enhancement feature IDs. Returns a
+ *  `Set` for O(1) membership checks. Empty = all features enabled. */
+function useDisabledEnhancements(): Set<string> {
+  const [ids, setIds] = React.useState<string[]>([]);
+  React.useEffect(() => {
+    api.recorder
+      .getSettings()
+      .then((s) => setIds(s.disabledAestheticEnhancements ?? []))
+      .catch(() => {
+        /* defaults to all enabled */
+      });
+  }, []);
+  return new Set(ids);
+}
+
 export function friendlyError(message: string): string {
   if (/no model selected/i.test(message)) {
     return `${message} Open Settings (⌘,) → AI provider to pick one.`;
@@ -284,6 +299,8 @@ export function AiDebugDialog({
   const [modelName, setModelName] = React.useState<string | null>(null);
   const [models, setModels] = React.useState<LlmModel[]>([]);
   const startedKeyRef = React.useRef<string | null>(null);
+  const disabledEnhancements = useDisabledEnhancements();
+  const thinkingGifEnabled = !disabledEnhancements.has("aiThinkingGif");
   // Whether the dialog is showing the prompt-review phase (true) or the
   // streamed-response phase (false). Starts in review so the user must
   // explicitly confirm before any request is sent; "Regenerate" returns to
@@ -499,7 +516,9 @@ export function AiDebugDialog({
               {status === "streaming" ? (
                 <>
                   <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
-                  <img src={glitchGif} alt="" className="size-5 shrink-0 rounded-sm" />
+                  {!thinkingGifEnabled ? (
+                    <img src={glitchGif} alt="" className="size-5 shrink-0 rounded-sm" />
+                  ) : null}
                 </>
               ) : null}
               {status === "error" ? <Status variant="error">Error</Status> : null}
@@ -549,7 +568,9 @@ export function AiDebugDialog({
               ) : null}
             </div>
             <ScrollArea
-              className="min-h-0 flex-1 rounded-md border border-separator"
+              className={`min-h-0 flex-1 rounded-md ${
+                status === "streaming" && thinkingGifEnabled ? "" : "border border-separator"
+              }`}
               autoScrollToBottom
               autoScrollDeps={[content.length]}
             >
@@ -566,6 +587,10 @@ export function AiDebugDialog({
                       </p>
                     ),
                   )
+                ) : status === "streaming" && thinkingGifEnabled ? (
+                  <div className="flex flex-1 items-center justify-center py-8">
+                    <img src={glitchGif} alt="" className="size-16 shrink-0 rounded-sm" />
+                  </div>
                 ) : (
                   <p className="text-small text-secondary">
                     {status === "streaming" ? (modelName ? `Thinking with ${modelName}…` : "Thinking…") : ""}
@@ -610,6 +635,8 @@ export function StepAiDebugDialog({
   const [modelName, setModelName] = React.useState<string | null>(null);
   const [models, setModels] = React.useState<LlmModel[]>([]);
   const startedKeyRef = React.useRef<string | null>(null);
+  const disabledEnhancements = useDisabledEnhancements();
+  const thinkingGifEnabled = !disabledEnhancements.has("aiThinkingGif");
 
   React.useEffect(() => {
     if (!open) return;
@@ -702,7 +729,9 @@ export function StepAiDebugDialog({
           {status === "streaming" ? (
             <>
               <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
-              <img src={glitchGif} alt="" className="size-5 shrink-0 rounded-sm" />
+              {!thinkingGifEnabled ? (
+                <img src={glitchGif} alt="" className="size-5 shrink-0 rounded-sm" />
+              ) : null}
             </>
           ) : null}
           {status === "error" ? <Status variant="error">Error</Status> : null}
@@ -731,7 +760,9 @@ export function StepAiDebugDialog({
           ) : null}
         </div>
         <ScrollArea
-          className="min-h-0 flex-1 rounded-md border border-separator"
+          className={`min-h-0 flex-1 rounded-md ${
+            status === "streaming" && thinkingGifEnabled ? "" : "border border-separator"
+          }`}
           autoScrollToBottom
           autoScrollDeps={[content.length]}
         >
@@ -748,6 +779,10 @@ export function StepAiDebugDialog({
                   </p>
                 ),
               )
+            ) : status === "streaming" && thinkingGifEnabled ? (
+              <div className="flex flex-1 items-center justify-center py-8">
+                <img src={glitchGif} alt="" className="size-16 shrink-0 rounded-sm" />
+              </div>
             ) : (
               <p className="text-small text-secondary">
                 {status === "streaming" ? (modelName ? `Thinking with ${modelName}…` : "Thinking…") : ""}

@@ -240,6 +240,9 @@ export interface RecorderSettings {
   /** default value of the per-test "Capture screenshots" toggle for tests
    *  that haven't set their own preference (default false). */
   defaultCaptureArtifacts: boolean;
+  /** IDs of aesthetic enhancement features the user has disabled.
+   *  Empty = all enabled. Known IDs: "aiThinkingGif". */
+  disabledAestheticEnhancements: string[];
 }
 
 /** A single alternative locator the Auto-Heal engine found for a failed step. */
