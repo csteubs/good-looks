@@ -41,7 +41,7 @@ export function buildReplayScript(step: Step): string {
   if (step.locator) log("info", "Locator: " + locDesc(step.locator));
   if (step.type === "fill" || step.type === "select") log("info", "Value: " + (step.value || ""));
   if (step.type === "assert") {
-    if (step.assert === "url" || step.assert === "title") log("info", "Expect " + step.assert + " contains: " + (step.value || ""));
+    if (step.assert === "url" || step.assert === "urlEndsWith" || step.assert === "urlIs" || step.assert === "title") log("info", "Expect " + step.assert + " contains: " + (step.value || ""));
     else if (step.assert === "count") log("info", "Expect count = " + step.count);
     else if (step.assert === "value" || step.assert === "attribute") log("info", "Expect " + step.assert + " = " + (step.value || ""));
     else if (step.assert === "text" || step.assert === "exactText") log("info", "Expect text: " + (step.text || ""));
@@ -126,10 +126,15 @@ export function buildReplayScript(step: Step): string {
 
   function runAssert() {
     var a = step.assert;
-    if (a === "url") {
-      var urlOk = ci(location.href).indexOf(ci(step.value || "")) >= 0;
-      log(urlOk ? "info" : "error", "page URL = \\"" + location.href + "\\"; expected to contain \\"" + (step.value || "") + "\\"");
-      return { ok: urlOk, error: urlOk ? undefined : "URL is " + location.href };
+    if (a === "url" || a === "urlEndsWith" || a === "urlIs") {
+      var cur = ci(location.href);
+      var exp = ci(step.value || "");
+      var ok;
+      if (a === "urlEndsWith") ok = cur.slice(-exp.length) === exp;
+      else if (a === "urlIs") ok = cur === exp;
+      else ok = cur.indexOf(exp) >= 0;
+      log(ok ? "info" : "error", "page URL = \\"" + location.href + "\\"; expected " + (a === "urlEndsWith" ? "to end with" : a === "urlIs" ? "to be" : "to contain") + " \\"" + (step.value || "") + "\\"");
+      return { ok: ok, error: ok ? undefined : "URL is " + location.href };
     }
     if (a === "title") {
       var titleOk = ci(document.title).indexOf(ci(step.value || "")) >= 0;

@@ -44,6 +44,14 @@ const ASSERT_PICKABLE: { kind: AssertKind; label: string }[] = [
   { kind: "unchecked", label: "Is unchecked" },
 ];
 
+// URL assertions need a typed string (not an element click), so selecting one
+// from the dropdown opens the Add-step → Assertion dialog prefilled.
+const ASSERT_URL: { kind: AssertKind; label: string }[] = [
+  { kind: "url", label: "URL contains" },
+  { kind: "urlEndsWith", label: "URL ends with" },
+  { kind: "urlIs", label: "URL is" },
+];
+
 const ASSERT_LABEL: Record<AssertKind, string> = {
   visible: "Is visible",
   hidden: "Is hidden",
@@ -56,7 +64,9 @@ const ASSERT_LABEL: Record<AssertKind, string> = {
   value: "Has value",
   attribute: "Has attribute",
   count: "Has count",
-  url: "Page URL is",
+  url: "URL contains",
+  urlEndsWith: "URL ends with",
+  urlIs: "URL is",
   title: "Page title is",
 };
 
@@ -571,12 +581,19 @@ export function RecordingView() {
       items: [
         ...ASSERT_PICKABLE.map((a, i) => ({ label: a.label, commandId: i })),
         { type: "separator" as const },
-        { label: state.assertMode ? "Cancel assertion" : "— pick a kind above —", commandId: 99 },
+        ...ASSERT_URL.map((a, i) => ({ label: a.label, commandId: 100 + i })),
       ],
     });
-    if (res.commandId === 99) setAssert(null);
-    else if (typeof res.commandId === "number" && ASSERT_PICKABLE[res.commandId]) {
+    if (typeof res.commandId !== "number") return;
+    if (res.commandId < 100 && ASSERT_PICKABLE[res.commandId]) {
       setAssert(ASSERT_PICKABLE[res.commandId].kind, soft);
+    } else if (res.commandId >= 100) {
+      const urlKind = ASSERT_URL[res.commandId - 100];
+      if (urlKind) {
+        // URL assertions need a typed string — open the Add-step dialog prefilled.
+        setContextPick({ picked: null, assert: urlKind.kind });
+        setAddKind("assertion");
+      }
     }
   };
 

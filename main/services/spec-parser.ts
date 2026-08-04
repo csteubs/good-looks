@@ -386,7 +386,26 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
           const aOpen = close + 1 + after.indexOf("(", pageAssertM[0].length - 1);
           const aClose = matchParen(src, aOpen);
           if (aClose >= 0) {
-            const value = firstStringLiteral(src.slice(aOpen + 1, aClose));
+            const argStr = src.slice(aOpen + 1, aClose).trim();
+            if (pageAssertM[1] === "toHaveURL") {
+              // toHaveURL(string) → url (substring). toHaveURL(new RegExp("…", "i"))
+              // → urlEndsWith (trailing $) or urlIs (^…$).
+              const reM = argStr.match(/^new\s+RegExp\s*\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*(?:,\s*"(?:[^"\\]|\\.)*"\s*)?\)/);
+              if (reM) {
+                const pattern = unescapeLit(reM[1].slice(1, -1));
+                const assert: AssertKind = pattern.startsWith("^") && pattern.endsWith("$") ? "urlIs" : pattern.endsWith("$") ? "urlEndsWith" : "url";
+                steps.push(
+                  makeStep("assert", {
+                    assert,
+                    ...(soft ? { soft: true } : {}),
+                    value: pattern.replace(/^\^/, "").replace(/\$$/, ""),
+                  }),
+                );
+                i = aClose + 1;
+                continue;
+              }
+            }
+            const value = firstStringLiteral(argStr);
             const assert: AssertKind = pageAssertM[1] === "toHaveURL" ? "url" : "title";
             steps.push(
               makeStep("assert", {

@@ -68,7 +68,9 @@ const ASSERT_OPTIONS: {
   { value: "value", label: "Has value", need: "value" },
   { value: "attribute", label: "Has attribute", need: "attr" },
   { value: "count", label: "Has count", need: "count" },
-  { value: "url", label: "Page URL is", need: "value", pageLevel: true },
+  { value: "url", label: "URL contains", need: "value", pageLevel: true },
+  { value: "urlEndsWith", label: "URL ends with", need: "value", pageLevel: true },
+  { value: "urlIs", label: "URL is", need: "value", pageLevel: true },
   { value: "title", label: "Page title is", need: "value", pageLevel: true },
 ];
 

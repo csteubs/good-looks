@@ -8,6 +8,11 @@ function q(s: string): string {
   return JSON.stringify(s ?? "");
 }
 
+/** Escape regex metacharacters so a literal string can be embedded in a RegExp. */
+function reEscape(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function locatorExpr(loc: Locator): string {
   switch (loc.k) {
     case "testid":
@@ -33,6 +38,10 @@ function locatorExpr(loc: Locator): string {
 function describeAssert(step: Step, target: string | null): string {
   const e = step.soft ? "expect.soft" : "expect";
   if (step.assert === "url") return e + "(page).toHaveURL(" + q(step.value ?? "") + ")";
+  if (step.assert === "urlEndsWith")
+    return e + "(page).toHaveURL(new RegExp(" + q(reEscape(step.value ?? "") + "$") + ", \"i\"))";
+  if (step.assert === "urlIs")
+    return e + "(page).toHaveURL(new RegExp(" + q("^" + reEscape(step.value ?? "") + "$") + ", \"i\"))";
   if (step.assert === "title") return e + "(page).toHaveTitle(" + q(step.value ?? "") + ")";
   if (!target) return "assert";
   const x = e + "(" + target + ")";

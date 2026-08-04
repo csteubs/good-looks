@@ -57,6 +57,8 @@ export type AssertKind =
   | "attribute"
   | "count"
   | "url"
+  | "urlEndsWith"
+  | "urlIs"
   | "title";
 
 export interface Step {

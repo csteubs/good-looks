@@ -6,6 +6,11 @@ function q(s: string): string {
   return JSON.stringify(s ?? "");
 }
 
+/** Escape regex metacharacters so a literal string can be embedded in a RegExp. */
+function reEscape(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function locatorExpr(loc: Locator): string {
   switch (loc.k) {
     case "testid":
@@ -32,6 +37,10 @@ function assertLine(step: Step, target: string | null): string | null {
   const e = step.soft ? "expect.soft" : "expect";
   // Page-level assertions don't need an element locator.
   if (step.assert === "url") return "await " + e + "(page).toHaveURL(" + q(step.value ?? "") + ");";
+  if (step.assert === "urlEndsWith")
+    return "await " + e + "(page).toHaveURL(new RegExp(" + q(reEscape(step.value ?? "") + "$") + ", \"i\"));";
+  if (step.assert === "urlIs")
+    return "await " + e + "(page).toHaveURL(new RegExp(" + q("^" + reEscape(step.value ?? "") + "$") + ", \"i\"));";
   if (step.assert === "title") return "await " + e + "(page).toHaveTitle(" + q(step.value ?? "") + ");";
   if (!target) return null;
   const x = e + "(" + target + ")";

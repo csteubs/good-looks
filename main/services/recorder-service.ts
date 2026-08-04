@@ -604,7 +604,9 @@ export const recorderService = {
           { label: "Has count", click: () => ctxAction({ kind: "assertion", assert: "count", picked, prefillText, prefillValue }) },
         ];
         const assertPageItems: MenuItemConstructorOptions[] = [
-          { label: "Page URL is…", click: () => ctxAction({ kind: "assertion", assert: "url", picked: null, prefillText: "", prefillValue }) },
+          { label: "URL contains…", click: () => ctxAction({ kind: "assertion", assert: "url", picked: null, prefillText: "", prefillValue }) },
+          { label: "URL ends with…", click: () => ctxAction({ kind: "assertion", assert: "urlEndsWith", picked: null, prefillText: "", prefillValue }) },
+          { label: "URL is…", click: () => ctxAction({ kind: "assertion", assert: "urlIs", picked: null, prefillText: "", prefillValue }) },
           { label: "Page title is…", click: () => ctxAction({ kind: "assertion", assert: "title", picked: null, prefillText: "", prefillValue }) },
         ];
         const waitItems: MenuItemConstructorOptions[] = [
