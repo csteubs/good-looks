@@ -11,7 +11,7 @@ import glitchGif from "./assets/glitch.gif";
 
 import { api } from "../lib/api";
 import { diffLines, diffSummary, type DiffLine } from "../lib/line-diff";
-import type { LlmModel } from "../lib/llm-types";
+import type { LlmMessage, LlmModel } from "../lib/llm-types";
 import { buildDebugMessages, buildStepDebugMessages } from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
 import type { TestSpeed } from "../lib/recorder-types";
@@ -362,6 +362,12 @@ export function AiDebugDialog({
   // explicitly confirm before any request is sent; "Regenerate" returns to
   // review so the user can adjust context before re-sending.
   const [reviewing, setReviewing] = React.useState(true);
+  // Conversation history for the in-progress chat. The initial send stores the
+  // messages array here; a follow-up (when the model asks for more info) appends
+  // the assistant's response + the user's reply and re-sends the whole thread so
+  // the model has the full context of the back-and-forth.
+  const messagesRef = React.useRef<LlmMessage[] | null>(null);
+  const [followUp, setFollowUp] = React.useState("");
 
   // Fetch the configured LLM model name for the dialog title and the model
   // picker, then load the available models for that provider so the picker can
@@ -440,8 +446,34 @@ export function AiDebugDialog({
           )
         : promptMessages;
     setReviewing(false);
+    messagesRef.current = messages;
+    setFollowUp("");
     void start(messages, { model });
   }, [start, modelName, additionalContext, promptMessages]);
+
+  // Send a follow-up when the model's response asks for more information.
+  // Appends the assistant's streamed response + the user's reply to the
+  // existing thread and re-sends, so the model keeps the full back-and-forth.
+  const sendFollowUp = React.useCallback(async () => {
+    const trimmed = followUp.trim();
+    if (!trimmed || !messagesRef.current || !content) return;
+    let model = modelName ?? undefined;
+    try {
+      const cfg = await api.llm.getConfig();
+      setModelName(cfg.model);
+      model = cfg.model ?? undefined;
+    } catch {
+      // keep the cached name
+    }
+    const messages: LlmMessage[] = [
+      ...messagesRef.current,
+      { role: "assistant", content },
+      { role: "user", content: trimmed },
+    ];
+    messagesRef.current = messages;
+    setFollowUp("");
+    void start(messages, { model });
+  }, [start, modelName, followUp, content]);
 
   // Reset to the review phase (clear the additional-context box and any prior
   // streamed response) when the dialog opens for a different run. We do NOT
@@ -453,6 +485,8 @@ export function AiDebugDialog({
     startedKeyRef.current = key;
     setApplied(false);
     setAdditionalContext("");
+    setFollowUp("");
+    messagesRef.current = null;
     setReviewing(true);
   }, [open, testName, output.length]);
 
@@ -639,6 +673,31 @@ export function AiDebugDialog({
                 ) : null}
               </div>
             </ScrollArea>
+            {status === "done" && content ? (
+              <div className="flex items-end gap-2">
+                <Textarea
+                  size="medium"
+                  className="flex-1 min-h-0 resize-none"
+                  placeholder="The model asked for more info — add details here and send a follow-up."
+                  value={followUp}
+                  onChange={(e) => setFollowUp(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void sendFollowUp();
+                    }
+                  }}
+                />
+                <Button
+                  size="small"
+                  variant="accent"
+                  disabled={!followUp.trim() || status !== "done"}
+                  onClick={sendFollowUp}
+                >
+                  <Send className="size-3.5" /> Send
+                </Button>
+              </div>
+            ) : null}
           </>
         )}
         </div>
