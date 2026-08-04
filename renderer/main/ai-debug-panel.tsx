@@ -100,11 +100,11 @@ function ThinkingGifOverlay({
       });
       return () => cancelAnimationFrame(raf);
     }
-    // Response received (done/error/cancelled) — start the 5s ease-out.
+    // Response received (done/error/cancelled) — start the 0.5s ease-out.
     if (phaseRef.current === "expanding") {
       setPhase("contracting");
       setScaledIn(false);
-      const t = setTimeout(() => setPhase("hidden"), 5000);
+      const t = setTimeout(() => setPhase("hidden"), 500);
       return () => clearTimeout(t);
     }
   }, [status, enabled]);
@@ -126,7 +126,7 @@ function ThinkingGifOverlay({
           style={{
             transform: `scaleX(${targetScale})`,
             transformOrigin: "center",
-            transition: "transform 5s ease-in-out",
+            transition: `transform ${phase === "contracting" ? "0.5s" : "5s"} ease-in-out`,
           }}
         />
       </div>
