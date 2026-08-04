@@ -561,8 +561,19 @@ export function AiDebugDialog({
                 );
               })}
             </div>
+            <Field
+              label="Anything else you want to include? (Optional)"
+              orientation="vertical"
+            >
+              <Textarea
+                size="medium"
+                placeholder={"Add anything the model should know — e.g. the site changed recently, this selector is flaky, or you suspect a timing issue."}
+                value={additionalContext}
+                onChange={(e) => setAdditionalContext(e.target.value)}
+              />
+            </Field>
             <ScrollArea
-              className="max-h-[44vh] rounded-md border border-separator"
+              className="flex-1 min-h-0 rounded-md border border-separator"
               viewportClassName="max-h-[44vh]"
             >
               <div className="flex flex-col gap-3 p-3">
@@ -578,17 +589,6 @@ export function AiDebugDialog({
                 ))}
               </div>
             </ScrollArea>
-            <Field
-              label="Anything else you want to include? (Optional)"
-              orientation="vertical"
-            >
-              <Textarea
-                size="medium"
-                placeholder={"Add anything the model should know — e.g. the site changed recently, this selector is flaky, or you suspect a timing issue."}
-                value={additionalContext}
-                onChange={(e) => setAdditionalContext(e.target.value)}
-              />
-            </Field>
             <div className="flex items-center justify-end gap-2 pb-8">
               <Button size="small" variant="muted" onClick={() => onOpenChange(false)}>
                 Cancel
