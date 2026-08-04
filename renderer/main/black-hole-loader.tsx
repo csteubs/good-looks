@@ -2,15 +2,15 @@ import * as React from "react";
 import handInkLight from "./assets/hand-ink.png";
 import handInkDark from "./assets/hand-ink-dark.png";
 
-const LOOP_SECONDS = 3;
+const LOOP_SECONDS = 1.5;
 const ACCELERATION = 1.2;
 const DIRECTION: 1 | -1 = 1;
-const SWIRL = 0.8;
-const DEPTH = 420;
-const STEEPNESS = 3.1;
-const HOLE_SHADOW = 0.45;
-const RING_COUNT = 18;
-const SPOKE_COUNT = 18;
+const SWIRL = 0;
+const DEPTH = 380;
+const STEEPNESS = 7;
+const LINE_THICKNESS = 1;
+const RING_COUNT = 9;
+const SPOKE_COUNT = 30;
 
 const CX = 844;
 const CY = 1302;
@@ -65,7 +65,6 @@ export function BlackHoleLoader({ size = 220, dark = false }: { size?: number; d
   const rootRef = React.useRef<HTMLDivElement | null>(null);
   const fieldRef = React.useRef<SVGGElement | null>(null);
   const frontRef = React.useRef<SVGGElement | null>(null);
-  const shadowRef = React.useRef<SVGEllipseElement | null>(null);
   const maskRef = React.useRef<SVGPathElement | null>(null);
   const cutRef = React.useRef<SVGPathElement | null>(null);
   const handClipRef = React.useRef<HTMLDivElement | null>(null);
@@ -169,7 +168,7 @@ export function BlackHoleLoader({ size = 220, dark = false }: { size?: number; d
         }
         if (!inHole && !anyCut) d += "Z";
         el.setAttribute("d", d || "M0 0");
-        const sw = (4.5 + 7.5 * Math.min(1, r / 520)).toFixed(2);
+        const sw = ((4.5 + 7.5 * Math.min(1, r / 520)) * LINE_THICKNESS).toFixed(2);
         const op = smooth(u / 0.08);
         el.setAttribute("stroke-width", sw);
         el.setAttribute("opacity", op.toFixed(3));
@@ -212,23 +211,16 @@ export function BlackHoleLoader({ size = 220, dark = false }: { size?: number; d
           } else pin = false;
         }
         el.setAttribute("d", d);
+        el.setAttribute("stroke-width", (8 * LINE_THICKNESS).toFixed(2));
         const fe = fSpokes[j];
         if (fe) {
           if (fd) {
             fe.setAttribute("d", fd);
+            fe.setAttribute("stroke-width", (8 * LINE_THICKNESS).toFixed(2));
             fe.setAttribute("opacity", "0.92");
             fe.removeAttribute("display");
           } else fe.setAttribute("display", "none");
         }
-      }
-
-      if (shadowRef.current) {
-        const se = shadowRef.current;
-        se.setAttribute("cx", String(CX));
-        se.setAttribute("cy", (cyRH + RH * SQ * 0.15).toFixed(1));
-        se.setAttribute("rx", (RH * 1.25).toFixed(1));
-        se.setAttribute("ry", (RH * SQ * 1.3).toFixed(1));
-        se.setAttribute("opacity", HOLE_SHADOW.toFixed(3));
       }
 
       const cut: [string, string][] = [
@@ -315,13 +307,6 @@ export function BlackHoleLoader({ size = 220, dark = false }: { size?: number; d
             />
           </mask>
         </defs>
-        <defs>
-          <radialGradient id="okd-holeshadow">
-            <stop offset="0%" stopColor={variant.strokeColor} stopOpacity={1} />
-            <stop offset="55%" stopColor={variant.strokeColor} stopOpacity={0.82} />
-            <stop offset="100%" stopColor={variant.strokeColor} stopOpacity={0} />
-          </radialGradient>
-        </defs>
         <g mask="url(#okd-hand)">
           <g
             ref={fieldRef}
@@ -330,16 +315,6 @@ export function BlackHoleLoader({ size = 220, dark = false }: { size?: number; d
             stroke={variant.strokeColor}
             strokeLinecap="round"
             strokeLinejoin="round"
-          />
-          <ellipse
-            ref={shadowRef}
-            clipPath="url(#okd-panel)"
-            fill="url(#okd-holeshadow)"
-            cx={844}
-            cy={1200}
-            rx={330}
-            ry={185}
-            opacity={0}
           />
           <rect
             x={287.5}
