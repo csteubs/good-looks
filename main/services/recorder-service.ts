@@ -200,6 +200,26 @@ async function tryHeal(
   return { heal, okWithHeal: false };
 }
 
+/** `tryHeal` with the standard in-window re-run wiring — every replay path
+ *  re-runs a healed step the same way (substitute the locator, execute the
+ *  replay script against the training window under the usual step timeout), so
+ *  the four callers share this instead of repeating it. */
+async function healAndRetry(
+  wc: { executeJavaScript: (script: string) => Promise<unknown> },
+  step: Step,
+  stepIndex: number,
+  error: string | undefined,
+): Promise<{ heal: HealResult | null; okWithHeal: boolean; healedLogs?: DebugEntry["logs"] }> {
+  return tryHeal(wc, step, stepIndex, error, async (locator) => {
+    const healedStep = { ...step, locator: locator! };
+    return (await execWithTimeout(wc, buildReplayScript(healedStep), REPLAY_STEP_TIMEOUT_MS)) as {
+      ok: boolean;
+      error?: string;
+      logs?: DebugEntry["logs"];
+    };
+  });
+}
+
 interface Session {
   testId: string;
   url: string;
@@ -917,8 +937,19 @@ export const recorderService = {
         error?: string;
         logs?: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[];
       };
-      const ok = !!(result && typeof result.ok === "boolean" && result.ok);
-      const error = ok ? undefined : result?.error || "Replay produced no result.";
+      let ok = !!(result && typeof result.ok === "boolean" && result.ok);
+      let error = ok ? undefined : result?.error || "Replay produced no result.";
+      let logs: DebugEntry["logs"] = result?.logs ?? [];
+      // Auto-Heal: a single-step preview that failed on an unresolved locator
+      // gets the same healing pass as a full replay run.
+      if (!ok && step.locator) {
+        const healed = await healAndRetry(wc, step, idx, error);
+        if (healed.okWithHeal) {
+          ok = true;
+          error = undefined;
+          if (healed.healedLogs) logs = healed.healedLogs;
+        }
+      }
       const entry: DebugEntry = {
         stepId,
         stepIndex: idx,
@@ -926,7 +957,7 @@ export const recorderService = {
         ok,
         error,
         at: Date.now(),
-        logs: result?.logs ?? [],
+        logs,
       };
       if (!ok) logger.info("recorder", "replayStep failed", { stepId, error });
       this.persistDebug(entry);
@@ -985,15 +1016,27 @@ export const recorderService = {
             met?: boolean;
             logs?: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[];
           };
-          const ok = !!(result && result.ok);
+          let ok = !!(result && result.ok);
+          let error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
+          let logs: DebugEntry["logs"] = result?.logs ?? [];
+          // Auto-Heal before treating an unresolved locator as the stopping
+          // point — a healed step counts as the success this path looks for.
+          if (!ok && step.locator && step.type !== "if") {
+            const healed = await healAndRetry(wc, step, i, error);
+            if (healed.okWithHeal) {
+              ok = true;
+              error = undefined;
+              if (healed.healedLogs) logs = healed.healedLogs;
+            }
+          }
           const entry: DebugEntry = {
             stepId: step.id,
             stepIndex: i,
             stepLabel: describeStep(step),
             ok,
-            error: ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`,
+            error,
             at: Date.now(),
-            logs: result?.logs ?? [],
+            logs,
           };
           this.persistDebug(entry);
           // Structural logic steps never stop the run; a false condition skips
@@ -1083,6 +1126,16 @@ export const recorderService = {
         } catch (err) {
           error = String(err);
           logs = verboseErrorLogs(err, step);
+        }
+        // Auto-Heal: heal an unresolved locator before the failure stops the
+        // run. Candidates are surfaced to the Console either way.
+        if (!ok && step.locator && step.type !== "if") {
+          const healed = await healAndRetry(wc, step, i, error);
+          if (healed.okWithHeal) {
+            ok = true;
+            error = undefined;
+            if (healed.healedLogs) logs = healed.healedLogs;
+          }
         }
         const entry: DebugEntry = {
           stepId: step.id,
@@ -1226,14 +1279,7 @@ export const recorderService = {
         // to heal it before reporting the failure. If a candidate auto-succeeds,
         // count the step as passed and stream the healed result.
         if (!ok && step.locator) {
-          const healed = await tryHeal(wc, step, i, error, async (locator) => {
-            const healedStep = { ...step, locator: locator! };
-            return (await execWithTimeout(wc, buildReplayScript(healedStep), REPLAY_STEP_TIMEOUT_MS)) as {
-              ok: boolean;
-              error?: string;
-              logs?: DebugEntry["logs"];
-            };
-          });
+          const healed = await healAndRetry(wc, step, i, error);
           heal = healed.heal;
           if (healed.okWithHeal) {
             ok = true;
