@@ -8,10 +8,11 @@
 import { artifactStore } from "./artifact-store.js";
 import type { RunReplay } from "./artifact-store.js";
 import { baselineStore } from "./baseline-store.js";
+import { runHistoryStore } from "./run-history-store.js";
 
 /** Pin one step of a completed run as its new baseline. Returns the patched
  *  replay (or null if the run has no replay). No-op when the step produced no
- *  screenshot to pin. */
+ *  screenshot to pin. Logs the change to Stats. */
 export function acceptStepBaseline(testId: string, runId: string, stepId: string): RunReplay | null {
   const replay = artifactStore.readReplay(testId, runId);
   if (!replay) return null;
@@ -22,22 +23,29 @@ export function acceptStepBaseline(testId: string, runId: string, stepId: string
       baselineStore.set(testId, stepId, png, { runId, label: step.label });
       step.diff = { state: "match", ratio: 0, threshold: replay.visualThreshold };
       artifactStore.writeReplay(testId, runId, replay);
+      runHistoryStore.logBaselineUpdate(testId, replay.testName, 1, "step");
     }
   }
   return replay;
 }
 
-/** Pin every screenshot-producing step of a run as the new baselines. */
+/** Pin every screenshot-producing step of a run as the new baselines. Logs
+ *  the change to Stats. */
 export function acceptRunBaseline(testId: string, runId: string): RunReplay | null {
   const replay = artifactStore.readReplay(testId, runId);
   if (!replay) return null;
+  let pinned = 0;
   for (const step of replay.steps) {
     if (!step.screenshot) continue;
     const png = artifactStore.readShot(testId, runId, step.screenshot);
     if (!png) continue;
     baselineStore.set(testId, step.stepId, png, { runId, label: step.label });
     step.diff = { state: "match", ratio: 0, threshold: replay.visualThreshold };
+    pinned++;
   }
   artifactStore.writeReplay(testId, runId, replay);
+  if (pinned > 0) {
+    runHistoryStore.logBaselineUpdate(testId, replay.testName, pinned, "run");
+  }
   return replay;
 }

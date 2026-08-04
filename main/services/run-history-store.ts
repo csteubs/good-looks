@@ -130,6 +130,50 @@ export const runHistoryStore = {
     return record;
   },
 
+  /** Log a baseline-update event (when the user accepts screenshots as new
+   *  baselines). These are shown in the Stats history table but excluded from
+   *  the pass/fail charts. `stepCount` is the number of steps re-pinned
+   *  (1 for per-step, N for per-run). */
+  logBaselineUpdate(
+    testId: string,
+    testName: string,
+    stepCount: number,
+    scope: "step" | "run",
+  ): RunRecord {
+    ensureDirs();
+    const id = randomUUID();
+    const now = Date.now();
+    const note =
+      scope === "run"
+        ? `Accepted ${stepCount} screenshot${stepCount === 1 ? "" : "s"} as new baselines`
+        : `Accepted 1 screenshot as new baseline`;
+    const record: RunRecord = {
+      id,
+      testId,
+      testName,
+      url: "",
+      status: "passed",
+      exitCode: 0,
+      startedAt: now,
+      finishedAt: now,
+      durationMs: 0,
+      logFile: "",
+      logBytes: 0,
+      kind: "baseline-update",
+      note,
+    };
+    const all = readAll();
+    all.push(record);
+    all.sort((a, b) => a.startedAt - b.startedAt);
+    while (all.length > MAX_RECORDS) {
+      const dropped = all.shift();
+      if (dropped) safeUnlink(dropped.logFile);
+    }
+    writeAll(all);
+    logger.info("recorder", "Logged baseline update", { id, testId, scope, stepCount });
+    return record;
+  },
+
   /** Read the raw console output for a run. */
   readLog(id: string): string {
     const rec = readAll().find((r) => r.id === id);

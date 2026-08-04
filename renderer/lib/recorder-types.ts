@@ -110,6 +110,8 @@ export interface TestRecord {
 }
 
 /** A single completed test run (mirror of main/recorder/types.ts RunRecord). */
+export type RunRecordKind = "run" | "baseline-update";
+
 export interface RunRecord {
   id: string;
   testId: string;
@@ -122,6 +124,9 @@ export interface RunRecord {
   durationMs: number;
   logFile: string;
   logBytes: number;
+  captureArtifacts?: boolean;
+  kind?: RunRecordKind;
+  note?: string;
 }
 
 /** Per-run visual-testing replay model (mirror of main/services/artifact-store.ts). */

@@ -14,6 +14,7 @@ import {
   Toolbar,
   ToolbarContent,
   ToolbarTitle,
+  toast,
   Tooltip,
   TooltipContent,
   TooltipTrigger,
@@ -438,11 +439,18 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
 
   const acceptRun = useMutation({
     mutationFn: () => api.visual.acceptRun(summary.testId, summary.runId),
-    onSuccess: patchReplay,
+    onSuccess: (replay) => {
+      patchReplay(replay);
+      const n = replay?.steps.filter((s) => s.screenshot).length ?? 0;
+      toast.success(`Pinned ${n} screenshot${n === 1 ? "" : "s"} as new baselines. Logged in Stats.`);
+    },
   });
   const acceptStep = useMutation({
     mutationFn: (stepId: string) => api.visual.acceptStep(summary.testId, summary.runId, stepId),
-    onSuccess: patchReplay,
+    onSuccess: (replay) => {
+      patchReplay(replay);
+      toast.success("Screenshot pinned as new baseline. Logged in Stats.");
+    },
   });
 
   if (replayQuery.isLoading) {
@@ -466,6 +474,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   const idx = clamp(current);
   const step = steps[idx];
   const changedCount = steps.filter((s) => s.diff?.state === "changed").length;
+  const screenshotCount = steps.filter((s) => Boolean(s.screenshot)).length;
   const canDiff = Boolean(step.diff?.diffFile);
   const hasBaselineView =
     step.diff !== undefined && step.diff.state !== "unable" && Boolean(step.screenshot);
@@ -507,6 +516,25 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           </Text>
         </div>
         <ThresholdControl testId={summary.testId} />
+        {screenshotCount > 0 ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                size="small"
+                variant="glass"
+                disabled={acceptRun.isPending}
+                onClick={() => acceptRun.mutate()}
+              >
+                <Stamp className="size-3.5" />
+                Accept run as baseline
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="max-w-[240px] leading-snug">
+              Pin all {screenshotCount} screenshot{screenshotCount === 1 ? "" : "s"} from this run as
+              the new comparison standard for future runs. Logged in Stats.
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
         <div className="flex shrink-0 items-center gap-1">
           <Button
             iconOnly
@@ -626,7 +654,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           {step.label}
         </Text>
         {step.diff ? <DiffBadge diff={step.diff} /> : null}
-        {step.diff?.state === "changed" ? (
+        {step.screenshot ? (
           <Button
             size="small"
             variant="glass"

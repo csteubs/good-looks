@@ -15,6 +15,7 @@ import { runHistoryStore } from "../services/run-history-store.js";
 import { artifactStore } from "../services/artifact-store.js";
 import { baselineStore } from "../services/baseline-store.js";
 import { acceptRunBaseline, acceptStepBaseline } from "../services/visual-baseline-ops.js";
+import { sendToMain } from "../services/app-window.js";
 import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
 import { importService } from "../services/import-service.js";
@@ -420,16 +421,19 @@ export function registerHandlers(): void {
     },
   );
   // Pin an entire run's screenshots as the new baselines. Returns patched replay.
-  ipcMain.handle(
-    "visual:acceptRun",
-    async (_e, params: { testId: string; runId: string }) =>
-      acceptRunBaseline(params.testId, params.runId),
-  );
+  ipcMain.handle("visual:acceptRun", async (_e, params: { testId: string; runId: string }) => {
+    const result = acceptRunBaseline(params.testId, params.runId);
+    if (result) sendToMain("runs:changed", {});
+    return result;
+  });
   // Pin one step's screenshot as its new baseline. Returns patched replay.
   ipcMain.handle(
     "visual:acceptStep",
-    async (_e, params: { testId: string; runId: string; stepId: string }) =>
-      acceptStepBaseline(params.testId, params.runId, params.stepId),
+    async (_e, params: { testId: string; runId: string; stepId: string }) => {
+      const result = acceptStepBaseline(params.testId, params.runId, params.stepId);
+      if (result) sendToMain("runs:changed", {});
+      return result;
+    },
   );
   // A step's pinned baseline screenshot as a data URL (for side-by-side), or null.
   ipcMain.handle(

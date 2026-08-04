@@ -151,6 +151,8 @@ export const DEFAULT_VISUAL_THRESHOLD = 0.1;
 /** A single completed test run, persisted to run-history.json. The raw console
  *  output for the run lives in a sibling .log file (see logFile) so large
  *  outputs stay out of the JSON index. */
+export type RunRecordKind = "run" | "baseline-update";
+
 export interface RunRecord {
   /** unique per run (not the testId — one test has many runs) */
   id: string;
@@ -173,6 +175,13 @@ export interface RunRecord {
    *  video/DOM snapshots). Per-run choice, off by default; the gate every
    *  visual-testing phase checks. Absent on runs recorded before the toggle. */
   captureArtifacts?: boolean;
+  /** Distinguishes a real test "run" (default) from a "baseline-update" event
+   *  logged when the user accepts screenshots as new baselines. Baseline-update
+   *  records are excluded from the pass/fail charts but shown in the history
+   *  table so baseline changes are auditable from Stats. */
+  kind?: RunRecordKind;
+  /** Human-readable summary for non-run events (e.g. baseline-update notes). */
+  note?: string;
 }
 
 /** A hit from searching the raw run logs. */

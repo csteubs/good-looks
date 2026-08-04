@@ -25,7 +25,7 @@ import {
   ToolbarTitle,
   toast,
 } from "@glaze/core/components";
-import { Calendar, Check, Copy, MoreHorizontal, Search } from "lucide-react";
+import { Calendar, Check, Copy, MoreHorizontal, Search, Stamp } from "lucide-react";
 
 import { api } from "../lib/api";
 import type { LogSearchResult, RunRecord } from "../lib/recorder-types";
@@ -99,6 +99,7 @@ interface DayBucket {
 function buildDailyBuckets(runs: RunRecord[]): DayBucket[] {
   const map = new Map<string, DayBucket>();
   for (const r of runs) {
+    if (r.kind === "baseline-update") continue; // exclude from pass/fail chart
     const d = new Date(r.startedAt);
     const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
     let b = map.get(key);
@@ -273,9 +274,12 @@ export function StatsView() {
   });
 
   const buckets = React.useMemo(() => buildDailyBuckets(runs), [runs]);
-  const passed = runs.filter((r) => r.status === "passed").length;
-  const failed = runs.length - passed;
-  const passRate = runs.length > 0 ? Math.round((passed / runs.length) * 100) : 0;
+  // Only real test runs count toward pass/fail stats; baseline-update events
+  // are shown in the history table but excluded from charts and summary cards.
+  const realRuns = runs.filter((r) => r.kind !== "baseline-update");
+  const passed = realRuns.filter((r) => r.status === "passed").length;
+  const failed = realRuns.length - passed;
+  const passRate = realRuns.length > 0 ? Math.round((passed / realRuns.length) * 100) : 0;
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["runs"] });
@@ -350,7 +354,12 @@ export function StatsView() {
         <ToolbarContent>
           <ToolbarTitle>Stats</ToolbarTitle>
           <ToolbarDescription>
-            {runs.length} run{runs.length === 1 ? "" : "s"} recorded
+            {realRuns.length} run{realRuns.length === 1 ? "" : "s"} recorded
+            {runs.length !== realRuns.length
+              ? ` · ${runs.length - realRuns.length} baseline update${
+                  runs.length - realRuns.length === 1 ? "" : "s"
+                }`
+              : ""}
           </ToolbarDescription>
         </ToolbarContent>
         <ToolbarActions>
@@ -373,7 +382,7 @@ export function StatsView() {
             <>
               {/* Summary cards */}
               <div className="grid grid-cols-4 gap-3">
-                <StatCard label="Total runs" value={String(runs.length)} />
+                <StatCard label="Total runs" value={String(realRuns.length)} />
                 <StatCard label="Pass rate" value={`${passRate}%`} />
                 <StatCard label="Passed" value={String(passed)} />
                 <StatCard label="Failed" value={String(failed)} />
@@ -452,29 +461,53 @@ export function StatsView() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {runs.map((r) => (
-                        <TableRow
-                          key={r.id}
-                          className="cursor-pointer"
-                          onClick={() =>
-                            setLogRun({ id: r.id, title: `${r.testName} — ${fmtDateTime(r.startedAt)}` })
-                          }
-                        >
-                          <TableCell className="max-w-[220px] truncate font-medium">
-                            {r.testName}
-                          </TableCell>
-                          <TableCell>
-                            <Badge color={r.status === "passed" ? "green" : "red"}>{r.status}</Badge>
-                          </TableCell>
-                          <TableCell className="text-secondary">{fmtDateTime(r.startedAt)}</TableCell>
-                          <TableCell className="text-right text-secondary">
-                            {fmtDuration(r.durationMs)}
-                          </TableCell>
-                          <TableCell className="text-right text-tertiary">
-                            {fmtBytes(r.logBytes)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                      {runs.map((r) => {
+                        const isBaseline = r.kind === "baseline-update";
+                        return (
+                          <TableRow
+                            key={r.id}
+                            className={isBaseline ? "" : "cursor-pointer"}
+                            onClick={() => {
+                              if (isBaseline) return;
+                              setLogRun({
+                                id: r.id,
+                                title: `${r.testName} — ${fmtDateTime(r.startedAt)}`,
+                              });
+                            }}
+                          >
+                            <TableCell className="max-w-[220px] truncate font-medium">
+                              {r.testName}
+                            </TableCell>
+                            <TableCell>
+                              {isBaseline ? (
+                                <Badge color="secondary">
+                                  <Stamp className="size-3" />
+                                  Baseline
+                                </Badge>
+                              ) : (
+                                <Badge color={r.status === "passed" ? "green" : "red"}>
+                                  {r.status}
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-secondary">
+                              {fmtDateTime(r.startedAt)}
+                            </TableCell>
+                            <TableCell className="text-right text-secondary">
+                              {isBaseline ? (
+                                <span className="text-tertiary" title={r.note}>
+                                  {r.note ?? "—"}
+                                </span>
+                              ) : (
+                                fmtDuration(r.durationMs)
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right text-tertiary">
+                              {isBaseline ? "—" : fmtBytes(r.logBytes)}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 </div>
