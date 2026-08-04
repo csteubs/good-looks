@@ -852,6 +852,7 @@ export const recorderService = {
           "locator",
           "label",
           "continueOnFailure",
+          "disabled",
         ];
         const target = step as unknown as Record<string, unknown>;
         const src = patch as Record<string, unknown>;
@@ -972,6 +973,11 @@ export const recorderService = {
       await applyStateAttributes();
       for (let i = 0; i < session.steps.length; i++) {
         const step = session.steps[i];
+        // A disabled step is skipped — log why and continue without running it.
+        if (step.disabled) {
+          logger.info("recorder", "Step skipped — disabled", { stepIndex: i });
+          continue;
+        }
         try {
           const result = (await execWithTimeout(wc, buildReplayScript(step), REPLAY_STEP_TIMEOUT_MS)) as {
             ok: boolean;
@@ -1053,6 +1059,11 @@ export const recorderService = {
       await applyStateAttributes();
       for (let i = 0; i < session.steps.length; i++) {
         const step = session.steps[i];
+        // A disabled step is skipped — log why and move on without running it.
+        if (step.disabled) {
+          logger.info("recorder", "Step skipped — disabled", { stepIndex: i });
+          continue;
+        }
         sendToMain("recorder:replayStep", { index: i, status: "begin", ok: true });
         let ok = false;
         let error: string | undefined;
@@ -1147,6 +1158,21 @@ export const recorderService = {
         // The window may close (finalize → session = null) mid-run.
         if (!session || !recWindow || recWindow.isDestroyed()) break;
         const step = session.steps[i];
+        // A disabled step is skipped — log why, stream it as skipped, and move
+        // on without running it (not counted in ran/passed totals).
+        if (step.disabled) {
+          logger.info("recorder", "Step skipped — disabled", { stepIndex: i });
+          sendToMain("recorder:replayLog", {
+            phase: "step",
+            index: i,
+            stepLabel: describeStep(step),
+            ok: true,
+            error: "Skipped — disabled",
+            logs: [{ i: 0, t: Date.now(), level: "info", m: "Step skipped — disabled" }],
+          });
+          await sleep(REPLAY_STEP_DELAY_MS);
+          continue;
+        }
         sendToMain("recorder:replayStep", { index: i, status: "begin", ok: true });
         await sleep(REPLAY_SETTLE_MS);
         let ok = false;

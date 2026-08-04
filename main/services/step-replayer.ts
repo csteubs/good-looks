@@ -226,6 +226,10 @@ export function buildReplayScript(step: Step): string {
 
   function run() {
     var t = step.type;
+    if (step.disabled) {
+      log("info", "Step " + (step.index_ ?? "") + " skipped — disabled");
+      return { ok: true, error: "Skipped — disabled" };
+    }
     if (t === "if") {
       var met = evalCondition();
       log("info", met ? "block WILL run" : "block will be SKIPPED");

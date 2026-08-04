@@ -184,10 +184,16 @@ export function generateSpec(record: Pick<TestRecord, "name" | "url" | "steps">)
     if (line == null) continue;
     if (step.type === "endif") depth = Math.max(1, depth - 1);
     const indent = "  ".repeat(depth);
-    // "Continue on Failure" wraps the step's statement in a try/catch so a
-    // failure is swallowed and the test proceeds to the next step. Only
-    // applies to action/assert steps — structural `if`/`endif` are never wrapped.
-    if (step.continueOnFailure && step.type !== "if" && step.type !== "endif") {
+    // A disabled step is emitted as a commented-out line so the generated spec
+    // stays runnable (the step is skipped) while preserving the step's place
+    // in the script for round-tripping and readability. Structural `if`/
+    // `endif` are never commented — disabling them would break block pairing.
+    if (step.disabled && step.type !== "if" && step.type !== "endif") {
+      body.push(indent + "// disabled — skipped: " + line);
+    } else if (step.continueOnFailure && step.type !== "if" && step.type !== "endif") {
+      // "Continue on Failure" wraps the step's statement in a try/catch so a
+      // failure is swallowed and the test proceeds to the next step. Only
+      // applies to action/assert steps — structural `if`/`endif` are never wrapped.
       body.push(indent + "try {");
       body.push(indent + "  " + line);
       body.push(indent + "} catch { /* continue on failure */ }");

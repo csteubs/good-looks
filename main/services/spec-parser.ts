@@ -53,6 +53,17 @@ function stripComments(src: string): string {
     }
     const two = src.slice(i, i + 2);
     if (two === "//") {
+      // Preserve "disabled — skipped:" comment lines so the scan loop can
+      // round-trip them into disabled steps (see parseBody). We keep the
+      // whole line verbatim by skipping the `//` but NOT the rest.
+      const after = src.slice(i + 2);
+      if (after.match(/^\s*disabled\s*—\s*skipped\s*:/) || after.match(/^\s*disabled\s*-?\s*skipped\s*:/)) {
+        // Emit a bare `//` so the line stays a comment the scan loop handles,
+        // but keep the rest of the line (the statement) intact.
+        out += "//";
+        i += 2;
+        continue;
+      }
       const nl = src.indexOf("\n", i);
       if (nl < 0) break;
       i = nl;
@@ -263,6 +274,34 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
       } else {
         i = close + 1;
       }
+      continue;
+    }
+
+    // // disabled — skipped: <statement> — a disabled step emitted by
+    // script-generator.ts. Parse the statement after the marker, tag it with
+    // disabled: true, then advance past the line.
+    const disM = rest.match(/^[\s;]*\/\/\s*disabled\s*—\s*skipped\s*:\s*/);
+    if (disM) {
+      const stmtStart = i + disM[0].length;
+      // Find the end of the statement (next newline or `}` at the same depth).
+      // The statement is a single line, so scan to the next newline.
+      let nl = src.indexOf("\n", stmtStart);
+      if (nl < 0) nl = src.length;
+      const stmt = src.slice(stmtStart, nl).trim();
+      if (stmt) {
+        const innerResult = parseBody(stmt);
+        if (innerResult.steps.length > 0) {
+          const s = innerResult.steps[0];
+          s.disabled = true;
+          steps.push(...innerResult.steps);
+          skipped += innerResult.skipped;
+        } else {
+          skipped++;
+        }
+      } else {
+        skipped++;
+      }
+      i = nl;
       continue;
     }
 

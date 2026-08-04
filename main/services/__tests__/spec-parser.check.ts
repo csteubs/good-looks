@@ -173,6 +173,24 @@ assertEqual(cofParsed.steps[3]?.continueOnFailure, undefined, "untoggled step ha
 const tryLines = cofSource.split("\n").filter((l) => l.includes("try {"));
 assertEqual(tryLines.length, 2, "two try/catch wrappers emitted for two toggled steps");
 
+// ── 8. "Disable Step" (commented-out line) round-trips ──────────────────────
+const disSteps: Step[] = [
+  step({ type: "goto", url: "https://example.com" }),
+  step({ type: "click", locator: { k: "role", role: "button", name: "Skip" }, disabled: true }),
+  step({ type: "assert", locator: { k: "css", v: "#result" }, assert: "visible", disabled: true }),
+  step({ type: "click", locator: { k: "role", role: "button", name: "Next" } }),
+];
+const disSource = generateSpec({ name: "dis", url: "https://example.com", steps: disSteps });
+const disParsed = parseSpecDetailed(disSource);
+assertEqual(disParsed.skipped, 0, "disabled comment produces zero skips");
+assertEqual(disParsed.steps.length, disSteps.length, "disabled round-trips step count");
+assertEqual(disParsed.steps[1]?.disabled, true, "click step disabled flag round-trips");
+assertEqual(disParsed.steps[2]?.disabled, true, "assert step disabled flag round-trips");
+assertEqual(disParsed.steps[3]?.disabled, undefined, "untoggled step has no disabled flag");
+// The commented-out lines must actually be emitted in the source.
+const disLines = disSource.split("\n").filter((l) => l.includes("// disabled — skipped:"));
+assertEqual(disLines.length, 2, "two disabled comment lines emitted for two toggled steps");
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

@@ -73,6 +73,10 @@ export interface Step {
    *  the next step instead of stopping the test. Emitted as a try/catch wrapper
    *  around the step's line in the generated spec. */
   continueOnFailure?: boolean;
+  /** true when the user disabled this step — the runner skips it (logging
+   *  why) and the generated spec emits the line commented out. The step stays
+   *  in the list and keeps its index/position. */
+  disabled?: boolean;
   timestamp: number;
 }
 

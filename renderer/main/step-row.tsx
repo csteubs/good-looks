@@ -204,6 +204,11 @@ export function StepRow({
           continue on fail
         </Badge>
       ) : null}
+      {step.disabled ? (
+        <Badge color="secondary" className="shrink-0" title="Disabled — skipped during runs and commented out in the spec">
+          disabled
+        </Badge>
+      ) : null}
 
       {editing && field ? (
         <Input
@@ -310,6 +315,14 @@ export function StepRow({
                       onCheckedChange={(checked) => onEdit?.({ continueOnFailure: checked })}
                     >
                       Continue on Failure
+                    </DropdownMenuCheckboxItem>
+                  ) : null}
+                  {canContinue ? (
+                    <DropdownMenuCheckboxItem
+                      checked={!!step.disabled}
+                      onCheckedChange={(checked) => onEdit?.({ disabled: checked })}
+                    >
+                      Disable Step
                     </DropdownMenuCheckboxItem>
                   ) : null}
                 </DropdownMenuContent>
