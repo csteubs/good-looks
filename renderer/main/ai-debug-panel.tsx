@@ -615,8 +615,8 @@ export function AiDebugDialog({
               </Button>
             </div>
             <ScrollArea
-              className="flex-1 min-h-0 rounded-md border border-separator"
-              viewportClassName="max-h-[44vh]"
+              className="max-h-[56vh] flex-1 min-h-0 rounded-md border border-separator"
+              viewportClassName="max-h-[56vh]"
             >
               <div className="flex flex-col gap-3 p-3">
                 {promptMessages.map((m, i) => (
