@@ -498,12 +498,14 @@ export function StatsView() {
                               {isBaseline ? (
                                 <span className="text-tertiary">—</span>
                               ) : r.runHeadless ? (
-                                <Badge color="secondary" title="Headless">
+                                <Badge color="secondary">
                                   <MonitorOff className="size-3" />
+                                  Headless
                                 </Badge>
                               ) : (
-                                <Badge color="secondary" title="Browser">
+                                <Badge color="secondary">
                                   <Globe className="size-3" />
+                                  Browser
                                 </Badge>
                               )}
                             </TableCell>

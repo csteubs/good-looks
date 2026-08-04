@@ -29,6 +29,7 @@ import {
   Eye,
   ImageOff,
   MessageSquare,
+  Pencil,
   Stamp,
   TriangleAlert,
   X,
@@ -355,26 +356,36 @@ function StepAnnotation({
       <Text variant="small" color="secondary" className="min-w-0 flex-1 whitespace-pre-wrap">
         {annotation.text}
       </Text>
-      <Button
-        size="small"
-        variant="transparent"
-        className="shrink-0"
-        onClick={() => {
-          setDraft(annotation.text);
-          setEditing(true);
-        }}
-      >
-        Edit
-      </Button>
-      <Button
-        size="small"
-        variant="transparent"
-        className="shrink-0"
-        disabled={saving}
-        onClick={() => onSave("")}
-      >
-        Clear
-      </Button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            size="small"
+            variant="transparent"
+            className="shrink-0"
+            onClick={() => {
+              setDraft(annotation.text);
+              setEditing(true);
+            }}
+          >
+            <Pencil className="size-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Edit annotation</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            size="small"
+            variant="transparent"
+            className="shrink-0"
+            disabled={saving}
+            onClick={() => onSave("")}
+          >
+            <X className="size-3.5" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent>Clear annotation</TooltipContent>
+      </Tooltip>
     </div>
   );
 }
