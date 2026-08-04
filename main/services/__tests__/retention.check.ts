@@ -15,6 +15,10 @@ const userData = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-retention-check-")
 process.env.GLAZE_TEST_USERDATA = userData;
 
 let failures = 0;
+function check(cond: boolean, label: string): void {
+  if (!cond) failures++;
+  console.log(`${cond ? "ok  " : "FAIL"} ${label}`);
+}
 function eq(actual: unknown, expected: unknown, label: string): void {
   const ok = JSON.stringify(actual) === JSON.stringify(expected);
   if (!ok) failures++;
@@ -150,6 +154,53 @@ eq(
   0,
   "0 is accepted (disables the rule) rather than treated as unset",
 );
+
+// 8. Retention sweeps EVERY test, not just the one being run.
+// This is the hole pruneRuns alone left: a test you stop running never ages
+// out, so an "older than N days" rule silently did nothing for it.
+const IDLE = "test-idle";
+const ACTIVE = "test-active";
+for (const [testId, ageDays] of [
+  [IDLE, 30],
+  [ACTIVE, 30],
+] as const) {
+  const dir = artifactStore.ensureRunDir(testId, `stale-${testId}`);
+  fs.writeFileSync(path.join(dir, "0.png"), Buffer.alloc(2048));
+  const when = new Date(Date.now() - ageDays * DAY_MS);
+  fs.utimesSync(dir, when, when);
+}
+// A fresh run for the active test only — the idle one gets nothing new.
+const activeFresh = artifactStore.ensureRunDir(ACTIVE, "fresh");
+fs.writeFileSync(path.join(activeFresh, "0.png"), Buffer.alloc(2048));
+
+// Per-test pruning (what a capture run does) only touches the test it ran.
+artifactStore.pruneRuns(ACTIVE, 10, 7 * DAY_MS);
+eq(artifactStore.listRuns(ACTIVE), ["fresh"], "a run prunes its own test's stale artifacts");
+eq(
+  artifactStore.listRuns(IDLE).length,
+  1,
+  "…but leaves an idle test's stale artifacts untouched (the gap)",
+);
+
+// The all-tests sweep closes it.
+const swept = artifactStore.pruneAllTests(10, 7 * DAY_MS);
+eq(artifactStore.listRuns(IDLE).length, 0, "pruneAllTests reaches an idle test");
+eq(swept.removedRuns, 1, "the sweep reports how many runs it removed");
+check(swept.freedBytes > 0, "the sweep reports the bytes it freed");
+
+// Sweeping again is a no-op rather than an error.
+const again = artifactStore.pruneAllTests(10, 7 * DAY_MS);
+eq(again.removedRuns, 0, "a second sweep removes nothing");
+
+// A lowered run limit applies retroactively across tests.
+for (let i = 0; i < 5; i++) {
+  const d = artifactStore.ensureRunDir(IDLE, `bulk-${i}`);
+  fs.writeFileSync(path.join(d, "0.png"), Buffer.alloc(512));
+  const t = new Date(Date.now() + i * 1000);
+  fs.utimesSync(d, t, t);
+}
+artifactStore.pruneAllTests(2, 0);
+eq(artifactStore.listRuns(IDLE).length, 2, "a lowered run limit applies without a new run");
 
 fs.rmSync(userData, { recursive: true, force: true });
 console.log(failures === 0 ? "\nAll retention checks passed" : `\n${failures} check(s) FAILED`);

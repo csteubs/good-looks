@@ -76,6 +76,7 @@ export function SettingsView() {
   const [artifactRetentionDays, setArtifactRetentionDays] = useState(0);
   const [notifyOnRunIssues, setNotifyOnRunIssues] = useState(false);
   const [artifactUsage, setArtifactUsage] = useState<ArtifactUsage | null>(null);
+  const [pruning, setPruning] = useState(false);
 
   // ── Auto-Heal settings ──────────────────────────────────────────────
   const [autoHealEnabled, setAutoHealEnabled] = useState(true);
@@ -170,6 +171,23 @@ export function SettingsView() {
       await api.recorder.setSettings({ artifactRetainedRuns: n });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handlePruneNow = async () => {
+    setPruning(true);
+    try {
+      const { removedRuns, freedBytes } = await api.artifacts.pruneNow();
+      setArtifactUsage(await api.artifacts.usage());
+      toast.success(
+        removedRuns > 0
+          ? `Deleted ${removedRuns} run${removedRuns === 1 ? "" : "s"}, freeing ${formatBytes(freedBytes)}.`
+          : "Nothing to clean up — every run is within your limits.",
+      );
+    } catch (error) {
+      toast.error(`Cleanup failed: ${error}`);
+    } finally {
+      setPruning(false);
     }
   };
 
@@ -567,6 +585,18 @@ export function SettingsView() {
                 value={artifactRetentionDays}
                 onChange={(e) => handleArtifactRetentionDaysChange(e.target.value)}
               />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel>Apply retention now</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Deletes anything already past the limits above, across every test. Retention also
+                  runs automatically when the app launches and after each test run.
+                </p>
+              </FieldContent>
+              <Button variant="secondary" onClick={handlePruneNow} disabled={pruning}>
+                {pruning ? "Cleaning up…" : "Clean up now"}
+              </Button>
             </Field>
             <Field orientation="horizontal">
               <FieldContent>

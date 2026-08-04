@@ -26,6 +26,7 @@ import { llmConfigStore } from "../services/llm-config-store.js";
 import { anthropicKeyStore } from "../services/anthropic-key-store.js";
 import { recorderSettingsStore } from "../services/recorder-settings-store.js";
 import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
+import { applyRetention } from "../services/retention.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import type { AssertKind, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
@@ -425,6 +426,13 @@ export function registerHandlers(): void {
   ipcMain.handle("artifacts:list", async () => artifactStore.listReplays());
   // On-disk footprint of all captured artifacts (Settings retention readout).
   ipcMain.handle("artifacts:usage", async () => artifactStore.usage());
+  // Apply the retention settings now, across every test. Lets the user see the
+  // setting take effect immediately instead of waiting for the next run.
+  ipcMain.handle("artifacts:pruneNow", async () => {
+    const result = applyRetention();
+    sendToMain("runs:changed", {});
+    return result;
+  });
   // The canonical per-step replay model for one run (or null if unavailable).
   ipcMain.handle(
     "artifacts:getReplay",

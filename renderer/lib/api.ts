@@ -13,6 +13,7 @@ import type {
   RunRecord,
   ArtifactUsage,
   CaptureOverheadSummary,
+  RetentionResult,
   RunReplay,
   RunReplaySummary,
   VisualMask,
@@ -147,6 +148,7 @@ export const api = {
     readShot: (testId: string, runId: string, file: string) =>
       ipc().invoke<string | null>("artifacts:readShot", { testId, runId, file }),
     usage: () => ipc().invoke<ArtifactUsage>("artifacts:usage"),
+    pruneNow: () => ipc().invoke<RetentionResult>("artifacts:pruneNow"),
   },
   visual: {
     getThreshold: (testId: string) =>

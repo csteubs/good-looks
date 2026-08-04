@@ -18,6 +18,7 @@ import { captureFixtureSource } from "./capture-fixture-source.js";
 import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { notifyRunOutcome } from "./run-notifier.js";
+import { applyRetention } from "./retention.js";
 import { buildReplay, enrichWithVisualDiffs } from "./replay-builder.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import type { TestSpeed } from "../recorder/types.js";
@@ -517,6 +518,10 @@ export const playwrightRunner = {
         } catch (err) {
           logger.warn("runner", "Failed to persist run history", { err: String(err) });
         }
+        // Sweep artifacts against retention after every run — including
+        // non-capture ones, so the rules apply even when this test isn't the
+        // one generating screenshots.
+        applyRetention();
         // Local desktop notification for a failure or a visual change, when the
         // user opted in. Never fires for a clean run.
         if (recorderSettingsStore.get().notifyOnRunIssues) {

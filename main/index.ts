@@ -14,6 +14,7 @@ import { registerHandlers } from "./handlers/index.js";
 import { getPreloadPath, getWindowUrl } from "./windows/window-paths.js";
 import { openSettingsWindow } from "./windows/settings-window.js";
 import { setMainWindow } from "./services/app-window.js";
+import { applyRetention } from "./services/retention.js";
 
 // Get directory paths
 const __filename = fileURLToPath(import.meta.url);
@@ -22,6 +23,17 @@ const __dirname = path.dirname(__filename);
 // ── IPC Handlers ──────────────────────────────────────────────────────
 // ipcMain is already wired to the IPC server by the runtime bootstrap.
 registerHandlers();
+
+// ── Artifact retention ────────────────────────────────────────────────
+// Sweep on launch so the retention settings apply to every test, including
+// ones that haven't been run lately — otherwise an "older than N days" rule
+// would only ever take effect for a test you happen to run again.
+{
+  const swept = applyRetention();
+  if (swept.removedRuns > 0) {
+    logger.info("artifacts", "Applied retention at startup", swept);
+  }
+}
 
 // ── Dev-only parity harness ───────────────────────────────────────────
 // The parity autotest lives in main/dev/, which is excluded from scaffolded

@@ -238,6 +238,12 @@ export interface CaptureOverheadSummary {
   totalShots: number;
 }
 
+/** What a retention sweep deleted. Mirror of main/services/retention.ts. */
+export interface RetentionResult {
+  removedRuns: number;
+  freedBytes: number;
+}
+
 /** On-disk footprint of all captured artifacts. Mirror of
  *  main/services/artifact-store.ts ArtifactUsage. */
 export interface ArtifactUsage {

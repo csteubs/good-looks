@@ -278,6 +278,33 @@ export const artifactStore = {
     }
   },
 
+  /** Apply retention to EVERY test that has artifacts, not just one.
+   *
+   *  `pruneRuns` alone only ever runs as a side effect of a capture run for the
+   *  test being run, which leaves three holes: an idle test's artifacts never
+   *  age out (so an age rule silently does nothing), lowering the run limit
+   *  doesn't apply to tests until their next capture run, and deleted/hidden
+   *  tests are never swept at all. This closes them. Returns what it freed so
+   *  the UI can report it. */
+  pruneAllTests(keep: number, maxAgeMs = 0): { removedRuns: number; freedBytes: number } {
+    const before = this.usage();
+    let removedRuns = 0;
+    let testDirs: fs.Dirent[];
+    try {
+      testDirs = fs.readdirSync(artifactsDir(), { withFileTypes: true });
+    } catch {
+      return { removedRuns: 0, freedBytes: 0 }; // nothing captured yet
+    }
+    for (const t of testDirs) {
+      if (!t.isDirectory()) continue;
+      const was = this.listRuns(t.name).length;
+      this.pruneRuns(t.name, keep, maxAgeMs);
+      removedRuns += Math.max(0, was - this.listRuns(t.name).length);
+    }
+    const after = this.usage();
+    return { removedRuns, freedBytes: Math.max(0, before.bytes - after.bytes) };
+  },
+
   /** Run ids that have artifacts for a test, newest first (by dir mtime). */
   listRuns(testId: string): string[] {
     const dir = testDir(testId);
