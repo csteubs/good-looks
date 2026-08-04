@@ -504,7 +504,7 @@ export function AiDebugDialog({
         <span className="inline-flex items-center gap-2">
           {testName}
           {status === "streaming" ? (
-            <Button iconOnly size="small" variant="destructive" onClick={stop} aria-label="Stop" title="Stop">
+            <Button iconOnly size="small" variant="muted" onClick={stop} aria-label="Stop" title="Stop">
               <Square className="size-3.5" />
             </Button>
           ) : null}
@@ -771,7 +771,7 @@ export function StepAiDebugDialog({
         <span className="inline-flex items-center gap-2">
           {stepLabel}
           {status === "streaming" ? (
-            <Button iconOnly size="small" variant="destructive" onClick={stop} aria-label="Stop" title="Stop">
+            <Button iconOnly size="small" variant="muted" onClick={stop} aria-label="Stop" title="Stop">
               <Square className="size-3.5" />
             </Button>
           ) : null}
