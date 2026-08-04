@@ -5,7 +5,9 @@ import {
   Badge,
   Button,
   Callout,
+  Dialog,
   EmptyState,
+  Input,
   ScrollArea,
   SegmentedControl,
   SegmentedControlItem,
@@ -528,6 +530,181 @@ function StepAnnotation({
   );
 }
 
+
+// ── Masks & baselines manager ───────────────────────────────────────────
+// Both were previously only reachable one step at a time by scrubbing to the
+// step they belong to. This is the per-test view: what's masked, what's pinned,
+// and the ability to name, delete, or unpin without hunting for the step.
+
+function MasksBaselinesDialog({
+  testId,
+  open,
+  onOpenChange,
+  stepLabelById,
+}: {
+  testId: string;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  /** stepId → human label, for naming rows the user can recognize. */
+  stepLabelById: Map<string, string>;
+}) {
+  const qc = useQueryClient();
+  const masksQuery = useQuery({
+    queryKey: ["visualMasks", testId],
+    queryFn: () => api.visual.getMasks(testId),
+    enabled: open,
+  });
+  const baselinesQuery = useQuery({
+    queryKey: ["baselines", testId],
+    queryFn: () => api.visual.listBaselines(testId),
+    enabled: open,
+  });
+  const masks = masksQuery.data ?? [];
+  const baselines = baselinesQuery.data ?? [];
+
+  const saveMasks = useMutation({
+    mutationFn: (next: VisualMask[]) => api.visual.setMasks(testId, next),
+    onSuccess: (saved) => qc.setQueryData(["visualMasks", testId], saved),
+    onError: (err) => toast.error(`Couldn't save ignore regions: ${err}`),
+  });
+  const clearBaseline = useMutation({
+    mutationFn: (stepId: string) => api.visual.clearBaseline(testId, stepId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["baselines", testId] });
+      qc.invalidateQueries({ queryKey: ["baselineShot", testId] });
+      toast.success("Baseline unpinned. The next capture run will set a new one.");
+    },
+    onError: (err) => toast.error(`Couldn't unpin the baseline: ${err}`),
+  });
+
+  const [labelDraft, setLabelDraft] = React.useState<{ id: string; text: string } | null>(null);
+  const commitLabel = () => {
+    if (!labelDraft) return;
+    const text = labelDraft.text.trim();
+    saveMasks.mutate(
+      masks.map((m) =>
+        m.id === labelDraft.id ? { ...m, ...(text ? { label: text } : { label: undefined }) } : m,
+      ),
+    );
+    setLabelDraft(null);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange} size="large" title="Masks & baselines">
+      <div className="flex flex-col gap-5">
+        {/* Ignore regions */}
+        <section className="flex flex-col gap-2">
+          <Text variant="small" className="font-medium">
+            Ignore regions ({masks.length})
+          </Text>
+          {masks.length === 0 ? (
+            <Text variant="small" color="tertiary">
+              None yet. Open a captured run, click “Ignore regions”, and drag over anything that
+              changes on its own — a clock, a carousel, an ad slot.
+            </Text>
+          ) : (
+            <div className="flex flex-col gap-1">
+              {masks.map((m) => (
+                <div
+                  key={m.id}
+                  className="flex items-center gap-2 rounded-md border border-token-border px-2 py-1.5"
+                >
+                  <SquareDashed className="size-3.5 shrink-0 text-support-orange" />
+                  {labelDraft?.id === m.id ? (
+                    <Input
+                      autoFocus
+                      className="h-7 flex-1"
+                      value={labelDraft.text}
+                      placeholder="Name this region"
+                      onChange={(e) => setLabelDraft({ id: m.id, text: e.target.value })}
+                      onBlur={commitLabel}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") commitLabel();
+                        if (e.key === "Escape") setLabelDraft(null);
+                      }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 truncate text-left"
+                      onClick={() => setLabelDraft({ id: m.id, text: m.label ?? "" })}
+                      title="Rename"
+                    >
+                      <Text variant="small" color={m.label ? undefined : "tertiary"}>
+                        {m.label ?? "Unnamed region"}
+                      </Text>
+                    </button>
+                  )}
+                  <Badge color="secondary" className="shrink-0">
+                    {m.stepId === null
+                      ? "All steps"
+                      : (stepLabelById.get(m.stepId) ?? "One step")}
+                  </Badge>
+                  <Text variant="small-mono" color="tertiary" className="shrink-0 tabular-nums">
+                    {Math.round(m.w * 100)}×{Math.round(m.h * 100)}%
+                  </Text>
+                  <Button
+                    iconOnly
+                    size="small"
+                    variant="glass"
+                    aria-label="Delete ignore region"
+                    onClick={() => saveMasks.mutate(masks.filter((x) => x.id !== m.id))}
+                  >
+                    <X className="size-3.5" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Pinned baselines */}
+        <section className="flex flex-col gap-2">
+          <Text variant="small" className="font-medium">
+            Pinned baselines ({baselines.length})
+          </Text>
+          {baselines.length === 0 ? (
+            <Text variant="small" color="tertiary">
+              None yet. The first run that captures screenshots pins one per step.
+            </Text>
+          ) : (
+            <div className="flex flex-col gap-1">
+              {baselines.map((b) => (
+                <div
+                  key={b.stepId}
+                  className="flex items-center gap-2 rounded-md border border-token-border px-2 py-1.5"
+                >
+                  <Stamp className="size-3.5 shrink-0 text-tertiary" />
+                  <Text variant="small-mono" className="min-w-0 flex-1 truncate" title={b.label}>
+                    {b.label}
+                  </Text>
+                  {b.rect ? (
+                    <Badge color="secondary" className="shrink-0">
+                      has geometry
+                    </Badge>
+                  ) : null}
+                  <Text variant="small" color="tertiary" className="shrink-0">
+                    {fmtDateTime(b.at)}
+                  </Text>
+                  <Button
+                    size="small"
+                    variant="glass"
+                    className="shrink-0"
+                    disabled={clearBaseline.isPending}
+                    onClick={() => clearBaseline.mutate(b.stepId)}
+                  >
+                    Unpin
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    </Dialog>
+  );
+}
+
 // ── Right pane: the scrubber/timeline for one run ───────────────────────
 function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   const qc = useQueryClient();
@@ -584,6 +761,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
     onError: (err) => toast.error(`Couldn't change comparison scope: ${err}`),
   });
 
+  const [managerOpen, setManagerOpen] = React.useState(false);
   const [masking, setMasking] = React.useState(false);
   // New masks default to this step only; the toolbar switch widens them to the
   // whole test (for page chrome like a clock that appears on every screenshot).
@@ -695,6 +873,14 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
             {fmtDateTime(replay.startedAt)}
           </Text>
         </div>
+        <Button
+          size="small"
+          variant="glass"
+          className="shrink-0"
+          onClick={() => setManagerOpen(true)}
+        >
+          Masks & baselines
+        </Button>
         <ThresholdControl testId={summary.testId} />
         <div className="flex shrink-0 items-center gap-1">
           <Button
@@ -722,6 +908,13 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           </Button>
         </div>
       </div>
+
+      <MasksBaselinesDialog
+        testId={summary.testId}
+        open={managerOpen}
+        onOpenChange={setManagerOpen}
+        stepLabelById={new Map(steps.map((st) => [st.stepId, st.label]))}
+      />
 
       {/* Failure banner */}
       {replay.failedIndex !== null ? (

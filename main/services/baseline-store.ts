@@ -126,6 +126,20 @@ export const baselineStore = {
     return buf ? `data:image/png;base64,${buf.toString("base64")}` : null;
   },
 
+  /** Unpin one step's baseline (PNG + manifest entry). The next capture run
+   *  re-seeds it, so this is the "start this step's comparison over" action. */
+  clear(testId: string, stepId: string): void {
+    try {
+      fs.rmSync(path.join(baselineDir(testId), safeStepFile(stepId)), { force: true });
+    } catch (err) {
+      logger.warn("baseline", "Failed to delete baseline image", { stepId, err: String(err) });
+    }
+    const m = readManifest(testId);
+    delete m.steps[stepId];
+    m.updatedAt = Date.now();
+    writeManifest(testId, m);
+  },
+
   /** Delete every baseline for a test (called when the test is deleted). */
   deleteTest(testId: string): void {
     try {

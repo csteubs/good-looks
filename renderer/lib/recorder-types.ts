@@ -238,6 +238,15 @@ export interface CaptureOverheadSummary {
   totalShots: number;
 }
 
+/** A pinned visual baseline. Mirror of main/services/baseline-store.ts. */
+export interface BaselineEntry {
+  stepId: string;
+  runId: string;
+  at: number;
+  label: string;
+  rect?: NormalizedRect;
+}
+
 /** What a retention sweep deleted. Mirror of main/services/retention.ts. */
 export interface RetentionResult {
   removedRuns: number;

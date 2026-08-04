@@ -539,6 +539,21 @@ export function registerHandlers(): void {
       return result;
     },
   );
+  // Every pinned baseline for a test, newest first — backs the baselines
+  // manager (which steps are pinned, from which run, and when).
+  ipcMain.handle("visual:listBaselines", async (_e, params: { testId: string }) => {
+    const entries = Object.values(baselineStore.manifest(params.testId).steps);
+    return entries.sort((a, b) => b.at - a.at);
+  });
+  // Unpin a step's baseline, so the next capture run re-seeds it from scratch.
+  ipcMain.handle(
+    "visual:clearBaseline",
+    async (_e, params: { testId: string; stepId: string }) => {
+      baselineStore.clear(params.testId, params.stepId);
+      sendToMain("runs:changed", {});
+      return true;
+    },
+  );
   // A step's pinned baseline screenshot as a data URL (for side-by-side), or null.
   ipcMain.handle(
     "visual:baselineShot",

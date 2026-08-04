@@ -12,6 +12,7 @@ import type {
   RecorderState,
   RunRecord,
   ArtifactUsage,
+  BaselineEntry,
   CaptureOverheadSummary,
   RetentionResult,
   RunReplay,
@@ -162,6 +163,10 @@ export const api = {
     baselineShot: (testId: string, stepId: string) =>
       ipc().invoke<string | null>("visual:baselineShot", { testId, stepId }),
     getMasks: (testId: string) => ipc().invoke<VisualMask[]>("visual:getMasks", { testId }),
+    listBaselines: (testId: string) =>
+      ipc().invoke<BaselineEntry[]>("visual:listBaselines", { testId }),
+    clearBaseline: (testId: string, stepId: string) =>
+      ipc().invoke<boolean>("visual:clearBaseline", { testId, stepId }),
     getElementSteps: (testId: string) =>
       ipc().invoke<string[]>("visual:getElementSteps", { testId }),
     setElementStep: (testId: string, stepId: string, element: boolean) =>

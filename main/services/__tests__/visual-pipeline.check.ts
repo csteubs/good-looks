@@ -444,6 +444,28 @@ eq(
   "element scope without recorded geometry reports unable",
 );
 
+// ── 9. Baselines manager: listing and unpinning ────────────────────────────
+const pinnedList = Object.values(baselineStore.manifest(testId).steps);
+eq(pinnedList.length, capturedStepIds.length, "every captured step is listed as a pinned baseline");
+check(
+  pinnedList.every((b) => b.label.length > 0 && b.runId.length > 0),
+  "each listed baseline carries the label and run it was pinned from",
+);
+
+// Unpinning removes both the PNG and the manifest entry, so the next capture
+// run re-seeds the step from scratch.
+baselineStore.clear(testId, capturedStepIds[0]);
+eq(baselineStore.has(testId, capturedStepIds[0]), false, "unpinning deletes the baseline image");
+eq(baselineStore.entry(testId, capturedStepIds[0]), null, "unpinning removes the manifest entry");
+eq(
+  baselineStore.has(testId, capturedStepIds[1]),
+  true,
+  "unpinning one step leaves the others pinned",
+);
+// Clearing something already gone must not throw.
+baselineStore.clear(testId, capturedStepIds[0]);
+eq(baselineStore.entry(testId, capturedStepIds[0]), null, "clearing twice is a no-op");
+
 // ── cleanup + verdict ──────────────────────────────────────────────────────
 try {
   fs.rmSync(DATA_ROOT, { recursive: true, force: true });
