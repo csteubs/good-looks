@@ -225,7 +225,7 @@ function StepScreenshot({
         ? `Visual diff for step ${step.index + 1}`
         : `Screenshot for step ${step.index + 1}`;
   return (
-    <div className="relative max-h-full max-w-full">
+    <div className="relative flex h-full w-full items-center justify-center overflow-hidden">
       <img
         src={src}
         alt={alt}
@@ -1110,7 +1110,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
 
       {/* Screenshot */}
       <div className="min-h-0 flex-1 p-4">
-        <div className="relative flex h-full items-center justify-center rounded-lg border border-token-border bg-token-surface p-3">
+        <div className="relative flex h-full items-center justify-center overflow-hidden rounded-lg border border-token-border bg-token-surface p-3">
           {/* Ignore-region editor toggle */}
           {step.screenshot ? (
             <div className="absolute left-3 top-3 z-10 flex items-center gap-2">
