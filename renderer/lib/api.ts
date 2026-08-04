@@ -160,6 +160,10 @@ export const api = {
     baselineShot: (testId: string, stepId: string) =>
       ipc().invoke<string | null>("visual:baselineShot", { testId, stepId }),
     getMasks: (testId: string) => ipc().invoke<VisualMask[]>("visual:getMasks", { testId }),
+    getElementSteps: (testId: string) =>
+      ipc().invoke<string[]>("visual:getElementSteps", { testId }),
+    setElementStep: (testId: string, stepId: string, element: boolean) =>
+      ipc().invoke<string[]>("visual:setElementStep", { testId, stepId, element }),
     setMasks: (testId: string, masks: VisualMask[]) =>
       ipc().invoke<VisualMask[]>("visual:setMasks", { testId, masks }),
   },

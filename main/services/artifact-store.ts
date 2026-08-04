@@ -40,6 +40,18 @@ export interface ArtifactStepEntry {
   ts: number;
   /** wall-clock ms this one screenshot took (absent on pre-instrumentation runs) */
   ms?: number;
+  /** the acted-on element's viewport rect, NORMALIZED 0–1, measured at capture
+   *  time. Present only for locator actions; the anchor for component-level
+   *  diffing (no selector is re-resolved later). */
+  rect?: NormalizedRect;
+}
+
+/** A normalized (0–1) rectangle in page/viewport space. */
+export interface NormalizedRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export interface ArtifactManifest {
@@ -83,6 +95,9 @@ export interface VisualDiff {
   /** how many ignore masks were applied to this step's comparison, when any.
    *  Lets the UI say the result was measured with regions excluded. */
   maskedCount?: number;
+  /** "element" when this step was compared element-scoped rather than
+   *  page-wide, so the UI can label what the ratio is a share OF. */
+  scope?: "page" | "element";
 }
 
 export interface ReplayStep {
@@ -95,6 +110,8 @@ export interface ReplayStep {
   type: string;
   status: ReplayStepStatus;
   screenshot: string | null;
+  /** the acted-on element's normalized rect at capture time, when recorded. */
+  rect?: NormalizedRect;
   /** visual-diff result for this step's screenshot, when captured (Phase 3). */
   diff?: VisualDiff;
 }

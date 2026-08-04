@@ -20,8 +20,15 @@ export function acceptStepBaseline(testId: string, runId: string, stepId: string
   if (step && step.screenshot) {
     const png = artifactStore.readShot(testId, runId, step.screenshot);
     if (png) {
-      baselineStore.set(testId, stepId, png, { runId, label: step.label });
-      step.diff = { state: "match", ratio: 0, threshold: replay.visualThreshold };
+      // Carry the element geometry across too, so an element-scoped comparison
+      // keeps working (and starts working) after a re-pin.
+      baselineStore.set(testId, stepId, png, { runId, label: step.label, rect: step.rect });
+      step.diff = {
+        state: "match",
+        ratio: 0,
+        threshold: replay.visualThreshold,
+        ...(step.diff?.scope ? { scope: step.diff.scope } : {}),
+      };
       artifactStore.writeReplay(testId, runId, replay);
       runHistoryStore.logBaselineUpdate(testId, replay.testName, 1, "step");
     }
@@ -39,8 +46,13 @@ export function acceptRunBaseline(testId: string, runId: string): RunReplay | nu
     if (!step.screenshot) continue;
     const png = artifactStore.readShot(testId, runId, step.screenshot);
     if (!png) continue;
-    baselineStore.set(testId, step.stepId, png, { runId, label: step.label });
-    step.diff = { state: "match", ratio: 0, threshold: replay.visualThreshold };
+    baselineStore.set(testId, step.stepId, png, { runId, label: step.label, rect: step.rect });
+    step.diff = {
+      state: "match",
+      ratio: 0,
+      threshold: replay.visualThreshold,
+      ...(step.diff?.scope ? { scope: step.diff.scope } : {}),
+    };
     pinned++;
   }
   artifactStore.writeReplay(testId, runId, replay);

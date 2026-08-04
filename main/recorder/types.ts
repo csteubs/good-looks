@@ -152,6 +152,10 @@ export interface TestRecord {
    *  content (timestamps, carousels, ads) would otherwise flag a change on
    *  every run. Absent/empty → nothing is masked. */
   visualMasks?: VisualMask[];
+  /** Step ids compared ELEMENT-scoped (cropped to the element's recorded
+   *  rectangle) instead of page-wide. Absent/empty → every step is page-level,
+   *  which stays the default. */
+  visualElementSteps?: string[];
   /** Per-test screenshot-capture preference, remembered between sessions.
    *  When absent, the global `RecorderSettings.defaultCaptureArtifacts`
    *  applies. Set from the test detail toolbar's "Capture screenshots" toggle. */

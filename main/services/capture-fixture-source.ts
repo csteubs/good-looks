@@ -53,6 +53,28 @@ function describe(target, method, args) {
   return { action: method, target: loc, value: value };
 }
 
+// The element's on-page rectangle, NORMALIZED against the viewport, recorded at
+// capture time. Component-level diffing crops to this instead of re-resolving a
+// selector later — the roadmap's "stable selector-to-region mapping" hazard is
+// avoided by never doing the mapping twice.
+async function elementRect(page, target) {
+  try {
+    if (!target || typeof target.boundingBox !== "function") return undefined;
+    const box = await target.boundingBox({ timeout: 1000 });
+    if (!box || !box.width || !box.height) return undefined;
+    const vp = page.viewportSize && page.viewportSize();
+    if (!vp || !vp.width || !vp.height) return undefined;
+    return {
+      x: box.x / vp.width,
+      y: box.y / vp.height,
+      w: box.width / vp.width,
+      h: box.height / vp.height,
+    };
+  } catch (e) {
+    return undefined; // geometry is best-effort; never fail the test for it
+  }
+}
+
 async function capture(page, method, target, args) {
   if (!ctx) return;
   const index = ctx.index++;
@@ -60,7 +82,10 @@ async function capture(page, method, target, args) {
   let ok = false;
   // Time the screenshot itself so the runner can report what capture actually
   // costs, rather than leaving the toggle's overhead to guesswork.
-  const t0 = Date.now();
+  // Measured BEFORE the screenshot so it reflects the element the action ran
+  // against, and excluded from captureMs so overhead stays screenshot-only.
+  const rect = await elementRect(page, target);
+  const tShot = Date.now();
   try {
     if (page && (!page.isClosed || !page.isClosed())) {
       await page.screenshot({ path: path.join(ctx.dir, index + ".png"), timeout: SHOT_TIMEOUT_MS });
@@ -70,9 +95,11 @@ async function capture(page, method, target, args) {
     // Capture must never fail or alter the test. Log to stderr for diagnosis.
     process.stderr.write("[glaze-capture] step " + index + " (" + method + ") screenshot failed: " + String(err) + "\\n");
   }
-  const ms = Date.now() - t0;
+  const ms = Date.now() - tShot;
   ctx.captureMs += ms;
-  ctx.manifest.push({ index: index, action: info.action, target: info.target, value: info.value, ok: ok, ts: Date.now(), ms: ms });
+  const entry = { index: index, action: info.action, target: info.target, value: info.value, ok: ok, ts: Date.now(), ms: ms };
+  if (rect) entry.rect = rect;
+  ctx.manifest.push(entry);
 }
 
 function wrap(obj, method, getPage) {

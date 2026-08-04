@@ -465,6 +465,7 @@ export const playwrightRunner = {
               replay,
               rec.visualThreshold ?? DEFAULT_VISUAL_THRESHOLD,
               rec.visualMasks ?? [],
+              rec.visualElementSteps ?? [],
             );
             artifactStore.writeReplay(rec.id, recordId, replay);
           } catch (err) {

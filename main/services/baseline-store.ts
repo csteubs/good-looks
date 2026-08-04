@@ -18,6 +18,8 @@ import * as path from "path";
 
 import { app, logger } from "@glaze/core/backend";
 
+import type { NormalizedRect } from "./artifact-store.js";
+
 /** Per-step baseline metadata (the PNG lives alongside as <stepId>.png). */
 export interface BaselineEntry {
   stepId: string;
@@ -27,6 +29,10 @@ export interface BaselineEntry {
   at: number;
   /** human-friendly label at pin time (for a future baselines manager UI). */
   label: string;
+  /** the element's normalized rect in THIS baseline screenshot, when the run
+   *  that pinned it recorded one. Component-level diffing crops the baseline
+   *  by this and the new shot by its own — comparing like with like. */
+  rect?: NormalizedRect;
 }
 
 interface BaselineManifest {
@@ -83,12 +89,23 @@ export const baselineStore = {
   },
 
   /** Pin (or replace) a step's baseline with the given PNG bytes. */
-  set(testId: string, stepId: string, png: Buffer, meta: { runId: string; label: string }): void {
+  set(
+    testId: string,
+    stepId: string,
+    png: Buffer,
+    meta: { runId: string; label: string; rect?: NormalizedRect },
+  ): void {
     const dir = baselineDir(testId);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, safeStepFile(stepId)), png);
     const m = readManifest(testId);
-    m.steps[stepId] = { stepId, runId: meta.runId, at: Date.now(), label: meta.label };
+    m.steps[stepId] = {
+      stepId,
+      runId: meta.runId,
+      at: Date.now(),
+      label: meta.label,
+      ...(meta.rect ? { rect: meta.rect } : {}),
+    };
     m.updatedAt = Date.now();
     writeManifest(testId, m);
   },

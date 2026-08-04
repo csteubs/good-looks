@@ -161,6 +161,16 @@ export interface VisualDiff {
   diffFile?: string;
   /** how many ignore masks were applied to this step's comparison, when any. */
   maskedCount?: number;
+  /** "element" when the step was compared element-scoped rather than page-wide. */
+  scope?: "page" | "element";
+}
+
+/** A normalized (0–1) rectangle in page/viewport space. */
+export interface NormalizedRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 export interface ReplayStep {
@@ -172,6 +182,8 @@ export interface ReplayStep {
   status: ReplayStepStatus;
   /** filename within the run dir (e.g. "3.png"), or null when uncaptured. */
   screenshot: string | null;
+  /** the acted-on element's normalized rect at capture time, when recorded. */
+  rect?: NormalizedRect;
   diff?: VisualDiff;
 }
 

@@ -113,10 +113,15 @@ function DiffBadge({ diff }: { diff: VisualDiff }) {
       label = "Baseline set";
       break;
     case "match":
-      label = "Visual match";
+      label = diff.scope === "element" ? "Element match" : "Visual match";
       break;
     case "changed":
-      label = `Changed ${fmtPct(diff.ratio ?? 0)}`;
+      // Say what the percentage is a share OF — 2% of one button is a very
+      // different claim from 2% of the page.
+      label =
+        diff.scope === "element"
+          ? `Element changed ${fmtPct(diff.ratio ?? 0)}`
+          : `Changed ${fmtPct(diff.ratio ?? 0)}`;
       break;
     default:
       label = "Can’t compare";
@@ -563,6 +568,22 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
     onSuccess: (saved) => qc.setQueryData(["visualMasks", summary.testId], saved),
     onError: (err) => toast.error(`Couldn't save ignore regions: ${err}`),
   });
+  // Steps compared element-scoped rather than page-wide (component-level).
+  const elementStepsQuery = useQuery({
+    queryKey: ["visualElementSteps", summary.testId],
+    queryFn: () => api.visual.getElementSteps(summary.testId),
+  });
+  const elementSteps = React.useMemo(
+    () => new Set(elementStepsQuery.data ?? []),
+    [elementStepsQuery.data],
+  );
+  const setElementStep = useMutation({
+    mutationFn: ({ stepId, element }: { stepId: string; element: boolean }) =>
+      api.visual.setElementStep(summary.testId, stepId, element),
+    onSuccess: (saved) => qc.setQueryData(["visualElementSteps", summary.testId], saved),
+    onError: (err) => toast.error(`Couldn't change comparison scope: ${err}`),
+  });
+
   const [masking, setMasking] = React.useState(false);
   // New masks default to this step only; the toolbar switch widens them to the
   // whole test (for page chrome like a clock that appears on every screenshot).
@@ -796,6 +817,18 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
             step={step}
             mode={effectiveMode}
           >
+            {step.rect && elementSteps.has(step.stepId) ? (
+              <div
+                className="pointer-events-none absolute border-2 border-accent"
+                style={{
+                  left: pctStr(step.rect.x),
+                  top: pctStr(step.rect.y),
+                  width: pctStr(step.rect.w),
+                  height: pctStr(step.rect.h),
+                }}
+                title="Only this region is compared"
+              />
+            ) : null}
             <MaskLayer
               masks={stepMasks}
               editing={masking}
@@ -830,6 +863,32 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         <Text variant="small-mono" className="min-w-0 flex-1 truncate" title={step.label}>
           {step.label}
         </Text>
+        {/* Comparison scope — only meaningful for a step with a captured
+            element rectangle to crop to. */}
+        {step.screenshot && step.rect ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <SegmentedControl
+                type="single"
+                size="small"
+                variant="filled"
+                className="shrink-0"
+                value={elementSteps.has(step.stepId) ? "element" : "page"}
+                onValueChange={(v) =>
+                  v &&
+                  setElementStep.mutate({ stepId: step.stepId, element: v === "element" })
+                }
+              >
+                <SegmentedControlItem value="page">Page</SegmentedControlItem>
+                <SegmentedControlItem value="element">Element</SegmentedControlItem>
+              </SegmentedControl>
+            </TooltipTrigger>
+            <TooltipContent>
+              Compare the whole page, or only the element this step acted on. Applies from the next
+              capture run.
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
         {step.diff ? <DiffBadge diff={step.diff} /> : null}
         {step.screenshot && step.diff?.state === "changed" && !acceptedSteps.has(step.stepId) ? (
           <AlertDialog

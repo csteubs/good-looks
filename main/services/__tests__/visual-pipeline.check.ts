@@ -357,6 +357,93 @@ eq(
   "a mask pinned to this step applies",
 );
 
+// ── 8. Component-level (element-scoped) diffing ────────────────────────────
+// Cropping to the element's recorded rect means a change ELSEWHERE on the page
+// is ignored, while a change inside the element is still caught. A size change
+// between runs is reported honestly rather than diffed as mismatched crops.
+const elTestId = randomUUID();
+const elSteps: Step[] = [
+  step({ type: "click", locator: { k: "role", role: "button", name: "Go" } }),
+];
+const elStepId = elSteps[0].id;
+// The button occupies the bottom-right quarter.
+const BUTTON = { x: 0.5, y: 0.5, w: 0.5, h: 0.5 };
+
+function elReplay(
+  runId: string,
+  shot: Buffer,
+  rect: { x: number; y: number; w: number; h: number } | undefined,
+  elementScoped: boolean,
+) {
+  const dir = artifactStore.ensureRunDir(elTestId, runId);
+  fs.writeFileSync(path.join(dir, "0.png"), shot);
+  fs.writeFileSync(
+    path.join(dir, "manifest.json"),
+    JSON.stringify({
+      testId: elTestId,
+      runId,
+      status: "passed",
+      steps: [
+        { index: 0, action: "click", target: "", ok: true, ts: Date.now(), ...(rect ? { rect } : {}) },
+      ],
+    } satisfies ArtifactManifest),
+  );
+  const replay = buildReplay({
+    testId: elTestId,
+    runId,
+    testName: "Component diffing",
+    url: "https://example.com",
+    status: "passed",
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+    steps: elSteps,
+    statuses: {},
+  });
+  enrichWithVisualDiffs(replay, threshold, [], elementScoped ? [elStepId] : []);
+  return replay;
+}
+
+// Seed a baseline that carries the element geometry.
+const elSeed = elReplay(randomUUID(), RED, BUTTON, true);
+eq(elSeed.steps[0].diff?.state, "new-baseline", "element run seeds a baseline");
+eq(elSeed.steps[0].rect?.w, BUTTON.w, "the capture rect round-trips into the replay model");
+check(!!baselineStore.entry(elTestId, elStepId)?.rect, "the baseline records its element rect");
+
+// A change OUTSIDE the element (top-left quarter) is ignored element-scoped...
+const OUTSIDE = patchedPng(0, 0, 0.25, 0.25);
+eq(
+  elReplay(randomUUID(), OUTSIDE, BUTTON, true).steps[0].diff?.state,
+  "match",
+  "element-scoped: a change outside the element is ignored",
+);
+// ...but caught page-wide.
+eq(
+  elReplay(randomUUID(), OUTSIDE, BUTTON, false).steps[0].diff?.state,
+  "changed",
+  "page-scoped: the same change is still flagged",
+);
+
+// A change INSIDE the element is caught.
+const INSIDE = patchedPng(0.5, 0.5, 0.5, 0.5);
+const insideRun = elReplay(randomUUID(), INSIDE, BUTTON, true);
+eq(insideRun.steps[0].diff?.state, "changed", "element-scoped: a change inside the element is caught");
+eq(insideRun.steps[0].diff?.scope, "element", "the diff records the scope it was measured at");
+
+// A resized element must not be diffed as mismatched crops.
+const resized = elReplay(randomUUID(), RED, { x: 0.5, y: 0.5, w: 0.25, h: 0.25 }, true);
+eq(resized.steps[0].diff?.state, "unable", "a resized element reports unable, not a false change");
+check(
+  (resized.steps[0].diff?.reason ?? "").includes("moved or resized"),
+  "the resize reason names the cause",
+);
+
+// Element scope requested but no geometry captured this run → say so.
+eq(
+  elReplay(randomUUID(), RED, undefined, true).steps[0].diff?.state,
+  "unable",
+  "element scope without recorded geometry reports unable",
+);
+
 // ── cleanup + verdict ──────────────────────────────────────────────────────
 try {
   fs.rmSync(DATA_ROOT, { recursive: true, force: true });

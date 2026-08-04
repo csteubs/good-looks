@@ -8,7 +8,7 @@
 // Behavior is identical to the in-runner version; this is a pure move.
 
 import { artifactStore } from "./artifact-store.js";
-import type { ReplayStep, ReplayStepStatus, RunReplay } from "./artifact-store.js";
+import type { NormalizedRect, ReplayStep, ReplayStepStatus, RunReplay } from "./artifact-store.js";
 import { baselineStore } from "./baseline-store.js";
 import { diffPngBuffers } from "./visual-diff.js";
 import { describeStep } from "./script-generator.js";
@@ -75,10 +75,12 @@ export function buildReplay(params: {
   // Pass 1 — screenshots per step, matched in execution order by method so a
   // non-captured step can never steal the next action's shot.
   let shotPtr = 0;
-  const shotByStep: (string | null)[] = params.steps.map((s) => {
+  const rectByStep: (NormalizedRect | undefined)[] = [];
+  const shotByStep: (string | null)[] = params.steps.map((s, i) => {
     const method = s.type === "if" || s.type === "endif" ? null : captureMethod(s);
     if (method && shotPtr < shots.length && shots[shotPtr].action === method) {
       const entry = shots[shotPtr++];
+      rectByStep[i] = entry.rect;
       return entry.ok ? `${entry.index}.png` : null;
     }
     return null;
@@ -118,6 +120,7 @@ export function buildReplay(params: {
       type: s.type,
       status,
       screenshot: shotByStep[i],
+      ...(rectByStep[i] ? { rect: rectByStep[i] } : {}),
     };
   });
   const failedIndex = steps.find((s) => s.status === "failed")?.index ?? null;
@@ -143,7 +146,10 @@ export function enrichWithVisualDiffs(
   replay: RunReplay,
   threshold: number,
   masks: readonly VisualMask[] = [],
+  /** stepIds the user set to compare element-scoped rather than page-wide. */
+  elementSteps: readonly string[] = [],
 ): void {
+  const elementScoped = new Set(elementSteps);
   replay.visualThreshold = threshold;
   for (const step of replay.steps) {
     // A mask with stepId null is test-wide; otherwise it targets one step.
@@ -155,10 +161,13 @@ export function enrichWithVisualDiffs(
       continue;
     }
     if (!baselineStore.has(replay.testId, step.stepId)) {
-      // First captured run for this step — seed the pinned baseline.
+      // First captured run for this step — seed the pinned baseline, recording
+      // the element geometry alongside so a later element-scoped diff can crop
+      // the baseline the same way.
       baselineStore.set(replay.testId, step.stepId, next, {
         runId: replay.runId,
         label: step.label,
+        rect: step.rect,
       });
       step.diff = { state: "new-baseline", threshold };
       continue;
@@ -168,9 +177,32 @@ export function enrichWithVisualDiffs(
       step.diff = { state: "unable", reason: "baseline unreadable", threshold };
       continue;
     }
-    const outcome = diffPngBuffers(baseline, next, threshold, undefined, stepMasks);
+    // Component-level: crop both sides to the element's rect as measured in
+    // each run. Requires geometry on BOTH sides — if either is missing we say
+    // so rather than silently falling back to a page-wide comparison the user
+    // didn't ask for.
+    let region: { baseline: NormalizedRect; next: NormalizedRect } | undefined;
+    const wantsElement = elementScoped.has(step.stepId);
+    if (wantsElement) {
+      const baseRect = baselineStore.entry(replay.testId, step.stepId)?.rect;
+      if (!baseRect || !step.rect) {
+        step.diff = {
+          state: "unable",
+          reason: !step.rect
+            ? "no element geometry recorded for this run (element-scoped comparison)"
+            : "the pinned baseline predates element geometry — accept a new baseline to enable it",
+          threshold,
+          scope: "element",
+        };
+        continue;
+      }
+      region = { baseline: baseRect, next: step.rect };
+    }
+
+    const outcome = diffPngBuffers(baseline, next, threshold, undefined, stepMasks, region);
+    const scope = wantsElement ? ("element" as const) : ("page" as const);
     if (outcome.state === "unable") {
-      step.diff = { state: "unable", reason: outcome.reason, threshold };
+      step.diff = { state: "unable", reason: outcome.reason, threshold, scope };
     } else if (outcome.state === "changed") {
       const shotIndex = Number.parseInt(step.screenshot, 10);
       const diffFile = artifactStore.writeDiff(replay.testId, replay.runId, shotIndex, outcome.diffPng);
@@ -180,6 +212,7 @@ export function enrichWithVisualDiffs(
         threshold,
         diffFile,
         maskedCount: stepMasks.length || undefined,
+        scope,
       };
     } else {
       step.diff = {
@@ -187,6 +220,7 @@ export function enrichWithVisualDiffs(
         ratio: outcome.ratio,
         threshold,
         maskedCount: stepMasks.length || undefined,
+        scope,
       };
     }
   }

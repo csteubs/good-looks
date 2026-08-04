@@ -83,6 +83,24 @@ function applyMasks(
   return painted;
 }
 
+/** Crop an RGBA image to a normalized region, returning a new PNG. Bounds are
+ *  clamped and rounded to whole pixels; an empty result returns null. */
+function cropTo(png: PNG, r: MaskRect): PNG | null {
+  const x0 = Math.max(0, Math.min(png.width, Math.round(r.x * png.width)));
+  const y0 = Math.max(0, Math.min(png.height, Math.round(r.y * png.height)));
+  const x1 = Math.max(x0, Math.min(png.width, Math.round((r.x + r.w) * png.width)));
+  const y1 = Math.max(y0, Math.min(png.height, Math.round((r.y + r.h) * png.height)));
+  const width = x1 - x0;
+  const height = y1 - y0;
+  if (width <= 0 || height <= 0) return null;
+  const out = new PNG({ width, height });
+  for (let y = 0; y < height; y++) {
+    const src = ((y + y0) * png.width + x0) * 4;
+    png.data.copy(out.data, y * width * 4, src, src + width * 4);
+  }
+  return out;
+}
+
 /**
  * Compare two PNG buffers.
  * @param threshold percent of pixels (0–100) allowed to change before the
@@ -92,6 +110,11 @@ function applyMasks(
  * @param masks normalized regions to ignore. Both images are painted with the
  *   same solid fill there, so masked pixels always compare equal — the ratio
  *   stays "changed pixels ÷ all pixels" with no special-casing downstream.
+ * @param region component-level diffing: crop each image to the element's
+ *   recorded rectangle before comparing, so unrelated page changes don't count.
+ *   The two rects are measured independently (baseline run vs this run), so a
+ *   size difference means the element moved/resized — reported as "unable"
+ *   rather than diffing mismatched crops.
  */
 export function diffPngBuffers(
   baseline: Buffer,
@@ -99,6 +122,7 @@ export function diffPngBuffers(
   threshold: number,
   sensitivity = 0.1,
   masks: readonly MaskRect[] = [],
+  region?: { baseline: MaskRect; next: MaskRect },
 ): DiffOutcome {
   let a: PNG;
   let b: PNG;
@@ -108,6 +132,31 @@ export function diffPngBuffers(
   } catch (err) {
     return { state: "unable", reason: "could not decode image: " + String(err) };
   }
+  // Component-level: crop to the element's recorded rectangle in each image.
+  let cropMask: ((m: MaskRect) => MaskRect) | null = null;
+  if (region) {
+    const ca = cropTo(a, region.baseline);
+    const cb = cropTo(b, region.next);
+    if (!ca || !cb) return { state: "unable", reason: "element region is empty" };
+    if (ca.width !== cb.width || ca.height !== cb.height) {
+      return {
+        state: "unable",
+        reason: `element moved or resized (baseline ${ca.width}×${ca.height}, new ${cb.width}×${cb.height})`,
+      };
+    }
+    a = ca;
+    b = cb;
+    // Masks are page-normalized; re-express them relative to the crop so they
+    // still cover the same part of the page.
+    const r = region.next;
+    cropMask = (m) => ({
+      x: (m.x - r.x) / r.w,
+      y: (m.y - r.y) / r.h,
+      w: m.w / r.w,
+      h: m.h / r.h,
+    });
+  }
+
   if (a.width !== b.width || a.height !== b.height) {
     return {
       state: "unable",
@@ -122,9 +171,10 @@ export function diffPngBuffers(
   // the stored screenshots and baselines are never modified.
   let maskedPixels = 0;
   if (masks.length > 0) {
+    const effective = cropMask ? masks.map(cropMask) : masks;
     const seen = new Uint8Array(totalPixels);
-    maskedPixels = applyMasks(a, masks, seen);
-    applyMasks(b, masks);
+    maskedPixels = applyMasks(a, effective, seen);
+    applyMasks(b, effective);
   }
 
   const diff = new PNG({ width, height });

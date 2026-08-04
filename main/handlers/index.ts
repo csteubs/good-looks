@@ -496,6 +496,26 @@ export function registerHandlers(): void {
       return rec.visualMasks;
     },
   );
+  // Step ids this test compares element-scoped rather than page-wide.
+  ipcMain.handle("visual:getElementSteps", async (_e, params: { testId: string }) => {
+    const rec = testStore.get(params.testId);
+    return rec?.visualElementSteps ?? [];
+  });
+  // Toggle one step between page-level and element-scoped comparison.
+  ipcMain.handle(
+    "visual:setElementStep",
+    async (_e, params: { testId: string; stepId: string; element: boolean }) => {
+      const rec = testStore.get(params.testId);
+      if (!rec) throw new Error("Test not found: " + params.testId);
+      const current = new Set(rec.visualElementSteps ?? []);
+      if (params.element) current.add(params.stepId);
+      else current.delete(params.stepId);
+      rec.visualElementSteps = [...current];
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return rec.visualElementSteps;
+    },
+  );
   // Pin an entire run's screenshots as the new baselines. Returns patched replay.
   ipcMain.handle("visual:acceptRun", async (_e, params: { testId: string; runId: string }) => {
     const result = acceptRunBaseline(params.testId, params.runId);
