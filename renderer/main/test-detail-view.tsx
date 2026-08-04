@@ -226,21 +226,6 @@ export function TestDetailView() {
           />
           <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
             <Checkbox
-              checked={captureArtifacts}
-              onCheckedChange={(v) => {
-                const next = v === true;
-                setCaptureArtifacts(next);
-                api.tests.setCaptureArtifacts(id, next).catch(() => {
-                  /* best-effort persist; the toggle still applies to this run */
-                });
-              }}
-              disabled={runInfo?.running}
-              aria-label="Capture screenshots on this run"
-            />
-            Capture screenshots
-          </label>
-          <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
-            <Checkbox
               checked={runHeadless}
               onCheckedChange={(v) => {
                 const next = v === true;
@@ -253,6 +238,21 @@ export function TestDetailView() {
               aria-label="Run this test headless (no visible browser)"
             />
             Run headless
+          </label>
+          <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+            <Checkbox
+              checked={captureArtifacts}
+              onCheckedChange={(v) => {
+                const next = v === true;
+                setCaptureArtifacts(next);
+                api.tests.setCaptureArtifacts(id, next).catch(() => {
+                  /* best-effort persist; the toggle still applies to this run */
+                });
+              }}
+              disabled={runInfo?.running || runHeadless}
+              aria-label="Capture screenshots on this run"
+            />
+            Capture screenshots
           </label>
           {runInfo?.running ? (
             <Button variant="destructive" onClick={() => stopRun(id)}>
