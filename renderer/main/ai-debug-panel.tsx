@@ -648,7 +648,7 @@ export function AiDebugDialog({
                     seg.type === "code" ? (
                       <CodeBlock key={i} lang={seg.lang} content={seg.content} />
                     ) : (
-                      <p key={i} className="text-small whitespace-pre-wrap break-words text-primary">
+                      <p key={i} className="py-1 text-small whitespace-pre-wrap break-words text-primary">
                         {seg.content}
                       </p>
                     ),
@@ -868,7 +868,7 @@ export function StepAiDebugDialog({
                 seg.type === "code" ? (
                   <CodeBlock key={i} lang={seg.lang} content={seg.content} />
                 ) : (
-                  <p key={i} className="text-small whitespace-pre-wrap break-words text-primary">
+                  <p key={i} className="py-1 text-small whitespace-pre-wrap break-words text-primary">
                     {seg.content}
                   </p>
                 ),
