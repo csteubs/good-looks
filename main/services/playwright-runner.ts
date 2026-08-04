@@ -376,8 +376,14 @@ export const playwrightRunner = {
             // retained count is user-configurable in Settings; `- 1` leaves
             // room for the run about to be created, so the on-disk total after
             // this run equals the configured number.
-            const keep = recorderSettingsStore.get().artifactRetainedRuns ?? DEFAULT_RETAINED_RUNS;
-            artifactStore.pruneRuns(rec.id, Math.max(0, keep - 1));
+            const settings = recorderSettingsStore.get();
+            const keep = settings.artifactRetainedRuns ?? DEFAULT_RETAINED_RUNS;
+            const days = settings.artifactRetentionDays ?? 0;
+            artifactStore.pruneRuns(
+              rec.id,
+              Math.max(0, keep - 1),
+              days > 0 ? days * 24 * 60 * 60 * 1000 : 0,
+            );
             artifactDir = artifactStore.ensureRunDir(rec.id, recordId);
           } else {
             emitOutput(

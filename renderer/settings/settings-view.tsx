@@ -73,6 +73,7 @@ export function SettingsView() {
   const [defaultCaptureArtifacts, setDefaultCaptureArtifacts] = useState(false);
   const [defaultRunHeadless, setDefaultRunHeadless] = useState(false);
   const [artifactRetainedRuns, setArtifactRetainedRuns] = useState(10);
+  const [artifactRetentionDays, setArtifactRetentionDays] = useState(0);
   const [artifactUsage, setArtifactUsage] = useState<ArtifactUsage | null>(null);
 
   // ── Auto-Heal settings ──────────────────────────────────────────────
@@ -108,6 +109,7 @@ export function SettingsView() {
         setDefaultCaptureArtifacts(settings.defaultCaptureArtifacts ?? false);
         setDefaultRunHeadless(settings.defaultRunHeadless ?? false);
         setArtifactRetainedRuns(settings.artifactRetainedRuns ?? 10);
+        setArtifactRetentionDays(settings.artifactRetentionDays ?? 0);
         setAutoHealEnabled(settings.autoHealEnabled ?? true);
         setAutoHealRetries(settings.autoHealRetries ?? 3);
         setAutoHealTimeout(settings.autoHealAttemptTimeoutMs ?? 4000);
@@ -164,6 +166,16 @@ export function SettingsView() {
     setArtifactRetainedRuns(n);
     try {
       await api.recorder.setSettings({ artifactRetainedRuns: n });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleArtifactRetentionDaysChange = async (value: string) => {
+    const n = Math.max(0, Math.min(365, Math.round(Number(value) || 0)));
+    setArtifactRetentionDays(n);
+    try {
+      await api.recorder.setSettings({ artifactRetentionDays: n });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
     }
@@ -509,6 +521,26 @@ export function SettingsView() {
                 className="w-24"
                 value={artifactRetainedRuns}
                 onChange={(e) => handleArtifactRetainedRunsChange(e.target.value)}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="artifact-retention-days">Delete screenshots older than</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Days to keep captured screenshots, on top of the history limit above — a run is
+                  kept only if it satisfies both. 0 disables the age rule. Pinned visual baselines
+                  are never deleted.
+                </p>
+              </FieldContent>
+              <Input
+                id="artifact-retention-days"
+                type="number"
+                min={0}
+                max={365}
+                step={1}
+                className="w-24"
+                value={artifactRetentionDays}
+                onChange={(e) => handleArtifactRetentionDaysChange(e.target.value)}
               />
             </Field>
             <Field orientation="horizontal">

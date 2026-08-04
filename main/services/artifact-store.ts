@@ -217,8 +217,12 @@ export const artifactStore = {
 
   /** Keep the newest `keep` run directories for a test; delete the rest.
    *  Ordered by directory mtime (screenshots are written into the run dir, so
-   *  the active/most-recent run always sorts newest). Best-effort; never throws. */
-  pruneRuns(testId: string, keep: number = DEFAULT_RETAINED_RUNS): void {
+   *  the active/most-recent run always sorts newest). Best-effort; never throws.
+   *
+   *  `maxAgeMs` adds an age rule ON TOP of the count: a run survives only if it
+   *  is both within the newest `keep` AND newer than the cutoff. Omit or pass 0
+   *  to disable the age rule. `baseline/` is excluded from both rules. */
+  pruneRuns(testId: string, keep: number = DEFAULT_RETAINED_RUNS, maxAgeMs = 0): void {
     const dir = testDir(testId);
     let names: fs.Dirent[];
     try {
@@ -240,7 +244,12 @@ export const artifactStore = {
       })
       .sort((a, b) => b.mtime - a.mtime);
 
-    for (const r of runDirs.slice(Math.max(0, keep))) {
+    const cutoff = maxAgeMs > 0 ? Date.now() - maxAgeMs : 0;
+    const doomed = runDirs.filter(
+      (r, i) => i >= Math.max(0, keep) || (cutoff > 0 && r.mtime > 0 && r.mtime < cutoff),
+    );
+
+    for (const r of doomed) {
       try {
         fs.rmSync(r.full, { recursive: true, force: true });
       } catch (err) {

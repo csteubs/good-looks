@@ -95,6 +95,62 @@ eq(
   "a low retained count still never prunes the baseline",
 );
 
+// 7. Age-based retention runs ON TOP of the count cap.
+const AGED_TEST = "test-aged";
+const DAY_MS = 24 * 60 * 60 * 1000;
+const aged = artifactStore.ensureRunDir(AGED_TEST, "old-run");
+const fresh = artifactStore.ensureRunDir(AGED_TEST, "new-run");
+fs.writeFileSync(path.join(aged, "0.png"), Buffer.alloc(10));
+fs.writeFileSync(path.join(fresh, "0.png"), Buffer.alloc(10));
+// Backdate the old run's directory mtime by 30 days.
+const old = new Date(Date.now() - 30 * DAY_MS);
+fs.utimesSync(aged, old, old);
+
+// Age rule off: the count cap alone keeps both.
+artifactStore.pruneRuns(AGED_TEST, 10, 0);
+eq(artifactStore.listRuns(AGED_TEST).length, 2, "maxAgeMs=0 disables the age rule");
+
+// A 7-day cutoff drops the 30-day-old run but keeps the fresh one, even though
+// the count cap alone would have kept both.
+artifactStore.pruneRuns(AGED_TEST, 10, 7 * DAY_MS);
+eq(artifactStore.listRuns(AGED_TEST), ["new-run"], "runs older than the cutoff are pruned by age");
+
+// A generous cutoff keeps everything that survived.
+artifactStore.pruneRuns(AGED_TEST, 10, 365 * DAY_MS);
+eq(artifactStore.listRuns(AGED_TEST).length, 1, "a wide cutoff prunes nothing further");
+
+// Both rules apply together: cutoff keeps it, but the count cap doesn't.
+const a2 = artifactStore.ensureRunDir(AGED_TEST, "second-run");
+fs.writeFileSync(path.join(a2, "0.png"), Buffer.alloc(10));
+artifactStore.pruneRuns(AGED_TEST, 1, 365 * DAY_MS);
+eq(artifactStore.listRuns(AGED_TEST).length, 1, "the count cap still applies under an age rule");
+
+// The baseline survives age-based pruning too.
+const agedBaseline = path.join(artifactStore.rootPath(), AGED_TEST, "baseline");
+fs.mkdirSync(agedBaseline, { recursive: true });
+fs.writeFileSync(path.join(agedBaseline, "step.png"), Buffer.alloc(10));
+const oldB = new Date(Date.now() - 300 * DAY_MS);
+fs.utimesSync(agedBaseline, oldB, oldB);
+artifactStore.pruneRuns(AGED_TEST, 10, DAY_MS);
+eq(
+  fs.existsSync(path.join(agedBaseline, "step.png")),
+  true,
+  "an old pinned baseline survives age-based pruning",
+);
+
+// Settings clamping for the new field.
+eq(recorderSettingsStore.get().artifactRetentionDays, 0, "age retention defaults to off");
+eq(
+  recorderSettingsStore.set({ artifactRetentionDays: 9999 }).artifactRetentionDays,
+  365,
+  "clamps the retention age to a year",
+);
+eq(
+  recorderSettingsStore.set({ artifactRetentionDays: 0 }).artifactRetentionDays,
+  0,
+  "0 is accepted (disables the rule) rather than treated as unset",
+);
+
 fs.rmSync(userData, { recursive: true, force: true });
 console.log(failures === 0 ? "\nAll retention checks passed" : `\n${failures} check(s) FAILED`);
 process.exit(failures === 0 ? 0 : 1);

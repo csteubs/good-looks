@@ -15,6 +15,14 @@ import { DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 const MIN_RETAINED_RUNS = 1;
 const MAX_RETAINED_RUNS = 50;
 
+/** Bounds for `artifactRetentionDays`. 0 disables age-based pruning entirely
+ *  (the run-count cap still applies); 365 is a sane ceiling for a local app. */
+const MAX_RETENTION_DAYS = 365;
+
+function clampDays(n: number): number {
+  return Math.min(MAX_RETENTION_DAYS, Math.max(0, Math.round(n)));
+}
+
 function clampRetained(n: number): number {
   return Math.min(MAX_RETAINED_RUNS, Math.max(MIN_RETAINED_RUNS, Math.round(n)));
 }
@@ -28,6 +36,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   defaultCaptureArtifacts: false,
   defaultRunHeadless: false,
   artifactRetainedRuns: DEFAULT_RETAINED_RUNS,
+  artifactRetentionDays: 0,
   disabledAestheticEnhancements: [],
 };
 
@@ -66,6 +75,10 @@ function read(): RecorderSettings {
         typeof parsed.artifactRetainedRuns === "number" && parsed.artifactRetainedRuns > 0
           ? clampRetained(parsed.artifactRetainedRuns)
           : DEFAULT_SETTINGS.artifactRetainedRuns,
+      artifactRetentionDays:
+        typeof parsed.artifactRetentionDays === "number" && parsed.artifactRetentionDays >= 0
+          ? clampDays(parsed.artifactRetentionDays)
+          : DEFAULT_SETTINGS.artifactRetentionDays,
       disabledAestheticEnhancements:
         Array.isArray(parsed.disabledAestheticEnhancements) &&
         parsed.disabledAestheticEnhancements.every((v) => typeof v === "string")
@@ -114,6 +127,12 @@ export const recorderSettingsStore = {
         update.artifactRetainedRuns > 0
           ? clampRetained(update.artifactRetainedRuns)
           : current.artifactRetainedRuns,
+      artifactRetentionDays:
+        update.artifactRetentionDays !== undefined &&
+        typeof update.artifactRetentionDays === "number" &&
+        update.artifactRetentionDays >= 0
+          ? clampDays(update.artifactRetentionDays)
+          : current.artifactRetentionDays,
       disabledAestheticEnhancements:
         update.disabledAestheticEnhancements !== undefined &&
         Array.isArray(update.disabledAestheticEnhancements) &&
@@ -132,6 +151,7 @@ export const recorderSettingsStore = {
       defaultCaptureArtifacts: next.defaultCaptureArtifacts,
       defaultRunHeadless: next.defaultRunHeadless,
       artifactRetainedRuns: next.artifactRetainedRuns,
+      artifactRetentionDays: next.artifactRetentionDays,
       disabledAestheticEnhancements: next.disabledAestheticEnhancements,
     });
     return next;

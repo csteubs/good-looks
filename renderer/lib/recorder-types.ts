@@ -279,6 +279,8 @@ export interface RecorderSettings {
   defaultRunHeadless: boolean;
   /** how many runs' screenshot artifacts to keep per test (default 10, 1–50). */
   artifactRetainedRuns: number;
+  /** also delete captured runs older than N days (0 = off, max 365). */
+  artifactRetentionDays: number;
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];

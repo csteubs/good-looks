@@ -289,6 +289,10 @@ export interface RecorderSettings {
    *  are pruned (default 10, clamped 1–50). The pinned visual baseline is
    *  never pruned regardless of this number. */
   artifactRetainedRuns: number;
+  /** additionally delete captured runs older than this many days (0 = off,
+   *  max 365). Applies ON TOP of artifactRetainedRuns — a run is kept only if
+   *  it satisfies both rules. The pinned baseline is never pruned. */
+  artifactRetentionDays: number;
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];
