@@ -572,6 +572,14 @@ export function AiDebugDialog({
                 onChange={(e) => setAdditionalContext(e.target.value)}
               />
             </Field>
+            <div className="flex items-center justify-end gap-2">
+              <Button size="small" variant="muted" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button size="small" variant="accent" onClick={sendDiagnosis}>
+                <Send className="size-3.5" /> Send to AI
+              </Button>
+            </div>
             <ScrollArea
               className="flex-1 min-h-0 rounded-md border border-separator"
               viewportClassName="max-h-[44vh]"
@@ -589,14 +597,6 @@ export function AiDebugDialog({
                 ))}
               </div>
             </ScrollArea>
-            <div className="flex items-center justify-end gap-2 pb-8">
-              <Button size="small" variant="muted" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
-              <Button size="small" variant="accent" onClick={sendDiagnosis}>
-                <Send className="size-3.5" /> Send to AI
-              </Button>
-            </div>
           </>
         ) : (
           <>
