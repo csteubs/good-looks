@@ -504,7 +504,7 @@ export function AiDebugDialog({
       description={testName}
       size="xl"
     >
-      <div className="relative flex h-[50vh] flex-col gap-3">
+      <div className="relative flex max-h-[50vh] flex-col gap-3">
         <ThinkingGifOverlay status={status} enabled={thinkingGifEnabled} />
         <div className="relative z-10 flex flex-1 flex-col gap-3">
         {reviewing ? (
@@ -514,7 +514,7 @@ export function AiDebugDialog({
             <Text variant="small" color="secondary">
               Review the prompt that will be sent to the model, then add any context you want and confirm to send. Nothing is sent until you confirm.
             </Text>
-            <ScrollArea className="min-h-0 flex-1 rounded-md border border-separator">
+            <ScrollArea className="max-h-[32vh] rounded-md border border-separator">
               <div className="flex flex-col gap-3 p-3">
                 {promptMessages.map((m, i) => (
                   <div key={i} className="flex flex-col gap-1">
@@ -606,7 +606,7 @@ export function AiDebugDialog({
               ) : null}
             </div>
             <ScrollArea
-              className="min-h-0 flex-1 rounded-md border border-separator"
+              className="max-h-[40vh] rounded-md border border-separator"
               autoScrollToBottom
               autoScrollDeps={[content.length]}
             >
@@ -770,7 +770,7 @@ export function StepAiDebugDialog({
       description={stepLabel}
       size="xl"
     >
-      <div className="relative flex h-[50vh] flex-col gap-3">
+      <div className="relative flex max-h-[50vh] flex-col gap-3">
         <ThinkingGifOverlay status={status} enabled={thinkingGifEnabled} />
         <div className="relative z-10 flex flex-1 flex-col gap-3">
         <div className="flex items-center gap-2">
@@ -803,7 +803,7 @@ export function StepAiDebugDialog({
           ) : null}
         </div>
         <ScrollArea
-          className="min-h-0 flex-1 rounded-md border border-separator"
+          className="max-h-[42vh] rounded-md border border-separator"
           autoScrollToBottom
           autoScrollDeps={[content.length]}
         >
