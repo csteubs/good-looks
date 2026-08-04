@@ -29,10 +29,19 @@ import type { NativeThemeInfo } from "@glaze/core/ipc";
 
 import { api } from "../lib/api";
 import type { LlmProvider, LlmProviderStatus } from "../lib/llm-types";
-import type { TestSpeed } from "../lib/recorder-types";
+import type { ArtifactUsage, TestSpeed } from "../lib/recorder-types";
 
 const SPEEDS: TestSpeed[] = ["slow", "medium", "fast"];
 const SPEED_LABEL: Record<TestSpeed, string> = { slow: "Slow", medium: "Medium", fast: "Fast" };
+
+/** Human-readable size for the screenshot-storage readout (KB/MB/GB, 1 decimal
+ *  once past KB so "0.6 MB" reads better than "614 KB"). */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
 
 export function SettingsView() {
   const [themeInfo, setThemeInfo] = useState<NativeThemeInfo | null>(null);
@@ -63,6 +72,8 @@ export function SettingsView() {
   const [defaultRunSpeed, setDefaultRunSpeed] = useState<TestSpeed>("slow");
   const [defaultCaptureArtifacts, setDefaultCaptureArtifacts] = useState(false);
   const [defaultRunHeadless, setDefaultRunHeadless] = useState(false);
+  const [artifactRetainedRuns, setArtifactRetainedRuns] = useState(10);
+  const [artifactUsage, setArtifactUsage] = useState<ArtifactUsage | null>(null);
 
   // ── Auto-Heal settings ──────────────────────────────────────────────
   const [autoHealEnabled, setAutoHealEnabled] = useState(true);
@@ -96,6 +107,7 @@ export function SettingsView() {
         setDefaultRunSpeed(settings.defaultRunSpeed ?? "slow");
         setDefaultCaptureArtifacts(settings.defaultCaptureArtifacts ?? false);
         setDefaultRunHeadless(settings.defaultRunHeadless ?? false);
+        setArtifactRetainedRuns(settings.artifactRetainedRuns ?? 10);
         setAutoHealEnabled(settings.autoHealEnabled ?? true);
         setAutoHealRetries(settings.autoHealRetries ?? 3);
         setAutoHealTimeout(settings.autoHealAttemptTimeoutMs ?? 4000);
@@ -103,6 +115,12 @@ export function SettingsView() {
       })
       .catch(() => {
         /* fall back to defaults */
+      });
+    api.artifacts
+      .usage()
+      .then(setArtifactUsage)
+      .catch(() => {
+        /* usage readout is optional — omit it if unavailable */
       });
   }, []);
 
@@ -136,6 +154,16 @@ export function SettingsView() {
     setDefaultRunHeadless(checked);
     try {
       await api.recorder.setSettings({ defaultRunHeadless: checked });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleArtifactRetainedRunsChange = async (value: string) => {
+    const n = Math.max(1, Math.min(50, Math.round(Number(value) || 10)));
+    setArtifactRetainedRuns(n);
+    try {
+      await api.recorder.setSettings({ artifactRetainedRuns: n });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
     }
@@ -457,6 +485,30 @@ export function SettingsView() {
                 id="default-capture-artifacts"
                 checked={defaultCaptureArtifacts}
                 onCheckedChange={handleDefaultCaptureArtifactsChange}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="artifact-retained-runs">Screenshot history per test</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  How many runs' screenshots to keep for each test before the oldest are deleted
+                  (1–50). Pinned visual baselines are never deleted.
+                  {artifactUsage
+                    ? ` Currently using ${formatBytes(artifactUsage.bytes)} across ${artifactUsage.runs} ${
+                        artifactUsage.runs === 1 ? "run" : "runs"
+                      }.`
+                    : ""}
+                </p>
+              </FieldContent>
+              <Input
+                id="artifact-retained-runs"
+                type="number"
+                min={1}
+                max={50}
+                step={1}
+                className="w-24"
+                value={artifactRetainedRuns}
+                onChange={(e) => handleArtifactRetainedRunsChange(e.target.value)}
               />
             </Field>
             <Field orientation="horizontal">

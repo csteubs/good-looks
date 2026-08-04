@@ -11,6 +11,7 @@ import type {
   RecorderSettings,
   RecorderState,
   RunRecord,
+  ArtifactUsage,
   RunReplay,
   RunReplaySummary,
   Step,
@@ -141,6 +142,7 @@ export const api = {
       ipc().invoke<RunReplay | null>("artifacts:getReplay", { testId, runId }),
     readShot: (testId: string, runId: string, file: string) =>
       ipc().invoke<string | null>("artifacts:readShot", { testId, runId, file }),
+    usage: () => ipc().invoke<ArtifactUsage>("artifacts:usage"),
   },
   visual: {
     getThreshold: (testId: string) =>

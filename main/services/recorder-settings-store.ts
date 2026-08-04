@@ -7,6 +7,17 @@ import * as path from "path";
 import { app, logger } from "@glaze/core/backend";
 
 import type { RecorderSettings, TestSpeed } from "../recorder/types.js";
+import { DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
+
+/** Bounds for `artifactRetainedRuns`. 1 keeps only the newest run (the pinned
+ *  baseline is stored separately and is never pruned); 50 is a generous ceiling
+ *  — at ~0.6 MB per captured run for a small test that's ~30 MB per test. */
+const MIN_RETAINED_RUNS = 1;
+const MAX_RETAINED_RUNS = 50;
+
+function clampRetained(n: number): number {
+  return Math.min(MAX_RETAINED_RUNS, Math.max(MIN_RETAINED_RUNS, Math.round(n)));
+}
 
 const DEFAULT_SETTINGS: RecorderSettings = {
   showUrlBar: true,
@@ -16,6 +27,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   autoHealAttemptTimeoutMs: 4000,
   defaultCaptureArtifacts: false,
   defaultRunHeadless: false,
+  artifactRetainedRuns: DEFAULT_RETAINED_RUNS,
   disabledAestheticEnhancements: [],
 };
 
@@ -50,6 +62,10 @@ function read(): RecorderSettings {
         typeof parsed.defaultRunHeadless === "boolean"
           ? parsed.defaultRunHeadless
           : DEFAULT_SETTINGS.defaultRunHeadless,
+      artifactRetainedRuns:
+        typeof parsed.artifactRetainedRuns === "number" && parsed.artifactRetainedRuns > 0
+          ? clampRetained(parsed.artifactRetainedRuns)
+          : DEFAULT_SETTINGS.artifactRetainedRuns,
       disabledAestheticEnhancements:
         Array.isArray(parsed.disabledAestheticEnhancements) &&
         parsed.disabledAestheticEnhancements.every((v) => typeof v === "string")
@@ -92,6 +108,12 @@ export const recorderSettingsStore = {
         update.defaultRunHeadless !== undefined
           ? update.defaultRunHeadless
           : current.defaultRunHeadless,
+      artifactRetainedRuns:
+        update.artifactRetainedRuns !== undefined &&
+        typeof update.artifactRetainedRuns === "number" &&
+        update.artifactRetainedRuns > 0
+          ? clampRetained(update.artifactRetainedRuns)
+          : current.artifactRetainedRuns,
       disabledAestheticEnhancements:
         update.disabledAestheticEnhancements !== undefined &&
         Array.isArray(update.disabledAestheticEnhancements) &&
@@ -109,6 +131,7 @@ export const recorderSettingsStore = {
       autoHealAttemptTimeoutMs: next.autoHealAttemptTimeoutMs,
       defaultCaptureArtifacts: next.defaultCaptureArtifacts,
       defaultRunHeadless: next.defaultRunHeadless,
+      artifactRetainedRuns: next.artifactRetainedRuns,
       disabledAestheticEnhancements: next.disabledAestheticEnhancements,
     });
     return next;

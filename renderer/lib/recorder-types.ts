@@ -195,6 +195,14 @@ export interface RunReplaySummary {
   changedSteps: number;
 }
 
+/** On-disk footprint of all captured artifacts. Mirror of
+ *  main/services/artifact-store.ts ArtifactUsage. */
+export interface ArtifactUsage {
+  bytes: number;
+  runs: number;
+  tests: number;
+}
+
 /** A user-authored note on a replay step (Phase 4). Mirror of
  *  main/services/annotation-store.ts Annotation. */
 export interface Annotation {
@@ -238,6 +246,8 @@ export interface RecorderSettings {
   defaultCaptureArtifacts: boolean;
   /** default value of the per-test "Run headless" toggle (default false). */
   defaultRunHeadless: boolean;
+  /** how many runs' screenshot artifacts to keep per test (default 10, 1–50). */
+  artifactRetainedRuns: number;
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];

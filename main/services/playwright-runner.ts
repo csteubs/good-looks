@@ -16,6 +16,7 @@ import { runHistoryStore } from "./run-history-store.js";
 import { stepReporterSource } from "./step-reporter-source.js";
 import { captureFixtureSource } from "./capture-fixture-source.js";
 import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
+import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { buildReplay, enrichWithVisualDiffs } from "./replay-builder.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import type { TestSpeed } from "../recorder/types.js";
@@ -371,8 +372,12 @@ export const playwrightRunner = {
             specToRun = prepared;
             capturing = true;
             capturingRun = true;
-            // Prune old runs first, then create this run's dir (newest).
-            artifactStore.pruneRuns(rec.id, Math.max(0, DEFAULT_RETAINED_RUNS - 1));
+            // Prune old runs first, then create this run's dir (newest). The
+            // retained count is user-configurable in Settings; `- 1` leaves
+            // room for the run about to be created, so the on-disk total after
+            // this run equals the configured number.
+            const keep = recorderSettingsStore.get().artifactRetainedRuns ?? DEFAULT_RETAINED_RUNS;
+            artifactStore.pruneRuns(rec.id, Math.max(0, keep - 1));
             artifactDir = artifactStore.ensureRunDir(rec.id, recordId);
           } else {
             emitOutput(

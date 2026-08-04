@@ -634,6 +634,31 @@ export function AiDebugDialog({
           </>
         ) : (
           <>
+            {status === "done" && content ? (
+              <div className="flex items-end gap-2">
+                <Textarea
+                  size="medium"
+                  className="flex-1 min-h-0 resize-none"
+                  placeholder="The model asked for more info — add details here and send a follow-up."
+                  value={followUp}
+                  onChange={(e) => setFollowUp(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void sendFollowUp();
+                    }
+                  }}
+                />
+                <Button
+                  size="small"
+                  variant="accent"
+                  disabled={!followUp.trim() || status !== "done"}
+                  onClick={sendFollowUp}
+                >
+                  <Send className="size-3.5" /> Send
+                </Button>
+              </div>
+            ) : null}
             <ScrollArea
               className="max-h-[56vh] rounded-md border border-separator"
               viewportClassName="max-h-[56vh]"
@@ -673,31 +698,6 @@ export function AiDebugDialog({
                 ) : null}
               </div>
             </ScrollArea>
-            {status === "done" && content ? (
-              <div className="flex items-end gap-2">
-                <Textarea
-                  size="medium"
-                  className="flex-1 min-h-0 resize-none"
-                  placeholder="The model asked for more info — add details here and send a follow-up."
-                  value={followUp}
-                  onChange={(e) => setFollowUp(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void sendFollowUp();
-                    }
-                  }}
-                />
-                <Button
-                  size="small"
-                  variant="accent"
-                  disabled={!followUp.trim() || status !== "done"}
-                  onClick={sendFollowUp}
-                >
-                  <Send className="size-3.5" /> Send
-                </Button>
-              </div>
-            ) : null}
           </>
         )}
         </div>

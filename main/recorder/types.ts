@@ -252,6 +252,10 @@ export interface RecorderSettings {
    *  haven't set their own preference (default false → runs are headed). Only
    *  affects test runs, not the trainer. */
   defaultRunHeadless: boolean;
+  /** how many runs' screenshot artifacts to keep per test before the oldest
+   *  are pruned (default 10, clamped 1–50). The pinned visual baseline is
+   *  never pruned regardless of this number. */
+  artifactRetainedRuns: number;
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];

@@ -123,6 +123,17 @@ export interface RunReplaySummary {
   changedSteps: number;
 }
 
+/** On-disk footprint of all captured artifacts, for the retention setting's
+ *  "using X MB across N runs" readout. */
+export interface ArtifactUsage {
+  /** total bytes under the artifacts root (screenshots + manifests + baselines) */
+  bytes: number;
+  /** number of retained run directories across all tests (excludes `baseline/`) */
+  runs: number;
+  /** number of tests that have any artifacts */
+  tests: number;
+}
+
 function artifactsDir(): string {
   return path.join(app.getPath("userData"), "recorder", "artifacts");
 }
@@ -135,6 +146,52 @@ export const artifactStore = {
   /** Absolute path to the artifacts root (for "Reveal in Finder" later). */
   rootPath(): string {
     return artifactsDir();
+  },
+
+  /** Total on-disk footprint of every captured artifact (screenshots, manifests,
+   *  replay.json, and pinned baselines), so the retention setting can be shown
+   *  against a real number instead of a guess. Best-effort: unreadable entries
+   *  are skipped rather than throwing. */
+  usage(): ArtifactUsage {
+    const root = artifactsDir();
+    let bytes = 0;
+    let runs = 0;
+    let tests = 0;
+
+    const walk = (dir: string): void => {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          walk(full);
+        } else if (e.isFile()) {
+          try {
+            bytes += fs.statSync(full).size;
+          } catch {
+            /* skip unreadable file */
+          }
+        }
+      }
+    };
+
+    let testDirs: fs.Dirent[];
+    try {
+      testDirs = fs.readdirSync(root, { withFileTypes: true });
+    } catch {
+      return { bytes: 0, runs: 0, tests: 0 }; // nothing captured yet
+    }
+    for (const t of testDirs) {
+      if (!t.isDirectory()) continue;
+      tests += 1;
+      runs += this.listRuns(t.name).length;
+      walk(path.join(root, t.name));
+    }
+    return { bytes, runs, tests };
   },
 
   /** Directory for one run's screenshots + manifest. */

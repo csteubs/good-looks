@@ -417,6 +417,8 @@ export function registerHandlers(): void {
   // ── Visual-testing replay handlers (Phase 2) ────────────────────────
   // Runs that have persisted screenshot artifacts, newest first.
   ipcMain.handle("artifacts:list", async () => artifactStore.listReplays());
+  // On-disk footprint of all captured artifacts (Settings retention readout).
+  ipcMain.handle("artifacts:usage", async () => artifactStore.usage());
   // The canonical per-step replay model for one run (or null if unavailable).
   ipcMain.handle(
     "artifacts:getReplay",
