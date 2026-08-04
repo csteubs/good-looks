@@ -4,7 +4,7 @@
 // the model returns a complete corrected spec — offers to apply it to the script.
 
 import * as React from "react";
-import { AlertDialog, Button, Dialog, Field, ScrollArea, Status, Text, Textarea, toast } from "@glaze/core/components";
+import { Button, Dialog, Field, ScrollArea, Status, Text, Textarea, toast } from "@glaze/core/components";
 import { Check, ChevronDown, Copy, RotateCcw, Send, Square, Wand2 } from "lucide-react";
 
 import glitchGif from "./assets/glitch.gif";
@@ -602,25 +602,9 @@ export function AiDebugDialog({
                 </Button>
               )}
               {correctedScript && onApplyScript ? (
-                <AlertDialog
-                  trigger={
-                    <Button size="small" variant="accent" disabled={applied}>
-                      <Wand2 className="size-3.5" /> {applied ? "Applied" : "Apply to script"}
-                    </Button>
-                  }
-                  title="Apply the suggested fix?"
-                  description={
-                    summary
-                      ? `This replaces the test's current script with the AI's corrected version (+${summary.added} / -${summary.removed} lines). The Steps tab will update to reflect the new script. You can still edit or re-record the script afterward.`
-                      : "This replaces the test's current script with the AI's corrected version. The Steps tab will update to reflect the new script. You can still edit or re-record the script afterward."
-                  }
-                  confirmLabel="Apply"
-                  confirmVariant="accent"
-                  size="xl"
-                  onConfirm={applyScript}
-                >
-                  {diff ? <DiffView diff={diff} /> : null}
-                </AlertDialog>
+                <Button size="small" variant="accent" disabled={applied} onClick={applyScript}>
+                  <Wand2 className="size-3.5" /> {applied ? "Applied" : "Apply"}
+                </Button>
               ) : null}
               {content ? (
                 <Button
@@ -662,6 +646,15 @@ export function AiDebugDialog({
                     {status === "streaming" ? (modelName ? `Thinking with ${modelName}…` : "Thinking…") : ""}
                   </p>
                 )}
+                {correctedScript && diff ? (
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    <Text variant="small-strong" color="secondary">
+                      Suggested changes
+                      {summary ? ` (+${summary.added} / -${summary.removed} lines)` : ""}
+                    </Text>
+                    <DiffView diff={diff} />
+                  </div>
+                ) : null}
               </div>
             </ScrollArea>
           </>
