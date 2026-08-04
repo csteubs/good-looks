@@ -14,6 +14,7 @@ import type {
   ArtifactUsage,
   RunReplay,
   RunReplaySummary,
+  VisualMask,
   Step,
   TestRecord,
   TestSpeed,
@@ -155,6 +156,9 @@ export const api = {
       ipc().invoke<RunReplay | null>("visual:acceptStep", { testId, runId, stepId }),
     baselineShot: (testId: string, stepId: string) =>
       ipc().invoke<string | null>("visual:baselineShot", { testId, stepId }),
+    getMasks: (testId: string) => ipc().invoke<VisualMask[]>("visual:getMasks", { testId }),
+    setMasks: (testId: string, masks: VisualMask[]) =>
+      ipc().invoke<VisualMask[]>("visual:setMasks", { testId, masks }),
   },
   annotations: {
     list: (testId: string, runId: string) =>

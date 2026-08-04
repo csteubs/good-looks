@@ -74,6 +74,9 @@ export interface VisualDiff {
   reason?: string;
   /** diff-overlay filename (e.g. "3.diff.png") in the run dir, for "changed". */
   diffFile?: string;
+  /** how many ignore masks were applied to this step's comparison, when any.
+   *  Lets the UI say the result was measured with regions excluded. */
+  maskedCount?: number;
 }
 
 export interface ReplayStep {

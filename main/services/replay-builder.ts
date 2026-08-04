@@ -12,7 +12,7 @@ import type { ReplayStep, ReplayStepStatus, RunReplay } from "./artifact-store.j
 import { baselineStore } from "./baseline-store.js";
 import { diffPngBuffers } from "./visual-diff.js";
 import { describeStep } from "./script-generator.js";
-import type { Step } from "../recorder/types.js";
+import type { Step, VisualMask } from "../recorder/types.js";
 
 // The Playwright action a step captures a screenshot for (mirrors the fixture's
 // PAGE_ACTIONS/LOCATOR_ACTIONS in capture-fixture-source.ts). null → the step
@@ -139,9 +139,15 @@ export function buildReplay(params: {
 // baseline exists yet, this run's shot seeds it ("new-baseline"). Mutates each
 // step's `diff`. Best-effort: any failure degrades to "unable" — a diff must
 // never throw into the run's finally block or false-flag a change.
-export function enrichWithVisualDiffs(replay: RunReplay, threshold: number): void {
+export function enrichWithVisualDiffs(
+  replay: RunReplay,
+  threshold: number,
+  masks: readonly VisualMask[] = [],
+): void {
   replay.visualThreshold = threshold;
   for (const step of replay.steps) {
+    // A mask with stepId null is test-wide; otherwise it targets one step.
+    const stepMasks = masks.filter((m) => m.stepId === null || m.stepId === step.stepId);
     if (!step.screenshot) continue; // asserts/waits/skipped — nothing to compare
     const next = artifactStore.readShot(replay.testId, replay.runId, step.screenshot);
     if (!next) {
@@ -162,15 +168,26 @@ export function enrichWithVisualDiffs(replay: RunReplay, threshold: number): voi
       step.diff = { state: "unable", reason: "baseline unreadable", threshold };
       continue;
     }
-    const outcome = diffPngBuffers(baseline, next, threshold);
+    const outcome = diffPngBuffers(baseline, next, threshold, undefined, stepMasks);
     if (outcome.state === "unable") {
       step.diff = { state: "unable", reason: outcome.reason, threshold };
     } else if (outcome.state === "changed") {
       const shotIndex = Number.parseInt(step.screenshot, 10);
       const diffFile = artifactStore.writeDiff(replay.testId, replay.runId, shotIndex, outcome.diffPng);
-      step.diff = { state: "changed", ratio: outcome.ratio, threshold, diffFile };
+      step.diff = {
+        state: "changed",
+        ratio: outcome.ratio,
+        threshold,
+        diffFile,
+        maskedCount: stepMasks.length || undefined,
+      };
     } else {
-      step.diff = { state: "match", ratio: outcome.ratio, threshold };
+      step.diff = {
+        state: "match",
+        ratio: outcome.ratio,
+        threshold,
+        maskedCount: stepMasks.length || undefined,
+      };
     }
   }
 }

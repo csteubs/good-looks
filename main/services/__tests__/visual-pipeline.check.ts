@@ -26,7 +26,7 @@ import { buildReplay, enrichWithVisualDiffs } from "../replay-builder.js";
 import { acceptRunBaseline, acceptStepBaseline } from "../visual-baseline-ops.js";
 import { annotationStore } from "../annotation-store.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../../recorder/types.js";
-import type { Step } from "../../recorder/types.js";
+import type { Step, VisualMask } from "../../recorder/types.js";
 
 // ── temp userData (must be set BEFORE the stores resolve paths) ────────────
 // The stub reads GLAZE_TEST_USERDATA at import; the check's runner sets it,
@@ -253,6 +253,108 @@ eq(remaining.length, keep, `pruneRuns keeps exactly ${keep} retention run dirs`)
 check(
   baselineStore.has(testId, capturedStepIds[0]),
   "pruning run dirs never deletes the pinned baseline",
+);
+
+// ── 7. Ignore masks exclude a region from the comparison ───────────────────
+// A screenshot that differs from its baseline ONLY inside a masked region must
+// stay "match" — that's the whole point of masking dynamic content. The same
+// screenshot with no mask (or a mask elsewhere) must still be flagged.
+const maskTestId = randomUUID();
+const maskSteps: Step[] = [step({ type: "goto", url: "https://example.com" })];
+const maskStepId = maskSteps[0].id;
+
+/** RED with a BLUE rectangle painted over the given normalized region. */
+function patchedPng(nx: number, ny: number, nw: number, nh: number): Buffer {
+  const png = PNG.sync.read(RED);
+  const x0 = Math.round(nx * png.width);
+  const y0 = Math.round(ny * png.height);
+  const x1 = Math.round((nx + nw) * png.width);
+  const y1 = Math.round((ny + nh) * png.height);
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const o = (y * png.width + x) * 4;
+      png.data[o] = 40;
+      png.data[o + 1] = 60;
+      png.data[o + 2] = 220;
+    }
+  }
+  return PNG.sync.write(png);
+}
+
+// The volatile widget occupies the top-left quarter of the page.
+const WIDGET = { x: 0, y: 0, w: 0.25, h: 0.25 };
+const PATCHED = patchedPng(WIDGET.x, WIDGET.y, WIDGET.w, WIDGET.h);
+
+function maskReplay(runId: string, shot: Buffer, masks: VisualMask[]) {
+  const dir = artifactStore.ensureRunDir(maskTestId, runId);
+  fs.writeFileSync(path.join(dir, "0.png"), shot);
+  fs.writeFileSync(
+    path.join(dir, "manifest.json"),
+    JSON.stringify({
+      testId: maskTestId,
+      runId,
+      status: "passed",
+      steps: [{ index: 0, action: "goto", target: "", ok: true, ts: Date.now() }],
+    } satisfies ArtifactManifest),
+  );
+  const replay = buildReplay({
+    testId: maskTestId,
+    runId,
+    testName: "Masking",
+    url: "https://example.com",
+    status: "passed",
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+    steps: maskSteps,
+    statuses: {},
+  });
+  enrichWithVisualDiffs(replay, threshold, masks);
+  return replay;
+}
+
+// Seed the baseline from a clean run.
+eq(maskReplay(randomUUID(), RED, []).steps[0].diff?.state, "new-baseline", "mask run seeds baseline");
+
+// Unmasked: the patched widget is a real change.
+eq(
+  maskReplay(randomUUID(), PATCHED, []).steps[0].diff?.state,
+  "changed",
+  "without a mask, the altered region is flagged changed",
+);
+
+// Masked over the widget: same pixels, but now ignored.
+const coveringMask: VisualMask = { id: randomUUID(), stepId: null, ...WIDGET };
+const maskedRun = maskReplay(randomUUID(), PATCHED, [coveringMask]);
+eq(
+  maskedRun.steps[0].diff?.state,
+  "match",
+  "a mask over the altered region suppresses the change",
+);
+eq(maskedRun.steps[0].diff?.maskedCount, 1, "the applied mask count is recorded on the diff");
+
+// A mask somewhere else must NOT suppress it.
+eq(
+  maskReplay(randomUUID(), PATCHED, [
+    { id: randomUUID(), stepId: null, x: 0.6, y: 0.6, w: 0.3, h: 0.3 },
+  ]).steps[0].diff?.state,
+  "changed",
+  "a mask elsewhere on the page doesn't suppress a real change",
+);
+
+// A mask scoped to a DIFFERENT step must not apply here.
+eq(
+  maskReplay(randomUUID(), PATCHED, [{ id: randomUUID(), stepId: randomUUID(), ...WIDGET }])
+    .steps[0].diff?.state,
+  "changed",
+  "a mask pinned to another step doesn't apply",
+);
+
+// The same mask scoped to THIS step does apply.
+eq(
+  maskReplay(randomUUID(), PATCHED, [{ id: randomUUID(), stepId: maskStepId, ...WIDGET }])
+    .steps[0].diff?.state,
+  "match",
+  "a mask pinned to this step applies",
 );
 
 // ── cleanup + verdict ──────────────────────────────────────────────────────

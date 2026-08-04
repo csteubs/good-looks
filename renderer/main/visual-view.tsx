@@ -10,6 +10,7 @@ import {
   SegmentedControl,
   SegmentedControlItem,
   Slider,
+  Switch,
   Text,
   Textarea,
   Toolbar,
@@ -30,6 +31,7 @@ import {
   ImageOff,
   MessageSquare,
   Pencil,
+  SquareDashed,
   Stamp,
   TriangleAlert,
   X,
@@ -44,6 +46,7 @@ import type {
   RunReplaySummary,
   VisualDiff,
   VisualDiffState,
+  VisualMask,
 } from "../lib/recorder-types";
 
 // ── Formatting ─────────────────────────────────────────────────────────
@@ -118,9 +121,16 @@ function DiffBadge({ diff }: { diff: VisualDiff }) {
     default:
       label = "Can’t compare";
   }
+  // Make it explicit when a result was measured with regions excluded —
+  // otherwise a "Visual match" on a masked page looks like a full-page match.
+  const masked = diff.maskedCount
+    ? `${diff.maskedCount} ignored region${diff.maskedCount === 1 ? "" : "s"}`
+    : null;
+  const title = [diff.reason, masked].filter(Boolean).join(" · ") || undefined;
   return (
-    <Badge color={diffBadgeColor(diff.state)} className="shrink-0" title={diff.reason}>
+    <Badge color={diffBadgeColor(diff.state)} className="shrink-0" title={title}>
       {label}
+      {masked ? <SquareDashed className="ml-1 size-3" /> : null}
     </Badge>
   );
 }
@@ -133,11 +143,16 @@ function StepScreenshot({
   runId,
   step,
   mode,
+  children,
 }: {
   testId: string;
   runId: string;
   step: ReplayStep;
   mode: ShotMode;
+  /** Overlay rendered on top of the image, aligned to its rendered box (the
+   *  wrapper shrinks to the image), so percentage-positioned children line up
+   *  with normalized mask coordinates. */
+  children?: React.ReactNode;
 }) {
   // Resolve the image source for the active view mode.
   const file =
@@ -200,11 +215,129 @@ function StepScreenshot({
         ? `Visual diff for step ${step.index + 1}`
         : `Screenshot for step ${step.index + 1}`;
   return (
-    <img
-      src={src}
-      alt={alt}
-      className="max-h-full max-w-full rounded-md object-contain shadow-sm ring-1 ring-inset ring-token-border"
-    />
+    <div className="relative max-h-full max-w-full">
+      <img
+        src={src}
+        alt={alt}
+        className="block max-h-full max-w-full rounded-md object-contain shadow-sm ring-1 ring-inset ring-token-border"
+      />
+      {children}
+    </div>
+  );
+}
+
+// ── Ignore-mask overlay ─────────────────────────────────────────────────
+// Masks are stored normalized (0–1), so they position directly as CSS
+// percentages over the image regardless of its rendered size.
+
+/** Smallest mask we'll keep, as a fraction of each axis. Anything below this
+ *  is almost certainly a stray click rather than a deliberate drag. */
+const MIN_MASK_SIZE = 0.005;
+
+/** Normalized 0–1 → a CSS percentage string. */
+function pctStr(n: number): string {
+  return `${n * 100}%`;
+}
+
+function MaskLayer({
+  masks,
+  editing,
+  onAdd,
+  onRemove,
+}: {
+  masks: VisualMask[];
+  editing: boolean;
+  onAdd: (rect: { x: number; y: number; w: number; h: number }) => void;
+  onRemove: (id: string) => void;
+}) {
+  const [drag, setDrag] = React.useState<{ x0: number; y0: number; x1: number; y1: number } | null>(
+    null,
+  );
+
+  // Pointer position as a fraction of the image box, clamped so a drag that
+  // leaves the image still produces an in-bounds mask.
+  const posOf = (e: React.PointerEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return {
+      x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)),
+      y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)),
+    };
+  };
+
+  const rectOf = (d: { x0: number; y0: number; x1: number; y1: number }) => ({
+    x: Math.min(d.x0, d.x1),
+    y: Math.min(d.y0, d.y1),
+    w: Math.abs(d.x1 - d.x0),
+    h: Math.abs(d.y1 - d.y0),
+  });
+
+  const live = drag ? rectOf(drag) : null;
+
+  return (
+    <div
+      className={`absolute inset-0 ${editing ? "cursor-crosshair" : "pointer-events-none"}`}
+      onPointerDown={
+        editing
+          ? (e) => {
+              const p = posOf(e);
+              e.currentTarget.setPointerCapture(e.pointerId);
+              setDrag({ x0: p.x, y0: p.y, x1: p.x, y1: p.y });
+            }
+          : undefined
+      }
+      onPointerMove={
+        editing
+          ? (e) => {
+              if (!drag) return;
+              const p = posOf(e);
+              setDrag({ ...drag, x1: p.x, y1: p.y });
+            }
+          : undefined
+      }
+      onPointerUp={
+        editing
+          ? () => {
+              if (drag) {
+                const r = rectOf(drag);
+                if (r.w >= MIN_MASK_SIZE && r.h >= MIN_MASK_SIZE) onAdd(r);
+              }
+              setDrag(null);
+            }
+          : undefined
+      }
+    >
+      {masks.map((m) => (
+        <div
+          key={m.id}
+          className="absolute border-2 border-dashed border-support-orange bg-support-orange/25"
+          style={{ left: pctStr(m.x), top: pctStr(m.y), width: pctStr(m.w), height: pctStr(m.h) }}
+          title={m.label ?? (m.stepId === null ? "Ignored on every step" : "Ignored on this step")}
+        >
+          {editing ? (
+            <button
+              type="button"
+              aria-label="Remove ignore region"
+              className="pointer-events-auto absolute -right-2 -top-2 rounded-full bg-support-orange p-0.5 text-white shadow-sm"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => onRemove(m.id)}
+            >
+              <X className="size-3" />
+            </button>
+          ) : null}
+        </div>
+      ))}
+      {live && live.w > 0 && live.h > 0 ? (
+        <div
+          className="absolute border-2 border-support-orange bg-support-orange/20"
+          style={{
+            left: pctStr(live.x),
+            top: pctStr(live.y),
+            width: pctStr(live.w),
+            height: pctStr(live.h),
+          }}
+        />
+      ) : null}
+    </div>
   );
 }
 
@@ -419,6 +552,22 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
     },
   });
 
+  // ── Ignore masks (per test, applied on the next capture run) ──────────
+  const masksQuery = useQuery({
+    queryKey: ["visualMasks", summary.testId],
+    queryFn: () => api.visual.getMasks(summary.testId),
+  });
+  const allMasks = React.useMemo(() => masksQuery.data ?? [], [masksQuery.data]);
+  const saveMasks = useMutation({
+    mutationFn: (masks: VisualMask[]) => api.visual.setMasks(summary.testId, masks),
+    onSuccess: (saved) => qc.setQueryData(["visualMasks", summary.testId], saved),
+    onError: (err) => toast.error(`Couldn't save ignore regions: ${err}`),
+  });
+  const [masking, setMasking] = React.useState(false);
+  // New masks default to this step only; the toolbar switch widens them to the
+  // whole test (for page chrome like a clock that appears on every screenshot).
+  const [maskAllSteps, setMaskAllSteps] = React.useState(false);
+
   const [current, setCurrent] = React.useState(0);
   const [mode, setMode] = React.useState<ShotMode>("current");
   // Step IDs whose baseline was accepted in this session — used to hide the
@@ -482,6 +631,8 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
 
   const idx = clamp(current);
   const step = steps[idx];
+  // Test-wide masks (stepId null) plus any pinned to this step.
+  const stepMasks = allMasks.filter((m) => m.stepId === null || m.stepId === step.stepId);
   const changedCount = steps.filter((s) => s.diff?.state === "changed").length;
   const canDiff = Boolean(step.diff?.diffFile);
   const hasBaselineView =
@@ -592,6 +743,32 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
       {/* Screenshot */}
       <div className="min-h-0 flex-1 p-4">
         <div className="relative flex h-full items-center justify-center rounded-lg border border-token-border bg-token-surface p-3">
+          {/* Ignore-region editor toggle */}
+          {step.screenshot ? (
+            <div className="absolute left-3 top-3 z-10 flex items-center gap-2">
+              <Button
+                size="small"
+                variant={masking ? "accent" : "glass"}
+                onClick={() => setMasking((v) => !v)}
+                title="Exclude regions of the page from visual diffing"
+              >
+                <SquareDashed className="size-3.5" />
+                {masking ? "Done" : "Ignore regions"}
+              </Button>
+              {masking ? (
+                <div className="flex items-center gap-1.5 rounded-md bg-token-surface-raised/90 px-2 py-1 shadow-sm">
+                  <Switch
+                    id="mask-all-steps"
+                    checked={maskAllSteps}
+                    onCheckedChange={setMaskAllSteps}
+                  />
+                  <label htmlFor="mask-all-steps" className="cursor-pointer">
+                    <Text variant="small">Apply to all steps</Text>
+                  </label>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           {/* View-mode toggle — only when there's a baseline to compare against */}
           {hasBaselineView ? (
             <div className="absolute right-3 top-3 z-10">
@@ -618,8 +795,30 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
             runId={summary.runId}
             step={step}
             mode={effectiveMode}
-          />
+          >
+            <MaskLayer
+              masks={stepMasks}
+              editing={masking}
+              onAdd={(rect) =>
+                saveMasks.mutate([
+                  ...allMasks,
+                  {
+                    id: crypto.randomUUID(),
+                    stepId: maskAllSteps ? null : step.stepId,
+                    ...rect,
+                  },
+                ])
+              }
+              onRemove={(id) => saveMasks.mutate(allMasks.filter((m) => m.id !== id))}
+            />
+          </StepScreenshot>
         </div>
+        {masking ? (
+          <Text variant="small" color="tertiary" className="mt-2 block text-center">
+            Drag on the screenshot to exclude a region from visual diffing. Regions are ignored from
+            the next capture run onward — this run's results don't change.
+          </Text>
+        ) : null}
       </div>
 
       {/* Current step detail */}

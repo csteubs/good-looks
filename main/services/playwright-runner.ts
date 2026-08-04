@@ -455,7 +455,11 @@ export const playwrightRunner = {
               statuses,
             });
             // Phase 3 — diff each captured shot against the pinned baseline.
-            enrichWithVisualDiffs(replay, rec.visualThreshold ?? DEFAULT_VISUAL_THRESHOLD);
+            enrichWithVisualDiffs(
+              replay,
+              rec.visualThreshold ?? DEFAULT_VISUAL_THRESHOLD,
+              rec.visualMasks ?? [],
+            );
             artifactStore.writeReplay(rec.id, recordId, replay);
           } catch (err) {
             logger.warn("runner", "Failed to persist replay model", { err: String(err) });

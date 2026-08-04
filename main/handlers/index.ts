@@ -26,7 +26,7 @@ import { llmConfigStore } from "../services/llm-config-store.js";
 import { anthropicKeyStore } from "../services/anthropic-key-store.js";
 import { recorderSettingsStore } from "../services/recorder-settings-store.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
-import type { AssertKind, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed } from "../recorder/types.js";
+import type { AssertKind, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 
 import { ipcMain, logger } from "@glaze/core/backend";
@@ -453,6 +453,41 @@ export function registerHandlers(): void {
       rec.updatedAt = Date.now();
       testStore.save(rec);
       return t;
+    },
+  );
+  // A test's ignore masks (regions excluded from visual diffing).
+  ipcMain.handle("visual:getMasks", async (_e, params: { testId: string }) => {
+    const rec = testStore.get(params.testId);
+    return rec?.visualMasks ?? [];
+  });
+  // Replace a test's ignore masks. Geometry is normalized (0–1) and clamped
+  // here so a bad drag in the UI can't persist an out-of-bounds region.
+  ipcMain.handle(
+    "visual:setMasks",
+    async (_e, params: { testId: string; masks: VisualMask[] }) => {
+      const rec = testStore.get(params.testId);
+      if (!rec) throw new Error("Test not found: " + params.testId);
+      const clamp01 = (n: number) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
+      rec.visualMasks = (params.masks ?? [])
+        .map((m) => {
+          const x = clamp01(m.x);
+          const y = clamp01(m.y);
+          return {
+            id: m.id,
+            stepId: m.stepId ?? null,
+            x,
+            y,
+            // width/height can't extend past the right/bottom edge
+            w: Math.min(clamp01(m.w), 1 - x),
+            h: Math.min(clamp01(m.h), 1 - y),
+            ...(m.label ? { label: m.label } : {}),
+          };
+        })
+        // A zero-area mask would silently do nothing — drop it rather than store it.
+        .filter((m) => m.w > 0 && m.h > 0);
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return rec.visualMasks;
     },
   );
   // Pin an entire run's screenshots as the new baselines. Returns patched replay.

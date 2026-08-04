@@ -148,6 +148,10 @@ export interface TestRecord {
    *  (0–100) allowed to change vs the pinned baseline before a step is flagged
    *  "visual change detected". Absent → DEFAULT_VISUAL_THRESHOLD. */
   visualThreshold?: number;
+  /** Regions of the page to ignore when visual-diffing capture runs. Dynamic
+   *  content (timestamps, carousels, ads) would otherwise flag a change on
+   *  every run. Absent/empty → nothing is masked. */
+  visualMasks?: VisualMask[];
   /** Per-test screenshot-capture preference, remembered between sessions.
    *  When absent, the global `RecorderSettings.defaultCaptureArtifacts`
    *  applies. Set from the test detail toolbar's "Capture screenshots" toggle. */
@@ -163,6 +167,30 @@ export interface TestRecord {
  *  none set. 0.1% tolerates trivial antialiasing noise while flagging real
  *  layout/content changes. */
 export const DEFAULT_VISUAL_THRESHOLD = 0.1;
+
+/** A rectangular region excluded from visual diffing.
+ *
+ *  Coordinates are NORMALIZED (0–1, fractions of image width/height) rather
+ *  than pixels, so a mask drawn at one viewport still covers the same part of
+ *  the page at another — and a baseline captured before a viewport change
+ *  keeps masking the right area. */
+export interface VisualMask {
+  id: string;
+  /** Step this mask applies to, or null for "every step in the test".
+   *  Dynamic chrome (a clock in the header) is usually test-wide; a single
+   *  volatile widget is usually one step. */
+  stepId: string | null;
+  /** left edge, 0–1 */
+  x: number;
+  /** top edge, 0–1 */
+  y: number;
+  /** width, 0–1 */
+  w: number;
+  /** height, 0–1 */
+  h: number;
+  /** optional user label (e.g. "clock", "ad slot") */
+  label?: string;
+}
 
 /** A single completed test run, persisted to run-history.json. The raw console
  *  output for the run lives in a sibling .log file (see logFile) so large

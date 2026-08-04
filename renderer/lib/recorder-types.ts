@@ -156,6 +156,8 @@ export interface VisualDiff {
   reason?: string;
   /** diff-overlay filename (e.g. "3.diff.png") in the run dir, for "changed". */
   diffFile?: string;
+  /** how many ignore masks were applied to this step's comparison, when any. */
+  maskedCount?: number;
 }
 
 export interface ReplayStep {
@@ -193,6 +195,19 @@ export interface RunReplaySummary {
   stepCount: number;
   failedIndex: number | null;
   changedSteps: number;
+}
+
+/** A rectangular region excluded from visual diffing. Coordinates are
+ *  normalized (0–1) so masks survive viewport changes. `stepId: null` means
+ *  the mask applies to every step. Mirror of main/recorder/types.ts VisualMask. */
+export interface VisualMask {
+  id: string;
+  stepId: string | null;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  label?: string;
 }
 
 /** On-disk footprint of all captured artifacts. Mirror of
