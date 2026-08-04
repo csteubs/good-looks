@@ -63,6 +63,77 @@ function useDisabledEnhancements(): Set<string> {
   return new Set(ids);
 }
 
+/** Full-bleed glitch gif that eases in to fill the dialog while the model is
+ *  processing, then eases back out when the response arrives. Sits behind the
+ *  text layer so all window text stays visible. Background is #000000 while
+ *  active or transitioning. */
+function ThinkingGifOverlay({
+  status,
+  enabled,
+}: {
+  status: "idle" | "streaming" | "done" | "error" | "cancelled";
+  enabled: boolean;
+}) {
+  // `expanding` while streaming; `contracting` for the 5s ease-out after the
+  // response arrives; `hidden` once the scale-out completes.
+  const [phase, setPhase] = React.useState<"hidden" | "expanding" | "contracting">("hidden");
+  // Tracks whether the scaleX target has been applied yet so the CSS transition
+  // actually animates from 0 → 1 (without this, React renders scaleX(1) on the
+  // first frame and there's nothing to transition from).
+  const [scaledIn, setScaledIn] = React.useState(false);
+  const phaseRef = React.useRef(phase);
+  phaseRef.current = phase;
+
+  React.useEffect(() => {
+    if (!enabled) {
+      setPhase("hidden");
+      setScaledIn(false);
+      return;
+    }
+    if (status === "streaming") {
+      setPhase("expanding");
+      // Start at scaleX(0), then on the next frame flip to scaleX(1) so the
+      // 5s ease-in transition runs.
+      setScaledIn(false);
+      const raf = requestAnimationFrame(() => {
+        requestAnimationFrame(() => setScaledIn(true));
+      });
+      return () => cancelAnimationFrame(raf);
+    }
+    // Response received (done/error/cancelled) — start the 5s ease-out.
+    if (phaseRef.current === "expanding") {
+      setPhase("contracting");
+      setScaledIn(false);
+      const t = setTimeout(() => setPhase("hidden"), 5000);
+      return () => clearTimeout(t);
+    }
+  }, [status, enabled]);
+
+  if (!enabled || phase === "hidden") return null;
+
+  const targetScale = phase === "expanding" ? (scaledIn ? 1 : 0) : 0;
+
+  return (
+    <div
+      className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-md"
+      style={{ backgroundColor: "#000000" }}
+    >
+      <div className="flex h-full w-full items-center justify-center">
+        <img
+          src={glitchGif}
+          alt=""
+          className="h-full w-full max-w-none object-contain"
+          style={{
+            transform: `scaleX(${targetScale})`,
+            transformOrigin: "center",
+            transition: "transform 5s ease-in-out",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function friendlyError(message: string): string {
   if (/no model selected/i.test(message)) {
     return `${message} Open Settings (⌘,) → AI provider to pick one.`;
@@ -447,7 +518,9 @@ export function AiDebugDialog({
       description={testName}
       size="xl"
     >
-      <div className="flex h-[50vh] flex-col gap-3">
+      <div className="relative flex h-[50vh] flex-col gap-3">
+        <ThinkingGifOverlay status={status} enabled={thinkingGifEnabled} />
+        <div className="relative z-10 flex flex-1 flex-col gap-3">
         {reviewing ? (
           // Review phase: show the full prompt that will be sent and let the
           // user add context. Nothing is sent until they click "Send to AI".
@@ -514,12 +587,7 @@ export function AiDebugDialog({
           <>
             <div className="flex items-center gap-2">
               {status === "streaming" ? (
-                <>
-                  <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
-                  {!thinkingGifEnabled ? (
-                    <img src={glitchGif} alt="" className="size-5 shrink-0 rounded-sm" />
-                  ) : null}
-                </>
+                <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
               ) : null}
               {status === "error" ? <Status variant="error">Error</Status> : null}
               {status === "done" ? <Status variant="success">Done</Status> : null}
@@ -568,9 +636,7 @@ export function AiDebugDialog({
               ) : null}
             </div>
             <ScrollArea
-              className={`min-h-0 flex-1 rounded-md ${
-                status === "streaming" && thinkingGifEnabled ? "" : "border border-separator"
-              }`}
+              className="min-h-0 flex-1 rounded-md border border-separator"
               autoScrollToBottom
               autoScrollDeps={[content.length]}
             >
@@ -588,9 +654,9 @@ export function AiDebugDialog({
                     ),
                   )
                 ) : status === "streaming" && thinkingGifEnabled ? (
-                  <div className="flex flex-1 items-center justify-center py-8">
-                    <img src={glitchGif} alt="" className="size-16 shrink-0 rounded-sm" />
-                  </div>
+                  <p className="text-small text-secondary">
+                    {modelName ? `Thinking with ${modelName}…` : "Thinking…"}
+                  </p>
                 ) : (
                   <p className="text-small text-secondary">
                     {status === "streaming" ? (modelName ? `Thinking with ${modelName}…` : "Thinking…") : ""}
@@ -600,6 +666,7 @@ export function AiDebugDialog({
             </ScrollArea>
           </>
         )}
+        </div>
       </div>
     </Dialog>
   );
@@ -724,15 +791,12 @@ export function StepAiDebugDialog({
       description={stepLabel}
       size="xl"
     >
-      <div className="flex h-[50vh] flex-col gap-3">
+      <div className="relative flex h-[50vh] flex-col gap-3">
+        <ThinkingGifOverlay status={status} enabled={thinkingGifEnabled} />
+        <div className="relative z-10 flex flex-1 flex-col gap-3">
         <div className="flex items-center gap-2">
           {status === "streaming" ? (
-            <>
-              <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
-              {!thinkingGifEnabled ? (
-                <img src={glitchGif} alt="" className="size-5 shrink-0 rounded-sm" />
-              ) : null}
-            </>
+            <Status variant="loading">{modelName ? `Thinking with ${modelName}` : "Thinking"}</Status>
           ) : null}
           {status === "error" ? <Status variant="error">Error</Status> : null}
           {status === "done" ? <Status variant="success">Done</Status> : null}
@@ -760,9 +824,7 @@ export function StepAiDebugDialog({
           ) : null}
         </div>
         <ScrollArea
-          className={`min-h-0 flex-1 rounded-md ${
-            status === "streaming" && thinkingGifEnabled ? "" : "border border-separator"
-          }`}
+          className="min-h-0 flex-1 rounded-md border border-separator"
           autoScrollToBottom
           autoScrollDeps={[content.length]}
         >
@@ -780,9 +842,9 @@ export function StepAiDebugDialog({
                 ),
               )
             ) : status === "streaming" && thinkingGifEnabled ? (
-              <div className="flex flex-1 items-center justify-center py-8">
-                <img src={glitchGif} alt="" className="size-16 shrink-0 rounded-sm" />
-              </div>
+              <p className="text-small text-secondary">
+                {modelName ? `Thinking with ${modelName}…` : "Thinking…"}
+              </p>
             ) : (
               <p className="text-small text-secondary">
                 {status === "streaming" ? (modelName ? `Thinking with ${modelName}…` : "Thinking…") : ""}
@@ -790,6 +852,7 @@ export function StepAiDebugDialog({
             )}
           </div>
         </ScrollArea>
+        </div>
       </div>
     </Dialog>
   );

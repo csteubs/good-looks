@@ -524,8 +524,9 @@ export function SettingsView() {
               <FieldContent>
                 <FieldLabel htmlFor="ai-thinking-gif">AI thinking gif</FieldLabel>
                 <p className="text-sm text-muted-foreground">
-                  While the AI is processing, hide the response border and show the glitch gif
-                  centered at full size instead of the small inline indicator.
+                  While the AI is processing, the glitch gif eases in to fill the debug window
+                  over 5 seconds, then eases back out when the response arrives. Window
+                  background turns black while active.
                 </p>
               </FieldContent>
               <Switch
