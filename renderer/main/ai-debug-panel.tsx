@@ -544,6 +544,23 @@ export function AiDebugDialog({
             <Text variant="small" color="secondary">
               Review the prompt that will be sent to the model, then add any context you want and confirm to send. Nothing is sent until you confirm.
             </Text>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {QUICK_CONTEXT_REASONS.map((reason) => {
+                const active = isReasonActive(additionalContext, reason);
+                return (
+                  <Button
+                    key={reason}
+                    size="small"
+                    variant={active ? "muted" : "transparent"}
+                    radius="full"
+                    className="h-6 px-2 text-small"
+                    onClick={() => setAdditionalContext((prev) => toggleReason(prev, reason))}
+                  >
+                    {reason}
+                  </Button>
+                );
+              })}
+            </div>
             <ScrollArea
               className="max-h-[44vh] rounded-md border border-separator"
               viewportClassName="max-h-[44vh]"
@@ -562,28 +579,7 @@ export function AiDebugDialog({
               </div>
             </ScrollArea>
             <Field
-              label={
-                <span className="flex w-full items-center justify-between gap-2">
-                  <span>Anything else you want to include? (Optional)</span>
-                  <span className="flex flex-wrap items-center justify-end gap-1.5">
-                    {QUICK_CONTEXT_REASONS.map((reason) => {
-                      const active = isReasonActive(additionalContext, reason);
-                      return (
-                        <Button
-                          key={reason}
-                          size="small"
-                          variant={active ? "muted" : "transparent"}
-                          radius="full"
-                          className="h-6 px-2 text-small"
-                          onClick={() => setAdditionalContext((prev) => toggleReason(prev, reason))}
-                        >
-                          {reason}
-                        </Button>
-                      );
-                    })}
-                  </span>
-                </span>
-              }
+              label="Anything else you want to include? (Optional)"
               orientation="vertical"
             >
               <Textarea
