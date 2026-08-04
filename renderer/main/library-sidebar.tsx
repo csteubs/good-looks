@@ -103,6 +103,31 @@ function hostOf(url: string): string {
   }
 }
 
+/** A test row's icon: the recorded site's favicon, falling back to the
+ * generic FlaskConical icon when the favicon can't be loaded (offline,
+ * malformed URL, or a site with no favicon). Uses Google's S2 favicon
+ * service so we don't have to fetch/parse `<link rel="icon">` ourselves. */
+function Favicon({ url }: { url: string }) {
+  const [failed, setFailed] = React.useState(false);
+  const host = hostOf(url);
+  // 64px source for retina crispness; rendered in a 16px (size-4) box.
+  const src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`;
+  if (failed) return <FlaskConical className="size-4" />;
+  return (
+    <img
+      src={src}
+      alt=""
+      width={16}
+      height={16}
+      className="size-4 shrink-0 object-contain"
+      loading="lazy"
+      decoding="async"
+      draggable={false}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 // Native popup menu bridge. The sidebar header action renders as a native
 // control, so a React dropdown can't anchor to it — use the native menu popup.
 interface MenuPopupItem {
@@ -257,7 +282,7 @@ export function LibrarySidebar() {
             <CustomContextMenu key={t.id}>
               <CustomContextMenuTrigger asChild>
                 <SidebarListItem
-                  icon={<FlaskConical className="size-4" />}
+                  icon={<Favicon url={t.url} />}
                   title={t.name}
                   subtitle={hostOf(t.url)}
                   selected={t.id === selectedId}
