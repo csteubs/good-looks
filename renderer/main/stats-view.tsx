@@ -450,82 +450,90 @@ export function StatsView() {
                   <Text variant="small" className="mb-2 block font-medium">
                     Run history
                   </Text>
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Test</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Started</TableHead>
-                        <TableHead>Tags</TableHead>
-                        <TableHead className="text-right">Duration</TableHead>
-                        <TableHead className="text-right">Log</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {runs.map((r) => {
-                        const isBaseline = r.kind === "baseline-update";
-                        return (
-                          <TableRow
-                            key={r.id}
-                            className={isBaseline ? "" : "cursor-pointer"}
-                            onClick={() => {
-                              if (isBaseline) return;
-                              setLogRun({
-                                id: r.id,
-                                title: `${r.testName} — ${fmtDateTime(r.startedAt)}`,
-                              });
-                            }}
-                          >
-                            <TableCell className="max-w-[220px] truncate font-medium">
-                              {r.testName}
-                            </TableCell>
-                            <TableCell>
-                              {isBaseline ? (
-                                <Badge color="secondary">
-                                  <Stamp className="size-3" />
-                                  Baseline
-                                </Badge>
-                              ) : (
-                                <Badge color={r.status === "passed" ? "green" : "red"}>
-                                  {r.status}
-                                </Badge>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-secondary">
-                              {fmtDateTime(r.startedAt)}
-                            </TableCell>
-                            <TableCell>
-                              {isBaseline ? (
-                                <span className="text-tertiary">—</span>
-                              ) : r.runHeadless ? (
-                                <Badge color="secondary">
-                                  <MonitorOff className="size-3" />
-                                  Headless
-                                </Badge>
-                              ) : (
-                                <Badge color="secondary">
-                                  <Globe className="size-3" />
-                                  Browser
-                                </Badge>
-                              )}
-                            </TableCell>
-                            <TableCell className="text-right text-secondary">
-                              {isBaseline ? (
-                                <span className="text-tertiary" title={r.note}>
-                                  {r.note ?? "—"}
-                                </span>
-                              ) : (
-                                fmtDuration(r.durationMs)
-                              )}
-                            </TableCell>
-                            <TableCell className="text-right text-tertiary">
-                              {isBaseline ? "—" : fmtBytes(r.logBytes)}
-                            </TableCell>
-                          </TableRow>
+                  <div className="overflow-x-hidden">
+                    <Table className="table-fixed">
+                      <TableHeader sticky>
+                        <TableRow>
+                          <TableHead>Test</TableHead>
+                          <TableHead className="w-20">Status</TableHead>
+                          <TableHead className="w-28">Started</TableHead>
+                          <TableHead className="w-24">Tags</TableHead>
+                          <TableHead className="w-24 text-right">Duration</TableHead>
+                          <TableHead className="w-20 text-right">Log</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {runs.map((r) => {
+                          const isBaseline = r.kind === "baseline-update";
+                          return (
+                            <TableRow
+                              key={r.id}
+                              className={isBaseline ? "" : "cursor-pointer"}
+                              onClick={() => {
+                                if (isBaseline) return;
+                                setLogRun({
+                                  id: r.id,
+                                  title: `${r.testName} — ${fmtDateTime(r.startedAt)}`,
+                                });
+                              }}
+                            >
+                              <TableCell
+                                className="truncate font-medium"
+                                title={r.testName}
+                              >
+                                {r.testName}
+                              </TableCell>
+                              <TableCell>
+                                {isBaseline ? (
+                                  <Badge color="secondary">
+                                    <Stamp className="size-3" />
+                                    Baseline
+                                  </Badge>
+                                ) : (
+                                  <Badge color={r.status === "passed" ? "green" : "red"}>
+                                    {r.status}
+                                  </Badge>
+                                )}
+                              </TableCell>
+                              <TableCell
+                                className="truncate text-secondary"
+                                title={fmtDateTime(r.startedAt)}
+                              >
+                                {fmtDateTime(r.startedAt)}
+                              </TableCell>
+                              <TableCell>
+                                {isBaseline ? (
+                                  <span className="text-tertiary">—</span>
+                                ) : r.runHeadless ? (
+                                  <Badge color="secondary">
+                                    <MonitorOff className="size-3" />
+                                    Headless
+                                  </Badge>
+                                ) : (
+                                  <Badge color="secondary">
+                                    <Globe className="size-3" />
+                                    Browser
+                                  </Badge>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right text-secondary">
+                                {isBaseline ? (
+                                  <span className="text-tertiary" title={r.note}>
+                                    {r.note ?? "—"}
+                                  </span>
+                                ) : (
+                                  fmtDuration(r.durationMs)
+                                )}
+                              </TableCell>
+                              <TableCell className="text-right text-tertiary">
+                                {isBaseline ? "—" : fmtBytes(r.logBytes)}
+                              </TableCell>
+                            </TableRow>
                         );
                       })}
                     </TableBody>
                   </Table>
+                  </div>
                 </div>
               ) : null}
             </>
