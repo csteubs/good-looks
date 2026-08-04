@@ -15,6 +15,7 @@ import type {
   BaselineEntry,
   CaptureOverheadSummary,
   RetentionResult,
+  RunComparison,
   RunReplay,
   RunReplaySummary,
   VisualMask,
@@ -128,6 +129,10 @@ export const api = {
     run: (id: string, headed: boolean, captureArtifacts?: boolean, runHeadless?: boolean) =>
       ipc().invoke<{ runId: string }>("runner:run", { id, headed, captureArtifacts, runHeadless }),
     stop: (runId: string) => ipc().invoke<void>("runner:stop", { runId }),
+    replayRun: (testId: string, runId: string, runHeadless?: boolean) =>
+      ipc().invoke<{ runId: string }>("runner:replayRun", { testId, runId, runHeadless }),
+    compareRuns: (testId: string, baseRunId: string, replayRunId: string) =>
+      ipc().invoke<RunComparison | null>("runner:compareRuns", { testId, baseRunId, replayRunId }),
   },
   runs: {
     list: () => ipc().invoke<RunRecord[]>("runs:list"),

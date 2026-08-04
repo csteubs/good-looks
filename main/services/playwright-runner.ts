@@ -21,7 +21,8 @@ import { notifyRunOutcome } from "./run-notifier.js";
 import { applyRetention } from "./retention.js";
 import { buildReplay, enrichWithVisualDiffs } from "./replay-builder.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
-import type { TestSpeed } from "../recorder/types.js";
+import { generateSpec } from "./script-generator.js";
+import type { Step, TestSpeed } from "../recorder/types.js";
 
 // Module Playwright specs import test/expect from — redirected to the capture
 // fixture for a run that captures artifacts.
@@ -327,6 +328,9 @@ export const playwrightRunner = {
     headed: boolean;
     captureArtifacts?: boolean;
     runHeadless?: boolean;
+    /** Re-execute the steps a PAST run recorded, instead of the test's current
+     *  script. The new run is tagged with this id so the two can be compared. */
+    replayOfRunId?: string;
   }): { runId: string } {
     const captureArtifacts = params.captureArtifacts ?? false;
     const runHeadless = params.runHeadless ?? false;
@@ -339,6 +343,21 @@ export const playwrightRunner = {
     if (!rec) {
       throw new Error("Test not found: " + params.testId);
     }
+
+    // Re-running a past run replays THAT run's recorded steps — the test may
+    // have been edited since, and the point is to reproduce what happened.
+    const replayOfRunId = params.replayOfRunId;
+    let replaySteps: Step[] | null = null;
+    if (replayOfRunId) {
+      replaySteps = artifactStore.readSteps<Step>(params.testId, replayOfRunId);
+      if (!replaySteps || replaySteps.length === 0) {
+        throw new Error(
+          "That run predates step snapshots, so it can't be re-run. Capture a new run first.",
+        );
+      }
+    }
+    // Which steps this execution correlates its results against.
+    const runSteps: Step[] = replaySteps ?? rec.steps;
 
     const startedAt = Date.now();
     // Unique per execution — names the artifacts dir and (below) the RunRecord,
@@ -366,9 +385,23 @@ export const playwrightRunner = {
         let specToRun = rec.scriptPath;
         let capturing = false;
         let artifactDir = "";
+
+        // Re-running a past run: generate a spec from ITS recorded steps rather
+        // than the test's current script, so an edit since then can't change
+        // what gets reproduced.
+        if (replaySteps) {
+          const replaySpecPath = path.join(scriptsDir, `${recordId}.replay.spec.ts`);
+          fs.writeFileSync(
+            replaySpecPath,
+            generateSpec({ name: rec.name, url: rec.url, steps: replaySteps }),
+            "utf-8",
+          );
+          tempSpecPath = replaySpecPath;
+          specToRun = replaySpecPath;
+        }
         if (captureArtifacts && !rec.sourceDir) {
           ensureCaptureFixture(scriptsDir);
-          const prepared = prepareCaptureSpec(scriptsDir, rec.scriptPath, recordId);
+          const prepared = prepareCaptureSpec(scriptsDir, specToRun, recordId);
           if (prepared) {
             tempSpecPath = prepared;
             specToRun = prepared;
@@ -387,6 +420,9 @@ export const playwrightRunner = {
               days > 0 ? days * 24 * 60 * 60 * 1000 : 0,
             );
             artifactDir = artifactStore.ensureRunDir(rec.id, recordId);
+            // Snapshot exactly what this run executes, so it can be re-run
+            // later even if the test is edited in the meantime.
+            artifactStore.writeSteps(rec.id, recordId, runSteps);
           } else {
             emitOutput(
               runId,
@@ -463,7 +499,7 @@ export const playwrightRunner = {
               status: runStatus,
               startedAt,
               finishedAt,
-              steps: rec.steps,
+              steps: runSteps,
               statuses,
             });
             // Phase 3 — diff each captured shot against the pinned baseline.
@@ -511,6 +547,7 @@ export const playwrightRunner = {
               runHeadless,
               captureOverheadMs,
               shotCount,
+              replayOfRunId,
             },
             logText,
           );

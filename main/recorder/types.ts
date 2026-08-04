@@ -231,6 +231,9 @@ export interface RunRecord {
    *  raw inputs for the "what does capture cost?" readout in Stats. */
   captureOverheadMs?: number;
   shotCount?: number;
+  /** set when this run re-executed a past run's recorded steps; the id of that
+   *  run, so the two can be compared then-vs-now. */
+  replayOfRunId?: string;
   /** Distinguishes a real test "run" (default) from a "baseline-update" event
    *  logged when the user accepts screenshots as new baselines. Baseline-update
    *  records are excluded from the pass/fail charts but shown in the history

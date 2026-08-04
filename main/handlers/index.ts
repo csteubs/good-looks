@@ -27,6 +27,7 @@ import { anthropicKeyStore } from "../services/anthropic-key-store.js";
 import { recorderSettingsStore } from "../services/recorder-settings-store.js";
 import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
 import { applyRetention } from "../services/retention.js";
+import { compareRuns } from "../services/run-comparison.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import type { AssertKind, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
@@ -384,6 +385,25 @@ export function registerHandlers(): void {
         captureArtifacts: params.captureArtifacts ?? false,
         runHeadless: params.runHeadless ?? false,
       }),
+  );
+  // Re-execute a past run's recorded steps against the live site. Always
+  // captures, so the re-run produces its own screenshots to compare.
+  ipcMain.handle(
+    "runner:replayRun",
+    async (_e, params: { testId: string; runId: string; runHeadless?: boolean }) =>
+      playwrightRunner.start({
+        testId: params.testId,
+        headed: !(params.runHeadless ?? false),
+        captureArtifacts: true,
+        runHeadless: params.runHeadless ?? false,
+        replayOfRunId: params.runId,
+      }),
+  );
+  // Then-vs-now comparison between a past run and a re-run of it.
+  ipcMain.handle(
+    "runner:compareRuns",
+    async (_e, params: { testId: string; baseRunId: string; replayRunId: string }) =>
+      compareRuns(params.testId, params.baseRunId, params.replayRunId),
   );
   ipcMain.handle("runner:stop", async (_e, params: { runId: string }) => {
     playwrightRunner.stop(params.runId);

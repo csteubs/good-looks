@@ -20,11 +20,12 @@ import { randomUUID } from "crypto";
 import { PNG } from "pngjs";
 
 import { artifactStore } from "../artifact-store.js";
-import type { ArtifactManifest } from "../artifact-store.js";
+import type { ArtifactManifest, ReplayStepStatus } from "../artifact-store.js";
 import { baselineStore } from "../baseline-store.js";
 import { buildReplay, enrichWithVisualDiffs } from "../replay-builder.js";
 import { acceptRunBaseline, acceptStepBaseline } from "../visual-baseline-ops.js";
 import { annotationStore } from "../annotation-store.js";
+import { compareRuns } from "../run-comparison.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../../recorder/types.js";
 import type { Step, VisualMask } from "../../recorder/types.js";
 
@@ -465,6 +466,85 @@ eq(
 // Clearing something already gone must not throw.
 baselineStore.clear(testId, capturedStepIds[0]);
 eq(baselineStore.entry(testId, capturedStepIds[0]), null, "clearing twice is a no-op");
+
+// ── 10. Re-run comparison (live re-execution) ──────────────────────────────
+// The comparison must distinguish "worked before, doesn't now" from a plain
+// failure, and must match steps by id so an index shift can't misalign it.
+const cmpTestId = randomUUID();
+const cmpSteps: Step[] = [
+  step({ type: "goto", url: "https://example.com" }),
+  step({ type: "click", locator: { k: "role", role: "button", name: "A" } }),
+  step({ type: "click", locator: { k: "role", role: "button", name: "B" } }),
+];
+
+function seedReplayWithStatuses(
+  runId: string,
+  statuses: ReplayStepStatus[],
+): void {
+  artifactStore.ensureRunDir(cmpTestId, runId);
+  artifactStore.writeReplay(cmpTestId, runId, {
+    testId: cmpTestId,
+    runId,
+    testName: "Comparison",
+    status: statuses.includes("failed") ? "failed" : "passed",
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+    failedIndex: statuses.indexOf("failed") >= 0 ? statuses.indexOf("failed") : null,
+    steps: cmpSteps.map((st, i) => ({
+      index: i,
+      stepId: st.id,
+      label: `step ${i}`,
+      type: st.type,
+      status: statuses[i],
+      screenshot: null,
+    })),
+  });
+}
+
+const baseRun = randomUUID();
+const rerun = randomUUID();
+seedReplayWithStatuses(baseRun, ["passed", "passed", "failed"]);
+seedReplayWithStatuses(rerun, ["passed", "failed", "passed"]);
+
+const cmp = compareRuns(cmpTestId, baseRun, rerun);
+eq(
+  cmp?.steps.map((c) => c.delta),
+  ["stable", "changed-since", "fixed"],
+  "each step is classified by what moved between the runs",
+);
+eq(cmp?.changedSinceCount, 1, "counts what worked before and doesn't now");
+eq(cmp?.fixedCount, 1, "counts what failed before and passes now");
+eq(cmp?.stepsDiverged, false, "matching step sets don't report divergence");
+
+// A missing replay (e.g. pruned by retention) is null, not a crash.
+eq(compareRuns(cmpTestId, baseRun, randomUUID()), null, "a missing re-run compares to null");
+
+// A step absent from the re-run is "unknown", and divergence is flagged.
+const shortRun = randomUUID();
+artifactStore.ensureRunDir(cmpTestId, shortRun);
+artifactStore.writeReplay(cmpTestId, shortRun, {
+  testId: cmpTestId,
+  runId: shortRun,
+  testName: "Comparison",
+  status: "passed",
+  startedAt: Date.now(),
+  finishedAt: Date.now(),
+  failedIndex: null,
+  steps: [
+    {
+      index: 0,
+      stepId: cmpSteps[0].id,
+      label: "step 0",
+      type: "goto",
+      status: "passed",
+      screenshot: null,
+    },
+  ],
+});
+const partial = compareRuns(cmpTestId, baseRun, shortRun);
+eq(partial?.steps.map((c) => c.delta), ["stable", "unknown", "unknown"], "absent steps are unknown");
+eq(partial?.changedSinceCount, 0, "an absent step is never counted as broken");
+eq(partial?.stepsDiverged, true, "a differing step set is reported as diverged");
 
 // ── cleanup + verdict ──────────────────────────────────────────────────────
 try {

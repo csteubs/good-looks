@@ -305,6 +305,33 @@ export const artifactStore = {
     return { removedRuns, freedBytes: Math.max(0, before.bytes - after.bytes) };
   },
 
+  /** Snapshot the exact Step[] a run executed, alongside its screenshots.
+   *  replay.json holds only labels/statuses — not locators — so re-executing a
+   *  past run needs the real steps. Storing them per run also means a re-run
+   *  replays what actually ran, even if the test has been edited since. */
+  writeSteps(testId: string, runId: string, steps: unknown[]): void {
+    try {
+      fs.writeFileSync(
+        path.join(this.runDir(testId, runId), "steps.json"),
+        JSON.stringify(steps, null, 2),
+        "utf-8",
+      );
+    } catch (err) {
+      logger.warn("artifacts", "Failed to snapshot run steps", { testId, runId, err: String(err) });
+    }
+  },
+
+  /** The Step[] snapshot for a run, or null when it predates snapshotting. */
+  readSteps<T>(testId: string, runId: string): T[] | null {
+    try {
+      const raw = fs.readFileSync(path.join(this.runDir(testId, runId), "steps.json"), "utf-8");
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? (parsed as T[]) : null;
+    } catch {
+      return null;
+    }
+  },
+
   /** Run ids that have artifacts for a test, newest first (by dir mtime). */
   listRuns(testId: string): string[] {
     const dir = testDir(testId);

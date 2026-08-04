@@ -94,6 +94,8 @@ export const runHistoryStore = {
       /** measured screenshot cost for capture runs (see capture-overhead.ts) */
       captureOverheadMs?: number;
       shotCount?: number;
+      /** id of the run this one re-executed, when it's a re-run */
+      replayOfRunId?: string;
     },
     logText: string,
   ): RunRecord {
@@ -120,6 +122,7 @@ export const runHistoryStore = {
       // "no capture" apart from "capture that took no measurable time".
       ...(run.captureOverheadMs !== undefined ? { captureOverheadMs: run.captureOverheadMs } : {}),
       ...(run.shotCount !== undefined ? { shotCount: run.shotCount } : {}),
+      ...(run.replayOfRunId ? { replayOfRunId: run.replayOfRunId } : {}),
     };
 
     const all = readAll();

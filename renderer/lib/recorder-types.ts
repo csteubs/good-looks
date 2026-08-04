@@ -139,6 +139,8 @@ export interface RunRecord {
   /** ms spent taking screenshots, and how many — capture runs only. */
   captureOverheadMs?: number;
   shotCount?: number;
+  /** id of the run this one re-executed, when it's a re-run. */
+  replayOfRunId?: string;
   kind?: RunRecordKind;
   note?: string;
 }
@@ -245,6 +247,29 @@ export interface BaselineEntry {
   at: number;
   label: string;
   rect?: NormalizedRect;
+}
+
+/** Then-vs-now comparison of a past run and a re-run of it. Mirror of
+ *  main/services/run-comparison.ts. */
+export type StepDelta = "stable" | "fixed" | "changed-since" | "still-failing" | "unknown";
+
+export interface StepComparison {
+  stepId: string;
+  label: string;
+  before: ReplayStepStatus;
+  after: ReplayStepStatus;
+  delta: StepDelta;
+  visual?: VisualDiffState;
+}
+
+export interface RunComparison {
+  testId: string;
+  baseRunId: string;
+  replayRunId: string;
+  steps: StepComparison[];
+  changedSinceCount: number;
+  fixedCount: number;
+  stepsDiverged: boolean;
 }
 
 /** What a retention sweep deleted. Mirror of main/services/retention.ts. */

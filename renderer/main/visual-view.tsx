@@ -33,6 +33,7 @@ import {
   ImageOff,
   MessageSquare,
   Pencil,
+  RefreshCw,
   SquareDashed,
   Stamp,
   TriangleAlert,
@@ -49,6 +50,8 @@ import type {
   VisualDiff,
   VisualDiffState,
   VisualMask,
+  RunComparison,
+  StepDelta,
 } from "../lib/recorder-types";
 
 // ── Formatting ─────────────────────────────────────────────────────────
@@ -705,6 +708,104 @@ function MasksBaselinesDialog({
   );
 }
 
+
+// ── Re-run comparison (live re-execution) ───────────────────────────────
+// Re-executing a past run only pays off if you can see what MOVED, so the
+// result is framed as a then-vs-now delta per step rather than a fresh
+// pass/fail. Note the deliberate wording on "changed since": a step that
+// worked before and doesn't now might be a regression OR environment drift
+// (site changed, auth expired, data gone) — we show the evidence and don't
+// claim to know which.
+
+function deltaBadge(delta: StepDelta): { color: "green" | "orange" | "red" | "secondary"; label: string } {
+  switch (delta) {
+    case "stable":
+      return { color: "green", label: "Same" };
+    case "fixed":
+      return { color: "green", label: "Now passing" };
+    case "changed-since":
+      return { color: "orange", label: "Changed since" };
+    case "still-failing":
+      return { color: "red", label: "Still failing" };
+    default:
+      return { color: "secondary", label: "No result" };
+  }
+}
+
+function RunComparisonDialog({
+  comparison,
+  open,
+  onOpenChange,
+}: {
+  comparison: RunComparison | null;
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange} size="large" title="Re-run comparison">
+      {!comparison ? (
+        <Text color="secondary">
+          The comparison isn’t available — one of the two runs’ artifacts may have been pruned by
+          retention.
+        </Text>
+      ) : (
+        <div className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {comparison.changedSinceCount > 0 ? (
+              <Badge color="orange">
+                {comparison.changedSinceCount} changed since
+              </Badge>
+            ) : (
+              <Badge color="green">Nothing broke</Badge>
+            )}
+            {comparison.fixedCount > 0 ? (
+              <Badge color="green">{comparison.fixedCount} now passing</Badge>
+            ) : null}
+          </div>
+          {comparison.changedSinceCount > 0 ? (
+            <Callout color="orange" icon={<TriangleAlert className="size-4" />}>
+              These steps worked in the original run and don’t now. That can be a real regression or
+              environment drift — the site changed, a login expired, test data is gone. Compare the
+              screenshots before deciding.
+            </Callout>
+          ) : null}
+          {comparison.stepsDiverged ? (
+            <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+              The two runs don’t cover the same steps, so some rows have nothing to compare against.
+            </Callout>
+          ) : null}
+          <div className="flex flex-col gap-1">
+            {comparison.steps.map((s) => {
+              const badge = deltaBadge(s.delta);
+              return (
+                <div
+                  key={s.stepId}
+                  className="flex items-center gap-2 rounded-md border border-token-border px-2 py-1.5"
+                >
+                  <Text variant="small-mono" className="min-w-0 flex-1 truncate" title={s.label}>
+                    {s.label}
+                  </Text>
+                  <Text variant="small" color="tertiary" className="shrink-0">
+                    {statusLabel(s.before)} → {statusLabel(s.after)}
+                  </Text>
+                  {s.visual === "changed" ? (
+                    <Badge color="orange" className="shrink-0">
+                      <Eye className="size-3" />
+                    </Badge>
+                  ) : null}
+                  <Badge color={badge.color} className="shrink-0">
+                    {badge.label}
+                  </Badge>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </Dialog>
+  );
+}
+
 // ── Right pane: the scrubber/timeline for one run ───────────────────────
 function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   const qc = useQueryClient();
@@ -762,6 +863,43 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   });
 
   const [managerOpen, setManagerOpen] = React.useState(false);
+  // Live re-execution: kick off a re-run of THIS run's recorded steps, then
+  // show the then-vs-now delta once it lands.
+  const [rerunning, setRerunning] = React.useState(false);
+  const [comparison, setComparison] = React.useState<RunComparison | null>(null);
+  const [comparisonOpen, setComparisonOpen] = React.useState(false);
+  const pendingRerun = React.useRef<string | null>(null);
+
+  const startRerun = async () => {
+    setRerunning(true);
+    try {
+      await api.runner.replayRun(summary.testId, summary.runId);
+      pendingRerun.current = summary.runId;
+      toast.success("Re-running this run — the comparison opens when it finishes.");
+    } catch (err) {
+      setRerunning(false);
+      toast.error(String(err));
+    }
+  };
+
+  // The re-run reports completion through the same runs:changed push the rest
+  // of the view already listens to; find the newest run tagged as a re-run of
+  // this one and compare against it.
+  React.useEffect(() => {
+    return api.on("runs:changed", () => {
+      const base = pendingRerun.current;
+      if (!base) return;
+      void (async () => {
+        const runs = await api.runs.list();
+        const replayRun = runs.find((r) => r.replayOfRunId === base);
+        if (!replayRun) return;
+        pendingRerun.current = null;
+        setRerunning(false);
+        setComparison(await api.runner.compareRuns(summary.testId, base, replayRun.id));
+        setComparisonOpen(true);
+      })();
+    });
+  }, [summary.testId]);
   const [masking, setMasking] = React.useState(false);
   // New masks default to this step only; the toolbar switch widens them to the
   // whole test (for page chrome like a clock that appears on every screenshot).
@@ -877,6 +1015,17 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           size="small"
           variant="glass"
           className="shrink-0"
+          disabled={rerunning}
+          onClick={startRerun}
+          title="Re-execute this run's recorded steps against the live site"
+        >
+          <RefreshCw className={`size-3.5 ${rerunning ? "animate-spin" : ""}`} />
+          {rerunning ? "Re-running…" : "Re-run"}
+        </Button>
+        <Button
+          size="small"
+          variant="glass"
+          className="shrink-0"
           onClick={() => setManagerOpen(true)}
         >
           Masks & baselines
@@ -909,6 +1058,11 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         </div>
       </div>
 
+      <RunComparisonDialog
+        comparison={comparison}
+        open={comparisonOpen}
+        onOpenChange={setComparisonOpen}
+      />
       <MasksBaselinesDialog
         testId={summary.testId}
         open={managerOpen}
