@@ -18,6 +18,7 @@ export function HomeView() {
       </Toolbar>
       <div className="relative flex-1">
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 overflow-hidden px-8 py-10 text-center">
+          {animationEnabled ? <BlackHoleLoader size={440} dark={isDarkMode} /> : null}
           <div className="flex max-w-sm flex-col gap-2">
             <EmptyStateTitle>Record a Playwright test</EmptyStateTitle>
             <EmptyStateDescription>
@@ -25,7 +26,6 @@ export function HomeView() {
               becomes a test step — then generate and run a Playwright script.
             </EmptyStateDescription>
           </div>
-          {animationEnabled ? <BlackHoleLoader size={440} dark={isDarkMode} /> : null}
         </div>
       </div>
     </div>
