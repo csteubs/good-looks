@@ -241,8 +241,9 @@ export function TestDetailView() {
           </label>
           <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
             <Checkbox
-              checked={captureArtifacts}
+              checked={runHeadless ? false : captureArtifacts}
               onCheckedChange={(v) => {
+                if (runHeadless) return; // disabled when headless — ignore stray toggles
                 const next = v === true;
                 setCaptureArtifacts(next);
                 api.tests.setCaptureArtifacts(id, next).catch(() => {
