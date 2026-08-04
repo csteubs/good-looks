@@ -196,6 +196,20 @@ export function registerHandlers(): void {
     },
   );
 
+  // Per-test "Run headless" preference, remembered between sessions. Absent →
+  // use the global default from RecorderSettings. Only affects test runs.
+  ipcMain.handle(
+    "tests:setHeadless",
+    async (_e, params: { id: string; runHeadless: boolean }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      rec.runHeadless = params.runHeadless;
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return rec;
+    },
+  );
+
   // Hide a test from the sidebar without deleting its record or script file.
   ipcMain.handle(
     "tests:setHidden",

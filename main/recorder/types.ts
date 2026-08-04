@@ -152,6 +152,11 @@ export interface TestRecord {
    *  When absent, the global `RecorderSettings.defaultCaptureArtifacts`
    *  applies. Set from the test detail toolbar's "Capture screenshots" toggle. */
   captureArtifacts?: boolean;
+  /** Per-test headless-run preference, remembered between sessions. When absent,
+   *  the global `RecorderSettings.defaultRunHeadless` applies. Set from the test
+   *  detail toolbar's "Run headless" toggle. Only affects test runs, not the
+   *  trainer. */
+  runHeadless?: boolean;
 }
 
 /** Default visual-diff threshold (percent of pixels changed) when a test has
@@ -240,6 +245,10 @@ export interface RecorderSettings {
   /** default value of the per-test "Capture screenshots" toggle for tests
    *  that haven't set their own preference (default false). */
   defaultCaptureArtifacts: boolean;
+  /** default value of the per-test "Run headless" toggle for tests that
+   *  haven't set their own preference (default false → runs are headed). Only
+   *  affects test runs, not the trainer. */
+  defaultRunHeadless: boolean;
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];

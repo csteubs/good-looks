@@ -130,7 +130,7 @@ interface RecorderContextValue {
    *  The trainer opens the Add-step dialog from this; null when idle. */
   contextAction: ContextAction | null;
   clearContextAction: () => void;
-  run: (id: string, captureArtifacts?: boolean) => void;
+  run: (id: string, captureArtifacts?: boolean, headless?: boolean) => void;
   stopRun: (id: string) => void;
 }
 
@@ -403,9 +403,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     void api.recorder.endRefine();
   }, []);
   const clearPicked = React.useCallback(() => setPicked(null), []);
-  const run = React.useCallback((id: string, captureArtifacts?: boolean) => {
+  const run = React.useCallback((id: string, captureArtifacts?: boolean, headless?: boolean) => {
     setRuns((prev) => ({ ...prev, [id]: { lines: [], running: true, code: null, stepStatus: {} } }));
-    api.runner.run(id, true, captureArtifacts).catch(() => {});
+    // headed = not headless — the trainer path is unaffected (separate channel).
+    api.runner.run(id, !headless, captureArtifacts).catch(() => {});
   }, []);
   const stopRun = React.useCallback((id: string) => void api.runner.stop(id), []);
 

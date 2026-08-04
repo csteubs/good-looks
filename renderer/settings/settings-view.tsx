@@ -62,6 +62,7 @@ export function SettingsView() {
   const [showUrlBar, setShowUrlBar] = useState(true);
   const [defaultRunSpeed, setDefaultRunSpeed] = useState<TestSpeed>("slow");
   const [defaultCaptureArtifacts, setDefaultCaptureArtifacts] = useState(false);
+  const [defaultRunHeadless, setDefaultRunHeadless] = useState(false);
 
   // ── Auto-Heal settings ──────────────────────────────────────────────
   const [autoHealEnabled, setAutoHealEnabled] = useState(true);
@@ -94,6 +95,7 @@ export function SettingsView() {
         setShowUrlBar(settings.showUrlBar);
         setDefaultRunSpeed(settings.defaultRunSpeed ?? "slow");
         setDefaultCaptureArtifacts(settings.defaultCaptureArtifacts ?? false);
+        setDefaultRunHeadless(settings.defaultRunHeadless ?? false);
         setAutoHealEnabled(settings.autoHealEnabled ?? true);
         setAutoHealRetries(settings.autoHealRetries ?? 3);
         setAutoHealTimeout(settings.autoHealAttemptTimeoutMs ?? 4000);
@@ -125,6 +127,15 @@ export function SettingsView() {
     setDefaultCaptureArtifacts(checked);
     try {
       await api.recorder.setSettings({ defaultCaptureArtifacts: checked });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleDefaultRunHeadlessChange = async (checked: boolean) => {
+    setDefaultRunHeadless(checked);
+    try {
+      await api.recorder.setSettings({ defaultRunHeadless: checked });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
     }
@@ -446,6 +457,21 @@ export function SettingsView() {
                 id="default-capture-artifacts"
                 checked={defaultCaptureArtifacts}
                 onCheckedChange={handleDefaultCaptureArtifactsChange}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="default-run-headless">Run tests in headless mode</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Runs tests without opening a visible browser window. Only affects test runs —
+                  the trainer always opens a visible browser. Each test remembers its own choice
+                  once you toggle it in the test view.
+                </p>
+              </FieldContent>
+              <Switch
+                id="default-run-headless"
+                checked={defaultRunHeadless}
+                onCheckedChange={handleDefaultRunHeadlessChange}
               />
             </Field>
           </FieldGroup>

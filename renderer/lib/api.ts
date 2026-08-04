@@ -112,6 +112,8 @@ export const api = {
       ipc().invoke<TestRecord>("tests:setSpeed", { id, speed }),
     setCaptureArtifacts: (id: string, captureArtifacts: boolean) =>
       ipc().invoke<TestRecord>("tests:setCaptureArtifacts", { id, captureArtifacts }),
+    setHeadless: (id: string, runHeadless: boolean) =>
+      ipc().invoke<TestRecord>("tests:setHeadless", { id, runHeadless }),
     setHidden: (id: string, hidden: boolean) =>
       ipc().invoke<TestRecord | null>("tests:setHidden", { id, hidden }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),

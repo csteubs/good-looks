@@ -115,6 +115,8 @@ export interface TestRecord {
   stepsDiverged?: boolean;
   /** Per-test screenshot-capture preference (mirrors main TestRecord). */
   captureArtifacts?: boolean;
+  /** Per-test headless-run preference (mirrors main TestRecord). */
+  runHeadless?: boolean;
 }
 
 /** A single completed test run (mirror of main/recorder/types.ts RunRecord). */
@@ -233,6 +235,8 @@ export interface RecorderSettings {
   autoHealAttemptTimeoutMs: number;
   /** default value of the per-test "Capture screenshots" toggle (default false). */
   defaultCaptureArtifacts: boolean;
+  /** default value of the per-test "Run headless" toggle (default false). */
+  defaultRunHeadless: boolean;
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];

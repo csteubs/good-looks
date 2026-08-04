@@ -15,6 +15,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   autoHealRetries: 3,
   autoHealAttemptTimeoutMs: 4000,
   defaultCaptureArtifacts: false,
+  defaultRunHeadless: false,
   disabledAestheticEnhancements: [],
 };
 
@@ -45,6 +46,10 @@ function read(): RecorderSettings {
         typeof parsed.defaultCaptureArtifacts === "boolean"
           ? parsed.defaultCaptureArtifacts
           : DEFAULT_SETTINGS.defaultCaptureArtifacts,
+      defaultRunHeadless:
+        typeof parsed.defaultRunHeadless === "boolean"
+          ? parsed.defaultRunHeadless
+          : DEFAULT_SETTINGS.defaultRunHeadless,
       disabledAestheticEnhancements:
         Array.isArray(parsed.disabledAestheticEnhancements) &&
         parsed.disabledAestheticEnhancements.every((v) => typeof v === "string")
@@ -83,6 +88,10 @@ export const recorderSettingsStore = {
         update.defaultCaptureArtifacts !== undefined
           ? update.defaultCaptureArtifacts
           : current.defaultCaptureArtifacts,
+      defaultRunHeadless:
+        update.defaultRunHeadless !== undefined
+          ? update.defaultRunHeadless
+          : current.defaultRunHeadless,
       disabledAestheticEnhancements:
         update.disabledAestheticEnhancements !== undefined &&
         Array.isArray(update.disabledAestheticEnhancements) &&
@@ -99,6 +108,7 @@ export const recorderSettingsStore = {
       autoHealRetries: next.autoHealRetries,
       autoHealAttemptTimeoutMs: next.autoHealAttemptTimeoutMs,
       defaultCaptureArtifacts: next.defaultCaptureArtifacts,
+      defaultRunHeadless: next.defaultRunHeadless,
       disabledAestheticEnhancements: next.disabledAestheticEnhancements,
     });
     return next;

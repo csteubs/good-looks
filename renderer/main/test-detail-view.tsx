@@ -55,6 +55,11 @@ export function TestDetailView() {
   // test has no saved preference yet.
   const [captureArtifacts, setCaptureArtifacts] = React.useState(false);
   const [captureInited, setCaptureInited] = React.useState(false);
+  // Per-test "Run headless" choice — remembers whether this test's runs open a
+  // visible browser. Falls back to the global Settings default. Runs only; the
+  // trainer/"Edit in Trainer" flow is always headed.
+  const [runHeadless, setRunHeadless] = React.useState(false);
+  const [headlessInited, setHeadlessInited] = React.useState(false);
 
   const testQuery = useQuery({ queryKey: ["test", id], queryFn: () => api.tests.get(id) });
   const scriptQuery = useQuery({ queryKey: ["script", id], queryFn: () => api.tests.getScript(id) });
@@ -72,6 +77,13 @@ export function TestDetailView() {
     setCaptureArtifacts(test.captureArtifacts ?? fallback);
     setCaptureInited(true);
   }, [captureInited, test, settingsQuery.data]);
+  // Initialize the headless toggle from the test record (or the global default) once.
+  React.useEffect(() => {
+    if (headlessInited || !test) return;
+    const fallback = settingsQuery.data?.defaultRunHeadless ?? false;
+    setRunHeadless(test.runHeadless ?? fallback);
+    setHeadlessInited(true);
+  }, [headlessInited, test, settingsQuery.data]);
   // Earliest step the run reported as failed, if any — lets the AI debug
   // prompt skip steps after it, since Playwright never ran them.
   const failedStepIndex = React.useMemo(() => {
@@ -227,12 +239,27 @@ export function TestDetailView() {
             />
             Capture screenshots
           </label>
+          <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+            <Checkbox
+              checked={runHeadless}
+              onCheckedChange={(v) => {
+                const next = v === true;
+                setRunHeadless(next);
+                api.tests.setHeadless(id, next).catch(() => {
+                  /* best-effort persist; the toggle still applies to this run */
+                });
+              }}
+              disabled={runInfo?.running}
+              aria-label="Run this test headless (no visible browser)"
+            />
+            Run headless
+          </label>
           {runInfo?.running ? (
             <Button variant="destructive" onClick={() => stopRun(id)}>
               Stop
             </Button>
           ) : (
-            <Button variant="accent" onClick={() => run(id, captureArtifacts)}>
+            <Button variant="accent" onClick={() => run(id, captureArtifacts, runHeadless)}>
               Run test
             </Button>
           )}
