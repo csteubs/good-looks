@@ -97,14 +97,14 @@ function ThinkingGifOverlay({
 
   if (!enabled || phase === "hidden") return null;
 
-  const targetOpacity = phase === "expanding" ? (fadedIn ? 1 : 0) : 0;
+  const targetOpacity = phase === "expanding" ? (fadedIn ? 0.5 : 0) : 0;
 
   return (
     <div
       className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-md"
       style={{ backgroundColor: "#000000" }}
     >
-      <div className="flex h-full w-full items-start justify-center pt-4">
+      <div className="flex h-full w-full items-center justify-center">
         <img
           src={glitchGif}
           alt=""
