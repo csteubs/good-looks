@@ -514,7 +514,10 @@ export function AiDebugDialog({
             <Text variant="small" color="secondary">
               Review the prompt that will be sent to the model, then add any context you want and confirm to send. Nothing is sent until you confirm.
             </Text>
-            <ScrollArea className="max-h-[32vh] overflow-hidden rounded-md border border-separator">
+            <ScrollArea
+              className="max-h-[32vh] rounded-md border border-separator"
+              viewportClassName="max-h-[32vh]"
+            >
               <div className="flex flex-col gap-3 p-3">
                 {promptMessages.map((m, i) => (
                   <div key={i} className="flex flex-col gap-1">
@@ -606,7 +609,8 @@ export function AiDebugDialog({
               ) : null}
             </div>
             <ScrollArea
-              className="max-h-[40vh] overflow-hidden rounded-md border border-separator"
+              className="max-h-[40vh] rounded-md border border-separator"
+              viewportClassName="max-h-[40vh]"
               autoScrollToBottom
               autoScrollDeps={[content.length]}
             >
@@ -803,7 +807,8 @@ export function StepAiDebugDialog({
           ) : null}
         </div>
         <ScrollArea
-          className="max-h-[42vh] overflow-hidden rounded-md border border-separator"
+          className="max-h-[42vh] rounded-md border border-separator"
+          viewportClassName="max-h-[42vh]"
           autoScrollToBottom
           autoScrollDeps={[content.length]}
         >
