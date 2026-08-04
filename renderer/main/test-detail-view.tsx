@@ -36,6 +36,11 @@ import { ScriptEditor, ScriptView } from "./script-view";
 import { StepRow } from "./step-row";
 import { computeStepDepths } from "../lib/describe-step";
 
+/** Compact ms for the inline capture-cost hint next to the toggle. */
+function fmtCaptureMs(ms: number): string {
+  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
 export function TestDetailView() {
   const { id } = useParams({ from: "/test/$id" });
   const navigate = useNavigate();
@@ -63,6 +68,13 @@ export function TestDetailView() {
 
   const testQuery = useQuery({ queryKey: ["test", id], queryFn: () => api.tests.get(id) });
   const scriptQuery = useQuery({ queryKey: ["script", id], queryFn: () => api.tests.getScript(id) });
+  // What capture costs FOR THIS TEST — the fair comparison, since different
+  // tests do different amounts of work. Absent until this test has an
+  // instrumented capture run to measure.
+  const overheadQuery = useQuery({
+    queryKey: ["captureOverhead", id],
+    queryFn: () => api.runs.captureOverhead(id),
+  });
   const settingsQuery = useQuery({
     queryKey: ["recorder-settings"],
     queryFn: () => api.recorder.getSettings(),
@@ -254,6 +266,15 @@ export function TestDetailView() {
               aria-label="Capture screenshots on this run"
             />
             Capture screenshots
+            {overheadQuery.data && overheadQuery.data.capturedRuns > 0 ? (
+              <Text variant="small" color="tertiary">
+                (adds ~{fmtCaptureMs(overheadQuery.data.meanCaptureMs)}
+                {overheadQuery.data.captureShareOfRun > 0
+                  ? `, ${Math.round(overheadQuery.data.captureShareOfRun * 100)}%`
+                  : ""}
+                )
+              </Text>
+            ) : null}
           </label>
           {runInfo?.running ? (
             <Button variant="destructive" onClick={() => stopRun(id)}>
