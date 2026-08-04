@@ -1,6 +1,7 @@
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertDialog,
   Badge,
   Button,
   Callout,
@@ -409,6 +410,9 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
 
   const [current, setCurrent] = React.useState(0);
   const [mode, setMode] = React.useState<ShotMode>("current");
+  // Step IDs whose baseline was accepted in this session — used to hide the
+  // per-step "Accept New Baseline" button after a run- or step-level accept.
+  const [acceptedSteps, setAcceptedSteps] = React.useState<Set<string>>(() => new Set());
   // When a run first loads, jump straight to the failure — the main debugging
   // value — or to the first step for a passing run. Guard on runId so later
   // replay mutations (e.g. accepting a baseline) don't yank the user away from
@@ -417,6 +421,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   React.useEffect(() => {
     if (!replay || jumpedRunId.current === replay.runId) return;
     jumpedRunId.current = replay.runId;
+    setAcceptedSteps(new Set());
     setCurrent(replay.failedIndex ?? 0);
   }, [replay]);
 
@@ -441,14 +446,17 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
     mutationFn: () => api.visual.acceptRun(summary.testId, summary.runId),
     onSuccess: (replay) => {
       patchReplay(replay);
-      const n = replay?.steps.filter((s) => s.screenshot).length ?? 0;
+      const pinned = replay?.steps.filter((s) => s.screenshot) ?? [];
+      setAcceptedSteps(new Set(pinned.map((s) => s.stepId)));
+      const n = pinned.length;
       toast.success(`Pinned ${n} screenshot${n === 1 ? "" : "s"} as new baselines. Logged in Stats.`);
     },
   });
   const acceptStep = useMutation({
     mutationFn: (stepId: string) => api.visual.acceptStep(summary.testId, summary.runId, stepId),
-    onSuccess: (replay) => {
+    onSuccess: (replay, stepId) => {
       patchReplay(replay);
+      setAcceptedSteps((prev) => new Set(prev).add(stepId));
       toast.success("Screenshot pinned as new baseline. Logged in Stats.");
     },
   });
@@ -516,24 +524,20 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           </Text>
         </div>
         <ThresholdControl testId={summary.testId} />
-        {screenshotCount > 0 ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                size="small"
-                variant="glass"
-                disabled={acceptRun.isPending}
-                onClick={() => acceptRun.mutate()}
-              >
+        {screenshotCount > 0 && acceptedSteps.size < screenshotCount ? (
+          <AlertDialog
+            trigger={
+              <Button size="small" variant="glass" disabled={acceptRun.isPending}>
                 <Stamp className="size-3.5" />
-                Accept run as baseline
+                Accept All & Re-baseline
               </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom" className="max-w-[240px] leading-snug">
-              Pin all {screenshotCount} screenshot{screenshotCount === 1 ? "" : "s"} from this run as
-              the new comparison standard for future runs. Logged in Stats.
-            </TooltipContent>
-          </Tooltip>
+            }
+            title="Accept all screenshots as the new baseline?"
+            description={`This pins all ${screenshotCount} screenshot${screenshotCount === 1 ? "" : "s"} from this run as the new comparison standard for future runs. The per-step "Accept New Baseline" buttons will be hidden afterward. This is logged in Stats.`}
+            confirmLabel="Accept All"
+            confirmVariant="accent"
+            onConfirm={() => acceptRun.mutate()}
+          />
         ) : null}
         <div className="flex shrink-0 items-center gap-1">
           <Button
@@ -593,15 +597,19 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
             color="orange"
             icon={<Eye className="size-4" />}
             actions={
-              <Button
-                size="small"
-                variant="glass"
-                disabled={acceptRun.isPending}
-                onClick={() => acceptRun.mutate()}
-              >
-                <Stamp className="size-3.5" />
-                Accept run as baseline
-              </Button>
+              <AlertDialog
+                trigger={
+                  <Button size="small" variant="glass" disabled={acceptRun.isPending}>
+                    <Stamp className="size-3.5" />
+                    Accept All & Re-baseline
+                  </Button>
+                }
+                title="Accept all screenshots as the new baseline?"
+                description={`This pins all ${screenshotCount} screenshot${screenshotCount === 1 ? "" : "s"} from this run as the new comparison standard for future runs. The per-step "Accept New Baseline" buttons will be hidden afterward. This is logged in Stats.`}
+                confirmLabel="Accept All"
+                confirmVariant="accent"
+                onConfirm={() => acceptRun.mutate()}
+              />
             }
           >
             Visual change detected in {changedCount} {changedCount === 1 ? "step" : "steps"} (over{" "}
@@ -654,17 +662,20 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           {step.label}
         </Text>
         {step.diff ? <DiffBadge diff={step.diff} /> : null}
-        {step.screenshot ? (
-          <Button
-            size="small"
-            variant="glass"
-            className="shrink-0"
-            disabled={acceptStep.isPending}
-            onClick={() => acceptStep.mutate(step.stepId)}
-          >
-            <Stamp className="size-3.5" />
-            Accept as baseline
-          </Button>
+        {step.screenshot && !acceptedSteps.has(step.stepId) ? (
+          <AlertDialog
+            trigger={
+              <Button size="small" variant="glass" className="shrink-0" disabled={acceptStep.isPending}>
+                <Stamp className="size-3.5" />
+                Accept New Baseline
+              </Button>
+            }
+            title="Accept this screenshot as the new baseline?"
+            description="This pins this step's screenshot as the new comparison standard for future runs. The button will be hidden afterward. This is logged in Stats."
+            confirmLabel="Accept"
+            confirmVariant="accent"
+            onConfirm={() => acceptStep.mutate(step.stepId)}
+          />
         ) : (
           <Text variant="small" color="tertiary" className="shrink-0">
             {statusLabel(step.status)}
