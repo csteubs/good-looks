@@ -293,6 +293,8 @@ export interface RecorderSettings {
   artifactRetainedRuns: number;
   /** also delete captured runs older than N days (0 = off, max 365). */
   artifactRetentionDays: number;
+  /** notify on macOS when a run fails or shows a visual change (default false). */
+  notifyOnRunIssues: boolean;
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];

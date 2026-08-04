@@ -17,6 +17,7 @@ import { stepReporterSource } from "./step-reporter-source.js";
 import { captureFixtureSource } from "./capture-fixture-source.js";
 import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
+import { notifyRunOutcome } from "./run-notifier.js";
 import { buildReplay, enrichWithVisualDiffs } from "./replay-builder.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import type { TestSpeed } from "../recorder/types.js";
@@ -447,6 +448,10 @@ export const playwrightRunner = {
         // same runId so the Phase 2 timeline can retrieve it.
         const statuses = stepStatusMaps.get(runId) ?? {};
         stepStatusMaps.delete(runId);
+        // Filled in from the replay when capturing, so the notification can
+        // mention visual changes and name the failing step.
+        let changedSteps = 0;
+        let failedLabel: string | undefined;
         if (capturingRun) {
           try {
             const replay = buildReplay({
@@ -468,6 +473,10 @@ export const playwrightRunner = {
               rec.visualElementSteps ?? [],
             );
             artifactStore.writeReplay(rec.id, recordId, replay);
+            changedSteps = replay.steps.filter((st) => st.diff?.state === "changed").length;
+            if (replay.failedIndex !== null) {
+              failedLabel = replay.steps[replay.failedIndex]?.label;
+            }
           } catch (err) {
             logger.warn("runner", "Failed to persist replay model", { err: String(err) });
           }
@@ -507,6 +516,16 @@ export const playwrightRunner = {
           sendToMain("runs:changed", {});
         } catch (err) {
           logger.warn("runner", "Failed to persist run history", { err: String(err) });
+        }
+        // Local desktop notification for a failure or a visual change, when the
+        // user opted in. Never fires for a clean run.
+        if (recorderSettingsStore.get().notifyOnRunIssues) {
+          notifyRunOutcome({
+            testName: rec.name,
+            status: runStatus,
+            changedSteps,
+            failedLabel,
+          });
         }
         sendToMain("runner:done", { runId, code: exitCode });
       }

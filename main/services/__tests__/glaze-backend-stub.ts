@@ -22,3 +22,11 @@ export const app = {
 
 const noop = (..._args: unknown[]): void => {};
 export const logger = { info: noop, warn: noop, error: noop, debug: noop };
+
+/** Inert stand-in so modules that CAN post a notification are importable in a
+ *  check. The checks drive the pure decision helper (buildRunNotice), not this
+ *  — constructing one here must never try to reach the notification centre. */
+export class Notification {
+  constructor(_options?: { title?: string; body?: string }) {}
+  show(): void {}
+}

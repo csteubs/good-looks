@@ -74,6 +74,7 @@ export function SettingsView() {
   const [defaultRunHeadless, setDefaultRunHeadless] = useState(false);
   const [artifactRetainedRuns, setArtifactRetainedRuns] = useState(10);
   const [artifactRetentionDays, setArtifactRetentionDays] = useState(0);
+  const [notifyOnRunIssues, setNotifyOnRunIssues] = useState(false);
   const [artifactUsage, setArtifactUsage] = useState<ArtifactUsage | null>(null);
 
   // ── Auto-Heal settings ──────────────────────────────────────────────
@@ -110,6 +111,7 @@ export function SettingsView() {
         setDefaultRunHeadless(settings.defaultRunHeadless ?? false);
         setArtifactRetainedRuns(settings.artifactRetainedRuns ?? 10);
         setArtifactRetentionDays(settings.artifactRetentionDays ?? 0);
+        setNotifyOnRunIssues(settings.notifyOnRunIssues ?? false);
         setAutoHealEnabled(settings.autoHealEnabled ?? true);
         setAutoHealRetries(settings.autoHealRetries ?? 3);
         setAutoHealTimeout(settings.autoHealAttemptTimeoutMs ?? 4000);
@@ -176,6 +178,15 @@ export function SettingsView() {
     setArtifactRetentionDays(n);
     try {
       await api.recorder.setSettings({ artifactRetentionDays: n });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleNotifyOnRunIssuesChange = async (checked: boolean) => {
+    setNotifyOnRunIssues(checked);
+    try {
+      await api.recorder.setSettings({ notifyOnRunIssues: checked });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
     }
@@ -521,6 +532,20 @@ export function SettingsView() {
                 className="w-24"
                 value={artifactRetainedRuns}
                 onChange={(e) => handleArtifactRetainedRunsChange(e.target.value)}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="notify-run-issues">Notify when a run has problems</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Shows a macOS notification when a run fails or a step changes visually. Clean runs
+                  stay quiet. Nothing is sent anywhere — the notification is local to this Mac.
+                </p>
+              </FieldContent>
+              <Switch
+                id="notify-run-issues"
+                checked={notifyOnRunIssues}
+                onCheckedChange={handleNotifyOnRunIssuesChange}
               />
             </Field>
             <Field orientation="horizontal">

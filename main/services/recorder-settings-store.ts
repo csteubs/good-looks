@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   defaultRunHeadless: false,
   artifactRetainedRuns: DEFAULT_RETAINED_RUNS,
   artifactRetentionDays: 0,
+  notifyOnRunIssues: false,
   disabledAestheticEnhancements: [],
 };
 
@@ -79,6 +80,10 @@ function read(): RecorderSettings {
         typeof parsed.artifactRetentionDays === "number" && parsed.artifactRetentionDays >= 0
           ? clampDays(parsed.artifactRetentionDays)
           : DEFAULT_SETTINGS.artifactRetentionDays,
+      notifyOnRunIssues:
+        typeof parsed.notifyOnRunIssues === "boolean"
+          ? parsed.notifyOnRunIssues
+          : DEFAULT_SETTINGS.notifyOnRunIssues,
       disabledAestheticEnhancements:
         Array.isArray(parsed.disabledAestheticEnhancements) &&
         parsed.disabledAestheticEnhancements.every((v) => typeof v === "string")
@@ -133,6 +138,10 @@ export const recorderSettingsStore = {
         update.artifactRetentionDays >= 0
           ? clampDays(update.artifactRetentionDays)
           : current.artifactRetentionDays,
+      notifyOnRunIssues:
+        update.notifyOnRunIssues !== undefined
+          ? update.notifyOnRunIssues
+          : current.notifyOnRunIssues,
       disabledAestheticEnhancements:
         update.disabledAestheticEnhancements !== undefined &&
         Array.isArray(update.disabledAestheticEnhancements) &&
@@ -152,6 +161,7 @@ export const recorderSettingsStore = {
       defaultRunHeadless: next.defaultRunHeadless,
       artifactRetainedRuns: next.artifactRetainedRuns,
       artifactRetentionDays: next.artifactRetentionDays,
+      notifyOnRunIssues: next.notifyOnRunIssues,
       disabledAestheticEnhancements: next.disabledAestheticEnhancements,
     });
     return next;

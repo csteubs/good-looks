@@ -5,6 +5,7 @@
 //   npm run check:capture-overhead
 
 import { summarizeCaptureOverhead } from "../capture-overhead.js";
+import { buildRunNotice } from "../run-notifier.js";
 import type { RunRecord } from "../../recorder/types.js";
 
 let failures = 0;
@@ -93,6 +94,42 @@ const scoped = summarizeCaptureOverhead(
 );
 eq(scoped.capturedRuns, 1, "testId scopes the summary to one test");
 eq(scoped.meanCaptureMs, 100, "another test's runs don't skew the mean");
+
+// ── Run-notification decisions ─────────────────────────────────────────────
+// Same file: both are small pure "what do we tell the user about this run?"
+// helpers driven by RunRecord-shaped data.
+eq(
+  buildRunNotice({ testName: "Checkout", status: "passed", changedSteps: 0 }),
+  null,
+  "a clean run notifies nothing",
+);
+eq(
+  buildRunNotice({ testName: "Checkout", status: "failed", changedSteps: 0 })?.title,
+  "Checkout failed",
+  "a failed run names the test",
+);
+eq(
+  buildRunNotice({ testName: "Checkout", status: "failed", changedSteps: 0, failedLabel: "Click Pay" })
+    ?.body,
+  "Failed at: Click Pay",
+  "the failing step is named when known",
+);
+eq(
+  buildRunNotice({ testName: "Checkout", status: "passed", changedSteps: 2 })?.title,
+  "Checkout: visual change",
+  "a passing run with visual changes still notifies",
+);
+eq(
+  buildRunNotice({ testName: "Checkout", status: "passed", changedSteps: 1 })?.body,
+  "1 step changed visually.",
+  "step count is singular for one change",
+);
+eq(
+  buildRunNotice({ testName: "Checkout", status: "failed", changedSteps: 3, failedLabel: "Click Pay" })
+    ?.body,
+  "Failed at: Click Pay 3 steps changed visually.",
+  "a failure with visual changes reports both",
+);
 
 console.log(failures === 0 ? "\nAll capture-overhead checks passed" : `\n${failures} check(s) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
