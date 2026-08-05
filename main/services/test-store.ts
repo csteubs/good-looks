@@ -6,7 +6,9 @@ import * as path from "path";
 
 import { app, logger } from "@glaze/core/backend";
 
-import type { TestRecord } from "../recorder/types.js";
+import { generateSpec } from "./script-generator.js";
+import { collectVarRefs } from "../recorder/types.js";
+import type { Step, TestRecord } from "../recorder/types.js";
 
 function dataDir(): string {
   return path.join(app.getPath("userData"), "recorder");
@@ -49,6 +51,10 @@ function writeAll(records: TestRecord[]): void {
 }
 
 export const testStore = {
+  /** Where a test's generated spec lives. Exposed so callers assembling a
+   *  record can fill in scriptPath before the file itself is written. */
+  scriptPathFor,
+
   list(): TestRecord[] {
     // Hidden tests are kept on disk but removed from the sidebar view.
     return readAll()
@@ -61,6 +67,20 @@ export const testStore = {
   },
 
   save(record: TestRecord): void {
+    // Derive each step's variable references on write, at the ONE choke point
+    // every record passes through. Computing this at the call sites instead
+    // would mean the trainer, the step editor, the LLM-apply path and the
+    // importer each had to remember — and the one that forgot would show a
+    // variable as unused, inviting the user to delete something still in use.
+    record.steps = record.steps.map((step) => {
+      const refs = collectVarRefs(step);
+      if (refs.length === 0) {
+        if (!step.varRefs) return step;
+        const { varRefs: _dropped, ...rest } = step;
+        return rest as Step;
+      }
+      return { ...step, varRefs: refs };
+    });
     const all = readAll();
     const idx = all.findIndex((t) => t.id === record.id);
     if (idx >= 0) all[idx] = record;
@@ -74,6 +94,29 @@ export const testStore = {
     const p = scriptPathFor(id);
     fs.writeFileSync(p, source, "utf-8");
     return p;
+  },
+
+  /**
+   * Regenerate a record's spec from its steps and write it, returning the path.
+   *
+   * The single place regeneration happens. Every call site needs the same three
+   * inputs — steps, variables, and a flow resolver — and one that forgets the
+   * variables silently emits a spec with no `const V` header, so every `V.x`
+   * reference in it becomes a ReferenceError at run time. Callers must still
+   * check `scriptEdited` themselves: a hand-edited script is the source of
+   * truth and regenerating it would discard the user's edit.
+   */
+  regenerateScript(record: TestRecord): string {
+    const source = generateSpec(
+      {
+        name: record.name,
+        url: record.url,
+        steps: record.steps,
+        variables: record.variables,
+      },
+      { resolveFlow: (flowId) => this.get(flowId) },
+    );
+    return this.writeScript(record.id, source);
   },
 
   readScript(id: string): string {

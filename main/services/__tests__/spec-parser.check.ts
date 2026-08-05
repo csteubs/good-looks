@@ -191,6 +191,175 @@ assertEqual(disParsed.steps[3]?.disabled, undefined, "untoggled step has no disa
 const disLines = disSource.split("\n").filter((l) => l.includes("// disabled — skipped:"));
 assertEqual(disLines.length, 2, "two disabled comment lines emitted for two toggled steps");
 
+// ── 9. Variables, capture steps and flow inlining round-trip ───────────────
+//
+// The failure mode being guarded is silent: a `${var}` reference that parses
+// back as the literal text "V.email" still LOOKS like a valid step in the
+// editor, and the next regeneration emits it as a quoted string — quietly
+// un-parameterizing the test. Likewise, a `const V = {…}` header counted as an
+// unclassifiable statement would set stepsDiverged on every parameterized test
+// forever, training the user to ignore that warning.
+const varVariables = [
+  { name: "email", kind: "plain" as const, value: "a@b.com" },
+  { name: "password", kind: "secret" as const },
+  { name: "orderId", kind: "captured" as const },
+];
+const varSteps: Step[] = [
+  step({ type: "goto", url: "https://example.com" }),
+  step({ type: "fill", locator: { k: "label", v: "Email" }, value: "${email}" }),
+  step({ type: "fill", locator: { k: "label", v: "Password" }, value: "${password}" }),
+  step({
+    type: "capture",
+    locator: { k: "testid", v: "order" },
+    captureVar: "orderId",
+    captureFrom: "text",
+  }),
+  step({ type: "capture", captureVar: "landed", captureFrom: "url" }),
+  step({
+    type: "capture",
+    locator: { k: "testid", v: "link" },
+    captureVar: "href",
+    captureFrom: "attribute",
+    captureAttr: "href",
+  }),
+  step({
+    type: "assert",
+    locator: { k: "testid", v: "conf" },
+    assert: "text",
+    text: "Order ${orderId} confirmed",
+  }),
+];
+const varSource = generateSpec({
+  name: "vars",
+  url: "https://example.com",
+  steps: varSteps,
+  variables: varVariables,
+});
+const varParsed = parseSpecDetailed(varSource);
+assertEqual(varParsed.skipped, 0, "the variable header and capture calls produce zero skips");
+assertEqual(varParsed.steps.length, varSteps.length, "variables round-trip the step count");
+assertEqual(varParsed.steps[1]?.value, "${email}", "a whole-value variable reference round-trips");
+assertEqual(
+  varParsed.steps[2]?.value,
+  "${password}",
+  "a secret variable reference round-trips (and never becomes its value)",
+);
+assertEqual(
+  varParsed.steps[6]?.text,
+  "Order ${orderId} confirmed",
+  "an embedded variable reference inside surrounding text round-trips",
+);
+assertEqual(varParsed.steps[3]?.captureVar, "orderId", "capture target variable round-trips");
+assertEqual(varParsed.steps[3]?.captureFrom, "text", "capture source round-trips");
+assertEqual(
+  varParsed.steps[3]?.locator,
+  { k: "testid", v: "order" },
+  "capture locator round-trips",
+);
+assertEqual(varParsed.steps[4]?.captureFrom, "url", "a page-level capture needs no locator");
+assertEqual(varParsed.steps[5]?.captureAttr, "href", "capture attribute name round-trips");
+// The secret's VALUE must never appear in the generated spec — only an env
+// reference. This is the guarantee the whole secrets store exists to provide.
+assertEqual(
+  varSource.includes("process.env.GLAZE_SECRET_password"),
+  true,
+  "a secret is emitted as an env reference",
+);
+
+// A test with no variables must generate exactly what it always did — no
+// header, no runtime import — so nothing about existing tests changes.
+const plainSource = generateSpec({ name: "login", url: "https://example.com", steps: sevenSteps });
+assertEqual(plainSource.includes("const V"), false, "a test with no variables emits no header");
+assertEqual(
+  plainSource.includes("glaze-runtime"),
+  false,
+  "a test with no capture step imports no runtime helper",
+);
+assertEqual(plainSource, baseSource, "a test with no variables generates byte-identical output");
+
+// Flow inlining: the flow's steps appear in the caller, with the caller's
+// argument bound in place of the flow's parameter.
+const loginFlow = {
+  id: "flow-1",
+  name: "Login",
+  flowParams: ["user"],
+  variables: [{ name: "user", kind: "plain" as const, value: "fallback@x.com" }],
+  steps: [
+    step({ type: "fill", locator: { k: "label", v: "Email" }, value: "${user}" }),
+    step({ type: "click", locator: { k: "role", role: "button", name: "Log in" } }),
+  ],
+};
+const callerSteps: Step[] = [
+  step({ type: "goto", url: "https://example.com" }),
+  step({ type: "runFlow", flowId: "flow-1", label: "Login", flowArgs: { user: "${email}" } }),
+];
+const flowSource = generateSpec(
+  { name: "caller", url: "https://example.com", steps: callerSteps, variables: varVariables },
+  { resolveFlow: (id) => (id === "flow-1" ? loginFlow : null) },
+);
+assertEqual(
+  flowSource.includes('await page.getByLabel("Email").fill(V.email)'),
+  true,
+  "an inlined flow step binds the caller's argument, not the flow's default",
+);
+assertEqual(
+  flowSource.includes('getByRole("button", { name: "Log in" }).click()'),
+  true,
+  "every step of an inlined flow is emitted",
+);
+
+// An unsupplied parameter falls back to the flow's own default rather than
+// emitting an empty value — a silently blank login field is the worst outcome.
+const noArgSource = generateSpec(
+  {
+    name: "caller",
+    url: "https://example.com",
+    steps: [step({ type: "runFlow", flowId: "flow-1", label: "Login" })],
+  },
+  { resolveFlow: (id) => (id === "flow-1" ? loginFlow : null) },
+);
+assertEqual(
+  noArgSource.includes('fill("fallback@x.com")'),
+  true,
+  "an unsupplied flow parameter falls back to the flow's declared default",
+);
+
+// A flow that invokes itself must not expand forever.
+const selfFlow = {
+  id: "loop-1",
+  name: "Loop",
+  steps: [step({ type: "runFlow", flowId: "loop-1", label: "Loop" })],
+};
+const cycleSource = generateSpec(
+  {
+    name: "caller",
+    url: "https://example.com",
+    steps: [step({ type: "runFlow", flowId: "loop-1", label: "Loop" })],
+  },
+  { resolveFlow: (id) => (id === "loop-1" ? selfFlow : null) },
+);
+assertEqual(
+  cycleSource.includes("circular reference"),
+  true,
+  "a self-referencing flow is refused with a visible comment, not infinite output",
+);
+
+// A flow the resolver can't find leaves a visible marker rather than silently
+// dropping the call — a test that quietly skips its login still "passes".
+const missingSource = generateSpec(
+  {
+    name: "caller",
+    url: "https://example.com",
+    steps: [step({ type: "runFlow", flowId: "gone", label: "Gone" })],
+  },
+  { resolveFlow: () => null },
+);
+assertEqual(
+  missingSource.includes("flow Gone not found"),
+  true,
+  "a missing flow is reported in the spec, not silently dropped",
+);
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

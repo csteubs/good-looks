@@ -13,7 +13,9 @@ export type StepType =
   | "viewport"
   | "if"
   | "endif"
-  | "cookie";
+  | "cookie"
+  | "capture"
+  | "runFlow";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
@@ -82,8 +84,30 @@ export interface Step {
    *  why) and the generated spec emits the line commented out. The step stays
    *  in the list and keeps its index/position. */
   disabled?: boolean;
+  /** capture/flow fields (mirror of main types) */
+  captureVar?: string;
+  captureFrom?: CaptureSource;
+  captureAttr?: string;
+  flowId?: string;
+  flowArgs?: Record<string, string>;
+  /** variable names this step interpolates; derived backend-side on write. */
+  varRefs?: string[];
   timestamp: number;
 }
+
+/** What a `capture` step reads off its resolved element (mirror of main types). */
+export type CaptureSource = "text" | "value" | "attribute" | "url" | "title";
+
+export const CAPTURE_SOURCES: CaptureSource[] = ["text", "value", "attribute", "url", "title"];
+
+/** Display labels for the capture-source picker. */
+export const CAPTURE_SOURCE_LABELS: Record<CaptureSource, string> = {
+  text: "Text content",
+  value: "Input value",
+  attribute: "Attribute",
+  url: "Page URL",
+  title: "Page title",
+};
 
 /** Payload for a manually-added or AI-generated step (no id/timestamp yet). */
 export interface RawStep {
@@ -104,6 +128,12 @@ export interface RawStep {
   /** cookie fields, so a cookie step can be inserted via insertStep */
   cookieAction?: CookieAction;
   cookie?: CookieSpec;
+  /** capture/flow fields, so those steps can be inserted via insertStep */
+  captureVar?: string;
+  captureFrom?: CaptureSource;
+  captureAttr?: string;
+  flowId?: string;
+  flowArgs?: Record<string, string>;
 }
 
 export type TestSpeed = "slow" | "medium" | "fast";
@@ -143,6 +173,48 @@ export interface TestRecord {
   /** Free-form grouping labels (mirrors main TestRecord). Normalized backend-
    *  side on write, so the renderer never has to canonicalize them itself. */
   tags?: string[];
+  /** Named values this test's steps interpolate with `${name}` (mirrors main
+   *  TestRecord). A secret variable never carries its value here. */
+  variables?: TestVariable[];
+  /** Rows of variable values this test can be swept over. */
+  datasets?: Dataset[];
+  /** true when this test is a reusable flow, inlined into other tests. */
+  isFlow?: boolean;
+  /** parameter names a flow accepts. */
+  flowParams?: string[];
+}
+
+/** How a variable's value is sourced (mirror of main types). */
+export type VariableKind = "plain" | "secret" | "captured";
+
+export const VARIABLE_KINDS: VariableKind[] = ["plain", "secret", "captured"];
+
+export const VARIABLE_KIND_LABELS: Record<VariableKind, string> = {
+  plain: "Value",
+  secret: "Secret",
+  captured: "Captured at run time",
+};
+
+export interface TestVariable {
+  name: string;
+  value?: string;
+  kind: VariableKind;
+  description?: string;
+}
+
+/** One row of variable values a test can be swept over (mirror of main types). */
+export interface Dataset {
+  id: string;
+  name: string;
+  values: Record<string, string>;
+}
+
+/** What the renderer is allowed to know about a stored secret: that it exists,
+ *  never what it is. The value lives encrypted backend-side and is injected
+ *  straight into the run's child process. */
+export interface SecretStatus {
+  name: string;
+  hasValue: boolean;
 }
 
 /** A single completed test run (mirror of main/recorder/types.ts RunRecord). */
@@ -167,6 +239,9 @@ export interface RunRecord {
   runBrowser?: RunBrowser;
   /** id of the batch this run belonged to, when it was part of one. */
   batchId?: string;
+  /** the dataset row this run used, when it was one row of a sweep. */
+  datasetId?: string;
+  datasetName?: string;
   /** ms spent taking screenshots, and how many — capture runs only. */
   captureOverheadMs?: number;
   shotCount?: number;

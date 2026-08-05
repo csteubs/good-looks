@@ -22,12 +22,28 @@ import { sendAlert } from "./alert-service.js";
 import { applyRetention } from "./retention.js";
 import { buildReplay, enrichWithVisualDiffs } from "./replay-builder.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
-import { generateSpec } from "./script-generator.js";
-import type { RunBrowser, Step, TestSpeed } from "../recorder/types.js";
+import { generateSpec, generateSpecDetailed, secretEnvName } from "./script-generator.js";
+import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "./glaze-runtime-source.js";
+import { testSecretsStore } from "./test-secrets-store.js";
+import { refreshSecretSnapshot, redactWithSnapshot } from "./secret-redaction.js";
+import type {
+  RunBrowser,
+  Step,
+  TestRecord,
+  TestSpeed,
+  TestVariable,
+} from "../recorder/types.js";
 
 // Module Playwright specs import test/expect from — redirected to the capture
 // fixture for a run that captures artifacts.
 const CAPTURE_FIXTURE_FILE = "glaze-capture.mjs";
+
+/** Resolve a `runFlow` step's target for the generator. Flows are ordinary
+ *  TestRecords, so this is just a store lookup — but it's named here so the
+ *  three generation sites in this file can't disagree about what a flow is. */
+function resolveFlow(flowId: string): TestRecord | null {
+  return testStore.get(flowId) ?? null;
+}
 
 const RUN_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -145,6 +161,41 @@ function ensureCaptureFixture(scriptsDir: string): void {
   fs.writeFileSync(path.join(scriptsDir, CAPTURE_FIXTURE_FILE), captureFixtureSource, "utf-8");
 }
 
+// Write the spec runtime helper (glaze-runtime.mjs) next to the specs, for
+// specs with a `capture` step. Unconditional and always rewritten, like the
+// reporter: it's a few hundred bytes, and writing it only when a capture step
+// exists would mean a test that gains one mid-session runs against a missing
+// module until the next app start.
+function ensureRuntime(scriptsDir: string): void {
+  fs.writeFileSync(path.join(scriptsDir, GLAZE_RUNTIME_FILE), glazeRuntimeSource, "utf-8");
+}
+
+/** Environment carrying this run's variable values into the spec.
+ *
+ *  Two channels on purpose. Plain values (including a dataset row) go as one
+ *  JSON blob the spec spreads over its declared defaults. Secrets go one env
+ *  var each, and are NEVER put in the JSON blob: the blob is a single string
+ *  that would show up whole in a crash dump or a process listing, and it is
+ *  also the thing a future feature is most likely to log. */
+async function variableEnv(
+  testId: string,
+  vars: Record<string, string> | undefined,
+  variables: TestVariable[],
+): Promise<NodeJS.ProcessEnv> {
+  const out: NodeJS.ProcessEnv = {};
+  if (vars && Object.keys(vars).length > 0) out.GLAZE_VARS = JSON.stringify(vars);
+  const secretNames = variables.filter((v) => v.kind === "secret").map((v) => v.name);
+  if (secretNames.length === 0) return out;
+  const stored = await testSecretsStore.valuesFor(testId);
+  for (const name of secretNames) {
+    // A declared-but-unset secret becomes an empty string rather than being
+    // left undefined, so the spec's `?? ""` fallback is what runs and the
+    // failure is "the field was empty", not "process.env is missing a key".
+    out[secretEnvName(name)] = stored[name] ?? "";
+  }
+  return out;
+}
+
 // For a capture run, produce a temp copy of the spec whose `@playwright/test`
 // import is redirected to the capture fixture, leaving the stored spec pristine.
 // Only line 1's module specifier changes, so line numbers (and the step line
@@ -167,11 +218,46 @@ function prepareCaptureSpec(scriptsDir: string, scriptPath: string, runId: strin
   return tempPath;
 }
 
+/**
+ * The authoritative line→step map for an app-generated spec: ask the generator,
+ * which is the only thing that knows which step produced which line.
+ *
+ * `buildStepLineMap` below infers the mapping by counting `await` lines, which
+ * is right only when every step emits exactly one such line. It isn't: an `if`
+ * step emits `if (...) {`, a disabled step emits a comment, and an inlined flow
+ * emits several lines for one step — each of which shifts every later step's
+ * highlight and screenshot attribution silently.
+ *
+ * Returns null for a hand-edited or imported spec, where the stored steps no
+ * longer describe the file and the regex scan is the only option left.
+ */
+function generatedStepLineMap(
+  rec: TestRecord,
+  steps: Step[],
+  resolveFlow: (flowId: string) => TestRecord | null,
+): Map<number, number> | null {
+  if (rec.scriptEdited || rec.sourceDir) return null;
+  try {
+    const { lineMap } = generateSpecDetailed(
+      { name: rec.name, url: rec.url, steps, variables: rec.variables },
+      { resolveFlow },
+    );
+    const map = new Map<number, number>();
+    for (const [line, index] of Object.entries(lineMap)) map.set(Number(line), index);
+    return map.size > 0 ? map : null;
+  } catch (err) {
+    logger.warn("runner", "Could not build the generated step map", { err: String(err) });
+    return null;
+  }
+}
+
 // Build a map from 1-based spec line number → 0-based step index, by scanning
 // the generated spec's test body for indented `await ...` step lines. The
 // StepReporter emits `location.line`; this map turns it into a step index the
 // renderer can highlight. Returns null when the spec can't be mapped (e.g.
 // hand-authored imported scripts with no clean step-per-line structure).
+//
+// Fallback only — see `generatedStepLineMap` for why.
 function buildStepLineMap(scriptPath: string): Map<number, number> | null {
   let src: string;
   try {
@@ -227,9 +313,18 @@ function baseEnv(nodeModules: string): NodeJS.ProcessEnv {
 }
 
 function emitOutput(runId: string, stream: "stdout" | "stderr" | "system", chunk: string): void {
+  // Redact HERE, at the single point every byte of run output passes through,
+  // rather than at each consumer. The live stream feeds the Output panel and
+  // (via Debug with AI) the prompt sent to a hosted LLM; the buffer feeds the
+  // log file. Redacting downstream would mean getting all three right, forever.
+  //
+  // Chunk-boundary caveat: a secret split across two chunks survives this. The
+  // buffered log is redacted again on write, which catches those; the live
+  // stream can't be, since it has already been sent.
+  const safe = redactWithSnapshot(chunk);
   const buf = logBuffers.get(runId);
-  if (buf) buf.push(chunk);
-  sendToMain("runner:output", { runId, stream, chunk });
+  if (buf) buf.push(safe);
+  sendToMain("runner:output", { runId, stream, chunk: safe });
 }
 
 // Per-run stdout buffer for splitting `__GLAZE_STEP__:` marker lines out of
@@ -355,6 +450,15 @@ export const playwrightRunner = {
     /** id of the batch driving this run, when it's part of one. Recorded on the
      *  RunRecord so a persisted batch can be joined back to its runs. */
     batchId?: string;
+    /** Variable values for this execution, injected as GLAZE_VARS and spread
+     *  over the spec's declared defaults. This is how one spec runs once per
+     *  dataset row without being regenerated. Secrets are NOT passed here —
+     *  they're read from the encrypted store, so a caller can't inject one. */
+    vars?: Record<string, string>;
+    /** The dataset row this run represents, recorded on the RunRecord so run
+     *  history can say WHICH row failed. */
+    datasetId?: string;
+    datasetName?: string;
   }): { runId: string; recordId?: string; alreadyRunning?: boolean } {
     const captureArtifacts = params.captureArtifacts ?? false;
     const runHeadless = params.runHeadless ?? false;
@@ -409,7 +513,13 @@ export const playwrightRunner = {
         ensureModuleResolution(scriptsDir, nodeModules);
         const configPath = ensureConfig(scriptsDir);
         const reporterPath = ensureReporter(scriptsDir);
+        ensureRuntime(scriptsDir);
         const env = baseEnv(nodeModules);
+        // Refresh the redaction snapshot BEFORE the run: the log this run
+        // produces is redacted synchronously when it's persisted, so the
+        // snapshot has to already know every secret the run could expose.
+        await refreshSecretSnapshot();
+        const varEnv = await variableEnv(rec.id, params.vars, rec.variables ?? []);
 
         // Decide whether this run actually captures. Gate BEFORE any capture
         // work so an off run (or an imported test) pays nothing. Imported specs
@@ -426,7 +536,10 @@ export const playwrightRunner = {
           const replaySpecPath = path.join(scriptsDir, `${recordId}.replay.spec.ts`);
           fs.writeFileSync(
             replaySpecPath,
-            generateSpec({ name: rec.name, url: rec.url, steps: replaySteps }),
+            generateSpec(
+              { name: rec.name, url: rec.url, steps: replaySteps, variables: rec.variables },
+              { resolveFlow },
+            ),
             "utf-8",
           );
           tempSpecPath = replaySpecPath;
@@ -467,8 +580,13 @@ export const playwrightRunner = {
 
         // Map spec line numbers → step indices so the StepReporter's markers
         // can be translated into highlightable step indices for the renderer.
-        // (The redirected capture spec preserves line numbers.)
-        stepLineMaps.set(runId, buildStepLineMap(specToRun));
+        // (The redirected capture spec preserves line numbers.) Prefer the
+        // generator's own map; fall back to scanning the file for specs it
+        // didn't produce.
+        stepLineMaps.set(
+          runId,
+          generatedStepLineMap(rec, runSteps, resolveFlow) ?? buildStepLineMap(specToRun),
+        );
 
         // Each engine is downloaded on its own first use — switching browsers
         // costs one install, not a re-download of everything.
@@ -501,6 +619,7 @@ export const playwrightRunner = {
         args.push(`--browser=${runBrowser}`);
         exitCode = await runCli(runId, args, cliPath, scriptsDir, {
           ...env,
+          ...varEnv,
           PW_SLOWMO_MS: String(slowMo),
           GLAZE_CAPTURE_ARTIFACTS: capturing ? "1" : "0",
           GLAZE_ARTIFACT_DIR: artifactDir,
@@ -589,6 +708,8 @@ export const playwrightRunner = {
               runHeadless,
               runBrowser,
               batchId: params.batchId,
+              datasetId: params.datasetId,
+              datasetName: params.datasetName,
               captureOverheadMs,
               shotCount,
               replayOfRunId,

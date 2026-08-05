@@ -30,6 +30,7 @@ import type {
   BatchState,
   BatchSummary,
   BatchTestStatus,
+  Dataset,
   RunBrowser,
 } from "../recorder/types.js";
 
@@ -49,12 +50,61 @@ export interface BatchRunParams {
   captureArtifacts?: boolean;
   runHeadless?: boolean;
   browser?: RunBrowser;
+  /** Run each selected test once per dataset row instead of once. Names a
+   *  subset of row ids, or use `allDatasets` for every row a test has.
+   *  A test with no matching rows still runs once, with its declared defaults —
+   *  dropping it would turn "sweep my suite" into "silently skip the tests that
+   *  aren't parameterized yet". */
+  datasetIds?: string[];
+  /** Sweep every dataset row each selected test declares. */
+  allDatasets?: boolean;
+}
+
+/** One queued execution: a test, optionally bound to a dataset row. */
+export interface BatchEntry {
+  testId: string;
+  datasetId?: string;
+  datasetName?: string;
+  vars?: Record<string, string>;
+}
+
+/**
+ * Expand a selection into the queue actually executed.
+ *
+ * Pure, and separated from the runner, because this is where a sweep gets its
+ * meaning: without dataset options the queue is exactly the selection (so
+ * nothing about existing batches changes), and with them the same test appears
+ * once per matching row, in the order the rows are declared.
+ */
+export function buildQueue(
+  params: BatchRunParams,
+  getDatasets: (testId: string) => Dataset[],
+): BatchEntry[] {
+  const wantsSweep = params.allDatasets === true || (params.datasetIds?.length ?? 0) > 0;
+  if (!wantsSweep) return params.testIds.map((testId) => ({ testId }));
+  const wanted = new Set(params.datasetIds ?? []);
+  const out: BatchEntry[] = [];
+  for (const testId of params.testIds) {
+    const rows = getDatasets(testId).filter(
+      (d) => params.allDatasets === true || wanted.has(d.id),
+    );
+    if (rows.length === 0) {
+      out.push({ testId });
+      continue;
+    }
+    for (const row of rows) {
+      out.push({ testId, datasetId: row.id, datasetName: row.name, vars: row.values });
+    }
+  }
+  return out;
 }
 
 /** Seam for testing — the real implementations talk to the Playwright runner,
  *  the test store, and the renderer. */
 export interface BatchDeps {
   getTestName: (testId: string) => string | null;
+  /** Dataset rows declared by a test, for expanding a sweep. */
+  getDatasets: (testId: string) => Dataset[];
   startRun: (params: {
     testId: string;
     headed: boolean;
@@ -62,6 +112,9 @@ export interface BatchDeps {
     runHeadless?: boolean;
     browser?: RunBrowser;
     batchId?: string;
+    vars?: Record<string, string>;
+    datasetId?: string;
+    datasetName?: string;
   }) => { runId: string; recordId?: string; alreadyRunning?: boolean };
   /** Resolves with the run's exit code, or null if the run isn't in flight. */
   waitFor: (runId: string) => Promise<number> | null;
@@ -77,6 +130,7 @@ export interface BatchDeps {
 
 const realDeps: BatchDeps = {
   getTestName: (testId) => testStore.get(testId)?.name ?? null,
+  getDatasets: (testId) => testStore.get(testId)?.datasets ?? [],
   startRun: (params) => playwrightRunner.start(params),
   waitFor: (runId) => playwrightRunner.waitFor(runId),
   stopRun: (runId) => playwrightRunner.stop(runId),
@@ -136,19 +190,26 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
       }
       const batchId = randomUUID();
       cancelled = false;
+      const queue = buildQueue(params, deps.getDatasets);
       state = {
         batchId,
         running: true,
         startedAt: deps.now(),
         currentIndex: -1,
         stopped: false,
-        results: params.testIds.map((testId) => ({
-          testId,
-          testName: deps.getTestName(testId) ?? testId,
+        results: queue.map((entry) => ({
+          testId: entry.testId,
+          testName: deps.getTestName(entry.testId) ?? entry.testId,
           status: "pending" as BatchTestStatus,
+          ...(entry.datasetId ? { datasetId: entry.datasetId } : {}),
+          ...(entry.datasetName ? { datasetName: entry.datasetName } : {}),
         })),
       };
-      logger.info("batch", "Batch run started", { batchId, total: params.testIds.length });
+      logger.info("batch", "Batch run started", {
+        batchId,
+        total: queue.length,
+        tests: params.testIds.length,
+      });
       emitProgress();
 
       void (async () => {
@@ -183,6 +244,12 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
               runHeadless: params.runHeadless,
               browser: params.browser,
               batchId,
+              // Read from the queue, not from `entry`: BatchState is persisted
+              // to disk on every transition, and a dataset row's values have no
+              // business being written into batch-history.json.
+              vars: queue[i]?.vars,
+              datasetId: entry.datasetId,
+              datasetName: entry.datasetName,
             });
             // Recorded even if the run later fails, so a persisted batch can
             // link through to the run's log in Stats.

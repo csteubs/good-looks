@@ -1,10 +1,63 @@
 // Convert recorded steps into a @playwright/test spec file.
 
-import { cookieScopeIsValid, toPlaywrightSameSite } from "../recorder/types.js";
-import type { CookieSpec, Locator, Step, TestRecord } from "../recorder/types.js";
+import { GLAZE_RUNTIME_FILE } from "./glaze-runtime-source.js";
+import { cookieScopeIsValid, toPlaywrightSameSite, VAR_REF_RE } from "../recorder/types.js";
+import type {
+  CookieSpec,
+  Locator,
+  Step,
+  TestRecord,
+  TestVariable,
+} from "../recorder/types.js";
 
 function q(s: string): string {
   return JSON.stringify(s ?? "");
+}
+
+/** Env var a secret variable's value arrives in. The name is already a valid
+ *  JS identifier (enforced by `isValidVariableName`), so it needs no escaping,
+ *  and it is used verbatim rather than upper-cased — folding case would let
+ *  `pass` and `PASS` collide into one another's values. */
+export function secretEnvName(varName: string): string {
+  return `GLAZE_SECRET_${varName}`;
+}
+
+/** Escape a literal chunk for embedding inside a template literal. All three
+ *  replacements are load-bearing: an unescaped backtick ends the literal early,
+ *  an unescaped `${` starts an interpolation, and a lone backslash would eat
+ *  whichever character follows it. */
+function escTemplate(s: string): string {
+  return s.replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$\{/g, "\\${");
+}
+
+/**
+ * Render a recorded value as a JS expression.
+ *
+ * With no `${var}` reference to a DECLARED variable it stays a quoted literal,
+ * so specs for tests without variables are byte-identical to what this
+ * generator produced before variables existed. A reference to a name the test
+ * doesn't declare is deliberately left as literal text — a user typing a price
+ * of `${9.99}` or pasting a shell snippet must not have it silently turned into
+ * an undefined-variable lookup that renders "undefined" at run time.
+ */
+function valueExpr(raw: string | undefined, vars: ReadonlySet<string>): string {
+  const text = raw ?? "";
+  if (vars.size === 0 || !text.includes("${")) return q(text);
+  const matches = [...text.matchAll(VAR_REF_RE)].filter((m) => vars.has(m[1]));
+  if (matches.length === 0) return q(text);
+  // A value that is nothing but one reference emits as a plain lookup rather
+  // than a one-element template literal — `V.email` reads better than
+  // `` `${V.email}` `` in a spec the user is expected to open and read.
+  if (matches.length === 1 && matches[0][0] === text) return "V." + matches[0][1];
+  let out = "`";
+  let last = 0;
+  for (const m of matches) {
+    const at = m.index ?? 0;
+    out += escTemplate(text.slice(last, at));
+    out += "${V." + m[1] + "}";
+    last = at + m[0].length;
+  }
+  return out + escTemplate(text.slice(last)) + "`";
 }
 
 /** Escape regex metacharacters so a literal string can be embedded in a RegExp. */
@@ -34,24 +87,30 @@ function locatorExpr(loc: Locator): string {
   }
 }
 
-function assertLine(step: Step, target: string | null): string | null {
+function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>): string | null {
   const e = step.soft ? "expect.soft" : "expect";
   // Page-level assertions don't need an element locator.
-  if (step.assert === "url") return "await " + e + "(page).toHaveURL(" + q(step.value ?? "") + ");";
+  if (step.assert === "url")
+    return "await " + e + "(page).toHaveURL(" + valueExpr(step.value, vars) + ");";
+  // The regex asserts embed their expected value INSIDE a pattern, so they take
+  // the literal text rather than an expression — an interpolated value would
+  // have to be regex-escaped at run time, and `reEscape` only works on a string
+  // known now. Variables in these two assert kinds stay literal by design.
   if (step.assert === "urlEndsWith")
     return "await " + e + "(page).toHaveURL(new RegExp(" + q(reEscape(step.value ?? "") + "$") + ", \"i\"));";
   if (step.assert === "urlIs")
     return "await " + e + "(page).toHaveURL(new RegExp(" + q("^" + reEscape(step.value ?? "") + "$") + ", \"i\"));";
-  if (step.assert === "title") return "await " + e + "(page).toHaveTitle(" + q(step.value ?? "") + ");";
+  if (step.assert === "title")
+    return "await " + e + "(page).toHaveTitle(" + valueExpr(step.value, vars) + ");";
   if (!target) return null;
   const x = e + "(" + target + ")";
   switch (step.assert) {
     case "hidden":
       return "await " + x + ".toBeHidden();";
     case "text":
-      return "await " + x + ".toContainText(" + q(step.text ?? "") + ");";
+      return "await " + x + ".toContainText(" + valueExpr(step.text, vars) + ");";
     case "exactText":
-      return "await " + x + ".toHaveText(" + q(step.text ?? "") + ");";
+      return "await " + x + ".toHaveText(" + valueExpr(step.text, vars) + ");";
     case "enabled":
       return "await " + x + ".toBeEnabled();";
     case "disabled":
@@ -61,9 +120,9 @@ function assertLine(step: Step, target: string | null): string | null {
     case "unchecked":
       return "await " + x + ".not.toBeChecked();";
     case "value":
-      return "await " + x + ".toHaveValue(" + q(step.value ?? "") + ");";
+      return "await " + x + ".toHaveValue(" + valueExpr(step.value, vars) + ");";
     case "attribute":
-      return "await " + x + ".toHaveAttribute(" + q(step.attr ?? "") + ", " + q(step.value ?? "") + ");";
+      return "await " + x + ".toHaveAttribute(" + q(step.attr ?? "") + ", " + valueExpr(step.value, vars) + ");";
     case "count":
       return "await " + x + ".toHaveCount(" + (step.count ?? 0) + ");";
     case "visible":
@@ -72,15 +131,33 @@ function assertLine(step: Step, target: string | null): string | null {
   }
 }
 
+/** The `capture` step: read a value off the page into the run's variable scope.
+ *
+ *  Emitted as a call to the `glazeCapture` runtime helper rather than the
+ *  obvious `V.name = await ...`, because the line must START with `await`.
+ *  `buildStepLineMap` in playwright-runner classifies spec lines by that
+ *  prefix, and a step whose line doesn't match is invisible to it — which
+ *  would shift every later step's highlight and screenshot attribution. */
+function captureLine(step: Step, target: string | null): string | null {
+  if (!step.captureVar) return null;
+  const from = step.captureFrom ?? "text";
+  // url/title read the page itself and need no element.
+  const subject = from === "url" || from === "title" ? "page" : target;
+  if (!subject) return null;
+  const args = ["V", q(step.captureVar), subject, q(from)];
+  if (from === "attribute") args.push(q(step.captureAttr ?? ""));
+  return "await glazeCapture(" + args.join(", ") + ");";
+}
+
 /** Build the boolean expression for an `if` step's condition. */
-function conditionExpr(step: Step): string {
+function conditionExpr(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string {
   const loc = step.locator;
   const target = loc ? "page." + locatorExpr(loc) : "page.locator(\"html\")";
   switch (step.cond) {
     case "urlContains":
-      return "page.url().includes(" + q(step.value ?? "") + ")";
+      return "page.url().includes(" + valueExpr(step.value, vars) + ")";
     case "titleContains":
-      return "(await page.title()).includes(" + q(step.value ?? "") + ")";
+      return "(await page.title()).includes(" + valueExpr(step.value, vars) + ")";
     case "hidden":
       return "await " + target + ".isHidden()";
     case "exists":
@@ -129,6 +206,10 @@ function cookieFilterLiteral(spec: CookieSpec): string {
   return "{ " + parts.join(", ") + " }";
 }
 
+/** Shared "this test declares no variables" set, so the many call sites that
+ *  legitimately have no variable context don't each allocate one. */
+const EMPTY_VARS: ReadonlySet<string> = new Set<string>();
+
 function cookieLine(step: Step): string | null {
   switch (step.cookieAction) {
     case "clearAll":
@@ -148,27 +229,32 @@ function cookieLine(step: Step): string | null {
   }
 }
 
-function stepLine(step: Step): string | null {
+function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | null {
   const loc = step.locator;
   const target = loc ? "page." + locatorExpr(loc) : null;
   switch (step.type) {
     case "if":
-      return "if (" + conditionExpr(step) + ") {";
+      return "if (" + conditionExpr(step, vars) + ") {";
     case "endif":
       return "}";
     case "goto":
-      return "await page.goto(" + q(step.url ?? "") + ");";
+      return "await page.goto(" + valueExpr(step.url, vars) + ");";
     case "click":
       return target ? "await " + target + ".click();" : null;
     case "fill":
-      return target ? "await " + target + ".fill(" + q(step.value ?? "") + ");" : null;
+      return target ? "await " + target + ".fill(" + valueExpr(step.value, vars) + ");" : null;
     case "select":
-      return target ? "await " + target + ".selectOption(" + q(step.value ?? "") + ");" : null;
+      return target
+        ? "await " + target + ".selectOption(" + valueExpr(step.value, vars) + ");"
+        : null;
     case "check":
       return target ? "await " + target + ".check();" : null;
     case "uncheck":
       return target ? "await " + target + ".uncheck();" : null;
     case "press":
+      // A key name is a Playwright keyboard token ("Enter", "Control+A"), not
+      // free text, so it stays a literal — interpolating a variable into it
+      // would produce a silently-ignored key press rather than an error.
       return target
         ? "await " + target + ".press(" + q(step.value ?? "") + ");"
         : "await page.keyboard.press(" + q(step.value ?? "") + ");";
@@ -185,20 +271,61 @@ function stepLine(step: Step): string | null {
       );
     case "cookie":
       return cookieLine(step);
+    case "capture":
+      return captureLine(step, target);
+    // A runFlow step emits no line of its own — its target flow's steps are
+    // inlined in its place by `expandSteps` before generation reaches here.
+    case "runFlow":
+      return null;
     case "assert":
-      return assertLine(step, target);
+      return assertLine(step, target, vars);
     default:
       return null;
   }
 }
 
-/** Short human description of a step for the UI. */
+/** Short human description of a step for the UI.
+ *
+ *  Deliberately renders values with no variable context, so a `${name}`
+ *  reference shows as written rather than as the `V.name` the spec compiles to
+ *  — the step list is meant to read like what the user typed. */
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
   if (step.type === "cookie") return describeCookie(step);
+  if (step.type === "capture") return describeCapture(step);
+  if (step.type === "runFlow") return describeFlow(step);
   const line = stepLine(step);
   return line ? line.replace(/^await /, "").replace(/;$/, "") : step.type;
+}
+
+/** Readable phrasing of a `capture` step. Kept in sync with the mirror in
+ *  renderer/lib/describe-step.ts. */
+export function describeCapture(step: Step): string {
+  const name = step.captureVar || "variable";
+  const from = step.captureFrom ?? "text";
+  const loc = step.locator ? "page." + locatorExpr(step.locator) : "page";
+  switch (from) {
+    case "url":
+      return `capture ${name} from the page URL`;
+    case "title":
+      return `capture ${name} from the page title`;
+    case "value":
+      return `capture ${name} from ${loc} value`;
+    case "attribute":
+      return `capture ${name} from ${loc} @${step.captureAttr || "attribute"}`;
+    case "text":
+    default:
+      return `capture ${name} from ${loc} text`;
+  }
+}
+
+/** Readable phrasing of a `runFlow` step. Kept in sync with the mirror in
+ *  renderer/lib/describe-step.ts. */
+export function describeFlow(step: Step): string {
+  const name = step.label || step.flowId || "flow";
+  const args = step.flowArgs ? Object.keys(step.flowArgs) : [];
+  return args.length > 0 ? `run flow ${name} (${args.join(", ")})` : `run flow ${name}`;
 }
 
 /** Readable phrasing of a cookie step for the trainer's step list. Kept in
@@ -246,12 +373,206 @@ export function describeCondition(step: Step): string {
   }
 }
 
-export function generateSpec(record: Pick<TestRecord, "name" | "url" | "steps">): string {
+/** The subset of a flow's record the generator needs to inline it. */
+export type FlowSource = Pick<TestRecord, "id" | "name" | "steps"> &
+  Partial<Pick<TestRecord, "variables" | "flowParams">>;
+
+export interface GenerateOptions {
+  /** Resolve a `runFlow` step's target. Omitted (the default) means flows
+   *  can't be inlined and each `runFlow` step emits an explanatory comment —
+   *  which is what every caller that only has one record in hand should get,
+   *  rather than a silently missing block of steps. */
+  resolveFlow?: (flowId: string) => FlowSource | null;
+}
+
+/** One generated statement, tagged with the step it came from. */
+interface ExpandedStep {
+  step: Step;
+  /** index into the ORIGINAL record.steps — inlined flow steps all carry the
+   *  index of the `runFlow` step that pulled them in, so highlighting a running
+   *  step points at something the user can actually see in the step list. */
+  sourceIndex: number;
+  /** set when the step can't be generated (missing flow, cycle); emitted as a
+   *  comment so the spec stays runnable and the problem stays visible. */
+  problem?: string;
+}
+
+/** Substitute `${param}` references in a flow step's interpolatable fields.
+ *
+ *  Binding happens HERE, textually, at generation time rather than through a
+ *  runtime scope: the value a caller supplies may itself reference the
+ *  caller's own variables, and rewriting the text lets that resolve against the
+ *  caller's `V` with no nested scopes to reason about. */
+function bindFlowStep(step: Step, args: Record<string, string>): Step {
+  const names = Object.keys(args);
+  if (names.length === 0) return step;
+  const sub = (text: string | undefined): string | undefined => {
+    if (typeof text !== "string" || !text.includes("${")) return text;
+    return text.replace(VAR_REF_RE, (whole, name: string) =>
+      Object.prototype.hasOwnProperty.call(args, name) ? args[name] : whole,
+    );
+  };
+  const bound: Step = { ...step };
+  if (typeof bound.value === "string") bound.value = sub(bound.value);
+  if (typeof bound.text === "string") bound.text = sub(bound.text);
+  if (typeof bound.url === "string") bound.url = sub(bound.url);
+  if (bound.flowArgs) {
+    const next: Record<string, string> = {};
+    for (const [k, v] of Object.entries(bound.flowArgs)) next[k] = sub(v) ?? "";
+    bound.flowArgs = next;
+  }
+  return bound;
+}
+
+/** Expand `runFlow` steps into the steps they invoke, depth-first. */
+function expandSteps(
+  steps: Step[],
+  opts: GenerateOptions,
+  sourceIndexOf: (i: number) => number,
+  stack: string[],
+): ExpandedStep[] {
+  const out: ExpandedStep[] = [];
+  steps.forEach((step, i) => {
+    const sourceIndex = sourceIndexOf(i);
+    if (step.type !== "runFlow") {
+      out.push({ step, sourceIndex });
+      return;
+    }
+    const flowId = step.flowId ?? "";
+    const label = step.label || flowId || "flow";
+    if (!opts.resolveFlow) {
+      out.push({ step, sourceIndex, problem: `flow ${label} not inlined (no resolver)` });
+      return;
+    }
+    // A flow that invokes itself, directly or through another flow, would
+    // expand forever. Refuse the repeat rather than recursing — the step list
+    // is user-editable, so this is reachable by ordinary editing, not just by
+    // a bug.
+    if (stack.includes(flowId)) {
+      out.push({ step, sourceIndex, problem: `flow ${label} skipped (circular reference)` });
+      return;
+    }
+    const flow = opts.resolveFlow(flowId);
+    if (!flow) {
+      out.push({ step, sourceIndex, problem: `flow ${label} not found` });
+      return;
+    }
+    if (flow.steps.length === 0) {
+      out.push({ step, sourceIndex, problem: `flow ${label} has no steps` });
+      return;
+    }
+    // Bind each parameter: the caller's argument wins, and a parameter the
+    // caller didn't supply falls back to the flow's own declared default.
+    const args: Record<string, string> = {};
+    for (const param of flow.flowParams ?? []) {
+      const supplied = step.flowArgs?.[param];
+      if (typeof supplied === "string") {
+        args[param] = supplied;
+        continue;
+      }
+      const own = (flow.variables ?? []).find((v) => v.name === param);
+      args[param] = own?.value ?? "";
+    }
+    const inner = expandSteps(
+      flow.steps.map((s) => {
+        const bound = bindFlowStep(s, args);
+        // The call site's disabled/continue-on-failure apply to the whole
+        // inlined block: disabling a flow call must not run half of it.
+        if (step.disabled) bound.disabled = true;
+        if (step.continueOnFailure) bound.continueOnFailure = true;
+        return bound;
+      }),
+      opts,
+      () => sourceIndex,
+      [...stack, flowId],
+    );
+    out.push(...inner);
+  });
+  return out;
+}
+
+/** Build the `const V = {...}` header for a test's variables.
+ *
+ *  Spread order is the whole design: declared defaults first, then the run's
+ *  injected values (a dataset row), then secrets. Secrets go LAST so nothing
+ *  can shadow them — a dataset row naming a secret variable must not be able to
+ *  substitute a plaintext value for the encrypted one. */
+function variableHeader(variables: TestVariable[]): string[] {
+  if (variables.length === 0) return [];
+  const plain = variables.filter((v) => v.kind !== "secret");
+  const secret = variables.filter((v) => v.kind === "secret");
+  const lines: string[] = ["  const V = {"];
+  for (const v of plain) {
+    lines.push(`    ${v.name}: ${q(v.value ?? "")},`);
+  }
+  // JSON.parse over an env var rather than a baked-in literal: this is what
+  // lets one spec run once per dataset row without regenerating the file.
+  lines.push('    ...JSON.parse(process.env.GLAZE_VARS || "{}"),');
+  for (const v of secret) {
+    lines.push(`    ${v.name}: process.env.${secretEnvName(v.name)} ?? "",`);
+  }
+  lines.push("  };");
+  return lines;
+}
+
+/** Generated spec plus the line→step map the runner needs to attribute a
+ *  running step back to the step list. */
+export interface GeneratedSpec {
+  source: string;
+  /** 1-based spec line number → 0-based index into `record.steps`. */
+  lineMap: Record<number, number>;
+}
+
+export type SpecSource = Pick<TestRecord, "name" | "url" | "steps"> &
+  Partial<Pick<TestRecord, "variables">>;
+
+/**
+ * Generate the spec AND the authoritative line→step map.
+ *
+ * The map is emitted here rather than re-derived from the finished file
+ * because only this function knows which step produced which line. The
+ * runner's `buildStepLineMap` fallback infers it by counting `await` lines,
+ * which silently mis-attributes any step that emits something else (an `if`
+ * block, an inlined flow) — every step after it shifts by one.
+ */
+export function generateSpecDetailed(
+  record: SpecSource,
+  opts: GenerateOptions = {},
+): GeneratedSpec {
+  const variables = record.variables ?? [];
+  const vars: ReadonlySet<string> = new Set(variables.map((v) => v.name));
   const body: string[] = [];
+  const lineMap: Record<number, number> = {};
+
   // Track block nesting so conditional bodies are indented one level deeper.
   let depth = 1; // base level: statements sit inside the test() callback
-  for (const step of record.steps) {
-    const line = stepLine(step);
+  const expanded = expandSteps(record.steps, opts, (i) => i, []);
+
+  // Everything above the test body, built as lines so the line map is derived
+  // from the real preamble rather than a hard-coded count — the preamble grows
+  // by one when a capture step is present, and an off-by-one here would
+  // mis-attribute EVERY step rather than fail loudly.
+  const needsRuntime = expanded.some((e) => !e.problem && e.step.type === "capture");
+  const preamble = ['import { test, expect } from "@playwright/test";'];
+  if (needsRuntime) {
+    preamble.push(`import { glazeCapture } from "./${GLAZE_RUNTIME_FILE}";`);
+  }
+  preamble.push("");
+  const header = variableHeader(variables);
+  // The `test(...)` line sits at `preamble.length + 1`; the variable header
+  // follows it; the first body line is the one after that.
+  const bodyStartLine = preamble.length + 2 + header.length;
+
+  const record1 = (index: number): void => {
+    lineMap[bodyStartLine + body.length] = index;
+  };
+
+  for (const { step, sourceIndex, problem } of expanded) {
+    if (problem) {
+      body.push("  // " + problem);
+      continue;
+    }
+    const line = stepLine(step, vars);
     if (line == null) continue;
     if (step.type === "endif") depth = Math.max(1, depth - 1);
     const indent = "  ".repeat(depth);
@@ -266,18 +587,26 @@ export function generateSpec(record: Pick<TestRecord, "name" | "url" | "steps">)
       // failure is swallowed and the test proceeds to the next step. Only
       // applies to action/assert steps — structural `if`/`endif` are never wrapped.
       body.push(indent + "try {");
+      record1(sourceIndex);
       body.push(indent + "  " + line);
       body.push(indent + "} catch { /* continue on failure */ }");
     } else {
+      record1(sourceIndex);
       body.push(indent + line);
     }
     if (step.type === "if") depth += 1;
   }
+
   const title = record.name && record.name.trim() ? record.name.trim() : "recorded test";
-  return (
-    'import { test, expect } from "@playwright/test";\n\n' +
+  const source =
+    preamble.join("\n") +
+    "\n" +
     "test(" + q(title) + ", async ({ page }) => {\n" +
-    body.join("\n") +
-    "\n});\n"
-  );
+    [...header, ...body].join("\n") +
+    "\n});\n";
+  return { source, lineMap };
+}
+
+export function generateSpec(record: SpecSource, opts: GenerateOptions = {}): string {
+  return generateSpecDetailed(record, opts).source;
 }

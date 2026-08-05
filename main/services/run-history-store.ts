@@ -15,6 +15,7 @@ import * as path from "path";
 
 import { app, logger } from "@glaze/core/backend";
 
+import { redactWithSnapshot } from "./secret-redaction.js";
 import type { LogSearchResult, RunBrowser, RunRecord } from "../recorder/types.js";
 
 const MAX_RECORDS = 1000; // cap the index; oldest runs (+ their logs) are pruned
@@ -95,6 +96,9 @@ export const runHistoryStore = {
       runBrowser?: RunBrowser;
       /** batch that drove this run, when part of one */
       batchId?: string;
+      /** dataset row this run used, when it was one row of a sweep */
+      datasetId?: string;
+      datasetName?: string;
       /** measured screenshot cost for capture runs (see capture-overhead.ts) */
       captureOverheadMs?: number;
       shotCount?: number;
@@ -106,7 +110,11 @@ export const runHistoryStore = {
     ensureDirs();
     const id = run.id ?? randomUUID();
     const logFile = path.join(logsDir(), id + ".log");
-    fs.writeFileSync(logFile, logText, "utf-8");
+    // Redact on WRITE, not on read. A secret never reaches the generated spec,
+    // but it does reach the browser — so it can come back in a Playwright error
+    // message or an assertion diff. Redacting on read would leave the plaintext
+    // sitting in a file on disk that Reveal in Finder happily opens.
+    fs.writeFileSync(logFile, redactWithSnapshot(logText), "utf-8");
 
     const record: RunRecord = {
       id,
@@ -131,6 +139,8 @@ export const runHistoryStore = {
       ...(run.captureOverheadMs !== undefined ? { captureOverheadMs: run.captureOverheadMs } : {}),
       ...(run.shotCount !== undefined ? { shotCount: run.shotCount } : {}),
       ...(run.replayOfRunId ? { replayOfRunId: run.replayOfRunId } : {}),
+      ...(run.datasetId ? { datasetId: run.datasetId } : {}),
+      ...(run.datasetName ? { datasetName: run.datasetName } : {}),
     };
 
     const all = readAll();

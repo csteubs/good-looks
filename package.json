@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "productName": "Good Looks!",
   "description": "Record web interactions and generate",
-  "iconDescription": "A desktop automation tool that records user interactions on websites—clicks, typing, navigation—and converts them into executable Playwright test scripts. Users enter a URL, the app opens a browser window, records each action as a test step, and generates code they can run locally. Think of a recording button, browser window with a red record indicator, or automated test script code being generated from live interactions.",
+  "iconDescription": "A desktop automation tool that records user interactions on websites\u2014clicks, typing, navigation\u2014and converts them into executable Playwright test scripts. Users enter a URL, the app opens a browser window, records each action as a test step, and generates code they can run locally. Think of a recording button, browser window with a red record indicator, or automated test script code being generated from live interactions.",
   "private": true,
   "type": "module",
   "scripts": {
@@ -31,10 +31,11 @@
     "check:paginate": "tsx main/services/__tests__/paginate.check.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:checks": "npm run check:spec-parser && npm run check:visual-pipeline && npm run check:ai-debug-scroll && npm run check:capture-overhead && npm run check:retention && npm run check:auto-heal-wiring && npm run check:run-filters && npm run check:batch-runner && npm run check:batch-history && npm run check:test-tags && npm run check:mcp-select && npm run check:alerts && npm run check:cookie-steps && npm run check:batch-order && npm run check:paginate && npm run check:scroll-layout",
+    "test:checks": "npm run check:spec-parser && npm run check:visual-pipeline && npm run check:ai-debug-scroll && npm run check:capture-overhead && npm run check:retention && npm run check:auto-heal-wiring && npm run check:run-filters && npm run check:batch-runner && npm run check:batch-history && npm run check:test-tags && npm run check:mcp-select && npm run check:alerts && npm run check:cookie-steps && npm run check:batch-order && npm run check:paginate && npm run check:variables && npm run check:scroll-layout",
     "test:all": "npm run test:checks && npm run test",
     "test:coverage": "vitest run --coverage",
-    "check:scroll-layout": "tsx main/services/__tests__/scroll-layout.check.ts"
+    "check:scroll-layout": "tsx main/services/__tests__/scroll-layout.check.ts",
+    "check:variables": "esbuild main/services/__tests__/variables.check.ts --bundle --platform=node --format=cjs --alias:@glaze/core/backend=./main/services/__tests__/glaze-backend-stub.ts --outfile=node_modules/.cache/variables.check.cjs && node node_modules/.cache/variables.check.cjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

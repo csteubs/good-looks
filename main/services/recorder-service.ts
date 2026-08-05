@@ -49,7 +49,7 @@ import { sendToMain } from "./app-window.js";
 import { recorderDebugStore } from "./recorder-debug-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { runHistoryStore } from "./run-history-store.js";
-import { describeStep, generateSpec } from "./script-generator.js";
+import { describeStep } from "./script-generator.js";
 import { testStore } from "./test-store.js";
 
 // Pacing for the "Replay from current step" run so the user can watch it step
@@ -1465,25 +1465,35 @@ async function finalize(): Promise<void> {
     return;
   }
 
-  const source = generateSpec({ name: s.name, url: s.url, steps: s.steps });
-  const scriptPath = testStore.writeScript(s.testId, source);
+  // "Edit in Trainer" re-enters this path with an existing test's id, so the
+  // record being written may already exist. Spread it FIRST and let this
+  // session's results win, rather than building a fresh record: everything the
+  // trainer doesn't know about — tags, variables, datasets, browser/headless
+  // preferences, visual threshold and masks, the hidden flag — lives only on
+  // the stored record, and a from-scratch rebuild silently discards all of it.
+  const existing = testStore.get(s.testId);
   const record: TestRecord = {
+    // Seed from the persisted defaults so NEW recordings inherit the user's
+    // last-chosen run speed and capture preference. Placed before the spread so
+    // an existing test keeps its own choices; the sidebar "Adjust Test Speed"
+    // menu and the per-test toggle still override per test.
+    speed: recorderSettingsStore.get().defaultRunSpeed,
+    captureArtifacts: recorderSettingsStore.get().defaultCaptureArtifacts,
+    ...(existing ?? {}),
     id: s.testId,
     name: s.name,
     url: s.url,
     createdAt: s.createdAt,
     updatedAt: Date.now(),
     steps: s.steps,
-    scriptPath,
+    scriptPath: existing?.scriptPath ?? testStore.scriptPathFor(s.testId),
+    // Continuing in the trainer always regenerates from steps, so a previously
+    // hand-edited script is replaced and the flag no longer holds.
     scriptEdited: false,
-    // Seed from the persisted default so new recordings inherit the user's
-    // last-chosen run speed (slow by default). Existing tests keep their own
-    // speed; the sidebar "Adjust Test Speed" menu still overrides per-test.
-    speed: recorderSettingsStore.get().defaultRunSpeed,
-    // Seed the screenshot-capture preference from the global default so new
-    // recordings inherit it; the per-test toggle overrides it thereafter.
-    captureArtifacts: recorderSettingsStore.get().defaultCaptureArtifacts,
   };
+  // Written after the record is assembled so the generator sees this session's
+  // steps alongside the variables carried over from the existing record.
+  record.scriptPath = testStore.regenerateScript(record);
   testStore.save(record);
 
   logger.info("recorder", "Recording finalized", { id: s.testId, steps: s.steps.length });

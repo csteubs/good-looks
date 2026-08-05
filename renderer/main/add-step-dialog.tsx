@@ -20,10 +20,27 @@ import {
 } from "@glaze/core/components";
 import { Crosshair, X } from "lucide-react";
 
-import type { AssertKind, ConditionKind, Locator, PickedElement, RawStep } from "../lib/recorder-types";
+import type {
+  AssertKind,
+  CaptureSource,
+  ConditionKind,
+  Locator,
+  PickedElement,
+  RawStep,
+} from "../lib/recorder-types";
+import { api } from "../lib/api";
 import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 
-export type AddStepKind = "assertion" | "condition" | "wait" | "goto" | "press" | "find" | "viewport";
+export type AddStepKind =
+  | "assertion"
+  | "condition"
+  | "wait"
+  | "goto"
+  | "press"
+  | "find"
+  | "viewport"
+  | "capture"
+  | "runFlow";
 
 export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   assertion: "Add assertion",
@@ -33,7 +50,19 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   press: "Press key",
   find: "Find element",
   viewport: "Set viewport",
+  capture: "Capture a value",
+  runFlow: "Run a flow",
 };
+
+// What a `capture` step reads. url/title read the page and need no element,
+// which is why the target picker is hidden for them.
+const CAPTURE_OPTIONS: { value: CaptureSource; label: string; page?: boolean }[] = [
+  { value: "text", label: "Element text" },
+  { value: "value", label: "Input value" },
+  { value: "attribute", label: "Element attribute" },
+  { value: "url", label: "Page URL", page: true },
+  { value: "title", label: "Page title", page: true },
+];
 
 // Condition predicates for an `if` block. Element conditions resolve a picked
 // locator; page conditions match a substring of the current URL / title.
@@ -185,9 +214,12 @@ export function AddStepDialog({
   initialWaitMode,
   prefillText,
   prefillValue,
+  currentTestId,
 }: {
   open: boolean;
   kind: AddStepKind;
+  /** The test being edited, so it can't be offered as a flow to call itself. */
+  currentTestId?: string;
   onOpenChange: (open: boolean) => void;
   onAdd: (steps: RawStep[]) => void;
   /** Element the user picked in the training browser via the Target Element flow, if any. */
@@ -224,6 +256,10 @@ export function AddStepDialog({
   const [viewport, setViewport] = React.useState("desktop");
   const [vw, setVw] = React.useState("1280");
   const [vh, setVh] = React.useState("800");
+  const [captureVar, setCaptureVar] = React.useState("");
+  const [captureFrom, setCaptureFrom] = React.useState<CaptureSource>("text");
+  const [captureAttr, setCaptureAttr] = React.useState("");
+  const [flowId, setFlowId] = React.useState("");
 
   // Reset transient fields whenever a fresh dialog opens. When opened from the
   // right-click menu, seed the assert kind / wait mode / text / value from the
@@ -249,8 +285,32 @@ export function AddStepDialog({
       setViewport("desktop");
       setVw("1280");
       setVh("800");
+      setCaptureVar("");
+      setCaptureFrom("text");
+      setCaptureAttr("");
+      setFlowId("");
     }
   }, [open, kind, initialAssert, initialWaitMode, prefillText, prefillValue]);
+
+  // Flows available to call from here. Fetched when the dialog opens rather
+  // than held by the parent, so a flow created in another window shows up
+  // without a reload.
+  const [flows, setFlows] = React.useState<{ id: string; name: string; flowParams: string[] }[]>([]);
+  React.useEffect(() => {
+    if (!open || kind !== "runFlow") return;
+    let live = true;
+    void api.tests
+      .listFlows(currentTestId)
+      .then((f) => {
+        if (live) setFlows(f);
+      })
+      .catch(() => {
+        if (live) setFlows([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [open, kind, currentTestId]);
 
   const opt = ASSERT_OPTIONS.find((o) => o.value === assert)!;
   const condOpt = CONDITION_OPTIONS.find((c) => c.value === cond)!;
@@ -282,6 +342,36 @@ export function AddStepDialog({
       }
       case "find":
         return locator ? [{ type: "assert", assert: "visible", locator }] : null;
+      case "capture": {
+        const name = captureVar.trim();
+        if (!name) return null;
+        const pageLevel = captureFrom === "url" || captureFrom === "title";
+        // An element-scoped capture with no target would silently capture
+        // nothing, so refuse it here rather than emit a broken step.
+        if (!pageLevel && !locator) return null;
+        return [
+          {
+            type: "capture",
+            captureVar: name,
+            captureFrom,
+            ...(captureFrom === "attribute" ? { captureAttr: captureAttr.trim() } : {}),
+            ...(pageLevel ? {} : { locator: locator! }),
+          },
+        ];
+      }
+      case "runFlow": {
+        if (!flowId) return null;
+        const flow = flows.find((f) => f.id === flowId);
+        return [
+          {
+            type: "runFlow",
+            flowId,
+            // The name is stored on the step so the list stays readable even if
+            // the flow is later renamed or deleted.
+            label: flow?.name ?? flowId,
+          },
+        ];
+      }
       case "condition": {
         // Insert an empty IF/END-IF pair; the user drags steps between them.
         const ifStep: RawStep = { type: "if", cond };
@@ -443,6 +533,79 @@ export function AddStepDialog({
                 </Field>
               </div>
             ) : null}
+          </>
+        ) : null}
+
+        {kind === "capture" ? (
+          <>
+            <Field label="Store as variable" orientation="vertical">
+              <Input
+                size="small"
+                value={captureVar}
+                placeholder="orderId"
+                className="font-mono"
+                onChange={(e) => setCaptureVar(e.target.value)}
+              />
+            </Field>
+            <Text size="small" className="text-secondary">
+              Later steps can use it as <code className="font-mono">{"${" + (captureVar || "name") + "}"}</code>.
+              Declare it on the Variables tab to give it a fallback value.
+            </Text>
+            <Field label="Capture from" orientation="vertical">
+              <Select
+                value={captureFrom}
+                onValueChange={(v) => setCaptureFrom(v as CaptureSource)}
+              >
+                <SelectTrigger size="small">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CAPTURE_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            {captureFrom === "attribute" ? (
+              <Field label="Attribute" orientation="vertical">
+                <Input
+                  size="small"
+                  value={captureAttr}
+                  placeholder="href"
+                  onChange={(e) => setCaptureAttr(e.target.value)}
+                />
+              </Field>
+            ) : null}
+          </>
+        ) : null}
+
+        {kind === "runFlow" ? (
+          <>
+            <Field label="Flow" orientation="vertical">
+              <Select value={flowId} onValueChange={setFlowId}>
+                <SelectTrigger size="small">
+                  <SelectValue placeholder="Choose a flow" />
+                </SelectTrigger>
+                <SelectContent>
+                  {flows.map((f) => (
+                    <SelectItem key={f.id} value={f.id}>
+                      {f.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            {flows.length === 0 ? (
+              <Text size="small" className="text-tertiary">
+                No flows yet. Mark a test as a reusable flow to call it from here.
+              </Text>
+            ) : (
+              <Text size="small" className="text-secondary">
+                The flow's steps are inlined into this test's script when it runs.
+              </Text>
+            )}
           </>
         ) : null}
 

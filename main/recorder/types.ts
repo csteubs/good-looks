@@ -18,7 +18,11 @@ export type StepType =
   | "endif"
   // Cookie state. Applied through the browser session rather than injected JS,
   // because an httpOnly cookie is invisible to document.cookie by definition.
-  | "cookie";
+  | "cookie"
+  // Variable layer: `capture` reads a value off the page into the run's
+  // variable scope; `runFlow` inlines another test's steps as a reusable flow.
+  | "capture"
+  | "runFlow";
 
 /**
  * Predicate for an `if` step. Element conditions resolve `Step.locator`; page
@@ -105,7 +109,31 @@ export interface Step {
    *  step's line commented out so the test passes. The step stays in the list
    *  and keeps its index/position. */
   disabled?: boolean;
+  /** variable a `capture` step writes its read value into. */
+  captureVar?: string;
+  /** what a `capture` step reads off the resolved element (default "text"). */
+  captureFrom?: CaptureSource;
+  /** attribute name when `captureFrom === "attribute"`. */
+  captureAttr?: string;
+  /** id of the flow (another TestRecord) a `runFlow` step invokes. */
+  flowId?: string;
+  /** argument bindings for a `runFlow` step: flow parameter name → value
+   *  expression (which may itself interpolate `${var}` from the caller). */
+  flowArgs?: Record<string, string>;
+  /** names of the variables this step's value/text/url interpolates. Derived on
+   *  write by `collectVarRefs` — never hand-maintained — so the editor can warn
+   *  before deleting a variable something still references. */
+  varRefs?: string[];
   timestamp: number;
+}
+
+/** What a `capture` step reads off its resolved element. */
+export type CaptureSource = "text" | "value" | "attribute" | "url" | "title";
+
+export const CAPTURE_SOURCES: CaptureSource[] = ["text", "value", "attribute", "url", "title"];
+
+export function isCaptureSource(v: unknown): v is CaptureSource {
+  return typeof v === "string" && (CAPTURE_SOURCES as string[]).includes(v);
 }
 
 /** Payload emitted by the injected capture script (before backend enrichment). */
@@ -127,6 +155,12 @@ export interface RawStep {
   /** cookie fields, so a cookie step can be inserted via insertStep */
   cookieAction?: CookieAction;
   cookie?: CookieSpec;
+  /** capture/flow fields, so those steps can be inserted via insertStep */
+  captureVar?: string;
+  captureFrom?: CaptureSource;
+  captureAttr?: string;
+  flowId?: string;
+  flowArgs?: Record<string, string>;
 }
 
 export type TestSpeed = "slow" | "medium" | "fast";
@@ -194,6 +228,182 @@ export interface TestRecord {
    *  of truth, so the renderer sends raw strings and renders what comes back.
    *  Absent/empty means untagged. */
   tags?: string[];
+  /** Named values this test's steps can interpolate with `${name}`. Normalized
+   *  by `normalizeVariables` on write. A "secret" variable's value is NOT here —
+   *  it lives encrypted in test-secrets-store and is injected as an env
+   *  reference at generation time, so it never reaches the spec file or IPC. */
+  variables?: TestVariable[];
+  /** Rows of variable values this test can be swept over. Each row produces its
+   *  own run (and its own RunRecord) when the test is run as a sweep. */
+  datasets?: Dataset[];
+  /** true when this test is a reusable flow — a step sequence meant to be
+   *  inlined into other tests via a `runFlow` step rather than run on its own.
+   *  A flow is an ordinary TestRecord (same library, tags, trainer and MCP
+   *  surface); this flag only hides it from the Batch checklist, the same way
+   *  `hidden` hides a test from the sidebar. */
+  isFlow?: boolean;
+  /** Parameter names a flow accepts. A `runFlow` step supplies a value for each
+   *  via `flowArgs`; unsupplied parameters fall back to the flow's own variable
+   *  defaults. Meaningless unless `isFlow`. */
+  flowParams?: string[];
+}
+
+/** How a variable's value is sourced. "plain" is stored on the record;
+ *  "secret" is stored encrypted and referenced via env at run time; "captured"
+ *  has no stored value at all — it's written during the run by a `capture`
+ *  step, and any default here is only a fallback for steps that read it before
+ *  the capture happens. */
+export type VariableKind = "plain" | "secret" | "captured";
+
+export const VARIABLE_KINDS: VariableKind[] = ["plain", "secret", "captured"];
+
+export function isVariableKind(v: unknown): v is VariableKind {
+  return typeof v === "string" && (VARIABLE_KINDS as string[]).includes(v);
+}
+
+export interface TestVariable {
+  /** identifier used in `${name}` interpolation; see `isValidVariableName` */
+  name: string;
+  /** default value. Always absent for "secret" — a secret's value never lives
+   *  on the record, only in the encrypted store. */
+  value?: string;
+  kind: VariableKind;
+  description?: string;
+}
+
+/** One row of variable values a test can be swept over. */
+export interface Dataset {
+  id: string;
+  /** display name, used in the run history so a failing row is identifiable */
+  name: string;
+  /** variable name → value for this row. Names not declared as variables on
+   *  the test are ignored at generation time rather than injected blindly. */
+  values: Record<string, string>;
+}
+
+/** Bounds — generous in practice, tight enough that a paste accident can't
+ *  write a megabyte into tests.json. */
+export const MAX_VARIABLE_NAME_LENGTH = 40;
+export const MAX_VARIABLE_VALUE_LENGTH = 2000;
+export const MAX_VARIABLES_PER_TEST = 50;
+export const MAX_DATASETS_PER_TEST = 100;
+
+/**
+ * A variable name must be a plain JS identifier: it becomes a property access
+ * (`V.name`) in the generated spec, so anything else would emit a spec that
+ * doesn't parse. Rejecting at the boundary is what keeps that guarantee — the
+ * generator never has to escape or quote a name.
+ */
+export function isValidVariableName(name: unknown): name is string {
+  return (
+    typeof name === "string" &&
+    name.length <= MAX_VARIABLE_NAME_LENGTH &&
+    /^[A-Za-z_][A-Za-z0-9_]*$/.test(name)
+  );
+}
+
+/**
+ * Canonicalize a set of variables: drop invalid names, dedupe by name
+ * (case-SENSITIVE — `user` and `User` are different JS properties, so folding
+ * them would silently merge two distinct variables), truncate over-long values,
+ * strip any value from a secret, and cap the count.
+ *
+ * Accepts `unknown` because it sits directly behind an IPC boundary.
+ */
+export function normalizeVariables(input: unknown): TestVariable[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: TestVariable[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") continue;
+    const v = raw as Partial<TestVariable>;
+    if (!isValidVariableName(v.name)) continue;
+    if (seen.has(v.name)) continue;
+    seen.add(v.name);
+    const kind: VariableKind = isVariableKind(v.kind) ? v.kind : "plain";
+    const entry: TestVariable = { name: v.name, kind };
+    // A secret's value never round-trips through the record — it would land in
+    // tests.json in plaintext, which is the exact thing the encrypted store
+    // exists to prevent.
+    if (kind !== "secret" && typeof v.value === "string") {
+      entry.value = v.value.slice(0, MAX_VARIABLE_VALUE_LENGTH);
+    }
+    if (typeof v.description === "string" && v.description.trim()) {
+      entry.description = v.description.trim().slice(0, 200);
+    }
+    out.push(entry);
+    if (out.length >= MAX_VARIABLES_PER_TEST) break;
+  }
+  return out;
+}
+
+/**
+ * Canonicalize datasets: require an id and a name, keep only string values,
+ * truncate over-long ones, and cap the count. Values for variables the test
+ * doesn't declare are kept here (the user may be mid-edit) but ignored at
+ * generation time.
+ */
+export function normalizeDatasets(input: unknown): Dataset[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: Dataset[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object") continue;
+    const d = raw as Partial<Dataset>;
+    if (typeof d.id !== "string" || !d.id) continue;
+    if (seen.has(d.id)) continue;
+    seen.add(d.id);
+    const name = typeof d.name === "string" && d.name.trim() ? d.name.trim().slice(0, 80) : d.id;
+    const values: Record<string, string> = {};
+    if (d.values && typeof d.values === "object") {
+      for (const [k, v] of Object.entries(d.values as Record<string, unknown>)) {
+        if (!isValidVariableName(k)) continue;
+        if (typeof v !== "string") continue;
+        values[k] = v.slice(0, MAX_VARIABLE_VALUE_LENGTH);
+      }
+    }
+    out.push({ id: d.id, name, values });
+    if (out.length >= MAX_DATASETS_PER_TEST) break;
+  }
+  return out;
+}
+
+/** Matches a `${name}` reference in a step's value. Deliberately narrow: only a
+ *  bare identifier, so a literal `${...}` containing anything else (an actual
+ *  price string, a template someone typed) is left alone as text. */
+export const VAR_REF_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;
+
+/** Every variable name referenced anywhere in a string, in order, deduped. */
+export function varRefsIn(text: unknown): string[] {
+  if (typeof text !== "string") return [];
+  const out: string[] = [];
+  for (const m of text.matchAll(VAR_REF_RE)) {
+    if (!out.includes(m[1])) out.push(m[1]);
+  }
+  return out;
+}
+
+/** The interpolatable fields of a step, in a fixed order. Every site that
+ *  scans or substitutes must use this list, so a new interpolatable field can't
+ *  be added to one and forgotten in the other. */
+export function interpolatableFields(step: Step): string[] {
+  const parts: string[] = [];
+  if (typeof step.value === "string") parts.push(step.value);
+  if (typeof step.text === "string") parts.push(step.text);
+  if (typeof step.url === "string") parts.push(step.url);
+  if (step.flowArgs) parts.push(...Object.values(step.flowArgs));
+  return parts;
+}
+
+/** All variable names a step references across its interpolatable fields. */
+export function collectVarRefs(step: Step): string[] {
+  const out: string[] = [];
+  for (const field of interpolatableFields(step)) {
+    for (const name of varRefsIn(field)) {
+      if (!out.includes(name)) out.push(name);
+    }
+  }
+  return out;
 }
 
 /** Bounds for `TestRecord.tags`. Generous enough to never bite in practice,
@@ -293,6 +503,12 @@ export interface RunRecord {
   /** id of the batch this run belonged to, when it was part of one. Absent for
    *  ordinary single runs — which is most of them. */
   batchId?: string;
+  /** The dataset row this run used, when it was one row of a sweep. Both are
+   *  stored: the id joins back to the record, and the name survives the row
+   *  being renamed or deleted — a run history that can't say WHICH row failed
+   *  is the whole reason the sweep exists. */
+  datasetId?: string;
+  datasetName?: string;
   /** Wall-clock ms this run spent taking screenshots, and how many it took.
    *  Only present on capture runs from the instrumented fixture onward — the
    *  raw inputs for the "what does capture cost?" readout in Stats. */
@@ -502,6 +718,11 @@ export interface BatchTestResult {
   /** id of the RunRecord this test produced, when it actually ran. Lets a
    *  persisted batch link through to the run's log in Stats. */
   runRecordId?: string;
+  /** The dataset row this entry ran. A sweep queues the same test once per row,
+   *  so without this the results list would show N identical-looking entries
+   *  with no way to tell which row was the one that failed. */
+  datasetId?: string;
+  datasetName?: string;
 }
 
 export interface BatchSummary {

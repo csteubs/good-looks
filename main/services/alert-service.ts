@@ -18,6 +18,8 @@ import { logger } from "@glaze/core/backend";
 
 import { webhookUrlStore } from "./webhook-url-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
+import { redact } from "./secret-redaction.js";
+import { testSecretsStore } from "./test-secrets-store.js";
 import type { BatchSummary } from "../recorder/types.js";
 
 /** A webhook that hangs must not hold a batch open. */
@@ -61,6 +63,23 @@ function fmtDuration(ms: number): string {
   const s = ms / 1000;
   if (s < 60) return `${s.toFixed(1)}s`;
   return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
+}
+
+/**
+ * Strip secret values from a built payload.
+ *
+ * The payload already carries no run log, but it DOES carry a step label, and a
+ * step recorded before variables existed has its typed value baked into that
+ * label — a password among them. Kept separate from `buildAlertPayload` so that
+ * function stays pure and the check can still assert its shape directly.
+ */
+export function redactPayload(payload: AlertPayload, secrets: readonly string[]): AlertPayload {
+  if (secrets.length === 0) return payload;
+  const detail: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(payload.detail)) {
+    detail[k] = typeof v === "string" ? redact(v, secrets) : v;
+  }
+  return { ...payload, text: redact(payload.text, secrets), detail };
 }
 
 /**
@@ -168,10 +187,14 @@ export async function postWebhook(url: string, payload: AlertPayload): Promise<v
 export async function sendAlert(alert: Alert): Promise<void> {
   try {
     if (!recorderSettingsStore.get().alertWebhookEnabled) return;
-    const payload = buildAlertPayload(alert);
-    if (!payload) return;
+    const built = buildAlertPayload(alert);
+    if (!built) return;
     const url = await webhookUrlStore.getUrl();
     if (!url) return;
+    // This is the only path that sends anything off the machine automatically,
+    // so redaction happens here, immediately before the send, rather than
+    // anywhere a later refactor could route around.
+    const payload = redactPayload(built, await testSecretsStore.allValues());
     await postWebhook(url, payload);
     logger.info("alerts", "Sent webhook alert", { event: payload.event, status: payload.status });
   } catch (err) {

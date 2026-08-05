@@ -151,6 +151,48 @@ function firstStringLiteral(s: string): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * Read a step's VALUE argument back out of a generated call, undoing what
+ * `valueExpr` in script-generator emitted.
+ *
+ * Three shapes, because the generator emits three:
+ *   V.name                     → "${name}"
+ *   `text ${V.name} more`      → "text ${name} more"
+ *   "literal"                  → "literal"
+ *
+ * Without this a round-trip would turn `V.email` into the literal text
+ * "V.email" — the step would still look plausible in the editor and the next
+ * regeneration would emit a quoted string, silently un-parameterizing the test.
+ */
+function parseValueArg(argsStr: string): string | null {
+  const trimmed = argsStr.trim();
+  const bare = trimmed.match(/^V\.([A-Za-z_][A-Za-z0-9_]*)\s*$/);
+  if (bare) return "${" + bare[1] + "}";
+  if (trimmed.startsWith("`")) {
+    // Scan for the first UNescaped backtick — `indexOf` would stop at a \`
+    // inside the literal and truncate the value there.
+    let end = -1;
+    for (let k = 1; k < trimmed.length; k++) {
+      if (trimmed[k] === "\\") {
+        k++;
+        continue;
+      }
+      if (trimmed[k] === "`") {
+        end = k;
+        break;
+      }
+    }
+    if (end > 0) {
+      return unescapeLit(trimmed.slice(1, end)).replace(
+        /\$\{\s*V\.([A-Za-z_][A-Za-z0-9_]*)\s*\}/g,
+        (_whole, name: string) => "${" + name + "}",
+      );
+    }
+  }
+  const lit = firstStringLiteral(argsStr);
+  return lit === null ? null : unescapeLit(lit);
+}
+
 /** Unescape a JS string-literal payload (\\n, \\t, \\", \\', \\`, \\\\). */
 function unescapeLit(s: string): string {
   return s
@@ -416,14 +458,60 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
       continue;
     }
 
+    // const V = { … }; — the variable header script-generator emits. It's
+    // declaration, not a step, so it's consumed WITHOUT counting as skipped:
+    // a skip sets TestRecord.stepsDiverged, which warns the user their step
+    // count may be wrong. Every parameterized test would carry that warning
+    // forever if this were treated as an unclassifiable statement.
+    const varsM = rest.match(/^[\s;]*const\s+V\s*=\s*\{/);
+    if (varsM) {
+      const openIdx = i + varsM[0].length - 1;
+      const close = matchBrace(src, openIdx);
+      if (close < 0) break;
+      // Also swallow the trailing semicolon so the next iteration starts clean.
+      const after = src.slice(close + 1).match(/^\s*;/);
+      i = close + 1 + (after ? after[0].length : 0);
+      continue;
+    }
+
+    // glazeCapture(V, "name", <subject>, "from"[, "attr"]) — a capture step.
+    const capM = rest.match(/^[\s;]*(?:await\s+|return\s+)?glazeCapture\s*\(/);
+    if (capM) {
+      const openIdx = i + capM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const argsStr = src.slice(openIdx + 1, close);
+      // Args are positional and generator-emitted, so a narrow match is right:
+      // anything else is a hand-written call we shouldn't half-parse.
+      const argM = argsStr.match(
+        /^\s*V\s*,\s*['"]([^'"]+)['"]\s*,\s*([\s\S]*?),\s*['"](text|value|attribute|url|title)['"]\s*(?:,\s*['"]([^'"]*)['"]\s*)?$/,
+      );
+      if (argM) {
+        const subject = argM[2].trim();
+        const parsedLoc = subject === "page" ? null : parseLocator(subject);
+        steps.push(
+          makeStep("capture", {
+            captureVar: argM[1],
+            captureFrom: argM[3] as Step["captureFrom"],
+            ...(argM[4] ? { captureAttr: argM[4] } : {}),
+            ...(parsedLoc ? { locator: parsedLoc.locator } : {}),
+          }),
+        );
+      } else {
+        skipped++;
+      }
+      i = close + 1;
+      continue;
+    }
+
     // page.goto("…")
     const gotoM = rest.match(/^[\s;]*(?:await\s+|return\s+)?page\.goto\s*\(/);
     if (gotoM) {
       const openIdx = i + gotoM[0].length - 1;
       const close = matchParen(src, openIdx);
       if (close < 0) break;
-      const url = firstStringLiteral(src.slice(openIdx + 1, close));
-      if (url !== null) steps.push(makeStep("goto", { url: unescapeLit(url) }));
+      const url = parseValueArg(src.slice(openIdx + 1, close));
+      if (url !== null) steps.push(makeStep("goto", { url }));
       i = close + 1;
       continue;
     }
@@ -558,7 +646,7 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
                 continue;
               }
             }
-            const value = firstStringLiteral(argStr);
+            const value = parseValueArg(argStr);
             const assert: AssertKind = pageAssertM[1] === "toHaveURL" ? "url" : "title";
             steps.push(
               makeStep("assert", {
@@ -617,7 +705,7 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
                 steps.push(makeStep("assert", { ...base, assert: "checked" }));
                 break;
               case "toContainText": {
-                const text = firstStringLiteral(argsStr);
+                const text = parseValueArg(argsStr);
                 steps.push(
                   makeStep("assert", {
                     ...base,
@@ -628,7 +716,7 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
                 break;
               }
               case "toHaveText": {
-                const text = firstStringLiteral(argsStr);
+                const text = parseValueArg(argsStr);
                 steps.push(
                   makeStep("assert", {
                     ...base,
@@ -639,7 +727,7 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
                 break;
               }
               case "toHaveValue": {
-                const value = firstStringLiteral(argsStr);
+                const value = parseValueArg(argsStr);
                 steps.push(
                   makeStep("assert", {
                     ...base,
@@ -712,7 +800,7 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
               press: "press",
               waitFor: "wait",
             };
-            const value = firstStringLiteral(src.slice(aOpen + 1, aClose));
+            const value = parseValueArg(src.slice(aOpen + 1, aClose));
             steps.push(
               makeStep(typeMap[action], {
                 locator: parsed.locator,

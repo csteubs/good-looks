@@ -4,6 +4,9 @@
 import type {
   Annotation,
   AssertKind,
+  Dataset,
+  SecretStatus,
+  TestVariable,
   DebugEntry,
   LogSearchResult,
   Locator,
@@ -139,19 +142,43 @@ export const api = {
       ipc().invoke<TestRecord>("tests:setTags", { id, tags }),
     setHidden: (id: string, hidden: boolean) =>
       ipc().invoke<TestRecord | null>("tests:setHidden", { id, hidden }),
+    setVariables: (id: string, variables: TestVariable[]) =>
+      ipc().invoke<TestRecord>("tests:setVariables", { id, variables }),
+    // One-way: a secret's value crosses renderer→backend and never comes back.
+    setSecret: (id: string, name: string, value: string) =>
+      ipc().invoke<SecretStatus>("tests:setSecret", { id, name, value }),
+    clearSecret: (id: string, name: string) =>
+      ipc().invoke<SecretStatus>("tests:clearSecret", { id, name }),
+    secretStatus: (id: string) => ipc().invoke<SecretStatus[]>("tests:secretStatus", { id }),
+    setDatasets: (id: string, datasets: Dataset[]) =>
+      ipc().invoke<TestRecord>("tests:setDatasets", { id, datasets }),
+    setFlow: (id: string, isFlow: boolean, flowParams: string[]) =>
+      ipc().invoke<TestRecord>("tests:setFlow", { id, isFlow, flowParams }),
+    listFlows: (fromId?: string) =>
+      ipc().invoke<{ id: string; name: string; flowParams: string[] }[]>("tests:listFlows", {
+        fromId,
+      }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),
     importGit: (url: string) => ipc().invoke<ImportResult>("tests:importGit", { url }),
   },
   batch: {
     run: (
       testIds: string[],
-      opts?: { captureArtifacts?: boolean; runHeadless?: boolean; browser?: RunBrowser },
+      opts?: {
+        captureArtifacts?: boolean;
+        runHeadless?: boolean;
+        browser?: RunBrowser;
+        datasetIds?: string[];
+        allDatasets?: boolean;
+      },
     ) =>
       ipc().invoke<{ batchId: string; alreadyRunning: boolean }>("batch:run", {
         testIds,
         captureArtifacts: opts?.captureArtifacts,
         runHeadless: opts?.runHeadless,
         browser: opts?.browser,
+        datasetIds: opts?.datasetIds,
+        allDatasets: opts?.allDatasets,
       }),
     stop: () => ipc().invoke<void>("batch:stop"),
     status: () => ipc().invoke<BatchState | null>("batch:status"),

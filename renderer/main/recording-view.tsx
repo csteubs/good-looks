@@ -80,6 +80,8 @@ const ADD_STEP_KINDS: AddStepKind[] = [
   "press",
   "find",
   "viewport",
+  "capture",
+  "runFlow",
 ];
 
 interface MenuPopupItem {
@@ -851,6 +853,7 @@ export function RecordingView() {
         <AddStepDialog
           open={addKind !== null}
           kind={addKind}
+          currentTestId={state?.testId ?? undefined}
           onOpenChange={(o) => {
             if (!o) {
               setAddKind(null);

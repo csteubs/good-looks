@@ -39,6 +39,7 @@ import { EditStepsView } from "./edit-steps-view";
 import { RunOutput } from "./run-output";
 import { ScriptEditor, ScriptView } from "./script-view";
 import { StepRow } from "./step-row";
+import { VariablesPanel } from "./variables-panel";
 import { computeStepDepths } from "../lib/describe-step";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS, type RunBrowser } from "../lib/recorder-types";
 
@@ -366,6 +367,15 @@ export function TestDetailView() {
               <Tabs variant="filled" size="large">
                 {showSteps ? <TabsTrigger value="steps">Steps ({test.steps.length})</TabsTrigger> : null}
                 <TabsTrigger value="script">Script</TabsTrigger>
+                {/* Imported tests have no generated spec to parameterize — the
+                    stored script is their source of truth, so a variable
+                    declared here would never reach it. */}
+                {imported ? null : (
+                  <TabsTrigger value="variables">
+                    Variables
+                    {(test.variables?.length ?? 0) > 0 ? ` (${test.variables?.length})` : ""}
+                  </TabsTrigger>
+                )}
               </Tabs>
             </div>
             <TabsContent value="steps" className="min-h-0 flex-1">
@@ -420,6 +430,11 @@ export function TestDetailView() {
                 <ScriptView code={scriptQuery.data ?? ""} />
               )}
             </TabsContent>
+            {imported ? null : (
+              <TabsContent value="variables" className="min-h-0 flex-1">
+                <VariablesPanel test={test} />
+              </TabsContent>
+            )}
           </TabsRoot>
         );
       })()}

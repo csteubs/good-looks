@@ -251,6 +251,22 @@ export function buildReplayScript(step: Step): string {
       return { ok: false, error: "Element not found for wait" };
     }
     if (t === "assert") return runAssert();
+    // A flow's steps are inlined into the generated spec, so there is nothing
+    // to run for the call itself — same shape as goto/viewport.
+    if (t === "runFlow") { log("info", "flow steps run inline at test time; not previewable"); return { ok: true, error: "flow steps run inline at test time; not previewable" }; }
+    if (t === "capture") {
+      var from = step.captureFrom || "text";
+      if (from === "url") { log("info", "captured URL"); return { ok: true, captured: location.href }; }
+      if (from === "title") { log("info", "captured title"); return { ok: true, captured: document.title }; }
+      var cEl = resolve(step.locator);
+      if (!cEl) { log("error", "Element not found — cannot capture"); return { ok: false, error: "Element not found" }; }
+      var got = "";
+      if (from === "value") got = cEl.value == null ? "" : String(cEl.value);
+      else if (from === "attribute") got = cEl.getAttribute ? (cEl.getAttribute(step.captureAttr || "") || "") : "";
+      else got = (cEl.textContent || "").trim();
+      log("info", "captured " + (step.captureVar || "?") + " = \\"" + got + "\\"");
+      return { ok: true, captured: got };
+    }
 
     var el = resolve(step.locator);
     if (!el) { log("error", "Element not found — cannot " + t); return { ok: false, error: "Element not found" }; }

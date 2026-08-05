@@ -17,12 +17,14 @@
 //   npm run check:batch-runner
 
 import {
+  buildQueue,
   createBatchRunner,
   summarize,
   type BatchDeps,
   type BatchState,
   type BatchTestStatus,
 } from "../batch-runner.js";
+import type { Dataset } from "../../recorder/types.js";
 import type { BatchSummary } from "../../recorder/types.js";
 // The MCP server is standalone .mjs by design (it must run without the app
 // build), so it cannot import the app's summarizer — it carries its own copy.
@@ -51,6 +53,8 @@ function makeFake(opts: {
    *  previous run's promise in its in-flight map, so waitFor still resolves —
    *  which is exactly the trap the batch must not fall into. */
   alreadyRunning?: string[];
+  /** dataset rows each test declares, for sweep expansion */
+  datasets?: Record<string, Dataset[]>;
 }) {
   const names = opts.names ?? {};
   const notInFlight = new Set(opts.notInFlight ?? []);
@@ -59,6 +63,12 @@ function makeFake(opts: {
   const events: { channel: string; payload: unknown }[] = [];
   /** every testId startRun was called with, in order */
   const started: string[] = [];
+  /** the full start params, so a sweep's dataset binding can be asserted */
+  const startedWithDataset: {
+    testId: string;
+    datasetId?: string;
+    vars?: Record<string, string>;
+  }[] = [];
   /** how many runs are in flight at once, and the high-water mark */
   let live = 0;
   let maxLive = 0;
@@ -70,9 +80,13 @@ function makeFake(opts: {
   const alerts: unknown[] = [];
   let clock = 1000;
 
+  const datasets = opts.datasets ?? {};
+
   const deps: BatchDeps = {
     getTestName: (id) => (id in names ? names[id] : `Test ${id}`),
-    startRun: ({ testId }) => {
+    getDatasets: (id) => datasets[id] ?? [],
+    startRun: ({ testId, datasetId, vars }) => {
+      startedWithDataset.push({ testId, datasetId, vars });
       if (busy.has(testId)) {
         // No new run started — and, like the real runner, a stale promise for
         // the OTHER run is still resolvable via waitFor.
@@ -121,6 +135,7 @@ function makeFake(opts: {
     deps,
     events,
     started,
+    startedWithDataset,
     stopped,
     persisted,
     alerts,
@@ -478,6 +493,107 @@ async function main(): Promise<void> {
         `app and MCP summaries agree — ${c.label} (app.ok=${mine.ok}, mcp.ok=${theirs.ok})`,
       );
     }
+  }
+
+  // ---- dataset sweeps -----------------------------------------------------
+  //
+  // A sweep is the one case where the SAME test id is queued more than once.
+  // Every property below is one a naive implementation gets wrong: deduping the
+  // queue by test id, dropping unparameterized tests, or losing which row a
+  // result belongs to.
+  {
+    const rows: Record<string, Dataset[]> = {
+      a: [
+        { id: "d1", name: "GBP", values: { currency: "GBP" } },
+        { id: "d2", name: "USD", values: { currency: "USD" } },
+      ],
+      b: [],
+    };
+    const getDatasets = (id: string): Dataset[] => rows[id] ?? [];
+
+    const plain = buildQueue({ testIds: ["a", "b"] }, getDatasets);
+    assert(
+      plain.length === 2 && plain.every((e) => e.datasetId === undefined),
+      "no dataset options → the queue is exactly the selection",
+    );
+
+    const swept = buildQueue({ testIds: ["a", "b"], allDatasets: true }, getDatasets);
+    assert(
+      swept.length === 3,
+      `allDatasets queues one entry per row, plus unparameterized tests once (got ${swept.length})`,
+    );
+    assert(
+      swept[0].testId === "a" && swept[0].datasetId === "d1" &&
+        swept[1].testId === "a" && swept[1].datasetId === "d2",
+      "sweep keeps rows in declared order",
+    );
+    assert(
+      swept[2].testId === "b" && swept[2].datasetId === undefined,
+      "a test with no rows still runs once, with its own defaults",
+    );
+    assert(
+      swept[0].vars?.currency === "GBP" && swept[1].vars?.currency === "USD",
+      "each queued entry carries its own row's values",
+    );
+
+    const subset = buildQueue({ testIds: ["a"], datasetIds: ["d2"] }, getDatasets);
+    assert(
+      subset.length === 1 && subset[0].datasetId === "d2",
+      "an explicit datasetIds subset runs only those rows",
+    );
+
+    const unmatched = buildQueue({ testIds: ["a"], datasetIds: ["nope"] }, getDatasets);
+    assert(
+      unmatched.length === 1 && unmatched[0].datasetId === undefined,
+      "a selection matching no rows falls back to one plain run, not zero",
+    );
+  }
+
+  {
+    const fake = makeFake({
+      datasets: {
+        a: [
+          { id: "d1", name: "GBP", values: { currency: "GBP" } },
+          { id: "d2", name: "USD", values: { currency: "USD" } },
+        ],
+      },
+    });
+    const runner = createBatchRunner(fake.deps);
+    runner.start({ testIds: ["a"], allDatasets: true });
+    await tick();
+    // The real runner clears its in-flight entry before the awaited promise
+    // resolves, which is what lets the same test start again for the next row.
+    fake.finish("a", 0);
+    await tick();
+    fake.finish("a", 1);
+    await tick();
+
+    assert(
+      fake.startedWithDataset.length === 2,
+      `a two-row sweep starts two runs of the same test (got ${fake.startedWithDataset.length})`,
+    );
+    assert(
+      fake.startedWithDataset[0]?.vars?.currency === "GBP" &&
+        fake.startedWithDataset[1]?.vars?.currency === "USD",
+      "each run of the sweep is given its own row's values",
+    );
+    const last = fake.persisted[fake.persisted.length - 1];
+    assert(
+      last.results.length === 2 &&
+        last.results[0].datasetName === "GBP" &&
+        last.results[1].datasetName === "USD",
+      "each result records which row it was, so a failing row is identifiable",
+    );
+    assert(
+      last.results[0].status === "passed" && last.results[1].status === "failed",
+      "rows report their own outcomes independently",
+    );
+    // The values themselves must not be written to disk — batch state is
+    // persisted on every transition, and a row may hold real data.
+    assert(
+      !JSON.stringify(last).includes("GBP=") && !("vars" in last.results[0]),
+      "persisted batch state carries the row's NAME, never its values",
+    );
   }
 
   if (failures > 0) {

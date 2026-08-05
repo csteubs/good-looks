@@ -132,10 +132,39 @@ export function describeCookie(step: Step): string {
   }
 }
 
+/** Mirror of describeCapture in main/services/script-generator.ts — keep in sync. */
+export function describeCapture(step: Step): string {
+  const name = step.captureVar || "variable";
+  const from = step.captureFrom ?? "text";
+  const loc = step.locator ? "page." + locatorExpr(step.locator) : "page";
+  switch (from) {
+    case "url":
+      return `capture ${name} from the page URL`;
+    case "title":
+      return `capture ${name} from the page title`;
+    case "value":
+      return `capture ${name} from ${loc} value`;
+    case "attribute":
+      return `capture ${name} from ${loc} @${step.captureAttr || "attribute"}`;
+    case "text":
+    default:
+      return `capture ${name} from ${loc} text`;
+  }
+}
+
+/** Mirror of describeFlow in main/services/script-generator.ts — keep in sync. */
+export function describeFlow(step: Step): string {
+  const name = step.label || step.flowId || "flow";
+  const args = step.flowArgs ? Object.keys(step.flowArgs) : [];
+  return args.length > 0 ? `run flow ${name} (${args.join(", ")})` : `run flow ${name}`;
+}
+
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
   if (step.type === "cookie") return describeCookie(step);
+  if (step.type === "capture") return describeCapture(step);
+  if (step.type === "runFlow") return describeFlow(step);
   const loc = step.locator;
   const target = loc ? "page." + locatorExpr(loc) : null;
   switch (step.type) {

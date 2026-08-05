@@ -23,7 +23,8 @@ import { sendToMain } from "../services/app-window.js";
 import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
 import { importService } from "../services/import-service.js";
-import { generateSpec } from "../services/script-generator.js";
+import { testSecretsStore } from "../services/test-secrets-store.js";
+import { refreshSecretSnapshot } from "../services/secret-redaction.js";
 import { parseSpecDetailed } from "../services/spec-parser.js";
 import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
@@ -32,7 +33,14 @@ import { recorderSettingsStore } from "../services/recorder-settings-store.js";
 import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
 import { applyRetention } from "../services/retention.js";
 import { compareRuns } from "../services/run-comparison.js";
-import { DEFAULT_VISUAL_THRESHOLD, isRunBrowser, normalizeTags } from "../recorder/types.js";
+import {
+  DEFAULT_VISUAL_THRESHOLD,
+  isRunBrowser,
+  isValidVariableName,
+  normalizeDatasets,
+  normalizeTags,
+  normalizeVariables,
+} from "../recorder/types.js";
 import type { AssertKind, CookieSpec, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 
@@ -177,6 +185,10 @@ export function registerHandlers(): void {
     artifactStore.deleteTest(params.id);
     baselineStore.deleteTest(params.id);
     annotationStore.deleteTest(params.id);
+    // Deleting a test must not leave its credentials encrypted on disk forever
+    // with nothing left in the UI to remove them with.
+    await testSecretsStore.clearTest(params.id);
+    await refreshSecretSnapshot();
   });
   ipcMain.handle("tests:rename", async (_e, params: { id: string; name: string }) => {
     const rec = testStore.get(params.id);
@@ -186,8 +198,7 @@ export function registerHandlers(): void {
     // A hand-edited script is no longer regenerated from steps, so a rename
     // must not clobber it — just update the title metadata.
     if (!rec.scriptEdited) {
-      const source = generateSpec({ name: rec.name, url: rec.url, steps: rec.steps });
-      rec.scriptPath = testStore.writeScript(rec.id, source);
+      rec.scriptPath = testStore.regenerateScript(rec);
     }
     testStore.save(rec);
     return rec;
@@ -261,6 +272,103 @@ export function registerHandlers(): void {
     return rec;
   });
 
+  // ── Variables, secrets and datasets ──────────────────────────────────────
+  //
+  // Normalization is backend-only, matching tests:setTags: the renderer posts
+  // raw input and renders whatever comes back, so the two sides cannot disagree
+  // about what a valid variable name is. That matters more here than for tags —
+  // a name that isn't a JS identifier would emit a spec that doesn't parse.
+  ipcMain.handle(
+    "tests:setVariables",
+    async (_e, params: { id: string; variables: unknown }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      const next = normalizeVariables(params.variables);
+      // A secret dropped from the list should not leave its value on disk.
+      const keptSecrets = new Set(next.filter((v) => v.kind === "secret").map((v) => v.name));
+      for (const name of await testSecretsStore.names(params.id)) {
+        if (!keptSecrets.has(name)) await testSecretsStore.clear(params.id, name);
+      }
+      await refreshSecretSnapshot();
+      rec.variables = next;
+      rec.updatedAt = Date.now();
+      // Regenerate so the spec's `const V` header matches the declared set. A
+      // hand-edited script is the source of truth and is left alone.
+      if (!rec.scriptEdited) rec.scriptPath = testStore.regenerateScript(rec);
+      testStore.save(rec);
+      return rec;
+    },
+  );
+
+  // Store a secret's value. One-way by design: there is no handler that reads a
+  // secret back out, so a compromised renderer has nothing to ask for.
+  ipcMain.handle(
+    "tests:setSecret",
+    async (_e, params: { id: string; name: string; value: string }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      if (!isValidVariableName(params.name)) {
+        throw new Error("Invalid variable name: " + String(params.name));
+      }
+      if (typeof params.value !== "string" || params.value === "") {
+        throw new Error("A secret's value cannot be empty.");
+      }
+      await testSecretsStore.set(params.id, params.name, params.value);
+      await refreshSecretSnapshot();
+      return { name: params.name, hasValue: true };
+    },
+  );
+
+  ipcMain.handle("tests:clearSecret", async (_e, params: { id: string; name: string }) => {
+    await testSecretsStore.clear(params.id, params.name);
+    await refreshSecretSnapshot();
+    return { name: params.name, hasValue: false };
+  });
+
+  /** Which of a test's secrets have values stored — names only, never values. */
+  ipcMain.handle("tests:secretStatus", async (_e, params: { id: string }) => {
+    const stored = new Set(await testSecretsStore.names(params.id));
+    const rec = testStore.get(params.id);
+    return (rec?.variables ?? [])
+      .filter((v) => v.kind === "secret")
+      .map((v) => ({ name: v.name, hasValue: stored.has(v.name) }));
+  });
+
+  ipcMain.handle("tests:setDatasets", async (_e, params: { id: string; datasets: unknown }) => {
+    const rec = testStore.get(params.id);
+    if (!rec) throw new Error("Test not found: " + params.id);
+    rec.datasets = normalizeDatasets(params.datasets);
+    rec.updatedAt = Date.now();
+    testStore.save(rec);
+    return rec;
+  });
+
+  /** Mark a test as a reusable flow, and declare the parameters it accepts. */
+  ipcMain.handle(
+    "tests:setFlow",
+    async (_e, params: { id: string; isFlow: boolean; flowParams?: unknown }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      rec.isFlow = params.isFlow === true;
+      rec.flowParams = Array.isArray(params.flowParams)
+        ? params.flowParams.filter(isValidVariableName)
+        : [];
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return rec;
+    },
+  );
+
+  /** Tests usable as flows from `fromId`, excluding itself. Cycles are refused
+   *  at generation time too, but keeping a test from listing itself is the
+   *  difference between "can't do that" and never offering it. */
+  ipcMain.handle("tests:listFlows", async (_e, params: { fromId?: string }) => {
+    return testStore
+      .list()
+      .filter((t) => t.isFlow && t.id !== params.fromId)
+      .map((t) => ({ id: t.id, name: t.name, flowParams: t.flowParams ?? [] }));
+  });
+
   // Hide a test from the sidebar without deleting its record or script file.
   ipcMain.handle(
     "tests:setHidden",
@@ -315,8 +423,7 @@ export function registerHandlers(): void {
       // app-generated tests, regenerate from the edited steps so the script
       // stays in sync. Clear any divergence flag since the steps are now clean.
       if (!rec.scriptEdited) {
-        const source = generateSpec({ name: rec.name, url: rec.url, steps: rec.steps });
-        rec.scriptPath = testStore.writeScript(rec.id, source);
+        rec.scriptPath = testStore.regenerateScript(rec);
         rec.stepsDiverged = false;
       }
       rec.updatedAt = Date.now();
@@ -499,6 +606,8 @@ export function registerHandlers(): void {
         captureArtifacts?: boolean;
         runHeadless?: boolean;
         browser?: string;
+        datasetIds?: unknown;
+        allDatasets?: boolean;
       },
     ) => {
       const testIds = Array.isArray(params.testIds) ? params.testIds.filter((t) => !!t) : [];
@@ -508,6 +617,10 @@ export function registerHandlers(): void {
         captureArtifacts: params.captureArtifacts ?? false,
         runHeadless: params.runHeadless ?? false,
         browser: isRunBrowser(params.browser) ? params.browser : undefined,
+        datasetIds: Array.isArray(params.datasetIds)
+          ? params.datasetIds.filter((d): d is string => typeof d === "string")
+          : undefined,
+        allDatasets: params.allDatasets === true,
       });
     },
   );
