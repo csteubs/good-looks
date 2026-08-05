@@ -20,6 +20,7 @@ import { randomUUID } from "crypto";
 import { generateSpec, describeStep } from "../script-generator.js";
 import { parseSpecDetailed } from "../spec-parser.js";
 import { cookieUrlFor, specToSetDetails } from "../cookie-service.js";
+import { fromDateTimeLocal, toDateTimeLocal } from "../../../renderer/lib/cookie-format.js";
 import {
   cookieScopeIsValid,
   fromPlaywrightSameSite,
@@ -333,6 +334,36 @@ assert(
   specToSetDetails({ name: "a" }, "") === null,
   "no scope and no page URL produces no set details",
 );
+
+// ── Expiry ↔ datetime-local input ────────────────────────────────────
+// Two traps: expirationDate is unix SECONDS (not ms), and a datetime-local
+// input reads/writes LOCAL time with no timezone suffix — building the value
+// from toISOString() would shift the shown time by the viewer's UTC offset.
+// Asserted as a round trip so the check is timezone-independent.
+{
+  // 2033-01-01T00:00:00Z, minute-aligned so nothing is lost to truncation.
+  const secs = 1988150400;
+  const local = toDateTimeLocal(secs);
+  assert(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(local), `emits YYYY-MM-DDTHH:mm (got ${local})`);
+  assert(fromDateTimeLocal(local) === secs, "expiry round-trips through the input format");
+  assert(
+    !local.endsWith("Z") && !local.includes("+"),
+    "the input value carries no timezone suffix (it is local time)",
+  );
+}
+assert(toDateTimeLocal(undefined) === "", "no expiry → empty input (a session cookie)");
+assert(toDateTimeLocal(Number.NaN) === "", "NaN expiry → empty input");
+assert(fromDateTimeLocal("") === undefined, "empty input → no expiry");
+assert(fromDateTimeLocal("   ") === undefined, "whitespace input → no expiry");
+assert(fromDateTimeLocal("not a date") === undefined, "junk input → no expiry, not NaN");
+{
+  // Seconds, not milliseconds: a ms value would land ~50,000 years out.
+  const secs = fromDateTimeLocal(toDateTimeLocal(1988150400))!;
+  assert(
+    new Date(secs * 1000).getUTCFullYear() === 2033,
+    `treated as unix seconds (got year ${new Date(secs * 1000).getUTCFullYear()})`,
+  );
+}
 
 // ── describeStep ─────────────────────────────────────────────────────
 assert(

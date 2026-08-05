@@ -238,8 +238,25 @@ async function runStep(
   step: Step,
 ): Promise<ReplayStepResult> {
   if (step.type === "cookie") {
+    // The trainer window can close mid-replay (the loops elsewhere guard for
+    // exactly this), so don't assert it's alive — report a clean failure
+    // instead of throwing a TypeError out of the replay loop.
+    if (!recWindow || recWindow.isDestroyed()) {
+      return {
+        ok: false,
+        error: "Recorder window is not open.",
+        logs: [
+          {
+            i: 0,
+            t: Date.now(),
+            level: "error",
+            m: "Cookie step skipped — the recorder window is not open.",
+          },
+        ],
+      };
+    }
     return applyCookieStep(
-      recWindow!.webContents as unknown as CookieHost,
+      recWindow.webContents as unknown as CookieHost,
       step,
       currentPageUrl(),
     );

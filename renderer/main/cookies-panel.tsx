@@ -29,6 +29,7 @@ import {
 import { Cookie as CookieIcon, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
 import { api } from "../lib/api";
+import { fromDateTimeLocal, toDateTimeLocal } from "../lib/cookie-format";
 import type { CookieSameSite, CookieSpec, LiveCookie, RawStep } from "../lib/recorder-types";
 
 const SAME_SITE_OPTIONS: { value: CookieSameSite; label: string }[] = [
@@ -237,6 +238,39 @@ export function CookiesPanel({
                 />
                 HttpOnly
               </label>
+              {/* Without an expiry every cookie created here would silently be
+                  a session cookie — invisible until a test failed after a
+                  browser restart. Unchecking "Session" reveals the date field. */}
+              <label className="flex cursor-pointer select-none items-center gap-1.5 text-[11px] text-secondary">
+                <Checkbox
+                  checked={draft.expirationDate === undefined}
+                  onCheckedChange={(v) =>
+                    setDraft((d) => ({
+                      ...d,
+                      expirationDate:
+                        v === true
+                          ? undefined
+                          : // Default a new expiry to a week out — a sensible,
+                            // clearly-temporary lifetime for a test fixture.
+                            Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+                    }))
+                  }
+                  aria-label="Session cookie (expires when the browser closes)"
+                />
+                Session
+              </label>
+              {draft.expirationDate !== undefined ? (
+                <Input
+                  variant="filled"
+                  type="datetime-local"
+                  value={toDateTimeLocal(draft.expirationDate)}
+                  onChange={(e) =>
+                    setDraft((d) => ({ ...d, expirationDate: fromDateTimeLocal(e.target.value) }))
+                  }
+                  className="w-52"
+                  aria-label="Cookie expiry"
+                />
+              ) : null}
               <div className="ml-auto flex items-center gap-2">
                 {editing ? (
                   <Button
