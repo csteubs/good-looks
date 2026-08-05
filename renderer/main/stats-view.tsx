@@ -35,6 +35,8 @@ import {
 import {
   Calendar,
   Camera,
+  ChevronLeft,
+  ChevronRight,
   Check,
   Copy,
   Globe,
@@ -48,6 +50,7 @@ import {
 import { api } from "../lib/api";
 import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
+import { clampPage, pageCount, pageRange, pageSlice } from "../lib/paginate";
 import {
   NO_FILTERS,
   filtersActive,
@@ -322,6 +325,57 @@ function LogInspector({
   );
 }
 
+/** Prev / range / Next control shared by both Stats lists. Renders nothing for
+ *  a single page, so short lists aren't cluttered with dead controls. */
+function Pager({
+  page,
+  total,
+  onPage,
+  label,
+}: {
+  page: number;
+  total: number;
+  onPage: (page: number) => void;
+  label: string;
+}) {
+  const pages = pageCount(total);
+  if (pages <= 1) return null;
+  const safe = clampPage(page, total);
+  const range = pageRange(safe, total);
+  return (
+    <div className="flex items-center justify-between gap-2 border-t border-token-border px-3 py-2">
+      <Text variant="small" color="tertiary">
+        {range ? `${range.from}–${range.to} of ${total} ${label}` : `0 ${label}`}
+      </Text>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="glass"
+          size="small"
+          disabled={safe <= 1}
+          onClick={() => onPage(safe - 1)}
+          aria-label="Previous page"
+        >
+          <ChevronLeft className="size-4" />
+          Prev
+        </Button>
+        <Text variant="small" color="secondary" className="tabular-nums">
+          Page {safe} of {pages}
+        </Text>
+        <Button
+          variant="glass"
+          size="small"
+          disabled={safe >= pages}
+          onClick={() => onPage(safe + 1)}
+          aria-label="Next page"
+        >
+          Next
+          <ChevronRight className="size-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function StatsView() {
   const qc = useQueryClient();
   const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
@@ -335,6 +389,11 @@ export function StatsView() {
   const [rangeFrom, setRangeFrom] = React.useState("");
   const [rangeTo, setRangeTo] = React.useState("");
   const [filters, setFilters] = React.useState<RunFilters>(NO_FILTERS);
+  // Page per list. Both reset to 1 when their inputs change, so narrowing a
+  // filter doesn't strand you on a page that no longer exists; clampPage in
+  // render is the backstop for the list shrinking any other way.
+  const [runsPage, setRunsPage] = React.useState(1);
+  const [searchPage, setSearchPage] = React.useState(1);
 
   // Live-refresh when a run completes.
   React.useEffect(() => {
@@ -373,6 +432,15 @@ export function StatsView() {
 
   // Distinct tests present in the history, for the test filter's options.
   const testOptions = React.useMemo(() => testFilterOptions(runs), [runs]);
+
+  React.useEffect(() => {
+    setRunsPage(1);
+  }, [filters]);
+
+  // A new query is a new result set — start at its first page.
+  React.useEffect(() => {
+    setSearchPage(1);
+  }, [debounced]);
 
   // A filter pinned to a test that no longer has runs (deleted test, pruned
   // history) would silently show an empty table — drop back to "all" instead.
@@ -528,7 +596,7 @@ export function StatsView() {
                         No logs match “{debounced}”.
                       </Text>
                     ) : (
-                      searchResults.map((r) => (
+                      pageSlice(searchResults, searchPage).map((r) => (
                         <button
                           key={r.runId}
                           type="button"
@@ -553,6 +621,12 @@ export function StatsView() {
                         </button>
                       ))
                     )}
+                    <Pager
+                      page={searchPage}
+                      total={searchResults.length}
+                      onPage={setSearchPage}
+                      label="results"
+                    />
                   </div>
                 ) : null}
               </div>
@@ -650,7 +724,7 @@ export function StatsView() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredRuns.map((r) => {
+                        {pageSlice(filteredRuns, runsPage).map((r) => {
                           const isBaseline = r.kind === "baseline-update";
                           return (
                             <TableRow
@@ -736,6 +810,12 @@ export function StatsView() {
                       No runs match these filters.
                     </Text>
                   ) : null}
+                  <Pager
+                    page={runsPage}
+                    total={filteredRuns.length}
+                    onPage={setRunsPage}
+                    label="runs"
+                  />
                   </div>
                 </div>
               ) : null}
