@@ -49,6 +49,7 @@ import {
 } from "lucide-react";
 
 import { api } from "../lib/api";
+import { FlakePanel } from "./flake-panel";
 import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import { clampPage, pageCount, pageRange, pageSlice } from "../lib/paginate";
@@ -440,6 +441,10 @@ export function StatsView() {
 
   // Capture overhead is computed backend-side from the same run history, so
   // the summarizer has one implementation (and one regression check).
+  const flakeQuery = useQuery({
+    queryKey: ["flake"],
+    queryFn: () => api.runs.flake(),
+  });
   const overheadQuery = useQuery({
     queryKey: ["captureOverhead"],
     queryFn: () => api.runs.captureOverhead(),
@@ -597,6 +602,10 @@ export function StatsView() {
 
               {/* Capture overhead — only once a capture run has been measured */}
               {overheadQuery.data ? <CaptureOverheadPanel summary={overheadQuery.data} /> : null}
+
+              {/* Stability — above the chart, because "is this test trustworthy"
+                  is the question the pass rate below can't answer. */}
+              {flakeQuery.data ? <FlakePanel report={flakeQuery.data} /> : null}
 
               {/* Chart */}
               {buckets.length > 0 ? <PassFailChart buckets={buckets} /> : null}

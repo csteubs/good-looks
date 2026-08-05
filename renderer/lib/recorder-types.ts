@@ -252,6 +252,58 @@ export interface HealEntry {
   at: number;
 }
 
+/** Stability verdict for a test (mirror of main/services/flake-analysis.ts).
+ *  Shares run-comparison's vocabulary rather than inventing a second one. */
+export type StabilityVerdict =
+  | "stable"
+  | "still-failing"
+  | "changed-since"
+  | "fixed"
+  | "flaky"
+  | "data-dependent"
+  | "unknown";
+
+export interface StepFlake {
+  stepId: string;
+  label: string;
+  failures: number;
+  heals: number;
+  failureRate: number;
+}
+
+export interface FailureCluster {
+  signature: string;
+  example: string;
+  stepId?: string;
+  stepLabel?: string;
+  count: number;
+  lastSeenAt: number;
+  runIds: string[];
+}
+
+export interface TestFlake {
+  testId: string;
+  testName: string;
+  runs: number;
+  passed: number;
+  failed: number;
+  transitions: number;
+  flakeRate: number;
+  verdict: StabilityVerdict;
+  failingDatasets: { id: string; name: string; failed: number; runs: number }[];
+  steps: StepFlake[];
+  healedRuns: number;
+}
+
+export interface FlakeReport {
+  tests: TestFlake[];
+  clusters: FailureCluster[];
+  analysedTests: number;
+  /** how many runs the analysis actually looked at, and the cap it uses */
+  windowRuns: number;
+  windowCap: number;
+}
+
 /** What the renderer is allowed to know about a stored secret: that it exists,
  *  never what it is. The value lives encrypted backend-side and is injected
  *  straight into the run's child process. */

@@ -5,6 +5,7 @@ import type {
   Annotation,
   AssertKind,
   Dataset,
+  FlakeReport,
   HealEntry,
   SecretStatus,
   TestVariable,
@@ -240,6 +241,7 @@ export const api = {
   runs: {
     list: () => ipc().invoke<RunRecord[]>("runs:list"),
     getLog: (id: string) => ipc().invoke<string>("runs:getLog", { id }),
+    flake: () => ipc().invoke<FlakeReport>("runs:flake"),
     searchLogs: (query: string) =>
       ipc().invoke<LogSearchResult[]>("runs:searchLogs", { query }),
     resetStats: () => ipc().invoke<{ removed: number }>("runs:resetStats"),

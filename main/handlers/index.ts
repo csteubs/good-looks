@@ -35,6 +35,8 @@ import { recorderSettingsStore } from "../services/recorder-settings-store.js";
 import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
 import { applyRetention } from "../services/retention.js";
 import { compareRuns } from "../services/run-comparison.js";
+import { analyseFlake } from "../services/flake-analysis.js";
+import { ANALYSIS_WINDOW, analysisWindow, gatherRunDetails } from "../services/flake-source.js";
 import {
   DEFAULT_VISUAL_THRESHOLD,
   isRunBrowser,
@@ -710,6 +712,17 @@ export function registerHandlers(): void {
 
   // ── Run history / stats handlers ────────────────────────────────────
   ipcMain.handle("runs:list", async () => runHistoryStore.list());
+  /** Flake and failure analytics over the recent run history.
+   *
+   *  Computed on demand rather than maintained incrementally: it's a read over
+   *  at most ANALYSIS_WINDOW runs, and a cached figure that silently went stale
+   *  would be worse than a brief wait. The window size is returned so a
+   *  truncated history is visible in the UI rather than implied. */
+  ipcMain.handle("runs:flake", async () => {
+    const runs = analysisWindow();
+    const report = analyseFlake(runs, gatherRunDetails(runs));
+    return { ...report, windowRuns: runs.length, windowCap: ANALYSIS_WINDOW };
+  });
   ipcMain.handle("runs:getLog", async (_e, params: { id: string }) =>
     runHistoryStore.readLog(params.id),
   );
