@@ -58,7 +58,7 @@ const RELATIVE_SPEC_RE =
 
 /** Resolve a relative import specifier to a real file, trying common extensions
  *  and an `index` when the specifier is a bare directory. Returns null if not found. */
-function resolveSibling(dir: string, spec: string): string | null {
+export function resolveSibling(dir: string, spec: string): string | null {
   const base = path.resolve(dir, spec);
   // Exact path, or with a tried extension, or as a directory's index file.
   const tries = [base, ...SIBLING_EXT.map((e) => base + e)];
@@ -136,7 +136,7 @@ function copyRelativeImports(
   return copied;
 }
 
-function scanDir(root: string): FoundTest[] {
+export function scanDir(root: string): FoundTest[] {
   const found: FoundTest[] = [];
 
   function walk(dir: string, depth: number): void {
@@ -168,13 +168,13 @@ function scanDir(root: string): FoundTest[] {
 }
 
 /** Best-effort test URL from the first `page.goto("…")` in the file. */
-function extractUrl(content: string): string {
+export function extractUrl(content: string): string {
   const m = content.match(/\.goto\(\s*['"`]([^'"`]+)['"`]/);
   return m ? m[1] : "";
 }
 
 /** Prefer the first `test("title", …)` name, else the file's base name. */
-function extractName(content: string, filePath: string): string {
+export function extractName(content: string, filePath: string): string {
   const m = content.match(/\btest(?:\.\w+)?\s*\(\s*['"`]([^'"`]+)['"`]/);
   if (m && m[1].trim()) return m[1].trim();
   return path.basename(filePath).replace(TEST_FILE_RE, "");

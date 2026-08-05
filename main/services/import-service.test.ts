@@ -1,0 +1,151 @@
+// Tests for importing existing Playwright projects.
+//
+// These four helpers decide what the user actually sees after an import: the
+// test's name and URL in the sidebar, which files get scanned, and which
+// sibling modules are copied so the spec still runs once it's away from its
+// original folder. Getting any of them wrong produces a library full of
+// mis-named tests or specs that fail on first run with "cannot find module".
+//
+// Driven against real temp directories rather than a mocked fs — the logic IS
+// filesystem behavior (extension probing, index files, depth limits), so a
+// mock would only assert my assumptions back at me.
+
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { extractName, extractUrl, resolveSibling, scanDir } from "./import-service.js";
+
+let root: string;
+
+beforeEach(() => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-import-test-"));
+});
+
+afterEach(() => {
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+function write(rel: string, content = "") {
+  const full = path.join(root, rel);
+  fs.mkdirSync(path.dirname(full), { recursive: true });
+  fs.writeFileSync(full, content, "utf-8");
+  return full;
+}
+
+describe("extractName", () => {
+  it("prefers the first test() title", () => {
+    expect(extractName('test("Checkout flow", async () => {});', "/x/a.spec.ts")).toBe(
+      "Checkout flow",
+    );
+  });
+
+  it("handles test.only / test.describe-style modifiers", () => {
+    expect(extractName('test.only("Focused", async () => {});', "/x/a.spec.ts")).toBe("Focused");
+  });
+
+  it("accepts single quotes and backticks", () => {
+    expect(extractName("test('Single', async () => {});", "/x/a.spec.ts")).toBe("Single");
+    expect(extractName("test(`Backtick`, async () => {});", "/x/a.spec.ts")).toBe("Backtick");
+  });
+
+  it("falls back to the file name when there's no title", () => {
+    expect(extractName("// no tests here", "/x/login.spec.ts")).toBe("login");
+  });
+
+  it("falls back when the title is blank rather than naming a test ''", () => {
+    expect(extractName('test("   ", async () => {});', "/x/login.spec.ts")).toBe("login");
+  });
+});
+
+describe("extractUrl", () => {
+  it("takes the first goto", () => {
+    expect(extractUrl('await page.goto("https://a.test");await page.goto("https://b.test");')).toBe(
+      "https://a.test",
+    );
+  });
+
+  it("returns empty when there is no goto rather than inventing one", () => {
+    expect(extractUrl("await page.click('#go');")).toBe("");
+  });
+
+  it("handles all quote styles", () => {
+    expect(extractUrl("page.goto('https://s.test')")).toBe("https://s.test");
+    expect(extractUrl("page.goto(`https://b.test`)")).toBe("https://b.test");
+  });
+});
+
+describe("scanDir", () => {
+  it("finds .spec and .test files", () => {
+    write("a.spec.ts", "test('a', () => {})");
+    write("b.test.ts", "test('b', () => {})");
+    const found = scanDir(root);
+    expect(found.map((f) => path.basename(f.filePath)).sort()).toEqual(["a.spec.ts", "b.test.ts"]);
+  });
+
+  it("ignores files that aren't tests", () => {
+    write("helpers.ts", "export const a = 1;");
+    write("README.md", "# hi");
+    expect(scanDir(root)).toHaveLength(0);
+  });
+
+  it("recurses into subdirectories", () => {
+    write("suites/deep/c.spec.ts", "test('c', () => {})");
+    expect(scanDir(root)).toHaveLength(1);
+  });
+
+  it("skips node_modules and dot-directories", () => {
+    // Scanning node_modules would import thousands of a dependency's own tests.
+    write("node_modules/pkg/x.spec.ts", "test('x', () => {})");
+    write(".git/y.spec.ts", "test('y', () => {})");
+    write("real.spec.ts", "test('real', () => {})");
+    const found = scanDir(root);
+    expect(found).toHaveLength(1);
+    expect(path.basename(found[0].filePath)).toBe("real.spec.ts");
+  });
+
+  it("reads file contents alongside the path", () => {
+    write("a.spec.ts", "test('has content', () => {})");
+    expect(scanDir(root)[0].content).toContain("has content");
+  });
+
+  it("returns nothing for an empty or missing directory", () => {
+    expect(scanDir(root)).toHaveLength(0);
+    expect(scanDir(path.join(root, "does-not-exist"))).toHaveLength(0);
+  });
+});
+
+describe("resolveSibling", () => {
+  it("resolves an exact relative path", () => {
+    const target = write("helpers.ts", "");
+    expect(resolveSibling(root, "./helpers.ts")).toBe(target);
+  });
+
+  it("probes extensions when the import omits one", () => {
+    // `import "./helpers"` is the common style and must still be copied, or the
+    // imported spec fails at run time with "cannot find module".
+    const target = write("helpers.ts", "");
+    expect(resolveSibling(root, "./helpers")).toBe(target);
+  });
+
+  it("resolves a directory to its index file", () => {
+    const target = write("utils/index.ts", "");
+    expect(resolveSibling(root, "./utils")).toBe(target);
+  });
+
+  it("resolves a parent-relative import", () => {
+    const target = write("shared.ts", "");
+    fs.mkdirSync(path.join(root, "specs"), { recursive: true });
+    expect(resolveSibling(path.join(root, "specs"), "../shared.ts")).toBe(target);
+  });
+
+  it("returns null for something that doesn't exist", () => {
+    expect(resolveSibling(root, "./nope")).toBeNull();
+  });
+
+  it("returns null for a directory with no index file", () => {
+    fs.mkdirSync(path.join(root, "emptydir"), { recursive: true });
+    expect(resolveSibling(root, "./emptydir")).toBeNull();
+  });
+});

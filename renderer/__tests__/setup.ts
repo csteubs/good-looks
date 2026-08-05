@@ -54,6 +54,24 @@ if (!window.matchMedia) {
   })) as unknown as typeof window.matchMedia;
 }
 
+// Used by the SDK's Dialog (and anything with scroll-aware chrome). jsdom
+// implements neither observer API, and the failure surfaces as a bare
+// "IntersectionObserver is not defined" from inside the design-system bundle,
+// which reads like a component bug rather than a missing browser API.
+if (!globalThis.IntersectionObserver) {
+  globalThis.IntersectionObserver = class {
+    readonly root = null;
+    readonly rootMargin = "";
+    readonly thresholds: ReadonlyArray<number> = [];
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+    takeRecords(): IntersectionObserverEntry[] {
+      return [];
+    }
+  } as unknown as typeof IntersectionObserver;
+}
+
 if (!globalThis.ResizeObserver) {
   globalThis.ResizeObserver = class {
     observe() {}
