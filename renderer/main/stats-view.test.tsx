@@ -1,0 +1,225 @@
+// Component tests for the Stats view.
+//
+// Two features overlap here — filtering and pagination — and their interaction
+// is the part no pure test can reach. check:run-filters proves the predicate;
+// check:paginate proves the slice. Only a rendered component proves that
+// narrowing a filter while on page 5 lands you on rows that exist, and that
+// filtering does NOT move the summary cards (which describe the whole history
+// on purpose).
+
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+import type { RunRecord } from "../lib/recorder-types";
+import { StatsView } from "./stats-view";
+
+let runs: RunRecord[] = [];
+
+vi.mock("../lib/api", () => ({
+  api: {
+    runs: {
+      list: async () => runs,
+      searchLogs: async () => [],
+      captureOverhead: async () => null,
+      getLog: async () => "",
+      logsDir: async () => "/tmp",
+      resetStats: async () => ({ removed: 0 }),
+      deleteAll: async () => ({ removed: 0 }),
+      deleteRange: async () => ({ removed: 0 }),
+    },
+    on: () => () => {},
+  },
+}));
+
+function run(over: Partial<RunRecord> & { id: string }): RunRecord {
+  return {
+    testId: "t1",
+    testName: "Alpha",
+    url: "https://example.com",
+    status: "passed",
+    exitCode: 0,
+    startedAt: 1_700_000_000_000,
+    finishedAt: 1_700_000_001_000,
+    durationMs: 1000,
+    logFile: `${over.id}.log`,
+    logBytes: 10,
+    ...over,
+  } as RunRecord;
+}
+
+function renderView() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <StatsView />
+    </QueryClientProvider>,
+  );
+}
+
+/** Data rows in the run-history table right now (header row excluded).
+ *  Synchronous: the table renders before the query resolves, so a plain
+ *  findByRole("table") would return an empty body and read as "no runs". */
+function rowsNow(): HTMLElement[] {
+  const table = screen.getByRole("table");
+  return within(table).getAllByRole("row").slice(1) as HTMLElement[];
+}
+
+/** Wait for the run query to resolve and rows to render. */
+async function bodyRows(min = 1): Promise<HTMLElement[]> {
+  await waitFor(() => {
+    if (rowsNow().length < min) throw new Error("rows not rendered yet");
+  });
+  return rowsNow();
+}
+
+/** Wait for the table to settle on an exact row count (after a filter/page). */
+async function expectRows(n: number): Promise<HTMLElement[]> {
+  await waitFor(() => expect(rowsNow()).toHaveLength(n));
+  return rowsNow();
+}
+
+beforeEach(() => {
+  runs = [];
+});
+
+describe("run history table", () => {
+  it("lists runs", async () => {
+    runs = [run({ id: "r1" }), run({ id: "r2", testName: "Beta", status: "failed" })];
+    renderView();
+    expect(await bodyRows()).toHaveLength(2);
+    expect(screen.getByText("Beta")).toBeTruthy();
+  });
+
+  it("names the browser engine in the Tags column", async () => {
+    runs = [run({ id: "r1", runBrowser: "firefox" })];
+    renderView();
+    await bodyRows();
+    expect(screen.getByText("Firefox")).toBeTruthy();
+  });
+
+  it("reports a run predating the browser picker as Chromium", async () => {
+    runs = [run({ id: "r1" })]; // no runBrowser
+    renderView();
+    await bodyRows();
+    expect(screen.getByText("Chromium")).toBeTruthy();
+  });
+});
+
+describe("filtering", () => {
+  beforeEach(() => {
+    runs = [
+      run({ id: "r1", testName: "Alpha", status: "passed" }),
+      run({ id: "r2", testName: "Beta", status: "failed" }),
+      run({ id: "r3", testName: "Gamma", status: "failed", runHeadless: true }),
+    ];
+  });
+
+  it("narrows the table by status", async () => {
+    renderView();
+    expect(await bodyRows()).toHaveLength(3);
+    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+    await expectRows(2);
+  });
+
+  it("does NOT change the summary cards when filtering", async () => {
+    // Deliberate: the cards describe the whole history, so narrowing the table
+    // must never silently redefine "pass rate".
+    renderView();
+    await bodyRows();
+    const totalBefore = screen.getByText("Total runs").parentElement?.textContent;
+
+    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+    await expectRows(2);
+
+    expect(screen.getByText("Total runs").parentElement?.textContent).toBe(totalBefore);
+  });
+
+  it("shows a Clear control only while a filter is active", async () => {
+    renderView();
+    await bodyRows();
+    expect(screen.queryByRole("button", { name: /clear/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+    expect(await screen.findByRole("button", { name: /clear/i })).toBeTruthy();
+  });
+
+  it("explains an empty result instead of showing a blank table", async () => {
+    runs = [run({ id: "r1", status: "passed" })];
+    renderView();
+    await bodyRows();
+    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+    expect(await screen.findByText(/no runs match these filters/i)).toBeTruthy();
+  });
+
+  it("keeps baseline-update rows out of Passed and Failed", async () => {
+    // Their `status` field is incidental — they are not test runs.
+    runs = [
+      run({ id: "r1", status: "passed" }),
+      run({ id: "r2", status: "passed", kind: "baseline-update", testName: "Pinned" }),
+    ];
+    renderView();
+    expect(await bodyRows()).toHaveLength(2);
+
+    fireEvent.click(screen.getByRole("radio", { name: "Passed" }));
+    const rows = await expectRows(1);
+    expect(within(rows[0]).queryByText("Pinned")).toBeNull();
+  });
+});
+
+describe("pagination", () => {
+  it("shows at most 50 rows and pages the rest", async () => {
+    runs = Array.from({ length: 120 }, (_, i) => run({ id: `r${i}`, testName: `Test ${i}` }));
+    renderView();
+    await expectRows(50);
+    expect(screen.getByText(/page 1 of 3/i)).toBeTruthy();
+  });
+
+  it("hides the pager when everything fits on one page", async () => {
+    runs = [run({ id: "r1" })];
+    renderView();
+    await bodyRows();
+    expect(screen.queryByRole("button", { name: /next page/i })).toBeNull();
+  });
+
+  it("moves between pages", async () => {
+    runs = Array.from({ length: 120 }, (_, i) => run({ id: `r${i}`, testName: `Test ${i}` }));
+    renderView();
+    await bodyRows();
+
+    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
+    expect(await screen.findByText(/page 2 of 3/i)).toBeTruthy();
+    // Page 2 holds the 51st row onward.
+    expect(screen.getByText("Test 50")).toBeTruthy();
+    expect(screen.queryByText("Test 0")).toBeNull();
+  });
+
+  it("lands on real rows when a filter narrows the list under you", async () => {
+    // THE interaction: without clamping, page 3 of a 120-row table becomes an
+    // empty table the moment a filter cuts it to 10 rows.
+    runs = [
+      ...Array.from({ length: 110 }, (_, i) => run({ id: `p${i}`, testName: `Pass ${i}` })),
+      ...Array.from({ length: 10 }, (_, i) =>
+        run({ id: `f${i}`, testName: `Fail ${i}`, status: "failed" }),
+      ),
+    ];
+    renderView();
+    await bodyRows();
+
+    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
+    expect(await screen.findByText(/page 3 of 3/i)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+
+    await expectRows(10);
+    expect(screen.getByText("Fail 0")).toBeTruthy();
+  });
+});
+
+describe("empty state", () => {
+  it("explains itself with no runs at all", async () => {
+    renderView();
+    expect(await screen.findByText(/no runs yet/i)).toBeTruthy();
+  });
+});
