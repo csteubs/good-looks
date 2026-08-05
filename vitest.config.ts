@@ -84,6 +84,10 @@ export default defineConfig({
           name: "node",
           environment: "node",
           include: ["main/**/*.test.ts", "mcp/**/*.test.ts", "renderer/lib/**/*.test.ts"],
+          // *.dom.test.ts belongs to the jsdom project. Without this it matches
+          // BOTH globs and every DOM test runs a second time with no document,
+          // failing for a reason that has nothing to do with the code.
+          exclude: ["**/*.dom.test.ts", "**/node_modules/**"],
         },
       },
       {
