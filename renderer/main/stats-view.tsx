@@ -11,6 +11,13 @@ import {
   NativeDatePickerTrigger,
   NativeDatePickerValue,
   ScrollArea,
+  SegmentedControl,
+  SegmentedControlItem,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Table,
   TableBody,
   TableCell,
@@ -25,10 +32,30 @@ import {
   ToolbarTitle,
   toast,
 } from "@glaze/core/components";
-import { Calendar, Check, Copy, Globe, MoreHorizontal, MonitorOff, Search, Stamp } from "lucide-react";
+import {
+  Calendar,
+  Camera,
+  Check,
+  Copy,
+  Globe,
+  MoreHorizontal,
+  MonitorOff,
+  Search,
+  Stamp,
+  X,
+} from "lucide-react";
 
 import { api } from "../lib/api";
 import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
+import {
+  NO_FILTERS,
+  filtersActive,
+  runMatchesFilters,
+  testFilterOptions,
+  type RunFilters,
+  type StatusFilter,
+  type TagFilter,
+} from "../lib/run-filters";
 
 // ── Native bridges (match library-sidebar patterns) ───────────────────
 interface MenuPopupItem {
@@ -305,6 +332,7 @@ export function StatsView() {
   const [rangeOpen, setRangeOpen] = React.useState(false);
   const [rangeFrom, setRangeFrom] = React.useState("");
   const [rangeTo, setRangeTo] = React.useState("");
+  const [filters, setFilters] = React.useState<RunFilters>(NO_FILTERS);
 
   // Live-refresh when a run completes.
   React.useEffect(() => {
@@ -332,6 +360,25 @@ export function StatsView() {
     queryKey: ["captureOverhead"],
     queryFn: () => api.runs.captureOverhead(),
   });
+
+  // Filters apply to the run-history table only — the summary cards and chart
+  // keep describing the whole history, so narrowing the table doesn't silently
+  // redefine "pass rate".
+  const filteredRuns = React.useMemo(
+    () => runs.filter((r) => runMatchesFilters(r, filters)),
+    [runs, filters],
+  );
+
+  // Distinct tests present in the history, for the test filter's options.
+  const testOptions = React.useMemo(() => testFilterOptions(runs), [runs]);
+
+  // A filter pinned to a test that no longer has runs (deleted test, pruned
+  // history) would silently show an empty table — drop back to "all" instead.
+  React.useEffect(() => {
+    if (filters.test !== "all" && !testOptions.some((t) => t.id === filters.test)) {
+      setFilters((f) => ({ ...f, test: "all" }));
+    }
+  }, [testOptions, filters.test]);
 
   const buckets = React.useMemo(() => buildDailyBuckets(runs), [runs]);
   // Only real test runs count toward pass/fail stats; baseline-update events
@@ -511,9 +558,78 @@ export function StatsView() {
               {/* Run history table */}
               {!searching ? (
                 <div>
-                  <Text variant="small" className="mb-2 block font-medium">
-                    Run history
-                  </Text>
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <Text variant="small" className="font-medium">
+                      Run history
+                    </Text>
+                    <Text variant="small" color="tertiary">
+                      {filtersActive(filters)
+                        ? `${filteredRuns.length} of ${runs.length}`
+                        : `${runs.length} run${runs.length === 1 ? "" : "s"}`}
+                    </Text>
+
+                    <div className="ml-auto flex flex-wrap items-center gap-2">
+                      <SegmentedControl
+                        size="small"
+                        value={filters.status}
+                        onValueChange={(v) => {
+                          // allowEmpty is off, but Radix still emits "" if the
+                          // selected item is re-pressed — ignore that.
+                          if (!v) return;
+                          setFilters((f) => ({ ...f, status: v as StatusFilter }));
+                        }}
+                        aria-label="Filter runs by status"
+                      >
+                        <SegmentedControlItem value="all">All</SegmentedControlItem>
+                        <SegmentedControlItem value="passed">Passed</SegmentedControlItem>
+                        <SegmentedControlItem value="failed">Failed</SegmentedControlItem>
+                        <SegmentedControlItem value="baseline">Baselines</SegmentedControlItem>
+                      </SegmentedControl>
+
+                      <Select
+                        value={filters.tag}
+                        onValueChange={(v) => setFilters((f) => ({ ...f, tag: v as TagFilter }))}
+                      >
+                        <SelectTrigger variant="filled" size="small" className="w-36">
+                          <SelectValue placeholder="Any tag" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Any tag</SelectItem>
+                          <SelectItem value="browser">Browser</SelectItem>
+                          <SelectItem value="headless">Headless</SelectItem>
+                          <SelectItem value="captured">Screenshots</SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      <Select
+                        value={filters.test}
+                        onValueChange={(v) => setFilters((f) => ({ ...f, test: v }))}
+                      >
+                        <SelectTrigger variant="filled" size="small" className="w-44">
+                          <SelectValue placeholder="All tests" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">All tests</SelectItem>
+                          {testOptions.map((t) => (
+                            <SelectItem key={t.id} value={t.id}>
+                              {t.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+
+                      {filtersActive(filters) ? (
+                        <Button
+                          variant="glass"
+                          size="small"
+                          onClick={() => setFilters(NO_FILTERS)}
+                        >
+                          <X className="size-4" />
+                          Clear
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
                   <div className="overflow-x-hidden">
                     <Table className="table-fixed">
                       <TableHeader sticky>
@@ -521,13 +637,13 @@ export function StatsView() {
                           <TableHead>Test</TableHead>
                           <TableHead className="w-20">Status</TableHead>
                           <TableHead className="w-28">Started</TableHead>
-                          <TableHead className="w-24">Tags</TableHead>
+                          <TableHead className="w-28">Tags</TableHead>
                           <TableHead className="w-24 text-right">Duration</TableHead>
                           <TableHead className="w-20 text-right">Log</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {runs.map((r) => {
+                        {filteredRuns.map((r) => {
                           const isBaseline = r.kind === "baseline-update";
                           return (
                             <TableRow
@@ -568,16 +684,28 @@ export function StatsView() {
                               <TableCell>
                                 {isBaseline ? (
                                   <span className="text-tertiary">—</span>
-                                ) : r.runHeadless ? (
-                                  <Badge color="secondary">
-                                    <MonitorOff className="size-3" />
-                                    Headless
-                                  </Badge>
                                 ) : (
-                                  <Badge color="secondary">
-                                    <Globe className="size-3" />
-                                    Browser
-                                  </Badge>
+                                  <span className="flex items-center gap-1">
+                                    {r.runHeadless ? (
+                                      <Badge color="secondary">
+                                        <MonitorOff className="size-3" />
+                                        Headless
+                                      </Badge>
+                                    ) : (
+                                      <Badge color="secondary">
+                                        <Globe className="size-3" />
+                                        Browser
+                                      </Badge>
+                                    )}
+                                    {/* Capture is a filterable tag, so it needs to be
+                                        visible here — icon-only to fit the column. */}
+                                    {r.captureArtifacts ? (
+                                      <Camera
+                                        className="size-3 shrink-0 text-tertiary"
+                                        aria-label="Screenshots captured"
+                                      />
+                                    ) : null}
+                                  </span>
                                 )}
                               </TableCell>
                               <TableCell className="text-right text-secondary">
@@ -597,6 +725,11 @@ export function StatsView() {
                       })}
                     </TableBody>
                   </Table>
+                  {filteredRuns.length === 0 ? (
+                    <Text variant="small" color="tertiary" className="block px-3 py-6 text-center">
+                      No runs match these filters.
+                    </Text>
+                  ) : null}
                   </div>
                 </div>
               ) : null}
