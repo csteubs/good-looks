@@ -71,7 +71,14 @@ function baseUrlFor(provider: LlmProvider): string {
 async function fetchModels(provider: LlmProvider, base: string): Promise<LlmModel[]> {
   if (provider === "anthropic") {
     const key = await anthropicKeyStore.getKey();
-    if (!key) return [];
+    // Throw rather than return []. hasKey() only checks that the key FILE
+    // exists, while getKey() decrypts and returns null on failure — so the two
+    // disagree whenever the file is present but undecryptable (corrupted, or
+    // safeStorage unavailable after a keychain/machine change). Returning an
+    // empty list there made status() report reachable:true with no models and
+    // no error: a green "connected" dot for a provider that cannot
+    // authenticate, followed by every chat failing with a confusing message.
+    if (!key) throw new Error("Add an Anthropic API key to connect to Claude.");
     const res = await fetch(`${base}/v1/models`, {
       headers: anthropicHeaders(key),
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
