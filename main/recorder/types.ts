@@ -366,6 +366,10 @@ export interface RecorderSettings {
    *  problem (default false). The only thing in the app that sends data off the
    *  machine — inert until a URL is configured, and never includes run logs. */
   alertWebhookEnabled: boolean;
+  /** User-chosen run order for the Batch view, as test ids. Tests missing from
+   *  this list (newly added) run after it, in library order; ids for deleted
+   *  tests are ignored. Empty = plain library order. */
+  batchOrder: string[];
   /** how many runs' screenshot artifacts to keep per test before the oldest
    *  are pruned (default 10, clamped 1–50). The pinned visual baseline is
    *  never pruned regardless of this number. */

@@ -20,6 +20,10 @@ const MAX_RETAINED_RUNS = 50;
  *  (the run-count cap still applies); 365 is a sane ceiling for a local app. */
 const MAX_RETENTION_DAYS = 365;
 
+/** Ceiling on the persisted batch order. Far above any real library; exists so
+ *  a corrupt file can't grow without bound across saves. */
+const MAX_BATCH_ORDER = 1000;
+
 function clampDays(n: number): number {
   return Math.min(MAX_RETENTION_DAYS, Math.max(0, Math.round(n)));
 }
@@ -38,6 +42,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   defaultRunHeadless: false,
   defaultRunBrowser: "chromium",
   alertWebhookEnabled: false,
+  batchOrder: [],
   artifactRetainedRuns: DEFAULT_RETAINED_RUNS,
   artifactRetentionDays: 0,
   notifyOnRunIssues: false,
@@ -84,6 +89,11 @@ function read(): RecorderSettings {
         typeof parsed.alertWebhookEnabled === "boolean"
           ? parsed.alertWebhookEnabled
           : DEFAULT_SETTINGS.alertWebhookEnabled,
+      // Ids only, capped — a corrupt or bloated array would otherwise be
+      // written straight back out on the next settings save.
+      batchOrder: Array.isArray(parsed.batchOrder)
+        ? parsed.batchOrder.filter((v: unknown) => typeof v === "string").slice(0, MAX_BATCH_ORDER)
+        : DEFAULT_SETTINGS.batchOrder,
       artifactRetainedRuns:
         typeof parsed.artifactRetainedRuns === "number" && parsed.artifactRetainedRuns > 0
           ? clampRetained(parsed.artifactRetainedRuns)
@@ -145,6 +155,9 @@ export const recorderSettingsStore = {
         update.alertWebhookEnabled !== undefined
           ? update.alertWebhookEnabled
           : current.alertWebhookEnabled,
+      batchOrder: Array.isArray(update.batchOrder)
+        ? update.batchOrder.filter((v) => typeof v === "string").slice(0, MAX_BATCH_ORDER)
+        : current.batchOrder,
       artifactRetainedRuns:
         update.artifactRetainedRuns !== undefined &&
         typeof update.artifactRetainedRuns === "number" &&
@@ -180,6 +193,7 @@ export const recorderSettingsStore = {
       defaultRunHeadless: next.defaultRunHeadless,
       defaultRunBrowser: next.defaultRunBrowser,
       alertWebhookEnabled: next.alertWebhookEnabled,
+      batchOrderCount: next.batchOrder.length,
       artifactRetainedRuns: next.artifactRetainedRuns,
       artifactRetentionDays: next.artifactRetentionDays,
       notifyOnRunIssues: next.notifyOnRunIssues,

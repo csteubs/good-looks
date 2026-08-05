@@ -27,11 +27,12 @@ import {
   ToolbarTitle,
   toast,
 } from "@glaze/core/components";
-import { Check, CircleDashed, Play, Square, X, SkipForward, Loader } from "lucide-react";
+import { Check, CircleDashed, GripVertical, Play, Square, X, SkipForward, Loader } from "lucide-react";
 
 import { api } from "../lib/api";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts, untaggedCount } from "../lib/test-tags";
+import { applyOrder, moveToTarget, orderIdsOf, orderIsStale } from "../lib/batch-order";
 import type {
   BatchRecord,
   BatchState,
@@ -163,14 +164,41 @@ export function BatchView() {
     setOptionsInited(true);
   }, [optionsInited, settingsQuery.data]);
 
-  // Tag filter over the checklist. Selection is stored by test id, so
+  // User-defined run order, persisted as ids in settings. Held locally while
+  // dragging so rows track the pointer without a round trip per frame.
+  const [order, setOrder] = React.useState<string[]>([]);
+  const [orderInited, setOrderInited] = React.useState(false);
+  const [dragId, setDragId] = React.useState<string | null>(null);
+  const [overId, setOverId] = React.useState<string | null>(null);
+
+    // Tag filter over the checklist. Selection is stored by test id, so
   // switching filters never silently drops tests you already ticked.
   const [tagFilter, setTagFilter] = React.useState<string>(ALL_TAGS);
   const tags = React.useMemo(() => tagCounts(tests), [tests]);
   const untagged = React.useMemo(() => untaggedCount(tests), [tests]);
+  React.useEffect(() => {
+    if (orderInited || !settingsQuery.data) return;
+    setOrder(settingsQuery.data.batchOrder ?? []);
+    setOrderInited(true);
+  }, [orderInited, settingsQuery.data]);
+
+  // Every test appears exactly once regardless of what was stored, so a test
+  // added or deleted since the order was saved can never go missing.
+  const orderedTests = React.useMemo(() => applyOrder(tests, order), [tests, order]);
+
+  // Rewrite the stored order once when the library has drifted (a test added or
+  // deleted), rather than on every render.
+  React.useEffect(() => {
+    if (!orderInited || tests.length === 0) return;
+    if (!orderIsStale(order, tests)) return;
+    const fresh = orderIdsOf(applyOrder(tests, order));
+    setOrder(fresh);
+    api.recorder.setSettings({ batchOrder: fresh }).catch(() => {});
+  }, [orderInited, tests, order]);
+
   const visibleTests = React.useMemo(
-    () => filterByTag(tests, tagFilter),
-    [tests, tagFilter],
+    () => filterByTag(orderedTests, tagFilter),
+    [orderedTests, tagFilter],
   );
 
   const [batch, setBatch] = React.useState<BatchState | null>(null);
@@ -222,12 +250,28 @@ export function BatchView() {
     }
   }, [tags, tagFilter]);
 
+    // Commit a drag: reorder by ID, not by visible index — under a tag filter the
+  // visible rows are only a subsequence of the real order.
+  const commitDrag = () => {
+    if (dragId && overId && dragId !== overId) {
+      const next = moveToTarget(orderIdsOf(orderedTests), dragId, overId);
+      setOrder(next);
+      api.recorder.setSettings({ batchOrder: next }).catch(() => {
+        /* best-effort persist; the new order still applies to this session */
+      });
+    }
+    setDragId(null);
+    setOverId(null);
+  };
+
   const history = React.useMemo(() => historyQuery.data ?? [], [historyQuery.data]);
   // Nothing live → show the most recent persisted batch, so a restart doesn't
   // present a blank view as though the batch never happened.
   const shown: BatchState | null = batch ?? history[0] ?? null;
   const running = batch?.running ?? false;
-  const selectedIds = tests.filter((t) => selected.has(t.id)).map((t) => t.id);
+  // Derived from the ORDERED list, not the library: this is what the batch
+  // actually runs, so it has to match the order shown on screen.
+  const selectedIds = orderedTests.filter((t) => selected.has(t.id)).map((t) => t.id);
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -238,7 +282,7 @@ export function BatchView() {
     });
   };
 
-  const startBatch = async () => {
+    const startBatch = async () => {
     if (selectedIds.length === 0) return;
     try {
       const res = await api.batch.run(selectedIds, {
@@ -425,10 +469,32 @@ export function BatchView() {
                   return (
                     <div
                       key={t.id}
-                      className={`flex items-center gap-3 border-b border-token-border px-3 py-2 last:border-b-0 ${
+                      onDragEnter={running ? undefined : () => setOverId(t.id)}
+                      onDragOver={running ? undefined : (e) => e.preventDefault()}
+                      onDrop={running ? undefined : (e) => e.preventDefault()}
+                      className={`group/row flex items-center gap-3 border-b border-token-border px-3 py-2 last:border-b-0 ${
                         isCurrent ? "bg-accent/10" : ""
-                      }`}
+                      } ${
+                        overId === t.id && dragId !== null && dragId !== t.id
+                          ? "border-t-2 border-t-accent"
+                          : ""
+                      } ${dragId === t.id ? "opacity-50" : ""}`}
                     >
+                      {/* Matches the trainer's step list: grip appears on hover,
+                          only the handle is draggable so row clicks still work. */}
+                      <span
+                        draggable={!running}
+                        onDragStart={running ? undefined : () => setDragId(t.id)}
+                        onDragEnd={running ? undefined : commitDrag}
+                        className={`shrink-0 text-tertiary ${
+                          running
+                            ? "opacity-20"
+                            : "cursor-grab opacity-0 group-hover/row:opacity-100 active:cursor-grabbing"
+                        }`}
+                        aria-label={`Drag to reorder ${t.name}`}
+                      >
+                        <GripVertical className="size-4" />
+                      </span>
                       <Checkbox
                         checked={selected.has(t.id)}
                         onCheckedChange={() => toggle(t.id)}

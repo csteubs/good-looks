@@ -364,6 +364,8 @@ export interface RecorderSettings {
   defaultRunBrowser: RunBrowser;
   /** send a summary to a configured webhook on run/batch problems (default false). */
   alertWebhookEnabled: boolean;
+  /** user-chosen Batch run order, as test ids (mirrors main types) */
+  batchOrder: string[];
   /** how many runs' screenshot artifacts to keep per test (default 10, 1–50). */
   artifactRetainedRuns: number;
   /** also delete captured runs older than N days (0 = off, max 365). */
