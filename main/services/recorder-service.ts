@@ -132,7 +132,7 @@ function verboseErrorLogs(err: unknown, step: Step): DebugEntry["logs"] {
 /** Determine whether a step's failure is a "locator didn't resolve" failure
  *  (element not found) — the only kind Auto-Heal can address. Healing a locator
  *  won't fix a value-mismatch assertion or a click that threw. */
-function isLocatorFailure(error: string | undefined, step: Step): boolean {
+export function isLocatorFailure(error: string | undefined, step: Step): boolean {
   if (!step.locator) return false;
   if (!error) return false;
   const e = error.toLowerCase();

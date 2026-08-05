@@ -95,7 +95,10 @@ export default defineConfig({
         test: {
           name: "dom",
           environment: "jsdom",
-          include: ["renderer/**/*.test.tsx"],
+          // *.dom.test.ts covers BACKEND code that produces DOM-executing
+          // scripts (the injected replayer / capture helpers) — not React, but
+          // it genuinely needs a document to run against.
+          include: ["renderer/**/*.test.tsx", "main/**/*.dom.test.ts"],
           setupFiles: [path.resolve(here, "renderer/__tests__/setup.ts")],
           // The design system ships CSS the components import; jsdom can't parse
           // it and doesn't need it for behavior assertions.
