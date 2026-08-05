@@ -82,6 +82,56 @@ for (const rel of VIEWS) {
   }
 }
 
+// ── Panels nested inside a page-level ScrollArea ───────────────────────────
+//
+// The bug: the Stability panel wrapped its list in `<ScrollArea className=
+// "max-h-72">`. The SDK's ScrollArea needs a DEFINITE height — its viewport
+// sizes against the root — so a max-height alone left it with nothing to size
+// against. Nothing clipped: the list overflowed its box and PAINTED OVER the
+// "Show all" button and the Failure causes section below it, while the parent
+// still laid those out as if the panel were 288px tall.
+//
+// Two rules, both source-level for the same reason as everything above: jsdom
+// has no layout engine, so a rendered test sees overlapping elements as
+// perfectly fine.
+{
+  const PANELS = [
+    "../../../renderer/main/flake-panel.tsx",
+    "../../../renderer/main/heals-panel.tsx",
+    "../../../renderer/main/variables-panel.tsx",
+  ];
+
+  for (const rel of PANELS) {
+    const file = resolve(here, rel);
+    let src: string;
+    try {
+      src = readFileSync(file, "utf8");
+    } catch {
+      continue; // a panel that no longer exists isn't a failure
+    }
+    const name = rel.split("/").pop();
+    const tags = [...src.matchAll(/<ScrollArea[^>]*>/g)].map((m) => m[0]);
+
+    for (const tag of tags) {
+      // A max-height with no height is the exact shape that overflows.
+      const maxOnly = /\bmax-h-/.test(tag) && !/className="[^"]*\bh-(?:full|\[|\d)/.test(tag);
+      assert(
+        !maxOnly,
+        `${name}: ScrollArea uses max-h-* with no definite height — its content will overflow and paint over what follows`,
+      );
+    }
+  }
+
+  // The Stability panel specifically must not nest a scroller at all: it sits
+  // inside the page ScrollArea, and expanding a row has to grow the panel
+  // rather than scroll inside a fixed box.
+  const flake = readFileSync(resolve(here, "../../../renderer/main/flake-panel.tsx"), "utf8");
+  assert(
+    !/<ScrollArea/.test(flake),
+    "flake-panel.tsx: no nested ScrollArea — expanding a row must grow the panel, not scroll within it",
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

@@ -155,6 +155,45 @@ describe("FlakePanel", () => {
     expect(screen.getByText(/Timeout 30000ms exceeded/)).toBeTruthy();
   });
 
+  it("renders every row inline, with nothing scrolling inside the panel", () => {
+    // The reported bug. The list was wrapped in a ScrollArea with only a
+    // max-height, so it neither grew nor clipped — it overflowed and painted
+    // over the "Show all" button and the Failure causes section below it.
+    //
+    // jsdom has no layout engine, so it cannot see that overlap. What it CAN
+    // check is the structural cause: every row present in one container with no
+    // scroller between them and the panel. The geometry itself is guarded at
+    // source level by check:scroll-layout.
+    const tests = Array.from({ length: 12 }, (_, i) =>
+      test_({ testId: `t${i}`, testName: `Test ${i}` }),
+    );
+    const { container } = render(<FlakePanel report={report({ tests, analysedTests: 12 })} />);
+
+    // All twelve are in the DOM — none dropped behind a fixed-height box.
+    for (let i = 0; i < 12; i++) expect(screen.getByText(`Test ${i}`)).toBeTruthy();
+    // And the content below them is a SIBLING of the list, not something the
+    // list can overflow across.
+    expect(container.querySelector("[data-radix-scroll-area-viewport]")).toBeNull();
+  });
+
+  it("keeps every other row reachable when one is expanded", () => {
+    // "Doesn't resize when the details are expanded", concretely: after opening
+    // a row, its detail AND all the other rows are still rendered. A fixed-height
+    // scroller is what made this feel broken.
+    const tests = Array.from({ length: 8 }, (_, i) =>
+      test_({ testId: `t${i}`, testName: `Test ${i}` }),
+    );
+    render(<FlakePanel report={report({ tests, analysedTests: 8 })} />);
+
+    const rows = screen.getAllByRole("button", { expanded: false });
+    fireEvent.click(rows[0]);
+
+    expect(screen.getByText(/coin toss/i)).toBeTruthy();
+    for (let i = 0; i < 8; i++) expect(screen.getByText(`Test ${i}`)).toBeTruthy();
+    // The rest stay collapsed — expanding one row must not open them all.
+    expect(screen.getAllByRole("button", { expanded: false })).toHaveLength(7);
+  });
+
   it("says when the analysis window is capped", () => {
     // Presenting a truncated history as the whole one would quietly overstate
     // every verdict in the panel.

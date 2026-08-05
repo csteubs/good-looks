@@ -7,7 +7,7 @@
 // job is to say WHICH, in words, before it shows any number.
 
 import * as React from "react";
-import { Badge, Button, ScrollArea, Text } from "@glaze/core/components";
+import { Badge, Button, Text } from "@glaze/core/components";
 import { Activity, ChevronDown, ChevronRight, Wand2 } from "lucide-react";
 
 import type { FailureCluster, StabilityVerdict, TestFlake } from "../lib/recorder-types";
@@ -221,13 +221,25 @@ export function FlakePanel({
           Every test with enough runs is passing consistently.
         </Text>
       ) : (
-        <ScrollArea className="max-h-72">
-          <div className="flex flex-col gap-1.5 pr-1">
-            {shown.map((t) => (
-              <TestRow key={t.testId} test={t} />
-            ))}
-          </div>
-        </ScrollArea>
+        // No ScrollArea here, deliberately. This panel already lives inside the
+        // page-level one in stats-view, and a nested scroller broke twice over:
+        //
+        //   • The SDK's ScrollArea needs a DEFINITE height — its viewport sizes
+        //     against the root. Given only `max-h-72` there was nothing to size
+        //     against, so nothing clipped: the list overflowed its box and
+        //     painted on top of the "Show all" button and the Failure causes
+        //     section, while the parent still reserved only 288px for it.
+        //   • Even at a fixed height it would be wrong for this content —
+        //     expanding a row has to grow the panel, and a nested scroller
+        //     traps that growth behind a second scrollbar.
+        //
+        // Sizing to content and letting the page scroll is what every other
+        // panel on this view does.
+        <div className="flex flex-col gap-1.5">
+          {shown.map((t) => (
+            <TestRow key={t.testId} test={t} />
+          ))}
+        </div>
       )}
 
       {report.tests.length > interesting.length ? (
