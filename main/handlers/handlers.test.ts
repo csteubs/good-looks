@@ -239,3 +239,79 @@ describe("recorder cookie handlers with no trainer window", () => {
     ).rejects.toThrow(/not open/i);
   });
 });
+
+// ── Creating a test ────────────────────────────────────────────────────────
+//
+// Four paths reach "a new test exists": the trainer (recorder:start, both for a
+// new recording and for Edit in Trainer), prompt-driven generation, and the two
+// imports. None had coverage, and manual creation silently broke — the home
+// screen came back, no window, no test, no error.
+//
+// The trainer path creates a real BrowserWindow and can't run here; its
+// regression is covered by trainer-window-gate.test.ts. What IS checkable at
+// this boundary is that every path is reachable and that a created record is
+// well-formed enough to run, list and open — which is what "the test was not
+// created" actually means to a user.
+describe("test creation paths", () => {
+  it("registers every channel that can create a test", () => {
+    // A path that stops being registered fails exactly the way the reported bug
+    // did: the UI calls it, nothing happens, no error anywhere.
+    for (const channel of [
+      "recorder:start",
+      "tests:createFromPrompt",
+      "tests:importFiles",
+      "tests:importGit",
+    ]) {
+      expect(registeredChannels(), `${channel} is not registered`).toContain(channel);
+    }
+  });
+
+  it("creates a runnable record from a generated script", async () => {
+    const rec = await invokeHandler<TestRecord>("tests:createFromPrompt", {
+      name: "  Generated checkout  ",
+      url: "https://example.com",
+      source: 'import { test } from "@playwright/test";\ntest("x", async () => {});\n',
+    });
+
+    expect(rec.id).toBeTruthy();
+    expect(rec.name).toBe("Generated checkout"); // trimmed
+    // A test the runner can't find a script for is created-but-broken, which is
+    // worse than not created at all.
+    expect(rec.scriptPath).toBeTruthy();
+    expect(fs.existsSync(rec.scriptPath)).toBe(true);
+    // No captured steps: the script is the source of truth, so it must be
+    // flagged as hand-edited or the next save would regenerate an empty spec
+    // over the generated one.
+    expect(rec.scriptEdited).toBe(true);
+    expect(rec.steps).toEqual([]);
+  });
+
+  it("makes a created test immediately listable and fetchable", async () => {
+    // "The test is not created" is what the user SEES — so the check is that it
+    // shows up where they'd look, not merely that a function returned an object.
+    const rec = await invokeHandler<TestRecord>("tests:createFromPrompt", {
+      name: "Listable",
+      url: "https://example.com",
+      source: "// spec",
+    });
+    const listed = await invokeHandler<TestRecord[]>("tests:list");
+    expect(listed.map((t) => t.id)).toContain(rec.id);
+    const fetched = await invokeHandler<TestRecord | null>("tests:get", { id: rec.id });
+    expect(fetched?.name).toBe("Listable");
+  });
+
+  it("falls back to a name rather than creating an unnamed test", async () => {
+    const rec = await invokeHandler<TestRecord>("tests:createFromPrompt", {
+      name: "   ",
+      url: "https://example.com",
+      source: "// spec",
+    });
+    expect(rec.name.trim()).not.toBe("");
+  });
+
+  it("refuses a git import with no URL instead of creating nothing quietly", async () => {
+    // The import paths reach the filesystem and a network clone, so what's
+    // checked here is the boundary: a missing URL is reported, not swallowed.
+    await expect(invokeHandler("tests:importGit", {})).rejects.toThrow();
+  });
+});

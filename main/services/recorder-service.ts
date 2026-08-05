@@ -26,6 +26,7 @@ import {
 import { buildReplayScript } from "./step-replayer.js";
 import { healStep } from "./auto-heal.js";
 import { healJournalStore } from "./heal-journal-store.js";
+import { createTrainerWindowGate } from "./trainer-window-gate.js";
 import type { CookieSpec } from "../recorder/types.js";
 import {
   applyCookieStep,
@@ -770,23 +771,25 @@ export const recorderService = {
     // slow redirect (e.g. shopify.com → /website/builder) it can lag. Fall back
     // to `dom-ready` (1.5s after creation) so the user sees the window opening
     // promptly instead of a blank background with "Recording" and no window.
-    let shown = false;
     let showFallback: ReturnType<typeof setTimeout> | null = null;
-    const showNow = () => {
-      if (showFallback) {
-        clearTimeout(showFallback);
-        showFallback = null;
-      }
-      if (shown || !recWindow || recWindow.isDestroyed()) return;
-      shown = true;
-      recWindow.show();
-    };
+    // See trainer-window-gate.ts: any of four signals shows the window, and
+    // "never shown" is the only thing that counts as a failure to open.
+    const gate = createTrainerWindowGate(
+      () => {
+        if (showFallback) {
+          clearTimeout(showFallback);
+          showFallback = null;
+        }
+        recWindow?.show();
+      },
+      () => !!recWindow && !recWindow.isDestroyed(),
+    );
     // Prefer the WebView's own readiness signals (no white flash) when they
     // fire, but guarantee the window appears with a creation-relative fallback
     // so a cold-start lag in those events can't leave it hidden.
-    recWindow.once("ready-to-show", showNow);
-    wc.once("dom-ready", showNow);
-    showFallback = setTimeout(showNow, SHOW_FALLBACK_MS);
+    recWindow.once("ready-to-show", () => gate.signal("ready-to-show"));
+    wc.once("dom-ready", () => gate.signal("dom-ready"));
+    showFallback = setTimeout(() => gate.signal("fallback"), SHOW_FALLBACK_MS);
     recWindow.on("closed", () => void finalize());
 
     // A same-origin redirect on load (e.g. adding a trailing slash) can retrigger
@@ -799,6 +802,10 @@ export const recorderService = {
     const finishLoad = () => {
       if (loadDone) return;
       loadDone = true;
+      // A completed load is itself a reason to show. Without this, a page that
+      // loaded FASTER than SHOW_FALLBACK_MS raced the failure check below and a
+      // working window was closed as "failed to open".
+      gate.signal("load-finished");
     };
     await new Promise<void>((resolve) => {
       loadNavInWindow(url);
@@ -816,7 +823,7 @@ export const recorderService = {
     // Only a genuine failure now: the window was never shown (couldn't open) or
     // was destroyed. A slow-but-fine cold-start load no longer trips this — the
     // window is force-shown within SHOW_FALLBACK_MS regardless of load timing.
-    if (!shown || recWindow.isDestroyed()) {
+    if (gate.failed(recWindow.isDestroyed())) {
       session.loadFailed = true;
       const message = `The training window couldn't open for ${url}.`;
       logger.error("recorder", "Trainer window failed to open", { url, testId });
