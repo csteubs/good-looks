@@ -355,12 +355,17 @@ export const playwrightRunner = {
     /** id of the batch driving this run, when it's part of one. Recorded on the
      *  RunRecord so a persisted batch can be joined back to its runs. */
     batchId?: string;
-  }): { runId: string; recordId?: string } {
+  }): { runId: string; recordId?: string; alreadyRunning?: boolean } {
     const captureArtifacts = params.captureArtifacts ?? false;
     const runHeadless = params.runHeadless ?? false;
     const runId = params.testId;
     if (runs.has(runId)) {
-      return { runId };
+      // No new run was started. Say so explicitly: `inFlight` still holds the
+      // IN-PROGRESS run's promise, so a caller that fell back to waitFor(runId)
+      // would silently await someone else's run — one started with different
+      // browser/headless/capture options and no batchId — and report its exit
+      // code as its own result.
+      return { runId, alreadyRunning: true };
     }
 
     const rec = testStore.get(params.testId);

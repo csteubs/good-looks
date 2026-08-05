@@ -36,9 +36,15 @@ function makeFake(opts: {
   names?: Record<string, string | null>;
   /** testIds that should report "not in flight" from waitFor */
   notInFlight?: string[];
+  /** testIds the runner declines to start because they're mid-run already.
+   *  Models the REAL runner: it returns `alreadyRunning` and leaves the
+   *  previous run's promise in its in-flight map, so waitFor still resolves —
+   *  which is exactly the trap the batch must not fall into. */
+  alreadyRunning?: string[];
 }) {
   const names = opts.names ?? {};
   const notInFlight = new Set(opts.notInFlight ?? []);
+  const busy = new Set(opts.alreadyRunning ?? []);
   const pending = new Map<string, (code: number) => void>();
   const events: { channel: string; payload: unknown }[] = [];
   /** every testId startRun was called with, in order */
@@ -57,12 +63,21 @@ function makeFake(opts: {
   const deps: BatchDeps = {
     getTestName: (id) => (id in names ? names[id] : `Test ${id}`),
     startRun: ({ testId }) => {
+      if (busy.has(testId)) {
+        // No new run started — and, like the real runner, a stale promise for
+        // the OTHER run is still resolvable via waitFor.
+        return { runId: testId, alreadyRunning: true };
+      }
       started.push(testId);
       live++;
       maxLive = Math.max(maxLive, live);
       return { runId: testId, recordId: `rec-${testId}` };
     },
     waitFor: (runId) => {
+      if (busy.has(runId)) {
+        // Deliberately NOT null: the trap is that this resolves.
+        return Promise.resolve(0);
+      }
       if (notInFlight.has(runId)) {
         live--;
         return null;
@@ -200,9 +215,13 @@ async function main(): Promise<void> {
     assert(done?.summary.ok === true, "skips alone don't make a batch fail");
   }
 
-  // ── A test already running is skipped, not counted as failed ──────
+  // ── A test already running is skipped, not attributed ─────────────
+  // Regression: the runner leaves the in-progress run's promise in its
+  // in-flight map, so a batch that fell back to waitFor would await a run it
+  // never started — one with different browser/headless options and no
+  // batchId — and report that run's exit code as this entry's result.
   {
-    const fake = makeFake({ notInFlight: ["busy"] });
+    const fake = makeFake({ alreadyRunning: ["busy"] });
     const batch = createBatchRunner(fake.deps);
     batch.start({ testIds: ["busy", "a"] });
     await tick();
@@ -211,7 +230,31 @@ async function main(): Promise<void> {
     const done = fake.doneEvent();
     const busy = done?.results.find((r) => r.testId === "busy");
     assert(busy?.status === "skipped", `an already-running test is skipped (got ${busy?.status})`);
+    assert(
+      busy?.exitCode === undefined,
+      "an already-running test does NOT adopt the other run's exit code",
+    );
+    assert(
+      busy?.runRecordId === undefined,
+      "an already-running test is not linked to a run it didn't start",
+    );
     assert(done?.summary.failed === 0, "an already-running test is NOT reported as a failure");
+    assert(done?.summary.skipped === 1, "it counts as skipped in the summary");
+  }
+
+  // The null-waitFor backstop (run finished between start and waitFor).
+  {
+    const fake = makeFake({ notInFlight: ["gone"] });
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["gone", "a"] });
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+    const done = fake.doneEvent();
+    assert(
+      done?.results.find((r) => r.testId === "gone")?.status === "skipped",
+      "a run that vanished before waitFor is skipped, not failed",
+    );
   }
 
   // ── stop(): kills the current run, skips the rest, keeps results ───

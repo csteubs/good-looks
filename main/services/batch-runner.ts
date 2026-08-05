@@ -62,7 +62,7 @@ export interface BatchDeps {
     runHeadless?: boolean;
     browser?: RunBrowser;
     batchId?: string;
-  }) => { runId: string; recordId?: string };
+  }) => { runId: string; recordId?: string; alreadyRunning?: boolean };
   /** Resolves with the run's exit code, or null if the run isn't in flight. */
   waitFor: (runId: string) => Promise<number> | null;
   stopRun: (runId: string) => void;
@@ -176,7 +176,7 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
 
           let exitCode = -1;
           try {
-            const { runId, recordId } = deps.startRun({
+            const { runId, recordId, alreadyRunning } = deps.startRun({
               testId: entry.testId,
               headed: !params.runHeadless,
               captureArtifacts: params.captureArtifacts,
@@ -187,10 +187,12 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
             // Recorded even if the run later fails, so a persisted batch can
             // link through to the run's log in Stats.
             if (recordId) entry.runRecordId = recordId;
-            const pending = deps.waitFor(runId);
-            // null means the run wasn't in flight — e.g. the same test was
-            // already running when the batch reached it. Treat as skipped
-            // rather than silently reporting a bogus failure.
+            // `alreadyRunning` means the runner declined to start a new run
+            // because this test was mid-run already. Awaiting it would attribute
+            // a run the batch didn't start (different options, no batchId) to
+            // this entry — so skip instead. The null-waitFor check below is the
+            // backstop for a run that finished between start and waitFor.
+            const pending = alreadyRunning ? null : deps.waitFor(runId);
             if (pending === null) {
               entry.status = "skipped";
               entry.note = "That test was already running";
