@@ -21,7 +21,8 @@
     "format": "node glaze.ts format",
     "check:auto-heal-wiring": "tsx main/services/__tests__/auto-heal-wiring.check.ts",
     "check:run-filters": "tsx main/services/__tests__/run-filters.check.ts",
-    "check:batch-runner": "esbuild main/services/__tests__/batch-runner.check.ts --bundle --platform=node --format=cjs --alias:@glaze/core/backend=./main/services/__tests__/glaze-backend-stub.ts --outfile=node_modules/.cache/batch-runner.check.cjs && node node_modules/.cache/batch-runner.check.cjs"
+    "check:batch-runner": "esbuild main/services/__tests__/batch-runner.check.ts --bundle --platform=node --format=cjs --alias:@glaze/core/backend=./main/services/__tests__/glaze-backend-stub.ts --outfile=node_modules/.cache/batch-runner.check.cjs && node node_modules/.cache/batch-runner.check.cjs",
+    "check:batch-history": "esbuild main/services/__tests__/batch-history.check.ts --bundle --platform=node --format=esm --alias:@glaze/core/backend=./main/services/__tests__/glaze-backend-stub.ts --outfile=node_modules/.cache/batch-history.check.mjs && node node_modules/.cache/batch-history.check.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",

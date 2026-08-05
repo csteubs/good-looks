@@ -15,6 +15,7 @@ import { getPreloadPath, getWindowUrl } from "./windows/window-paths.js";
 import { openSettingsWindow } from "./windows/settings-window.js";
 import { setMainWindow } from "./services/app-window.js";
 import { applyRetention } from "./services/retention.js";
+import { batchHistoryStore } from "./services/batch-history-store.js";
 
 // Get directory paths
 const __filename = fileURLToPath(import.meta.url);
@@ -32,6 +33,17 @@ registerHandlers();
   const swept = applyRetention();
   if (swept.removedRuns > 0) {
     logger.info("artifacts", "Applied retention at startup", swept);
+  }
+}
+
+// ── Batch history reconciliation ──────────────────────────────────────
+// A batch persisted as "running" means the app exited mid-batch; nothing is
+// running now, so clear the stale flag rather than showing a phantom
+// in-progress batch forever.
+{
+  const { reconciled } = batchHistoryStore.reconcileInterrupted();
+  if (reconciled > 0) {
+    logger.info("batch", "Reconciled interrupted batches at startup", { reconciled });
   }
 }
 

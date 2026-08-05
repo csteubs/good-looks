@@ -243,6 +243,9 @@ export interface RunRecord {
   /** Browser engine this run used. Absent on runs recorded before the picker
    *  existed — treated as chromium, which is what they all ran on. */
   runBrowser?: RunBrowser;
+  /** id of the batch this run belonged to, when it was part of one. Absent for
+   *  ordinary single runs — which is most of them. */
+  batchId?: string;
   /** Wall-clock ms this run spent taking screenshots, and how many it took.
    *  Only present on capture runs from the instrumented fixture onward — the
    *  raw inputs for the "what does capture cost?" readout in Stats. */
@@ -420,4 +423,57 @@ export interface RecorderState {
   /** set when the training window failed to open within the timeout; the
    *  renderer shows an error dialog prompting the user to try again. */
   loadFailed: boolean;
+}
+
+// ── Batch (suite) runs ────────────────────────────────────────────────
+// A batch drives ordinary runs sequentially. Each test still writes its own
+// RunRecord (joined back by `RunRecord.batchId`), so a batch is a grouping over
+// runs rather than a separate kind of history. Mirror kept in
+// renderer/lib/recorder-types.ts.
+
+export type BatchTestStatus = "pending" | "running" | "passed" | "failed" | "skipped";
+
+export interface BatchTestResult {
+  testId: string;
+  testName: string;
+  status: BatchTestStatus;
+  /** Playwright exit code, once finished. */
+  exitCode?: number;
+  startedAt?: number;
+  finishedAt?: number;
+  durationMs?: number;
+  /** why the test was skipped, or why it failed to start */
+  note?: string;
+  /** id of the RunRecord this test produced, when it actually ran. Lets a
+   *  persisted batch link through to the run's log in Stats. */
+  runRecordId?: string;
+}
+
+export interface BatchSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  /** something ran and nothing failed — an all-skipped batch is NOT ok */
+  ok: boolean;
+  durationMs: number;
+}
+
+export interface BatchState {
+  batchId: string;
+  running: boolean;
+  startedAt: number;
+  finishedAt?: number;
+  /** index in `results` currently executing, or -1 when idle */
+  currentIndex: number;
+  results: BatchTestResult[];
+  /** the user stopped the batch partway */
+  stopped: boolean;
+}
+
+/** A batch as persisted to batch-history.json. Same shape as the live state
+ *  plus its computed summary, so a restored batch renders identically to a
+ *  live one. `running: true` on a loaded record means the app exited mid-batch. */
+export interface BatchRecord extends BatchState {
+  summary: BatchSummary;
 }

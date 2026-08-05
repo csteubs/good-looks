@@ -93,6 +93,8 @@ export const runHistoryStore = {
       runHeadless?: boolean;
       /** browser engine the run used */
       runBrowser?: RunBrowser;
+      /** batch that drove this run, when part of one */
+      batchId?: string;
       /** measured screenshot cost for capture runs (see capture-overhead.ts) */
       captureOverheadMs?: number;
       shotCount?: number;
@@ -122,6 +124,8 @@ export const runHistoryStore = {
       runHeadless: run.runHeadless ?? false,
       // Runs predating the browser picker all ran on chromium.
       runBrowser: run.runBrowser ?? "chromium",
+      // Left undefined for ordinary single runs rather than written as null.
+      ...(run.batchId !== undefined ? { batchId: run.batchId } : {}),
       // Left undefined (not 0) for non-capture runs so the summarizer can tell
       // "no capture" apart from "capture that took no measurable time".
       ...(run.captureOverheadMs !== undefined ? { captureOverheadMs: run.captureOverheadMs } : {}),

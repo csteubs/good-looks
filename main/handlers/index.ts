@@ -11,6 +11,7 @@ import { appHandlers } from "./app.js";
 import { getSettingsWindow, openSettingsWindow } from "../windows/settings-window.js";
 import { recorderService } from "../services/recorder-service.js";
 import { batchRunner } from "../services/batch-runner.js";
+import { batchHistoryStore } from "../services/batch-history-store.js";
 import { playwrightRunner } from "../services/playwright-runner.js";
 import { runHistoryStore } from "../services/run-history-store.js";
 import { artifactStore } from "../services/artifact-store.js";
@@ -456,6 +457,15 @@ export function registerHandlers(): void {
     batchRunner.stop();
   });
   ipcMain.handle("batch:status", async () => batchRunner.getState());
+  // Persisted batch history — survives restarts, joined to runs by RunRecord.batchId.
+  ipcMain.handle("batch:list", async () => batchHistoryStore.list());
+  ipcMain.handle("batch:get", async (_e, params: { batchId: string }) =>
+    batchHistoryStore.get(params.batchId),
+  );
+  ipcMain.handle("batch:delete", async (_e, params: { batchId: string }) =>
+    batchHistoryStore.remove(params.batchId),
+  );
+  ipcMain.handle("batch:clearHistory", async () => batchHistoryStore.clear());
 
   ipcMain.handle("runner:stop", async (_e, params: { runId: string }) => {
     playwrightRunner.stop(params.runId);

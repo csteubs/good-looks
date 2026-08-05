@@ -17,6 +17,7 @@
 //   npm run check:batch-runner
 
 import { createBatchRunner, summarize, type BatchDeps, type BatchState } from "../batch-runner.js";
+import type { BatchSummary } from "../../recorder/types.js";
 
 let failures = 0;
 
@@ -46,6 +47,9 @@ function makeFake(opts: {
   let live = 0;
   let maxLive = 0;
   const stopped: string[] = [];
+  /** every write-through persist, in order — the last one is what a restart
+   *  would load back. */
+  const persisted: (BatchState & { summary: BatchSummary })[] = [];
   let clock = 1000;
 
   const deps: BatchDeps = {
@@ -54,7 +58,7 @@ function makeFake(opts: {
       started.push(testId);
       live++;
       maxLive = Math.max(maxLive, live);
-      return { runId: testId };
+      return { runId: testId, recordId: `rec-${testId}` };
     },
     waitFor: (runId) => {
       if (notInFlight.has(runId)) {
@@ -76,6 +80,11 @@ function makeFake(opts: {
     },
     emit: (channel, payload) => events.push({ channel, payload }),
     now: () => (clock += 10),
+    persist: (record) => {
+      // Deep-ish copy: the runner mutates its result entries in place, so
+      // storing the live objects would make every snapshot look identical.
+      persisted.push({ ...record, results: record.results.map((r) => ({ ...r })) });
+    },
   };
 
   return {
@@ -83,6 +92,7 @@ function makeFake(opts: {
     events,
     started,
     stopped,
+    persisted,
     get maxLive() {
       return maxLive;
     },
@@ -262,6 +272,66 @@ async function main(): Promise<void> {
     const s = batch.getState();
     assert(s?.running === false, "getState reports the finished batch");
     assert(s?.summary.passed === 1, "a finished batch's results remain readable");
+  }
+
+  // ── Write-through persistence ─────────────────────────────────────
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"] });
+    await tick();
+
+    // The point of write-through: a crash here must not lose the batch.
+    assert(fake.persisted.length > 0, "persists before the batch finishes");
+    const early = fake.persisted[fake.persisted.length - 1];
+    assert(early.running === true, "a mid-batch snapshot is marked running");
+    assert(
+      early.results.find((r) => r.testId === "a")?.status === "running",
+      "a mid-batch snapshot records the in-flight test",
+    );
+
+    fake.finish("a", 0);
+    await tick();
+    const afterFirst = fake.persisted[fake.persisted.length - 1];
+    assert(
+      afterFirst.results.find((r) => r.testId === "a")?.status === "passed",
+      "a finished test is persisted as soon as it finishes",
+    );
+    assert(
+      afterFirst.results.find((r) => r.testId === "b")?.status === "running",
+      "the next test's start is persisted too",
+    );
+
+    fake.finish("b", 1);
+    await tick();
+    const final = fake.persisted[fake.persisted.length - 1];
+    assert(final.running === false, "the final snapshot is not running");
+    assert(final.summary.failed === 1, "the final snapshot carries the summary");
+    assert(
+      final.batchId === batch.getState()?.batchId,
+      "persisted snapshots keep the batch id (so save() upserts one record)",
+    );
+    // Every snapshot is the same batch — the store upserts by id rather than
+    // accumulating one record per transition.
+    assert(
+      new Set(fake.persisted.map((r) => r.batchId)).size === 1,
+      "all snapshots of one batch share one id",
+    );
+  }
+
+  // ── Runs are linked back to their RunRecord ───────────────────────
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a"] });
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+    const done = fake.doneEvent();
+    assert(
+      done?.results[0].runRecordId === "rec-a",
+      "a run's RunRecord id is recorded on the batch result",
+    );
   }
 
   // ── summarize() edge case: all skipped is not a pass ───────────────

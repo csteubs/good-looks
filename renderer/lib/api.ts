@@ -15,6 +15,7 @@ import type {
   BaselineEntry,
   CaptureOverheadSummary,
   RetentionResult,
+  BatchRecord,
   BatchState,
   RunBrowser,
   RunComparison,
@@ -142,6 +143,10 @@ export const api = {
       }),
     stop: () => ipc().invoke<void>("batch:stop"),
     status: () => ipc().invoke<BatchState | null>("batch:status"),
+    list: () => ipc().invoke<BatchRecord[]>("batch:list"),
+    get: (batchId: string) => ipc().invoke<BatchRecord | null>("batch:get", { batchId }),
+    remove: (batchId: string) => ipc().invoke<{ removed: number }>("batch:delete", { batchId }),
+    clearHistory: () => ipc().invoke<{ removed: number }>("batch:clearHistory"),
   },
   runner: {
     run: (

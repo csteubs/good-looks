@@ -32,11 +32,21 @@ import { Check, CircleDashed, Play, Square, X, SkipForward, Loader } from "lucid
 import { api } from "../lib/api";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import type {
+  BatchRecord,
   BatchState,
   BatchTestResult,
   BatchTestStatus,
   RunBrowser,
 } from "../lib/recorder-types";
+
+function fmtDateTime(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
 function fmtDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -121,6 +131,8 @@ export function BatchView() {
   }, [optionsInited, settingsQuery.data]);
 
   const [batch, setBatch] = React.useState<BatchState | null>(null);
+  // Persisted batch history — survives restarts, unlike the live state above.
+  const historyQuery = useQuery({ queryKey: ["batch-history"], queryFn: api.batch.list });
 
   // Pick up a batch already running when this view mounts (the run continues on
   // the backend while the user is off in another view).
@@ -141,6 +153,7 @@ export function BatchView() {
       // Each test wrote its own RunRecord, so Stats/history are now stale.
       qc.invalidateQueries({ queryKey: ["runs"] });
       qc.invalidateQueries({ queryKey: ["captureOverhead"] });
+      qc.invalidateQueries({ queryKey: ["batch-history"] });
       if (state.stopped) {
         toast.info("Batch stopped.");
       } else if (state.summary.failed > 0) {
@@ -157,6 +170,10 @@ export function BatchView() {
     };
   }, [qc]);
 
+  const history = React.useMemo(() => historyQuery.data ?? [], [historyQuery.data]);
+  // Nothing live → show the most recent persisted batch, so a restart doesn't
+  // present a blank view as though the batch never happened.
+  const shown: BatchState | null = batch ?? history[0] ?? null;
   const running = batch?.running ?? false;
   const selectedIds = tests.filter((t) => selected.has(t.id)).map((t) => t.id);
 
@@ -187,11 +204,11 @@ export function BatchView() {
   // while the batch is mid-flight.
   const resultFor = React.useMemo(() => {
     const map = new Map<string, BatchTestResult>();
-    for (const r of batch?.results ?? []) map.set(r.testId, r);
+    for (const r of shown?.results ?? []) map.set(r.testId, r);
     return map;
-  }, [batch]);
+  }, [shown]);
 
-  const summary = batch?.summary;
+  const summary = shown?.summary;
 
   return (
     <div className="flex h-full flex-col">
@@ -201,7 +218,7 @@ export function BatchView() {
           <ToolbarDescription>
             {running
               ? `Running ${(batch?.currentIndex ?? 0) + 1} of ${batch?.results.length ?? 0}…`
-              : summary && batch
+              : summary && shown
                 ? `${summary.passed} passed · ${summary.failed} failed${
                     summary.skipped > 0 ? ` · ${summary.skipped} skipped` : ""
                   } · ${fmtDuration(summary.durationMs)}`
@@ -337,20 +354,85 @@ export function BatchView() {
                 })}
               </div>
 
-              {batch && !running && summary ? (
+              {shown && !running && summary ? (
                 <div className="rounded-lg border border-token-border bg-token-surface-raised p-4">
                   <Text variant="small" className="mb-1 block font-medium">
-                    {batch.stopped
+                    {shown.stopped
                       ? "Batch stopped"
                       : summary.failed > 0
                         ? "Batch finished with failures"
                         : "Batch passed"}
                   </Text>
                   <Text variant="small" color="secondary">
-                    {summary.passed} passed · {summary.failed} failed · {summary.skipped} skipped ·{" "}
-                    {fmtDuration(summary.durationMs)} total. Each test also appears in Stats as its
-                    own run.
+                    {fmtDateTime(shown.startedAt)} · {summary.passed} passed · {summary.failed}{" "}
+                    failed · {summary.skipped} skipped · {fmtDuration(summary.durationMs)} total.
+                    Each test also appears in Stats as its own run.
                   </Text>
+                </div>
+              ) : null}
+
+              {history.length > 0 ? (
+                <div>
+                  <div className="mb-2 flex items-center gap-2">
+                    <Text variant="small" className="font-medium">
+                      Previous batches
+                    </Text>
+                    <Text variant="small" color="tertiary">
+                      {history.length}
+                    </Text>
+                    <Button
+                      variant="glass"
+                      size="small"
+                      className="ml-auto"
+                      disabled={running}
+                      onClick={async () => {
+                        try {
+                          const res = await api.batch.clearHistory();
+                          setBatch(null);
+                          qc.invalidateQueries({ queryKey: ["batch-history"] });
+                          toast.success(
+                            res.removed === 1
+                              ? "Cleared 1 batch."
+                              : `Cleared ${res.removed} batches.`,
+                          );
+                        } catch (err) {
+                          toast.error(
+                            err instanceof Error ? err.message : "Failed to clear batch history.",
+                          );
+                        }
+                      }}
+                    >
+                      Clear history
+                    </Button>
+                  </div>
+                  <div className="rounded-lg border border-token-border bg-token-surface-raised">
+                    {history.map((b: BatchRecord) => (
+                      <button
+                        key={b.batchId}
+                        type="button"
+                        disabled={running}
+                        onClick={() => setBatch(b)}
+                        className={`flex w-full items-center gap-3 border-b border-token-border px-3 py-2 text-left last:border-b-0 hover:bg-token-hover disabled:opacity-50 ${
+                          b.batchId === shown?.batchId ? "bg-token-hover" : ""
+                        }`}
+                      >
+                        <Text variant="small" color="secondary" className="w-32 shrink-0">
+                          {fmtDateTime(b.startedAt)}
+                        </Text>
+                        <Text variant="small" className="min-w-0 flex-1 truncate">
+                          {b.summary.total} {b.summary.total === 1 ? "test" : "tests"} ·{" "}
+                          {fmtDuration(b.summary.durationMs)}
+                        </Text>
+                        {b.stopped ? (
+                          <Badge color="secondary">Stopped</Badge>
+                        ) : b.summary.failed > 0 ? (
+                          <Badge color="red">{b.summary.failed} failed</Badge>
+                        ) : (
+                          <Badge color="green">{b.summary.passed} passed</Badge>
+                        )}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               ) : null}
             </>

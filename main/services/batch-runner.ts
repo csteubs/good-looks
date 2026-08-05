@@ -24,45 +24,24 @@ import { logger } from "@glaze/core/backend";
 import { sendToMain } from "./app-window.js";
 import { playwrightRunner } from "./playwright-runner.js";
 import { testStore } from "./test-store.js";
-import type { RunBrowser } from "../recorder/types.js";
+import { batchHistoryStore } from "./batch-history-store.js";
+import type {
+  BatchState,
+  BatchSummary,
+  BatchTestStatus,
+  RunBrowser,
+} from "../recorder/types.js";
 
-/** Outcome of one test within a batch. */
-export type BatchTestStatus = "pending" | "running" | "passed" | "failed" | "skipped";
-
-export interface BatchTestResult {
-  testId: string;
-  testName: string;
-  status: BatchTestStatus;
-  /** Playwright exit code, once finished. */
-  exitCode?: number;
-  startedAt?: number;
-  finishedAt?: number;
-  durationMs?: number;
-  /** why the test was skipped (missing record, or the batch was stopped) */
-  note?: string;
-}
-
-export interface BatchState {
-  batchId: string;
-  running: boolean;
-  startedAt: number;
-  finishedAt?: number;
-  /** index in `results` currently executing, or -1 when not running */
-  currentIndex: number;
-  results: BatchTestResult[];
-  /** set when the user stopped the batch partway */
-  stopped: boolean;
-}
-
-export interface BatchSummary {
-  total: number;
-  passed: number;
-  failed: number;
-  skipped: number;
-  /** every test that ran finished with exit code 0 */
-  ok: boolean;
-  durationMs: number;
-}
+// The batch data model is canonical in ../recorder/types.js (shared with the
+// history store and mirrored in the renderer); re-exported here so callers that
+// already import from this module keep working.
+export type {
+  BatchTestStatus,
+  BatchTestResult,
+  BatchSummary,
+  BatchState,
+  BatchRecord,
+} from "../recorder/types.js";
 
 export interface BatchRunParams {
   testIds: string[];
@@ -81,12 +60,16 @@ export interface BatchDeps {
     captureArtifacts?: boolean;
     runHeadless?: boolean;
     browser?: RunBrowser;
-  }) => { runId: string };
+    batchId?: string;
+  }) => { runId: string; recordId?: string };
   /** Resolves with the run's exit code, or null if the run isn't in flight. */
   waitFor: (runId: string) => Promise<number> | null;
   stopRun: (runId: string) => void;
   emit: (channel: string, payload: unknown) => void;
   now: () => number;
+  /** Write-through persistence, called on every transition so a crash
+   *  mid-batch still leaves the results collected so far. */
+  persist: (record: BatchState & { summary: BatchSummary }) => void;
 }
 
 const realDeps: BatchDeps = {
@@ -96,6 +79,9 @@ const realDeps: BatchDeps = {
   stopRun: (runId) => playwrightRunner.stop(runId),
   emit: (channel, payload) => sendToMain(channel, payload),
   now: () => Date.now(),
+  persist: (record) => {
+    batchHistoryStore.save(record);
+  },
 };
 
 /** `now` is passed in rather than read from a clock so a mid-run summary can
@@ -125,10 +111,13 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
 
   const emitProgress = (): void => {
     if (!state) return;
-    deps.emit("batch:progress", {
-      ...snapshot(),
-      summary: summarize(state, deps.now()),
-    });
+    const payload = { ...snapshot(), summary: summarize(state, deps.now()) } as BatchState & {
+      summary: BatchSummary;
+    };
+    deps.emit("batch:progress", payload);
+    // Write-through: the same payload the UI just got is what lands on disk, so
+    // a batch interrupted by a crash reloads exactly as far as it got.
+    deps.persist(payload);
   };
 
   return {
@@ -181,13 +170,17 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
 
           let exitCode = -1;
           try {
-            const { runId } = deps.startRun({
+            const { runId, recordId } = deps.startRun({
               testId: entry.testId,
               headed: !params.runHeadless,
               captureArtifacts: params.captureArtifacts,
               runHeadless: params.runHeadless,
               browser: params.browser,
+              batchId,
             });
+            // Recorded even if the run later fails, so a persisted batch can
+            // link through to the run's log in Stats.
+            if (recordId) entry.runRecordId = recordId;
             const pending = deps.waitFor(runId);
             // null means the run wasn't in flight — e.g. the same test was
             // already running when the batch reached it. Treat as skipped
@@ -229,7 +222,9 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
         s.stopped = cancelled;
         const summary = summarize(s, s.finishedAt);
         logger.info("batch", "Batch run finished", { batchId, ...summary });
-        deps.emit("batch:done", { ...snapshot(), summary });
+        const donePayload = { ...snapshot(), summary } as BatchState & { summary: BatchSummary };
+        deps.emit("batch:done", donePayload);
+        deps.persist(donePayload);
       })();
 
       return { batchId, alreadyRunning: false };

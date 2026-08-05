@@ -154,6 +154,8 @@ export interface RunRecord {
   /** browser engine this run used; absent on runs predating the picker
    *  (all of which ran on chromium). */
   runBrowser?: RunBrowser;
+  /** id of the batch this run belonged to, when it was part of one. */
+  batchId?: string;
   /** ms spent taking screenshots, and how many — capture runs only. */
   captureOverheadMs?: number;
   shotCount?: number;
@@ -459,6 +461,8 @@ export interface BatchTestResult {
   durationMs?: number;
   /** why a test was skipped, or why it failed to start */
   note?: string;
+  /** id of the RunRecord this test produced, for linking to its log */
+  runRecordId?: string;
 }
 
 export interface BatchSummary {
@@ -482,3 +486,7 @@ export interface BatchState {
   stopped: boolean;
   summary: BatchSummary;
 }
+
+/** A batch as persisted to batch-history.json — same shape as the live state,
+ *  so a restored batch renders identically to a running one. */
+export type BatchRecord = BatchState;

@@ -351,7 +351,10 @@ export const playwrightRunner = {
     /** Re-execute the steps a PAST run recorded, instead of the test's current
      *  script. The new run is tagged with this id so the two can be compared. */
     replayOfRunId?: string;
-  }): { runId: string } {
+    /** id of the batch driving this run, when it's part of one. Recorded on the
+     *  RunRecord so a persisted batch can be joined back to its runs. */
+    batchId?: string;
+  }): { runId: string; recordId?: string } {
     const captureArtifacts = params.captureArtifacts ?? false;
     const runHeadless = params.runHeadless ?? false;
     const runId = params.testId;
@@ -579,6 +582,7 @@ export const playwrightRunner = {
               captureArtifacts,
               runHeadless,
               runBrowser,
+              batchId: params.batchId,
               captureOverheadMs,
               shotCount,
               replayOfRunId,
@@ -616,7 +620,7 @@ export const playwrightRunner = {
       if (inFlight.get(runId) === done) inFlight.delete(runId);
     });
 
-    return { runId };
+    return { runId, recordId };
   },
 
   /** Resolve when the given run finishes, with its Playwright exit code
