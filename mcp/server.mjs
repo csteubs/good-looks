@@ -18,11 +18,16 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import { readJsonFile, resolveDataDir, writeJsonFile } from "./glaze-data.mjs";
+import { selectTests, summarizeResults, UNTAGGED } from "./select-tests.mjs";
 
 const MCP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(MCP_DIR, "..");
 const RUN_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_RUN_RECORDS = 1000;
+const MAX_BATCH_RECORDS = 50; // mirrors main/services/batch-history-store.ts
+const RUN_BROWSERS = ["chromium", "firefox", "webkit"];
+/** Mirrors SLOW_MO_MS in main/services/playwright-runner.ts. */
+const SLOW_MO_MS = { fast: 0, medium: 400, slow: 1200 };
 const OUTPUT_TAIL_CHARS = 4000;
 const LOG_TAIL_CHARS = 20000;
 
@@ -41,6 +46,19 @@ function listRuns() {
   return readJsonFile(dataDir, "recorder/run-history.json", []);
 }
 
+function listBatches() {
+  return readJsonFile(dataDir, "recorder/batch-history.json", []);
+}
+
+/** Persist a batch in the SAME file and shape the app's batch-history-store
+ *  uses, so a batch run from an MCP client shows up in the app's Batch view. */
+function saveBatchRecord(record) {
+  const all = listBatches().filter((b) => b.batchId !== record.batchId);
+  all.push(record);
+  all.sort((a, b) => b.startedAt - a.startedAt);
+  writeJsonFile(dataDir, "recorder/batch-history.json", all.slice(0, MAX_BATCH_RECORDS));
+}
+
 function findPlaywrightCli() {
   const nodeModules = path.join(PROJECT_ROOT, "node_modules");
   const candidates = [
@@ -51,10 +69,14 @@ function findPlaywrightCli() {
   return cliPath ? { cliPath, nodeModules } : null;
 }
 
-function isChromiumInstalled() {
+/** Playwright unpacks each engine as `<engine>-<revision>`. Match the trailing
+ *  dash: Chromium also ships a `chromium_headless_shell-*` directory, which is
+ *  not a usable browser, so a bare startsWith("chromium") reports a
+ *  shell-only install as complete and the run then fails at launch. */
+function isBrowserInstalled(browser = "chromium") {
   const dir = path.join(dataDir, "recorder", "browsers");
   try {
-    return fs.existsSync(dir) && fs.readdirSync(dir).some((n) => n.startsWith("chromium"));
+    return fs.existsSync(dir) && fs.readdirSync(dir).some((n) => n.startsWith(`${browser}-`));
   } catch {
     return false;
   }
@@ -107,6 +129,89 @@ function saveRunRecord(record, logText) {
   writeJsonFile(dataDir, "recorder/run-history.json", runs);
 }
 
+/**
+ * Run one recorded test to completion and persist its RunRecord.
+ * Shared by run_test and run_batch so the two can't drift in how they invoke
+ * Playwright or what they record.
+ *
+ * @returns {{ runId, status, exitCode, startedAt, finishedAt, durationMs, output }}
+ */
+async function executeTest(test, { playwright, browser, batchId, timeoutMs }) {
+  const scriptsDir = path.dirname(test.scriptPath);
+  ensureModuleResolution(scriptsDir, playwright.nodeModules);
+  ensurePlaywrightConfig(scriptsDir);
+
+  const browsersPath = path.join(dataDir, "recorder", "browsers");
+  const env = {
+    ...process.env,
+    PLAYWRIGHT_BROWSERS_PATH: browsersPath,
+    NODE_PATH: playwright.nodeModules,
+    PW_SLOWMO_MS: String(SLOW_MO_MS[test.speed ?? "fast"] ?? 0),
+  };
+  const specFile = path.basename(test.scriptPath);
+
+  const startedAt = Date.now();
+  const { exitCode, output } = await new Promise((resolve) => {
+    const child = spawn(
+      process.execPath,
+      [playwright.cliPath, "test", specFile, `--browser=${browser}`],
+      { cwd: scriptsDir, env },
+    );
+    let out = "";
+    const timer = setTimeout(() => {
+      out += `\n[Timed out after ${Math.round(timeoutMs / 60000)} minutes — stopping.]\n`;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.stdout.on("data", (d) => {
+      out += d.toString();
+    });
+    child.stderr.on("data", (d) => {
+      out += d.toString();
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve({ exitCode: code ?? 1, output: out });
+    });
+  });
+  const finishedAt = Date.now();
+  const status = exitCode === 0 ? "passed" : "failed";
+  const runId = randomUUID();
+  const logFile = path.join(dataDir, "recorder", "logs", `${runId}.log`);
+
+  saveRunRecord(
+    {
+      id: runId,
+      testId: test.id,
+      testName: test.name,
+      url: test.url,
+      status,
+      exitCode,
+      startedAt,
+      finishedAt,
+      durationMs: Math.max(0, finishedAt - startedAt),
+      logFile,
+      logBytes: Buffer.byteLength(output, "utf-8"),
+      captureArtifacts: false,
+      // These runs are always headless — there's no user at a screen watching
+      // an MCP-driven run.
+      runHeadless: true,
+      runBrowser: browser,
+      ...(batchId ? { batchId } : {}),
+    },
+    output,
+  );
+
+  return {
+    runId,
+    status,
+    exitCode,
+    startedAt,
+    finishedAt,
+    durationMs: Math.max(0, finishedAt - startedAt),
+    output,
+  };
+}
+
 const server = new McpServer({ name: "good-looks", version: "1.0.0" });
 
 server.registerTool(
@@ -127,7 +232,9 @@ server.registerTool(
         name: t.name,
         url: t.url,
         stepCount: Array.isArray(t.steps) ? t.steps.length : 0,
+        tags: t.tags ?? [],
         speed: t.speed ?? "fast",
+        runBrowser: t.runBrowser ?? "chromium",
         scriptEdited: Boolean(t.scriptEdited),
         createdAt: t.createdAt,
         updatedAt: t.updatedAt,
@@ -238,13 +345,92 @@ server.registerTool(
   {
     title: "Run a test",
     description:
-      "Run a recorded test locally with the bundled Playwright and report pass/fail. Requires Chromium to already be installed (open the test once in the app and run it there first if this fails with a missing-browser error). Records the run in the app's run history so it shows up in Stats too.",
-    inputSchema: { testId: z.string() },
+      "Run one recorded test locally with the bundled Playwright and report pass/fail. Runs headless. The chosen browser must already be installed (run the test once from the app, which installs it on first use). Records the run in the app's run history so it shows up in Stats too.",
+    inputSchema: {
+      testId: z.string(),
+      browser: z.enum(["chromium", "firefox", "webkit"]).optional(),
+    },
   },
-  async ({ testId }) => {
+  async ({ testId, browser }) => {
     const test = listTests().find((t) => t.id === testId);
     if (!test) {
       return { content: [{ type: "text", text: `No test found with id ${testId}` }], isError: true };
+    }
+    const engine = browser ?? test.runBrowser ?? "chromium";
+
+    const playwright = findPlaywrightCli();
+    if (!playwright) {
+      return {
+        content: [{ type: "text", text: `Could not find @playwright/test under ${PROJECT_ROOT}/node_modules.` }],
+        isError: true,
+      };
+    }
+    if (!isBrowserInstalled(engine)) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${engine} isn't installed yet. Open this test in the app and run it once from the UI on ${engine} (it installs the browser on first run), then retry.`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const result = await executeTest(test, {
+      playwright,
+      browser: engine,
+      timeoutMs: RUN_TIMEOUT_MS,
+    });
+    const outputTail =
+      result.output.length > OUTPUT_TAIL_CHARS ? result.output.slice(-OUTPUT_TAIL_CHARS) : result.output;
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              runId: result.runId,
+              status: result.status,
+              exitCode: result.exitCode,
+              browser: engine,
+              durationMs: result.durationMs,
+              outputTail,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+);
+
+server.registerTool(
+  "run_batch",
+  {
+    title: "Run many tests",
+    description:
+      `Run several recorded tests back to back and report an aggregate pass/fail summary. Select them by explicit testIds, by tag (see list_tests; pass "${UNTAGGED}" for tests with no tags), or omit both to run every visible test. Tests run one at a time, headless. A failing test does not stop the batch. Each test is recorded in the app's run history, and the batch itself appears in the app's Batch view.`,
+    inputSchema: {
+      testIds: z.array(z.string()).optional(),
+      tag: z.string().optional(),
+      browser: z.enum(["chromium", "firefox", "webkit"]).optional(),
+    },
+  },
+  async ({ testIds, tag, browser }) => {
+    const engine = browser ?? "chromium";
+    if (!RUN_BROWSERS.includes(engine)) {
+      return { content: [{ type: "text", text: `Unknown browser: ${engine}` }], isError: true };
+    }
+
+    const { tests: selected, missing } = selectTests(listTests(), { testIds, tag });
+    if (selected.length === 0) {
+      const how = tag ? `tag "${tag}"` : testIds ? "those ids" : "the library";
+      return {
+        content: [{ type: "text", text: `No tests matched ${how}. Nothing to run.` }],
+        isError: true,
+      };
     }
 
     const playwright = findPlaywrightCli();
@@ -254,84 +440,102 @@ server.registerTool(
         isError: true,
       };
     }
-    if (!isChromiumInstalled()) {
+    if (!isBrowserInstalled(engine)) {
       return {
         content: [
           {
             type: "text",
-            text: "Chromium isn't installed yet. Open this test in the app and run it once from the UI (it installs the browser on first run), then retry.",
+            text: `${engine} isn't installed yet. Run a test once from the app on ${engine} (it installs the browser on first run), then retry.`,
           },
         ],
         isError: true,
       };
     }
 
-    const scriptsDir = path.dirname(test.scriptPath);
-    ensureModuleResolution(scriptsDir, playwright.nodeModules);
-    ensurePlaywrightConfig(scriptsDir);
-
-    const browsersPath = path.join(dataDir, "recorder", "browsers");
-    const env = { ...process.env, PLAYWRIGHT_BROWSERS_PATH: browsersPath, NODE_PATH: playwright.nodeModules };
-    const specFile = path.basename(test.scriptPath);
-
+    const batchId = randomUUID();
     const startedAt = Date.now();
-    const { exitCode, output } = await new Promise((resolve) => {
-      const child = spawn(process.execPath, [playwright.cliPath, "test", specFile], {
-        cwd: scriptsDir,
-        env,
-      });
-      let out = "";
-      const timer = setTimeout(() => {
-        out += "\n[Timed out after 5 minutes — stopping.]\n";
-        child.kill("SIGKILL");
-      }, RUN_TIMEOUT_MS);
-      child.stdout.on("data", (d) => {
-        out += d.toString();
-      });
-      child.stderr.on("data", (d) => {
-        out += d.toString();
-      });
-      child.on("close", (code) => {
-        clearTimeout(timer);
-        resolve({ exitCode: code ?? 1, output: out });
-      });
-    });
-    const finishedAt = Date.now();
-    const status = exitCode === 0 ? "passed" : "failed";
-    const id = randomUUID();
-    const logFile = path.join(dataDir, "recorder", "logs", `${id}.log`);
+    const results = selected.map((t) => ({
+      testId: t.id,
+      testName: t.name,
+      status: "pending",
+    }));
 
-    saveRunRecord(
-      {
-        id,
-        testId: test.id,
-        testName: test.name,
-        url: test.url,
-        status,
-        exitCode,
+    // Write-through, matching the app: a crash mid-batch still leaves the
+    // results collected so far, and the app's Batch view can watch progress.
+    const persist = (running, index) => {
+      saveBatchRecord({
+        batchId,
+        running,
         startedAt,
-        finishedAt,
-        durationMs: Math.max(0, finishedAt - startedAt),
-        logFile,
-        logBytes: Buffer.byteLength(output, "utf-8"),
-        captureArtifacts: false,
-        runHeadless: test.runHeadless ?? false,
-      },
-      output,
-    );
+        ...(running ? {} : { finishedAt: Date.now() }),
+        currentIndex: index,
+        results,
+        stopped: false,
+        summary: summarizeResults(results, Date.now() - startedAt),
+      });
+    };
+    persist(true, -1);
 
-    const outputTail = output.length > OUTPUT_TAIL_CHARS ? output.slice(-OUTPUT_TAIL_CHARS) : output;
+    for (let i = 0; i < selected.length; i++) {
+      const test = selected[i];
+      results[i].status = "running";
+      results[i].startedAt = Date.now();
+      persist(true, i);
+
+      // One test failing must not abort the batch — that's the whole point of
+      // running a suite.
+      try {
+        const r = await executeTest(test, {
+          playwright,
+          browser: engine,
+          batchId,
+          timeoutMs: RUN_TIMEOUT_MS,
+        });
+        results[i].status = r.status;
+        results[i].exitCode = r.exitCode;
+        results[i].runRecordId = r.runId;
+        results[i].finishedAt = r.finishedAt;
+        results[i].durationMs = r.durationMs;
+      } catch (err) {
+        results[i].status = "failed";
+        results[i].note = String(err);
+        results[i].finishedAt = Date.now();
+        results[i].durationMs = Math.max(0, results[i].finishedAt - (results[i].startedAt ?? results[i].finishedAt));
+      }
+      persist(true, i);
+    }
+
+    const finishedAt = Date.now();
+    const summary = summarizeResults(results, finishedAt - startedAt);
+    persist(false, -1);
+
     return {
       content: [
         {
           type: "text",
           text: JSON.stringify(
-            { runId: id, status, exitCode, durationMs: finishedAt - startedAt, outputTail },
+            {
+              batchId,
+              browser: engine,
+              ...(missing.length > 0 ? { missingTestIds: missing } : {}),
+              summary,
+              results: results.map((r) => ({
+                testId: r.testId,
+                testName: r.testName,
+                status: r.status,
+                durationMs: r.durationMs,
+                runId: r.runRecordId,
+                ...(r.note ? { note: r.note } : {}),
+              })),
+            },
             null,
             2,
           ),
         },
       ],
+      // Surface a failing suite as an error so an agent doesn't read a red
+      // batch as success.
+      ...(summary.failed > 0 ? { isError: true } : {}),
     };
   },
 );
