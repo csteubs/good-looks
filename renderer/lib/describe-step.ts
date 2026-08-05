@@ -154,7 +154,11 @@ export function describeStep(step: Step): string {
     case "press":
       return target
         ? target + ".press(" + q(step.value ?? "") + ")"
-        : "keyboard.press(" + q(step.value ?? "") + ")";
+        // "page." prefix matters: the generated spec emits
+        // await page.keyboard.press(...), and the backend's describeStep
+        // (script-generator.ts) says so too. Dropping it made the trainer's
+        // step list disagree with run logs for the same step.
+        : "page.keyboard.press(" + q(step.value ?? "") + ")";
     case "wait":
       if (typeof step.waitMs === "number") return "page.waitForTimeout(" + step.waitMs + ")";
       return target ? target + ".waitFor()" : "wait";

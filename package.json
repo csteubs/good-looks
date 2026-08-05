@@ -30,7 +30,9 @@
     "check:batch-order": "tsx main/services/__tests__/batch-order.check.ts",
     "check:paginate": "tsx main/services/__tests__/paginate.check.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:checks": "npm run check:spec-parser && npm run check:visual-pipeline && npm run check:ai-debug-scroll && npm run check:capture-overhead && npm run check:retention && npm run check:auto-heal-wiring && npm run check:run-filters && npm run check:batch-runner && npm run check:batch-history && npm run check:test-tags && npm run check:mcp-select && npm run check:alerts && npm run check:cookie-steps && npm run check:batch-order && npm run check:paginate",
+    "test:all": "npm run test:checks && npm run test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
