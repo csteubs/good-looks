@@ -11,15 +11,23 @@ export type LlmChatStatus = "idle" | "streaming" | "done" | "error" | "cancelled
 
 export function useLlmChat() {
   const [content, setContent] = React.useState("");
+  // A reasoning model's thinking, accumulated SEPARATELY from the answer.
+  // Merging them would present a model's scratchpad as its conclusion — and
+  // the "Apply fix" path downstream reads the answer as a diff.
+  const [reasoning, setReasoning] = React.useState("");
   const [status, setStatus] = React.useState<LlmChatStatus>("idle");
   const [error, setError] = React.useState<string | null>(null);
   const requestIdRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
-    const offChunk = api.on<{ requestId: string; delta: string }>("llm:chunk", ({ requestId, delta }) => {
-      if (requestId !== requestIdRef.current) return;
-      setContent((c) => c + delta);
-    });
+    const offChunk = api.on<{ requestId: string; delta: string; reasoning?: boolean }>(
+      "llm:chunk",
+      ({ requestId, delta, reasoning: isReasoning }) => {
+        if (requestId !== requestIdRef.current) return;
+        if (isReasoning) setReasoning((r) => r + delta);
+        else setContent((c) => c + delta);
+      },
+    );
     const offDone = api.on<{ requestId: string; cancelled?: boolean }>("llm:done", ({ requestId, cancelled }) => {
       if (requestId !== requestIdRef.current) return;
       setStatus(cancelled ? "cancelled" : "done");
@@ -43,6 +51,7 @@ export function useLlmChat() {
   const start = React.useCallback(
     async (messages: LlmMessage[], options?: { model?: string; provider?: LlmProvider; temperature?: number }) => {
       setContent("");
+      setReasoning("");
       setError(null);
       setStatus("streaming");
       try {
@@ -60,5 +69,5 @@ export function useLlmChat() {
     if (requestIdRef.current) void api.llm.cancel(requestIdRef.current);
   }, []);
 
-  return { content, status, error, start, stop };
+  return { content, reasoning, status, error, start, stop };
 }

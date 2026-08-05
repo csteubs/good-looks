@@ -187,6 +187,10 @@ async function runChat(
     // reader and branch on extraction.
     const decoder = new TextDecoder();
     let buffer = "";
+    // Whether the stream produced anything at all, so an empty one can be
+    // reported rather than ending as a silent, indistinguishable success.
+    let sawContent = false;
+    let sawReasoning = false;
     for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
       buffer += decoder.decode(chunk, { stream: true });
       let nl: number;
@@ -208,9 +212,37 @@ async function runChat(
               throw new Error(msg || "Anthropic streaming error.");
             }
           } else {
-            const delta = (json as { choices?: Array<{ delta?: { content?: string } }> }).choices?.[0]
-              ?.delta?.content;
-            if (delta) sendToMain("llm:chunk", { requestId, delta });
+            const choice = (
+              json as {
+                choices?: Array<{
+                  delta?: { content?: string; reasoning_content?: string; reasoning?: string };
+                }>;
+              }
+            ).choices?.[0]?.delta;
+            const delta = choice?.content;
+            if (delta) {
+              sawContent = true;
+              sendToMain("llm:chunk", { requestId, delta });
+            }
+            // A REASONING model streams its thinking in a separate field and
+            // puts only the final answer in `content`. Reading content alone
+            // meant every thinking token was silently discarded — and since a
+            // model can spend its whole budget reasoning, the stream could end
+            // having emitted nothing at all. The UI then showed "thinking",
+            // received `done`, and collapsed with no output and no error.
+            //
+            // Two spellings in the wild: `reasoning_content` (DeepSeek's, which
+            // LM Studio and vLLM follow) and `reasoning` (OpenRouter and
+            // others). Both are handled because the cost of guessing wrong is
+            // this exact silent failure.
+            const thinking = choice?.reasoning_content ?? choice?.reasoning;
+            if (thinking) {
+              sawReasoning = true;
+              // Flagged, not merged: thinking is not the answer, and appending
+              // it to the answer would present a model's scratchpad as its
+              // conclusion.
+              sendToMain("llm:chunk", { requestId, delta: thinking, reasoning: true });
+            }
           }
         } catch (parseErr) {
           // Re-throw genuine Anthropic error events; ignore keep-alive lines /
@@ -220,6 +252,22 @@ async function runChat(
           }
         }
       }
+    }
+    if (!sawContent) {
+      // The stream finished without a single token of ANSWER. Ending on a plain
+      // `done` here is what made this look like the feature was broken: the
+      // panel collapsed with nothing in it and nothing to explain why.
+      //
+      // The reasoning case is worth naming separately, because the fix is
+      // different: the model was working, it just never stopped thinking.
+      const message = sawReasoning
+        ? "The model spent its whole response thinking and never produced an answer. " +
+          "Reasoning models need room for both — raise the model's token limit in your " +
+          "local server, or pick a non-reasoning model for this."
+        : "The model returned an empty response. It may have hit a token limit, or the " +
+          "prompt may have been too long for its context window.";
+      sendToMain("llm:error", { requestId, message });
+      return;
     }
     sendToMain("llm:done", { requestId });
   } catch (err) {

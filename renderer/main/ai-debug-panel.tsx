@@ -340,7 +340,7 @@ export function AiDebugDialog({
   /** Persist an AI-suggested full-file replacement of the test's script. */
   onApplyScript?: (source: string) => Promise<void>;
 }) {
-  const { content, status, error, start, stop } = useLlmChat();
+  const { content, reasoning, status, error, start, stop } = useLlmChat();
   const [copied, setCopied] = React.useState(false);
   const [applied, setApplied] = React.useState(false);
   const [modelName, setModelName] = React.useState<string | null>(null);
@@ -654,7 +654,7 @@ export function AiDebugDialog({
               className="max-h-[56vh] rounded-md border border-separator"
               viewportClassName="max-h-[56vh]"
               autoScrollToBottom
-              autoScrollDeps={[content.length]}
+              autoScrollDeps={[content.length, reasoning.length]}
             >
               <div className="flex flex-col gap-1 p-3">
                 {status === "error" && error ? (
@@ -669,15 +669,24 @@ export function AiDebugDialog({
                       </p>
                     ),
                   )
-                ) : status === "streaming" && thinkingGifEnabled ? (
-                  <p className="text-small text-secondary">
-                    {modelName ? `Thinking with ${modelName}…` : "Thinking…"}
-                  </p>
-                ) : (
-                  <p className="text-small text-secondary">
-                    {status === "streaming" ? (modelName ? `Thinking with ${modelName}…` : "Thinking…") : ""}
-                  </p>
-                )}
+                ) : status === "streaming" ? (
+                  <div className="flex flex-col gap-1">
+                    <p className="text-small text-secondary">
+                      {modelName ? `Thinking with ${modelName}…` : "Thinking…"}
+                    </p>
+                    {/* A reasoning model can spend a long time here with no
+                        answer yet. Showing the thinking as it arrives is the
+                        difference between "working" and "hung" — and this used
+                        to be dropped entirely, so the panel sat blank and then
+                        collapsed with nothing. Muted and monospaced: it's the
+                        model's scratchpad, not its answer. */}
+                    {reasoning ? (
+                      <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-separator pl-2 font-mono text-[11px] text-tertiary">
+                        {reasoning}
+                      </pre>
+                    ) : null}
+                  </div>
+                ) : null}
                 {correctedScript && diff ? (
                   <div className="mt-2 flex flex-col gap-1.5">
                     <Text variant="small-strong" color="secondary">

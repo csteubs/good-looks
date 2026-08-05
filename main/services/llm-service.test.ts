@@ -16,6 +16,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { llmService } from "./llm-service.js";
 import { anthropicKeyStore } from "./anthropic-key-store.js";
 
+// Capture what the backend pushes to the renderer. Mocked at module level
+// because ES module exports are read-only — reassigning `sendToMain` on the
+// imported namespace throws.
+const { sentEvents } = vi.hoisted(() => ({
+  sentEvents: [] as { channel: string; payload: Record<string, unknown> }[],
+}));
+vi.mock("./app-window.js", () => ({
+  sendToMain: (channel: string, payload: Record<string, unknown>) => {
+    sentEvents.push({ channel, payload });
+  },
+  getMainWindow: () => null,
+  setMainWindow: () => {},
+}));
+
 const realFetch = globalThis.fetch;
 
 /** Make fetch fail the way a down local provider does. */
@@ -184,5 +198,123 @@ describe("detect()", () => {
     const all = await llmService.detect();
     expect(all).toHaveLength(2);
     for (const s of all) expect(s.reachable).toBe(false);
+  });
+});
+
+// ── Streaming a REASONING model ─────────────────────────────────────────────
+//
+// The regression: `bonsai-27b` (and any DeepSeek/Qwen-style reasoning model)
+// streams its thinking in `delta.reasoning_content` and puts only the final
+// answer in `delta.content`. The parser read `content` alone, so every thinking
+// token was discarded — and because a model can spend its entire budget
+// reasoning, the stream could end having emitted NOTHING. The panel showed
+// "thinking", received a plain `done`, and collapsed with no output and no
+// error, which is indistinguishable from the feature being broken.
+//
+// These drive the real parser with SSE captured verbatim from LM Studio.
+describe("chat() streaming", () => {
+  /** Serve a canned SSE body through the same reader the parser uses. */
+  function sseFetch(lines: string[]) {
+    const body = lines.map((l) => `${l}\n`).join("");
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      body: (async function* () {
+        // Chunked mid-line on purpose: the parser buffers partial lines, and a
+        // test that always delivers whole ones would never exercise that.
+        const bytes = new TextEncoder().encode(body);
+        for (let i = 0; i < bytes.length; i += 17) {
+          yield bytes.slice(i, i + 17);
+        }
+      })(),
+    })) as unknown as typeof fetch;
+  }
+
+  /** Run a canned stream through the real parser and return what it pushed. */
+  async function collect(lines: string[]) {
+    sentEvents.length = 0;
+    sseFetch(lines);
+    await llmService.chat({
+      messages: [{ role: "user", content: "hi" }],
+      provider: "lmstudio",
+      model: "test-model",
+    });
+    // chat() returns once the request is registered; the stream is consumed on
+    // a background promise, so wait for the terminal event rather than a timer.
+    for (let i = 0; i < 200; i++) {
+      if (sentEvents.some((e) => e.channel === "llm:done" || e.channel === "llm:error")) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    return { events: [...sentEvents] };
+  }
+
+  /** Last element. This project targets ES2020 — no Array.prototype.at. */
+  const last = <T,>(xs: T[]): T | undefined => xs[xs.length - 1];
+
+  const chunk = (delta: Record<string, string>) =>
+    `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}`;
+
+  it("streams a reasoning model's thinking instead of discarding it", async () => {
+    const { events } = await collect([
+      chunk({ reasoning_content: "Let me " }),
+      chunk({ reasoning_content: "check the log." }),
+      chunk({ content: "The selector is stale." }),
+      "data: [DONE]",
+    ]);
+    const chunks = events.filter((e) => e.channel === "llm:chunk");
+    const thinking = chunks.filter((c) => c.payload.reasoning === true);
+    const answer = chunks.filter((c) => !c.payload.reasoning);
+
+    expect(thinking.map((c) => c.payload.delta).join("")).toBe("Let me check the log.");
+    // Flagged, never merged: a model's scratchpad is not its conclusion, and
+    // the Apply-fix path downstream reads the answer as a diff.
+    expect(answer.map((c) => c.payload.delta).join("")).toBe("The selector is stale.");
+    expect(last(events)?.channel).toBe("llm:done");
+  });
+
+  it("also understands the `reasoning` spelling", async () => {
+    // LM Studio and vLLM use reasoning_content; OpenRouter and others use
+    // reasoning. Guessing wrong produces exactly the silent failure above.
+    const { events } = await collect([
+      chunk({ reasoning: "hmm" }),
+      chunk({ content: "done thinking" }),
+      "data: [DONE]",
+    ]);
+    const thinking = events.filter((e) => e.channel === "llm:chunk" && e.payload.reasoning === true);
+    expect(thinking.map((c) => c.payload.delta).join("")).toBe("hmm");
+  });
+
+  it("reports an error when the model only ever thinks", async () => {
+    // THE regression, exactly: reasoning arrives, an answer never does. Ending
+    // on a plain `done` is what made the panel collapse with nothing in it.
+    const { events } = await collect([
+      chunk({ reasoning_content: "thinking and thinking" }),
+      "data: [DONE]",
+    ]);
+    const final = last(events);
+    expect(final?.channel).toBe("llm:error");
+    expect(String(final?.payload.message)).toMatch(/never produced an answer/i);
+    // And it says what to DO about it, since the fix isn't obvious.
+    expect(String(final?.payload.message)).toMatch(/token limit|non-reasoning/i);
+    expect(events.some((e) => e.channel === "llm:done")).toBe(false);
+  });
+
+  it("reports an error on a completely empty stream", async () => {
+    const { events } = await collect(["data: [DONE]"]);
+    const final = last(events);
+    expect(final?.channel).toBe("llm:error");
+    expect(String(final?.payload.message)).toMatch(/empty response/i);
+  });
+
+  it("still streams an ordinary non-reasoning model unchanged", async () => {
+    const { events } = await collect([
+      chunk({ content: "Hello" }),
+      chunk({ content: " world" }),
+      "data: [DONE]",
+    ]);
+    const chunks = events.filter((e) => e.channel === "llm:chunk");
+    expect(chunks.every((c) => c.payload.reasoning === undefined)).toBe(true);
+    expect(chunks.map((c) => c.payload.delta).join("")).toBe("Hello world");
+    expect(last(events)?.channel).toBe("llm:done");
   });
 });
