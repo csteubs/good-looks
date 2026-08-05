@@ -12,6 +12,8 @@ import { getSettingsWindow, openSettingsWindow } from "../windows/settings-windo
 import { recorderService } from "../services/recorder-service.js";
 import { batchRunner } from "../services/batch-runner.js";
 import { batchHistoryStore } from "../services/batch-history-store.js";
+import { webhookUrlStore } from "../services/webhook-url-store.js";
+import { postWebhook } from "../services/alert-service.js";
 import { playwrightRunner } from "../services/playwright-runner.js";
 import { runHistoryStore } from "../services/run-history-store.js";
 import { artifactStore } from "../services/artifact-store.js";
@@ -400,6 +402,33 @@ export function registerHandlers(): void {
     return { hasKey: false };
   });
   ipcMain.handle("llm:hasApiKey", async () => ({ hasKey: await anthropicKeyStore.hasKey() }));
+
+  // ── Alert (outgoing webhook) handlers ───────────────────────────────
+  // The URL is a bearer credential, so it only ever travels renderer→backend.
+  // The renderer can read back whether one exists and its host, never the URL.
+  ipcMain.handle("alerts:setWebhookUrl", async (_e, params: { url: string }) => {
+    await webhookUrlStore.setUrl(params.url ?? "");
+    return webhookUrlStore.status();
+  });
+  ipcMain.handle("alerts:clearWebhookUrl", async () => {
+    await webhookUrlStore.clear();
+    return webhookUrlStore.status();
+  });
+  ipcMain.handle("alerts:status", async () => webhookUrlStore.status());
+  // Deliberately surfaces failures instead of swallowing them like sendAlert —
+  // the whole point of a test button is to find out that it doesn't work.
+  ipcMain.handle("alerts:test", async () => {
+    const url = await webhookUrlStore.getUrl();
+    if (!url) throw new Error("No webhook URL is configured.");
+    await postWebhook(url, {
+      text: "✅ Good Looks! test alert — your webhook is configured correctly.",
+      event: "run",
+      status: "passed",
+      detail: { test: true },
+      source: "Good Looks!",
+    });
+    return { ok: true };
+  });
 
   // ── Runner handlers ─────────────────────────────────────────────────
   ipcMain.handle(

@@ -352,6 +352,10 @@ export interface RecorderSettings {
   /** default browser engine for tests that haven't set their own preference
    *  (default "chromium"). Only affects test runs, not the trainer. */
   defaultRunBrowser: RunBrowser;
+  /** POST a summary to a user-configured webhook when a run or batch has a
+   *  problem (default false). The only thing in the app that sends data off the
+   *  machine — inert until a URL is configured, and never includes run logs. */
+  alertWebhookEnabled: boolean;
   /** how many runs' screenshot artifacts to keep per test before the oldest
    *  are pruned (default 10, clamped 1–50). The pinned visual baseline is
    *  never pruned regardless of this number. */

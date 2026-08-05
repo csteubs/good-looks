@@ -77,6 +77,15 @@ export function SettingsView() {
   const [artifactRetainedRuns, setArtifactRetainedRuns] = useState(10);
   const [artifactRetentionDays, setArtifactRetentionDays] = useState(0);
   const [notifyOnRunIssues, setNotifyOnRunIssues] = useState(false);
+  // Outgoing webhook alerts. The URL itself is a bearer credential and is never
+  // read back from the backend — only whether one exists, and its host.
+  const [alertWebhookEnabled, setAlertWebhookEnabled] = useState(false);
+  const [webhookStatus, setWebhookStatus] = useState<{ hasUrl: boolean; host: string | null }>({
+    hasUrl: false,
+    host: null,
+  });
+  const [webhookInput, setWebhookInput] = useState("");
+  const [webhookBusy, setWebhookBusy] = useState(false);
   const [artifactUsage, setArtifactUsage] = useState<ArtifactUsage | null>(null);
   const [pruning, setPruning] = useState(false);
 
@@ -116,6 +125,11 @@ export function SettingsView() {
         setArtifactRetainedRuns(settings.artifactRetainedRuns ?? 10);
         setArtifactRetentionDays(settings.artifactRetentionDays ?? 0);
         setNotifyOnRunIssues(settings.notifyOnRunIssues ?? false);
+        setAlertWebhookEnabled(settings.alertWebhookEnabled ?? false);
+        api.alerts
+          .status()
+          .then(setWebhookStatus)
+          .catch(() => {});
         setAutoHealEnabled(settings.autoHealEnabled ?? true);
         setAutoHealRetries(settings.autoHealRetries ?? 3);
         setAutoHealTimeout(settings.autoHealAttemptTimeoutMs ?? 4000);
@@ -164,6 +178,55 @@ export function SettingsView() {
       await api.recorder.setSettings({ defaultRunHeadless: checked });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleAlertWebhookEnabledChange = async (checked: boolean) => {
+    setAlertWebhookEnabled(checked);
+    try {
+      await api.recorder.setSettings({ alertWebhookEnabled: checked });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleSaveWebhookUrl = async () => {
+    setWebhookBusy(true);
+    try {
+      const next = await api.alerts.setWebhookUrl(webhookInput);
+      setWebhookStatus(next);
+      setWebhookInput("");
+      toast.success(`Webhook saved${next.host ? ` — sending to ${next.host}` : ""}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : `Failed to save webhook: ${error}`);
+    } finally {
+      setWebhookBusy(false);
+    }
+  };
+
+  const handleClearWebhookUrl = async () => {
+    setWebhookBusy(true);
+    try {
+      setWebhookStatus(await api.alerts.clearWebhookUrl());
+      toast.success("Webhook removed.");
+    } catch (error) {
+      toast.error(`Failed to remove webhook: ${error}`);
+    } finally {
+      setWebhookBusy(false);
+    }
+  };
+
+  const handleTestWebhook = async () => {
+    setWebhookBusy(true);
+    try {
+      await api.alerts.test();
+      toast.success("Test alert sent.");
+    } catch (error) {
+      // Surfaced rather than swallowed — the point of a test button is to find
+      // out that it doesn't work.
+      toast.error(error instanceof Error ? error.message : `Test alert failed: ${error}`);
+    } finally {
+      setWebhookBusy(false);
     }
   };
 
@@ -577,6 +640,63 @@ export function SettingsView() {
                 checked={notifyOnRunIssues}
                 onCheckedChange={handleNotifyOnRunIssuesChange}
               />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="alert-webhook-enabled">Send alerts to a webhook</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  POSTs a short summary to a URL you choose when a run fails, a step changes
+                  visually, or a batch finishes with failures. Works with Slack and Discord incoming
+                  webhooks. <strong>This is the only feature that sends anything off this Mac</strong>
+                  , and it sends a summary only — test name, status, the failing step&apos;s label,
+                  counts and timing. Run logs are never included, since they can contain page
+                  content and values typed during recording.
+                </p>
+              </FieldContent>
+              <Switch
+                id="alert-webhook-enabled"
+                checked={alertWebhookEnabled}
+                onCheckedChange={handleAlertWebhookEnabledChange}
+                disabled={!webhookStatus.hasUrl}
+              />
+            </Field>
+            <Field>
+              <FieldContent>
+                <FieldLabel htmlFor="alert-webhook-url">Webhook URL</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  {webhookStatus.hasUrl
+                    ? `Saved — alerts go to ${webhookStatus.host ?? "the configured host"}. The URL is stored encrypted and never shown again; paste a new one to replace it.`
+                    : "Paste an incoming-webhook URL (https://). It's treated as a secret: stored encrypted on this Mac and never read back into this window."}
+                </p>
+              </FieldContent>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="alert-webhook-url"
+                  type="password"
+                  value={webhookInput}
+                  onChange={(e) => setWebhookInput(e.target.value)}
+                  placeholder="https://hooks.slack.com/services/…"
+                  disabled={webhookBusy}
+                  className="flex-1"
+                />
+                <Button
+                  variant="secondary"
+                  onClick={handleSaveWebhookUrl}
+                  disabled={webhookBusy || webhookInput.trim().length === 0}
+                >
+                  Save
+                </Button>
+                {webhookStatus.hasUrl ? (
+                  <>
+                    <Button variant="secondary" onClick={handleTestWebhook} disabled={webhookBusy}>
+                      Send test
+                    </Button>
+                    <Button variant="secondary" onClick={handleClearWebhookUrl} disabled={webhookBusy}>
+                      Remove
+                    </Button>
+                  </>
+                ) : null}
+              </div>
             </Field>
             <Field orientation="horizontal">
               <FieldContent>

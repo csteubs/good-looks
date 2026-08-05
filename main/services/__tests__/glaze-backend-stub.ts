@@ -30,3 +30,21 @@ export class Notification {
   constructor(_options?: { title?: string; body?: string }) {}
   show(): void {}
 }
+
+/** Stand-in for the encrypted-secret API. Reports encryption as UNAVAILABLE so
+ *  a check can never accidentally write a real secret to disk; the "encryption"
+ *  below is a reversible marker, not a cipher, and exists only so importing
+ *  webhook-url-store / anthropic-key-store doesn't blow up in a bundle. The
+ *  checks drive those stores' PURE helpers (validateWebhookUrl, hostOfUrl),
+ *  never their persistence. */
+export const safeStorage = {
+  async isEncryptionAvailable(): Promise<boolean> {
+    return false;
+  },
+  async encryptString(plain: string): Promise<Buffer> {
+    return Buffer.from(`stub:${plain}`, "utf-8");
+  },
+  async decryptString(buf: Buffer): Promise<string> {
+    return buf.toString("utf-8").replace(/^stub:/, "");
+  },
+};

@@ -354,6 +354,8 @@ export interface RecorderSettings {
   defaultRunHeadless: boolean;
   /** default browser engine for tests with no preference (default "chromium"). */
   defaultRunBrowser: RunBrowser;
+  /** send a summary to a configured webhook on run/batch problems (default false). */
+  alertWebhookEnabled: boolean;
   /** how many runs' screenshot artifacts to keep per test (default 10, 1–50). */
   artifactRetainedRuns: number;
   /** also delete captured runs older than N days (0 = off, max 365). */

@@ -18,6 +18,7 @@ import { captureFixtureSource } from "./capture-fixture-source.js";
 import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { notifyRunOutcome } from "./run-notifier.js";
+import { sendAlert } from "./alert-service.js";
 import { applyRetention } from "./retention.js";
 import { buildReplay, enrichWithVisualDiffs } from "./replay-builder.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
@@ -605,6 +606,20 @@ export const playwrightRunner = {
             status: runStatus,
             changedSteps,
             failedLabel,
+          });
+        }
+        // Outgoing webhook alert (off by default, summary only, never throws).
+        // Skipped for runs inside a batch — the batch sends one alert for the
+        // whole suite instead of one per test.
+        if (!params.batchId) {
+          void sendAlert({
+            kind: "run",
+            testName: rec.name,
+            status: runStatus,
+            changedSteps,
+            failedLabel,
+            durationMs: Math.max(0, finishedAt - startedAt),
+            browser: runBrowser,
           });
         }
         sendToMain("runner:done", { runId, code: exitCode });

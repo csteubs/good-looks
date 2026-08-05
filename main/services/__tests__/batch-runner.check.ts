@@ -50,6 +50,8 @@ function makeFake(opts: {
   /** every write-through persist, in order — the last one is what a restart
    *  would load back. */
   const persisted: (BatchState & { summary: BatchSummary })[] = [];
+  /** outgoing alerts requested by the runner */
+  const alerts: unknown[] = [];
   let clock = 1000;
 
   const deps: BatchDeps = {
@@ -80,6 +82,9 @@ function makeFake(opts: {
     },
     emit: (channel, payload) => events.push({ channel, payload }),
     now: () => (clock += 10),
+    alert: (a) => {
+      alerts.push(a);
+    },
     persist: (record) => {
       // Deep-ish copy: the runner mutates its result entries in place, so
       // storing the live objects would make every snapshot look identical.
@@ -93,6 +98,7 @@ function makeFake(opts: {
     started,
     stopped,
     persisted,
+    alerts,
     get maxLive() {
       return maxLive;
     },
@@ -317,6 +323,24 @@ async function main(): Promise<void> {
       new Set(fake.persisted.map((r) => r.batchId)).size === 1,
       "all snapshots of one batch share one id",
     );
+  }
+
+  // ── Alerting fires once per batch, not once per test ──────────────
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"] });
+    await tick();
+    fake.finish("a", 1);
+    await tick();
+    assert(fake.alerts.length === 0, "no alert is sent mid-batch");
+    fake.finish("b", 0);
+    await tick();
+    assert(fake.alerts.length === 1, `exactly one alert per batch (got ${fake.alerts.length})`);
+    const a = fake.alerts[0] as { kind: string; failedTests: string[]; stopped: boolean };
+    assert(a.kind === "batch", "the alert is a batch alert");
+    assert(a.failedTests.join(",") === "Test a", "the alert names the failed tests");
+    assert(a.stopped === false, "an uninterrupted batch is not reported as stopped");
   }
 
   // ── Runs are linked back to their RunRecord ───────────────────────

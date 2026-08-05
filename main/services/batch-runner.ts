@@ -25,6 +25,7 @@ import { sendToMain } from "./app-window.js";
 import { playwrightRunner } from "./playwright-runner.js";
 import { testStore } from "./test-store.js";
 import { batchHistoryStore } from "./batch-history-store.js";
+import { sendAlert, type BatchAlert } from "./alert-service.js";
 import type {
   BatchState,
   BatchSummary,
@@ -70,6 +71,8 @@ export interface BatchDeps {
   /** Write-through persistence, called on every transition so a crash
    *  mid-batch still leaves the results collected so far. */
   persist: (record: BatchState & { summary: BatchSummary }) => void;
+  /** Fire-and-forget outgoing alert when the batch finishes. */
+  alert: (alert: BatchAlert) => void;
 }
 
 const realDeps: BatchDeps = {
@@ -81,6 +84,9 @@ const realDeps: BatchDeps = {
   now: () => Date.now(),
   persist: (record) => {
     batchHistoryStore.save(record);
+  },
+  alert: (alert) => {
+    void sendAlert(alert);
   },
 };
 
@@ -225,6 +231,15 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
         const donePayload = { ...snapshot(), summary } as BatchState & { summary: BatchSummary };
         deps.emit("batch:done", donePayload);
         deps.persist(donePayload);
+        // One alert for the suite rather than one per test (the per-run alert
+        // is suppressed for batched runs).
+        deps.alert({
+          kind: "batch",
+          summary,
+          failedTests: s.results.filter((r) => r.status === "failed").map((r) => r.testName),
+          stopped: s.stopped,
+          browser: params.browser,
+        });
       })();
 
       return { batchId, alreadyRunning: false };

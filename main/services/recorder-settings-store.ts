@@ -37,6 +37,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   defaultCaptureArtifacts: false,
   defaultRunHeadless: false,
   defaultRunBrowser: "chromium",
+  alertWebhookEnabled: false,
   artifactRetainedRuns: DEFAULT_RETAINED_RUNS,
   artifactRetentionDays: 0,
   notifyOnRunIssues: false,
@@ -79,6 +80,10 @@ function read(): RecorderSettings {
       defaultRunBrowser: isRunBrowser(parsed.defaultRunBrowser)
         ? parsed.defaultRunBrowser
         : DEFAULT_SETTINGS.defaultRunBrowser,
+      alertWebhookEnabled:
+        typeof parsed.alertWebhookEnabled === "boolean"
+          ? parsed.alertWebhookEnabled
+          : DEFAULT_SETTINGS.alertWebhookEnabled,
       artifactRetainedRuns:
         typeof parsed.artifactRetainedRuns === "number" && parsed.artifactRetainedRuns > 0
           ? clampRetained(parsed.artifactRetainedRuns)
@@ -136,6 +141,10 @@ export const recorderSettingsStore = {
       defaultRunBrowser: isRunBrowser(update.defaultRunBrowser)
         ? update.defaultRunBrowser
         : current.defaultRunBrowser,
+      alertWebhookEnabled:
+        update.alertWebhookEnabled !== undefined
+          ? update.alertWebhookEnabled
+          : current.alertWebhookEnabled,
       artifactRetainedRuns:
         update.artifactRetainedRuns !== undefined &&
         typeof update.artifactRetainedRuns === "number" &&
@@ -170,6 +179,7 @@ export const recorderSettingsStore = {
       defaultCaptureArtifacts: next.defaultCaptureArtifacts,
       defaultRunHeadless: next.defaultRunHeadless,
       defaultRunBrowser: next.defaultRunBrowser,
+      alertWebhookEnabled: next.alertWebhookEnabled,
       artifactRetainedRuns: next.artifactRetainedRuns,
       artifactRetentionDays: next.artifactRetentionDays,
       notifyOnRunIssues: next.notifyOnRunIssues,

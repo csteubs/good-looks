@@ -150,6 +150,14 @@ export const api = {
     remove: (batchId: string) => ipc().invoke<{ removed: number }>("batch:delete", { batchId }),
     clearHistory: () => ipc().invoke<{ removed: number }>("batch:clearHistory"),
   },
+  alerts: {
+    setWebhookUrl: (url: string) =>
+      ipc().invoke<{ hasUrl: boolean; host: string | null }>("alerts:setWebhookUrl", { url }),
+    clearWebhookUrl: () =>
+      ipc().invoke<{ hasUrl: boolean; host: string | null }>("alerts:clearWebhookUrl"),
+    status: () => ipc().invoke<{ hasUrl: boolean; host: string | null }>("alerts:status"),
+    test: () => ipc().invoke<{ ok: boolean }>("alerts:test"),
+  },
   runner: {
     run: (
       id: string,
