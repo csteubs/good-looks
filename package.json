@@ -28,7 +28,9 @@
     "check:alerts": "esbuild main/services/__tests__/alerts.check.ts --bundle --platform=node --format=cjs --alias:@glaze/core/backend=./main/services/__tests__/glaze-backend-stub.ts --outfile=node_modules/.cache/alerts.check.cjs && node node_modules/.cache/alerts.check.cjs",
     "check:cookie-steps": "esbuild main/services/__tests__/cookie-steps.check.ts --bundle --platform=node --format=cjs --alias:@glaze/core/backend=./main/services/__tests__/glaze-backend-stub.ts --outfile=node_modules/.cache/cookie-steps.check.cjs && node node_modules/.cache/cookie-steps.check.cjs",
     "check:batch-order": "tsx main/services/__tests__/batch-order.check.ts",
-    "check:paginate": "tsx main/services/__tests__/paginate.check.ts"
+    "check:paginate": "tsx main/services/__tests__/paginate.check.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -52,6 +54,8 @@
     "@eslint/js": "^9.22.0",
     "@rolldown/plugin-babel": "^0.2.1",
     "@tailwindcss/vite": "^4.2.2",
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^24.3.1",
     "@types/pixelmatch": "^5.2.6",
     "@types/pngjs": "^6.0.5",
@@ -65,11 +69,13 @@
     "eslint": "^9.39.2",
     "eslint-plugin-import": "^2.31.0",
     "globals": "^17.3.0",
+    "jsdom": "^30.0.1",
     "oxfmt": "^0.26.0",
     "tailwindcss": "^4.2.2",
     "tsx": "^4.20.5",
     "typescript": "^5.5.3",
-    "vite": "^8.0.2"
+    "vite": "^8.0.2",
+    "vitest": "^4.1.10"
   },
   "engines": {
     "node": ">=24"
