@@ -111,7 +111,10 @@ function diffBadgeColor(state: VisualDiffState): "green" | "orange" | "yellow" |
   }
 }
 
-function DiffBadge({ diff }: { diff: VisualDiff }) {
+/** Exported for tests: this badge is the visual verdict a user acts on, and
+ *  its wording carries claims (page vs element scope, regions excluded) that
+ *  are wrong in a way nothing else would catch. */
+export function DiffBadge({ diff }: { diff: VisualDiff }) {
   let label: string;
   switch (diff.state) {
     case "new-baseline":
