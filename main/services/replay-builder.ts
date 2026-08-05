@@ -97,8 +97,15 @@ export function buildReplay(params: {
   if (reportedFail !== undefined) {
     failedIdx = reportedFail;
   } else if (params.status === "failed") {
+    // Only steps that WOULD have produced a screenshot are candidates. This
+    // fallback exists to answer "which uncaptured page interaction failed?" —
+    // a step that never captures (cookie state, control flow) can't be
+    // identified this way, and blaming it also marks every later step
+    // "skipped" when they actually ran. A cookie step that genuinely fails is
+    // still surfaced, because the reporter reports it and reportedFail wins
+    // above this branch.
     const cand = params.steps.findIndex(
-      (s, i) => i > lastShotIdx && s.type !== "if" && s.type !== "endif",
+      (s, i) => i > lastShotIdx && captureMethod(s) !== null,
     );
     failedIdx = cand >= 0 ? cand : lastShotIdx >= 0 ? lastShotIdx : params.steps.length ? 0 : null;
   }

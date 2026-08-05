@@ -546,6 +546,53 @@ eq(partial?.steps.map((c) => c.delta), ["stable", "unknown", "unknown"], "absent
 eq(partial?.changedSinceCount, 0, "an absent step is never counted as broken");
 eq(partial?.stepsDiverged, true, "a differing step set is reported as diverged");
 
+// ── Failure attribution must skip steps that never capture ────────────────
+// When a capture run fails but NO step reported a failure, buildReplay falls
+// back to "the first uncaptured step after the last screenshot". That question
+// only makes sense for page interactions: a step that never produces a
+// screenshot (a cookie step, control flow) can't be identified this way, and
+// blaming it also marks every LATER step "skipped" when they actually ran.
+{
+  const runId = randomUUID();
+  const dir = artifactStore.ensureRunDir(testId, runId);
+  fs.writeFileSync(path.join(dir, "0.png"), solidPng(10, 20, 30));
+  fs.writeFileSync(
+    path.join(dir, "manifest.json"),
+    JSON.stringify({
+      testId,
+      runId,
+      status: "failed",
+      steps: [{ index: 0, action: "goto", target: "", ok: true, ts: Date.now() }],
+    } satisfies ArtifactManifest),
+  );
+
+  // goto (captured) → cookie (never captures) → click (should be blamed)
+  const mixed: Step[] = [
+    step({ type: "goto", url: "https://example.com" }),
+    step({ type: "cookie", cookieAction: "set", cookie: { name: "s", value: "1" } }),
+    step({ type: "click", locator: { k: "role", role: "button", name: "Go" } }),
+  ];
+  const replay = buildReplay({
+    testId,
+    runId,
+    testName: "attribution",
+    url: "https://example.com",
+    status: "failed",
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+    steps: mixed,
+    statuses: {}, // nothing reported a failure — the fallback path
+  });
+
+  eq(replay.steps[0].status, "passed", "the captured step before the failure passes");
+  eq(
+    replay.steps[1].status !== "failed",
+    true,
+    "a cookie step is NOT blamed for an uncaptured failure",
+  );
+  eq(replay.steps[2].status, "failed", "the first step that WOULD capture is blamed instead");
+}
+
 // ── cleanup + verdict ──────────────────────────────────────────────────────
 try {
   fs.rmSync(DATA_ROOT, { recursive: true, force: true });
