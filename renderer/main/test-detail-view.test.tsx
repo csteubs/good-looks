@@ -13,6 +13,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { RecorderSettings, TestRecord } from "../lib/recorder-types";
 import { TestDetailView } from "./test-detail-view";
+import { withAiDebug } from "../__tests__/ai-debug-harness";
 
 let test_: TestRecord | null = null;
 let settings: Partial<RecorderSettings> = {};
@@ -46,6 +47,20 @@ vi.mock("../lib/api", () => ({
     },
     recorder: { getSettings: async () => settings as RecorderSettings },
     runs: { captureOverhead: async () => null },
+    aiDebug: {
+      list: async () => [],
+      save: async (s: unknown) => s,
+      remove: async () => ({ removed: 0 }),
+      clear: async () => ({ removed: 0 }),
+    },
+    llm: {
+      getConfig: async () => ({ provider: "ollama", model: null, baseUrls: {} }),
+      status: async () => ({ online: false, models: [] }),
+      setConfig: async () => ({}),
+      chat: async () => ({ requestId: "req-test" }),
+      cancel: async () => {},
+      isActive: async () => ({ active: false }),
+    },
     on: () => () => {},
   },
 }));
@@ -66,9 +81,7 @@ function record(over: Partial<TestRecord> = {}): TestRecord {
 function renderView() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <QueryClientProvider client={qc}>
-      <TestDetailView />
-    </QueryClientProvider>,
+    <QueryClientProvider client={qc}>{withAiDebug(<TestDetailView />)}</QueryClientProvider>,
   );
 }
 

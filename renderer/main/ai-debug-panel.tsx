@@ -4,20 +4,32 @@
 // the model returns a complete corrected spec — offers to apply it to the script.
 
 import * as React from "react";
-import { Button, Dialog, Field, ScrollArea, Text, Textarea, toast } from "@glaze/core/components";
-import { Check, ChevronDown, Copy, RotateCcw, Send, Square, Wand2 } from "lucide-react";
+import { Button, Callout, Dialog, Field, ScrollArea, Text, Textarea, toast } from "@glaze/core/components";
+import {
+  Check,
+  ChevronDown,
+  Copy,
+  Minimize2,
+  RotateCcw,
+  Send,
+  Square,
+  Trash2,
+  TriangleAlert,
+  Wand2,
+} from "lucide-react";
 
 import glitchGif from "./assets/glitch.gif";
 
 import { api } from "../lib/api";
+import { MAX_ACTIVE_STREAMS, hashScript, isStale, type StartDecision } from "../lib/ai-debug-sessions";
 import { diffLines, diffSummary, type DiffLine } from "../lib/line-diff";
 import { friendlyError } from "../lib/llm-errors";
 import type { LlmMessage, LlmModel } from "../lib/llm-types";
 import { buildDebugMessages, buildStepDebugMessages } from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
-import type { TestSpeed } from "../lib/recorder-types";
+import type { AiDebugStatus } from "../lib/recorder-types";
 import { useDisabledEnhancements } from "../lib/use-disabled-enhancements";
-import { useLlmChat } from "../lib/use-llm-chat";
+import { useAiDebug, useAiDebugContent } from "./ai-debug-store";
 
 // Common failure reasons a user can toggle into the "additional context" box
 // instead of retyping them every time. Each is appended on its own line; clicking
@@ -58,7 +70,7 @@ function ThinkingGifOverlay({
   status,
   enabled,
 }: {
-  status: "idle" | "streaming" | "done" | "error" | "cancelled";
+  status: AiDebugStatus;
   enabled: boolean;
 }) {
   // `expanding` while streaming; `contracting` for the 5s ease-out after the
@@ -315,54 +327,55 @@ export function ModelPicker({
   );
 }
 
-export function AiDebugDialog({
-  open,
-  onOpenChange,
-  testName,
-  testUrl,
-  script,
-  output,
-  imported,
-  speed,
-  failedStepIndex,
-  onApplyScript,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  testName: string;
-  testUrl: string;
-  script: string;
-  output: string;
-  imported: boolean;
-  speed?: TestSpeed;
-  /** 0-based index of the step the run failed on, if known — lets the debug prompt skip steps that never ran. */
-  failedStepIndex?: number;
-  /** Persist an AI-suggested full-file replacement of the test's script. */
-  onApplyScript?: (source: string) => Promise<void>;
-}) {
-  const { content, reasoning, status, error, start, stop } = useLlmChat();
-  const [copied, setCopied] = React.useState(false);
-  const [applied, setApplied] = React.useState(false);
+
+// ── Per-session UI drafts ────────────────────────────────────────────
+// A minimized dialog is UNMOUNTED (only the expanded one is rendered), so any
+// half-written context box or in-progress thread would be lost on minimize —
+// the one thing a "come back later" feature must not do. These live outside
+// React, keyed by session, and are dropped when the session is discarded.
+
+interface SessionDraft {
+  /** The session this draft belongs to. A key can be reused — discard a
+   *  session and debug the same run again — and inheriting the old draft would
+   *  drop the new session straight past its review phase into a stale thread. */
+  startedAt: number;
+  reviewing: boolean;
+  additionalContext: string;
+  followUp: string;
+  applied: boolean;
+}
+
+const drafts = new Map<string, SessionDraft>();
+/** Conversation history per session, so a follow-up after a minimize still
+ *  carries the original prompt rather than starting a fresh thread. */
+const threads = new Map<string, LlmMessage[]>();
+
+function draftFor(key: string, startedAt: number, status: AiDebugStatus): SessionDraft {
+  const existing = drafts.get(key);
+  if (existing && existing.startedAt === startedAt) return existing;
+  return {
+    startedAt,
+    // A session that has never been sent opens in the review phase; one with an
+    // answer already in it opens on the answer. Reopening a finished diagnosis
+    // into an empty prompt form would look like the work had been lost.
+    reviewing: status === "idle",
+    additionalContext: "",
+    followUp: "",
+    applied: false,
+  };
+}
+
+export function forgetDraft(key: string): void {
+  drafts.delete(key);
+  threads.delete(key);
+}
+
+/** Fetch the configured model, and the model list for its provider. Shared by
+ *  both dialogs — each needs the name for the title and the list for the picker. */
+function useModelPicker(open: boolean) {
   const [modelName, setModelName] = React.useState<string | null>(null);
   const [models, setModels] = React.useState<LlmModel[]>([]);
-  const startedKeyRef = React.useRef<string | null>(null);
-  const disabledEnhancements = useDisabledEnhancements();
-  const thinkingGifEnabled = !disabledEnhancements.has("aiThinkingGif");
-  // Whether the dialog is showing the prompt-review phase (true) or the
-  // streamed-response phase (false). Starts in review so the user must
-  // explicitly confirm before any request is sent; "Regenerate" returns to
-  // review so the user can adjust context before re-sending.
-  const [reviewing, setReviewing] = React.useState(true);
-  // Conversation history for the in-progress chat. The initial send stores the
-  // messages array here; a follow-up (when the model asks for more info) appends
-  // the assistant's response + the user's reply and re-sends the whole thread so
-  // the model has the full context of the back-and-forth.
-  const messagesRef = React.useRef<LlmMessage[] | null>(null);
-  const [followUp, setFollowUp] = React.useState("");
 
-  // Fetch the configured LLM model name for the dialog title and the model
-  // picker, then load the available models for that provider so the picker can
-  // cycle through them.
   React.useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -389,8 +402,6 @@ export function AiDebugDialog({
     };
   }, [open]);
 
-  // Persist a model selection from the title picker as the default so future
-  // prompts (this dialog's Regenerate, and other AI features) use it.
   const confirmModel = React.useCallback(async (model: string) => {
     setModelName(model);
     try {
@@ -400,86 +411,196 @@ export function AiDebugDialog({
     }
   }, []);
 
-  // The full prompt that will be sent to the model, memoized so it stays
-  // stable across re-renders while the dialog is open. Shown to the user in
-  // the review phase so they can see exactly what the system is sending.
-  const promptMessages = React.useMemo(
-    () => buildDebugMessages({ testName, testUrl, script, output, imported, speed, failedStepIndex }),
-    [testName, testUrl, script, output, imported, speed, failedStepIndex],
+  /** Re-poll right before sending so "Thinking with {model}" names the model the
+   *  backend will actually use, even if the default changed since open. */
+  const currentModel = React.useCallback(async () => {
+    try {
+      const cfg = await api.llm.getConfig();
+      setModelName(cfg.model);
+      return cfg.model ?? undefined;
+    } catch {
+      return modelName ?? undefined;
+    }
+  }, [modelName]);
+
+  return { modelName, models, confirmModel, currentModel };
+}
+
+/** Title node: "Debugging with <model picker>", falling back to plain text. */
+function dialogTitle(
+  prefix: string,
+  modelName: string | null,
+  models: LlmModel[],
+  onConfirm: (m: string) => void,
+) {
+  if (models.length > 0) {
+    return (
+      <span className="inline-flex items-baseline gap-1">
+        {prefix} <ModelPicker modelName={modelName} models={models} onConfirm={onConfirm} />
+      </span>
+    );
+  }
+  return modelName ? `${prefix} ${modelName}` : `${prefix} AI`;
+}
+
+/** Minimize / discard, shown on both dialogs. Minimize is the DEFAULT dismissal
+ *  (Esc and the close button route here too) — discarding a running job by
+ *  accident is the expensive mistake, so it takes its own explicit click. */
+function SessionControls({ sessionKey }: { sessionKey: string }) {
+  const { minimize, discard } = useAiDebug();
+  return (
+    <>
+      <Button
+        iconOnly
+        size="small"
+        variant="muted"
+        onClick={minimize}
+        aria-label="Minimize"
+        title="Minimize — the job keeps running"
+      >
+        <Minimize2 className="size-3.5" />
+      </Button>
+      <Button
+        iconOnly
+        size="small"
+        variant="transparent"
+        onClick={() => discard(sessionKey)}
+        aria-label="Discard session"
+        title="Discard — stops the job and forgets it"
+      >
+        <Trash2 className="size-3.5" />
+      </Button>
+    </>
+  );
+}
+
+/** Explains a refused send. The cap exists because local providers serialize
+ *  requests, so a third stream would sit "thinking" without progressing. */
+function CapacityNotice({
+  decision,
+  onStopOldest,
+}: {
+  decision: Extract<StartDecision, { ok: false }>;
+  onStopOldest: () => void;
+}) {
+  return (
+    <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+      <Callout.Text>
+        {MAX_ACTIVE_STREAMS} AI jobs are already running. They finish one at a time, so this one
+        would just wait.
+      </Callout.Text>
+      {decision.oldestStreamingKey ? (
+        <Button size="small" variant="muted" onClick={onStopOldest}>
+          Stop the oldest and send
+        </Button>
+      ) : null}
+    </Callout>
+  );
+}
+
+// ── Full-run debug dialog ────────────────────────────────────────────
+
+export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
+  const store = useAiDebug();
+  const { content, reasoning } = useAiDebugContent(sessionKey);
+  const session = store.sessions.find((s) => s.key === sessionKey) ?? null;
+  const ctx = store.getContext(sessionKey);
+  const runCtx = ctx?.kind === "run" ? ctx : null;
+  const open = store.expandedKey === sessionKey;
+
+  const [draft, setDraftState] = React.useState<SessionDraft>(() =>
+    draftFor(sessionKey, session?.startedAt ?? 0, session?.status ?? "idle"),
+  );
+  const setDraft = React.useCallback(
+    (patch: Partial<SessionDraft>) => {
+      setDraftState((prev) => {
+        const next = { ...prev, ...patch };
+        drafts.set(sessionKey, next);
+        return next;
+      });
+    },
+    [sessionKey],
   );
 
-  // Optional extra context the user can add before sending. Appended to the
-  // user message so the model sees it as part of the same diagnostic request.
-  const [additionalContext, setAdditionalContext] = React.useState("");
+  const [copied, setCopied] = React.useState(false);
+  const [refused, setRefused] = React.useState<Extract<StartDecision, { ok: false }> | null>(null);
+  const { modelName, models, confirmModel, currentModel } = useModelPicker(open);
+  const disabledEnhancements = useDisabledEnhancements();
+  const thinkingGifEnabled = !disabledEnhancements.has("aiThinkingGif");
 
-  // Poll the live configured model right before sending so the "Thinking with
-  // {model}" placeholder reflects the model the backend will actually use,
-  // even if the default changed (in Settings or another dialog) after this
-  // dialog opened. Falls back to the cached `modelName` if the poll fails.
-  // The user must explicitly confirm by clicking "Send to AI" — the dialog
-  // never sends a request automatically.
-  const sendDiagnosis = React.useCallback(async () => {
-    let model = modelName ?? undefined;
-    try {
-      const cfg = await api.llm.getConfig();
-      setModelName(cfg.model);
-      model = cfg.model ?? undefined;
-    } catch {
-      // keep the cached name; the backend will fall back to its own config
-    }
-    const trimmed = additionalContext.trim();
-    const messages =
-      trimmed.length > 0
-        ? promptMessages.map((m, i) =>
-            m.role === "user" && i === promptMessages.length - 1
-              ? { ...m, content: `${m.content}\n\nAdditional context from the user:\n${trimmed}` }
-              : m,
-          )
-        : promptMessages;
-    setReviewing(false);
-    messagesRef.current = messages;
-    setFollowUp("");
-    void start(messages, { model });
-  }, [start, modelName, additionalContext, promptMessages]);
+  const status = session?.status ?? "idle";
+  // Read-only: restored from disk with no live run behind it. The answer is
+  // still worth reading; pretending it can be re-sent is not.
+  const readOnly = !runCtx || Boolean(session?.readOnly);
+  const reviewing = draft.reviewing && !readOnly;
 
-  // Send a follow-up when the model's response asks for more information.
-  // Appends the assistant's streamed response + the user's reply to the
-  // existing thread and re-sends, so the model keeps the full back-and-forth.
+  const promptMessages = React.useMemo(
+    () =>
+      runCtx
+        ? buildDebugMessages({
+            testName: runCtx.testName,
+            testUrl: runCtx.testUrl,
+            script: runCtx.script,
+            output: runCtx.output,
+            imported: runCtx.imported,
+            speed: runCtx.speed,
+            failedStepIndex: runCtx.failedStepIndex,
+          })
+        : [],
+    [runCtx],
+  );
+
+  const send = React.useCallback(
+    async (stopOldest?: boolean) => {
+      if (!runCtx) return;
+      if (stopOldest) {
+        const decision = store.capacityFor(sessionKey);
+        if (!decision.ok && decision.oldestStreamingKey) store.stopStream(decision.oldestStreamingKey);
+      }
+      const model = await currentModel();
+      const trimmed = draft.additionalContext.trim();
+      const messages =
+        trimmed.length > 0
+          ? promptMessages.map((m, i) =>
+              m.role === "user" && i === promptMessages.length - 1
+                ? { ...m, content: `${m.content}\n\nAdditional context from the user:\n${trimmed}` }
+                : m,
+            )
+          : promptMessages;
+      threads.set(sessionKey, messages);
+      const decision = await store.startStream(sessionKey, messages, {
+        model,
+        scriptHash: hashScript(runCtx.script),
+      });
+      if (!decision.ok) {
+        setRefused(decision);
+        return;
+      }
+      setRefused(null);
+      setDraft({ reviewing: false, followUp: "", applied: false });
+    },
+    [runCtx, store, sessionKey, currentModel, draft.additionalContext, promptMessages, setDraft],
+  );
+
   const sendFollowUp = React.useCallback(async () => {
-    const trimmed = followUp.trim();
-    if (!trimmed || !messagesRef.current || !content) return;
-    let model = modelName ?? undefined;
-    try {
-      const cfg = await api.llm.getConfig();
-      setModelName(cfg.model);
-      model = cfg.model ?? undefined;
-    } catch {
-      // keep the cached name
-    }
+    const trimmed = draft.followUp.trim();
+    const thread = threads.get(sessionKey);
+    if (!trimmed || !thread || !content) return;
+    const model = await currentModel();
     const messages: LlmMessage[] = [
-      ...messagesRef.current,
+      ...thread,
       { role: "assistant", content },
       { role: "user", content: trimmed },
     ];
-    messagesRef.current = messages;
-    setFollowUp("");
-    void start(messages, { model });
-  }, [start, modelName, followUp, content]);
-
-  // Reset to the review phase (clear the additional-context box and any prior
-  // streamed response) when the dialog opens for a different run. We do NOT
-  // auto-send — the user must click "Send to AI".
-  React.useEffect(() => {
-    if (!open) return;
-    const key = `${testName}:${output.length}`;
-    if (startedKeyRef.current === key) return;
-    startedKeyRef.current = key;
-    setApplied(false);
-    setAdditionalContext("");
-    setFollowUp("");
-    messagesRef.current = null;
-    setReviewing(true);
-  }, [open, testName, output.length]);
+    threads.set(sessionKey, messages);
+    const decision = await store.startStream(sessionKey, messages, { model });
+    if (!decision.ok) {
+      setRefused(decision);
+      return;
+    }
+    setRefused(null);
+    setDraft({ followUp: "" });
+  }, [draft.followUp, sessionKey, content, currentModel, store, setDraft]);
 
   const copyResponse = async () => {
     await window.glazeAPI.clipboard.writeText(content);
@@ -489,20 +610,23 @@ export function AiDebugDialog({
 
   // A full, applyable corrected spec is only offered once streaming finishes.
   const correctedScript = status === "done" ? extractCorrectedScript(content) : null;
-  // Line-level diff between the current script and the AI's corrected spec,
-  // shown in the apply confirm so the user can review the changes. Memoized so
-  // we don't recompute the LCS on every render while the dialog is open.
+  const liveScript = runCtx?.script ?? null;
   const diff = React.useMemo<DiffLine[] | null>(() => {
-    if (!correctedScript) return null;
-    return diffLines(script, correctedScript);
-  }, [script, correctedScript]);
+    if (!correctedScript || liveScript === null) return null;
+    // Always diff against the CURRENT script, not the one the prompt was built
+    // from — that's what an approval actually overwrites.
+    return diffLines(liveScript, correctedScript);
+  }, [liveScript, correctedScript]);
   const summary = diff ? diffSummary(diff) : null;
+  // The script changed after this diagnosis was requested, so the model never
+  // saw the edits that applying would overwrite.
+  const stale = session ? isStale(session, liveScript) : false;
 
   const applyScript = async () => {
-    if (!correctedScript || !onApplyScript) return;
+    if (!correctedScript || !runCtx?.onApplyScript) return;
     try {
-      await onApplyScript(correctedScript);
-      setApplied(true);
+      await runCtx.onApplyScript(correctedScript);
+      setDraft({ applied: true });
       toast.success("Applied the suggested fix to the script.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to apply the suggested fix.");
@@ -514,33 +638,43 @@ export function AiDebugDialog({
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
-      title={
-        models.length > 0 ? (
-          <span className="inline-flex items-baseline gap-1">
-            Debugging with{" "}
-            <ModelPicker modelName={modelName} models={models} onConfirm={confirmModel} />
-          </span>
-        ) : (
-          modelName ? `Debugging with ${modelName}` : "Debugging with AI"
-        )
-      }
+      // Dismissing (Esc, close button, outside click) MINIMIZES. Losing a
+      // running job to a stray Escape is the failure this feature exists to
+      // avoid; discarding is a separate, explicit button.
+      onOpenChange={(next) => {
+        if (!next) store.minimize();
+      }}
+      title={dialogTitle("Debugging with", modelName, models, confirmModel)}
       description={
         <span className="inline-flex items-center gap-2">
-          {testName}
+          {session?.testName ?? ""}
           {status === "streaming" ? (
-            <Button iconOnly size="small" variant="muted" onClick={stop} aria-label="Stop" title="Stop">
+            <Button
+              iconOnly
+              size="small"
+              variant="muted"
+              onClick={() => store.stopStream(sessionKey)}
+              aria-label="Stop"
+              title="Stop"
+            >
               <Square className="size-3.5" />
             </Button>
           ) : null}
-          {!reviewing && status !== "streaming" ? (
-            <Button iconOnly size="small" variant="muted" onClick={() => setReviewing(true)} aria-label="Regenerate" title="Regenerate">
+          {!reviewing && status !== "streaming" && !readOnly ? (
+            <Button
+              iconOnly
+              size="small"
+              variant="muted"
+              onClick={() => setDraft({ reviewing: true })}
+              aria-label="Regenerate"
+              title="Regenerate"
+            >
               <RotateCcw className="size-3.5" />
             </Button>
           ) : null}
-          {!reviewing && correctedScript && onApplyScript ? (
-            <Button size="small" variant="accent" disabled={applied} onClick={applyScript}>
-              <Wand2 className="size-3.5" /> {applied ? "Applied" : "Apply"}
+          {!reviewing && correctedScript && runCtx?.onApplyScript ? (
+            <Button size="small" variant="accent" disabled={draft.applied} onClick={applyScript}>
+              <Wand2 className="size-3.5" /> {draft.applied ? "Applied" : "Apply"}
             </Button>
           ) : null}
           {!reviewing && content ? (
@@ -555,6 +689,7 @@ export function AiDebugDialog({
               {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
             </Button>
           ) : null}
+          <SessionControls sessionKey={sessionKey} />
         </span>
       }
       size="2xl"
@@ -562,144 +697,165 @@ export function AiDebugDialog({
       <div className="relative flex min-h-[400px] max-h-[70vh] flex-col gap-3">
         <ThinkingGifOverlay status={status} enabled={thinkingGifEnabled} />
         <div className="relative z-10 flex flex-1 flex-col gap-3">
-        {reviewing ? (
-          // Review phase: show the full prompt that will be sent and let the
-          // user add context. Nothing is sent until they click "Send to AI".
-          <>
-            <Text variant="small" color="secondary">
-              Review the prompt that will be sent to the model, then add any context you want and confirm to send. Nothing is sent until you confirm.
-            </Text>
-            <div className="flex flex-wrap items-center gap-1.5">
-              {QUICK_CONTEXT_REASONS.map((reason) => {
-                const active = isReasonActive(additionalContext, reason);
-                return (
-                  <Button
-                    key={reason}
-                    size="small"
-                    variant={active ? "muted" : "transparent"}
-                    radius="full"
-                    className="h-6 px-2 text-small"
-                    onClick={() => setAdditionalContext((prev) => toggleReason(prev, reason))}
-                  >
-                    {reason}
-                  </Button>
-                );
-              })}
-            </div>
-            <Field
-              label="Anything else you want to include? (Optional)"
-              orientation="vertical"
-            >
-              <Textarea
-                size="medium"
-                placeholder={"Add anything the model should know — e.g. the site changed recently, this selector is flaky, or you suspect a timing issue."}
-                value={additionalContext}
-                onChange={(e) => setAdditionalContext(e.target.value)}
-              />
-            </Field>
-            <div className="flex items-center justify-end gap-2">
-              <Button size="small" variant="muted" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
-              <Button size="small" variant="accent" onClick={sendDiagnosis}>
-                <Send className="size-3.5" /> Send to AI
-              </Button>
-            </div>
-            <ScrollArea
-              className="max-h-[56vh] flex-1 min-h-0 rounded-md border border-separator"
-              viewportClassName="max-h-[56vh]"
-            >
-              <div className="flex flex-col gap-3 p-3">
-                {promptMessages.map((m, i) => (
-                  <div key={i} className="flex flex-col gap-1">
-                    <Text variant="small-strong" color="secondary">
-                      {m.role === "system" ? "System prompt" : m.role === "user" ? "User prompt" : "Assistant"}
-                    </Text>
-                    <pre className="text-small-mono overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-control-subtle p-2 text-primary">
-                      {m.content}
-                    </pre>
-                  </div>
-                ))}
+          {readOnly ? (
+            <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+              <Callout.Text>
+                Restored from a previous session — the run behind it is gone, so this diagnosis is
+                read-only. Run the test again to ask for a fresh one.
+              </Callout.Text>
+            </Callout>
+          ) : null}
+          {refused ? (
+            <CapacityNotice decision={refused} onStopOldest={() => void send(true)} />
+          ) : null}
+          {reviewing ? (
+            // Review phase: show the full prompt that will be sent and let the
+            // user add context. Nothing is sent until they click "Send to AI".
+            <>
+              <Text variant="small" color="secondary">
+                Review the prompt that will be sent to the model, then add any context you want and
+                confirm to send. Nothing is sent until you confirm.
+              </Text>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {QUICK_CONTEXT_REASONS.map((reason) => {
+                  const active = isReasonActive(draft.additionalContext, reason);
+                  return (
+                    <Button
+                      key={reason}
+                      size="small"
+                      variant={active ? "muted" : "transparent"}
+                      radius="full"
+                      className="h-6 px-2 text-small"
+                      onClick={() =>
+                        setDraft({ additionalContext: toggleReason(draft.additionalContext, reason) })
+                      }
+                    >
+                      {reason}
+                    </Button>
+                  );
+                })}
               </div>
-            </ScrollArea>
-          </>
-        ) : (
-          <>
-            {status === "done" && content ? (
-              <div className="flex items-end gap-2">
+              <Field label="Anything else you want to include? (Optional)" orientation="vertical">
                 <Textarea
                   size="medium"
-                  className="flex-1 min-h-0 resize-none"
-                  placeholder="The model asked for more info — add details here and send a follow-up."
-                  value={followUp}
-                  onChange={(e) => setFollowUp(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void sendFollowUp();
-                    }
-                  }}
+                  placeholder={
+                    "Add anything the model should know — e.g. the site changed recently, this selector is flaky, or you suspect a timing issue."
+                  }
+                  value={draft.additionalContext}
+                  onChange={(e) => setDraft({ additionalContext: e.target.value })}
                 />
-                <Button
-                  size="small"
-                  variant="accent"
-                  disabled={!followUp.trim() || status !== "done"}
-                  onClick={sendFollowUp}
-                >
-                  <Send className="size-3.5" /> Send
+              </Field>
+              <div className="flex items-center justify-end gap-2">
+                <Button size="small" variant="muted" onClick={store.minimize}>
+                  Cancel
+                </Button>
+                <Button size="small" variant="accent" onClick={() => void send()}>
+                  <Send className="size-3.5" /> Send to AI
                 </Button>
               </div>
-            ) : null}
-            <ScrollArea
-              className="max-h-[56vh] rounded-md border border-separator"
-              viewportClassName="max-h-[56vh]"
-              autoScrollToBottom
-              autoScrollDeps={[content.length, reasoning.length]}
-            >
-              <div className="flex flex-col gap-1 p-3">
-                {status === "error" && error ? (
-                  <pre className="text-small overflow-x-auto whitespace-pre-wrap break-words text-primary">{friendlyError(error)}</pre>
-                ) : content ? (
-                  segments.map((seg, i) =>
-                    seg.type === "code" ? (
-                      <CodeBlock key={i} lang={seg.lang} content={seg.content} />
-                    ) : (
-                      <p key={i} className="py-1 text-small whitespace-pre-wrap break-words text-primary">
-                        {seg.content}
-                      </p>
-                    ),
-                  )
-                ) : status === "streaming" ? (
-                  <div className="flex flex-col gap-1">
-                    <p className="text-small text-secondary">
-                      {modelName ? `Thinking with ${modelName}…` : "Thinking…"}
-                    </p>
-                    {/* A reasoning model can spend a long time here with no
-                        answer yet. Showing the thinking as it arrives is the
-                        difference between "working" and "hung" — and this used
-                        to be dropped entirely, so the panel sat blank and then
-                        collapsed with nothing. Muted and monospaced: it's the
-                        model's scratchpad, not its answer. */}
-                    {reasoning ? (
-                      <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-separator pl-2 font-mono text-[11px] text-tertiary">
-                        {reasoning}
+              <ScrollArea
+                className="max-h-[56vh] flex-1 min-h-0 rounded-md border border-separator"
+                viewportClassName="max-h-[56vh]"
+              >
+                <div className="flex flex-col gap-3 p-3">
+                  {promptMessages.map((m, i) => (
+                    <div key={i} className="flex flex-col gap-1">
+                      <Text variant="small-strong" color="secondary">
+                        {m.role === "system" ? "System prompt" : m.role === "user" ? "User prompt" : "Assistant"}
+                      </Text>
+                      <pre className="text-small-mono overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-control-subtle p-2 text-primary">
+                        {m.content}
                       </pre>
-                    ) : null}
-                  </div>
-                ) : null}
-                {correctedScript && diff ? (
-                  <div className="mt-2 flex flex-col gap-1.5">
-                    <Text variant="small-strong" color="secondary">
-                      Suggested changes
-                      {summary ? ` (+${summary.added} / -${summary.removed} lines)` : ""}
-                    </Text>
-                    <DiffView diff={diff} />
-                  </div>
-                ) : null}
-              </div>
-            </ScrollArea>
-          </>
-        )}
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </>
+          ) : (
+            <>
+              {status === "done" && content && !readOnly ? (
+                <div className="flex items-end gap-2">
+                  <Textarea
+                    size="medium"
+                    className="flex-1 min-h-0 resize-none"
+                    placeholder="The model asked for more info — add details here and send a follow-up."
+                    value={draft.followUp}
+                    onChange={(e) => setDraft({ followUp: e.target.value })}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        void sendFollowUp();
+                      }
+                    }}
+                  />
+                  <Button
+                    size="small"
+                    variant="accent"
+                    disabled={!draft.followUp.trim() || status !== "done"}
+                    onClick={() => void sendFollowUp()}
+                  >
+                    <Send className="size-3.5" /> Send
+                  </Button>
+                </div>
+              ) : null}
+              <ScrollArea
+                className="max-h-[56vh] rounded-md border border-separator"
+                viewportClassName="max-h-[56vh]"
+                autoScrollToBottom
+                autoScrollDeps={[content.length, reasoning.length]}
+              >
+                <div className="flex flex-col gap-1 p-3">
+                  {status === "error" && session?.error ? (
+                    <pre className="text-small overflow-x-auto whitespace-pre-wrap break-words text-primary">
+                      {friendlyError(session.error)}
+                    </pre>
+                  ) : content ? (
+                    segments.map((seg, i) =>
+                      seg.type === "code" ? (
+                        <CodeBlock key={i} lang={seg.lang} content={seg.content} />
+                      ) : (
+                        <p key={i} className="py-1 text-small whitespace-pre-wrap break-words text-primary">
+                          {seg.content}
+                        </p>
+                      ),
+                    )
+                  ) : status === "streaming" ? (
+                    <div className="flex flex-col gap-1">
+                      <p className="text-small text-secondary">
+                        {modelName ? `Thinking with ${modelName}…` : "Thinking…"}
+                      </p>
+                      {/* A reasoning model can spend a long time here with no
+                          answer yet. Showing the thinking as it arrives is the
+                          difference between "working" and "hung". */}
+                      {reasoning ? (
+                        <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-separator pl-2 font-mono text-[11px] text-tertiary">
+                          {reasoning}
+                        </pre>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {correctedScript && diff ? (
+                    <div className="mt-2 flex flex-col gap-1.5">
+                      {stale ? (
+                        <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+                          <Callout.Text>
+                            The script changed after this diagnosis was requested. The diff below is
+                            against the current script, but the model never saw those edits —
+                            review it before applying.
+                          </Callout.Text>
+                        </Callout>
+                      ) : null}
+                      <Text variant="small-strong" color="secondary">
+                        Suggested changes
+                        {summary ? ` (+${summary.added} / -${summary.removed} lines)` : ""}
+                      </Text>
+                      <DiffView diff={diff} />
+                    </div>
+                  ) : null}
+                </div>
+              </ScrollArea>
+            </>
+          )}
         </div>
       </div>
     </Dialog>
@@ -708,97 +864,65 @@ export function AiDebugDialog({
 
 // ── Per-step replay debugging (trainer Console) ───────────────────────
 // A leaner sibling of AiDebugDialog for diagnosing a SINGLE failed trainer
-// step from the Console tab. Same streaming + rendering machinery, but no
-// "Apply to script" (these are editable steps, not a script file) — just a
-// diagnosis and an optional corrected-expression snippet the user can copy.
+// step. Same streaming + rendering machinery, but no "Apply to script" (these
+// are editable steps, not a script file) — just a diagnosis and an optional
+// corrected-expression snippet the user can copy.
 
-export function StepAiDebugDialog({
-  open,
-  onOpenChange,
-  testName,
-  url,
-  stepLabel,
-  locator,
-  error,
-  logs,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  testName: string;
-  url: string;
-  stepLabel: string;
-  locator?: string;
-  error: string;
-  logs: { level: "info" | "warn" | "error"; message: string }[];
-}) {
-  const { content, status, error: chatError, start, stop } = useLlmChat();
+export function StepAiDebugDialog({ sessionKey }: { sessionKey: string }) {
+  const store = useAiDebug();
+  const { content } = useAiDebugContent(sessionKey);
+  const session = store.sessions.find((s) => s.key === sessionKey) ?? null;
+  const ctx = store.getContext(sessionKey);
+  const stepCtx = ctx?.kind === "step" ? ctx : null;
+  const open = store.expandedKey === sessionKey;
+
   const [copied, setCopied] = React.useState(false);
-  const [modelName, setModelName] = React.useState<string | null>(null);
-  const [models, setModels] = React.useState<LlmModel[]>([]);
-  const startedKeyRef = React.useRef<string | null>(null);
+  const [refused, setRefused] = React.useState<Extract<StartDecision, { ok: false }> | null>(null);
+  const { modelName, models, confirmModel, currentModel } = useModelPicker(open);
   const disabledEnhancements = useDisabledEnhancements();
   const thinkingGifEnabled = !disabledEnhancements.has("aiThinkingGif");
+  const startedKeyRef = React.useRef<string | null>(null);
 
+  const status = session?.status ?? "idle";
+  const readOnly = !stepCtx || Boolean(session?.readOnly);
+
+  const runDiagnosis = React.useCallback(
+    async (stopOldest?: boolean) => {
+      if (!stepCtx) return;
+      if (stopOldest) {
+        const decision = store.capacityFor(sessionKey);
+        if (!decision.ok && decision.oldestStreamingKey) store.stopStream(decision.oldestStreamingKey);
+      }
+      const model = await currentModel();
+      const decision = await store.startStream(
+        sessionKey,
+        buildStepDebugMessages({
+          testName: stepCtx.testName,
+          url: stepCtx.url,
+          stepLabel: stepCtx.stepLabel,
+          locator: stepCtx.locator,
+          error: stepCtx.error,
+          logs: stepCtx.logs,
+        }),
+        { model },
+      );
+      if (!decision.ok) setRefused(decision);
+      else setRefused(null);
+    },
+    [stepCtx, store, sessionKey, currentModel],
+  );
+
+  // Auto-start once per unique failed step, but only for a session that has
+  // never been sent — a restored or already-answered session must not re-send
+  // itself (and re-bill) just because the user reopened it.
   React.useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    api.llm
-      .getConfig()
-      .then(async (cfg) => {
-        if (cancelled) return;
-        setModelName(cfg.model);
-        try {
-          const st = await api.llm.status(cfg.provider);
-          if (!cancelled) setModels(st.models);
-        } catch {
-          if (!cancelled) setModels([]);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setModelName(null);
-          setModels([]);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
-
-  const confirmModel = React.useCallback(async (model: string) => {
-    setModelName(model);
-    try {
-      await api.llm.setConfig({ model });
-    } catch {
-      // best-effort
-    }
-  }, []);
-
-  const runDiagnosis = React.useCallback(async () => {
-    let model = modelName ?? undefined;
-    try {
-      const cfg = await api.llm.getConfig();
-      setModelName(cfg.model);
-      model = cfg.model ?? undefined;
-    } catch {
-      // keep the cached name
-    }
-    void start(
-      buildStepDebugMessages({ testName, url, stepLabel, locator, error, logs }),
-      { model },
-    );
-  }, [start, modelName, testName, url, stepLabel, locator, error, logs]);
-
-  // Auto-start once per unique failed step while the dialog is open. Like
-  // AiDebugDialog, we don't reset the key on close so reopening for the same
-  // step shows the prior streamed response.
-  React.useEffect(() => {
-    if (!open) return;
-    const key = `${stepLabel}:${error.length}:${logs.length}`;
+    if (!open || !stepCtx || readOnly) return;
+    if (status !== "idle") return;
+    const key = `${sessionKey}:${stepCtx.error.length}:${stepCtx.logs.length}`;
     if (startedKeyRef.current === key) return;
     startedKeyRef.current = key;
     void runDiagnosis();
-  }, [open, stepLabel, error.length, logs.length, runDiagnosis]);
+  }, [open, stepCtx, readOnly, status, sessionKey, runDiagnosis]);
 
   const copyResponse = async () => {
     await window.glazeAPI.clipboard.writeText(content);
@@ -811,27 +935,34 @@ export function StepAiDebugDialog({
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
-      title={
-        models.length > 0 ? (
-          <span className="inline-flex items-baseline gap-1">
-            Debugging step with{" "}
-            <ModelPicker modelName={modelName} models={models} onConfirm={confirmModel} />
-          </span>
-        ) : (
-          modelName ? `Debugging step with ${modelName}` : "Debugging step with AI"
-        )
-      }
+      onOpenChange={(next) => {
+        if (!next) store.minimize();
+      }}
+      title={dialogTitle("Debugging step with", modelName, models, confirmModel)}
       description={
         <span className="inline-flex items-center gap-2">
-          {stepLabel}
+          {session?.label ?? "Step"}
           {status === "streaming" ? (
-            <Button iconOnly size="small" variant="muted" onClick={stop} aria-label="Stop" title="Stop">
+            <Button
+              iconOnly
+              size="small"
+              variant="muted"
+              onClick={() => store.stopStream(sessionKey)}
+              aria-label="Stop"
+              title="Stop"
+            >
               <Square className="size-3.5" />
             </Button>
           ) : null}
-          {status !== "streaming" ? (
-            <Button iconOnly size="small" variant="muted" onClick={runDiagnosis} aria-label="Regenerate" title="Regenerate">
+          {status !== "streaming" && !readOnly ? (
+            <Button
+              iconOnly
+              size="small"
+              variant="muted"
+              onClick={() => void runDiagnosis()}
+              aria-label="Regenerate"
+              title="Regenerate"
+            >
               <RotateCcw className="size-3.5" />
             </Button>
           ) : null}
@@ -847,6 +978,7 @@ export function StepAiDebugDialog({
               {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
             </Button>
           ) : null}
+          <SessionControls sessionKey={sessionKey} />
         </span>
       }
       size="2xl"
@@ -854,38 +986,79 @@ export function StepAiDebugDialog({
       <div className="relative flex min-h-[400px] max-h-[70vh] flex-col gap-3">
         <ThinkingGifOverlay status={status} enabled={thinkingGifEnabled} />
         <div className="relative z-10 flex flex-1 flex-col gap-3">
-        <ScrollArea
-          className="max-h-[56vh] rounded-md border border-separator"
-          viewportClassName="max-h-[56vh]"
-          autoScrollToBottom
-          autoScrollDeps={[content.length]}
-        >
-          <div className="flex flex-col gap-1 p-3">
-            {status === "error" && chatError ? (
-              <pre className="text-small overflow-x-auto whitespace-pre-wrap break-words text-primary">{friendlyError(chatError)}</pre>
-            ) : content ? (
-              segments.map((seg, i) =>
-                seg.type === "code" ? (
-                  <CodeBlock key={i} lang={seg.lang} content={seg.content} />
-                ) : (
-                  <p key={i} className="py-1 text-small whitespace-pre-wrap break-words text-primary">
-                    {seg.content}
-                  </p>
-                ),
-              )
-            ) : status === "streaming" && thinkingGifEnabled ? (
-              <p className="text-small text-secondary">
-                {modelName ? `Thinking with ${modelName}…` : "Thinking…"}
-              </p>
-            ) : (
-              <p className="text-small text-secondary">
-                {status === "streaming" ? (modelName ? `Thinking with ${modelName}…` : "Thinking…") : ""}
-              </p>
-            )}
-          </div>
-        </ScrollArea>
+          {readOnly ? (
+            <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+              <Callout.Text>
+                Restored from a previous trainer session — the step it describes is no longer live,
+                so this diagnosis is read-only.
+              </Callout.Text>
+            </Callout>
+          ) : null}
+          {refused ? (
+            <CapacityNotice decision={refused} onStopOldest={() => void runDiagnosis(true)} />
+          ) : null}
+          <ScrollArea
+            className="max-h-[56vh] rounded-md border border-separator"
+            viewportClassName="max-h-[56vh]"
+            autoScrollToBottom
+            autoScrollDeps={[content.length]}
+          >
+            <div className="flex flex-col gap-1 p-3">
+              {status === "error" && session?.error ? (
+                <pre className="text-small overflow-x-auto whitespace-pre-wrap break-words text-primary">
+                  {friendlyError(session.error)}
+                </pre>
+              ) : content ? (
+                segments.map((seg, i) =>
+                  seg.type === "code" ? (
+                    <CodeBlock key={i} lang={seg.lang} content={seg.content} />
+                  ) : (
+                    <p key={i} className="py-1 text-small whitespace-pre-wrap break-words text-primary">
+                      {seg.content}
+                    </p>
+                  ),
+                )
+              ) : (
+                <p className="text-small text-secondary">
+                  {status === "streaming" ? (modelName ? `Thinking with ${modelName}…` : "Thinking…") : ""}
+                </p>
+              )}
+            </div>
+          </ScrollArea>
         </div>
       </div>
     </Dialog>
+  );
+}
+
+// ── Host ─────────────────────────────────────────────────────────────
+// Renders whichever session is expanded. Mounted ONCE, above the router, so a
+// minimized job can be restored from anywhere — including from a view that
+// isn't the one that started it, and while the trainer has replaced the outlet.
+
+export function AiDebugHost() {
+  const { sessions, expandedKey } = useAiDebug();
+
+  // Drop the UI draft of any session that no longer exists, so a discarded
+  // session's half-written context box can't reappear under a recycled key.
+  const knownRef = React.useRef<Set<string>>(new Set());
+  React.useEffect(() => {
+    const live = new Set(sessions.map((s) => s.key));
+    for (const key of knownRef.current) {
+      if (!live.has(key)) forgetDraft(key);
+    }
+    knownRef.current = live;
+  }, [sessions]);
+
+  if (!expandedKey) return null;
+  const session = sessions.find((s) => s.key === expandedKey);
+  if (!session) return null;
+  // Keyed by startedAt as well as the session key so a session discarded and
+  // re-created under the same key gets a genuinely fresh dialog rather than one
+  // still holding the previous session's local state.
+  return session.kind === "step" ? (
+    <StepAiDebugDialog key={`${session.key}:${session.startedAt}`} sessionKey={expandedKey} />
+  ) : (
+    <AiDebugDialog key={`${session.key}:${session.startedAt}`} sessionKey={expandedKey} />
   );
 }

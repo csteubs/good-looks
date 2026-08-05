@@ -11,6 +11,7 @@ import type {
   HealListEntry,
   SecretStatus,
   TestVariable,
+  AiDebugSession,
   DebugEntry,
   LogSearchResult,
   Locator,
@@ -309,10 +310,23 @@ export const api = {
       ipc().invoke<LlmModel[]>("llm:listModels", { provider }),
     chat: (params: LlmChatParams) => ipc().invoke<{ requestId: string }>("llm:chat", params),
     cancel: (requestId: string) => ipc().invoke<void>("llm:cancel", { requestId }),
+    /** Whether a request is still streaming — used to re-adopt a session after
+     *  a renderer reload without stranding it as permanently "thinking". */
+    isActive: (requestId: string) =>
+      ipc().invoke<{ active: boolean }>("llm:isActive", { requestId }),
     // Anthropic API key management (key stays backend-side).
     setApiKey: (key: string) => ipc().invoke<{ hasKey: boolean }>("llm:setApiKey", { key }),
     clearApiKey: () => ipc().invoke<{ hasKey: boolean }>("llm:clearApiKey"),
     hasApiKey: () => ipc().invoke<{ hasKey: boolean }>("llm:hasApiKey"),
+  },
+  /** Persisted AI debug sessions. The stream itself never survives a restart —
+   *  only its output does; see main/services/ai-debug-store.ts. */
+  aiDebug: {
+    list: () => ipc().invoke<AiDebugSession[]>("aiDebug:list"),
+    save: (session: AiDebugSession) =>
+      ipc().invoke<AiDebugSession | null>("aiDebug:save", { session }),
+    remove: (key: string) => ipc().invoke<{ removed: number }>("aiDebug:remove", { key }),
+    clear: () => ipc().invoke<{ removed: number }>("aiDebug:clear"),
   },
   /** Subscribe to a backend push event. Returns an unsubscribe function. */
   on<T>(channel: string, cb: (payload: T) => void): () => void {

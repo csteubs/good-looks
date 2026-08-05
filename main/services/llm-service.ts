@@ -363,6 +363,17 @@ export const llmService = {
   cancel(requestId: string): void {
     activeRequests.get(requestId)?.abort();
   },
+
+  /** Whether a request is still in flight.
+   *
+   *  A renderer reload (dev HMR, window reload) drops the llm:chunk listeners
+   *  while the backend request keeps going. The AI debug store re-adopts such a
+   *  request on hydrate, and needs to distinguish "still answering" from
+   *  "finished while nobody was listening" — otherwise the second case shows a
+   *  permanently-thinking icon for a request that ended. */
+  isActive(requestId: string): boolean {
+    return activeRequests.has(requestId);
+  },
 };
 
 export type { LlmMessage };

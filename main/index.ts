@@ -29,6 +29,7 @@ import {
 } from "./services/debug-capture.js";
 import { applyRetention } from "./services/retention.js";
 import { batchHistoryStore } from "./services/batch-history-store.js";
+import { aiDebugStore } from "./services/ai-debug-store.js";
 
 // Get directory paths
 const __filename = fileURLToPath(import.meta.url);
@@ -57,6 +58,18 @@ registerHandlers();
   const { reconciled } = batchHistoryStore.reconcileInterrupted();
   if (reconciled > 0) {
     logger.info("batch", "Reconciled interrupted batches at startup", { reconciled });
+  }
+}
+
+// ── AI debug session reconciliation ───────────────────────────────────
+// The llm request map dies with the process, so a session persisted as
+// "streaming" describes a job that no longer exists. Restoring it as-is would
+// leave a permanently-orange "AI is thinking" icon for a model that stopped
+// answering at quit.
+{
+  const { reconciled } = aiDebugStore.reconcileInterrupted();
+  if (reconciled > 0) {
+    logger.info("ai-debug", "Reconciled interrupted AI debug sessions at startup", { reconciled });
   }
 }
 

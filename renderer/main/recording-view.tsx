@@ -20,13 +20,15 @@ import {
 } from "@glaze/core/components";
 import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, Sparkles, Wand2, X } from "lucide-react";
 
-import type { AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step } from "../lib/recorder-types";
+import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
 import { locatorToPrompt } from "../lib/llm-prompts";
 import { useRecorder, type ReplayRun } from "./recorder-store";
 import { StepRow } from "./step-row";
 import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "./add-step-dialog";
-import { StepAiDebugDialog } from "./ai-debug-panel";
+import { stepSessionKey, useAiDebug } from "./ai-debug-store";
+import { parseSessionKey } from "../lib/ai-debug-sessions";
+import { toneFor } from "../lib/ai-debug-status";
 import { GenerateStepsDialog } from "./generate-steps-dialog";
 import { RefineSelectorDialog, formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 import { CookiesPanel } from "./cookies-panel";
@@ -249,6 +251,7 @@ function DebugPanel({
   autoScroll,
   onAutoScrollChange,
   onDebugStep,
+  aiStatusByStep,
   onApplyHeal,
   onInsertCookieStep,
 }: {
@@ -262,6 +265,9 @@ function DebugPanel({
   autoScroll: boolean;
   onAutoScrollChange: (v: boolean) => void;
   onDebugStep: (index: number) => void;
+  /** Status of each step's AI debug session, keyed by step index. A step with
+   *  no session is absent — the icon then shows its plain, unstarted state. */
+  aiStatusByStep: Record<number, AiDebugStatus>;
   onApplyHeal: (stepId: string, locator: Locator) => void;
   onInsertCookieStep: (step: RawStep) => void;
 }) {
@@ -346,15 +352,28 @@ function DebugPanel({
                     {!s.ok && s.error ? (
                       <div className="flex items-start gap-2 pl-4">
                         <span className="min-w-0 flex-1 text-support-red">{s.error}</span>
-                        <button
-                          type="button"
-                          onClick={() => onDebugStep(s.index)}
-                          className="shrink-0 rounded p-0.5 text-tertiary transition-colors hover:bg-background-secondary hover:text-accent"
-                          aria-label="Debug this step with AI"
-                          title="Debug with AI"
-                        >
-                          <Sparkles className="size-3.5" />
-                        </button>
+                        {(() => {
+                          // Once a session exists for this step, the icon is
+                          // the way back to it — so it carries that session's
+                          // colour rather than the generic "start one" look.
+                          const st = aiStatusByStep[s.index];
+                          const tone = st ? toneFor(st) : null;
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => onDebugStep(s.index)}
+                              className={`shrink-0 rounded p-0.5 transition-colors hover:bg-background-secondary ${
+                                tone ? tone.className : "text-tertiary hover:text-accent"
+                              }`}
+                              aria-label={tone ? tone.label : "Debug this step with AI"}
+                              title={tone ? tone.label : "Debug with AI"}
+                            >
+                              <Sparkles
+                                className={`size-3.5 ${tone?.busy ? "animate-pulse" : ""}`}
+                              />
+                            </button>
+                          );
+                        })()}
                       </div>
                     ) : null}
                     {s.heal && s.heal.candidates.length > 0 ? (
@@ -491,9 +510,50 @@ export function RecordingView() {
   // the latest output (on by default; a checkbox lets the user scroll manually).
   const [debugTab, setDebugTab] = React.useState("steps");
   const [autoScroll, setAutoScroll] = React.useState(true);
-  // Index (into replayRun.steps) of the failed console step the user is
-  // debugging with AI. Null when the StepAiDebugDialog is closed.
-  const [debugStepIndex, setDebugStepIndex] = React.useState<number | null>(null);
+  // Per-step AI debugging is a session in the global store (see
+  // ai-debug-store.tsx), not local state: minimizing one has to survive this
+  // view, and the trainer replaces the whole outlet while it is open.
+  const aiDebug = useAiDebug();
+  // A brand-new recording has no test id yet, so its step sessions are keyed
+  // under a stable placeholder rather than "null" — otherwise every unsaved
+  // trainer session would collide with every other one.
+  const aiTestId = state.testId ?? "trainer";
+  // Status per step index, for the Console's per-step sparkle icons.
+  const aiStatusByStep = React.useMemo(() => {
+    const out: Record<number, AiDebugStatus> = {};
+    for (const s of aiDebug.sessions) {
+      const parsed = parseSessionKey(s.key);
+      if (parsed?.kind === "step" && parsed.testId === aiTestId && parsed.stepIndex !== null) {
+        out[parsed.stepIndex] = s.status;
+      }
+    }
+    return out;
+  }, [aiDebug.sessions, aiTestId]);
+
+  const openStepDebug = React.useCallback(
+    (index: number) => {
+      const failed = replayRun?.steps.find((x) => x.index === index) ?? null;
+      const live = liveSteps[index];
+      const stepLabel = failed?.stepLabel ?? `Step ${index + 1}`;
+      aiDebug.openSession({
+        key: stepSessionKey(aiTestId, index),
+        kind: "step",
+        testId: aiTestId,
+        label: `Step ${index + 1}: ${stepLabel}`,
+        testName: state.name ?? "Test",
+        context: {
+          kind: "step",
+          testName: state.name ?? "Test",
+          url: state.url ?? "",
+          stepLabel,
+          locator: live?.locator ? locatorToPrompt(live.locator) : undefined,
+          error: failed?.error ?? "Replay did not complete.",
+          logs: (failed?.logs ?? []).map((l) => ({ level: l.level, message: l.m })),
+        },
+      });
+    },
+    [aiDebug, aiTestId, replayRun, liveSteps, state.name, state.url],
+  );
   // Exit confirmation: the "Save Test" / "Generate Test" toolbar button opens
   // this modal only when there are unsaved steps; with no steps it saves/exits
   // directly. Two options: discard edits (close without saving) or save & exit.
@@ -845,7 +905,8 @@ export function RecordingView() {
         onInsertCookieStep={(step) => insertStep(step)}
         autoScroll={autoScroll}
         onAutoScrollChange={setAutoScroll}
-        onDebugStep={setDebugStepIndex}
+        onDebugStep={openStepDebug}
+        aiStatusByStep={aiStatusByStep}
         onApplyHeal={applyHeal}
       />
 
@@ -899,37 +960,6 @@ export function RecordingView() {
         url={state.url}
         onOpenChange={setAiOpen}
         onInsert={(steps) => steps.forEach((s) => insertStep(s))}
-      />
-      <StepAiDebugDialog
-        open={debugStepIndex !== null}
-        onOpenChange={(o) => {
-          if (!o) setDebugStepIndex(null);
-        }}
-        testName={state.name ?? "Test"}
-        url={state.url ?? ""}
-        stepLabel={(() => {
-          const fs = debugStepIndex !== null
-            ? replayRun?.steps.find((x) => x.index === debugStepIndex)
-            : null;
-          return fs?.stepLabel ?? "Step";
-        })()}
-        locator={(() => {
-          if (debugStepIndex === null) return undefined;
-          const ls = liveSteps[debugStepIndex];
-          return ls?.locator ? locatorToPrompt(ls.locator) : undefined;
-        })()}
-        error={(() => {
-          const fs = debugStepIndex !== null
-            ? replayRun?.steps.find((x) => x.index === debugStepIndex)
-            : null;
-          return fs?.error ?? "Replay did not complete.";
-        })()}
-        logs={(() => {
-          const fs = debugStepIndex !== null
-            ? replayRun?.steps.find((x) => x.index === debugStepIndex)
-            : null;
-          return (fs?.logs ?? []).map((l) => ({ level: l.level, message: l.m }));
-        })()}
       />
       {picked && refiningStepId ? (
         <RefineSelectorDialog

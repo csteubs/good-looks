@@ -30,6 +30,7 @@ import { refreshSecretSnapshot } from "../services/secret-redaction.js";
 import { parseSpecDetailed } from "../services/spec-parser.js";
 import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
+import { aiDebugStore } from "../services/ai-debug-store.js";
 import { anthropicKeyStore } from "../services/anthropic-key-store.js";
 import { recorderSettingsStore } from "../services/recorder-settings-store.js";
 import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
@@ -52,7 +53,7 @@ import {
   normalizeTags,
   normalizeVariables,
 } from "../recorder/types.js";
-import type { AssertKind, CookieSpec, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
+import type { AiDebugSession, AssertKind, CookieSpec, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 
 import { ipcMain, logger } from "@glaze/core/backend";
@@ -601,6 +602,9 @@ export function registerHandlers(): void {
   ipcMain.handle("llm:cancel", async (_e, params: { requestId?: unknown }) => {
     llmService.cancel(String(params?.requestId ?? ""));
   });
+  ipcMain.handle("llm:isActive", async (_e, params: { requestId?: unknown }) => ({
+    active: llmService.isActive(String(params?.requestId ?? "")),
+  }));
 
   // Anthropic API key — stored encrypted; the key itself never leaves the backend.
   ipcMain.handle("llm:setApiKey", async (_e, params: { key?: unknown }) => {
@@ -613,6 +617,21 @@ export function registerHandlers(): void {
     return { hasKey: false };
   });
   ipcMain.handle("llm:hasApiKey", async () => ({ hasKey: await anthropicKeyStore.hasKey() }));
+
+  // ── AI debug sessions (minimized "Debug with AI" jobs) ──────────────
+  // Persisted so a diagnosis survives a restart. The job itself cannot — see
+  // ai-debug-store.ts — so a session stored as "streaming" is reconciled to
+  // "interrupted" at startup rather than restored as live.
+  ipcMain.handle("aiDebug:list", async () => aiDebugStore.list());
+  ipcMain.handle("aiDebug:save", async (_e, params: { session?: unknown }) => {
+    const session = params?.session as AiDebugSession | undefined;
+    if (!session || typeof session.key !== "string" || !session.key) return null;
+    return aiDebugStore.save(session);
+  });
+  ipcMain.handle("aiDebug:remove", async (_e, params: { key?: unknown }) =>
+    aiDebugStore.remove(String(params?.key ?? "")),
+  );
+  ipcMain.handle("aiDebug:clear", async () => aiDebugStore.clear());
 
   // ── Alert (outgoing webhook) handlers ───────────────────────────────
   // The URL is a bearer credential, so it only ever travels renderer→backend.

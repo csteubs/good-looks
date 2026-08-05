@@ -3,6 +3,9 @@ import * as React from "react";
 import { SplitView } from "@glaze/core/components";
 import { useTheme } from "@glaze/core/hooks";
 
+import { AiDebugChip } from "./ai-debug-chip";
+import { AiDebugHost } from "./ai-debug-panel";
+import { AiDebugProvider } from "./ai-debug-store";
 import { LibrarySidebar } from "./library-sidebar";
 import { RecorderProvider, useRecorder } from "./recorder-store";
 import { RecordingView } from "./recording-view";
@@ -39,7 +42,14 @@ export function RootView() {
     <div className="relative h-full [&:not(:has([data-toolbar]))_.drag-region]:z-50">
       <div className="drag-region fixed left-0 right-0 top-0 h-13" />
       <RecorderProvider>
-        <RootShell />
+        {/* Above the shell, so an AI debug session survives navigation AND the
+            trainer replacing the whole outlet. The host renders whichever
+            session is expanded; the chip is the way back to a minimized one. */}
+        <AiDebugProvider>
+          <RootShell />
+          <AiDebugHost />
+          <AiDebugChip />
+        </AiDebugProvider>
       </RecorderProvider>
     </div>
   );

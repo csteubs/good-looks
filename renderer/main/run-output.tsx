@@ -2,9 +2,20 @@ import { Button, ScrollArea, Status, Text } from "@glaze/core/components";
 import { Check, Copy, Sparkles } from "lucide-react";
 import { useState } from "react";
 
+import { toneFor } from "../lib/ai-debug-status";
+import type { AiDebugStatus } from "../lib/recorder-types";
 import type { RunInfo } from "./recorder-store";
 
-export function RunOutput({ info, onDebug }: { info: RunInfo; onDebug?: () => void }) {
+export function RunOutput({
+  info,
+  onDebug,
+  /** Status of this test's AI debug session, or null when it has none. */
+  aiStatus,
+}: {
+  info: RunInfo;
+  onDebug?: () => void;
+  aiStatus?: AiDebugStatus | null;
+}) {
   const [copied, setCopied] = useState(false);
   const failed = !info.running && info.code !== null && info.code !== 0;
 
@@ -13,6 +24,12 @@ export function RunOutput({ info, onDebug }: { info: RunInfo; onDebug?: () => vo
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
+
+  // Once a session exists the icon is how you get BACK to it, so it must stay
+  // put — showing it only for a failed run would make a minimized job vanish
+  // the moment the test is re-run and passes.
+  const tone = aiStatus ? toneFor(aiStatus) : null;
+  const showDebug = Boolean(onDebug) && (failed || tone !== null);
 
   return (
     <div className="bg-background flex h-56 shrink-0 flex-col border-t border-separator">
@@ -25,16 +42,18 @@ export function RunOutput({ info, onDebug }: { info: RunInfo; onDebug?: () => vo
             {info.code === 0 ? "Passed" : "Failed"}
           </Status>
         )}
-        {failed && onDebug ? (
+        {showDebug ? (
           <Button
             iconOnly
             variant="transparent"
             size="small"
             onClick={onDebug}
-            aria-label="Debug with AI"
-            title="Debug with AI"
+            aria-label={tone ? tone.label : "Debug with AI"}
+            title={tone ? tone.label : "Debug with AI"}
           >
-            <Sparkles className="size-3.5" />
+            <Sparkles
+              className={`size-3.5 ${tone ? tone.className : ""} ${tone?.busy ? "animate-pulse" : ""}`}
+            />
           </Button>
         ) : null}
         {!info.running && info.lines.length > 0 ? (

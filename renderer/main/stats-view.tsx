@@ -359,7 +359,7 @@ export function StatsView() {
   const [search, setSearch] = React.useState("");
   const [debounced, setDebounced] = React.useState("");
   const [logRun, setLogRun] = React.useState<{ id: string; title: string } | null>(null);
-  const [confirm, setConfirm] = React.useState<null | "reset" | "all">(null);
+  const [confirm, setConfirm] = React.useState<null | "reset" | "all" | "aiDebug">(null);
   const [rangeOpen, setRangeOpen] = React.useState(false);
   const [rangeFrom, setRangeFrom] = React.useState("");
   const [rangeTo, setRangeTo] = React.useState("");
@@ -455,6 +455,10 @@ export function StatsView() {
         { label: "Delete stats & logs…", commandId: 2 },
         { label: "Delete logs by date…", commandId: 3 },
         { type: "separator" },
+        // AI debug sessions quote script and run-output excerpts, so they get
+        // the same explicit cleanup affordance the raw logs have.
+        { label: "Delete AI debug history…", commandId: 5 },
+        { type: "separator" },
         { label: "Reveal logs folder in Finder", commandId: 4 },
       ],
     });
@@ -464,7 +468,8 @@ export function StatsView() {
       setRangeFrom("");
       setRangeTo("");
       setRangeOpen(true);
-    } else if (res.commandId === 4) {
+    } else if (res.commandId === 5) setConfirm("aiDebug");
+    else if (res.commandId === 4) {
       try {
         nativeShell().showItemInFolder(await api.runs.logsDir());
       } catch {
@@ -481,6 +486,11 @@ export function StatsView() {
       } else if (confirm === "all") {
         const { removed } = await api.runs.deleteAll();
         toast.success(`Deleted ${removed} run${removed === 1 ? "" : "s"} and their logs.`);
+      } else if (confirm === "aiDebug") {
+        const { removed } = await api.aiDebug.clear();
+        toast.success(
+          `Deleted ${removed} saved AI debug session${removed === 1 ? "" : "s"}.`,
+        );
       }
       refresh();
     } catch (err) {
@@ -836,13 +846,27 @@ export function StatsView() {
         onOpenChange={(o) => {
           if (!o) setConfirm(null);
         }}
-        title={confirm === "all" ? "Delete stats and logs?" : "Reset stats?"}
+        title={
+          confirm === "all"
+            ? "Delete stats and logs?"
+            : confirm === "aiDebug"
+              ? "Delete saved AI debug sessions?"
+              : "Reset stats?"
+        }
         description={
           confirm === "all"
             ? "Permanently deletes all run history and every raw log file. This can't be undone."
-            : "Clears the run history and charts. The raw log files stay on disk (reveal them from the Manage menu)."
+            : confirm === "aiDebug"
+              ? "Permanently deletes every saved AI diagnosis, including any still minimized. Running jobs are unaffected until they finish. This can't be undone."
+              : "Clears the run history and charts. The raw log files stay on disk (reveal them from the Manage menu)."
         }
-        confirmLabel={confirm === "all" ? "Delete everything" : "Reset stats"}
+        confirmLabel={
+          confirm === "all"
+            ? "Delete everything"
+            : confirm === "aiDebug"
+              ? "Delete sessions"
+              : "Reset stats"
+        }
         confirmVariant="destructive"
         onConfirm={runConfirmedDelete}
       />

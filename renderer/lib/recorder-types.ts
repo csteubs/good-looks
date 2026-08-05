@@ -763,3 +763,32 @@ export interface LiveCookie extends CookieSpec {
   hostOnly?: boolean;
   session?: boolean;
 }
+
+// ── AI debug sessions (mirror of main/recorder/types.ts) ─────────────
+
+export type AiDebugStatus =
+  | "idle"
+  | "streaming"
+  | "done"
+  | "error"
+  | "cancelled"
+  | "interrupted";
+
+export type AiDebugKind = "run" | "step";
+
+export interface AiDebugSession {
+  key: string;
+  kind: AiDebugKind;
+  testId: string;
+  label: string;
+  testName: string;
+  status: AiDebugStatus;
+  content: string;
+  reasoning: string;
+  error: string | null;
+  requestId: string | null;
+  scriptHash: string | null;
+  startedAt: number;
+  updatedAt: number;
+  readOnly?: boolean;
+}

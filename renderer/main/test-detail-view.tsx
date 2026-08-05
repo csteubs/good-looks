@@ -34,7 +34,12 @@ import { ChevronDown, Pencil, TriangleAlert, Trash2 } from "lucide-react";
 
 import { api } from "../lib/api";
 import { useRecorder } from "./recorder-store";
-import { AiDebugDialog } from "./ai-debug-panel";
+import {
+  runSessionKey,
+  useAiDebug,
+  useAiDebugStatus,
+  type AiDebugRunContext,
+} from "./ai-debug-store";
 import { EditStepsView } from "./edit-steps-view";
 import { RunOutput } from "./run-output";
 import { ScriptEditor, ScriptView } from "./script-view";
@@ -60,7 +65,6 @@ export function TestDetailView() {
   const [nameDraft, setNameDraft] = React.useState("");
   const [editingScript, setEditingScript] = React.useState(false);
   const [scriptDraft, setScriptDraft] = React.useState("");
-  const [aiDebugOpen, setAiDebugOpen] = React.useState(false);
   const [editingSteps, setEditingSteps] = React.useState(false);
   const [trainerConfirmOpen, setTrainerConfirmOpen] = React.useState(false);
   // Per-test visual-testing gate — remembers the user's "Capture screenshots"
@@ -140,6 +144,61 @@ export function TestDetailView() {
       .map(([index]) => Number(index));
     return failed.length > 0 ? Math.min(...failed) : undefined;
   }, [runInfo]);
+
+  // ── AI debug session ─────────────────────────────────────────────
+  // The session lives in the global store, so it survives leaving this view.
+  // This view's job is to (a) supply the prompt context, and (b) re-supply it
+  // when a session restored from disk is reopened here.
+  const aiDebug = useAiDebug();
+  const aiKey = runSessionKey(id);
+  const aiStatus = useAiDebugStatus(aiKey);
+  const script = scriptQuery.data ?? "";
+  const runOutput = runInfo?.lines.join("") ?? "";
+
+  const applyScript = React.useCallback(
+    async (source: string) => {
+      await api.tests.updateScript(id, source);
+      qc.invalidateQueries({ queryKey: ["script", id] });
+      qc.invalidateQueries({ queryKey: ["test", id] });
+    },
+    [id, qc],
+  );
+
+  const runContext = React.useMemo<AiDebugRunContext | null>(() => {
+    if (!test) return null;
+    return {
+      kind: "run",
+      testName: test.name,
+      testUrl: test.url,
+      script,
+      output: runOutput,
+      imported: Boolean(test.sourceDir),
+      speed: test.speed,
+      failedStepIndex,
+      onApplyScript: applyScript,
+    };
+  }, [test, script, runOutput, failedStepIndex, applyScript]);
+
+  // Keep a live session's context fresh (the script or run output can change
+  // under it) and re-ground one restored from disk, which has no context at all
+  // until the view that owns it renders again.
+  React.useEffect(() => {
+    if (!runContext) return;
+    if (!aiStatus) return;
+    aiDebug.attachContext(aiKey, runContext);
+  }, [aiDebug, aiKey, runContext, aiStatus, script]);
+
+  const openAiDebug = React.useCallback(() => {
+    if (!test || !runContext) return;
+    aiDebug.openSession({
+      key: aiKey,
+      kind: "run",
+      testId: id,
+      label: test.name,
+      testName: test.name,
+      context: runContext,
+    });
+  }, [aiDebug, aiKey, id, test, runContext, script]);
 
   const saveName = async (name: string) => {
     const trimmed = name.trim();
@@ -488,24 +547,9 @@ export function TestDetailView() {
         );
       })()}
 
-      {runInfo ? <RunOutput info={runInfo} onDebug={() => setAiDebugOpen(true)} /> : null}
-
-      <AiDebugDialog
-        open={aiDebugOpen}
-        onOpenChange={setAiDebugOpen}
-        testName={test.name}
-        testUrl={test.url}
-        script={scriptQuery.data ?? ""}
-        output={runInfo?.lines.join("") ?? ""}
-        imported={Boolean(test.sourceDir)}
-        speed={test.speed}
-        failedStepIndex={failedStepIndex}
-        onApplyScript={async (source) => {
-          await api.tests.updateScript(id, source);
-          qc.invalidateQueries({ queryKey: ["script", id] });
-          qc.invalidateQueries({ queryKey: ["test", id] });
-        }}
-      />
+      {/* The dialog itself is rendered by AiDebugHost above the router, so a
+          minimized session outlives this view. */}
+      {runInfo ? <RunOutput info={runInfo} onDebug={openAiDebug} aiStatus={aiStatus} /> : null}
 
       <Dialog
         open={renameOpen}

@@ -910,3 +910,60 @@ export function cookieScopeIsValid(spec: CookieSpec | undefined): boolean {
   if (!spec || !spec.name) return false;
   return !!spec.url || !!(spec.domain && spec.path);
 }
+
+// ── AI debug sessions (minimizable "Debug with AI" jobs) ─────────────
+// A session is one LLM diagnosis — either of a whole failed run or of a single
+// trainer step. Sessions can be minimized and outlive the view that started
+// them, so they persist here rather than in component state.
+
+/** Lifecycle of one AI debug session.
+ *
+ *  `interrupted` exists only on RESTORE: the backend's in-flight request map
+ *  dies with the process, so a session persisted as "streaming" describes a job
+ *  that no longer exists. Startup rewrites those (see reconcileInterrupted)
+ *  rather than restoring a phantom in-progress job. */
+export type AiDebugStatus =
+  | "idle"
+  | "streaming"
+  | "done"
+  | "error"
+  | "cancelled"
+  | "interrupted";
+
+export type AiDebugKind = "run" | "step";
+
+/** The persisted shape. Deliberately does NOT include the prompt `messages`:
+ *  they embed the full script and run output — page content, URLs with session
+ *  tokens, values typed while recording — and they're reconstructible from live
+ *  data via buildDebugMessages. Only the model's answer is kept. */
+export interface AiDebugSession {
+  key: string;
+  kind: AiDebugKind;
+  testId: string;
+  /** Display label for the chip/list ("Step 3: click Submit", or the test name). */
+  label: string;
+  testName: string;
+  status: AiDebugStatus;
+  content: string;
+  reasoning: string;
+  error: string | null;
+  /** Backend llm request id while streaming; null once terminal. Owning this is
+   *  what makes an orphaned request cancellable. */
+  requestId: string | null;
+  /** Hash of the script the prompt was built from, so a diff computed against a
+   *  since-edited script can be flagged instead of silently clobbering it. */
+  scriptHash: string | null;
+  startedAt: number;
+  updatedAt: number;
+  /** Restored from disk with no live context behind it — readable, not re-runnable. */
+  readOnly?: boolean;
+}
+
+/** Bumped when the persisted shape changes; an unrecognized version reads as
+ *  empty rather than half-parsing into a wrong-shaped session. */
+export const AI_DEBUG_SESSIONS_VERSION = 1;
+
+export interface AiDebugSessionsFile {
+  version: number;
+  sessions: AiDebugSession[];
+}
