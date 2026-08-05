@@ -31,15 +31,26 @@ export class Notification {
   show(): void {}
 }
 
-/** Stand-in for the encrypted-secret API. Reports encryption as UNAVAILABLE so
- *  a check can never accidentally write a real secret to disk; the "encryption"
- *  below is a reversible marker, not a cipher, and exists only so importing
- *  webhook-url-store / anthropic-key-store doesn't blow up in a bundle. The
- *  checks drive those stores' PURE helpers (validateWebhookUrl, hostOfUrl),
- *  never their persistence. */
+/** Stand-in for the encrypted-secret API.
+ *
+ *  The "encryption" below is a reversible marker, not a cipher. That's safe
+ *  because the real protection is elsewhere: this stub only ever runs under a
+ *  test whose userData points at a throwaway temp dir, so nothing it writes is
+ *  a real secret in a real location.
+ *
+ *  Availability DEFAULTS TO FALSE so a test that doesn't think about secrets
+ *  can't accidentally exercise a persistence path. Tests that need the save
+ *  path (the IPC handler tests) opt in via setEncryptionAvailable(true). */
+let encryptionAvailable = false;
+
+/** Opt in to the fake-encrypted persistence path. Remember to reset it. */
+export function setEncryptionAvailable(available: boolean): void {
+  encryptionAvailable = available;
+}
+
 export const safeStorage = {
   async isEncryptionAvailable(): Promise<boolean> {
-    return false;
+    return encryptionAvailable;
   },
   async encryptString(plain: string): Promise<Buffer> {
     return Buffer.from(`stub:${plain}`, "utf-8");
@@ -48,3 +59,38 @@ export const safeStorage = {
     return buf.toString("utf-8").replace(/^stub:/, "");
   },
 };
+
+/** Recording stand-in for `ipcMain`.
+ *
+ *  `registerHandlers()` is a big block of `ipcMain.handle(channel, fn)` calls
+ *  with no other way in: without capturing those registrations there's no way
+ *  to exercise the IPC layer at all. Tests call `invokeHandler(channel, params)`
+ *  to run one exactly as the renderer would. */
+const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>();
+
+export const ipcMain = {
+  handle(channel: string, fn: (event: unknown, ...args: unknown[]) => unknown): void {
+    handlers.set(channel, fn);
+  },
+  removeHandler(channel: string): void {
+    handlers.delete(channel);
+  },
+  on(): void {},
+};
+
+/** Channels registered so far — lets a test assert the surface exists. */
+export function registeredChannels(): string[] {
+  return [...handlers.keys()].sort();
+}
+
+/** Invoke a registered handler the way the renderer would. Throws a clear error
+ *  for an unknown channel rather than a confusing "fn is not a function". */
+export async function invokeHandler<T = unknown>(channel: string, params?: unknown): Promise<T> {
+  const fn = handlers.get(channel);
+  if (!fn) throw new Error(`No IPC handler registered for "${channel}"`);
+  return (await fn({}, params)) as T;
+}
+
+export function clearHandlers(): void {
+  handlers.clear();
+}
