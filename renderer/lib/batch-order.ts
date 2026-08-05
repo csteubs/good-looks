@@ -68,6 +68,14 @@ export function orderIdsOf(tests: TestRecord[]): string[] {
   return tests.map((t) => t.id);
 }
 
+/** Is a user order actually in effect, i.e. does it differ from plain library
+ *  order? Drives whether a "Reset order" affordance is worth showing —
+ *  offering it when nothing has been reordered is noise. */
+export function isCustomOrder(tests: TestRecord[], order: string[]): boolean {
+  const ordered = applyOrder(tests, order);
+  return ordered.some((t, i) => t.id !== tests[i]?.id);
+}
+
 /** Has the stored order drifted from the library (tests added or removed)?
  *  Used to rewrite it once, rather than on every render. */
 export function orderIsStale(order: string[], tests: TestRecord[]): boolean {

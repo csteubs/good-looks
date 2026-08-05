@@ -32,7 +32,13 @@ import { Check, CircleDashed, GripVertical, Play, Square, X, SkipForward, Loader
 import { api } from "../lib/api";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts, untaggedCount } from "../lib/test-tags";
-import { applyOrder, moveToTarget, orderIdsOf, orderIsStale } from "../lib/batch-order";
+import {
+  applyOrder,
+  isCustomOrder,
+  moveToTarget,
+  orderIdsOf,
+  orderIsStale,
+} from "../lib/batch-order";
 import type {
   BatchRecord,
   BatchState,
@@ -457,6 +463,23 @@ export function BatchView() {
                 >
                   {tagFilter === ALL_TAGS ? "Select none" : "Deselect these"}
                 </Button>
+                {/* Drag-to-reorder is otherwise a one-way door: there'd be no
+                    way back to library order once you'd rearranged things. */}
+                {isCustomOrder(tests, order) ? (
+                  <Button
+                    variant="glass"
+                    size="small"
+                    disabled={running}
+                    onClick={() => {
+                      // Clearing the stored order lets the drift effect rewrite
+                      // it as plain library order on the next render.
+                      setOrder([]);
+                      api.recorder.setSettings({ batchOrder: [] }).catch(() => {});
+                    }}
+                  >
+                    Reset order
+                  </Button>
+                ) : null}
                 <Text variant="small" color="tertiary">
                   Tests run one at a time, in this order.
                 </Text>

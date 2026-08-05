@@ -17,6 +17,7 @@
 
 import {
   applyOrder,
+  isCustomOrder,
   moveToTarget,
   orderIdsOf,
   orderIsStale,
@@ -117,6 +118,15 @@ for (const [from, to] of [["a", "d"], ["d", "a"], ["b", "c"], ["c", "b"]]) {
     "hidden tests keep their relative order after a filtered drag",
   );
 }
+
+// ── isCustomOrder ────────────────────────────────────────────────────
+assert(!isCustomOrder(lib, []), "no stored order → not custom");
+assert(!isCustomOrder(lib, ["a", "b", "c", "d"]), "an order matching the library is not custom");
+assert(isCustomOrder(lib, ["b", "a", "c", "d"]), "a swapped pair is custom");
+assert(isCustomOrder(lib, ["d"]), "a partial order that moves a test is custom");
+assert(!isCustomOrder(lib, ["a"]), "a partial order that changes nothing is not custom");
+assert(!isCustomOrder(lib, ["zzz"]), "an order of only unknown ids is not custom");
+assert(!isCustomOrder([], ["a"]), "an empty library is never custom");
 
 // ── orderIdsOf / orderIsStale ────────────────────────────────────────
 assert(orderIdsOf(lib).join(",") === "a,b,c,d", "orderIdsOf lists ids in order");
