@@ -28,7 +28,7 @@ import { recorderSettingsStore } from "../services/recorder-settings-store.js";
 import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
 import { applyRetention } from "../services/retention.js";
 import { compareRuns } from "../services/run-comparison.js";
-import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
+import { DEFAULT_VISUAL_THRESHOLD, isRunBrowser } from "../recorder/types.js";
 import type { AssertKind, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 
@@ -213,6 +213,21 @@ export function registerHandlers(): void {
     },
   );
 
+  // Per-test browser-engine preference, remembered between sessions. Absent →
+  // use the global default from RecorderSettings. Only affects test runs; the
+  // trainer uses the app's own WebView.
+  ipcMain.handle("tests:setBrowser", async (_e, params: { id: string; runBrowser: string }) => {
+    const rec = testStore.get(params.id);
+    if (!rec) throw new Error("Test not found: " + params.id);
+    if (!isRunBrowser(params.runBrowser)) {
+      throw new Error("Unknown browser: " + params.runBrowser);
+    }
+    rec.runBrowser = params.runBrowser;
+    rec.updatedAt = Date.now();
+    testStore.save(rec);
+    return rec;
+  });
+
   // Hide a test from the sidebar without deleting its record or script file.
   ipcMain.handle(
     "tests:setHidden",
@@ -377,13 +392,22 @@ export function registerHandlers(): void {
     "runner:run",
     async (
       _e,
-      params: { id: string; headed?: boolean; captureArtifacts?: boolean; runHeadless?: boolean },
+      params: {
+        id: string;
+        headed?: boolean;
+        captureArtifacts?: boolean;
+        runHeadless?: boolean;
+        browser?: string;
+      },
     ) =>
       playwrightRunner.start({
         testId: params.id,
         headed: params.headed ?? true,
         captureArtifacts: params.captureArtifacts ?? false,
         runHeadless: params.runHeadless ?? false,
+        // Unvalidated input would reach the Playwright CLI verbatim; fall back
+        // to the test/global default rather than failing the run.
+        browser: isRunBrowser(params.browser) ? params.browser : undefined,
       }),
   );
   // Re-execute a past run's recorded steps against the live site. Always
@@ -408,9 +432,11 @@ export function registerHandlers(): void {
   ipcMain.handle("runner:stop", async (_e, params: { runId: string }) => {
     playwrightRunner.stop(params.runId);
   });
-  ipcMain.handle("runner:status", async (_e, params: { runId: string }) => ({
+  ipcMain.handle("runner:status", async (_e, params: { runId: string; browser?: string }) => ({
     running: playwrightRunner.isRunning(params.runId),
-    browserInstalled: playwrightRunner.isBrowserInstalled(),
+    browserInstalled: playwrightRunner.isBrowserInstalled(
+      isRunBrowser(params.browser) ? params.browser : undefined,
+    ),
   }));
 
   // ── Run history / stats handlers ────────────────────────────────────

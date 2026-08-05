@@ -6,6 +6,7 @@ import * as path from "path";
 
 import { app, logger } from "@glaze/core/backend";
 
+import { isRunBrowser } from "../recorder/types.js";
 import type { RecorderSettings, TestSpeed } from "../recorder/types.js";
 import { DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 
@@ -35,6 +36,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   autoHealAttemptTimeoutMs: 4000,
   defaultCaptureArtifacts: false,
   defaultRunHeadless: false,
+  defaultRunBrowser: "chromium",
   artifactRetainedRuns: DEFAULT_RETAINED_RUNS,
   artifactRetentionDays: 0,
   notifyOnRunIssues: false,
@@ -72,6 +74,11 @@ function read(): RecorderSettings {
         typeof parsed.defaultRunHeadless === "boolean"
           ? parsed.defaultRunHeadless
           : DEFAULT_SETTINGS.defaultRunHeadless,
+      // Validated rather than cast: an unknown engine name would be passed
+      // straight to the Playwright CLI and fail the run.
+      defaultRunBrowser: isRunBrowser(parsed.defaultRunBrowser)
+        ? parsed.defaultRunBrowser
+        : DEFAULT_SETTINGS.defaultRunBrowser,
       artifactRetainedRuns:
         typeof parsed.artifactRetainedRuns === "number" && parsed.artifactRetainedRuns > 0
           ? clampRetained(parsed.artifactRetainedRuns)
@@ -126,6 +133,9 @@ export const recorderSettingsStore = {
         update.defaultRunHeadless !== undefined
           ? update.defaultRunHeadless
           : current.defaultRunHeadless,
+      defaultRunBrowser: isRunBrowser(update.defaultRunBrowser)
+        ? update.defaultRunBrowser
+        : current.defaultRunBrowser,
       artifactRetainedRuns:
         update.artifactRetainedRuns !== undefined &&
         typeof update.artifactRetainedRuns === "number" &&
@@ -159,6 +169,7 @@ export const recorderSettingsStore = {
       autoHealAttemptTimeoutMs: next.autoHealAttemptTimeoutMs,
       defaultCaptureArtifacts: next.defaultCaptureArtifacts,
       defaultRunHeadless: next.defaultRunHeadless,
+      defaultRunBrowser: next.defaultRunBrowser,
       artifactRetainedRuns: next.artifactRetainedRuns,
       artifactRetentionDays: next.artifactRetentionDays,
       notifyOnRunIssues: next.notifyOnRunIssues,

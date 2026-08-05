@@ -14,6 +14,11 @@ import {
   Field,
   Input,
   ScrollArea,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   Tabs,
   TabsContent,
   TabsRoot,
@@ -35,6 +40,7 @@ import { RunOutput } from "./run-output";
 import { ScriptEditor, ScriptView } from "./script-view";
 import { StepRow } from "./step-row";
 import { computeStepDepths } from "../lib/describe-step";
+import { RUN_BROWSERS, RUN_BROWSER_LABELS, type RunBrowser } from "../lib/recorder-types";
 
 /** Compact ms for the inline capture-cost hint next to the toggle. */
 function fmtCaptureMs(ms: number): string {
@@ -65,6 +71,9 @@ export function TestDetailView() {
   // trainer/"Edit in Trainer" flow is always headed.
   const [runHeadless, setRunHeadless] = React.useState(false);
   const [headlessInited, setHeadlessInited] = React.useState(false);
+  // Per-test browser engine — same fall-back chain as the toggles above.
+  const [runBrowser, setRunBrowser] = React.useState<RunBrowser>("chromium");
+  const [browserInited, setBrowserInited] = React.useState(false);
 
   const testQuery = useQuery({ queryKey: ["test", id], queryFn: () => api.tests.get(id) });
   const scriptQuery = useQuery({ queryKey: ["script", id], queryFn: () => api.tests.getScript(id) });
@@ -96,6 +105,13 @@ export function TestDetailView() {
     setRunHeadless(test.runHeadless ?? fallback);
     setHeadlessInited(true);
   }, [headlessInited, test, settingsQuery.data]);
+  // Initialize the browser picker from the test record (or the global default) once.
+  React.useEffect(() => {
+    if (browserInited || !test) return;
+    const fallback = settingsQuery.data?.defaultRunBrowser ?? "chromium";
+    setRunBrowser(test.runBrowser ?? fallback);
+    setBrowserInited(true);
+  }, [browserInited, test, settingsQuery.data]);
   // Earliest step the run reported as failed, if any — lets the AI debug
   // prompt skip steps after it, since Playwright never ran them.
   const failedStepIndex = React.useMemo(() => {
@@ -236,6 +252,33 @@ export function TestDetailView() {
               navigate({ to: "/" });
             }}
           />
+          <Select
+            value={runBrowser}
+            onValueChange={(v) => {
+              const next = v as RunBrowser;
+              setRunBrowser(next);
+              api.tests.setBrowser(id, next).catch(() => {
+                /* best-effort persist; the choice still applies to this run */
+              });
+            }}
+            disabled={runInfo?.running}
+          >
+            <SelectTrigger
+              variant="filled"
+              size="small"
+              className="w-32"
+              aria-label="Browser engine for this test's runs"
+            >
+              <SelectValue placeholder="Chromium" />
+            </SelectTrigger>
+            <SelectContent>
+              {RUN_BROWSERS.map((b) => (
+                <SelectItem key={b} value={b}>
+                  {RUN_BROWSER_LABELS[b]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
             <Checkbox
               checked={runHeadless}
@@ -281,7 +324,7 @@ export function TestDetailView() {
               Stop
             </Button>
           ) : (
-            <Button variant="accent" onClick={() => run(id, captureArtifacts, runHeadless)}>
+            <Button variant="accent" onClick={() => run(id, captureArtifacts, runHeadless, runBrowser)}>
               Run test
             </Button>
           )}

@@ -15,7 +15,7 @@ import * as path from "path";
 
 import { app, logger } from "@glaze/core/backend";
 
-import type { LogSearchResult, RunRecord } from "../recorder/types.js";
+import type { LogSearchResult, RunBrowser, RunRecord } from "../recorder/types.js";
 
 const MAX_RECORDS = 1000; // cap the index; oldest runs (+ their logs) are pruned
 const SEARCH_RESULT_CAP = 200;
@@ -91,6 +91,8 @@ export const runHistoryStore = {
       finishedAt: number;
       captureArtifacts?: boolean;
       runHeadless?: boolean;
+      /** browser engine the run used */
+      runBrowser?: RunBrowser;
       /** measured screenshot cost for capture runs (see capture-overhead.ts) */
       captureOverheadMs?: number;
       shotCount?: number;
@@ -118,6 +120,8 @@ export const runHistoryStore = {
       logBytes: logByteSize(logFile),
       captureArtifacts: run.captureArtifacts ?? false,
       runHeadless: run.runHeadless ?? false,
+      // Runs predating the browser picker all ran on chromium.
+      runBrowser: run.runBrowser ?? "chromium",
       // Left undefined (not 0) for non-capture runs so the summarizer can tell
       // "no capture" apart from "capture that took no measurable time".
       ...(run.captureOverheadMs !== undefined ? { captureOverheadMs: run.captureOverheadMs } : {}),

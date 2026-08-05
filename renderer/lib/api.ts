@@ -15,6 +15,7 @@ import type {
   BaselineEntry,
   CaptureOverheadSummary,
   RetentionResult,
+  RunBrowser,
   RunComparison,
   RunReplay,
   RunReplaySummary,
@@ -120,14 +121,28 @@ export const api = {
       ipc().invoke<TestRecord>("tests:setCaptureArtifacts", { id, captureArtifacts }),
     setHeadless: (id: string, runHeadless: boolean) =>
       ipc().invoke<TestRecord>("tests:setHeadless", { id, runHeadless }),
+    setBrowser: (id: string, runBrowser: RunBrowser) =>
+      ipc().invoke<TestRecord>("tests:setBrowser", { id, runBrowser }),
     setHidden: (id: string, hidden: boolean) =>
       ipc().invoke<TestRecord | null>("tests:setHidden", { id, hidden }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),
     importGit: (url: string) => ipc().invoke<ImportResult>("tests:importGit", { url }),
   },
   runner: {
-    run: (id: string, headed: boolean, captureArtifacts?: boolean, runHeadless?: boolean) =>
-      ipc().invoke<{ runId: string }>("runner:run", { id, headed, captureArtifacts, runHeadless }),
+    run: (
+      id: string,
+      headed: boolean,
+      captureArtifacts?: boolean,
+      runHeadless?: boolean,
+      browser?: RunBrowser,
+    ) =>
+      ipc().invoke<{ runId: string }>("runner:run", {
+        id,
+        headed,
+        captureArtifacts,
+        runHeadless,
+        browser,
+      }),
     stop: (runId: string) => ipc().invoke<void>("runner:stop", { runId }),
     replayRun: (testId: string, runId: string, runHeadless?: boolean) =>
       ipc().invoke<{ runId: string }>("runner:replayRun", { testId, runId, runHeadless }),

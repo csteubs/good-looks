@@ -96,23 +96,47 @@ const capturedRun = run({ id: "r7", captureArtifacts: true });
 
 assert(runMatchesFilters(headlessRun, f({ tag: "headless" })), "tag=headless matches a headless run");
 assert(!runMatchesFilters(browserRun, f({ tag: "headless" })), "tag=headless excludes a headed run");
-assert(runMatchesFilters(browserRun, f({ tag: "browser" })), "tag=browser matches a headed run");
-assert(!runMatchesFilters(headlessRun, f({ tag: "browser" })), "tag=browser excludes a headless run");
+assert(runMatchesFilters(browserRun, f({ tag: "headed" })), "tag=headed matches a headed run");
+assert(!runMatchesFilters(headlessRun, f({ tag: "headed" })), "tag=headed excludes a headless run");
 assert(
-  runMatchesFilters(legacyRun, f({ tag: "browser" })),
-  "tag=browser matches a run predating runHeadless (undefined = headed, as the table shows it)",
+  runMatchesFilters(legacyRun, f({ tag: "headed" })),
+  "tag=headed matches a run predating runHeadless (undefined = headed, as the table shows it)",
 );
 assert(runMatchesFilters(capturedRun, f({ tag: "captured" })), "tag=captured matches a capture run");
 assert(
   !runMatchesFilters(passedRun, f({ tag: "captured" })),
   "tag=captured excludes a run with no artifacts",
 );
-for (const tag of ["browser", "headless", "captured"] as const) {
+for (const tag of ["headed", "headless", "captured", "firefox"] as const) {
   assert(
     !runMatchesFilters(baselineRun, f({ tag })),
     `tag=${tag} excludes baseline-update rows (they carry no tags)`,
   );
 }
+
+// ── Browser engine (same axis as the mode/capture tags) ──────────────
+const firefoxRun = run({ id: "r9", runBrowser: "firefox" });
+const webkitRun = run({ id: "r10", runBrowser: "webkit" });
+
+assert(runMatchesFilters(firefoxRun, f({ tag: "firefox" })), "tag=firefox matches a Firefox run");
+assert(!runMatchesFilters(webkitRun, f({ tag: "firefox" })), "tag=firefox excludes a WebKit run");
+assert(runMatchesFilters(webkitRun, f({ tag: "webkit" })), "tag=webkit matches a WebKit run");
+// Runs predating the picker have no runBrowser — they all ran on chromium, so
+// they must still be reachable under the chromium filter.
+assert(
+  runMatchesFilters(legacyRun, f({ tag: "chromium" })),
+  "tag=chromium matches a run predating the browser picker (undefined = chromium)",
+);
+assert(
+  !runMatchesFilters(firefoxRun, f({ tag: "chromium" })),
+  "tag=chromium excludes a Firefox run",
+);
+// Engine and mode are independent properties even though they share the axis:
+// a Firefox run is still headed/headless.
+assert(
+  runMatchesFilters(run({ runBrowser: "firefox", runHeadless: true }), f({ tag: "headless" })),
+  "a Firefox run is still matched by tag=headless",
+);
 
 // ── Test ─────────────────────────────────────────────────────────────
 const otherTest = run({ id: "r8", testId: "t2", testName: "Test Two" });

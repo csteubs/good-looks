@@ -22,7 +22,7 @@ import { applyRetention } from "./retention.js";
 import { buildReplay, enrichWithVisualDiffs } from "./replay-builder.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import { generateSpec } from "./script-generator.js";
-import type { Step, TestSpeed } from "../recorder/types.js";
+import type { RunBrowser, Step, TestSpeed } from "../recorder/types.js";
 
 // Module Playwright specs import test/expect from — redirected to the capture
 // fixture for a run that captures artifacts.
@@ -192,10 +192,17 @@ function buildStepLineMap(scriptPath: string): Map<number, number> | null {
   return map.size > 0 ? map : null;
 }
 
-function isChromiumInstalled(): boolean {
+/** Playwright unpacks each engine into `<browsersPath>/<engine>-<revision>`.
+ *  Chromium additionally ships a `chromium_headless_shell-*` directory, which
+ *  is NOT a usable headed browser — so match the engine prefix followed by "-"
+ *  rather than a bare `startsWith`, or a headless-shell-only install would be
+ *  mistaken for a full one and the run would fail at launch. */
+function isBrowserInstalled(browser: RunBrowser): boolean {
   const dir = browsersPath();
   try {
-    return fs.existsSync(dir) && fs.readdirSync(dir).some((n) => n.startsWith("chromium"));
+    return (
+      fs.existsSync(dir) && fs.readdirSync(dir).some((n) => n.startsWith(`${browser}-`))
+    );
   } catch {
     return false;
   }
@@ -311,8 +318,10 @@ function runCli(
 }
 
 export const playwrightRunner = {
-  isBrowserInstalled(): boolean {
-    return isChromiumInstalled();
+  /** Is the engine a run would use already downloaded? Defaults to the
+   *  global setting's engine when none is named. */
+  isBrowserInstalled(browser?: RunBrowser): boolean {
+    return isBrowserInstalled(browser ?? recorderSettingsStore.get().defaultRunBrowser);
   },
 
   /** Start a run. Returns immediately; progress streams over runner:* events.
@@ -328,6 +337,9 @@ export const playwrightRunner = {
     headed: boolean;
     captureArtifacts?: boolean;
     runHeadless?: boolean;
+    /** Browser engine to run on. Falls back to the test's saved preference,
+     *  then the global default. */
+    browser?: RunBrowser;
     /** Re-execute the steps a PAST run recorded, instead of the test's current
      *  script. The new run is tagged with this id so the two can be compared. */
     replayOfRunId?: string;
@@ -343,6 +355,10 @@ export const playwrightRunner = {
     if (!rec) {
       throw new Error("Test not found: " + params.testId);
     }
+
+    // Explicit choice → the test's saved preference → the global default.
+    const runBrowser: RunBrowser =
+      params.browser ?? rec.runBrowser ?? recorderSettingsStore.get().defaultRunBrowser;
 
     // Re-running a past run replays THAT run's recorded steps — the test may
     // have been edited since, and the point is to reproduce what happened.
@@ -437,9 +453,15 @@ export const playwrightRunner = {
         // (The redirected capture spec preserves line numbers.)
         stepLineMaps.set(runId, buildStepLineMap(specToRun));
 
-        if (!isChromiumInstalled()) {
-          emitOutput(runId, "system", "Installing the test browser (first run only)…\n");
-          await runCli(runId, ["install", "chromium"], cliPath, scriptsDir, env);
+        // Each engine is downloaded on its own first use — switching browsers
+        // costs one install, not a re-download of everything.
+        if (!isBrowserInstalled(runBrowser)) {
+          emitOutput(
+            runId,
+            "system",
+            `Installing ${runBrowser} (first run on this browser)…\n`,
+          );
+          await runCli(runId, ["install", runBrowser], cliPath, scriptsDir, env);
         }
 
         const slowMo = SLOW_MO_MS[rec.speed ?? "fast"];
@@ -457,6 +479,9 @@ export const playwrightRunner = {
           "--workers=1",
         ];
         if (params.headed) args.push("--headed");
+        // The generated config defines no projects, so --browser selects the
+        // engine directly (with projects it would be ignored in favor of them).
+        args.push(`--browser=${runBrowser}`);
         exitCode = await runCli(runId, args, cliPath, scriptsDir, {
           ...env,
           PW_SLOWMO_MS: String(slowMo),
@@ -545,6 +570,7 @@ export const playwrightRunner = {
               finishedAt,
               captureArtifacts,
               runHeadless,
+              runBrowser,
               captureOverheadMs,
               shotCount,
               replayOfRunId,

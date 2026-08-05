@@ -47,9 +47,11 @@ import {
 
 import { api } from "../lib/api";
 import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
+import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import {
   NO_FILTERS,
   filtersActive,
+  runBrowserOf,
   runMatchesFilters,
   testFilterOptions,
   type RunFilters,
@@ -595,9 +597,14 @@ export function StatsView() {
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="all">Any tag</SelectItem>
-                          <SelectItem value="browser">Browser</SelectItem>
+                          <SelectItem value="headed">Headed</SelectItem>
                           <SelectItem value="headless">Headless</SelectItem>
                           <SelectItem value="captured">Screenshots</SelectItem>
+                          {RUN_BROWSERS.map((b) => (
+                            <SelectItem key={b} value={b}>
+                              {RUN_BROWSER_LABELS[b]}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
 
@@ -686,17 +693,16 @@ export function StatsView() {
                                   <span className="text-tertiary">—</span>
                                 ) : (
                                   <span className="flex items-center gap-1">
-                                    {r.runHeadless ? (
-                                      <Badge color="secondary">
+                                    {/* One badge carries both facts: which engine
+                                        ran, and whether it was visible. */}
+                                    <Badge color="secondary">
+                                      {r.runHeadless ? (
                                         <MonitorOff className="size-3" />
-                                        Headless
-                                      </Badge>
-                                    ) : (
-                                      <Badge color="secondary">
+                                      ) : (
                                         <Globe className="size-3" />
-                                        Browser
-                                      </Badge>
-                                    )}
+                                      )}
+                                      {RUN_BROWSER_LABELS[runBrowserOf(r)]}
+                                    </Badge>
                                     {/* Capture is a filterable tag, so it needs to be
                                         visible here — icon-only to fit the column. */}
                                     {r.captureArtifacts ? (

@@ -5,13 +5,24 @@
 // design system. Filtering is entirely client-side over the already-loaded
 // RunRecord[] — no extra IPC round trip.
 
-import type { RunRecord } from "./recorder-types";
+import { RUN_BROWSERS, type RunBrowser, type RunRecord } from "./recorder-types";
 
 /** Baseline-update rows are their own status rather than passed/failed. */
 export type StatusFilter = "all" | "passed" | "failed" | "baseline";
 
-/** Mirrors the badges shown in the table's Tags column. */
-export type TagFilter = "all" | "browser" | "headless" | "captured";
+/** Mirrors the badges shown in the table's Tags column: the display mode
+ *  ("headed"/"headless"), whether the run captured screenshots, or a specific
+ *  browser engine. One axis, so a run is filtered by mode OR engine, not both
+ *  — the common questions ("which runs were headless?", "did the Firefox runs
+ *  pass?") each need only one.
+ *
+ *  "headed" is the mode, NOT the engine — engines are the RunBrowser values. */
+export type TagFilter = "all" | "headed" | "headless" | "captured" | RunBrowser;
+
+/** Runs recorded before the browser picker all ran on chromium. */
+export function runBrowserOf(r: RunRecord): RunBrowser {
+  return r.runBrowser ?? "chromium";
+}
 
 export interface RunFilters {
   status: StatusFilter;
@@ -47,8 +58,9 @@ export function runMatchesFilters(r: RunRecord, f: RunFilters): boolean {
   if (f.tag !== "all") {
     if (isBaseline) return false;
     if (f.tag === "headless" && !r.runHeadless) return false;
-    if (f.tag === "browser" && r.runHeadless) return false;
+    if (f.tag === "headed" && r.runHeadless) return false;
     if (f.tag === "captured" && !r.captureArtifacts) return false;
+    if ((RUN_BROWSERS as string[]).includes(f.tag) && runBrowserOf(r) !== f.tag) return false;
   }
 
   if (f.test !== "all" && r.testId !== f.test) return false;

@@ -121,6 +121,16 @@ export interface RawStep {
 
 export type TestSpeed = "slow" | "medium" | "fast";
 
+/** Playwright browser engine a test run uses. The trainer always uses the
+ *  app's own WebView and is unaffected by this. */
+export type RunBrowser = "chromium" | "firefox" | "webkit";
+
+export const RUN_BROWSERS: RunBrowser[] = ["chromium", "firefox", "webkit"];
+
+export function isRunBrowser(v: unknown): v is RunBrowser {
+  return typeof v === "string" && (RUN_BROWSERS as string[]).includes(v);
+}
+
 export interface TestRecord {
   id: string;
   name: string;
@@ -165,6 +175,10 @@ export interface TestRecord {
    *  detail toolbar's "Run headless" toggle. Only affects test runs, not the
    *  trainer. */
   runHeadless?: boolean;
+  /** Per-test browser-engine preference, remembered between sessions. When
+   *  absent, the global `RecorderSettings.defaultRunBrowser` applies. Set from
+   *  the test detail toolbar's browser picker. Only affects test runs. */
+  runBrowser?: RunBrowser;
 }
 
 /** Default visual-diff threshold (percent of pixels changed) when a test has
@@ -226,6 +240,9 @@ export interface RunRecord {
   /** Whether this run executed headless (no visible browser). Absent on runs
    *  recorded before the toggle — treated as false (headed) for display. */
   runHeadless?: boolean;
+  /** Browser engine this run used. Absent on runs recorded before the picker
+   *  existed — treated as chromium, which is what they all ran on. */
+  runBrowser?: RunBrowser;
   /** Wall-clock ms this run spent taking screenshots, and how many it took.
    *  Only present on capture runs from the instrumented fixture onward — the
    *  raw inputs for the "what does capture cost?" readout in Stats. */
@@ -292,6 +309,9 @@ export interface RecorderSettings {
    *  haven't set their own preference (default false → runs are headed). Only
    *  affects test runs, not the trainer. */
   defaultRunHeadless: boolean;
+  /** default browser engine for tests that haven't set their own preference
+   *  (default "chromium"). Only affects test runs, not the trainer. */
+  defaultRunBrowser: RunBrowser;
   /** how many runs' screenshot artifacts to keep per test before the oldest
    *  are pruned (default 10, clamped 1–50). The pinned visual baseline is
    *  never pruned regardless of this number. */

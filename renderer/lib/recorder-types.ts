@@ -100,6 +100,19 @@ export interface RawStep {
 
 export type TestSpeed = "slow" | "medium" | "fast";
 
+/** Playwright browser engine a test run uses (mirror of main types).
+ *  The trainer uses the app's own WebView and is unaffected. */
+export type RunBrowser = "chromium" | "firefox" | "webkit";
+
+export const RUN_BROWSERS: RunBrowser[] = ["chromium", "firefox", "webkit"];
+
+/** Display labels for the browser pickers. */
+export const RUN_BROWSER_LABELS: Record<RunBrowser, string> = {
+  chromium: "Chromium",
+  firefox: "Firefox",
+  webkit: "WebKit",
+};
+
 export interface TestRecord {
   id: string;
   name: string;
@@ -117,6 +130,8 @@ export interface TestRecord {
   captureArtifacts?: boolean;
   /** Per-test headless-run preference (mirrors main TestRecord). */
   runHeadless?: boolean;
+  /** Per-test browser-engine preference (mirrors main TestRecord). */
+  runBrowser?: RunBrowser;
 }
 
 /** A single completed test run (mirror of main/recorder/types.ts RunRecord). */
@@ -136,6 +151,9 @@ export interface RunRecord {
   logBytes: number;
   captureArtifacts?: boolean;
   runHeadless?: boolean;
+  /** browser engine this run used; absent on runs predating the picker
+   *  (all of which ran on chromium). */
+  runBrowser?: RunBrowser;
   /** ms spent taking screenshots, and how many — capture runs only. */
   captureOverheadMs?: number;
   shotCount?: number;
@@ -329,6 +347,8 @@ export interface RecorderSettings {
   defaultCaptureArtifacts: boolean;
   /** default value of the per-test "Run headless" toggle (default false). */
   defaultRunHeadless: boolean;
+  /** default browser engine for tests with no preference (default "chromium"). */
+  defaultRunBrowser: RunBrowser;
   /** how many runs' screenshot artifacts to keep per test (default 10, 1–50). */
   artifactRetainedRuns: number;
   /** also delete captured runs older than N days (0 = off, max 365). */

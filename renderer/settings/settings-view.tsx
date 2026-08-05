@@ -29,7 +29,8 @@ import type { NativeThemeInfo } from "@glaze/core/ipc";
 
 import { api } from "../lib/api";
 import type { LlmProvider, LlmProviderStatus } from "../lib/llm-types";
-import type { ArtifactUsage, TestSpeed } from "../lib/recorder-types";
+import type { ArtifactUsage, RunBrowser, TestSpeed } from "../lib/recorder-types";
+import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 
 const SPEEDS: TestSpeed[] = ["slow", "medium", "fast"];
 const SPEED_LABEL: Record<TestSpeed, string> = { slow: "Slow", medium: "Medium", fast: "Fast" };
@@ -72,6 +73,7 @@ export function SettingsView() {
   const [defaultRunSpeed, setDefaultRunSpeed] = useState<TestSpeed>("slow");
   const [defaultCaptureArtifacts, setDefaultCaptureArtifacts] = useState(false);
   const [defaultRunHeadless, setDefaultRunHeadless] = useState(false);
+  const [defaultRunBrowser, setDefaultRunBrowser] = useState<RunBrowser>("chromium");
   const [artifactRetainedRuns, setArtifactRetainedRuns] = useState(10);
   const [artifactRetentionDays, setArtifactRetentionDays] = useState(0);
   const [notifyOnRunIssues, setNotifyOnRunIssues] = useState(false);
@@ -110,6 +112,7 @@ export function SettingsView() {
         setDefaultRunSpeed(settings.defaultRunSpeed ?? "slow");
         setDefaultCaptureArtifacts(settings.defaultCaptureArtifacts ?? false);
         setDefaultRunHeadless(settings.defaultRunHeadless ?? false);
+        setDefaultRunBrowser(settings.defaultRunBrowser ?? "chromium");
         setArtifactRetainedRuns(settings.artifactRetainedRuns ?? 10);
         setArtifactRetentionDays(settings.artifactRetentionDays ?? 0);
         setNotifyOnRunIssues(settings.notifyOnRunIssues ?? false);
@@ -159,6 +162,15 @@ export function SettingsView() {
     setDefaultRunHeadless(checked);
     try {
       await api.recorder.setSettings({ defaultRunHeadless: checked });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleDefaultRunBrowserChange = async (browser: RunBrowser) => {
+    setDefaultRunBrowser(browser);
+    try {
+      await api.recorder.setSettings({ defaultRunBrowser: browser });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
     }
@@ -612,6 +624,31 @@ export function SettingsView() {
                 checked={defaultRunHeadless}
                 onCheckedChange={handleDefaultRunHeadlessChange}
               />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="default-run-browser">Browser</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Which browser engine test runs use. Each engine downloads once, on its first
+                  run. Only affects test runs — the trainer always records in the app&apos;s own
+                  browser. Each test remembers its own choice once you pick one in the test view.
+                </p>
+              </FieldContent>
+              <Select
+                value={defaultRunBrowser}
+                onValueChange={(v) => handleDefaultRunBrowserChange(v as RunBrowser)}
+              >
+                <SelectTrigger id="default-run-browser" className="w-36">
+                  <SelectValue placeholder="Chromium" />
+                </SelectTrigger>
+                <SelectContent>
+                  {RUN_BROWSERS.map((b) => (
+                    <SelectItem key={b} value={b}>
+                      {RUN_BROWSER_LABELS[b]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Field>
           </FieldGroup>
         </FieldSet>
