@@ -16,8 +16,18 @@
 // a non-zero exit code on failure stand in for one. Run with:
 //   npm run check:batch-runner
 
-import { createBatchRunner, summarize, type BatchDeps, type BatchState } from "../batch-runner.js";
+import {
+  createBatchRunner,
+  summarize,
+  type BatchDeps,
+  type BatchState,
+  type BatchTestStatus,
+} from "../batch-runner.js";
 import type { BatchSummary } from "../../recorder/types.js";
+// The MCP server is standalone .mjs by design (it must run without the app
+// build), so it cannot import the app's summarizer — it carries its own copy.
+// This check bundles both and pins them to the same verdicts.
+import { summarizeResults } from "../../../mcp/select-tests.mjs";
 
 let failures = 0;
 
@@ -422,6 +432,52 @@ async function main(): Promise<void> {
       summarize({ ...state, finishedAt: undefined }, 900).durationMs === 900,
       "duration falls back to now while still running",
     );
+  }
+
+  // ── App ↔ MCP summary parity ──────────────────────────────────────
+  // Two implementations of one rule. Without this, changing the app's rule
+  // would break check:batch-runner (so it gets updated) while check:mcp-select
+  // keeps passing on the old rule — and the app and MCP would then disagree
+  // about whether the same batch passed.
+  {
+    const cases: { label: string; statuses: string[] }[] = [
+      { label: "all passed", statuses: ["passed", "passed"] },
+      { label: "one failed", statuses: ["passed", "failed"] },
+      { label: "all failed", statuses: ["failed"] },
+      { label: "all skipped", statuses: ["skipped", "skipped"] },
+      { label: "passed + skipped", statuses: ["passed", "skipped"] },
+      { label: "failed + skipped", statuses: ["failed", "skipped"] },
+      { label: "empty", statuses: [] },
+    ];
+    for (const c of cases) {
+      const results = c.statuses.map((status, i) => ({
+        testId: `t${i}`,
+        testName: `T${i}`,
+        status: status as BatchTestStatus,
+      }));
+      const mine = summarize(
+        {
+          batchId: "x",
+          running: false,
+          startedAt: 0,
+          finishedAt: 500,
+          currentIndex: -1,
+          stopped: false,
+          results,
+        },
+        500,
+      );
+      const theirs = summarizeResults(results, 500);
+      assert(
+        mine.ok === theirs.ok &&
+          mine.total === theirs.total &&
+          mine.passed === theirs.passed &&
+          mine.failed === theirs.failed &&
+          mine.skipped === theirs.skipped &&
+          mine.durationMs === theirs.durationMs,
+        `app and MCP summaries agree — ${c.label} (app.ok=${mine.ok}, mcp.ok=${theirs.ok})`,
+      );
+    }
   }
 
   if (failures > 0) {
