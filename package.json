@@ -32,7 +32,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:checks": "npm run check:spec-parser && npm run check:visual-pipeline && npm run check:ai-debug-scroll && npm run check:capture-overhead && npm run check:retention && npm run check:auto-heal-wiring && npm run check:run-filters && npm run check:batch-runner && npm run check:batch-history && npm run check:test-tags && npm run check:mcp-select && npm run check:alerts && npm run check:cookie-steps && npm run check:batch-order && npm run check:paginate",
-    "test:all": "npm run test:checks && npm run test"
+    "test:all": "npm run test:checks && npm run test",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -66,6 +67,7 @@
     "@typescript-eslint/eslint-plugin": "^8.18.0",
     "@typescript-eslint/parser": "^8.18.0",
     "@vitejs/plugin-react": "^6.0.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "babel-plugin-react-compiler": "^1.0.0",
     "esbuild": "^0.27.4",
     "eslint": "^9.39.2",

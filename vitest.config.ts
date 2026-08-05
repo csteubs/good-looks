@@ -76,6 +76,25 @@ export default defineConfig({
     // Fail loudly rather than silently passing an empty run — a glob typo would
     // otherwise look like a green suite.
     passWithNoTests: false,
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json-summary"],
+      // App code only. Test files, generated sources (the reporter/fixture are
+      // strings shipped to a subprocess) and config aren't meaningful targets.
+      include: ["main/**/*.ts", "renderer/**/*.ts", "renderer/**/*.tsx", "mcp/*.mjs"],
+      exclude: [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "**/*.check.ts",
+        "**/*.check.mjs",
+        "**/__tests__/**",
+        "**/*.d.ts",
+        "**/*.d.mts",
+        "main/services/step-reporter-source.ts",
+        "main/services/capture-fixture-source.ts",
+        "renderer/preload.ts",
+      ],
+    },
     projects: [
       {
         plugins: [react()],
