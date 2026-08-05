@@ -113,6 +113,30 @@ function main(): void {
     "a pending heal survives clearing history",
   );
 
+  // ── 3b. listAll spans every test ─────────────────────────────────────────
+  //
+  // The Heals VIEW is cross-test: a locator that keeps breaking is often the
+  // same element in several tests, and a per-test list cannot show that.
+  {
+    healJournalStore.deleteTest("all-a");
+    healJournalStore.deleteTest("all-b");
+    record("all-a", { stepId: "x", at: 1000 });
+    record("all-b", { stepId: "y", at: 3000 });
+    record("all-a", { stepId: "z", at: 2000 });
+    const all = healJournalStore.listAll().filter((e) => e.testId.startsWith("all-"));
+    assertEqual(all.length, 3, "listAll returns heals from every test");
+    assertEqual(
+      all.map((e) => e.stepId),
+      ["y", "z", "x"],
+      "listAll is newest first ACROSS tests, not grouped by test",
+    );
+    assertEqual(
+      healJournalStore.list("all-a").length,
+      2,
+      "…and the per-test list is unaffected",
+    );
+  }
+
   // ── 4. Deleting a test takes its journal with it ─────────────────────────
   record("t9");
   healJournalStore.deleteTest("t9");

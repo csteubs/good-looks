@@ -7,6 +7,7 @@ import {
 import { BatchView } from "./batch-view";
 import { HomeView } from "./home-view";
 import { RootView } from "./root-view";
+import { HealsView } from "./heals-view";
 import { StatsView } from "./stats-view";
 import { TestDetailView } from "./test-detail-view";
 import { VisualView } from "./visual-view";
@@ -73,12 +74,22 @@ const batchRoute = createRoute({
   },
 });
 
+const healsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/heals",
+  component: HealsView,
+  staticData: {
+    title: "Heals",
+  },
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   testRoute,
   statsRoute,
   visualRoute,
   batchRoute,
+  healsRoute,
 ]);
 
 const queryClient = new QueryClient();

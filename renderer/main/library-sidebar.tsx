@@ -20,7 +20,7 @@ import {
   Text,
   toast,
 } from "@glaze/core/components";
-import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Tag } from "lucide-react";
+import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Tag, Wand2 } from "lucide-react";
 
 import { api } from "../lib/api";
 import type { LlmProvider } from "../lib/llm-types";
@@ -375,6 +375,13 @@ export function LibrarySidebar() {
             subtitle="Run many tests"
             selected={pathname === "/batch"}
             onClick={() => navigate({ to: "/batch" })}
+          />
+          <SidebarListItem
+            icon={<Wand2 className="size-4" />}
+            title="Heals"
+            subtitle="Locators Auto-Heal changed"
+            selected={pathname === "/heals"}
+            onClick={() => navigate({ to: "/heals" })}
           />
         </SidebarList>
       </div>

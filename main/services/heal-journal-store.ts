@@ -81,6 +81,15 @@ function writeAll(entries: HealEntry[]): void {
 }
 
 export const healJournalStore = {
+  /** Every heal across every test, newest first.
+   *
+   *  Separate from `list` because the Heals VIEW is cross-test: a locator that
+   *  keeps needing to be healed is often the same element in several tests, and
+   *  a per-test list can't show that. */
+  listAll(): HealEntry[] {
+    return readAll().sort((a, b) => b.at - a.at);
+  },
+
   /** Every heal for one test, newest first. */
   list(testId: string): HealEntry[] {
     return readAll()

@@ -396,6 +396,18 @@ export function registerHandlers(): void {
   ipcMain.handle("heals:list", async (_e, params: { testId: string }) =>
     healJournalStore.list(params.testId),
   );
+  /** Every heal across every test, for the Heals view.
+   *
+   *  The test NAME is attached here rather than looked up in the renderer: a
+   *  heal outlives the test it came from, and an entry that renders as a bare
+   *  uuid after a delete is worse than one that says the test is gone. */
+  ipcMain.handle("heals:listAll", async () => {
+    const names = new Map(testStore.list().map((t) => [t.id, t.name]));
+    return healJournalStore.listAll().map((entry) => ({
+      ...entry,
+      testName: names.get(entry.testId) ?? null,
+    }));
+  });
   ipcMain.handle("heals:pending", async (_e, params: { testId: string }) =>
     healJournalStore.pending(params.testId),
   );

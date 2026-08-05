@@ -321,6 +321,12 @@ export interface DebugCaptureSession {
   error?: string;
 }
 
+/** A heal as the cross-test Heals view sees it: the entry plus the name of the
+ *  test it came from, or null when that test has since been deleted. */
+export interface HealListEntry extends HealEntry {
+  testName: string | null;
+}
+
 /** What the renderer is allowed to know about a stored secret: that it exists,
  *  never what it is. The value lives encrypted backend-side and is injected
  *  straight into the run's child process. */

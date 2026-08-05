@@ -97,6 +97,7 @@ for (const rel of VIEWS) {
 {
   const PANELS = [
     "../../../renderer/main/flake-panel.tsx",
+    "../../../renderer/main/heals-view.tsx",
     "../../../renderer/main/heals-panel.tsx",
     "../../../renderer/main/variables-panel.tsx",
   ];

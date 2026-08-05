@@ -8,6 +8,7 @@ import type {
   DebugCaptureSession,
   FlakeReport,
   HealEntry,
+  HealListEntry,
   SecretStatus,
   TestVariable,
   DebugEntry,
@@ -182,6 +183,7 @@ export const api = {
   },
   heals: {
     list: (testId: string) => ipc().invoke<HealEntry[]>("heals:list", { testId }),
+    listAll: () => ipc().invoke<HealListEntry[]>("heals:listAll"),
     pending: (testId: string) => ipc().invoke<HealEntry[]>("heals:pending", { testId }),
     /** Apply a heal to the stored test. `locator` overrides the engine's pick. */
     accept: (id: string, locator?: Locator) =>

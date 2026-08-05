@@ -35,8 +35,6 @@ import {
 import {
   Calendar,
   Camera,
-  ChevronLeft,
-  ChevronRight,
   Check,
   Copy,
   Globe,
@@ -50,9 +48,10 @@ import {
 
 import { api } from "../lib/api";
 import { FlakePanel } from "./flake-panel";
+import { Pager } from "./pager";
 import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
-import { clampPage, pageCount, pageRange, pageSlice } from "../lib/paginate";
+import { pageSlice } from "../lib/paginate";
 import {
   NO_FILTERS,
   filtersActive,
@@ -351,54 +350,6 @@ function LogInspector({
 
 /** Prev / range / Next control shared by both Stats lists. Renders nothing for
  *  a single page, so short lists aren't cluttered with dead controls. */
-function Pager({
-  page,
-  total,
-  onPage,
-  label,
-}: {
-  page: number;
-  total: number;
-  onPage: (page: number) => void;
-  label: string;
-}) {
-  const pages = pageCount(total);
-  if (pages <= 1) return null;
-  const safe = clampPage(page, total);
-  const range = pageRange(safe, total);
-  return (
-    <div className="flex items-center justify-between gap-2 border-t border-token-border px-3 py-2">
-      <Text variant="small" color="tertiary">
-        {range ? `${range.from}–${range.to} of ${total} ${label}` : `0 ${label}`}
-      </Text>
-      <div className="flex items-center gap-2">
-        <Button
-          variant="glass"
-          size="small"
-          disabled={safe <= 1}
-          onClick={() => onPage(safe - 1)}
-          aria-label="Previous page"
-        >
-          <ChevronLeft className="size-4" />
-          Prev
-        </Button>
-        <Text variant="small" color="secondary" className="tabular-nums">
-          Page {safe} of {pages}
-        </Text>
-        <Button
-          variant="glass"
-          size="small"
-          disabled={safe >= pages}
-          onClick={() => onPage(safe + 1)}
-          aria-label="Next page"
-        >
-          Next
-          <ChevronRight className="size-4" />
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 export function StatsView() {
   const qc = useQueryClient();
