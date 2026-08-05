@@ -145,15 +145,28 @@ export function BatchView() {
     queryFn: () => api.recorder.getSettings(),
   });
 
-  // Selection. Defaults to every test once the library loads; a test added
-  // later is not auto-selected, so an in-progress choice isn't disturbed.
+  // Selection. Every test the view has never seen before starts ticked —
+  // including one recorded while this view was open, or one that arrived in a
+  // refetch after the first (cached, one-behind) list seeded the selection.
+  // Seeding only once meant a freshly recorded test showed up unticked and was
+  // then silently left out of "Run all", which reads as it not being there.
+  //
+  // Tests already seen keep whatever the user chose, so an in-progress
+  // selection is never disturbed by a background refresh.
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
-  const [seeded, setSeeded] = React.useState(false);
+  const seenIds = React.useRef<Set<string>>(new Set());
   React.useEffect(() => {
-    if (seeded || tests.length === 0) return;
-    setSelected(new Set(tests.map((t) => t.id)));
-    setSeeded(true);
-  }, [seeded, tests]);
+    const fresh = tests.filter((t) => !seenIds.current.has(t.id)).map((t) => t.id);
+    // Drop ids that no longer exist: a deleted test that comes back (re-import)
+    // is new again, rather than inheriting a deselection nobody remembers.
+    seenIds.current = new Set(tests.map((t) => t.id));
+    if (fresh.length === 0) return;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of fresh) next.add(id);
+      return next;
+    });
+  }, [tests]);
 
   // Batch-level run options. Deliberately NOT persisted to each test: a suite
   // run is a one-off choice ("run everything headless on WebKit"), and writing

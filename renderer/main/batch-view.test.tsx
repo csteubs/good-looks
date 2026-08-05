@@ -12,7 +12,7 @@
 // ("the library contains these tests") instead of channel plumbing.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, within, fireEvent } from "@testing-library/react";
+import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { RecorderSettings, TestRecord } from "../lib/recorder-types";
@@ -62,13 +62,25 @@ function test_(id: string, name: string, tags?: string[]): TestRecord {
   } as TestRecord;
 }
 
-function renderView() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+function renderView(qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+  render(
     <QueryClientProvider client={qc}>
       <BatchView />
     </QueryClientProvider>,
   );
+  return qc;
+}
+
+/** Checked state per test name, as the checklist currently shows it. */
+function checkedByName(): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const box of screen.getAllByLabelText(/^Include /)) {
+    const name = (box.getAttribute("aria-label") ?? "")
+      .replace("Include ", "")
+      .replace(" in the batch", "");
+    out[name] = box.getAttribute("data-state") === "checked";
+  }
+  return out;
 }
 
 /** Test names in the order they appear in the checklist. */
@@ -171,6 +183,77 @@ describe("BatchView selection and filtering", () => {
 
     expect(batchRun).toHaveBeenCalledTimes(1);
     expect(batchRun.mock.calls[0][0]).toEqual(["c", "b", "a"]);
+  });
+});
+
+// ── A test recorded after the view was opened ────────────────────────
+// The reported bug: record a test, open Batch, and it isn't in the run even
+// with the "All" filter showing. The row was there — it just arrived unticked,
+// because selection was seeded exactly once, and "Run all" only runs what's
+// ticked. Both paths below produce that: the library changing while the view
+// is mounted, and mounting against a cache that is one test behind.
+describe("BatchView newly created tests", () => {
+  it("ticks a test recorded while the Batch view is open", async () => {
+    const qc = renderView();
+    expect(await rowNames()).toEqual(["Alpha", "Beta", "Gamma"]);
+
+    library = [test_("d", "Delta"), ...library];
+    await qc.invalidateQueries({ queryKey: ["tests"] });
+
+    await waitFor(() => expect(screen.getAllByLabelText(/^Include /)).toHaveLength(4));
+    expect(checkedByName()).toEqual({ Alpha: true, Beta: true, Gamma: true, Delta: true });
+  });
+
+  it("runs the new test too, rather than silently leaving it out", async () => {
+    const qc = renderView();
+    await rowNames();
+    library = [test_("d", "Delta"), ...library];
+    await qc.invalidateQueries({ queryKey: ["tests"] });
+    await waitFor(() => expect(screen.getAllByLabelText(/^Include /)).toHaveLength(4));
+
+    fireEvent.click(screen.getByRole("button", { name: /^Run/ }));
+    expect(batchRun.mock.calls[0][0]).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("ticks a test that only appears in the refetch after a stale first list", async () => {
+    // How this actually happens in the app: the sidebar has already fetched the
+    // library, so Batch mounts with that cached list and refetches behind it.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    await qc.prefetchQuery({ queryKey: ["tests"], queryFn: async () => library });
+    library = [test_("d", "Delta"), ...library];
+    await qc.invalidateQueries({ queryKey: ["tests"] });
+
+    renderView(qc);
+    await waitFor(() => expect(screen.getAllByLabelText(/^Include /)).toHaveLength(4));
+    expect(checkedByName()).toEqual({ Alpha: true, Beta: true, Gamma: true, Delta: true });
+  });
+
+  it("leaves a deliberately unticked test alone when a new one arrives", async () => {
+    // The reason selection was seeded once: a refresh must not resurrect a
+    // choice the user has just made.
+    const qc = renderView();
+    await rowNames();
+    fireEvent.click(screen.getByLabelText("Include Beta in the batch"));
+    expect(checkedByName().Beta).toBe(false);
+
+    library = [test_("d", "Delta"), ...library];
+    await qc.invalidateQueries({ queryKey: ["tests"] });
+
+    await waitFor(() => expect(screen.getAllByLabelText(/^Include /)).toHaveLength(4));
+    expect(checkedByName()).toEqual({ Alpha: true, Beta: false, Gamma: true, Delta: true });
+  });
+
+  it("does not re-tick anything when the library merely refetches unchanged", async () => {
+    const qc = renderView();
+    await rowNames();
+    fireEvent.click(screen.getByLabelText("Include Beta in the batch"));
+
+    // A new array with the same ids — what every refetch produces.
+    library = library.map((t) => ({ ...t }));
+    await qc.invalidateQueries({ queryKey: ["tests"] });
+    await waitFor(() => expect(checkedByName().Alpha).toBe(true));
+
+    expect(checkedByName().Beta).toBe(false);
   });
 });
 
