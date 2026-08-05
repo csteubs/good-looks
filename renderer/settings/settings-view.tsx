@@ -95,6 +95,9 @@ export function SettingsView() {
   const [autoHealTimeout, setAutoHealTimeout] = useState(4000);
   const [autoHealApply, setAutoHealApply] = useState<"suggest" | "apply">("suggest");
   const [defaultA11y, setDefaultA11y] = useState(false);
+  const [debugScreenshots, setDebugScreenshots] = useState(false);
+  const [debugShortcut, setDebugShortcut] = useState("");
+  const [capturing, setCapturing] = useState(false);
 
   // ── Aesthetic Enhancement features ──────────────────────────────────
   const [disabledEnhancements, setDisabledEnhancements] = useState<string[]>([]);
@@ -137,6 +140,8 @@ export function SettingsView() {
         setAutoHealTimeout(settings.autoHealAttemptTimeoutMs ?? 4000);
         setAutoHealApply(settings.autoHealApply ?? "suggest");
         setDefaultA11y(settings.defaultA11yChecks ?? false);
+        setDebugScreenshots(settings.debugScreenshots ?? false);
+        void api.debug.shortcut().then(setDebugShortcut).catch(() => setDebugShortcut(""));
         setDisabledEnhancements(settings.disabledAestheticEnhancements ?? []);
       })
       .catch(() => {
@@ -305,6 +310,35 @@ export function SettingsView() {
       await api.recorder.setSettings({ autoHealRetries: n });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleDebugScreenshotsChange = async (checked: boolean) => {
+    setDebugScreenshots(checked);
+    try {
+      await api.recorder.setSettings({ debugScreenshots: checked });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleCaptureNow = async () => {
+    setCapturing(true);
+    try {
+      const session = await api.debug.capture();
+      if (session.error) toast.error(session.error);
+      else {
+        // Say what it actually got. "Saved" alone leaves you wondering whether
+        // it caught the window you cared about.
+        const names = session.shots.map((s) => s.window).join(", ");
+        toast.success(
+          `Captured ${session.shots.length} ${session.shots.length === 1 ? "window" : "windows"}: ${names}`,
+        );
+      }
+    } catch (error) {
+      toast.error(`Capture failed: ${error}`);
+    } finally {
+      setCapturing(false);
     }
   };
 
@@ -801,6 +835,39 @@ export function SettingsView() {
 
         <FieldSet>
           <FieldGroup>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="debug-screenshots">Debug screenshots</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Press{" "}
+                  <code className="rounded bg-muted px-1 py-0.5 text-xs">
+                    {debugShortcut || "⌘⌥⇧S"}
+                  </code>{" "}
+                  at any time to save a picture of every open app window, so you can hand it to
+                  Claude Code or another MCP client. That works whether or not this is on.
+                  <br />
+                  Turning this on additionally lets a connected client ASK for a fresh screenshot
+                  and get one back — useful when someone is helping you with a UI problem. It keeps
+                  a small watcher running while enabled, which is why it's off by default.
+                </p>
+              </FieldContent>
+              <Switch
+                id="debug-screenshots"
+                checked={debugScreenshots}
+                onCheckedChange={handleDebugScreenshotsChange}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel>Capture now</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Take one immediately, without the shortcut.
+                </p>
+              </FieldContent>
+              <Button variant="secondary" disabled={capturing} onClick={handleCaptureNow}>
+                {capturing ? "Capturing…" : "Capture"}
+              </Button>
+            </Field>
             <Field orientation="horizontal">
               <FieldContent>
                 <FieldLabel htmlFor="default-a11y">Check accessibility by default</FieldLabel>

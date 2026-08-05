@@ -19,6 +19,7 @@ import { z } from "zod";
 
 import { readJsonFile, resolveDataDir, writeJsonFile } from "./glaze-data.mjs";
 import { selectTests, summarizeResults, UNTAGGED } from "./select-tests.mjs";
+import { listSessions, readShots, requestCapture } from "./debug-shots.mjs";
 
 const MCP_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(MCP_DIR, "..");
@@ -537,6 +538,105 @@ server.registerTool(
       // batch as success.
       ...(summary.failed > 0 ? { isError: true } : {}),
     };
+  },
+);
+
+// ── Debug screenshots ───────────────────────────────────────────────────────
+//
+// The app can be read from here — its tests, its runs, its logs — but not SEEN.
+// Every UI change in this project so far has been described rather than shown.
+// These two tools close that: one asks the app for a fresh picture of itself,
+// the other fetches whatever was captured last.
+
+/** Turn a capture session into MCP content: a short text summary plus one image
+ *  block per window, so the images land in the conversation directly. */
+function sessionContent(session, note) {
+  const shots = readShots(dataDir, session);
+  if (shots.length === 0) {
+    return {
+      content: [
+        {
+          type: "text",
+          text:
+            session.error ??
+            "The capture produced no readable images (they may have been pruned since).",
+        },
+      ],
+      isError: true,
+    };
+  }
+  const summary = shots
+    .map((s) => `${s.window}${s.width ? ` (${s.width}×${s.height})` : ""}`)
+    .join(", ");
+  return {
+    content: [
+      {
+        type: "text",
+        text: `${note} ${shots.length} window${shots.length === 1 ? "" : "s"}: ${summary}. Captured ${new Date(session.at).toLocaleString()}.`,
+      },
+      ...shots.map((s) => ({ type: "image", data: s.base64, mimeType: "image/png" })),
+    ],
+  };
+}
+
+server.registerTool(
+  "capture_app",
+  {
+    title: "Screenshot the running app",
+    description:
+      "Ask the running Good Looks! app to screenshot every one of its open windows right now, " +
+      "and return the images. Requires the app to be running with 'Debug screenshots' enabled " +
+      "in Settings. Use this to SEE the app's own UI — not the pages under test, which are in " +
+      "the Visual tab's run artifacts.",
+    inputSchema: {},
+  },
+  async () => {
+    const result = await requestCapture(dataDir);
+    if (!result.ok) {
+      return { content: [{ type: "text", text: result.reason }], isError: true };
+    }
+    return sessionContent(result.session, "Captured");
+  },
+);
+
+server.registerTool(
+  "get_screenshot",
+  {
+    title: "Get the latest app screenshot",
+    description:
+      "Return the most recent debug screenshot of the app, including ones taken with the in-app " +
+      "keyboard shortcut. Use this when the app isn't listening for capture requests, or after " +
+      "asking someone to press the shortcut. Pass `index` to reach older captures (0 = newest).",
+    inputSchema: {
+      index: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Which capture to return, newest first. Defaults to 0."),
+    },
+  },
+  async ({ index = 0 }) => {
+    const sessions = listSessions(dataDir);
+    if (sessions.length === 0) {
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              "No debug screenshots have been taken. Press the capture shortcut in the app " +
+              "(Settings shows the combination), or use capture_app if the app is listening.",
+          },
+        ],
+        isError: true,
+      };
+    }
+    const session = sessions[Math.min(index, sessions.length - 1)];
+    const age = Math.round((Date.now() - session.at) / 1000);
+    // Say how old it is. A stale screenshot presented as current is how someone
+    // ends up debugging a UI state that stopped existing ten minutes ago.
+    const note = age < 90 ? "Captured just now —" : `Captured ${Math.round(age / 60)} minutes ago —`;
+    return sessionContent(session, note);
   },
 );
 

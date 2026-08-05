@@ -163,6 +163,32 @@ MCP shows up in the app's **Batch** view alongside ones started from the UI.
 The response is flagged as an error when any test failed, so an agent can't
 read a red suite as success.
 
+### `capture_app`
+
+Ask the running app to screenshot **every one of its open windows** right now,
+and return the images. This shows the app's own UI — not the pages under test,
+which live in the Visual tab's run artifacts.
+
+Requires the app to be running with **Debug screenshots** enabled in Settings.
+That toggle is off by default: it keeps a small directory watcher running, and a
+debugging aid has no business running for people who aren't debugging. Without
+it, use the in-app shortcut plus `get_screenshot` instead.
+
+Takes no arguments.
+
+### `get_screenshot`
+
+Return the most recent debug screenshot, **including ones taken with the in-app
+keyboard shortcut** (Settings shows the combination). Use this when the app
+isn't listening for requests, or after asking someone to press the shortcut.
+
+| Arg | Type | Required |
+| --- | --- | --- |
+| `index` | number (0+) | no — which capture, newest first. Defaults to 0. |
+
+The reply says how old the capture is. A stale screenshot presented as current
+is how you end up debugging a UI state that stopped existing ten minutes ago.
+
 ## Example prompts
 
 - "List my recorded tests."
@@ -172,13 +198,21 @@ read a red suite as success.
 - "Run the signup test and tell me if it passes."
 - "Run all my smoke tests and tell me which ones failed."
 - "Run the checkout tests on WebKit and compare against the last Chromium run."
+- "Screenshot the app and tell me if the Variables tab looks right."
+- "I just pressed the capture shortcut — grab the screenshot and tell me what's wrong with this dialog."
 
 ## Notes
 
-- Read-only tools (`list_tests`, `get_test`, `list_runs`, `get_run_log`) never
-  modify app data. `run_test` and `run_batch` execute Playwright and append run
+- Read-only tools (`list_tests`, `get_test`, `list_runs`, `get_run_log`,
+  `get_screenshot`) never modify app data. `run_test` and `run_batch` execute Playwright and append run
   records; `run_batch` also writes a batch record and persists progress after
   every test, so an interrupted batch keeps the results it already collected.
+- `capture_app` and `get_screenshot` talk to the app through plain files in
+  `userData/recorder/debug-shots` — a request/response pair, no socket and no
+  port. Both halves of that protocol are duplicated (TypeScript in the app,
+  JavaScript here), and a drift between them produces no error on either side,
+  so `main/services/debug-capture.test.ts` compares the two implementations
+  directly. Captures are pruned to the newest 10 and downscaled to 1400px.
 - Data directory resolution (`mcp/glaze-data.mjs`) is machine-independent — it
   derives the path from `package.json`'s `id` field, so the server keeps
   working if the project moves machines.

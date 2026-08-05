@@ -5,6 +5,7 @@ import type {
   Annotation,
   AssertKind,
   Dataset,
+  DebugCaptureSession,
   FlakeReport,
   HealEntry,
   SecretStatus,
@@ -164,6 +165,12 @@ export const api = {
       }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),
     importGit: (url: string) => ipc().invoke<ImportResult>("tests:importGit", { url }),
+  },
+  debug: {
+    /** Capture every open app window now. */
+    capture: () => ipc().invoke<DebugCaptureSession>("debug:capture"),
+    dir: () => ipc().invoke<string>("debug:dir"),
+    shortcut: () => ipc().invoke<string>("debug:shortcut"),
   },
   a11y: {
     acceptStep: (testId: string, runId: string, stepId: string) =>

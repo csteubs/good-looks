@@ -36,6 +36,13 @@ import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
 import { applyRetention } from "../services/retention.js";
 import { compareRuns } from "../services/run-comparison.js";
 import { analyseFlake } from "../services/flake-analysis.js";
+import {
+  captureWindows,
+  debugDir,
+  DEBUG_CAPTURE_ACCELERATOR,
+  newCaptureId,
+  syncRequestWatcher,
+} from "../services/debug-capture.js";
 import { ANALYSIS_WINDOW, analysisWindow, gatherRunDetails } from "../services/flake-source.js";
 import {
   DEFAULT_VISUAL_THRESHOLD,
@@ -174,7 +181,13 @@ export function registerHandlers(): void {
   ipcMain.handle("recorder:getSettings", async () => recorderSettingsStore.get());
   ipcMain.handle(
     "recorder:setSettings",
-    async (_e, params: Partial<RecorderSettings>) => recorderSettingsStore.set(params ?? {}),
+    async (_e, params: Partial<RecorderSettings>) => {
+      const next = recorderSettingsStore.set(params ?? {});
+      // Bring the debug watcher into line immediately. Deferring to the next
+      // launch would make the toggle look broken to the person who just used it.
+      syncRequestWatcher();
+      return next;
+    },
   );
 
   // ── Test library handlers ───────────────────────────────────────────
@@ -711,6 +724,13 @@ export function registerHandlers(): void {
   }));
 
   // ── Run history / stats handlers ────────────────────────────────────
+  // ── Debug screenshots ────────────────────────────────────────────────────
+  /** Capture every open app window now. Returns the session so the UI can say
+   *  what it got rather than just claiming success. */
+  ipcMain.handle("debug:capture", async () => captureWindows(newCaptureId(), "manual"));
+  ipcMain.handle("debug:dir", async () => debugDir());
+  ipcMain.handle("debug:shortcut", async () => DEBUG_CAPTURE_ACCELERATOR);
+
   ipcMain.handle("runs:list", async () => runHistoryStore.list());
   /** Flake and failure analytics over the recent run history.
    *

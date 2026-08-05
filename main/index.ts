@@ -8,12 +8,25 @@ import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
 
-import { app, BrowserWindow, Menu, logger, initDevToolsButtonState } from "@glaze/core/backend";
+import {
+  app,
+  BrowserWindow,
+  Menu,
+  globalShortcut,
+  logger,
+  initDevToolsButtonState,
+} from "@glaze/core/backend";
 
 import { registerHandlers } from "./handlers/index.js";
 import { getPreloadPath, getWindowUrl } from "./windows/window-paths.js";
 import { openSettingsWindow } from "./windows/settings-window.js";
-import { setMainWindow } from "./services/app-window.js";
+import { sendToMain, setMainWindow } from "./services/app-window.js";
+import {
+  captureWindows,
+  DEBUG_CAPTURE_ACCELERATOR,
+  newCaptureId,
+  syncRequestWatcher,
+} from "./services/debug-capture.js";
 import { applyRetention } from "./services/retention.js";
 import { batchHistoryStore } from "./services/batch-history-store.js";
 
@@ -34,6 +47,37 @@ registerHandlers();
   if (swept.removedRuns > 0) {
     logger.info("artifacts", "Applied retention at startup", swept);
   }
+}
+
+// ── Debug screenshots ─────────────────────────────────────────────────
+// A global shortcut so a screenshot of the app can be handed to an MCP client
+// without hunting for a menu, plus (only when the Settings toggle is on) a
+// watcher so a client can ask for one itself.
+//
+// The shortcut is registered unconditionally because it costs nothing until
+// pressed; the WATCHER is what the toggle gates, because that runs.
+{
+  syncRequestWatcher();
+  void globalShortcut
+    .register(DEBUG_CAPTURE_ACCELERATOR, () => {
+      void captureWindows(newCaptureId(), "shortcut").then((session) => {
+        sendToMain("debug:captured", session);
+      });
+    })
+    .then((ok) => {
+      if (!ok) {
+        // Something else owns the combination system-wide. Say so — a shortcut
+        // that silently does nothing is worse than one that isn't offered.
+        logger.warn("debug-capture", "Could not register the screenshot shortcut", {
+          accelerator: DEBUG_CAPTURE_ACCELERATOR,
+        });
+      }
+    })
+    .catch((err) => {
+      logger.warn("debug-capture", "Screenshot shortcut registration failed", {
+        err: String(err),
+      });
+    });
 }
 
 // ── Batch history reconciliation ──────────────────────────────────────

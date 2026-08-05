@@ -304,6 +304,23 @@ export interface FlakeReport {
   windowCap: number;
 }
 
+/** One captured window (mirror of main/services/debug-capture.ts). */
+export interface DebugShot {
+  file: string;
+  window: string;
+  width: number;
+  height: number;
+}
+
+/** One debug capture — a press or a request, and the windows it produced. */
+export interface DebugCaptureSession {
+  id: string;
+  at: number;
+  reason: "shortcut" | "request" | "manual";
+  shots: DebugShot[];
+  error?: string;
+}
+
 /** What the renderer is allowed to know about a stored secret: that it exists,
  *  never what it is. The value lives encrypted backend-side and is injected
  *  straight into the run's child process. */
@@ -563,6 +580,8 @@ export interface RecorderSettings {
   autoHealApply: HealApplyMode;
   /** default value of the per-test "Check accessibility" toggle. */
   defaultA11yChecks: boolean;
+  /** listen for screenshot requests from an MCP client (default false). */
+  debugScreenshots: boolean;
   /** default value of the per-test "Capture screenshots" toggle (default false). */
   defaultCaptureArtifacts: boolean;
   /** default value of the per-test "Run headless" toggle (default false). */

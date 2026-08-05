@@ -44,6 +44,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   autoHealApply: "suggest",
   defaultCaptureArtifacts: false,
   defaultA11yChecks: false,
+  debugScreenshots: false,
   defaultRunHeadless: false,
   defaultRunBrowser: "chromium",
   alertWebhookEnabled: false,
@@ -85,6 +86,10 @@ function read(): RecorderSettings {
         typeof parsed.defaultA11yChecks === "boolean"
           ? parsed.defaultA11yChecks
           : DEFAULT_SETTINGS.defaultA11yChecks,
+      debugScreenshots:
+        typeof parsed.debugScreenshots === "boolean"
+          ? parsed.debugScreenshots
+          : DEFAULT_SETTINGS.debugScreenshots,
       defaultCaptureArtifacts:
         typeof parsed.defaultCaptureArtifacts === "boolean"
           ? parsed.defaultCaptureArtifacts
@@ -161,6 +166,10 @@ export const recorderSettingsStore = {
         update.defaultA11yChecks !== undefined
           ? update.defaultA11yChecks
           : current.defaultA11yChecks,
+      debugScreenshots:
+        update.debugScreenshots !== undefined
+          ? update.debugScreenshots
+          : current.debugScreenshots,
       defaultCaptureArtifacts:
         update.defaultCaptureArtifacts !== undefined
           ? update.defaultCaptureArtifacts
@@ -212,6 +221,7 @@ export const recorderSettingsStore = {
       autoHealAttemptTimeoutMs: next.autoHealAttemptTimeoutMs,
       autoHealApply: next.autoHealApply,
       defaultA11yChecks: next.defaultA11yChecks,
+      debugScreenshots: next.debugScreenshots,
       defaultCaptureArtifacts: next.defaultCaptureArtifacts,
       defaultRunHeadless: next.defaultRunHeadless,
       defaultRunBrowser: next.defaultRunBrowser,

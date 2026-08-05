@@ -679,6 +679,11 @@ export interface RecorderSettings {
    *  max 365). Applies ON TOP of artifactRetainedRuns — a run is kept only if
    *  it satisfies both rules. The pinned baseline is never pruned. */
   artifactRetentionDays: number;
+  /** Listen for screenshot requests from an MCP client (default false).
+   *  Off by default because it costs a directory watcher, and a debugging aid
+   *  has no business running for people who aren't debugging. The in-app
+   *  shortcut works regardless of this. */
+  debugScreenshots: boolean;
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];

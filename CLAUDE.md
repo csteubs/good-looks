@@ -26,7 +26,8 @@ renderer/settings/   settings window UI
 renderer/components/ reusable UI wrapping the @glaze/core design system
 renderer/lib/        shared frontend utilities (llm-prompts, etc.)
 mcp/                 standalone MCP server exposing the test library to external MCP clients
-                     (list_tests, get_test, list_runs, get_run_log, run_test, run_batch)
+                     (list_tests, get_test, list_runs, get_run_log, run_test, run_batch,
+                      capture_app, get_screenshot)
                      — see mcp/README.md
 glaze.ts             thin wrapper that resolves the Glaze CLI relative to this folder's SDK install
 vitest.config.ts     test runner config (node + jsdom projects, @glaze/core aliasing)
