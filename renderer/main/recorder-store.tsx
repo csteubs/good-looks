@@ -6,8 +6,11 @@ import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { toast } from "@glaze/core/components";
+
 import { api } from "../lib/api";
 import type {
+  DebugCaptureSession,
   AssertKind,
   ContextAction,
   DebugEntry,
@@ -168,6 +171,20 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     // the whole list after every change and we replace our copy.
     const offSteps = api.on<Step[]>("recorder:steps", (steps) => setLiveSteps(steps ?? []));
     const offPicked = api.on<PickedElement>("recorder:picked", (p) => setPicked(p));
+    // The debug-screenshot shortcut fires with no visible effect otherwise —
+    // you press a key and nothing happens, which is indistinguishable from the
+    // shortcut not being registered at all. (It once WASN'T, and this is how
+    // that presented.) The toast names the windows so you know it caught the
+    // one you meant.
+    const offCaptured = api.on<DebugCaptureSession>("debug:captured", (session) => {
+      if (session.error) toast.error(session.error);
+      else {
+        const names = session.shots.map((s) => s.window).join(", ");
+        toast.success(
+          `Screenshot saved — ${session.shots.length} ${session.shots.length === 1 ? "window" : "windows"}: ${names}`,
+        );
+      }
+    });
     // Right-click test-tools menu in the training browser: the backend resolves
     // the element under the cursor and pushes the chosen action; the trainer
     // opens the Add-step dialog prefilled from it.
@@ -281,6 +298,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       offState();
       offSteps();
       offPicked();
+      offCaptured();
       offCtx();
       offFinished();
       offOut();

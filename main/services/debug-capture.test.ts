@@ -13,6 +13,7 @@
 
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import * as fs from "fs";
+import { readFileSync } from "fs";
 import * as os from "os";
 import * as path from "path";
 
@@ -274,5 +275,63 @@ describe("requestCapture", () => {
     if (!result.ok) throw new Error("unreachable");
     expect(result.session.reason).toBe("request");
     fs.rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe("the shortcut is registered at a point where it can work", () => {
+  // This shipped broken. `globalShortcut.register` was called at module scope,
+  // which throws "globalShortcut cannot be used before the app is ready" — and
+  // because that rejection is caught and logged rather than left to crash, the
+  // only symptom was a key combination that did nothing. Nothing in the type
+  // system, the linter or any other test could see it; it took reading the app
+  // log to find.
+  //
+  // A source-level assertion, like the a11y non-gating test. Crude, and still
+  // the only thing between this and a silent repeat.
+  function indexSource(): string {
+    const url = new URL("../index.ts", import.meta.url);
+    return readFileSync(url, "utf-8");
+  }
+
+  /** Body of a top-level `async function <name>` declaration. */
+  function functionBody(src: string, name: string): string {
+    const start = src.indexOf(`async function ${name}(`);
+    if (start < 0) return "";
+    const end = src.indexOf("\n}", start);
+    return end < 0 ? src.slice(start) : src.slice(start, end);
+  }
+
+  it("registers the shortcut only inside a function, never at module scope", () => {
+    const src = indexSource();
+    const body = functionBody(src, "setupDebugScreenshots");
+    expect(body, "setupDebugScreenshots not found").not.toBe("");
+    // Every mention of register lives in that function.
+    const mentions = src.split("globalShortcut.register").length - 1;
+    const inside = body.split("globalShortcut.register").length - 1;
+    expect(mentions).toBeGreaterThan(0);
+    expect(inside, "globalShortcut.register is called outside setupDebugScreenshots").toBe(
+      mentions,
+    );
+  });
+
+  it("calls that function from the app-ready handler", () => {
+    // Being inside a function isn't enough — it has to be a function that runs
+    // after ready. Anchoring on whenReady is what makes this test about the
+    // actual requirement rather than about code tidiness.
+    const src = indexSource();
+    const readyAt = src.indexOf("app.whenReady()");
+    expect(readyAt, "app.whenReady() not found").toBeGreaterThan(-1);
+    const afterReady = src.slice(readyAt);
+    expect(afterReady).toContain("setupDebugScreenshots()");
+  });
+
+  it("starts the request watcher from the same place", () => {
+    // syncRequestWatcher reads app.getPath("userData"), which has the same
+    // before-ready hazard.
+    const src = indexSource();
+    const body = functionBody(src, "setupDebugScreenshots");
+    const mentions = src.split("syncRequestWatcher(").length - 1;
+    const inside = body.split("syncRequestWatcher(").length - 1;
+    expect(inside, "syncRequestWatcher is called outside setupDebugScreenshots").toBe(mentions);
   });
 });

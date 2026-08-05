@@ -49,37 +49,6 @@ registerHandlers();
   }
 }
 
-// ── Debug screenshots ─────────────────────────────────────────────────
-// A global shortcut so a screenshot of the app can be handed to an MCP client
-// without hunting for a menu, plus (only when the Settings toggle is on) a
-// watcher so a client can ask for one itself.
-//
-// The shortcut is registered unconditionally because it costs nothing until
-// pressed; the WATCHER is what the toggle gates, because that runs.
-{
-  syncRequestWatcher();
-  void globalShortcut
-    .register(DEBUG_CAPTURE_ACCELERATOR, () => {
-      void captureWindows(newCaptureId(), "shortcut").then((session) => {
-        sendToMain("debug:captured", session);
-      });
-    })
-    .then((ok) => {
-      if (!ok) {
-        // Something else owns the combination system-wide. Say so — a shortcut
-        // that silently does nothing is worse than one that isn't offered.
-        logger.warn("debug-capture", "Could not register the screenshot shortcut", {
-          accelerator: DEBUG_CAPTURE_ACCELERATOR,
-        });
-      }
-    })
-    .catch((err) => {
-      logger.warn("debug-capture", "Screenshot shortcut registration failed", {
-        err: String(err),
-      });
-    });
-}
-
 // ── Batch history reconciliation ──────────────────────────────────────
 // A batch persisted as "running" means the app exited mid-batch; nothing is
 // running now, so clear the stale flag rather than showing a phantom
@@ -242,6 +211,43 @@ async function setupApplicationMenu() {
   logger.info("main", "Application menu configured with Settings");
 }
 
+/**
+ * Debug screenshots: a global shortcut for capturing the app's own windows, and
+ * (only when the Settings toggle is on) a watcher so an MCP client can request
+ * a capture itself.
+ *
+ * Must run AFTER app ready. Registering at module scope throws
+ * "globalShortcut cannot be used before the app is ready" — which is caught and
+ * logged rather than crashing, so the only symptom is a shortcut that does
+ * nothing. Exactly the silent failure this whole feature exists to avoid, so:
+ * called from whenReady, alongside the application menu.
+ */
+async function setupDebugScreenshots(): Promise<void> {
+  syncRequestWatcher();
+  try {
+    const ok = await globalShortcut.register(DEBUG_CAPTURE_ACCELERATOR, () => {
+      void captureWindows(newCaptureId(), "shortcut").then((session) => {
+        sendToMain("debug:captured", session);
+      });
+    });
+    if (!ok) {
+      // Something else owns the combination system-wide. Say so — a shortcut
+      // that silently does nothing is worse than one that isn't offered.
+      logger.warn("debug-capture", "Could not register the screenshot shortcut", {
+        accelerator: DEBUG_CAPTURE_ACCELERATOR,
+      });
+      return;
+    }
+    logger.info("debug-capture", "Screenshot shortcut registered", {
+      accelerator: DEBUG_CAPTURE_ACCELERATOR,
+    });
+  } catch (err) {
+    logger.warn("debug-capture", "Screenshot shortcut registration failed", {
+      err: String(err),
+    });
+  }
+}
+
 // ── Lifecycle events ──────────────────────────────────────────────────
 app.on("window-all-closed", () => {
   // On macOS, apps typically don't quit when all windows are closed
@@ -291,6 +297,7 @@ app.whenReady().then(async () => {
   await appAiDevHarness?.runAppAiAutotest();
 
   await setupApplicationMenu();
+  await setupDebugScreenshots();
 
   createMainWindow()
     .then(() => {
