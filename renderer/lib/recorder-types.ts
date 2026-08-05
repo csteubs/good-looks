@@ -441,3 +441,44 @@ export interface RecorderState {
   /** set when the training window failed to open within the timeout. */
   loadFailed: boolean;
 }
+
+// ── Batch (suite) runs ────────────────────────────────────────────────
+// Mirrors main/services/batch-runner.ts. A batch drives ordinary runs
+// sequentially; each test still writes its own RunRecord, so a batch shows up
+// in Stats as normal runs rather than a separate kind of history.
+
+export type BatchTestStatus = "pending" | "running" | "passed" | "failed" | "skipped";
+
+export interface BatchTestResult {
+  testId: string;
+  testName: string;
+  status: BatchTestStatus;
+  exitCode?: number;
+  startedAt?: number;
+  finishedAt?: number;
+  durationMs?: number;
+  /** why a test was skipped, or why it failed to start */
+  note?: string;
+}
+
+export interface BatchSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  skipped: number;
+  ok: boolean;
+  durationMs: number;
+}
+
+export interface BatchState {
+  batchId: string;
+  running: boolean;
+  startedAt: number;
+  finishedAt?: number;
+  /** index in `results` currently executing, or -1 when idle */
+  currentIndex: number;
+  results: BatchTestResult[];
+  /** the user stopped the batch partway */
+  stopped: boolean;
+  summary: BatchSummary;
+}

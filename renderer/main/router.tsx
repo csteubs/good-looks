@@ -4,6 +4,7 @@ import {
   createRoute,
   createRouter,
 } from "@tanstack/react-router";
+import { BatchView } from "./batch-view";
 import { HomeView } from "./home-view";
 import { RootView } from "./root-view";
 import { StatsView } from "./stats-view";
@@ -63,7 +64,22 @@ const visualRoute = createRoute({
   },
 });
 
-const routeTree = rootRoute.addChildren([homeRoute, testRoute, statsRoute, visualRoute]);
+const batchRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/batch",
+  component: BatchView,
+  staticData: {
+    title: "Batch",
+  },
+});
+
+const routeTree = rootRoute.addChildren([
+  homeRoute,
+  testRoute,
+  statsRoute,
+  visualRoute,
+  batchRoute,
+]);
 
 const queryClient = new QueryClient();
 

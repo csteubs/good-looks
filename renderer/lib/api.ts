@@ -15,6 +15,7 @@ import type {
   BaselineEntry,
   CaptureOverheadSummary,
   RetentionResult,
+  BatchState,
   RunBrowser,
   RunComparison,
   RunReplay,
@@ -127,6 +128,20 @@ export const api = {
       ipc().invoke<TestRecord | null>("tests:setHidden", { id, hidden }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),
     importGit: (url: string) => ipc().invoke<ImportResult>("tests:importGit", { url }),
+  },
+  batch: {
+    run: (
+      testIds: string[],
+      opts?: { captureArtifacts?: boolean; runHeadless?: boolean; browser?: RunBrowser },
+    ) =>
+      ipc().invoke<{ batchId: string; alreadyRunning: boolean }>("batch:run", {
+        testIds,
+        captureArtifacts: opts?.captureArtifacts,
+        runHeadless: opts?.runHeadless,
+        browser: opts?.browser,
+      }),
+    stop: () => ipc().invoke<void>("batch:stop"),
+    status: () => ipc().invoke<BatchState | null>("batch:status"),
   },
   runner: {
     run: (

@@ -10,6 +10,7 @@ import { fileURLToPath } from "url";
 import { appHandlers } from "./app.js";
 import { getSettingsWindow, openSettingsWindow } from "../windows/settings-window.js";
 import { recorderService } from "../services/recorder-service.js";
+import { batchRunner } from "../services/batch-runner.js";
 import { playwrightRunner } from "../services/playwright-runner.js";
 import { runHistoryStore } from "../services/run-history-store.js";
 import { artifactStore } from "../services/artifact-store.js";
@@ -429,6 +430,33 @@ export function registerHandlers(): void {
     async (_e, params: { testId: string; baseRunId: string; replayRunId: string }) =>
       compareRuns(params.testId, params.baseRunId, params.replayRunId),
   );
+  // ── Batch (suite) run handlers ──────────────────────────────────────
+  ipcMain.handle(
+    "batch:run",
+    async (
+      _e,
+      params: {
+        testIds: string[];
+        captureArtifacts?: boolean;
+        runHeadless?: boolean;
+        browser?: string;
+      },
+    ) => {
+      const testIds = Array.isArray(params.testIds) ? params.testIds.filter((t) => !!t) : [];
+      if (testIds.length === 0) throw new Error("Select at least one test to run.");
+      return batchRunner.start({
+        testIds,
+        captureArtifacts: params.captureArtifacts ?? false,
+        runHeadless: params.runHeadless ?? false,
+        browser: isRunBrowser(params.browser) ? params.browser : undefined,
+      });
+    },
+  );
+  ipcMain.handle("batch:stop", async () => {
+    batchRunner.stop();
+  });
+  ipcMain.handle("batch:status", async () => batchRunner.getState());
+
   ipcMain.handle("runner:stop", async (_e, params: { runId: string }) => {
     playwrightRunner.stop(params.runId);
   });

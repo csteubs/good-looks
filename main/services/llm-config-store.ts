@@ -15,7 +15,9 @@ function configFile(): string {
 }
 
 function normalizeProvider(v: unknown): LlmProvider {
-  return v === "lmstudio" ? "lmstudio" : "ollama";
+  if (v === "lmstudio") return "lmstudio";
+  if (v === "anthropic") return "anthropic";
+  return "ollama";
 }
 
 function read(): LlmConfig {
