@@ -29,6 +29,7 @@ import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "./add-step-dial
 import { StepAiDebugDialog } from "./ai-debug-panel";
 import { GenerateStepsDialog } from "./generate-steps-dialog";
 import { RefineSelectorDialog, formatLocator, KIND_LABEL } from "./refine-selector-dialog";
+import { CookiesPanel } from "./cookies-panel";
 
 // Assertions that can be captured by clicking an element in the page. Operand
 // assertions (value/attribute/count/url/title) need typed input, so they live in
@@ -247,6 +248,7 @@ function DebugPanel({
   onAutoScrollChange,
   onDebugStep,
   onApplyHeal,
+  onInsertCookieStep,
 }: {
   step: Step | null;
   selectedIndex: number;
@@ -259,6 +261,7 @@ function DebugPanel({
   onAutoScrollChange: (v: boolean) => void;
   onDebugStep: (index: number) => void;
   onApplyHeal: (stepId: string, locator: Locator) => void;
+  onInsertCookieStep: (step: RawStep) => void;
 }) {
   const consoleSteps = replayRun?.steps ?? [];
   const ran = replayRun?.ran ?? 0;
@@ -273,6 +276,7 @@ function DebugPanel({
           <Tabs variant="filled" size="small">
             <TabsTrigger value="console">Console</TabsTrigger>
             <TabsTrigger value="steps">Step details</TabsTrigger>
+            <TabsTrigger value="cookies">Cookies</TabsTrigger>
           </Tabs>
           {tab === "console" ? (
             <label className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 pr-1 text-[11px] text-secondary">
@@ -285,6 +289,12 @@ function DebugPanel({
             </label>
           ) : null}
         </div>
+
+        {/* Cookies: edit the training browser's cookies, optionally recording
+            each change as a test step. */}
+        <TabsContent value="cookies" className="flex min-h-0 flex-1 flex-col">
+          <CookiesPanel onInsertStep={onInsertCookieStep} />
+        </TabsContent>
 
         {/* Console: live run output. */}
         <TabsContent value="console" className="flex min-h-0 flex-1 flex-col">
@@ -830,6 +840,7 @@ export function RecordingView() {
         replayRun={replayRun}
         tab={debugTab}
         onTabChange={setDebugTab}
+        onInsertCookieStep={(step) => insertStep(step)}
         autoScroll={autoScroll}
         onAutoScrollChange={setAutoScroll}
         onDebugStep={setDebugStepIndex}

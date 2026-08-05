@@ -124,6 +124,9 @@ export interface RawStep {
   width?: number;
   height?: number;
   waitMs?: number;
+  /** cookie fields, so a cookie step can be inserted via insertStep */
+  cookieAction?: CookieAction;
+  cookie?: CookieSpec;
 }
 
 export type TestSpeed = "slow" | "medium" | "fast";

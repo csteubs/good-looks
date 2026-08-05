@@ -25,7 +25,8 @@ import type { Step, StepType } from "../lib/recorder-types";
 function badgeColor(type: StepType): "green" | "blue" | "secondary" | "purple" {
   if (type === "if" || type === "endif") return "purple";
   if (type === "assert") return "green";
-  if (type === "goto" || type === "viewport" || type === "wait") return "blue";
+  // Environment/setup steps share a colour: navigation, viewport, waits, cookies.
+  if (type === "goto" || type === "viewport" || type === "wait" || type === "cookie") return "blue";
   return "secondary";
 }
 
