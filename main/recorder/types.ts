@@ -15,7 +15,10 @@ export type StepType =
   // between them run only when the condition holds; otherwise they're skipped
   // and the test continues gracefully.
   | "if"
-  | "endif";
+  | "endif"
+  // Cookie state. Applied through the browser session rather than injected JS,
+  // because an httpOnly cookie is invisible to document.cookie by definition.
+  | "cookie";
 
 /**
  * Predicate for an `if` step. Element conditions resolve `Step.locator`; page
@@ -89,6 +92,10 @@ export interface Step {
   height?: number;
   /** wait duration in ms when type === "wait" (omit to wait for the locator instead) */
   waitMs?: number;
+  /** what a `cookie` step does */
+  cookieAction?: CookieAction;
+  /** the cookie a `cookie` step sets or deletes (absent for clearAll) */
+  cookie?: CookieSpec;
   /** true when the runner should swallow this step's failure and continue to
    *  the next step instead of stopping the test. Emitted as a try/catch wrapper
    *  around the step's line in the generated spec. */
@@ -517,4 +524,71 @@ export interface BatchState {
  *  live one. `running: true` on a loaded record means the app exited mid-batch. */
 export interface BatchRecord extends BatchState {
   summary: BatchSummary;
+}
+
+// ── Cookies ───────────────────────────────────────────────────────────
+// Mirror kept in renderer/lib/recorder-types.ts.
+
+export type CookieAction = "set" | "delete" | "clearAll";
+
+/** Glaze/Chromium sameSite spelling (see @glaze/core/backend CookieSameSite).
+ *  NOT the same vocabulary Playwright uses — see toPlaywrightSameSite. */
+export type CookieSameSite = "unspecified" | "no_restriction" | "lax" | "strict";
+
+export interface CookieSpec {
+  name: string;
+  value?: string;
+  domain?: string;
+  path?: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  sameSite?: CookieSameSite;
+  /** Unix seconds. Omit for a session cookie (cleared when the browser closes). */
+  expirationDate?: number;
+  /** URL the cookie is scoped to. `session.cookies.set/remove` require it, and
+   *  Playwright accepts either `url` OR `domain`+`path` — never a mix. */
+  url?: string;
+}
+
+/**
+ * Chromium and Playwright disagree on how to spell sameSite, and getting this
+ * wrong silently produces a cookie the site won't send on navigation:
+ *   Chromium "no_restriction" ≡ Playwright "None"
+ *   Chromium "lax"            ≡ Playwright "Lax"
+ *   Chromium "strict"         ≡ Playwright "Strict"
+ *   Chromium "unspecified"    → omitted (let Playwright default)
+ */
+export function toPlaywrightSameSite(v: CookieSameSite | undefined): "Strict" | "Lax" | "None" | null {
+  switch (v) {
+    case "strict":
+      return "Strict";
+    case "lax":
+      return "Lax";
+    case "no_restriction":
+      return "None";
+    default:
+      return null;
+  }
+}
+
+/** Inverse of toPlaywrightSameSite, for parsing a spec back into steps. */
+export function fromPlaywrightSameSite(v: string | undefined): CookieSameSite | undefined {
+  switch (v) {
+    case "Strict":
+      return "strict";
+    case "Lax":
+      return "lax";
+    case "None":
+      return "no_restriction";
+    default:
+      return undefined;
+  }
+}
+
+/** A cookie step needs a scope Playwright will accept: domain+path, or a url.
+ *  Returns null when the step carries neither, so the generator can skip
+ *  emitting an addCookies call that Playwright would reject at runtime. */
+export function cookieScopeIsValid(spec: CookieSpec | undefined): boolean {
+  if (!spec || !spec.name) return false;
+  return !!spec.url || !!(spec.domain && spec.path);
 }

@@ -12,7 +12,8 @@ export type StepType =
   | "wait"
   | "viewport"
   | "if"
-  | "endif";
+  | "endif"
+  | "cookie";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
@@ -69,6 +70,10 @@ export interface Step {
   width?: number;
   height?: number;
   waitMs?: number;
+  /** what a `cookie` step does (mirrors main types) */
+  cookieAction?: CookieAction;
+  /** the cookie a `cookie` step sets or deletes (absent for clearAll) */
+  cookie?: CookieSpec;
   /** true when the runner should swallow this step's failure and continue to
    *  the next step instead of stopping the test. Emitted as a try/catch wrapper
    *  around the step's line in the generated spec. */
@@ -495,3 +500,29 @@ export interface BatchState {
 /** A batch as persisted to batch-history.json — same shape as the live state,
  *  so a restored batch renders identically to a running one. */
 export type BatchRecord = BatchState;
+
+// ── Cookies (mirror of main/recorder/types.ts) ───────────────────────
+
+export type CookieAction = "set" | "delete" | "clearAll";
+
+/** Chromium sameSite spelling — NOT Playwright's ("Strict"/"Lax"/"None"). */
+export type CookieSameSite = "unspecified" | "no_restriction" | "lax" | "strict";
+
+export interface CookieSpec {
+  name: string;
+  value?: string;
+  domain?: string;
+  path?: string;
+  secure?: boolean;
+  httpOnly?: boolean;
+  sameSite?: CookieSameSite;
+  /** unix seconds; omit for a session cookie */
+  expirationDate?: number;
+  url?: string;
+}
+
+/** A live cookie read back from the training browser's session. */
+export interface LiveCookie extends CookieSpec {
+  hostOnly?: boolean;
+  session?: boolean;
+}

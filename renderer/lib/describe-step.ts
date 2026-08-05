@@ -115,9 +115,27 @@ export function computeStepDepths(steps: { type: StepType }[]): number[] {
   return depths;
 }
 
+/** Mirror of describeCookie in main/services/script-generator.ts — keep in sync. */
+export function describeCookie(step: Step): string {
+  const c = step.cookie;
+  switch (step.cookieAction) {
+    case "clearAll":
+      return "clear all cookies";
+    case "delete":
+      return c?.name ? `delete cookie ${c.name}` : "delete cookie";
+    case "set":
+    default: {
+      if (!c?.name) return "set cookie";
+      const scope = c.domain ? ` on ${c.domain}` : "";
+      return `set cookie ${c.name}=${c.value ?? ""}${scope}`;
+    }
+  }
+}
+
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
+  if (step.type === "cookie") return describeCookie(step);
   const loc = step.locator;
   const target = loc ? "page." + locatorExpr(loc) : null;
   switch (step.type) {

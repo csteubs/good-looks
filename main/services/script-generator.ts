@@ -1,6 +1,7 @@
 // Convert recorded steps into a @playwright/test spec file.
 
-import type { Locator, Step, TestRecord } from "../recorder/types.js";
+import { cookieScopeIsValid, toPlaywrightSameSite } from "../recorder/types.js";
+import type { CookieSpec, Locator, Step, TestRecord } from "../recorder/types.js";
 
 function q(s: string): string {
   return JSON.stringify(s ?? "");
@@ -98,6 +99,55 @@ function conditionExpr(step: Step): string {
   }
 }
 
+/** Emit the cookie object literal Playwright's addCookies expects.
+ *
+ *  Two renames matter and are easy to miss: Chromium's `expirationDate`
+ *  (unix seconds) is Playwright's `expires`, and the sameSite vocabularies
+ *  differ (see toPlaywrightSameSite). Playwright accepts `url` OR
+ *  `domain`+`path`, never both, so domain+path wins when present. */
+function cookieLiteral(spec: CookieSpec): string {
+  const parts: string[] = [`name: ${q(spec.name)}`, `value: ${q(spec.value ?? "")}`];
+  if (spec.domain && spec.path) {
+    parts.push(`domain: ${q(spec.domain)}`, `path: ${q(spec.path)}`);
+  } else if (spec.url) {
+    parts.push(`url: ${q(spec.url)}`);
+  }
+  if (typeof spec.expirationDate === "number") parts.push(`expires: ${spec.expirationDate}`);
+  if (spec.httpOnly) parts.push("httpOnly: true");
+  if (spec.secure) parts.push("secure: true");
+  const sameSite = toPlaywrightSameSite(spec.sameSite);
+  if (sameSite) parts.push(`sameSite: ${q(sameSite)}`);
+  return "{ " + parts.join(", ") + " }";
+}
+
+/** Filter for clearCookies — deleting ONE cookie rather than all of them.
+ *  Playwright 1.43+ accepts {name, domain, path}; the bundled runner is 1.53. */
+function cookieFilterLiteral(spec: CookieSpec): string {
+  const parts: string[] = [`name: ${q(spec.name)}`];
+  if (spec.domain) parts.push(`domain: ${q(spec.domain)}`);
+  if (spec.path) parts.push(`path: ${q(spec.path)}`);
+  return "{ " + parts.join(", ") + " }";
+}
+
+function cookieLine(step: Step): string | null {
+  switch (step.cookieAction) {
+    case "clearAll":
+      return "await page.context().clearCookies();";
+    case "delete":
+      return step.cookie?.name
+        ? "await page.context().clearCookies(" + cookieFilterLiteral(step.cookie) + ");"
+        : null;
+    case "set":
+    default:
+      // An addCookies call Playwright would reject at runtime is worse than no
+      // line at all — the run would fail on setup rather than on the assertion
+      // the test is actually about.
+      return cookieScopeIsValid(step.cookie)
+        ? "await page.context().addCookies([" + cookieLiteral(step.cookie!) + "]);"
+        : null;
+  }
+}
+
 function stepLine(step: Step): string | null {
   const loc = step.locator;
   const target = loc ? "page." + locatorExpr(loc) : null;
@@ -133,6 +183,8 @@ function stepLine(step: Step): string | null {
         (step.height ?? 800) +
         " });"
       );
+    case "cookie":
+      return cookieLine(step);
     case "assert":
       return assertLine(step, target);
     default:
@@ -144,8 +196,27 @@ function stepLine(step: Step): string | null {
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
+  if (step.type === "cookie") return describeCookie(step);
   const line = stepLine(step);
   return line ? line.replace(/^await /, "").replace(/;$/, "") : step.type;
+}
+
+/** Readable phrasing of a cookie step for the trainer's step list. Kept in
+ *  sync with the mirror in renderer/lib/describe-step.ts. */
+export function describeCookie(step: Step): string {
+  const c = step.cookie;
+  switch (step.cookieAction) {
+    case "clearAll":
+      return "clear all cookies";
+    case "delete":
+      return c?.name ? `delete cookie ${c.name}` : "delete cookie";
+    case "set":
+    default: {
+      if (!c?.name) return "set cookie";
+      const scope = c.domain ? ` on ${c.domain}` : "";
+      return `set cookie ${c.name}=${c.value ?? ""}${scope}`;
+    }
+  }
 }
 
 /** Readable phrasing of an `if` condition for the trainer's step list. */

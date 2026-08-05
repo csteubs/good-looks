@@ -19,7 +19,72 @@
 
 import { randomUUID } from "crypto";
 
-import type { AssertKind, ConditionKind, Locator, LocatorKind, Step, StepType } from "../recorder/types.js";
+import { fromPlaywrightSameSite } from "../recorder/types.js";
+import type {
+  AssertKind,
+  ConditionKind,
+  CookieSpec,
+  Locator,
+  LocatorKind,
+  Step,
+  StepType,
+} from "../recorder/types.js";
+
+/**
+ * Read `{ … }` object literals out of an argument string into CookieSpecs.
+ * Deliberately narrow: it understands the shape script-generator emits
+ * (string/number/boolean literal values, no nesting, no expressions) and
+ * ignores anything else, so a hand-written call with computed values is
+ * reported as skipped rather than silently half-parsed.
+ *
+ * Playwright's `expires`/`sameSite` are translated back to the Chromium
+ * spelling the app stores (`expirationDate`, lowercase sameSite).
+ */
+function parseCookieObjects(argsStr: string): CookieSpec[] {
+  const out: CookieSpec[] = [];
+  const objectRe = /\{[^{}]*\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = objectRe.exec(argsStr)) !== null) {
+    const body = m[0].slice(1, -1);
+    const readStr = (key: string): string | undefined => {
+      // Matches a quoted value (either quote style), honoring backslash
+      // escapes, then unescapes them — cookie values legitimately contain
+      // quotes and backslashes.
+      const hit = body.match(new RegExp(key + "\\s*:\\s*([\"'])((?:\\\\.|(?!\\1).)*)\\1"));
+      return hit ? hit[2].replace(/\\(.)/g, "$1") : undefined;
+    };
+    const readNum = (key: string): number | undefined => {
+      const hit = body.match(new RegExp(key + "\\s*:\\s*(-?\\d+(?:\\.\\d+)?)"));
+      return hit ? parseFloat(hit[1]) : undefined;
+    };
+    const readBool = (key: string): boolean | undefined => {
+      const hit = body.match(new RegExp(key + "\\s*:\\s*(true|false)"));
+      return hit ? hit[1] === "true" : undefined;
+    };
+
+    const name = readStr("name");
+    if (!name) continue;
+    const spec: CookieSpec = { name };
+    const value = readStr("value");
+    if (value !== undefined) spec.value = value;
+    const domain = readStr("domain");
+    if (domain !== undefined) spec.domain = domain;
+    const path = readStr("path");
+    if (path !== undefined) spec.path = path;
+    const url = readStr("url");
+    if (url !== undefined) spec.url = url;
+    const expires = readNum("expires");
+    if (expires !== undefined) spec.expirationDate = expires;
+    const httpOnly = readBool("httpOnly");
+    if (httpOnly !== undefined) spec.httpOnly = httpOnly;
+    const secure = readBool("secure");
+    if (secure !== undefined) spec.secure = secure;
+    const sameSite = fromPlaywrightSameSite(readStr("sameSite"));
+    if (sameSite !== undefined) spec.sameSite = sameSite;
+    out.push(spec);
+  }
+  return out;
+}
 
 /**
  * Strip line and block comments from a source snippet. String-aware so a
@@ -402,6 +467,55 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
           ...(hM ? { height: parseInt(hM[1], 10) } : {}),
         }),
       );
+      i = close + 1;
+      continue;
+    }
+
+    // page.context().addCookies([{ … }]) → one `cookie` set step per entry.
+    const addCookiesM = rest.match(
+      /^[\s;]*(?:await\s+|return\s+)?page\.context\(\)\.addCookies\s*\(/,
+    );
+    if (addCookiesM) {
+      const openIdx = i + addCookiesM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const argsStr = src.slice(openIdx + 1, close);
+      const specs = parseCookieObjects(argsStr);
+      if (specs.length === 0) {
+        // Recognized the call but couldn't read a cookie out of it — count it
+        // as skipped rather than emitting an empty step that would generate a
+        // different (broken) line on the way back out.
+        skipped++;
+      }
+      for (const spec of specs) {
+        steps.push(makeStep("cookie", { cookieAction: "set", cookie: spec }));
+      }
+      i = close + 1;
+      continue;
+    }
+
+    // page.context().clearCookies()            → clearAll
+    // page.context().clearCookies({ name: … }) → delete one
+    const clearCookiesM = rest.match(
+      /^[\s;]*(?:await\s+|return\s+)?page\.context\(\)\.clearCookies\s*\(/,
+    );
+    if (clearCookiesM) {
+      const openIdx = i + clearCookiesM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const argsStr = src.slice(openIdx + 1, close).trim();
+      if (!argsStr) {
+        steps.push(makeStep("cookie", { cookieAction: "clearAll" }));
+      } else {
+        const [filter] = parseCookieObjects(argsStr);
+        if (filter?.name) {
+          steps.push(makeStep("cookie", { cookieAction: "delete", cookie: filter }));
+        } else {
+          // A filtered clear we can't read (e.g. clears by domain only) is not
+          // a per-cookie delete — don't misrepresent it as one.
+          skipped++;
+        }
+      }
       i = close + 1;
       continue;
     }
