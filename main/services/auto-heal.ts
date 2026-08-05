@@ -99,18 +99,19 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
   function collectElements() {
     var sel = "button, a[href], input, select, textarea, [role], [data-testid], [data-test-id], [data-test], [aria-label], [tabindex]";
     var list = Array.prototype.slice.call(document.querySelectorAll(sel));
-    // De-duplicate + keep only visible elements (a hidden target can't be the
-    // intended one for an action step).
-    var seen = {};
+    // Keep only visible elements (a hidden target can't be the intended one
+    // for an action step).
+    //
+    // NOTE: no key-based de-duplication here. A comma-separated selector list
+    // already yields a unique, document-ordered set, so dedup was unnecessary —
+    // and keying it on tagName|id|className actively discarded real elements:
+    // any two plain <button>s (or <a href>s) with no id and no class collapse
+    // to the same key, so every one after the first was dropped and could never
+    // be proposed as a heal candidate.
     var out = [];
     for (var i = 0; i < list.length; i++) {
       var el = list[i];
-      if (!el || seen.___pw_seen) continue;
-      // Use the element itself as the dedup key (querySelectorAll can return
-      // the same element for multiple selectors).
-      var key = (el.tagName || "") + "|" + (el.id || "") + "|" + (el.className || "");
-      if (seen[key]) continue;
-      seen[key] = true;
+      if (!el) continue;
       if (!visible(el)) continue;
       out.push(el);
     }
@@ -127,12 +128,25 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
     if (cand.k === orig.k) {
       if (cand.v != null && orig.v != null && cand.v === orig.v) s += 1.0;
       else if (cand.v != null && orig.v != null && (ci(cand.v).indexOf(ci(orig.v)) >= 0 || ci(orig.v).indexOf(ci(cand.v)) >= 0)) s += 0.7;
-      else if (cand.role === orig.role && cand.name === orig.name) s += 0.8;
-      else if (cand.role === orig.role) s += 0.5;
+      // Both operands must actually BE something. Comparing two absent fields
+      // (undefined === undefined) is trivially true, which awarded the
+      // second-best score of 0.8 to every same-kind candidate on the page
+      // regardless of its value — e.g. every testid on the page tied at 0.8,
+      // outranking a real text match at 0.4 and putting an arbitrary element
+      // at the top of the heal menu.
+      else if (cand.role != null && orig.role != null && cand.role === orig.role &&
+               cand.name != null && orig.name != null && cand.name === orig.name) s += 0.8;
+      else if (cand.role != null && orig.role != null && cand.role === orig.role) s += 0.5;
       else s += 0.3;
     } else {
       // Cross-kind: weaker signal, but a text/role match is still meaningful.
-      if (orig.v && cand.v && ci(cand.v).indexOf(ci(orig.v)) >= 0) s += 0.4;
+      // Checked BOTH ways, like the same-kind branch above. One-directional
+      // matching missed the commonest heal case by far: a renamed testid whose
+      // visible label is unchanged, e.g. orig testid "submit-button" vs
+      // candidate text "Submit" — the original is longer, so asking only
+      // "does the candidate contain the original?" scored the correct element
+      // at zero and ranked an unrelated one first.
+      if (orig.v && cand.v && (ci(cand.v).indexOf(ci(orig.v)) >= 0 || ci(orig.v).indexOf(ci(cand.v)) >= 0)) s += 0.4;
       else if (orig.role && cand.role === orig.role) s += 0.3;
       else if (orig.name && cand.name && ci(cand.name).indexOf(ci(orig.name)) >= 0) s += 0.3;
     }
