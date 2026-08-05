@@ -219,7 +219,16 @@ async function runChat(
     if (controller.signal.aborted) {
       sendToMain("llm:done", { requestId, cancelled: true });
     } else {
-      const message = err instanceof Error ? err.message : String(err);
+      const raw = err instanceof Error ? err.message : String(err);
+      // Wrap low-level connection failures with a friendly message, so the
+      // renderer doesn't show a bare "fetch failed". Local providers get a
+      // "make sure it is running" hint; cloud providers get a network hint.
+      const isConnError = /abort|timeout|econnrefused|fetch failed|network/i.test(raw);
+      const message = isConnError
+        ? provider === "anthropic"
+          ? `Could not reach Claude (${base}). Check your internet connection and try again.`
+          : `Could not reach ${providerLabel(provider)} at ${base}. Make sure it is running.`
+        : raw;
       logger.warn("llm", "Chat request failed", { requestId, message });
       sendToMain("llm:error", { requestId, message });
     }
@@ -253,7 +262,11 @@ export const llmService = {
         return { provider, reachable: true, models, baseUrl: base, hasKey: true };
       } catch (err) {
         const raw = err instanceof Error ? err.message : String(err);
-        return { provider, reachable: false, models: [], baseUrl: base, hasKey: true, error: raw };
+        const unreachable = /abort|timeout|econnrefused|fetch failed|network/i.test(raw);
+        const error = unreachable
+          ? `Could not reach Claude (${base}). Check your internet connection and try again.`
+          : raw;
+        return { provider, reachable: false, models: [], baseUrl: base, hasKey: true, error };
       }
     }
     try {

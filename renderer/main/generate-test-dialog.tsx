@@ -29,6 +29,7 @@ import {
 import { Check, Copy, Square, Wand2 } from "lucide-react";
 
 import { api } from "../lib/api";
+import { friendlyError } from "../lib/llm-errors";
 import { buildGenerateMessages } from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
 import type { TestSpeed } from "../lib/recorder-types";
@@ -46,16 +47,6 @@ const VIEWPORT_PRESETS = [
   { id: "tablet", label: "Tablet 768×1024", w: 768, h: 1024 },
   { id: "mobile", label: "Mobile 390×844", w: 390, h: 844 },
 ] as const;
-
-function friendlyError(message: string): string {
-  if (/no model selected/i.test(message)) {
-    return `${message} Open Settings (⌘,) → AI provider to pick one.`;
-  }
-  if (/could not reach|abort|timeout|econnrefused|fetch failed|network/i.test(message)) {
-    return `${message} Open Settings (⌘,) → AI provider to check the connection.`;
-  }
-  return message;
-}
 
 // Reuse the AI debug panel's code-block rendering: fenced code in a bordered
 // card with a language label and per-block copy.

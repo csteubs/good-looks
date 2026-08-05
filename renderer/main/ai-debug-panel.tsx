@@ -11,6 +11,7 @@ import glitchGif from "./assets/glitch.gif";
 
 import { api } from "../lib/api";
 import { diffLines, diffSummary, type DiffLine } from "../lib/line-diff";
+import { friendlyError } from "../lib/llm-errors";
 import type { LlmMessage, LlmModel } from "../lib/llm-types";
 import { buildDebugMessages, buildStepDebugMessages } from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
@@ -117,16 +118,6 @@ function ThinkingGifOverlay({
       </div>
     </div>
   );
-}
-
-export function friendlyError(message: string): string {
-  if (/no model selected/i.test(message)) {
-    return `${message} Open Settings (⌘,) → AI provider to pick one.`;
-  }
-  if (/could not reach|abort|timeout|econnrefused|fetch failed|network/i.test(message)) {
-    return `${message} Open Settings (⌘,) → AI provider to check the connection.`;
-  }
-  return message;
 }
 
 // A fenced code block from the response, rendered distinctly with its own copy.

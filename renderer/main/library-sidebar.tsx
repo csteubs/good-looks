@@ -159,24 +159,34 @@ const PROVIDER_LABEL: Record<LlmProvider, string> = {
   anthropic: "Claude",
 };
 
-/** Subtle sidebar footer indicator shown when an AI provider is connected.
- * Clicking it opens the Settings window on the AI provider section. Re-checks
- * on window focus so a connection just made in Settings is reflected here. */
+type ConnState = "checking" | "connected" | "disconnected";
+
+/** Sidebar footer indicator for the configured AI provider. Always visible
+ * (for local and cloud providers), showing a green dot when connected, a red
+ * dot when not, or a loading dot while probing. Clicking opens Settings on the
+ * AI provider section. Re-checks on window focus so a connection just made in
+ * Settings is reflected here. */
 function AiConnectionFooter() {
-  const [label, setLabel] = React.useState<string | null>(null);
+  const [state, setState] = React.useState<ConnState>("checking");
+  const [label, setLabel] = React.useState<string>("");
 
   const check = React.useCallback(async () => {
     try {
       const cfg = await api.llm.getConfig();
-      const status = await api.llm.status(cfg.provider);
-      if (!status.reachable) {
-        setLabel(null);
-        return;
-      }
       const providerName = PROVIDER_LABEL[cfg.provider] ?? cfg.provider;
-      setLabel(`${providerName} connected`);
+      setLabel(providerName);
+      setState("checking");
+      const status = await api.llm.status(cfg.provider);
+      if (status.reachable) {
+        setState("connected");
+      } else {
+        setState("disconnected");
+        // Use the backend's friendly error as the label tooltip when available.
+        if (status.error) setLabel(`${providerName} — ${status.error}`);
+      }
     } catch {
-      setLabel(null);
+      setState("disconnected");
+      setLabel("No AI provider");
     }
   }, []);
 
@@ -191,18 +201,25 @@ function AiConnectionFooter() {
     };
   }, [check]);
 
-  if (!label) return null;
+  const variant = state === "connected" ? "success" : state === "disconnected" ? "error" : "loading";
+  const ariaLabel =
+    state === "connected"
+      ? `${label} connected`
+      : state === "disconnected"
+        ? `${label} not connected`
+        : `Checking ${label} connection`;
 
   return (
     <SidebarFooter>
       <button
         type="button"
         onClick={openSettingsWindow}
+        title={state === "disconnected" ? label : undefined}
         className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-fill-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <Status variant="success" aria-label="AI provider connected" />
+        <Status variant={variant} aria-label={ariaLabel} />
         <Text variant="small" color="secondary" className="truncate">
-          {label}
+          {state === "connected" ? label : label.split(" — ")[0]}
         </Text>
       </button>
     </SidebarFooter>

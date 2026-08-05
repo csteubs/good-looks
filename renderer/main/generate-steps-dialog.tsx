@@ -25,22 +25,13 @@ import {
 import { Crosshair, Square, Wand2, X } from "lucide-react";
 
 import { api } from "../lib/api";
+import { friendlyError } from "../lib/llm-errors";
 import { buildGenerateStepsMessages } from "../lib/llm-prompts";
 import { extractStepsJson } from "../lib/parse-llm-response";
 import type { Locator, PickedElement, RawStep } from "../lib/recorder-types";
 import { useLlmChat } from "../lib/use-llm-chat";
 import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 import { useRecorder } from "./recorder-store";
-
-function friendlyError(message: string): string {
-  if (/no model selected/i.test(message)) {
-    return `${message} Open Settings (⌘,) → AI provider to pick one.`;
-  }
-  if (/could not reach|abort|timeout|econnrefused|fetch failed|network/i.test(message)) {
-    return `${message} Open Settings (⌘,) → AI provider to check the connection.`;
-  }
-  return message;
-}
 
 export function GenerateStepsDialog({
   open,

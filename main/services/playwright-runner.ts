@@ -42,6 +42,14 @@ interface RunHandle {
 
 const runs = new Map<string, RunHandle>();
 
+/** Completion promises for runs currently in flight, keyed by runId, resolving
+ *  to the Playwright exit code. `runs` only holds an entry while the child
+ *  process is alive — it's empty during setup (browser install, spec
+ *  generation) and after the process exits but before the RunRecord is
+ *  persisted — so it can't be used to await a whole run. Batch runs need
+ *  exactly that, hence this second map. */
+const inFlight = new Map<string, Promise<number>>();
+
 function browsersPath(): string {
   return path.join(app.getPath("userData"), "recorder", "browsers");
 }
@@ -382,7 +390,7 @@ export const playwrightRunner = {
     logBuffers.set(runId, []);
     stepStatusMaps.set(runId, {});
 
-    void (async () => {
+    const done = (async () => {
       let exitCode = -1;
       let tempSpecPath: string | null = null;
       let capturingRun = false;
@@ -597,9 +605,25 @@ export const playwrightRunner = {
         }
         sendToMain("runner:done", { runId, code: exitCode });
       }
+      return exitCode;
     })();
+    // Never rejects: the IIFE catches everything and reports via runner:output,
+    // so an awaiting batch sees a non-zero exit code rather than a rejection.
+    inFlight.set(runId, done);
+    void done.finally(() => {
+      // Only clear if this is still the promise we registered — a fast
+      // sequential batch can start the same test again before this settles.
+      if (inFlight.get(runId) === done) inFlight.delete(runId);
+    });
 
     return { runId };
+  },
+
+  /** Resolve when the given run finishes, with its Playwright exit code
+   *  (0 = passed). Resolves to null if that run isn't in flight — either it
+   *  already finished or it never started. */
+  waitFor(runId: string): Promise<number> | null {
+    return inFlight.get(runId) ?? null;
   },
 
   stop(runId: string): void {
