@@ -72,6 +72,17 @@ if (!globalThis.IntersectionObserver) {
   } as unknown as typeof IntersectionObserver;
 }
 
+// jsdom implements no scrolling. The SDK's ScrollArea calls scrollTo when
+// auto-scrolling to the newest output, and several views call scrollIntoView to
+// reveal a selected step — both throw "not a function" from inside the bundle,
+// which reads like a component bug rather than a missing DOM API.
+if (!Element.prototype.scrollTo) {
+  Element.prototype.scrollTo = function (): void {};
+}
+if (!Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = function (): void {};
+}
+
 if (!globalThis.ResizeObserver) {
   globalThis.ResizeObserver = class {
     observe() {}
