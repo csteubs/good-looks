@@ -193,6 +193,33 @@ describe("BatchView reset order", () => {
   });
 });
 
+// ── Layout: nothing is stranded below the fold ───────────────────────
+// Same fix as Stats — the page ScrollArea used h-full inside a flex column, so
+// its last child sat below the window. The sizing classes are asserted at
+// source level in check:scroll-layout (jsdom has no layout engine and the SDK's
+// ScrollArea exposes no stable DOM marker); these pin what IS observable here.
+describe("BatchView layout", () => {
+  it("shows the run controls, the checklist and the summary together", async () => {
+    library = [test_("a", "Alpha"), test_("b", "Beta")];
+    renderView();
+    await rowNames();
+    expect(screen.getByRole("button", { name: /^Run/ })).toBeTruthy();
+    expect(screen.getAllByLabelText(/^Include /)).toHaveLength(2);
+    expect(screen.getByText(/Tests run one at a time/i)).toBeTruthy();
+  });
+
+  it("keeps the last row's controls present with a long library", async () => {
+    // A long list is what pushed content past the fold in the first place.
+    library = Array.from({ length: 40 }, (_, i) => test_(`t${i}`, `Test ${i}`));
+    renderView();
+    const names = await rowNames();
+    expect(names).toHaveLength(40);
+    // The final row still carries its own controls rather than being clipped.
+    const grips = screen.getAllByLabelText(/^Drag to reorder /);
+    expect(grips[grips.length - 1].getAttribute("aria-label")).toContain("Test 39");
+  });
+});
+
 describe("BatchView empty state", () => {
   it("explains itself when the library is empty", async () => {
     library = [];

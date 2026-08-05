@@ -217,6 +217,68 @@ describe("pagination", () => {
   });
 });
 
+// ── Layout: nothing is stranded below the fold ───────────────────────
+//
+// The bug this guards: the scroll region used `h-full` inside a flex column.
+// h-full resolves to 100% of the PARENT, but the Toolbar above had already
+// consumed part of that height — so the region extended past the bottom of the
+// window by the toolbar's height and its last child, the pager, was cut off.
+//
+// HONEST LIMIT: jsdom has no layout engine. Nothing here has a size, nothing
+// clips, and getBoundingClientRect returns zeros — so these tests CANNOT
+// observe visibility. They pin the structural contract that broke (the sizing
+// classes, bottom padding, and the pager being last with nothing after it).
+// Confirming it is actually on screen needs the real app.
+describe("layout keeps the page's last controls reachable", () => {
+  /** The element the scroll content lives in. */
+  function scrollContent(): HTMLElement {
+    const pager = screen.getByText(/page 1 of/i);
+    return pager.closest(".mx-auto") as HTMLElement;
+  }
+
+  beforeEach(() => {
+    runs = Array.from({ length: 120 }, (_, i) => run({ id: `r${i}`, testName: `Test ${i}` }));
+  });
+
+  // The sizing classes themselves are asserted at SOURCE level in
+  // check:scroll-layout — the SDK's ScrollArea exposes no stable DOM marker, so
+  // reaching its root from here would mean asserting against Radix internals.
+
+  it("always leaves bottom padding under the last element", async () => {
+    renderView();
+    await bodyRows(1);
+    expect(scrollContent().className).toMatch(/\bpb-\d+\b/);
+  });
+
+  it("renders the pager as the LAST thing in the page", async () => {
+    // Anything rendered after it would push it further out of view.
+    renderView();
+    await bodyRows(1);
+    const content = scrollContent();
+    const pagerBlock = screen.getByText(/page 1 of/i).closest("div")!;
+    expect(content.contains(pagerBlock)).toBe(true);
+    expect(content.lastElementChild?.contains(pagerBlock)).toBe(true);
+  });
+
+  it("shows the filters, the table and the pager at the same time", async () => {
+    // All three must coexist: a layout that hides any one of them is the bug.
+    renderView();
+    await bodyRows(1);
+    expect(screen.getByRole("radio", { name: "All" })).toBeTruthy();
+    expect(screen.getByRole("table")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /next page/i })).toBeTruthy();
+  });
+
+  it("keeps the pager reachable on the last page too", async () => {
+    renderView();
+    await bodyRows(1);
+    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
+    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
+    expect(await screen.findByText(/page 3 of 3/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /previous page/i })).toBeTruthy();
+  });
+});
+
 describe("empty state", () => {
   it("explains itself with no runs at all", async () => {
     renderView();

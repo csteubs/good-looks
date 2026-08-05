@@ -548,8 +548,14 @@ export function StatsView() {
         </ToolbarActions>
       </Toolbar>
 
-      <ScrollArea className="h-full">
-        <div className="mx-auto flex max-w-4xl flex-col gap-5 p-5">
+      {/* min-h-0 flex-1, NOT h-full. In a flex column h-full resolves to 100% of
+          the PARENT, but the Toolbar above has already consumed part of that —
+          so the scroll region extended past the bottom of the window by the
+          toolbar's height and its last child (the pager) was cut off. flex-1
+          claims only the remaining space; min-h-0 is required with it, or a
+          flex item refuses to shrink below its content and overflows again. */}
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="mx-auto flex max-w-4xl flex-col gap-5 p-5 pb-10">
           {runs.length === 0 && !runsQuery.isLoading ? (
             <EmptyState
               className="py-16"
