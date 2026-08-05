@@ -43,6 +43,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   // with no signal. The user opts into that; they do not get it by default.
   autoHealApply: "suggest",
   defaultCaptureArtifacts: false,
+  defaultA11yChecks: false,
   defaultRunHeadless: false,
   defaultRunBrowser: "chromium",
   alertWebhookEnabled: false,
@@ -80,6 +81,10 @@ function read(): RecorderSettings {
         parsed.autoHealApply === "apply" || parsed.autoHealApply === "suggest"
           ? parsed.autoHealApply
           : DEFAULT_SETTINGS.autoHealApply,
+      defaultA11yChecks:
+        typeof parsed.defaultA11yChecks === "boolean"
+          ? parsed.defaultA11yChecks
+          : DEFAULT_SETTINGS.defaultA11yChecks,
       defaultCaptureArtifacts:
         typeof parsed.defaultCaptureArtifacts === "boolean"
           ? parsed.defaultCaptureArtifacts
@@ -152,6 +157,10 @@ export const recorderSettingsStore = {
         update.autoHealApply === "apply" || update.autoHealApply === "suggest"
           ? update.autoHealApply
           : current.autoHealApply,
+      defaultA11yChecks:
+        update.defaultA11yChecks !== undefined
+          ? update.defaultA11yChecks
+          : current.defaultA11yChecks,
       defaultCaptureArtifacts:
         update.defaultCaptureArtifacts !== undefined
           ? update.defaultCaptureArtifacts
@@ -202,6 +211,7 @@ export const recorderSettingsStore = {
       autoHealRetries: next.autoHealRetries,
       autoHealAttemptTimeoutMs: next.autoHealAttemptTimeoutMs,
       autoHealApply: next.autoHealApply,
+      defaultA11yChecks: next.defaultA11yChecks,
       defaultCaptureArtifacts: next.defaultCaptureArtifacts,
       defaultRunHeadless: next.defaultRunHeadless,
       defaultRunBrowser: next.defaultRunBrowser,

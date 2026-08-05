@@ -254,6 +254,16 @@ export interface TestRecord {
    *  rectangle) instead of page-wide. Absent/empty → every step is page-level,
    *  which stays the default. */
   visualElementSteps?: string[];
+  /** Per-test accessibility-check preference, remembered between sessions.
+   *  When absent, the global `RecorderSettings.defaultA11yChecks` applies.
+   *  Independent of `captureArtifacts`: axe costs far more than a screenshot,
+   *  so asking for one must not silently buy the other. */
+  a11yChecks?: boolean;
+  /** Violations the user has accepted for this test, keyed by step id. Only
+   *  violations NOT in this set are flagged. Without it, the first run against
+   *  any real site reports dozens of pre-existing problems and the feature is
+   *  ignored from then on. */
+  a11yBaseline?: Record<string, string[]>;
   /** Per-test screenshot-capture preference, remembered between sessions.
    *  When absent, the global `RecorderSettings.defaultCaptureArtifacts`
    *  applies. Set from the test detail toolbar's "Capture screenshots" toggle. */
@@ -559,6 +569,15 @@ export interface RunRecord {
    *  is the whole reason the sweep exists. */
   datasetId?: string;
   datasetName?: string;
+  /** Wall-clock ms this run spent on accessibility checks, and how many ran.
+   *  Kept apart from the capture numbers so a slow run's cost can be attributed
+   *  to the right feature. */
+  a11yMs?: number;
+  a11yChecks?: number;
+  /** Steps whose accessibility check found violations that are NOT in the
+   *  test's accepted baseline. Reported, never fatal — the run's pass/fail is
+   *  decided purely by its assertions. */
+  a11yNewSteps?: number;
   /** Wall-clock ms this run spent taking screenshots, and how many it took.
    *  Only present on capture runs from the instrumented fixture onward — the
    *  raw inputs for the "what does capture cost?" readout in Stats. */
@@ -630,6 +649,10 @@ export interface RecorderSettings {
   /** default value of the per-test "Capture screenshots" toggle for tests
    *  that haven't set their own preference (default false). */
   defaultCaptureArtifacts: boolean;
+  /** default value of the per-test "Check accessibility" toggle (default
+   *  false). Off by default because axe typically costs more per step than
+   *  everything else the step does. */
+  defaultA11yChecks: boolean;
   /** default value of the per-test "Run headless" toggle for tests that
    *  haven't set their own preference (default false → runs are headed). Only
    *  affects test runs, not the trainer. */

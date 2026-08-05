@@ -94,6 +94,7 @@ export function SettingsView() {
   const [autoHealRetries, setAutoHealRetries] = useState(3);
   const [autoHealTimeout, setAutoHealTimeout] = useState(4000);
   const [autoHealApply, setAutoHealApply] = useState<"suggest" | "apply">("suggest");
+  const [defaultA11y, setDefaultA11y] = useState(false);
 
   // ── Aesthetic Enhancement features ──────────────────────────────────
   const [disabledEnhancements, setDisabledEnhancements] = useState<string[]>([]);
@@ -135,6 +136,7 @@ export function SettingsView() {
         setAutoHealRetries(settings.autoHealRetries ?? 3);
         setAutoHealTimeout(settings.autoHealAttemptTimeoutMs ?? 4000);
         setAutoHealApply(settings.autoHealApply ?? "suggest");
+        setDefaultA11y(settings.defaultA11yChecks ?? false);
         setDisabledEnhancements(settings.disabledAestheticEnhancements ?? []);
       })
       .catch(() => {
@@ -301,6 +303,15 @@ export function SettingsView() {
     setAutoHealRetries(n);
     try {
       await api.recorder.setSettings({ autoHealRetries: n });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleDefaultA11yChange = async (checked: boolean) => {
+    setDefaultA11y(checked);
+    try {
+      await api.recorder.setSettings({ defaultA11yChecks: checked });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
     }
@@ -790,6 +801,22 @@ export function SettingsView() {
 
         <FieldSet>
           <FieldGroup>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="default-a11y">Check accessibility by default</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Runs axe against the page after each action and reports WCAG violations per step
+                  in the Visual tab. It never fails a run — a third-party widget shouldn't be able
+                  to turn your suite red overnight. Off by default because the check usually costs
+                  more per step than everything else the step does; each test has its own toggle.
+                </p>
+              </FieldContent>
+              <Switch
+                id="default-a11y"
+                checked={defaultA11y}
+                onCheckedChange={handleDefaultA11yChange}
+              />
+            </Field>
             <Field orientation="horizontal">
               <FieldContent>
                 <FieldLabel htmlFor="auto-heal-enabled">Auto-Heal</FieldLabel>

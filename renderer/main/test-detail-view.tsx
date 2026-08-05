@@ -68,6 +68,11 @@ export function TestDetailView() {
   // test has no saved preference yet.
   const [captureArtifacts, setCaptureArtifacts] = React.useState(false);
   const [captureInited, setCaptureInited] = React.useState(false);
+  // Per-test accessibility gate. Independent of screenshots: axe usually costs
+  // more per step than the rest of the step does, so asking for pictures must
+  // not silently buy an a11y audit as well.
+  const [a11yChecks, setA11yChecks] = React.useState(false);
+  const [a11yInited, setA11yInited] = React.useState(false);
   // Per-test "Run headless" choice — remembers whether this test's runs open a
   // visible browser. Falls back to the global Settings default. Runs only; the
   // trainer/"Edit in Trainer" flow is always headed.
@@ -105,6 +110,13 @@ export function TestDetailView() {
     setCaptureArtifacts(test.captureArtifacts ?? fallback);
     setCaptureInited(true);
   }, [captureInited, test, settingsQuery.data]);
+  // Same one-shot init for the accessibility toggle.
+  React.useEffect(() => {
+    if (a11yInited || !test) return;
+    const fallback = settingsQuery.data?.defaultA11yChecks ?? false;
+    setA11yChecks(test.a11yChecks ?? fallback);
+    setA11yInited(true);
+  }, [a11yInited, test, settingsQuery.data]);
   // Initialize the headless toggle from the test record (or the global default) once.
   React.useEffect(() => {
     if (headlessInited || !test) return;
@@ -325,6 +337,21 @@ export function TestDetailView() {
                 )
               </Text>
             ) : null}
+          </label>
+          <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+            <Checkbox
+              checked={a11yChecks}
+              onCheckedChange={(v) => {
+                const next = v === true;
+                setA11yChecks(next);
+                api.tests.setA11yChecks(id, next).catch(() => {
+                  /* best-effort persist; the toggle still applies to this run */
+                });
+              }}
+              disabled={runInfo?.running}
+              aria-label="Check accessibility on this run"
+            />
+            Check accessibility
           </label>
           {runInfo?.running ? (
             <Button variant="destructive" onClick={() => stopRun(id)}>

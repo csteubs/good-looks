@@ -17,6 +17,8 @@ import * as path from "path";
 
 import { app, logger } from "@glaze/core/backend";
 
+import type { A11yResult, A11yViolation } from "./a11y-diff.js";
+
 /** Default number of runs whose artifacts are retained per test.
  *  Sized against real usage: a captured run dir is ~0.6 MB for a small test
  *  (page-level PNGs ~0.1–0.4 MB each), so 10 retained runs is ~6 MB for a
@@ -44,6 +46,9 @@ export interface ArtifactStepEntry {
    *  time. Present only for locator actions; the anchor for component-level
    *  diffing (no selector is re-resolved later). */
   rect?: NormalizedRect;
+  /** accessibility violations found after this action, when a11y checks were
+   *  on. Compacted by the fixture — see A11yViolation. */
+  a11y?: A11yViolation[];
 }
 
 /** A normalized (0–1) rectangle in page/viewport space. */
@@ -65,6 +70,11 @@ export interface ArtifactManifest {
   captureMs?: number;
   /** how many screenshots were attempted (absent on older manifests) */
   shotCount?: number;
+  /** total ms spent on accessibility checks, and how many ran. Separate from
+   *  the capture numbers: axe usually costs more than the screenshots do, and
+   *  folding the two together would misattribute a slow run. */
+  a11yMs?: number;
+  a11yChecks?: number;
   steps: ArtifactStepEntry[];
 }
 
@@ -114,6 +124,9 @@ export interface ReplayStep {
   rect?: NormalizedRect;
   /** visual-diff result for this step's screenshot, when captured (Phase 3). */
   diff?: VisualDiff;
+  /** accessibility result for this step, when a11y checks were on. Reported
+   *  only — a step with new violations still passes if its assertions did. */
+  a11y?: A11yResult;
 }
 
 /** The canonical replay model persisted per run (replay.json). The runner
@@ -147,6 +160,8 @@ export interface RunReplaySummary {
   failedIndex: number | null;
   /** how many steps exceeded the visual threshold this run (Phase 3). */
   changedSteps: number;
+  /** how many steps reported accessibility violations that aren't accepted. */
+  a11yNewSteps: number;
 }
 
 /** On-disk footprint of all captured artifacts, for the retention setting's
@@ -416,6 +431,7 @@ export const artifactStore = {
           stepCount: r.steps.length,
           failedIndex: r.failedIndex,
           changedSteps: r.steps.filter((s) => s.diff?.state === "changed").length,
+          a11yNewSteps: r.steps.filter((s) => (s.a11y?.newKeys.length ?? 0) > 0).length,
         });
       }
     }

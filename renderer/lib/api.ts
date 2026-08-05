@@ -143,6 +143,8 @@ export const api = {
       ipc().invoke<TestRecord>("tests:setTags", { id, tags }),
     setHidden: (id: string, hidden: boolean) =>
       ipc().invoke<TestRecord | null>("tests:setHidden", { id, hidden }),
+    setA11yChecks: (id: string, a11yChecks: boolean) =>
+      ipc().invoke<TestRecord>("tests:setA11yChecks", { id, a11yChecks }),
     setVariables: (id: string, variables: TestVariable[]) =>
       ipc().invoke<TestRecord>("tests:setVariables", { id, variables }),
     // One-way: a secret's value crosses renderer→backend and never comes back.
@@ -161,6 +163,14 @@ export const api = {
       }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),
     importGit: (url: string) => ipc().invoke<ImportResult>("tests:importGit", { url }),
+  },
+  a11y: {
+    acceptStep: (testId: string, runId: string, stepId: string) =>
+      ipc().invoke<RunReplay | null>("a11y:acceptStep", { testId, runId, stepId }),
+    acceptRun: (testId: string, runId: string) =>
+      ipc().invoke<RunReplay | null>("a11y:acceptRun", { testId, runId }),
+    resetBaseline: (testId: string) =>
+      ipc().invoke<{ cleared: number }>("a11y:resetBaseline", { testId }),
   },
   heals: {
     list: (testId: string) => ipc().invoke<HealEntry[]>("heals:list", { testId }),

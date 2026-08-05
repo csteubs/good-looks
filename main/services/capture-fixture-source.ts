@@ -29,6 +29,16 @@ const ON = process.env.GLAZE_CAPTURE_ARTIFACTS === "1";
 // \`test\`, and two fixtures each patching the Locator prototype would double-wrap
 // every action — each one's retry would run inside the other's.
 const HEAL_ON = process.env.GLAZE_HEAL === "1";
+// Accessibility checks, gated separately from screenshots: a11y is useful
+// without them, and it costs far more, so nobody should pay for one by asking
+// for the other.
+const A11Y_ON = process.env.GLAZE_A11Y === "1";
+const AXE_PATH = process.env.GLAZE_AXE_PATH || "";
+// Caps on what a single step may record. A page with a systemic problem can
+// produce hundreds of nodes for one rule; storing them all would bloat every
+// manifest for information that adds nothing after the first few examples.
+const MAX_VIOLATIONS = 25;
+const MAX_NODES = 5;
 const DIR = process.env.GLAZE_ARTIFACT_DIR || "";
 const TEST_ID = process.env.GLAZE_TEST_ID || "";
 const RUN_ID = process.env.GLAZE_RUN_ID || "";
@@ -45,7 +55,7 @@ const LOCATOR_ACTIONS = [
 // Module-level context for the active test. workers=1 + one spec per run means a
 // single test owns this at a time, so the locator-prototype patch (which is
 // global) reads the current run's context safely.
-let ctx = null; // { dir, index, manifest, startedAt, captureMs }
+let ctx = null; // { dir, index, manifest, startedAt, captureMs, a11yMs, a11yChecks }
 let patched = false;
 
 function describe(target, method, args) {
@@ -81,6 +91,51 @@ async function elementRect(page, target) {
   }
 }
 
+/**
+ * Run axe against the current page and return a COMPACT violation list.
+ *
+ * Compact matters: axe's own result objects carry the full rule metadata, help
+ * URLs and an HTML snippet per node. Storing those verbatim for every step of
+ * every run would put megabytes into manifest.json for information the UI never
+ * shows. What's kept is what identifies a violation and lets the user find it:
+ * the rule id, its impact, the short help text, and the node targets.
+ *
+ * Never throws. An a11y check that fails must not fail the test — this is
+ * reporting, not a gate.
+ */
+async function runAxe(page) {
+  try {
+    if (page.isClosed && page.isClosed()) return null;
+    const raw = await page.evaluate(async () => {
+      if (!window.axe) return null;
+      // resultTypes trims what axe assembles: we only ever read violations, and
+      // asking for passes/incomplete on a large page is most of the cost.
+      const res = await window.axe.run(document, {
+        resultTypes: ["violations"],
+        reporter: "v2",
+      });
+      return (res.violations || []).slice(0, MAX_VIOLATIONS).map((v) => ({
+        id: v.id,
+        impact: v.impact || "minor",
+        help: v.help,
+        nodes: (v.nodes || []).slice(0, MAX_NODES).map((n) => (n.target || []).join(" ")),
+      }));
+    });
+    return raw;
+  } catch (err) {
+    process.stderr.write("[glaze-a11y] check failed: " + String(err) + "\\n");
+    return null;
+  }
+}
+
+/**
+ * Post-action hook: screenshot and/or accessibility check.
+ *
+ * The two are gated independently — a11y is useful without screenshots, and
+ * screenshots are much cheaper than a11y — but they share this one hook and one
+ * step index, so a step's shot and its violations always describe the same
+ * moment.
+ */
 async function capture(page, method, target, args) {
   if (!ctx) return;
   const index = ctx.index++;
@@ -90,21 +145,36 @@ async function capture(page, method, target, args) {
   // costs, rather than leaving the toggle's overhead to guesswork.
   // Measured BEFORE the screenshot so it reflects the element the action ran
   // against, and excluded from captureMs so overhead stays screenshot-only.
-  const rect = await elementRect(page, target);
+  const rect = ON ? await elementRect(page, target) : undefined;
   const tShot = Date.now();
-  try {
-    if (page && (!page.isClosed || !page.isClosed())) {
-      await page.screenshot({ path: path.join(ctx.dir, index + ".png"), timeout: SHOT_TIMEOUT_MS });
-      ok = true;
+  if (ON) {
+    try {
+      if (page && (!page.isClosed || !page.isClosed())) {
+        await page.screenshot({ path: path.join(ctx.dir, index + ".png"), timeout: SHOT_TIMEOUT_MS });
+        ok = true;
+      }
+    } catch (err) {
+      // Capture must never fail or alter the test. Log to stderr for diagnosis.
+      process.stderr.write("[glaze-capture] step " + index + " (" + method + ") screenshot failed: " + String(err) + "\\n");
     }
-  } catch (err) {
-    // Capture must never fail or alter the test. Log to stderr for diagnosis.
-    process.stderr.write("[glaze-capture] step " + index + " (" + method + ") screenshot failed: " + String(err) + "\\n");
   }
   const ms = Date.now() - tShot;
   ctx.captureMs += ms;
+
+  // Accessibility, timed separately. axe is by far the more expensive of the
+  // two — often more than the rest of the step — so its cost is measured and
+  // reported rather than quietly folded into the capture number.
+  let violations = null;
+  if (A11Y_ON) {
+    const tAxe = Date.now();
+    violations = await runAxe(page);
+    ctx.a11yMs += Date.now() - tAxe;
+    if (violations) ctx.a11yChecks++;
+  }
+
   const entry = { index: index, action: info.action, target: info.target, value: info.value, ok: ok, ts: Date.now(), ms: ms };
   if (rect) entry.rect = rect;
+  if (violations) entry.a11y = violations;
   ctx.manifest.push(entry);
 }
 
@@ -132,7 +202,7 @@ function patchOnce(page) {
   }
 }
 
-export const test = ((ON && DIR) || HEAL_ON) ? base.extend({
+export const test = (((ON || A11Y_ON) && DIR) || HEAL_ON) ? base.extend({
   page: async ({ page }, use, testInfo) => {
     // Healing is installed FIRST so its retry sits inside the capture wrapper:
     // a healed action should produce one screenshot of the successful result,
@@ -142,12 +212,24 @@ export const test = ((ON && DIR) || HEAL_ON) ? base.extend({
         process.stderr.write("[glaze-heal] install failed: " + String(e) + "\\n");
       }
     }
-    if (!ON || !DIR) {
+    // Inject axe into every document, once, rather than evaluating its ~570KB
+    // source per check. addInitScript survives navigation, which a per-check
+    // injection would not.
+    if (A11Y_ON && AXE_PATH) {
+      try {
+        await page.addInitScript({ path: AXE_PATH });
+      } catch (e) {
+        process.stderr.write("[glaze-a11y] could not inject axe: " + String(e) + "\\n");
+      }
+    }
+    // The manifest is what carries BOTH screenshots and violations, so it is
+    // written whenever either is on — an a11y-only run still needs one.
+    if ((!ON && !A11Y_ON) || !DIR) {
       await use(page);
       return;
     }
     try { fs.mkdirSync(DIR, { recursive: true }); } catch (e) { /* ignore */ }
-    ctx = { dir: DIR, index: 0, manifest: [], startedAt: Date.now(), captureMs: 0 };
+    ctx = { dir: DIR, index: 0, manifest: [], startedAt: Date.now(), captureMs: 0, a11yMs: 0, a11yChecks: 0 };
     patchOnce(page);
     try {
       await use(page);
@@ -165,6 +247,10 @@ export const test = ((ON && DIR) || HEAL_ON) ? base.extend({
           // were attempted — the raw inputs for the overhead readout in Stats.
           captureMs: ctx.captureMs,
           shotCount: ctx.manifest.length,
+          // Reported separately from captureMs so "screenshots are slow" and
+          // "the a11y check is slow" can't be mistaken for each other.
+          a11yMs: ctx.a11yMs,
+          a11yChecks: ctx.a11yChecks,
           steps: ctx.manifest,
         };
         fs.writeFileSync(path.join(DIR, "manifest.json"), JSON.stringify(manifest, null, 2));

@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "productName": "Good Looks!",
   "description": "Record web interactions and generate",
-  "iconDescription": "A desktop automation tool that records user interactions on websites\u2014clicks, typing, navigation\u2014and converts them into executable Playwright test scripts. Users enter a URL, the app opens a browser window, records each action as a test step, and generates code they can run locally. Think of a recording button, browser window with a red record indicator, or automated test script code being generated from live interactions.",
+  "iconDescription": "A desktop automation tool that records user interactions on websites—clicks, typing, navigation—and converts them into executable Playwright test scripts. Users enter a URL, the app opens a browser window, records each action as a test step, and generates code they can run locally. Think of a recording button, browser window with a red record indicator, or automated test script code being generated from live interactions.",
   "private": true,
   "type": "module",
   "scripts": {
@@ -44,6 +44,7 @@
     "@radix-ui/colors": "^3.0.0",
     "@tanstack/react-query": "^5.87.4",
     "@tanstack/react-router": "^1.131.36",
+    "axe-core": "^4.13.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",

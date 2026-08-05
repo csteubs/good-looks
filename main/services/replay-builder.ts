@@ -11,6 +11,8 @@ import { artifactStore } from "./artifact-store.js";
 import type { NormalizedRect, ReplayStep, ReplayStepStatus, RunReplay } from "./artifact-store.js";
 import { baselineStore } from "./baseline-store.js";
 import { diffPngBuffers } from "./visual-diff.js";
+import { diffViolations } from "./a11y-diff.js";
+import type { A11yViolation } from "./a11y-diff.js";
 import { describeStep } from "./script-generator.js";
 import type { Step, VisualMask } from "../recorder/types.js";
 
@@ -76,11 +78,19 @@ export function buildReplay(params: {
   // non-captured step can never steal the next action's shot.
   let shotPtr = 0;
   const rectByStep: (NormalizedRect | undefined)[] = [];
+  // Accessibility results ride the SAME manifest entries as screenshots, so
+  // they're collected in this pass rather than matched again separately —
+  // two independent correlations over the same list would be two chances to
+  // attribute a result to the wrong step.
+  const a11yByStep: (A11yViolation[] | undefined)[] = [];
   const shotByStep: (string | null)[] = params.steps.map((s, i) => {
     const method = s.type === "if" || s.type === "endif" ? null : captureMethod(s);
     if (method && shotPtr < shots.length && shots[shotPtr].action === method) {
       const entry = shots[shotPtr++];
       rectByStep[i] = entry.rect;
+      // Recorded whether or not the screenshot succeeded, and on a11y-only runs
+      // where `ok` is false because no screenshot was ever attempted.
+      a11yByStep[i] = entry.a11y;
       return entry.ok ? `${entry.index}.png` : null;
     }
     return null;
@@ -128,6 +138,13 @@ export function buildReplay(params: {
       status,
       screenshot: shotByStep[i],
       ...(rectByStep[i] ? { rect: rectByStep[i] } : {}),
+      // Raw violations only at this stage. Comparing them against the accepted
+      // baseline is `enrichWithA11y`'s job, exactly as pixel diffing is
+      // `enrichWithVisualDiffs`' — buildReplay stays a pure correlation of what
+      // the run produced, with no store lookups in it.
+      ...(a11yByStep[i]
+        ? { a11y: { violations: a11yByStep[i]!, newKeys: [], acceptedCount: 0 } }
+        : {}),
     };
   });
   const failedIndex = steps.find((s) => s.status === "failed")?.index ?? null;
@@ -142,6 +159,36 @@ export function buildReplay(params: {
     failedIndex,
     steps,
   };
+}
+
+/**
+ * Compare each step's accessibility violations against the test's accepted
+ * baseline, filling in `newKeys` / `acceptedCount`.
+ *
+ * Separate from `buildReplay` for the same reason visual diffing is: the
+ * builder correlates what the run produced, and enrichment consults stored
+ * state. Keeping them apart is what lets both be tested without a browser.
+ *
+ * Returns how many steps have violations that are NOT accepted — the number the
+ * UI badges and the run record stores. Never affects the run's pass/fail:
+ * accessibility is reported here, not gated.
+ */
+export function enrichWithA11y(
+  replay: RunReplay,
+  baseline: Record<string, string[]> | undefined,
+): number {
+  let flagged = 0;
+  for (const step of replay.steps) {
+    if (!step.a11y) continue;
+    const result = diffViolations(step.a11y.violations, baseline?.[step.stepId]);
+    if (!result) {
+      delete step.a11y;
+      continue;
+    }
+    step.a11y = result;
+    if (result.newKeys.length > 0) flagged++;
+  }
+  return flagged;
 }
 
 // Phase 3 — visual-diff enrichment. For each captured step, compare its

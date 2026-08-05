@@ -184,7 +184,10 @@ function fmtMs(ms: number): string {
  *  assumed (the roadmap's cross-cutting performance risk). Hidden entirely
  *  until at least one instrumented capture run exists. */
 function CaptureOverheadPanel({ summary }: { summary: CaptureOverheadSummary }) {
-  if (summary.capturedRuns === 0) return null;
+  // Hidden until there is something measured to show — same rule as before, but
+  // now either instrumented capture runs OR accessibility runs qualify, since
+  // a11y can be on with screenshots off.
+  if (summary.capturedRuns === 0 && summary.a11yRuns === 0) return null;
   const sharePct = Math.round(summary.captureShareOfRun * 100);
   const delta =
     summary.meanUncapturedDurationMs !== null
@@ -197,17 +200,35 @@ function CaptureOverheadPanel({ summary }: { summary: CaptureOverheadSummary }) 
           Capture overhead
         </Text>
         <Text variant="small" color="tertiary">
-          {summary.capturedRuns} captured {summary.capturedRuns === 1 ? "run" : "runs"} ·{" "}
-          {summary.totalShots} screenshots
+          {summary.capturedRuns > 0
+            ? `${summary.capturedRuns} captured ${summary.capturedRuns === 1 ? "run" : "runs"} · ${summary.totalShots} screenshots`
+            : `${summary.a11yRuns} accessibility ${summary.a11yRuns === 1 ? "run" : "runs"}`}
         </Text>
       </div>
       <div className="grid grid-cols-3 gap-3">
-        <StatCard
-          label="Screenshot time per run"
-          value={fmtMs(summary.meanCaptureMs)}
-          hint={`${sharePct}% of a captured run`}
-        />
-        <StatCard label="Per screenshot" value={fmtMs(summary.meanMsPerShot)} />
+        {summary.capturedRuns > 0 ? (
+          <StatCard
+            label="Screenshot time per run"
+            value={fmtMs(summary.meanCaptureMs)}
+            hint={`${sharePct}% of a captured run`}
+          />
+        ) : null}
+        {/* Reported on its own axis. Folding axe's cost into the screenshot
+            number would make "capture is expensive" the wrong conclusion — the
+            a11y check is usually the larger of the two by some way. */}
+        {summary.a11yRuns > 0 ? (
+          <StatCard
+            label="Accessibility time per run"
+            value={fmtMs(summary.meanA11yMs)}
+            hint={`${Math.round(summary.a11yShareOfRun * 100)}% of such a run · ${fmtMs(
+              summary.meanMsPerA11yCheck,
+            )} per check`}
+          />
+        ) : null}
+        {summary.capturedRuns > 0 ? (
+          <StatCard label="Per screenshot" value={fmtMs(summary.meanMsPerShot)} />
+        ) : null}
+        {summary.capturedRuns > 0 ? (
         <StatCard
           label="Captured vs normal run"
           value={
@@ -221,6 +242,7 @@ function CaptureOverheadPanel({ summary }: { summary: CaptureOverheadSummary }) 
               : `${fmtMs(summary.meanCapturedDurationMs)} vs ${fmtMs(summary.meanUncapturedDurationMs)}`
           }
         />
+        ) : null}
       </div>
     </div>
   );

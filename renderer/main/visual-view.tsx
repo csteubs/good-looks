@@ -24,6 +24,7 @@ import {
   TooltipTrigger,
 } from "@glaze/core/components";
 import {
+  Accessibility,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -41,7 +42,10 @@ import {
 } from "lucide-react";
 
 import { api } from "../lib/api";
+import { countA11ySteps, worstNewImpact } from "../lib/a11y-format";
 import type {
+  A11yResult,
+  A11yViolation,
   Annotation,
   ReplayStep,
   ReplayStepStatus,
@@ -114,6 +118,117 @@ function diffBadgeColor(state: VisualDiffState): "green" | "orange" | "yellow" |
 /** Exported for tests: this badge is the visual verdict a user acts on, and
  *  its wording carries claims (page vs element scope, regions excluded) that
  *  are wrong in a way nothing else would catch. */
+/** Colour for an impact level, ranked the way axe ranks it. A "minor" and a
+ *  "critical" violation must not look the same — the whole point of triage is
+ *  knowing which to read first. */
+const IMPACT_COLOR: Record<A11yViolation["impact"], "red" | "orange" | "yellow" | "secondary"> = {
+  critical: "red",
+  serious: "orange",
+  moderate: "yellow",
+  minor: "secondary",
+};
+
+/** Compact "N accessibility issues" badge for the step detail row. */
+export function A11yBadge({ result }: { result: A11yResult }) {
+  const isNew = result.newKeys.length;
+  if (isNew === 0) {
+    // Checked and found nothing unaccepted. Worth saying explicitly — silence
+    // reads as "the check didn't run", which is a different thing entirely.
+    return (
+      <Badge color="secondary" className="shrink-0">
+        <Accessibility className="size-3.5" />
+        {result.acceptedCount > 0 ? `${result.acceptedCount} accepted` : "No a11y issues"}
+      </Badge>
+    );
+  }
+  const worst = worstNewImpact(result);
+  return (
+    <Badge color={worst ? IMPACT_COLOR[worst] : "orange"} className="shrink-0">
+      <Accessibility className="size-3.5" />
+      {isNew} new a11y issue{isNew === 1 ? "" : "s"}
+    </Badge>
+  );
+}
+
+/** The violations themselves, listed under the step detail row. */
+function A11yDetail({
+  result,
+  onAccept,
+  accepting,
+  accepted,
+}: {
+  result: A11yResult;
+  onAccept: () => void;
+  accepting: boolean;
+  accepted: boolean;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const newSet = new Set(result.newKeys);
+  if (result.violations.length === 0) return null;
+
+  return (
+    <div className="border-t border-separator px-4 py-2">
+      <div className="flex items-center gap-2">
+        <Button size="small" variant="ghost" onClick={() => setOpen((v) => !v)}>
+          <Accessibility className="size-3.5" />
+          {open ? "Hide" : "Show"} accessibility ({result.violations.length})
+        </Button>
+        <div className="flex-1" />
+        {result.newKeys.length > 0 && !accepted ? (
+          <AlertDialog
+            trigger={
+              <Button size="small" variant="glass" disabled={accepting}>
+                <Stamp className="size-3.5" />
+                Accept these issues
+              </Button>
+            }
+            title="Accept this step's accessibility issues?"
+            description="They stop being flagged for this step on future runs. Existing acceptances are kept — this only adds. Use Reset on the test to undo."
+            confirmLabel="Accept"
+            confirmVariant="accent"
+            onConfirm={onAccept}
+          />
+        ) : null}
+      </div>
+      {open ? (
+        <div className="flex flex-col gap-2 pt-2">
+          {result.violations.map((v, i) => {
+            const isNew = v.nodes.length
+              ? v.nodes.some((t) => newSet.has(`${v.id}|${t}`))
+              : newSet.has(`${v.id}|`);
+            return (
+              <div
+                key={i}
+                className={`rounded-md border p-2 ${
+                  isNew ? "border-separator" : "border-separator opacity-60"
+                }`}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge color={IMPACT_COLOR[v.impact]}>{v.impact}</Badge>
+                  <code className="font-mono text-xs text-secondary">{v.id}</code>
+                  {!isNew ? <Badge color="secondary">accepted</Badge> : null}
+                </div>
+                <Text variant="small" className="pt-1">
+                  {v.help}
+                </Text>
+                {v.nodes.length > 0 ? (
+                  <div className="flex flex-col gap-0.5 pt-1">
+                    {v.nodes.map((t, j) => (
+                      <code key={j} className="truncate font-mono text-[11px] text-tertiary">
+                        {t}
+                      </code>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function DiffBadge({ diff }: { diff: VisualDiff }) {
   let label: string;
   switch (diff.state) {
@@ -942,6 +1057,23 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
     [qc, summary.testId, summary.runId],
   );
 
+  const [acceptedA11y, setAcceptedA11y] = React.useState<Set<string>>(new Set());
+  const acceptA11yStep = useMutation({
+    mutationFn: (stepId: string) => api.a11y.acceptStep(summary.testId, summary.runId, stepId),
+    onSuccess: (replay, stepId) => {
+      patchReplay(replay);
+      setAcceptedA11y((prev) => new Set(prev).add(stepId));
+      toast.success("Accessibility issues accepted for this step.");
+    },
+  });
+  const acceptA11yRun = useMutation({
+    mutationFn: () => api.a11y.acceptRun(summary.testId, summary.runId),
+    onSuccess: (replay) => {
+      patchReplay(replay);
+      toast.success("Accessibility issues accepted for this run.");
+    },
+  });
+
   const acceptStep = useMutation({
     mutationFn: (stepId: string) => api.visual.acceptStep(summary.testId, summary.runId, stepId),
     onSuccess: (replay, stepId) => {
@@ -974,6 +1106,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   // Test-wide masks (stepId null) plus any pinned to this step.
   const stepMasks = allMasks.filter((m) => m.stepId === null || m.stepId === step.stepId);
   const changedCount = steps.filter((s) => s.diff?.state === "changed").length;
+  const a11yCount = countA11ySteps(steps);
   const canDiff = Boolean(step.diff?.diffFile);
   const hasBaselineView =
     step.diff !== undefined && step.diff.state !== "unable" && Boolean(step.screenshot);
@@ -1111,6 +1244,35 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         </div>
       ) : null}
 
+      {/* Accessibility, as its own callout rather than folded into the visual
+          one: they are different kinds of finding, and a run can easily have
+          one without the other. Never affects the run's pass/fail. */}
+      {a11yCount > 0 ? (
+        <div className="px-4 pt-3">
+          <Callout color="orange" icon={<Accessibility className="size-4" />}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span>
+                {a11yCount} {a11yCount === 1 ? "step has" : "steps have"} accessibility issues that
+                aren't accepted yet. This doesn't affect whether the run passed.
+              </span>
+              <AlertDialog
+                trigger={
+                  <Button size="small" variant="glass" disabled={acceptA11yRun.isPending}>
+                    <Stamp className="size-3.5" />
+                    Accept all for this run
+                  </Button>
+                }
+                title="Accept every accessibility issue in this run?"
+                description="They stop being flagged on future runs. Use this to establish a starting point on a site with pre-existing issues — new problems introduced later will still show up."
+                confirmLabel="Accept all"
+                confirmVariant="accent"
+                onConfirm={() => acceptA11yRun.mutate()}
+              />
+            </div>
+          </Callout>
+        </div>
+      ) : null}
+
       {/* Screenshot */}
       <div className="min-h-0 flex-1 p-4">
         <div className="relative flex h-full items-center justify-center overflow-hidden rounded-lg border border-token-border bg-token-surface p-3">
@@ -1240,6 +1402,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           </Tooltip>
         ) : null}
         {step.diff ? <DiffBadge diff={step.diff} /> : null}
+        {step.a11y ? <A11yBadge result={step.a11y} /> : null}
         {step.screenshot && step.diff?.state === "changed" && !acceptedSteps.has(step.stepId) ? (
           <AlertDialog
             trigger={
@@ -1261,6 +1424,17 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         )}
       </div>
 
+      {/* Accessibility, under the step row: reported, never fatal — the run's
+          pass/fail is decided purely by its assertions. */}
+      {step.a11y ? (
+        <A11yDetail
+          result={step.a11y}
+          accepting={acceptA11yStep.isPending}
+          accepted={acceptedA11y.has(step.stepId)}
+          onAccept={() => acceptA11yStep.mutate(step.stepId)}
+        />
+      ) : null}
+
       {/* Step note (Phase 4) */}
       <StepAnnotation
         key={step.stepId}
@@ -1277,6 +1451,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
               const active = s.index === idx;
               const failed = s.index === replay.failedIndex;
               const changed = s.diff?.state === "changed";
+              const a11yNew = (s.a11y?.newKeys.length ?? 0) > 0;
               const noted = annotationsByStep.has(s.stepId);
               return (
                 <button
@@ -1285,11 +1460,11 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
                   onClick={() => setCurrent(s.index)}
                   aria-label={`Step ${s.index + 1}: ${statusLabel(s.status)}${
                     changed ? ", visual change" : ""
-                  }${noted ? ", has a note" : ""}`}
+                  }${a11yNew ? ", accessibility issues" : ""}${noted ? ", has a note" : ""}`}
                   aria-current={active ? "true" : undefined}
                   title={`${s.index + 1}. ${s.label}${changed ? " · visual change" : ""}${
-                    noted ? " · note" : ""
-                  }`}
+                    a11yNew ? " · accessibility" : ""
+                  }${noted ? " · note" : ""}`}
                   className={`group flex min-w-[22px] shrink-0 flex-col items-center gap-1 rounded-md px-1 pb-1 pt-0.5 ${
                     active ? "bg-accent-10 ring-1 ring-inset ring-accent" : "hover:bg-control-subtle"
                   }`}
@@ -1299,6 +1474,8 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
                       <TriangleAlert className="size-3.5 text-support-red" />
                     ) : changed ? (
                       <Eye className="size-3.5 text-support-orange" />
+                    ) : a11yNew ? (
+                      <Accessibility className="size-3.5 text-support-orange" />
                     ) : noted ? (
                       <MessageSquare className="size-3.5 text-tertiary" />
                     ) : null}

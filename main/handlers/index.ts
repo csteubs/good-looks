@@ -19,6 +19,7 @@ import { runHistoryStore } from "../services/run-history-store.js";
 import { artifactStore } from "../services/artifact-store.js";
 import { baselineStore } from "../services/baseline-store.js";
 import { acceptRunBaseline, acceptStepBaseline } from "../services/visual-baseline-ops.js";
+import { acceptRunA11y, acceptStepA11y, resetA11yBaseline } from "../services/a11y-baseline-ops.js";
 import { sendToMain } from "../services/app-window.js";
 import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
@@ -853,6 +854,42 @@ export function registerHandlers(): void {
       return result;
     },
   );
+  // ── Accessibility acceptance ─────────────────────────────────────────────
+  //
+  // Same shape as the visual accept handlers above, deliberately: the mental
+  // model is identical ("this is the state I'm signing off"), so the affordance
+  // and the plumbing should be too.
+  ipcMain.handle(
+    "a11y:acceptStep",
+    async (_e, params: { testId: string; runId: string; stepId: string }) => {
+      const result = acceptStepA11y(params.testId, params.runId, params.stepId);
+      if (result) sendToMain("runs:changed", {});
+      return result;
+    },
+  );
+  ipcMain.handle("a11y:acceptRun", async (_e, params: { testId: string; runId: string }) => {
+    const result = acceptRunA11y(params.testId, params.runId);
+    if (result) sendToMain("runs:changed", {});
+    return result;
+  });
+  /** Forget everything accepted for a test — the way back from an over-eager
+   *  "accept run", which is otherwise irreversible. */
+  ipcMain.handle("a11y:resetBaseline", async (_e, params: { testId: string }) =>
+    resetA11yBaseline(params.testId),
+  );
+  /** Per-test accessibility-check preference. */
+  ipcMain.handle(
+    "tests:setA11yChecks",
+    async (_e, params: { id: string; a11yChecks: boolean }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      rec.a11yChecks = params.a11yChecks === true;
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return rec;
+    },
+  );
+
   // Every pinned baseline for a test, newest first — backs the baselines
   // manager (which steps are pinned, from which run, and when).
   ipcMain.handle("visual:listBaselines", async (_e, params: { testId: string }) => {

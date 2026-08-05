@@ -22,8 +22,11 @@ import { PNG } from "pngjs";
 import { artifactStore } from "../artifact-store.js";
 import type { ArtifactManifest, ReplayStepStatus } from "../artifact-store.js";
 import { baselineStore } from "../baseline-store.js";
-import { buildReplay, enrichWithVisualDiffs } from "../replay-builder.js";
+import { buildReplay, enrichWithA11y, enrichWithVisualDiffs } from "../replay-builder.js";
+import type { A11yViolation } from "../a11y-diff.js";
 import { acceptRunBaseline, acceptStepBaseline } from "../visual-baseline-ops.js";
+import { acceptRunA11y, acceptStepA11y, resetA11yBaseline } from "../a11y-baseline-ops.js";
+import { testStore } from "../test-store.js";
 import { annotationStore } from "../annotation-store.js";
 import { compareRuns } from "../run-comparison.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../../recorder/types.js";
@@ -90,7 +93,13 @@ const capturedStepIds = [steps[0].id, steps[1].id, steps[2].id]; // goto/fill/cl
 // Simulate what the capture fixture writes to a run dir: <index>.png for each
 // page action, in execution order, plus manifest.json. `action` must match
 // captureMethod(step) so buildReplay correlates shots to steps.
-function seedRunArtifacts(runId: string, shots: Buffer[]): void {
+function seedRunArtifacts(
+  runId: string,
+  shots: Buffer[],
+  /** violations per action index, as the capture fixture would have written
+   *  them onto the same manifest entries the screenshots use */
+  a11yByAction: Record<number, A11yViolation[]> = {},
+): void {
   const dir = artifactStore.ensureRunDir(testId, runId);
   const actions = ["goto", "fill", "click"];
   shots.forEach((buf, i) => fs.writeFileSync(path.join(dir, `${i}.png`), buf));
@@ -104,6 +113,7 @@ function seedRunArtifacts(runId: string, shots: Buffer[]): void {
       target: "",
       ok: true,
       ts: Date.now(),
+      ...(a11yByAction[i] ? { a11y: a11yByAction[i] } : {}),
     })),
   };
   fs.writeFileSync(path.join(dir, "manifest.json"), JSON.stringify(manifest, null, 2));
@@ -591,6 +601,162 @@ eq(partial?.stepsDiverged, true, "a differing step set is reported as diverged")
     "a cookie step is NOT blamed for an uncaptured failure",
   );
   eq(replay.steps[2].status, "failed", "the first step that WOULD capture is blamed instead");
+}
+
+// ── accessibility rides the same pipeline ─────────────────────────────────
+//
+// The point of this section is that a11y results travel on the SAME manifest
+// entries as screenshots, through the SAME step correlation. A separate
+// correlation would be a second chance to attribute a result to the wrong step,
+// and that mistake is invisible — the violation just appears under a step that
+// didn't produce it.
+{
+  // The accept path writes onto the TestRecord, so one has to exist — in the
+  // app it always does. Creating it here also pins that acceptance is stored on
+  // the record rather than in the artifacts tree.
+  testStore.save({
+    id: testId,
+    name: "E2E pipeline",
+    url: "https://example.com",
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    steps,
+    scriptPath: path.join(DATA_ROOT, "unused.spec.ts"),
+  });
+
+  const a11yRunId = randomUUID();
+  const contrast: A11yViolation[] = [
+    { id: "color-contrast", impact: "serious", help: "Contrast is too low", nodes: [".cta"] },
+  ];
+  const missingLabel: A11yViolation[] = [
+    { id: "label", impact: "critical", help: "Form elements must have labels", nodes: ["#email"] },
+  ];
+  // Attach to the SECOND and THIRD actions only, so a mis-correlation by one
+  // would land them on the wrong steps and be caught.
+  seedRunArtifacts(a11yRunId, [RED, RED, RED], { 1: contrast, 2: missingLabel });
+
+  const replay = buildReplay({
+    testId,
+    runId: a11yRunId,
+    testName: "E2E pipeline",
+    url: "https://example.com",
+    status: "passed",
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+    steps,
+    statuses: { 3: "passed" },
+  });
+
+  eq(replay.steps[0].a11y, undefined, "a step with no violations carries no a11y payload");
+  eq(
+    replay.steps[1].a11y?.violations[0].id,
+    "color-contrast",
+    "violations land on the step whose action produced them",
+  );
+  eq(
+    replay.steps[2].a11y?.violations[0].id,
+    "label",
+    "…and the next step gets its own, not the previous step's",
+  );
+
+  // No baseline yet: everything is new.
+  let flagged = enrichWithA11y(replay, undefined);
+  eq(flagged, 2, "with no accepted baseline, every step with violations is flagged");
+  eq(replay.steps[1].a11y?.newKeys, ["color-contrast|.cta"], "new keys are the violation keys");
+
+  artifactStore.writeReplay(testId, a11yRunId, replay);
+
+  // Accept one step, and the OTHER must stay flagged — accepting is per step.
+  const afterAccept = acceptStepA11y(testId, a11yRunId, steps[1].id);
+  eq(afterAccept?.steps[1].a11y?.newKeys.length, 0, "the accepted step stops being flagged");
+  eq(
+    afterAccept?.steps[2].a11y?.newKeys.length,
+    1,
+    "accepting one step leaves the others flagged",
+  );
+  eq(
+    afterAccept?.steps[1].a11y?.violations.length,
+    1,
+    "an accepted step still SHOWS its violations, greyed rather than hidden",
+  );
+
+  // Re-running with the stored baseline reproduces that state — the acceptance
+  // is persisted on the test record, not just patched into this replay.
+  const rerun = buildReplay({
+    testId,
+    runId: a11yRunId,
+    testName: "E2E pipeline",
+    url: "https://example.com",
+    status: "passed",
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+    steps,
+    statuses: { 3: "passed" },
+  });
+  flagged = enrichWithA11y(rerun, testStore.get(testId)?.a11yBaseline);
+  eq(flagged, 1, "the acceptance survives into the next run");
+
+  // A NEW node of an already-accepted rule must still flag: this is what stops
+  // one acceptance from swallowing every future failure of the same rule.
+  const widened: A11yViolation[] = [
+    {
+      id: "color-contrast",
+      impact: "serious",
+      help: "Contrast is too low",
+      nodes: [".cta", ".footer-link"],
+    },
+  ];
+  const widenedRunId = randomUUID();
+  seedRunArtifacts(widenedRunId, [RED, RED, RED], { 1: widened });
+  const widenedReplay = buildReplay({
+    testId,
+    runId: widenedRunId,
+    testName: "E2E pipeline",
+    url: "https://example.com",
+    status: "passed",
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+    steps,
+    statuses: { 3: "passed" },
+  });
+  enrichWithA11y(widenedReplay, testStore.get(testId)?.a11yBaseline);
+  eq(
+    widenedReplay.steps[1].a11y?.newKeys,
+    ["color-contrast|.footer-link"],
+    "a new NODE of an accepted rule is still flagged",
+  );
+
+  // Resetting gives everything back, so an over-eager "accept run" is undoable.
+  resetA11yBaseline(testId);
+  const afterReset = buildReplay({
+    testId,
+    runId: a11yRunId,
+    testName: "E2E pipeline",
+    url: "https://example.com",
+    status: "passed",
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+    steps,
+    statuses: { 3: "passed" },
+  });
+  eq(
+    enrichWithA11y(afterReset, testStore.get(testId)?.a11yBaseline),
+    2,
+    "resetting the baseline reports everything again",
+  );
+
+  // Retention must not touch the acceptance. The pixel baseline needed a
+  // special exclusion for this and once lost one to a pruning bug; keeping the
+  // a11y baseline on the TestRecord instead makes it structurally safe, and
+  // this pins that.
+  acceptRunA11y(testId, a11yRunId);
+  const beforePrune = testStore.get(testId)?.a11yBaseline;
+  artifactStore.pruneRuns(testId, 0, 0);
+  eq(
+    testStore.get(testId)?.a11yBaseline,
+    beforePrune,
+    "pruning every run's artifacts leaves the accepted-violations baseline intact",
+  );
 }
 
 // ── cleanup + verdict ──────────────────────────────────────────────────────

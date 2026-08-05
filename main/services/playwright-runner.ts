@@ -20,7 +20,7 @@ import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { notifyRunOutcome } from "./run-notifier.js";
 import { sendAlert } from "./alert-service.js";
 import { applyRetention } from "./retention.js";
-import { buildReplay, enrichWithVisualDiffs } from "./replay-builder.js";
+import { buildReplay, enrichWithA11y, enrichWithVisualDiffs } from "./replay-builder.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import { generateSpec, generateSpecDetailed, secretEnvName } from "./script-generator.js";
 import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "./glaze-runtime-source.js";
@@ -114,6 +114,13 @@ function resolvePlaywright(): { cliPath: string; nodeModules: string } {
     throw new Error("Could not locate the Playwright CLI in " + nodeModules);
   }
   return { cliPath, nodeModules };
+}
+
+/** Path to axe-core's bundled build, for injection into the page under test.
+ *  Resolved from the same node_modules the Playwright CLI came from, so it
+ *  can't pick up a different copy than the one this app installed. */
+function axePath(nodeModules: string): string {
+  return path.join(nodeModules, "axe-core", "axe.min.js");
 }
 
 function ensureModuleResolution(scriptsDir: string, nodeModules: string): void {
@@ -683,6 +690,15 @@ export const playwrightRunner = {
         // locators the app RECORDED, and a hand-authored spec's locators are not
         // ours to reason about.
         const healSettings = recorderSettingsStore.get();
+        // Accessibility checks: per-test choice, falling back to the global
+        // default. Like capture, app-generated tests only — an imported spec's
+        // actions aren't ones we hooked.
+        const wantA11y = (rec.a11yChecks ?? healSettings.defaultA11yChecks) && !rec.sourceDir;
+        const axeFile = axePath(nodeModules);
+        const a11y = wantA11y && fs.existsSync(axeFile);
+        if (wantA11y && !a11y) {
+          emitOutput(runId, "system", "Accessibility checks skipped: axe-core was not found.\n");
+        }
         const healing =
           healSettings.autoHealEnabled && !rec.sourceDir && runSteps.some((st) => !!st.locator);
         healApplyMode = healSettings.autoHealApply;
@@ -716,14 +732,18 @@ export const playwrightRunner = {
         // The redirect is what puts the fixture in the spec's import path, and
         // the fixture is where BOTH capture and healing live — so a heal-only
         // run needs it too.
-        if ((captureArtifacts || healing) && !rec.sourceDir) {
+        if ((captureArtifacts || healing || a11y) && !rec.sourceDir) {
           ensureCaptureFixture(scriptsDir);
           ensureHealFixture(scriptsDir);
           const prepared = prepareCaptureSpec(scriptsDir, specToRun, recordId);
           if (prepared) {
             tempSpecPath = prepared;
             specToRun = prepared;
-            capturing = true;
+            // `capturing` is the SCREENSHOT gate specifically — an a11y-only
+            // run redirects the spec and writes a manifest without taking a
+            // single picture. `capturingRun` is the broader "this run produced
+            // artifacts worth building a replay from".
+            capturing = captureArtifacts;
             capturingRun = true;
             // Prune old runs first, then create this run's dir (newest). The
             // retained count is user-configurable in Settings; `- 1` leaves
@@ -745,7 +765,11 @@ export const playwrightRunner = {
             // No direct import to redirect means the fixture never loads — so
             // neither capture NOR healing happens, whatever the settings say.
             // Naming only capture here would leave healing failing silently.
-            const skipped = [captureArtifacts ? "Screenshot capture" : null, healing ? "Auto-Heal" : null]
+            const skipped = [
+              captureArtifacts ? "Screenshot capture" : null,
+              a11y ? "Accessibility checks" : null,
+              healing ? "Auto-Heal" : null,
+            ]
               .filter(Boolean)
               .join(" and ");
             emitOutput(
@@ -799,6 +823,8 @@ export const playwrightRunner = {
           ...env,
           ...varEnv,
           GLAZE_HEAL: healing ? "1" : "0",
+          GLAZE_A11Y: a11y ? "1" : "0",
+          GLAZE_AXE_PATH: a11y ? axeFile : "",
           GLAZE_HEAL_DIR: healDir,
           GLAZE_HEAL_MAP: healMapPath,
           PW_SLOWMO_MS: String(slowMo),
@@ -841,6 +867,7 @@ export const playwrightRunner = {
         // Filled in from the replay when capturing, so the notification can
         // mention visual changes and name the failing step.
         let changedSteps = 0;
+        let a11yNewSteps = 0;
         let failedLabel: string | undefined;
         if (capturingRun) {
           try {
@@ -862,6 +889,9 @@ export const playwrightRunner = {
               rec.visualMasks ?? [],
               rec.visualElementSteps ?? [],
             );
+            // Accessibility, compared against what the user has accepted for
+            // this test. Reported only — this never touches runStatus.
+            a11yNewSteps = enrichWithA11y(replay, rec.a11yBaseline);
             artifactStore.writeReplay(rec.id, recordId, replay);
             changedSteps = replay.steps.filter((st) => st.diff?.state === "changed").length;
             if (replay.failedIndex !== null) {
@@ -880,10 +910,14 @@ export const playwrightRunner = {
         // manifest. Absent for non-capture runs and pre-instrumentation ones.
         let captureOverheadMs: number | undefined;
         let shotCount: number | undefined;
+        let a11yMs: number | undefined;
+        let a11yCheckCount: number | undefined;
         if (capturingRun) {
           const manifest = artifactStore.readManifest(rec.id, recordId);
           captureOverheadMs = manifest?.captureMs;
           shotCount = manifest?.shotCount ?? manifest?.steps.length;
+          a11yMs = manifest?.a11yMs;
+          a11yCheckCount = manifest?.a11yChecks;
         }
         try {
           runHistoryStore.append(
@@ -905,6 +939,9 @@ export const playwrightRunner = {
               healedSteps,
               captureOverheadMs,
               shotCount,
+              a11yMs,
+              a11yChecks: a11yCheckCount,
+              a11yNewSteps,
               replayOfRunId,
             },
             logText,

@@ -26,6 +26,14 @@ export interface CaptureOverheadSummary {
   captureShareOfRun: number;
   /** total screenshots taken across instrumented capture runs */
   totalShots: number;
+  /** runs that ran accessibility checks and reported a timing */
+  a11yRuns: number;
+  /** mean ms spent on accessibility checks across those runs */
+  meanA11yMs: number;
+  /** mean ms per individual accessibility check */
+  meanMsPerA11yCheck: number;
+  /** accessibility time as a share (0–1) of such a run's total duration */
+  a11yShareOfRun: number;
 }
 
 function mean(ns: number[]): number {
@@ -53,6 +61,15 @@ export function summarizeCaptureOverhead(
   const meanCaptureMs = mean(captureMs);
   const meanCapturedDurationMs = mean(captured.map((r) => r.durationMs));
 
+  // Accessibility is measured on its OWN axis, not folded into the capture
+  // numbers: axe typically costs more per step than the screenshot does, and
+  // one combined figure would make "capture is expensive" the wrong conclusion.
+  const a11yRuns = runs.filter((r) => typeof r.a11yMs === "number" && (r.a11yChecks ?? 0) > 0);
+  const a11yMsAll = a11yRuns.map((r) => r.a11yMs as number);
+  const meanA11yMs = mean(a11yMsAll);
+  const totalA11yChecks = a11yRuns.reduce((a, r) => a + (r.a11yChecks ?? 0), 0);
+  const meanA11yDurationMs = mean(a11yRuns.map((r) => r.durationMs));
+
   return {
     capturedRuns: captured.length,
     uncapturedRuns: uncaptured.length,
@@ -62,5 +79,10 @@ export function summarizeCaptureOverhead(
     meanUncapturedDurationMs: uncaptured.length > 0 ? mean(uncaptured.map((r) => r.durationMs)) : null,
     captureShareOfRun: meanCapturedDurationMs > 0 ? meanCaptureMs / meanCapturedDurationMs : 0,
     totalShots,
+    a11yRuns: a11yRuns.length,
+    meanA11yMs,
+    meanMsPerA11yCheck:
+      totalA11yChecks > 0 ? a11yMsAll.reduce((a, b) => a + b, 0) / totalA11yChecks : 0,
+    a11yShareOfRun: meanA11yDurationMs > 0 ? meanA11yMs / meanA11yDurationMs : 0,
   };
 }

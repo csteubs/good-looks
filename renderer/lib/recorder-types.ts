@@ -185,6 +185,10 @@ export interface TestRecord {
   runHeadless?: boolean;
   /** Per-test browser-engine preference (mirrors main TestRecord). */
   runBrowser?: RunBrowser;
+  /** Per-test accessibility-check preference (mirrors main TestRecord). */
+  a11yChecks?: boolean;
+  /** Violations accepted for this test, keyed by step id. */
+  a11yBaseline?: Record<string, string[]>;
   /** Free-form grouping labels (mirrors main TestRecord). Normalized backend-
    *  side on write, so the renderer never has to canonicalize them itself. */
   tags?: string[];
@@ -280,6 +284,10 @@ export interface RunRecord {
   batchId?: string;
   /** how many steps run-time Auto-Heal got past by substituting a locator. */
   healedSteps?: number;
+  /** accessibility-check cost, and steps with unaccepted violations. */
+  a11yMs?: number;
+  a11yChecks?: number;
+  a11yNewSteps?: number;
   /** the dataset row this run used, when it was one row of a sweep. */
   datasetId?: string;
   datasetName?: string;
@@ -290,6 +298,23 @@ export interface RunRecord {
   replayOfRunId?: string;
   kind?: RunRecordKind;
   note?: string;
+}
+
+/** One accessibility violation, compacted by the capture fixture
+ *  (mirror of main/services/a11y-diff.ts). */
+export interface A11yViolation {
+  id: string;
+  impact: "minor" | "moderate" | "serious" | "critical";
+  help: string;
+  nodes: string[];
+}
+
+/** A step's accessibility outcome, after comparison with the accepted
+ *  baseline. `newKeys` is what the UI flags; everything else is context. */
+export interface A11yResult {
+  violations: A11yViolation[];
+  newKeys: string[];
+  acceptedCount: number;
 }
 
 /** Per-run visual-testing replay model (mirror of main/services/artifact-store.ts). */
@@ -334,6 +359,8 @@ export interface ReplayStep {
   /** the acted-on element's normalized rect at capture time, when recorded. */
   rect?: NormalizedRect;
   diff?: VisualDiff;
+  /** accessibility outcome for this step, when a11y checks ran. */
+  a11y?: A11yResult;
 }
 
 export interface RunReplay {
@@ -359,6 +386,8 @@ export interface RunReplaySummary {
   stepCount: number;
   failedIndex: number | null;
   changedSteps: number;
+  /** how many steps reported unaccepted accessibility violations. */
+  a11yNewSteps?: number;
 }
 
 /** A rectangular region excluded from visual diffing. Coordinates are
@@ -385,6 +414,11 @@ export interface CaptureOverheadSummary {
   meanUncapturedDurationMs: number | null;
   captureShareOfRun: number;
   totalShots: number;
+  /** runs that ran accessibility checks and reported a timing */
+  a11yRuns: number;
+  meanA11yMs: number;
+  meanMsPerA11yCheck: number;
+  a11yShareOfRun: number;
 }
 
 /** A pinned visual baseline. Mirror of main/services/baseline-store.ts. */
@@ -475,6 +509,8 @@ export interface RecorderSettings {
   /** What a successful heal may do to the stored test (mirror of main types).
    *  "suggest" (default) records it for review; "apply" writes it immediately. */
   autoHealApply: HealApplyMode;
+  /** default value of the per-test "Check accessibility" toggle. */
+  defaultA11yChecks: boolean;
   /** default value of the per-test "Capture screenshots" toggle (default false). */
   defaultCaptureArtifacts: boolean;
   /** default value of the per-test "Run headless" toggle (default false). */
