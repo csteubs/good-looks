@@ -647,10 +647,13 @@ export function SettingsView() {
                 <p className="text-sm text-muted-foreground">
                   POSTs a short summary to a URL you choose when a run fails, a step changes
                   visually, or a batch finishes with failures. Works with Slack and Discord incoming
-                  webhooks. <strong>This is the only feature that sends anything off this Mac</strong>
-                  , and it sends a summary only — test name, status, the failing step&apos;s label,
+                  webhooks. This is the only thing that sends data off this Mac{" "}
+                  <strong>automatically</strong> — and it sends a{" "}
+                  <strong>summary only</strong>: test name, status, the failing step&apos;s label,
                   counts and timing. Run logs are never included, since they can contain page
-                  content and values typed during recording.
+                  content and values typed during recording. (Separately, if you pick Claude as the
+                  AI provider above, &ldquo;Debug with AI&rdquo; sends the test script and the
+                  failing run&apos;s output to Anthropic — but only when you click it.)
                 </p>
               </FieldContent>
               <Switch
