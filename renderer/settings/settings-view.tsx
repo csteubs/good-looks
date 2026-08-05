@@ -93,6 +93,7 @@ export function SettingsView() {
   const [autoHealEnabled, setAutoHealEnabled] = useState(true);
   const [autoHealRetries, setAutoHealRetries] = useState(3);
   const [autoHealTimeout, setAutoHealTimeout] = useState(4000);
+  const [autoHealApply, setAutoHealApply] = useState<"suggest" | "apply">("suggest");
 
   // ── Aesthetic Enhancement features ──────────────────────────────────
   const [disabledEnhancements, setDisabledEnhancements] = useState<string[]>([]);
@@ -133,6 +134,7 @@ export function SettingsView() {
         setAutoHealEnabled(settings.autoHealEnabled ?? true);
         setAutoHealRetries(settings.autoHealRetries ?? 3);
         setAutoHealTimeout(settings.autoHealAttemptTimeoutMs ?? 4000);
+        setAutoHealApply(settings.autoHealApply ?? "suggest");
         setDisabledEnhancements(settings.disabledAestheticEnhancements ?? []);
       })
       .catch(() => {
@@ -299,6 +301,16 @@ export function SettingsView() {
     setAutoHealRetries(n);
     try {
       await api.recorder.setSettings({ autoHealRetries: n });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleAutoHealApplyChange = async (checked: boolean) => {
+    const mode = checked ? "apply" : "suggest";
+    setAutoHealApply(mode);
+    try {
+      await api.recorder.setSettings({ autoHealApply: mode });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
     }
@@ -784,14 +796,32 @@ export function SettingsView() {
                 <p className="text-sm text-muted-foreground">
                   When a step's locator can't be found during replay, automatically search the page
                   for alternative target elements using all locator strategies plus context from
-                  past runs. The best match is auto-applied; all candidates appear in the Console
-                  for you to choose from.
+                  past runs, matched against what the element looked like when the step was
+                  recorded. Applies during trainer replays and real runs. Every heal is recorded on
+                  the test's Heals tab, with a one-click way back.
                 </p>
               </FieldContent>
               <Switch
                 id="auto-heal-enabled"
                 checked={autoHealEnabled}
                 onCheckedChange={handleAutoHealEnabledChange}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="auto-heal-apply">Apply heals automatically</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Off (recommended): a heal gets the step past its failure and is recorded on the
+                  test's Heals tab for you to apply or discard — your saved test is not changed. On:
+                  the new locator is written to the step straight away. Worth knowing before you
+                  turn this on: a wrong heal usually still succeeds, because clicking the wrong
+                  button rarely raises an error.
+                </p>
+              </FieldContent>
+              <Switch
+                id="auto-heal-apply"
+                checked={autoHealApply === "apply"}
+                onCheckedChange={handleAutoHealApplyChange}
               />
             </Field>
             <Field orientation="horizontal">

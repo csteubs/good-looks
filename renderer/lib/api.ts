@@ -5,6 +5,7 @@ import type {
   Annotation,
   AssertKind,
   Dataset,
+  HealEntry,
   SecretStatus,
   TestVariable,
   DebugEntry,
@@ -160,6 +161,16 @@ export const api = {
       }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),
     importGit: (url: string) => ipc().invoke<ImportResult>("tests:importGit", { url }),
+  },
+  heals: {
+    list: (testId: string) => ipc().invoke<HealEntry[]>("heals:list", { testId }),
+    pending: (testId: string) => ipc().invoke<HealEntry[]>("heals:pending", { testId }),
+    /** Apply a heal to the stored test. `locator` overrides the engine's pick. */
+    accept: (id: string, locator?: Locator) =>
+      ipc().invoke<HealEntry | null>("heals:accept", { id, locator }),
+    revert: (id: string) => ipc().invoke<HealEntry | null>("heals:revert", { id }),
+    clearSettled: (testId: string) =>
+      ipc().invoke<{ removed: number }>("heals:clearSettled", { testId }),
   },
   batch: {
     run: (

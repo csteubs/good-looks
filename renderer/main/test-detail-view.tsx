@@ -40,6 +40,7 @@ import { RunOutput } from "./run-output";
 import { ScriptEditor, ScriptView } from "./script-view";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
+import { HealsPanel } from "./heals-panel";
 import { computeStepDepths } from "../lib/describe-step";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS, type RunBrowser } from "../lib/recorder-types";
 
@@ -78,6 +79,10 @@ export function TestDetailView() {
 
   const testQuery = useQuery({ queryKey: ["test", id], queryFn: () => api.tests.get(id) });
   const scriptQuery = useQuery({ queryKey: ["script", id], queryFn: () => api.tests.getScript(id) });
+  // Badged on the Heals tab. Fetched here rather than inside the panel so the
+  // count is visible without opening the tab — an unreviewed heal means the
+  // test may already have been changed underneath the user.
+  const healsQuery = useQuery({ queryKey: ["heals", id], queryFn: () => api.heals.list(id) });
   // What capture costs FOR THIS TEST — the fair comparison, since different
   // tests do different amounts of work. Absent until this test has an
   // instrumented capture run to measure.
@@ -90,6 +95,7 @@ export function TestDetailView() {
     queryFn: () => api.recorder.getSettings(),
   });
   const test = testQuery.data;
+  const pendingHeals = (healsQuery.data ?? []).filter((h) => h.status === "pending").length;
   const runInfo = runs[id];
 
   // Initialize the toggle from the test record (or the global default) once.
@@ -376,6 +382,12 @@ export function TestDetailView() {
                     {(test.variables?.length ?? 0) > 0 ? ` (${test.variables?.length})` : ""}
                   </TabsTrigger>
                 )}
+                {imported ? null : (
+                  <TabsTrigger value="heals">
+                    Heals
+                    {pendingHeals > 0 ? ` (${pendingHeals})` : ""}
+                  </TabsTrigger>
+                )}
               </Tabs>
             </div>
             <TabsContent value="steps" className="min-h-0 flex-1">
@@ -433,6 +445,11 @@ export function TestDetailView() {
             {imported ? null : (
               <TabsContent value="variables" className="min-h-0 flex-1">
                 <VariablesPanel test={test} />
+              </TabsContent>
+            )}
+            {imported ? null : (
+              <TabsContent value="heals" className="min-h-0 flex-1">
+                <HealsPanel test={test} />
               </TabsContent>
             )}
           </TabsRoot>

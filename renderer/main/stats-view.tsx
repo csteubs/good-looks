@@ -45,6 +45,7 @@ import {
   Search,
   Stamp,
   X,
+  Wand2,
 } from "lucide-react";
 
 import { api } from "../lib/api";
@@ -757,9 +758,21 @@ export function StatsView() {
                                     Baseline
                                   </Badge>
                                 ) : (
-                                  <Badge color={r.status === "passed" ? "green" : "red"}>
-                                    {r.status}
-                                  </Badge>
+                                  <span className="flex items-center gap-1">
+                                    <Badge color={r.status === "passed" ? "green" : "red"}>
+                                      {r.status}
+                                    </Badge>
+                                    {/* A run that only passed because Auto-Heal
+                                        substituted a locator is not the same
+                                        evidence as one that passed outright, so
+                                        it must not read identically. */}
+                                    {r.healedSteps ? (
+                                      <Badge color="orange" title={`${r.healedSteps} step${r.healedSteps === 1 ? "" : "s"} healed during this run`}>
+                                        <Wand2 className="size-3" />
+                                        healed
+                                      </Badge>
+                                    ) : null}
+                                  </span>
                                 )}
                               </TableCell>
                               <TableCell

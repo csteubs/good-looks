@@ -320,6 +320,96 @@ export const CAPTURE_SCRIPT = `
     };
   }
 
+  // ----- Element fingerprint: what the target looked like at record time -----
+  //
+  // Auto-Heal used to reverse-engineer the user's intent from the ONE locator
+  // that was chosen, which is why its scoring needed three separate bug fixes:
+  // a renamed testid whose visible label was unchanged scored at zero, because
+  // nothing recorded that the label had ever been part of the element's
+  // identity. This records the whole identity up front so healing compares
+  // against what the element WAS, not against a guess.
+  //
+  // Deliberately excludes cssPropsOf: computed styles are review-dialog
+  // context, useless for identifying an element, and by far the biggest part of
+  // the payload — this is stored on every step of every test.
+
+  /** Nearby text that labels this element — the nearest preceding heading or
+   *  label within a few ancestors. Survives the element's own text changing,
+   *  which is exactly the case a text locator can't heal on its own. */
+  function neighborTextOf(el) {
+    var node = el;
+    for (var up = 0; up < 3 && node; up++) {
+      var sib = node.previousElementSibling;
+      for (var n = 0; n < 4 && sib; n++) {
+        var t = (sib.tagName || "").toLowerCase();
+        if (t === "h1" || t === "h2" || t === "h3" || t === "h4" || t === "h5" ||
+            t === "h6" || t === "label" || t === "legend") {
+          var s = txt(sib);
+          if (s) return s.slice(0, 60);
+        }
+        sib = sib.previousElementSibling;
+      }
+      node = node.parentElement;
+    }
+    return "";
+  }
+
+  /** How deep the element sits in the document. A weak signal on its own, but
+   *  it separates two otherwise identical candidates — a page usually doesn't
+   *  move its Submit button up six levels between runs. */
+  function depthOf(el) {
+    var d = 0;
+    var node = el;
+    while (node && node.parentElement) {
+      d++;
+      node = node.parentElement;
+    }
+    return d;
+  }
+
+  /** Viewport-normalized box, same 0–1 convention as the capture fixture's
+   *  elementRect, so the two can be compared without a unit conversion. */
+  function rectOf(el) {
+    try {
+      var r = el.getBoundingClientRect();
+      var vw = window.innerWidth || 0;
+      var vh = window.innerHeight || 0;
+      if (!vw || !vh || (!r.width && !r.height)) return null;
+      return { x: r.left / vw, y: r.top / vh, w: r.width / vw, h: r.height / vh };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function fingerprintFor(el) {
+    if (!el || el.nodeType !== 1) return null;
+    var t = txt(el);
+    var fp = {
+      tag: el.tagName ? el.tagName.toLowerCase() : "",
+      description: describeEl(el),
+      candidates: candidatesFor(el),
+      attributes: attrsOf(el),
+      depth: depthOf(el),
+    };
+    if (t) fp.text = t.slice(0, 120);
+    var nb = neighborTextOf(el);
+    if (nb) fp.neighborText = nb;
+    var r = rectOf(el);
+    if (r) fp.rect = r;
+    return fp;
+  }
+
+  /** Attach a fingerprint to a step. Never allowed to throw: a fingerprint is
+   *  an optimization for a later heal, and failing to build one must not stop
+   *  the step being recorded at all. */
+  function withFp(step, el) {
+    try {
+      var fp = fingerprintFor(el);
+      if (fp) step.fingerprint = fp;
+    } catch (e) {}
+    return step;
+  }
+
   // Floating overlay that tracks the hovered element in refine mode.
   var refineBox = null;
   function ensureBox() {
@@ -412,7 +502,7 @@ export const CAPTURE_SCRIPT = `
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
-      var payload = { type: "assert", assert: mode, locator: locatorFor(el) };
+      var payload = withFp({ type: "assert", assert: mode, locator: locatorFor(el) }, el);
       if (mode === "text" || mode === "exactText") payload.text = txt(el).slice(0, 120);
       if (assertSoft()) payload.soft = true;
       push(payload);
@@ -431,7 +521,8 @@ export const CAPTURE_SCRIPT = `
     var textLike = ["text", "email", "search", "password", "tel", "url", "number", "date"];
     if ((tag === "input" && textLike.indexOf(typ) >= 0) || tag === "textarea") return;
 
-    push({ type: "click", locator: locatorFor(interactiveTarget(el)) });
+    var clickTarget = interactiveTarget(el);
+    push(withFp({ type: "click", locator: locatorFor(clickTarget) }, clickTarget));
   }
 
   function onChange(e) {
@@ -441,20 +532,20 @@ export const CAPTURE_SCRIPT = `
     var tag = el.tagName.toLowerCase();
     if (tag === "select") {
       var opt = el.options[el.selectedIndex];
-      push({ type: "select", locator: locatorFor(el), value: el.value, label: opt ? txt(opt) : el.value });
+      push(withFp({ type: "select", locator: locatorFor(el), value: el.value, label: opt ? txt(opt) : el.value }, el));
       return;
     }
     if (tag === "input") {
       var ty = (el.getAttribute("type") || "text").toLowerCase();
       if (ty === "checkbox" || ty === "radio") {
-        push({ type: el.checked ? "check" : "uncheck", locator: locatorFor(el) });
+        push(withFp({ type: el.checked ? "check" : "uncheck", locator: locatorFor(el) }, el));
         return;
       }
-      push({ type: "fill", locator: locatorFor(el), value: el.value });
+      push(withFp({ type: "fill", locator: locatorFor(el), value: el.value }, el));
       return;
     }
     if (tag === "textarea") {
-      push({ type: "fill", locator: locatorFor(el), value: el.value });
+      push(withFp({ type: "fill", locator: locatorFor(el), value: el.value }, el));
     }
   }
 
@@ -468,7 +559,7 @@ export const CAPTURE_SCRIPT = `
       var loc = el && el.nodeType === 1 ? locatorFor(el) : null;
       var step = { type: "press", value: k };
       if (loc) step.locator = loc;
-      push(step);
+      push(loc ? withFp(step, el) : step);
     }
   }
 

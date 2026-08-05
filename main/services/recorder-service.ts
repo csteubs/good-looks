@@ -25,6 +25,7 @@ import {
 } from "../recorder/capture-script.js";
 import { buildReplayScript } from "./step-replayer.js";
 import { healStep } from "./auto-heal.js";
+import { healJournalStore } from "./heal-journal-store.js";
 import type { CookieSpec } from "../recorder/types.js";
 import {
   applyCookieStep,
@@ -146,11 +147,41 @@ export function isLocatorFailure(error: string | undefined, step: Step): boolean
   );
 }
 
+/** Write a trainer heal to the journal. Never throws: a journal write failing
+ *  must not turn a step that just healed successfully into a failed one. */
+function recordHeal(
+  step: Step,
+  stepIndex: number,
+  heal: HealResult,
+  best: HealResult["candidates"][number],
+  applied: boolean,
+): void {
+  if (!session) return;
+  try {
+    healJournalStore.record({
+      testId: session.testId,
+      stepId: step.id,
+      stepIndex,
+      stepLabel: describeStep(step),
+      source: "trainer",
+      originalLocator: heal.originalLocator ?? step.locator,
+      appliedLocator: best.locator,
+      candidates: heal.candidates,
+      applied,
+    });
+  } catch (err) {
+    logger.warn("recorder", "Could not journal a heal", { stepId: step.id, error: String(err) });
+  }
+}
+
 /** Run the Auto-Heal engine for a failed step, then (if candidates were found)
  *  re-run the step with the best candidate to see if it succeeds. Pushes a
  *  `recorder:healSuggestion` event to the renderer so the Console can surface
  *  the candidates as a menu. Returns the heal result and whether the re-run
  *  with the applied locator succeeded (so the caller can count it as passed).
+ *
+ *  Whether success also rewrites the STORED step is governed by the
+ *  `autoHealApply` setting; either way the heal is written to the journal.
  *
  *  `runWithLocator` re-runs the step with a substituted locator and returns
  *  `{ ok, error?, logs? }` — supplied by the caller since each replay path has
@@ -183,21 +214,31 @@ async function tryHeal(
     // "heal tried, found nothing" state if desired. We keep it quiet here.
     return { heal, okWithHeal: false };
   }
-  // Try the best candidate first; if it succeeds, auto-apply it.
+  // Try the best candidate first. Whether success also REWRITES the stored step
+  // depends on the apply mode — see below.
   const best = heal.candidates[0];
   try {
     const rerun = await runWithLocator(best.locator);
     if (rerun.ok) {
       heal.ok = true;
       heal.appliedLocator = best.locator;
-      heal.autoApplied = true;
-      // Auto-apply the healed locator to the step so future runs use it.
-      if (session) {
+      // Under "suggest" (the default), the candidate got the step past its
+      // failure but the step keeps its original locator. This used to apply
+      // unconditionally, and the reason that was dangerous is that a mis-heal
+      // usually SUCCEEDS: clicking the wrong button rarely throws, so the step
+      // was marked passed and the test quietly stopped testing what it was
+      // written to test — with nothing recorded to notice it by.
+      const apply = settings.autoHealApply === "apply";
+      heal.autoApplied = apply;
+      if (apply && session) {
         const idx = session.steps.findIndex((s) => s.id === step.id);
         if (idx >= 0) {
           session.steps[idx] = { ...session.steps[idx], locator: best.locator };
         }
       }
+      // Journaled either way — the whole point is that a heal leaves a trace,
+      // and under "suggest" the entry is also how the user applies it later.
+      recordHeal(step, stepIndex, heal, best, apply);
       sendToMain("recorder:healSuggestion", heal);
       return { heal, okWithHeal: true, healedLogs: rerun.logs };
     }
@@ -937,12 +978,21 @@ export const recorderService = {
           "label",
           "continueOnFailure",
           "disabled",
+          "fingerprint",
         ];
         const target = step as unknown as Record<string, unknown>;
         const src = patch as Record<string, unknown>;
         for (const key of allowed) {
           if (key in patch) target[key] = src[key];
         }
+        // Retargeting a step (Refine Selector) may point it at a DIFFERENT
+        // element, which makes the recorded fingerprint a description of
+        // something else — and Auto-Heal scoring against it would then confidently
+        // propose the old element. Dropping it falls back to locator-only
+        // scoring, which is merely weaker rather than wrong. Applying a heal
+        // candidate is the exception: same intended element, new locator, so
+        // that path preserves the fingerprint (see applyHeal).
+        if ("locator" in patch && !patch.fingerprint) delete target.fingerprint;
         broadcastSteps();
         broadcastState();
       }
@@ -985,7 +1035,12 @@ export const recorderService = {
    *  over `updateStep` so the heal menu has a dedicated IPC channel. */
   applyHeal(stepId: string, locator: Locator): RecorderState {
     logger.info("recorder", "Applying heal candidate", { stepId, locator });
-    return this.updateStep(stepId, { locator });
+    // Pass the existing fingerprint back through so updateStep's
+    // retarget-clears-fingerprint rule doesn't fire: a heal points the SAME
+    // intended element at a new locator, and losing the fingerprint here would
+    // make every subsequent heal of this step weaker than the first.
+    const existing = session?.steps.find((s) => s.id === stepId)?.fingerprint;
+    return this.updateStep(stepId, { locator, ...(existing ? { fingerprint: existing } : {}) });
   },
 
   /** Set the index at which the next captured/inserted step will land. */

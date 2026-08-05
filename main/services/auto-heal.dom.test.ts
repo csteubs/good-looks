@@ -188,3 +188,151 @@ describe("step kinds", () => {
     expect(() => probe(step({ type: "press", value: "Enter" }))).not.toThrow();
   });
 });
+
+describe("fingerprint-guided scoring", () => {
+  /** The fingerprint the capture script would have recorded for `el`. Built by
+   *  hand rather than by running the capture script, so a test states exactly
+   *  which recorded facts it depends on. */
+  function fingerprint(partial: Partial<Step["fingerprint"]> = {}): Step["fingerprint"] {
+    return {
+      tag: "button",
+      description: "button",
+      candidates: [],
+      attributes: {},
+      depth: 3,
+      ...partial,
+    } as Step["fingerprint"];
+  }
+
+  it("heals a renamed testid using the label the element still has", () => {
+    // THE case the fingerprint exists for. The step's locator is a testid that
+    // no longer exists; the element is otherwise unchanged. Locator-only
+    // scoring has nothing to match against — but the fingerprint remembers the
+    // element was also reachable by role+name and by its text.
+    document.body.innerHTML = `
+      <button data-testid="submit-v2">Place order</button>
+      <button data-testid="cancel">Cancel</button>`;
+    const cands = probe(
+      step({
+        type: "click",
+        locator: { k: "testid", v: "submit-v1" },
+        fingerprint: fingerprint({
+          candidates: [
+            { k: "testid", v: "submit-v1" },
+            { k: "role", role: "button", name: "Place order" },
+            { k: "text", v: "Place order" },
+          ],
+          text: "Place order",
+        }),
+      }),
+    );
+    expect(cands.length).toBeGreaterThan(0);
+    // The top candidate must resolve to the Place order button, not Cancel.
+    const top = resolve(cands[0].locator);
+    expect(top?.getAttribute("data-testid")).toBe("submit-v2");
+  });
+
+  it("prefers the element whose recorded attributes still match", () => {
+    // Two buttons with identical text. Only the attributes recorded at capture
+    // time distinguish them, which is precisely the information a single
+    // locator throws away.
+    document.body.innerHTML = `
+      <button name="decoy" data-testid="x1">Save</button>
+      <button name="save-order" data-testid="x2">Save</button>`;
+    const cands = probe(
+      step({
+        type: "click",
+        locator: { k: "testid", v: "gone" },
+        fingerprint: fingerprint({
+          candidates: [{ k: "text", v: "Save" }],
+          attributes: { name: "save-order" },
+          text: "Save",
+        }),
+      }),
+    );
+    const top = resolve(cands[0].locator);
+    expect(top?.getAttribute("name")).toBe("save-order");
+  });
+
+  it("ignores class when matching attributes", () => {
+    // Utility-class and CSS-in-JS codebases churn class names on every build.
+    // Scoring on them would rank a redesigned page's elements all alike — and,
+    // worse, favour whichever one happened to keep a stale class.
+    document.body.innerHTML = `
+      <button class="old-class" data-testid="wrong">Cancel</button>
+      <button class="new-class" name="confirm" data-testid="right">Confirm</button>`;
+    const cands = probe(
+      step({
+        type: "click",
+        locator: { k: "testid", v: "gone" },
+        fingerprint: fingerprint({
+          candidates: [{ k: "text", v: "Confirm" }],
+          attributes: { class: "old-class", name: "confirm" },
+          text: "Confirm",
+        }),
+      }),
+    );
+    const top = resolve(cands[0].locator);
+    expect(top?.getAttribute("data-testid")).toBe("right");
+  });
+
+  it("uses neighbouring label text when the element's own text changed", () => {
+    // A button relabelled "Continue" → "Next" loses its text locator entirely.
+    // The heading above it didn't change, and that is what still identifies it.
+    document.body.innerHTML = `
+      <section><h2>Shipping</h2><button data-testid="s1">Next</button></section>
+      <section><h2>Payment</h2><button data-testid="p1">Next</button></section>`;
+    const cands = probe(
+      step({
+        type: "click",
+        locator: { k: "testid", v: "gone" },
+        fingerprint: fingerprint({
+          candidates: [{ k: "text", v: "Continue" }],
+          text: "Continue",
+          neighborText: "Payment",
+        }),
+      }),
+    );
+    const top = resolve(cands[0].locator);
+    expect(top?.getAttribute("data-testid")).toBe("p1");
+  });
+
+  it("still proposes candidates for a step with no fingerprint", () => {
+    // Every test recorded before this feature existed has no fingerprint. The
+    // locator-only path must keep working rather than degrade to nothing.
+    document.body.innerHTML = `<button data-testid="checkout-v2">Checkout</button>`;
+    const cands = probe(step({ type: "click", locator: { k: "testid", v: "checkout-v1" } }));
+    expect(cands.length).toBeGreaterThan(0);
+    expect(resolve(cands[0].locator)).toBeTruthy();
+  });
+
+  it("never proposes a locator that matches more than one element", () => {
+    // Found by the attribute test below. Two buttons reading "Save" each
+    // generate the candidate {k:"text", v:"Save"}. Ranking picked the right
+    // ELEMENT, but that locator matches both — Playwright would raise a
+    // strict-mode violation, and the trainer's replayer (first match wins)
+    // would silently act on the wrong button. An ambiguous candidate is not a
+    // heal, so it must not be offered at all.
+    document.body.innerHTML = `
+      <button data-testid="a1">Save</button>
+      <button data-testid="a2">Save</button>`;
+    const cands = probe(step({ type: "click", locator: { k: "testid", v: "gone" } }));
+    const ambiguous = cands.filter((c) => c.locator.k === "text" && c.locator.v === "Save");
+    expect(ambiguous).toHaveLength(0);
+    // Its unambiguous siblings are still offered, so the step remains healable.
+    expect(cands.length).toBeGreaterThan(0);
+  });
+
+  it("never proposes the locator that just failed", () => {
+    document.body.innerHTML = `<button data-testid="same">Go</button>`;
+    const cands = probe(
+      step({
+        type: "click",
+        locator: { k: "testid", v: "same" },
+        fingerprint: fingerprint({ candidates: [{ k: "testid", v: "same" }] }),
+      }),
+    );
+    const proposedSame = cands.some((c) => c.locator.k === "testid" && c.locator.v === "same");
+    expect(proposedSame).toBe(false);
+  });
+});

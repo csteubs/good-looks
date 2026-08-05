@@ -24,6 +24,7 @@ import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
 import { importService } from "../services/import-service.js";
 import { testSecretsStore } from "../services/test-secrets-store.js";
+import { healJournalStore } from "../services/heal-journal-store.js";
 import { refreshSecretSnapshot } from "../services/secret-redaction.js";
 import { parseSpecDetailed } from "../services/spec-parser.js";
 import { llmService } from "../services/llm-service.js";
@@ -189,6 +190,7 @@ export function registerHandlers(): void {
     // with nothing left in the UI to remove them with.
     await testSecretsStore.clearTest(params.id);
     await refreshSecretSnapshot();
+    healJournalStore.deleteTest(params.id);
   });
   ipcMain.handle("tests:rename", async (_e, params: { id: string; name: string }) => {
     const rec = testStore.get(params.id);
@@ -368,6 +370,63 @@ export function registerHandlers(): void {
       .filter((t) => t.isFlow && t.id !== params.fromId)
       .map((t) => ({ id: t.id, name: t.name, flowParams: t.flowParams ?? [] }));
   });
+
+  // ── Heal journal ─────────────────────────────────────────────────────────
+  //
+  // Auto-Heal changes what a test targets. Accepting or reverting is the point
+  // of the journal, so both live here rather than being folded into a generic
+  // step update — a heal has an original locator to go back to, and only these
+  // handlers know it.
+  ipcMain.handle("heals:list", async (_e, params: { testId: string }) =>
+    healJournalStore.list(params.testId),
+  );
+  ipcMain.handle("heals:pending", async (_e, params: { testId: string }) =>
+    healJournalStore.pending(params.testId),
+  );
+
+  /** Apply a journaled heal to the stored test and mark it accepted.
+   *
+   *  Idempotent by design: an entry already accepted just re-applies the same
+   *  locator, so a double-click can't half-apply anything. */
+  ipcMain.handle("heals:accept", async (_e, params: { id: string; locator?: unknown }) => {
+    const entry = healJournalStore.get(params.id);
+    if (!entry) throw new Error("Heal not found: " + params.id);
+    const rec = testStore.get(entry.testId);
+    if (!rec) throw new Error("Test not found: " + entry.testId);
+    // The user may pick a different candidate from the menu rather than the one
+    // the engine proposed.
+    const chosen = (params.locator as Locator | undefined) ?? entry.appliedLocator;
+    const idx = rec.steps.findIndex((s) => s.id === entry.stepId);
+    if (idx < 0) throw new Error("That step no longer exists.");
+    rec.steps[idx] = { ...rec.steps[idx], locator: chosen };
+    rec.updatedAt = Date.now();
+    if (!rec.scriptEdited) rec.scriptPath = testStore.regenerateScript(rec);
+    testStore.save(rec);
+    return healJournalStore.setStatus(params.id, "accepted");
+  });
+
+  /** Put a step's locator back to what it was before the heal. */
+  ipcMain.handle("heals:revert", async (_e, params: { id: string }) => {
+    const entry = healJournalStore.get(params.id);
+    if (!entry) throw new Error("Heal not found: " + params.id);
+    // Under "suggest" the stored test was never changed, so reverting is just
+    // dismissing the suggestion — there is nothing to undo.
+    if (entry.applied && entry.originalLocator) {
+      const rec = testStore.get(entry.testId);
+      const idx = rec ? rec.steps.findIndex((s) => s.id === entry.stepId) : -1;
+      if (rec && idx >= 0) {
+        rec.steps[idx] = { ...rec.steps[idx], locator: entry.originalLocator };
+        rec.updatedAt = Date.now();
+        if (!rec.scriptEdited) rec.scriptPath = testStore.regenerateScript(rec);
+        testStore.save(rec);
+      }
+    }
+    return healJournalStore.setStatus(params.id, "reverted");
+  });
+
+  ipcMain.handle("heals:clearSettled", async (_e, params: { testId: string }) =>
+    healJournalStore.clearSettled(params.testId),
+  );
 
   // Hide a test from the sidebar without deleting its record or script file.
   ipcMain.handle(

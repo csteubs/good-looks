@@ -124,7 +124,49 @@ export interface Step {
    *  write by `collectVarRefs` — never hand-maintained — so the editor can warn
    *  before deleting a variable something still references. */
   varRefs?: string[];
+  /** What the target element looked like when this step was recorded. Absent on
+   *  steps recorded before fingerprinting existed, and on steps with no element
+   *  (goto, wait, viewport, cookie). Used by Auto-Heal — see ElementFingerprint. */
+  fingerprint?: ElementFingerprint;
   timestamp: number;
+}
+
+/**
+ * The recorded identity of a step's target element.
+ *
+ * Auto-Heal previously had only `Step.locator` — ONE strategy, chosen by
+ * `locatorFor` — and had to infer from it what the user meant. That inference
+ * needed three separate bug fixes, and the commonest real heal (a renamed
+ * testid on an element whose visible label never changed) still scored at zero,
+ * because nothing recorded that the label had ever been part of the element's
+ * identity.
+ *
+ * Recording the whole identity at capture time turns "guess what this locator
+ * was trying to point at" into "find the element that best matches what we
+ * saw", which is a question with an answer.
+ */
+export interface ElementFingerprint {
+  /** lowercase tag name */
+  tag: string;
+  /** human-readable descriptor, e.g. "button#submit.btn-primary" */
+  description: string;
+  /** EVERY locator strategy that applied at record time, best-first. The
+   *  load-bearing field: a candidate matching any of these is strong evidence,
+   *  even when the one locator the step uses has gone stale. */
+  candidates: Locator[];
+  /** curated attributes (id, class, type, name, role, href, placeholder,
+   *  aria-label) */
+  attributes: Record<string, string>;
+  /** the element's own trimmed text, capped */
+  text?: string;
+  /** nearest preceding heading/label text — survives the element's own text
+   *  changing, which is the case a text locator can't heal on its own */
+  neighborText?: string;
+  /** how deep the element sat in the document */
+  depth: number;
+  /** viewport-normalized box (same 0–1 convention as the capture fixture's
+   *  elementRect), so a heal candidate's geometry can be compared to it */
+  rect?: { x: number; y: number; w: number; h: number };
 }
 
 /** What a `capture` step reads off its resolved element. */
@@ -161,6 +203,8 @@ export interface RawStep {
   captureAttr?: string;
   flowId?: string;
   flowArgs?: Record<string, string>;
+  /** the target element's recorded identity, attached by the capture script */
+  fingerprint?: ElementFingerprint;
 }
 
 export type TestSpeed = "slow" | "medium" | "fast";
@@ -503,6 +547,12 @@ export interface RunRecord {
   /** id of the batch this run belonged to, when it was part of one. Absent for
    *  ordinary single runs — which is most of them. */
   batchId?: string;
+  /** How many steps run-time Auto-Heal got past by substituting a locator.
+   *  Non-zero makes a run "passed (healed)" rather than plainly passed —
+   *  a distinction worth keeping, because a run that only passed because
+   *  something was silently substituted is not the same evidence as one that
+   *  passed outright. */
+  healedSteps?: number;
   /** The dataset row this run used, when it was one row of a sweep. Both are
    *  stored: the id joins back to the record, and the name survives the row
    *  being renamed or deleted — a run history that can't say WHICH row failed
@@ -568,6 +618,15 @@ export interface RecorderSettings {
   /** per-attempt timeout in ms before the attempt is considered timed-out
    *  (default 4000). */
   autoHealAttemptTimeoutMs: number;
+  /** What a successful heal is allowed to do (default "suggest").
+   *
+   *  "suggest" — the heal gets the step past its failure in memory and records
+   *  the change in the heal journal for review. The stored test is untouched.
+   *  "apply"   — the healed locator is written to the step immediately.
+   *
+   *  Governs BOTH the trainer and run-time heal paths from one place, so the
+   *  two can't drift into different answers to the same question. */
+  autoHealApply: HealApplyMode;
   /** default value of the per-test "Capture screenshots" toggle for tests
    *  that haven't set their own preference (default false). */
   defaultCaptureArtifacts: boolean;
@@ -601,6 +660,9 @@ export interface RecorderSettings {
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];
 }
+
+/** What a successful Auto-Heal is allowed to do to the stored test. */
+export type HealApplyMode = "suggest" | "apply";
 
 /** A single alternative locator the Auto-Heal engine found for a failed step. */
 export interface HealCandidate {

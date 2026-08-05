@@ -24,9 +24,16 @@ import { buildReplay, enrichWithVisualDiffs } from "./replay-builder.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import { generateSpec, generateSpecDetailed, secretEnvName } from "./script-generator.js";
 import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "./glaze-runtime-source.js";
+import { HEAL_FIXTURE_FILE, healFixtureSource } from "./heal-fixture-source.js";
+import { buildHealProbeScript } from "./auto-heal.js";
+import { healJournalStore } from "./heal-journal-store.js";
+import { describeStep } from "./script-generator.js";
 import { testSecretsStore } from "./test-secrets-store.js";
 import { refreshSecretSnapshot, redactWithSnapshot } from "./secret-redaction.js";
 import type {
+  HealApplyMode,
+  HealCandidate,
+  Locator,
   RunBrowser,
   Step,
   TestRecord,
@@ -170,6 +177,64 @@ function ensureRuntime(scriptsDir: string): void {
   fs.writeFileSync(path.join(scriptsDir, GLAZE_RUNTIME_FILE), glazeRuntimeSource, "utf-8");
 }
 
+// Write the run-time heal fixture. Always written alongside the capture
+// fixture, which imports it unconditionally — a missing module would fail the
+// import even on a run with healing switched off.
+function ensureHealFixture(scriptsDir: string): void {
+  fs.writeFileSync(path.join(scriptsDir, HEAL_FIXTURE_FILE), healFixtureSource, "utf-8");
+}
+
+/** The canonical key the heal fixture tags a locator with. MUST match the
+ *  `FACTORIES` table in heal-fixture-source.ts — if the two spellings drift,
+ *  every lookup misses and healing silently stops happening with no error. */
+export function healKeyFor(loc: Locator): string {
+  switch (loc.k) {
+    case "testid":
+      return `testid|${loc.v ?? ""}`;
+    case "label":
+      return `label|${loc.v ?? ""}`;
+    case "placeholder":
+      return `placeholder|${loc.v ?? ""}`;
+    case "text":
+      return `text|${loc.v ?? ""}`;
+    case "role":
+      return `role|${loc.role ?? ""}|${loc.name ?? ""}`;
+    case "xpath":
+      return `css|xpath=${loc.v ?? ""}`;
+    case "css":
+    default:
+      return `css|${loc.v ?? ""}`;
+  }
+}
+
+/**
+ * Build the heal map the run-time fixture reads: canonical locator key → the
+ * step's identity plus a pre-built probe script.
+ *
+ * The probe is built HERE, with `buildHealProbeScript` — the same function the
+ * trainer uses. The fixture only evaluates it. That's deliberate: two
+ * implementations of candidate ranking would drift, and the ranking is where
+ * every Auto-Heal bug so far has lived.
+ */
+export function buildHealMap(steps: Step[]): Record<string, unknown> {
+  const map: Record<string, unknown> = {};
+  steps.forEach((step, index) => {
+    if (!step.locator || step.disabled) return;
+    const key = healKeyFor(step.locator);
+    // First step wins on a collision. Two steps with an identical locator act
+    // on the same element, so they'd share a fingerprint anyway.
+    if (map[key]) return;
+    map[key] = {
+      stepId: step.id,
+      stepIndex: index,
+      stepLabel: describeStep(step),
+      locator: step.locator,
+      probe: buildHealProbeScript(step, []),
+    };
+  });
+  return map;
+}
+
 /** Environment carrying this run's variable values into the spec.
  *
  *  Two channels on purpose. Plain values (including a dataset row) go as one
@@ -310,6 +375,85 @@ function baseEnv(nodeModules: string): NodeJS.ProcessEnv {
     NODE_PATH: nodeModules,
     ELECTRON_RUN_AS_NODE: "1",
   };
+}
+
+/**
+ * Read the heals a finished run performed, write them to the journal, and
+ * return how many there were.
+ *
+ * Under "suggest" (the default) nothing is written back to the test: the run
+ * used the healed locator in memory to get past the step, and the journal entry
+ * is the user's record of that plus the means to apply or dismiss it. Under
+ * "apply" the step's locator is updated here, on the backend, because the child
+ * process has no business writing to tests.json.
+ */
+function collectRunHeals(
+  testId: string,
+  runId: string,
+  healDir: string,
+  mode: HealApplyMode,
+): number {
+  if (!healDir) return 0;
+  const file = path.join(healDir, "heals.json");
+  let events: {
+    stepId: string;
+    stepIndex: number;
+    stepLabel: string;
+    originalLocator?: Locator;
+    appliedLocator: Locator;
+    candidates?: HealCandidate[];
+  }[] = [];
+  try {
+    events = JSON.parse(fs.readFileSync(file, "utf-8"));
+  } catch {
+    return 0; // no heals (the common case) — the fixture only writes on a heal
+  }
+  if (!Array.isArray(events) || events.length === 0) return 0;
+
+  const apply = mode === "apply";
+  const rec = apply ? testStore.get(testId) : null;
+  let changed = false;
+  for (const ev of events) {
+    try {
+      healJournalStore.record({
+        testId,
+        stepId: ev.stepId,
+        stepIndex: ev.stepIndex,
+        stepLabel: ev.stepLabel,
+        source: "run",
+        runId,
+        originalLocator: ev.originalLocator,
+        appliedLocator: ev.appliedLocator,
+        candidates: ev.candidates ?? [],
+        applied: apply,
+      });
+    } catch (err) {
+      logger.warn("runner", "Could not journal a run heal", { err: String(err) });
+    }
+    if (rec) {
+      const idx = rec.steps.findIndex((st) => st.id === ev.stepId);
+      if (idx >= 0) {
+        rec.steps[idx] = { ...rec.steps[idx], locator: ev.appliedLocator };
+        changed = true;
+      }
+    }
+  }
+  if (rec && changed) {
+    try {
+      rec.updatedAt = Date.now();
+      if (!rec.scriptEdited) rec.scriptPath = testStore.regenerateScript(rec);
+      testStore.save(rec);
+    } catch (err) {
+      logger.warn("runner", "Could not persist applied heals", { err: String(err) });
+    }
+  }
+  try {
+    fs.rmSync(healDir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+  logger.info("runner", "Run healed steps", { testId, runId, count: events.length, apply });
+  return events.length;
 }
 
 function emitOutput(runId: string, stream: "stdout" | "stderr" | "system", chunk: string): void {
@@ -507,6 +651,11 @@ export const playwrightRunner = {
       let exitCode = -1;
       let tempSpecPath: string | null = null;
       let capturingRun = false;
+      // Declared out here because the finally block reads them: everything
+      // below is set inside the try, which the finally cannot see into.
+      let healDir = "";
+      let healMapPath = "";
+      let healApplyMode: HealApplyMode = "suggest";
       try {
         const { cliPath, nodeModules } = resolvePlaywright();
         const scriptsDir = getScriptsDir();
@@ -529,6 +678,25 @@ export const playwrightRunner = {
         let capturing = false;
         let artifactDir = "";
 
+        // Run-time Auto-Heal, gated independently of capture. Imported specs are
+        // excluded for the same reason capture is: the heal map is keyed by the
+        // locators the app RECORDED, and a hand-authored spec's locators are not
+        // ours to reason about.
+        const healSettings = recorderSettingsStore.get();
+        const healing =
+          healSettings.autoHealEnabled && !rec.sourceDir && runSteps.some((st) => !!st.locator);
+        healApplyMode = healSettings.autoHealApply;
+        if (healing) {
+          ensureHealFixture(scriptsDir);
+          healDir = path.join(getScriptsDir(), `${recordId}.heal`);
+          healMapPath = path.join(scriptsDir, `${recordId}.heal-map.json`);
+          try {
+            fs.writeFileSync(healMapPath, JSON.stringify(buildHealMap(runSteps)), "utf-8");
+          } catch (err) {
+            logger.warn("runner", "Could not write the heal map", { err: String(err) });
+          }
+        }
+
         // Re-running a past run: generate a spec from ITS recorded steps rather
         // than the test's current script, so an edit since then can't change
         // what gets reproduced.
@@ -545,8 +713,12 @@ export const playwrightRunner = {
           tempSpecPath = replaySpecPath;
           specToRun = replaySpecPath;
         }
-        if (captureArtifacts && !rec.sourceDir) {
+        // The redirect is what puts the fixture in the spec's import path, and
+        // the fixture is where BOTH capture and healing live — so a heal-only
+        // run needs it too.
+        if ((captureArtifacts || healing) && !rec.sourceDir) {
           ensureCaptureFixture(scriptsDir);
+          ensureHealFixture(scriptsDir);
           const prepared = prepareCaptureSpec(scriptsDir, specToRun, recordId);
           if (prepared) {
             tempSpecPath = prepared;
@@ -570,10 +742,16 @@ export const playwrightRunner = {
             // later even if the test is edited in the meantime.
             artifactStore.writeSteps(rec.id, recordId, runSteps);
           } else {
+            // No direct import to redirect means the fixture never loads — so
+            // neither capture NOR healing happens, whatever the settings say.
+            // Naming only capture here would leave healing failing silently.
+            const skipped = [captureArtifacts ? "Screenshot capture" : null, healing ? "Auto-Heal" : null]
+              .filter(Boolean)
+              .join(" and ");
             emitOutput(
               runId,
               "system",
-              "Capture skipped: this test doesn't import @playwright/test directly.\n",
+              `${skipped} skipped: this test doesn't import @playwright/test directly.\n`,
             );
           }
         }
@@ -620,6 +798,9 @@ export const playwrightRunner = {
         exitCode = await runCli(runId, args, cliPath, scriptsDir, {
           ...env,
           ...varEnv,
+          GLAZE_HEAL: healing ? "1" : "0",
+          GLAZE_HEAL_DIR: healDir,
+          GLAZE_HEAL_MAP: healMapPath,
           PW_SLOWMO_MS: String(slowMo),
           GLAZE_CAPTURE_ARTIFACTS: capturing ? "1" : "0",
           GLAZE_ARTIFACT_DIR: artifactDir,
@@ -640,6 +821,17 @@ export const playwrightRunner = {
         }
         const finishedAt = Date.now();
         const runStatus = exitCode === 0 ? "passed" : "failed";
+
+        // Collect anything run-time Auto-Heal did, and journal it. Read before
+        // the temp files are cleaned up below.
+        const healedSteps = collectRunHeals(rec.id, recordId, healDir, healApplyMode);
+        if (healMapPath) {
+          try {
+            fs.rmSync(healMapPath, { force: true });
+          } catch {
+            /* ignore */
+          }
+        }
 
         // When this run captured artifacts, persist the canonical replay model
         // (per-step outcome + screenshot mapping) alongside them, keyed by the
@@ -710,6 +902,7 @@ export const playwrightRunner = {
               batchId: params.batchId,
               datasetId: params.datasetId,
               datasetName: params.datasetName,
+              healedSteps,
               captureOverheadMs,
               shotCount,
               replayOfRunId,

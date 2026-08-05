@@ -19,10 +19,16 @@
 export const captureFixtureSource = `import { test as base, expect } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
+import { installHealing } from "./glaze-heal.mjs";
 
 export { expect };
 
 const ON = process.env.GLAZE_CAPTURE_ARTIFACTS === "1";
+// Run-time Auto-Heal is gated independently of capture, but installed from
+// HERE rather than from its own fixture. A spec imports exactly one module for
+// \`test\`, and two fixtures each patching the Locator prototype would double-wrap
+// every action — each one's retry would run inside the other's.
+const HEAL_ON = process.env.GLAZE_HEAL === "1";
 const DIR = process.env.GLAZE_ARTIFACT_DIR || "";
 const TEST_ID = process.env.GLAZE_TEST_ID || "";
 const RUN_ID = process.env.GLAZE_RUN_ID || "";
@@ -126,8 +132,20 @@ function patchOnce(page) {
   }
 }
 
-export const test = (ON && DIR) ? base.extend({
+export const test = ((ON && DIR) || HEAL_ON) ? base.extend({
   page: async ({ page }, use, testInfo) => {
+    // Healing is installed FIRST so its retry sits inside the capture wrapper:
+    // a healed action should produce one screenshot of the successful result,
+    // not one per failed attempt.
+    if (HEAL_ON) {
+      try { installHealing(page); } catch (e) {
+        process.stderr.write("[glaze-heal] install failed: " + String(e) + "\\n");
+      }
+    }
+    if (!ON || !DIR) {
+      await use(page);
+      return;
+    }
     try { fs.mkdirSync(DIR, { recursive: true }); } catch (e) { /* ignore */ }
     ctx = { dir: DIR, index: 0, manifest: [], startedAt: Date.now(), captureMs: 0 };
     patchOnce(page);

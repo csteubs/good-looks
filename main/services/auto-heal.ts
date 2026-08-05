@@ -47,6 +47,10 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
   var step = ${JSON.stringify(step)};
   var hints = ${hintsJson};
   var MAX_CANDIDATES = 8;
+  // What the target looked like when the step was recorded. Absent on steps
+  // recorded before fingerprinting, which is why every use below is guarded and
+  // the locator-only path still works on its own.
+  var fp = step.fingerprint || null;
 
   function ci(s) { return String(s == null ? "" : s).toLowerCase(); }
 
@@ -160,6 +164,148 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
     return s;
   }
 
+  function sameLocator(a, b) {
+    return !!a && !!b && a.k === b.k && a.v === b.v && a.role === b.role && a.name === b.name;
+  }
+
+  /** Every element the given locator would resolve to, right now.
+   *
+   *  Mirrors the semantics the replayer and Playwright use, closely enough to
+   *  answer the only question asked of it: does this locator identify exactly
+   *  ONE element? */
+  function resolveAllFor(loc) {
+    var out = [];
+    try {
+      if (loc.k === "testid") {
+        var v = cssEscape(loc.v || "");
+        out = Array.prototype.slice.call(document.querySelectorAll(
+          '[data-testid="' + v + '"], [data-test-id="' + v + '"], [data-test="' + v + '"]'
+        ));
+      } else if (loc.k === "css") {
+        out = Array.prototype.slice.call(document.querySelectorAll(loc.v || ""));
+      } else if (loc.k === "xpath") {
+        var it = document.evaluate(loc.v || "", document, null, 7, null);
+        for (var xi = 0; xi < it.snapshotLength; xi++) out.push(it.snapshotItem(xi));
+      } else {
+        var alls = Array.prototype.slice.call(document.querySelectorAll("*"));
+        for (var i = 0; i < alls.length; i++) {
+          var el = alls[i];
+          if (loc.k === "text") {
+            if (el.children.length === 0 && txt(el) === loc.v) out.push(el);
+          } else if (loc.k === "label") {
+            if (labelFor(el) === loc.v) out.push(el);
+          } else if (loc.k === "placeholder") {
+            if (el.getAttribute && el.getAttribute("placeholder") === loc.v) out.push(el);
+          } else if (loc.k === "role") {
+            if (roleOf(el) !== loc.role) continue;
+            if (loc.name == null || accName(el) === loc.name) out.push(el);
+          }
+        }
+      }
+    } catch (e) {}
+    return out;
+  }
+
+  /** A heal candidate has to identify ONE element.
+   *
+   *  Found by a test: two buttons both reading "Save" each generate the
+   *  candidate {k:"text", v:"Save"}. Ranking correctly picked the right
+   *  ELEMENT, but the locator it proposed matched both — so applying it would
+   *  raise a Playwright strict-mode violation, or in the trainer's replayer
+   *  (which takes the first match) silently act on the wrong button. An
+   *  ambiguous candidate is not a heal, so it is not offered. */
+  function identifiesOnly(loc, el) {
+    var hits = resolveAllFor(loc);
+    return hits.length === 1 && hits[0] === el;
+  }
+
+  // Best score of this candidate against ANY locator strategy the element had
+  // at record time — the whole point of the fingerprint.
+  //
+  // The case this fixes: a testid renamed between runs on an element whose
+  // visible label never changed. The step's locator is the stale testid, so
+  // locator-only scoring has nothing to match; the fingerprint still remembers
+  // that this element was also reachable by role+name and by its text, and one
+  // of those matches exactly.
+  function scoreAgainstFingerprint(cand) {
+    if (!fp || !fp.candidates) return 0;
+    var best = 0;
+    for (var i = 0; i < fp.candidates.length; i++) {
+      var s = scoreLocator(cand, fp.candidates[i]);
+      if (s > best) best = s;
+    }
+    return best;
+  }
+
+  // How much of the recorded element's non-locator identity this element still
+  // shares: its tag, its curated attributes, its own text, and the nearby
+  // heading/label that named it. Weak signals individually, but together they
+  // separate the intended element from an unrelated one that happens to score
+  // the same on a single locator strategy.
+  function scoreElementIdentity(el) {
+    if (!fp) return 0;
+    var s = 0;
+    if (fp.tag && (el.tagName || "").toLowerCase() === fp.tag) s += 0.15;
+    if (fp.attributes) {
+      var keys = Object.keys(fp.attributes);
+      var hits = 0;
+      var checked = 0;
+      for (var i = 0; i < keys.length; i++) {
+        // "class" churns constantly in CSS-in-JS and utility-class codebases —
+        // matching on it would score a redesigned page's every element alike.
+        if (keys[i] === "class") continue;
+        checked++;
+        var got = el.getAttribute ? el.getAttribute(keys[i]) : null;
+        if (got && ci(got) === ci(fp.attributes[keys[i]])) hits++;
+      }
+      if (checked > 0) s += 0.35 * (hits / checked);
+    }
+    if (fp.text) {
+      var t = txt(el);
+      if (t && ci(t) === ci(fp.text)) s += 0.3;
+      else if (t && (ci(t).indexOf(ci(fp.text)) >= 0 || ci(fp.text).indexOf(ci(t)) >= 0)) s += 0.15;
+    }
+    if (fp.neighborText) {
+      var nb = "";
+      try {
+        var node = el;
+        for (var up = 0; up < 3 && node && !nb; up++) {
+          var sib = node.previousElementSibling;
+          for (var n = 0; n < 4 && sib; n++) {
+            var tag = (sib.tagName || "").toLowerCase();
+            if (tag === "h1" || tag === "h2" || tag === "h3" || tag === "h4" ||
+                tag === "h5" || tag === "h6" || tag === "label" || tag === "legend") {
+              nb = txt(sib); break;
+            }
+            sib = sib.previousElementSibling;
+          }
+          node = node.parentElement;
+        }
+      } catch (e) {}
+      if (nb && ci(nb) === ci(fp.neighborText)) s += 0.2;
+    }
+    return s;
+  }
+
+  // Geometry: an element that sits where the recorded one sat is more likely to
+  // BE it. Deliberately small and tolerant — a responsive layout legitimately
+  // moves things, so this breaks ties rather than deciding.
+  function scoreGeometry(el) {
+    if (!fp || !fp.rect) return 0;
+    try {
+      var r = el.getBoundingClientRect();
+      var vw = window.innerWidth || 0;
+      var vh = window.innerHeight || 0;
+      if (!vw || !vh) return 0;
+      var dx = Math.abs(r.left / vw - fp.rect.x);
+      var dy = Math.abs(r.top / vh - fp.rect.y);
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist < 0.05) return 0.2;
+      if (dist < 0.15) return 0.1;
+    } catch (e) {}
+    return 0;
+  }
+
   var orig = step.locator;
   var elements = collectElements();
   var all = [];
@@ -167,11 +313,20 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
     var el = elements[i];
     var cands = candidatesFor(el);
     var desc = describeEl(el);
+    // Per-ELEMENT signals, computed once rather than per candidate locator: the
+    // identity of the element doesn't change depending on which of its locators
+    // we happen to be scoring.
+    var identity = scoreElementIdentity(el) + scoreGeometry(el);
     for (var j = 0; j < cands.length; j++) {
       var c = cands[j];
-      var score = scoreLocator(c, orig);
       // Skip the exact original locator (it already failed).
-      if (orig && c.k === orig.k && c.v === orig.v && c.role === orig.role && c.name === orig.name) continue;
+      if (sameLocator(c, orig)) continue;
+      // Skip anything that doesn't pin down this exact element.
+      if (!identifiesOnly(c, el)) continue;
+      var score = scoreLocator(c, orig);
+      var fpScore = scoreAgainstFingerprint(c);
+      if (fpScore > score) score = fpScore;
+      score += identity;
       var matchedPast = false;
       for (var h = 0; h < hints.length; h++) {
         if (hints[h] && ((c.v && ci(hints[h]).indexOf(ci(c.v)) >= 0) || (c.name && ci(hints[h]).indexOf(ci(c.name)) >= 0))) {

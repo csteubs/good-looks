@@ -92,7 +92,22 @@ export interface Step {
   flowArgs?: Record<string, string>;
   /** variable names this step interpolates; derived backend-side on write. */
   varRefs?: string[];
+  /** the target element's recorded identity (mirror of main types). */
+  fingerprint?: ElementFingerprint;
   timestamp: number;
+}
+
+/** The recorded identity of a step's target element (mirror of main types).
+ *  Feeds Auto-Heal's candidate scoring. */
+export interface ElementFingerprint {
+  tag: string;
+  description: string;
+  candidates: Locator[];
+  attributes: Record<string, string>;
+  text?: string;
+  neighborText?: string;
+  depth: number;
+  rect?: { x: number; y: number; w: number; h: number };
 }
 
 /** What a `capture` step reads off its resolved element (mirror of main types). */
@@ -209,6 +224,30 @@ export interface Dataset {
   values: Record<string, string>;
 }
 
+/** What a successful Auto-Heal may do to the stored test (mirror of main types). */
+export type HealApplyMode = "suggest" | "apply";
+
+/** What happened to a proposed heal (mirror of heal-journal-store.ts). */
+export type HealStatus = "pending" | "accepted" | "reverted";
+
+/** One recorded Auto-Heal, and the means to undo it. */
+export interface HealEntry {
+  id: string;
+  testId: string;
+  stepId: string;
+  stepIndex: number;
+  stepLabel: string;
+  source: "trainer" | "run";
+  runId?: string;
+  originalLocator?: Locator;
+  appliedLocator: Locator;
+  candidates: HealCandidate[];
+  /** whether the stored test was actually changed. False under "suggest". */
+  applied: boolean;
+  status: HealStatus;
+  at: number;
+}
+
 /** What the renderer is allowed to know about a stored secret: that it exists,
  *  never what it is. The value lives encrypted backend-side and is injected
  *  straight into the run's child process. */
@@ -239,6 +278,8 @@ export interface RunRecord {
   runBrowser?: RunBrowser;
   /** id of the batch this run belonged to, when it was part of one. */
   batchId?: string;
+  /** how many steps run-time Auto-Heal got past by substituting a locator. */
+  healedSteps?: number;
   /** the dataset row this run used, when it was one row of a sweep. */
   datasetId?: string;
   datasetName?: string;
@@ -431,6 +472,9 @@ export interface RecorderSettings {
   autoHealRetries: number;
   /** per-attempt timeout in ms (default 4000). */
   autoHealAttemptTimeoutMs: number;
+  /** What a successful heal may do to the stored test (mirror of main types).
+   *  "suggest" (default) records it for review; "apply" writes it immediately. */
+  autoHealApply: HealApplyMode;
   /** default value of the per-test "Capture screenshots" toggle (default false). */
   defaultCaptureArtifacts: boolean;
   /** default value of the per-test "Run headless" toggle (default false). */

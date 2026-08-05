@@ -38,6 +38,10 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   autoHealEnabled: true,
   autoHealRetries: 3,
   autoHealAttemptTimeoutMs: 4000,
+  // Suggest, not apply. A mis-heal usually SUCCEEDS — clicking the wrong button
+  // rarely throws — so silently rewriting the stored test is the failure mode
+  // with no signal. The user opts into that; they do not get it by default.
+  autoHealApply: "suggest",
   defaultCaptureArtifacts: false,
   defaultRunHeadless: false,
   defaultRunBrowser: "chromium",
@@ -72,6 +76,10 @@ function read(): RecorderSettings {
         typeof parsed.autoHealAttemptTimeoutMs === "number" && parsed.autoHealAttemptTimeoutMs >= 1000
           ? Math.min(Math.round(parsed.autoHealAttemptTimeoutMs), 30000)
           : DEFAULT_SETTINGS.autoHealAttemptTimeoutMs,
+      autoHealApply:
+        parsed.autoHealApply === "apply" || parsed.autoHealApply === "suggest"
+          ? parsed.autoHealApply
+          : DEFAULT_SETTINGS.autoHealApply,
       defaultCaptureArtifacts:
         typeof parsed.defaultCaptureArtifacts === "boolean"
           ? parsed.defaultCaptureArtifacts
@@ -140,6 +148,10 @@ export const recorderSettingsStore = {
         update.autoHealAttemptTimeoutMs >= 1000
           ? Math.min(Math.round(update.autoHealAttemptTimeoutMs), 30000)
           : current.autoHealAttemptTimeoutMs,
+      autoHealApply:
+        update.autoHealApply === "apply" || update.autoHealApply === "suggest"
+          ? update.autoHealApply
+          : current.autoHealApply,
       defaultCaptureArtifacts:
         update.defaultCaptureArtifacts !== undefined
           ? update.defaultCaptureArtifacts
@@ -189,6 +201,7 @@ export const recorderSettingsStore = {
       autoHealEnabled: next.autoHealEnabled,
       autoHealRetries: next.autoHealRetries,
       autoHealAttemptTimeoutMs: next.autoHealAttemptTimeoutMs,
+      autoHealApply: next.autoHealApply,
       defaultCaptureArtifacts: next.defaultCaptureArtifacts,
       defaultRunHeadless: next.defaultRunHeadless,
       defaultRunBrowser: next.defaultRunBrowser,

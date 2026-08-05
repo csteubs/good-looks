@@ -99,6 +99,8 @@ export const runHistoryStore = {
       /** dataset row this run used, when it was one row of a sweep */
       datasetId?: string;
       datasetName?: string;
+      /** steps run-time Auto-Heal got past by substituting a locator */
+      healedSteps?: number;
       /** measured screenshot cost for capture runs (see capture-overhead.ts) */
       captureOverheadMs?: number;
       shotCount?: number;
@@ -139,6 +141,7 @@ export const runHistoryStore = {
       ...(run.captureOverheadMs !== undefined ? { captureOverheadMs: run.captureOverheadMs } : {}),
       ...(run.shotCount !== undefined ? { shotCount: run.shotCount } : {}),
       ...(run.replayOfRunId ? { replayOfRunId: run.replayOfRunId } : {}),
+      ...(run.healedSteps ? { healedSteps: run.healedSteps } : {}),
       ...(run.datasetId ? { datasetId: run.datasetId } : {}),
       ...(run.datasetName ? { datasetName: run.datasetName } : {}),
     };
