@@ -13,6 +13,7 @@ import { logger } from "@glaze/core/backend";
 import { anthropicKeyStore } from "./anthropic-key-store.js";
 import { sendToMain } from "./app-window.js";
 import { llmConfigStore } from "./llm-config-store.js";
+import { ProviderError, describeHttpFailure, providerLabel } from "./llm/provider-errors.js";
 import type {
   LlmChatParams,
   LlmMessage,
@@ -30,12 +31,6 @@ const DEFAULT_BASE_URLS: Record<LlmProvider, string> = {
 const STATUS_TIMEOUT_MS = 4000;
 const ANTHROPIC_VERSION = "2023-06-01";
 const ANTHROPIC_MAX_TOKENS = 4096;
-
-function providerLabel(provider: LlmProvider): string {
-  if (provider === "ollama") return "Ollama";
-  if (provider === "lmstudio") return "LM Studio";
-  return "Claude";
-}
 
 function anthropicHeaders(key: string): Record<string, string> {
   return {
@@ -176,9 +171,10 @@ async function runChat(
       });
     }
     if (!res.ok || !res.body) {
+      // The provider's own body is JSON meant for a client, not a person —
+      // decode it into one actionable sentence rather than pasting it through.
       const text = await res.text().catch(() => "");
-      const detail = res.status === 401 && provider === "anthropic" ? "Invalid API key." : text;
-      throw new Error(`Chat request failed (HTTP ${res.status}). ${detail}`.trim());
+      throw new ProviderError(describeHttpFailure({ status: res.status, body: text, provider, model }));
     }
 
     // Both providers stream Server-Sent Events as `data: {json}` lines; only the
@@ -275,10 +271,19 @@ async function runChat(
       sendToMain("llm:done", { requestId, cancelled: true });
     } else {
       const raw = err instanceof Error ? err.message : String(err);
-      // Wrap low-level connection failures with a friendly message, so the
-      // renderer doesn't show a bare "fetch failed". Local providers get a
-      // "make sure it is running" hint; cloud providers get a network hint.
-      const isConnError = /abort|timeout|econnrefused|fetch failed|network/i.test(raw);
+      // A ProviderError has already been decoded into an actionable sentence;
+      // anything else is a low-level transport failure that would otherwise
+      // reach the renderer as a bare "fetch failed", so it gets the "is it
+      // running?" hint (local) or a network hint (cloud).
+      //
+      // The instanceof check matters rather than matching on text, because a
+      // decoded message quotes the provider verbatim: a body mentioning e.g. a
+      // "network error while fetching weights" would match the patterns below
+      // and replace a correct, actionable message with "Make sure LM Studio is
+      // running" — sending the user after a server that is up and answering.
+      const decoded = err instanceof ProviderError;
+      const isConnError =
+        !decoded && /abort|timeout|econnrefused|fetch failed|network/i.test(raw);
       const message = isConnError
         ? provider === "anthropic"
           ? `Could not reach Claude (${base}). Check your internet connection and try again.`

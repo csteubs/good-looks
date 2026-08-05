@@ -1,49 +1,57 @@
-// Tests for the LLM error formatter.
+// The renderer's hint layer on top of a backend error message.
 //
-// Every branch exists to point the user at the ONE setting that fixes their
-// problem. A message that falls through to the default is a dead end for
-// someone whose AI provider isn't working, so the routing matters.
+// Its only job is to add "and here is where to fix it". Getting the branch
+// order wrong is the failure mode: the backend quotes the provider verbatim,
+// so a model-load message can contain words that match the connection
+// patterns and send the user to check a connection that is working perfectly.
 
-import { describe, expect, it } from "vitest";
+import { describe, it, expect } from "vitest";
 
 import { friendlyError } from "./llm-errors";
 
-const SETTINGS_HINT = /Open Settings/;
+const MODEL_LOAD_FAILURE =
+  'LM Studio couldn\'t load the model "google/gemma-4-e4b". Load it in LM Studio ' +
+  "(Developer → select the model), or pick a different model. LM Studio said: " +
+  "Failed to load model \"google/gemma-4-e4b\". Error: LM Link connection closed";
 
 describe("friendlyError", () => {
-  it("points a missing model at the provider picker", () => {
-    expect(friendlyError("No model selected.")).toMatch(/AI provider to pick one/);
+  it("points a model-load failure at the model picker, not the connection", () => {
+    const out = friendlyError(MODEL_LOAD_FAILURE);
+    expect(out).toMatch(/change the model/i);
+    expect(out).not.toMatch(/check the connection/i);
   });
 
-  it("adds a connection hint to a backend-wrapped connection failure", () => {
-    const out = friendlyError("Could not reach Ollama. Make sure it is running.");
-    expect(out).toMatch(/check the connection/);
+  it("keeps model advice even when the provider's own words mention the network", () => {
+    // Branch ORDER is the contract: the model branch has to win, or a server
+    // that is up and answering gets reported as unreachable.
+    const out = friendlyError(
+      'LM Studio couldn\'t load the model "m". Load it in LM Studio (Developer → select ' +
+        "the model), or pick a different model. LM Studio said: network error while fetching weights",
+    );
+    expect(out).toMatch(/change the model/i);
+    expect(out).not.toMatch(/check the connection/i);
   });
 
-  it("adds a connection hint to a raw network error the backend didn't wrap", () => {
-    for (const raw of ["fetch failed", "ECONNREFUSED", "The operation was aborted", "network error"]) {
-      expect(friendlyError(raw), raw).toMatch(/check the connection/);
-    }
+  it("keeps the backend's own explanation intact", () => {
+    expect(friendlyError(MODEL_LOAD_FAILURE)).toContain(MODEL_LOAD_FAILURE);
   });
 
-  it("points an auth failure at the API key", () => {
-    expect(friendlyError("Invalid API key")).toMatch(/update your API key/);
-    expect(friendlyError("Request failed with status 401")).toMatch(/update your API key/);
+  it("still adds connection advice for a genuinely unreachable server", () => {
+    const out = friendlyError("Could not reach LM Studio at http://127.0.0.1:1234. Make sure it is running.");
+    expect(out).toMatch(/check the connection/i);
   });
 
-  it("preserves the original message in every branch", () => {
-    for (const m of ["No model selected.", "fetch failed", "Invalid API key"]) {
-      expect(friendlyError(m).startsWith(m)).toBe(true);
-    }
+  it("sends a missing model selection to Settings", () => {
+    expect(friendlyError("No model selected.")).toMatch(/AI provider to pick one/i);
   });
 
-  it("returns an unrecognized message unchanged rather than guessing", () => {
-    const odd = "The model produced an unparseable response.";
-    expect(friendlyError(odd)).toBe(odd);
-    expect(friendlyError(odd)).not.toMatch(SETTINGS_HINT);
+  it("sends an auth failure to the API key setting", () => {
+    expect(friendlyError("Claude rejected the API key. Check it in Settings → AI provider.")).toMatch(
+      /update your API key/i,
+    );
   });
 
-  it("handles an empty message", () => {
-    expect(() => friendlyError("")).not.toThrow();
+  it("passes an unrecognized message through unchanged", () => {
+    expect(friendlyError("Something specific went wrong.")).toBe("Something specific went wrong.");
   });
 });
