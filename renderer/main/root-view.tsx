@@ -15,6 +15,12 @@ function RootShell() {
       sidebarSize={{ default: 240, min: 200, max: 320 }}
       storageKey="recorder"
     >
+      {/* Pinned (the default): the button portals to a fixed anchor on the
+          frame's leading edge, so it stays put whether the sidebar is open or
+          collapsed. A non-pinned toggle inside Sidebar.actions would disappear
+          along with the sidebar, leaving ⌃⌘S as the only way back.
+          Collapse state persists via the SplitView storageKey above. */}
+      <SplitView.SidebarToggle aria-label="Toggle sidebar" />
       {state.recording ? <RecordingView /> : <Outlet />}
     </SplitView>
   );
