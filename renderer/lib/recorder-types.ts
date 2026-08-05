@@ -132,6 +132,9 @@ export interface TestRecord {
   runHeadless?: boolean;
   /** Per-test browser-engine preference (mirrors main TestRecord). */
   runBrowser?: RunBrowser;
+  /** Free-form grouping labels (mirrors main TestRecord). Normalized backend-
+   *  side on write, so the renderer never has to canonicalize them itself. */
+  tags?: string[];
 }
 
 /** A single completed test run (mirror of main/recorder/types.ts RunRecord). */

@@ -125,6 +125,8 @@ export const api = {
       ipc().invoke<TestRecord>("tests:setHeadless", { id, runHeadless }),
     setBrowser: (id: string, runBrowser: RunBrowser) =>
       ipc().invoke<TestRecord>("tests:setBrowser", { id, runBrowser }),
+    setTags: (id: string, tags: string[]) =>
+      ipc().invoke<TestRecord>("tests:setTags", { id, tags }),
     setHidden: (id: string, hidden: boolean) =>
       ipc().invoke<TestRecord | null>("tests:setHidden", { id, hidden }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),

@@ -179,6 +179,43 @@ export interface TestRecord {
    *  absent, the global `RecorderSettings.defaultRunBrowser` applies. Set from
    *  the test detail toolbar's browser picker. Only affects test runs. */
   runBrowser?: RunBrowser;
+  /** Free-form labels used to group tests (e.g. "smoke", "checkout").
+   *  Normalized by `normalizeTags` on write — the backend is the single source
+   *  of truth, so the renderer sends raw strings and renders what comes back.
+   *  Absent/empty means untagged. */
+  tags?: string[];
+}
+
+/** Bounds for `TestRecord.tags`. Generous enough to never bite in practice,
+ *  tight enough that a paste accident can't write a megabyte into tests.json. */
+export const MAX_TAG_LENGTH = 32;
+export const MAX_TAGS_PER_TEST = 20;
+
+/**
+ * Canonicalize a set of tags: trim, drop empties, collapse inner whitespace,
+ * truncate over-long tags, dedupe case-insensitively (first spelling wins, so
+ * "Smoke" then "smoke" keeps "Smoke"), sort case-insensitively for stable
+ * display, and cap the count.
+ *
+ * Accepts `unknown` because it sits directly behind an IPC boundary — anything
+ * that isn't an array of strings normalizes to an empty list rather than
+ * throwing or persisting junk.
+ */
+export function normalizeTags(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of input) {
+    if (typeof raw !== "string") continue;
+    const tag = raw.trim().replace(/\s+/g, " ").slice(0, MAX_TAG_LENGTH);
+    if (!tag) continue;
+    const key = tag.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(tag);
+    if (out.length >= MAX_TAGS_PER_TEST) break;
+  }
+  return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 }
 
 /** Default visual-diff threshold (percent of pixels changed) when a test has

@@ -30,7 +30,7 @@ import { recorderSettingsStore } from "../services/recorder-settings-store.js";
 import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
 import { applyRetention } from "../services/retention.js";
 import { compareRuns } from "../services/run-comparison.js";
-import { DEFAULT_VISUAL_THRESHOLD, isRunBrowser } from "../recorder/types.js";
+import { DEFAULT_VISUAL_THRESHOLD, isRunBrowser, normalizeTags } from "../recorder/types.js";
 import type { AssertKind, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 
@@ -225,6 +225,18 @@ export function registerHandlers(): void {
       throw new Error("Unknown browser: " + params.runBrowser);
     }
     rec.runBrowser = params.runBrowser;
+    rec.updatedAt = Date.now();
+    testStore.save(rec);
+    return rec;
+  });
+
+  // Per-test grouping labels. The backend normalizes (trim/dedupe/cap/sort) so
+  // there's one source of truth — the renderer posts raw strings and renders
+  // whatever comes back.
+  ipcMain.handle("tests:setTags", async (_e, params: { id: string; tags: unknown }) => {
+    const rec = testStore.get(params.id);
+    if (!rec) throw new Error("Test not found: " + params.id);
+    rec.tags = normalizeTags(params.tags);
     rec.updatedAt = Date.now();
     testStore.save(rec);
     return rec;

@@ -20,7 +20,7 @@ import {
   Text,
   toast,
 } from "@glaze/core/components";
-import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks } from "lucide-react";
+import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Tag } from "lucide-react";
 
 import { api } from "../lib/api";
 import type { LlmProvider } from "../lib/llm-types";
@@ -28,6 +28,7 @@ import type { TestRecord, TestSpeed } from "../lib/recorder-types";
 import { NewRecordingDialog } from "./new-recording-dialog";
 import { GenerateTestDialog } from "./generate-test-dialog";
 import { ImportGitDialog } from "./import-git-dialog";
+import { TagsDialog } from "./tags-dialog";
 
 const SPEEDS: TestSpeed[] = ["slow", "medium", "fast"];
 const SPEED_LABEL: Record<TestSpeed, string> = { slow: "Slow", medium: "Medium", fast: "Fast" };
@@ -235,6 +236,7 @@ export function LibrarySidebar() {
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [generateOpen, setGenerateOpen] = React.useState(false);
   const [gitDialogOpen, setGitDialogOpen] = React.useState(false);
+  const [tagsFor, setTagsFor] = React.useState<TestRecord | null>(null);
 
   const { data: tests = [] } = useQuery({ queryKey: ["tests"], queryFn: api.tests.list });
 
@@ -327,6 +329,10 @@ export function LibrarySidebar() {
                   <EyeOff className="size-4" />
                   Remove from Sidebar
                 </CustomContextMenuItem>
+                <CustomContextMenuItem onSelect={() => setTagsFor(t)}>
+                  <Tag className="size-4" />
+                  Edit Tags…
+                </CustomContextMenuItem>
                 <CustomContextMenuSeparator />
                 <CustomContextMenuSub>
                   <CustomContextMenuSubTrigger value={SPEED_LABEL[t.speed ?? "fast"]}>
@@ -375,6 +381,13 @@ export function LibrarySidebar() {
       <NewRecordingDialog open={dialogOpen} onOpenChange={setDialogOpen} />
       <GenerateTestDialog open={generateOpen} onOpenChange={setGenerateOpen} />
       <ImportGitDialog open={gitDialogOpen} onOpenChange={setGitDialogOpen} />
+      <TagsDialog
+        test={tagsFor}
+        open={tagsFor !== null}
+        onOpenChange={(o) => {
+          if (!o) setTagsFor(null);
+        }}
+      />
     </Sidebar>
   );
 }

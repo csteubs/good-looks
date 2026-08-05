@@ -31,6 +31,7 @@ import { Check, CircleDashed, Play, Square, X, SkipForward, Loader } from "lucid
 
 import { api } from "../lib/api";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
+import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts, untaggedCount } from "../lib/test-tags";
 import type {
   BatchRecord,
   BatchState,
@@ -96,6 +97,38 @@ function StatusBadge({ status, note }: { status: BatchTestStatus; note?: string 
   }
 }
 
+/** One filter chip in the tag row. Shows its test count so an empty group is
+ *  obvious before you click it. */
+function TagChip({
+  label,
+  count,
+  active,
+  disabled,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-pressed={active}
+      className={`rounded-full border px-2.5 py-0.5 text-small transition-colors disabled:opacity-50 ${
+        active
+          ? "border-accent bg-accent/15 text-primary"
+          : "border-token-border text-secondary hover:bg-token-hover"
+      }`}
+    >
+      {label} · {count}
+    </button>
+  );
+}
+
 export function BatchView() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -129,6 +162,16 @@ export function BatchView() {
     setBrowser(settingsQuery.data.defaultRunBrowser ?? "chromium");
     setOptionsInited(true);
   }, [optionsInited, settingsQuery.data]);
+
+  // Tag filter over the checklist. Selection is stored by test id, so
+  // switching filters never silently drops tests you already ticked.
+  const [tagFilter, setTagFilter] = React.useState<string>(ALL_TAGS);
+  const tags = React.useMemo(() => tagCounts(tests), [tests]);
+  const untagged = React.useMemo(() => untaggedCount(tests), [tests]);
+  const visibleTests = React.useMemo(
+    () => filterByTag(tests, tagFilter),
+    [tests, tagFilter],
+  );
 
   const [batch, setBatch] = React.useState<BatchState | null>(null);
   // Persisted batch history — survives restarts, unlike the live state above.
@@ -169,6 +212,15 @@ export function BatchView() {
       offDone();
     };
   }, [qc]);
+
+  // A filter pinned to a tag nobody uses anymore would show an empty list with
+  // no obvious way back — fall back to "All".
+  React.useEffect(() => {
+    if (tagFilter === ALL_TAGS || tagFilter === UNTAGGED) return;
+    if (!tags.some((t) => t.tag.toLowerCase() === tagFilter.toLowerCase())) {
+      setTagFilter(ALL_TAGS);
+    }
+  }, [tags, tagFilter]);
 
   const history = React.useMemo(() => historyQuery.data ?? [], [historyQuery.data]);
   // Nothing live → show the most recent persisted batch, so a restart doesn't
@@ -222,7 +274,9 @@ export function BatchView() {
                 ? `${summary.passed} passed · ${summary.failed} failed${
                     summary.skipped > 0 ? ` · ${summary.skipped} skipped` : ""
                   } · ${fmtDuration(summary.durationMs)}`
-                : `${selectedIds.length} of ${tests.length} selected`}
+                : `${selectedIds.length} of ${tests.length} selected${
+                    tagFilter !== ALL_TAGS ? ` · showing ${visibleTests.length}` : ""
+                  }`}
           </ToolbarDescription>
         </ToolbarContent>
         <ToolbarActions>
@@ -296,22 +350,68 @@ export function BatchView() {
             />
           ) : (
             <>
+              {tags.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <TagChip
+                    label="All"
+                    count={tests.length}
+                    active={tagFilter === ALL_TAGS}
+                    disabled={running}
+                    onClick={() => setTagFilter(ALL_TAGS)}
+                  />
+                  {tags.map((t) => (
+                    <TagChip
+                      key={t.tag.toLowerCase()}
+                      label={t.tag}
+                      count={t.count}
+                      active={tagFilter.toLowerCase() === t.tag.toLowerCase()}
+                      disabled={running}
+                      onClick={() => setTagFilter(t.tag)}
+                    />
+                  ))}
+                  {untagged > 0 ? (
+                    <TagChip
+                      label="Untagged"
+                      count={untagged}
+                      active={tagFilter === UNTAGGED}
+                      disabled={running}
+                      onClick={() => setTagFilter(UNTAGGED)}
+                    />
+                  ) : null}
+                </div>
+              ) : null}
+
               <div className="flex items-center gap-3">
                 <Button
                   variant="glass"
                   size="small"
                   disabled={running}
-                  onClick={() => setSelected(new Set(tests.map((t) => t.id)))}
+                  onClick={() =>
+                    // Adds the visible tests to the selection rather than
+                    // replacing it, so "select all" under a filter doesn't
+                    // silently deselect everything hidden.
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      for (const t of visibleTests) next.add(t.id);
+                      return next;
+                    })
+                  }
                 >
-                  Select all
+                  {tagFilter === ALL_TAGS ? "Select all" : "Select these"}
                 </Button>
                 <Button
                   variant="glass"
                   size="small"
                   disabled={running}
-                  onClick={() => setSelected(new Set())}
+                  onClick={() =>
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      for (const t of visibleTests) next.delete(t.id);
+                      return next;
+                    })
+                  }
                 >
-                  Select none
+                  {tagFilter === ALL_TAGS ? "Select none" : "Deselect these"}
                 </Button>
                 <Text variant="small" color="tertiary">
                   Tests run one at a time, in this order.
@@ -319,7 +419,7 @@ export function BatchView() {
               </div>
 
               <div className="rounded-lg border border-token-border bg-token-surface-raised">
-                {tests.map((t) => {
+                {visibleTests.map((t) => {
                   const result = resultFor.get(t.id);
                   const isCurrent = result?.status === "running";
                   return (
@@ -343,6 +443,20 @@ export function BatchView() {
                       >
                         {t.name}
                       </button>
+                      {(t.tags ?? []).length > 0 ? (
+                        <span className="flex shrink-0 items-center gap-1">
+                          {(t.tags ?? []).slice(0, 2).map((tag) => (
+                            <Badge key={tag.toLowerCase()} color="secondary">
+                              {tag}
+                            </Badge>
+                          ))}
+                          {(t.tags ?? []).length > 2 ? (
+                            <Text variant="small" color="tertiary">
+                              +{(t.tags ?? []).length - 2}
+                            </Text>
+                          ) : null}
+                        </span>
+                      ) : null}
                       {result?.durationMs !== undefined ? (
                         <Text variant="small" color="tertiary">
                           {fmtDuration(result.durationMs)}
