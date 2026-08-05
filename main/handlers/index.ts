@@ -33,7 +33,7 @@ import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
 import { applyRetention } from "../services/retention.js";
 import { compareRuns } from "../services/run-comparison.js";
 import { DEFAULT_VISUAL_THRESHOLD, isRunBrowser, normalizeTags } from "../recorder/types.js";
-import type { AssertKind, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
+import type { AssertKind, CookieSpec, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 
 import { ipcMain, logger } from "@glaze/core/backend";
@@ -133,6 +133,23 @@ export function registerHandlers(): void {
   ipcMain.handle("recorder:clearDebugLog", async (_e, params: { stepId: string }) =>
     recorderService.clearDebugLog(params.stepId),
   );
+  // ── Live cookies in the trainer ─────────────────────────────────────
+  // Act on the training browser's session immediately. Recording a cookie
+  // change as a test step is separate (recorder:insertStep with a cookie step).
+  ipcMain.handle("recorder:listCookies", async () => recorderService.listCookies());
+  ipcMain.handle("recorder:setCookie", async (_e, params: { cookie: CookieSpec }) => {
+    await recorderService.setCookie(params.cookie);
+    return recorderService.listCookies();
+  });
+  ipcMain.handle("recorder:deleteCookie", async (_e, params: { cookie: CookieSpec }) => {
+    await recorderService.deleteCookie(params.cookie);
+    return recorderService.listCookies();
+  });
+  ipcMain.handle("recorder:clearCookies", async () => {
+    await recorderService.clearCookies();
+    return recorderService.listCookies();
+  });
+
   ipcMain.handle("recorder:startRefine", async () => recorderService.startRefine());
   ipcMain.handle("recorder:endRefine", async () => recorderService.endRefine());
   ipcMain.handle("recorder:stop", async () => {

@@ -25,6 +25,15 @@ import {
 } from "../recorder/capture-script.js";
 import { buildReplayScript } from "./step-replayer.js";
 import { healStep } from "./auto-heal.js";
+import type { CookieSpec } from "../recorder/types.js";
+import {
+  applyCookieStep,
+  clearCookies,
+  deleteCookie,
+  listCookies,
+  setCookie,
+  type CookieHost,
+} from "./cookie-service.js";
 import type {
   AssertKind,
   DebugEntry,
@@ -198,6 +207,44 @@ async function tryHeal(
   // Best candidate didn't auto-succeed — surface all candidates for the user.
   sendToMain("recorder:healSuggestion", heal);
   return { heal, okWithHeal: false };
+}
+
+/** Shape every replay path expects back from a step, whichever mechanism ran it. */
+interface ReplayStepResult {
+  ok: boolean;
+  error?: string;
+  met?: boolean;
+  logs?: DebugEntry["logs"];
+}
+
+/** The training page's current URL, falling back to the session's start URL
+ *  (the window may not have navigated yet). */
+function currentPageUrl(): string {
+  const live = recWindow && !recWindow.isDestroyed() ? recWindow.webContents.getURL() : "";
+  return live || session?.url || "";
+}
+
+/**
+ * Run one step during trainer replay.
+ *
+ * Single dispatch point on purpose: `cookie` steps CANNOT go through the
+ * injected-script replayer, because an httpOnly cookie is invisible to
+ * document.cookie by definition — they need the session API instead. Routing
+ * every path through here means a new step kind can't be handled in some replay
+ * paths and silently missed in others.
+ */
+async function runStep(
+  wc: { executeJavaScript: (script: string) => Promise<unknown> },
+  step: Step,
+): Promise<ReplayStepResult> {
+  if (step.type === "cookie") {
+    return applyCookieStep(
+      recWindow!.webContents as unknown as CookieHost,
+      step,
+      currentPageUrl(),
+    );
+  }
+  return (await execWithTimeout(wc, buildReplayScript(step), REPLAY_STEP_TIMEOUT_MS)) as ReplayStepResult;
 }
 
 /** `tryHeal` with the standard in-window re-run wiring — every replay path
@@ -886,6 +933,37 @@ export const recorderService = {
     return currentState();
   },
 
+  // ── Live cookies in the training browser ──────────────────────────
+  // These act on the session immediately; recording them as a test step is a
+  // separate, explicit choice in the panel (insertStep with a cookie step).
+
+  /** Cookies visible to the page currently open in the trainer. */
+  async listCookies(): Promise<(CookieSpec & { hostOnly?: boolean; session?: boolean })[]> {
+    if (!recWindow || recWindow.isDestroyed()) return [];
+    const url = currentPageUrl();
+    if (!url) return [];
+    return listCookies(recWindow.webContents as unknown as CookieHost, url);
+  },
+
+  /** Create or update a cookie in the training browser. */
+  async setCookie(spec: CookieSpec): Promise<void> {
+    if (!recWindow || recWindow.isDestroyed()) throw new Error("Recorder window is not open.");
+    await setCookie(recWindow.webContents as unknown as CookieHost, spec, currentPageUrl());
+  },
+
+  /** Delete one cookie from the training browser. */
+  async deleteCookie(spec: CookieSpec): Promise<void> {
+    if (!recWindow || recWindow.isDestroyed()) throw new Error("Recorder window is not open.");
+    await deleteCookie(recWindow.webContents as unknown as CookieHost, spec, currentPageUrl());
+  },
+
+  /** Remove every cookie visible to the current page. */
+  async clearCookies(): Promise<{ removed: number }> {
+    if (!recWindow || recWindow.isDestroyed()) throw new Error("Recorder window is not open.");
+    const removed = await clearCookies(recWindow.webContents as unknown as CookieHost, currentPageUrl());
+    return { removed };
+  },
+
   /** Apply a user-chosen Auto-Heal candidate locator to a step. Thin wrapper
    *  over `updateStep` so the heal menu has a dedicated IPC channel. */
   applyHeal(stepId: string, locator: Locator): RecorderState {
@@ -932,11 +1010,7 @@ export const recorderService = {
       // Suppress capture so the replayed interaction isn't recorded as a step.
       session.paused = true;
       await applyStateAttributes();
-      const result = (await execWithTimeout(wc, buildReplayScript(step), REPLAY_STEP_TIMEOUT_MS)) as {
-        ok: boolean;
-        error?: string;
-        logs?: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[];
-      };
+      const result = await runStep(wc, step);
       let ok = !!(result && typeof result.ok === "boolean" && result.ok);
       let error = ok ? undefined : result?.error || "Replay produced no result.";
       let logs: DebugEntry["logs"] = result?.logs ?? [];
@@ -1010,12 +1084,7 @@ export const recorderService = {
           continue;
         }
         try {
-          const result = (await execWithTimeout(wc, buildReplayScript(step), REPLAY_STEP_TIMEOUT_MS)) as {
-            ok: boolean;
-            error?: string;
-            met?: boolean;
-            logs?: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[];
-          };
+          const result = await runStep(wc, step);
           let ok = !!(result && result.ok);
           let error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
           let logs: DebugEntry["logs"] = result?.logs ?? [];
@@ -1113,12 +1182,7 @@ export const recorderService = {
         let met: boolean | undefined;
         let logs: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[] = [];
         try {
-          const result = (await execWithTimeout(wc, buildReplayScript(step), REPLAY_STEP_TIMEOUT_MS)) as {
-            ok: boolean;
-            error?: string;
-            met?: boolean;
-            logs?: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[];
-          };
+          const result = await runStep(wc, step);
           ok = !!(result && result.ok);
           met = result?.met;
           error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
@@ -1233,12 +1297,7 @@ export const recorderService = {
         let met: boolean | undefined;
         let logs: DebugEntry["logs"] = [];
         try {
-          const result = (await execWithTimeout(wc, buildReplayScript(step), REPLAY_STEP_TIMEOUT_MS)) as {
-            ok: boolean;
-            error?: string;
-            met?: boolean;
-            logs?: DebugEntry["logs"];
-          };
+          const result = await runStep(wc, step);
           ok = !!(result && result.ok);
           met = result?.met;
           error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;

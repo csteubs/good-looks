@@ -19,6 +19,7 @@ import { randomUUID } from "crypto";
 
 import { generateSpec, describeStep } from "../script-generator.js";
 import { parseSpecDetailed } from "../spec-parser.js";
+import { cookieUrlFor, specToSetDetails } from "../cookie-service.js";
 import {
   cookieScopeIsValid,
   fromPlaywrightSameSite,
@@ -265,6 +266,73 @@ test("domain clear", async ({ page }) => {
   const back = steps.find((s) => s.type === "cookie");
   assert(back?.cookie?.value === tricky, `a quote/backslash value round-trips (got ${back?.cookie?.value})`);
 }
+
+// ── Live cookie helpers (URL reconstruction) ─────────────────────────
+// cookies.set/remove both require a URL, but cookies are stored the way
+// Chromium reports them (domain + path), so one has to be rebuilt. The leading
+// dot on a domain cookie is the trap: ".example.com" is not a hostname, and a
+// URL built with it silently targets nothing.
+assert(
+  cookieUrlFor({ domain: "example.com", path: "/" }) === "http://example.com/",
+  "builds a URL from domain + path",
+);
+assert(
+  cookieUrlFor({ domain: ".example.com", path: "/app" }) === "http://example.com/app",
+  "strips the leading dot from a domain cookie",
+);
+assert(
+  cookieUrlFor({ domain: "example.com", path: "/", secure: true }) === "https://example.com/",
+  "a Secure cookie gets an https URL (it can't be set over http)",
+);
+assert(
+  cookieUrlFor({ domain: "example.com" }) === "http://example.com/",
+  "a missing path defaults to /",
+);
+assert(
+  cookieUrlFor({ domain: "example.com", path: "app" }) === "http://example.com/",
+  "a path without a leading slash falls back to / rather than producing a bad URL",
+);
+assert(
+  cookieUrlFor({ url: "https://given.test/x", domain: "other.test" }) === "https://given.test/x",
+  "an explicit url wins over domain",
+);
+assert(cookieUrlFor({}) === null, "nothing to build from → null");
+assert(cookieUrlFor({ domain: "." }) === null, "a bare dot domain → null");
+
+// specToSetDetails: falls back to the page URL when the user typed only a
+// name and value, which is the common "on this site" case.
+{
+  const d = specToSetDetails({ name: "a", value: "1" }, "https://page.test/here");
+  assert(d?.url === "https://page.test/here", "falls back to the page URL");
+  assert(d?.name === "a" && d?.value === "1", "carries name and value");
+}
+{
+  const d = specToSetDetails(
+    {
+      name: "s",
+      value: "v",
+      domain: "example.com",
+      path: "/",
+      secure: true,
+      httpOnly: true,
+      sameSite: "lax",
+      expirationDate: 123,
+    },
+    "https://page.test/",
+  );
+  assert(d?.url === "https://example.com/", "prefers the cookie's own scope over the page URL");
+  assert(d?.secure === true && d?.httpOnly === true, "passes flags through");
+  assert(d?.sameSite === "lax", "keeps the Chromium sameSite spelling for the session API");
+  assert(d?.expirationDate === 123, "keeps expirationDate (session API, not Playwright)");
+}
+assert(
+  specToSetDetails({ name: "" }, "https://page.test/") === null,
+  "a nameless cookie produces no set details",
+);
+assert(
+  specToSetDetails({ name: "a" }, "") === null,
+  "no scope and no page URL produces no set details",
+);
 
 // ── describeStep ─────────────────────────────────────────────────────
 assert(

@@ -17,6 +17,8 @@ import type {
   RetentionResult,
   BatchRecord,
   BatchState,
+  CookieSpec,
+  LiveCookie,
   RunBrowser,
   RunComparison,
   RunReplay,
@@ -97,6 +99,14 @@ export const api = {
     getSettings: () => ipc().invoke<RecorderSettings>("recorder:getSettings"),
     setSettings: (update: Partial<RecorderSettings>) =>
       ipc().invoke<RecorderSettings>("recorder:setSettings", update),
+    // Live cookies in the training browser. Each mutation returns the fresh
+    // list so the panel can't drift from the session.
+    listCookies: () => ipc().invoke<LiveCookie[]>("recorder:listCookies"),
+    setCookie: (cookie: CookieSpec) =>
+      ipc().invoke<LiveCookie[]>("recorder:setCookie", { cookie }),
+    deleteCookie: (cookie: CookieSpec) =>
+      ipc().invoke<LiveCookie[]>("recorder:deleteCookie", { cookie }),
+    clearCookies: () => ipc().invoke<LiveCookie[]>("recorder:clearCookies"),
     applyHeal: (stepId: string, locator: Locator) =>
       ipc().invoke<RecorderState>("recorder:applyHeal", { stepId, locator }),
   },
