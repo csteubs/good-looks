@@ -143,14 +143,50 @@ describe("running", () => {
     expect(run.mock.calls[0][1]).toBe(true);
   });
 
-  it("disables capture while headless is on", async () => {
-    // Screenshots of an invisible browser aren't useful; the UI reflects that.
+  /** The capture checkbox, once the view has finished seeding its toggles from
+   *  the record. Without waiting for that, an assertion races the one-shot init
+   *  effect and passes against the pre-initialised state — which is exactly how
+   *  the first version of these tests passed with the bug still in place. */
+  async function captureBoxAfterInit() {
+    await screen.findByText("Checkout");
+    const headless = screen.getByLabelText(/run this test headless/i);
+    await waitFor(() => expect(headless.getAttribute("data-state")).toBe("checked"));
+    return screen.getByLabelText(/capture screenshots/i);
+  }
+
+  it("leaves capture enabled while headless is on", async () => {
+    // These used to be coupled, on the assumption that screenshots of an
+    // invisible browser aren't useful. They are: headless Chromium renders to
+    // an offscreen surface and page.screenshot() works identically — it's how
+    // visual regression testing is normally done, and headless avoids the
+    // window chrome and focus rings that make headed baselines noisy.
     test_ = record({ runHeadless: true });
     renderView();
-    await screen.findByText("Checkout");
-    const capture = screen.getByLabelText(/capture screenshots/i);
-    await waitFor(() => expect(capture.getAttribute("data-disabled") ?? capture.getAttribute("disabled")).not.toBeNull());
+    const capture = await captureBoxAfterInit();
+    expect(capture.getAttribute("data-disabled") ?? capture.getAttribute("disabled")).toBeNull();
   });
+
+  it("shows capture as ticked while headless is on, rather than lying about it", async () => {
+    // The old UI forced the box to render unticked under headless while still
+    // passing the SAVED value to the run — so a test with both flags captured
+    // anyway and the checkbox said otherwise. Displayed state has to match what
+    // actually runs.
+    test_ = record({ runHeadless: true, captureArtifacts: true });
+    renderView();
+    const capture = await captureBoxAfterInit();
+    expect(capture.getAttribute("data-state")).toBe("checked");
+  });
+
+  it("can toggle capture on while headless is on", async () => {
+    // Guards the third part of the old coupling: a click handler that returned
+    // early under headless, so the box could not be ticked at all.
+    test_ = record({ runHeadless: true, captureArtifacts: false });
+    renderView();
+    const capture = await captureBoxAfterInit();
+    fireEvent.click(capture);
+    await waitFor(() => expect(setCaptureArtifacts).toHaveBeenCalledWith("t1", true));
+  });
+
 });
 
 describe("diverged steps warning", () => {

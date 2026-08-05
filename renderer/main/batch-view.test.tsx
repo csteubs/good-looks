@@ -22,7 +22,12 @@ import { BatchView } from "./batch-view";
 
 // ── Mocks ────────────────────────────────────────────────────────────
 const setSettings = vi.fn(async (_update: Partial<RecorderSettings>) => ({}) as RecorderSettings);
-const batchRun = vi.fn(async (_testIds: string[]) => ({ batchId: "b1", alreadyRunning: false }));
+const batchRun = vi.fn(
+  async (_testIds: string[], _opts?: Record<string, unknown>) => ({
+    batchId: "b1",
+    alreadyRunning: false,
+  }),
+);
 
 let library: TestRecord[] = [];
 let settings: Partial<RecorderSettings> = {};
@@ -37,7 +42,7 @@ vi.mock("../lib/api", () => ({
     batch: {
       list: async () => [],
       status: async () => null,
-      run: (ids: string[]) => batchRun(ids),
+      run: (ids: string[], opts?: Record<string, unknown>) => batchRun(ids, opts),
       stop: async () => {},
       clearHistory: async () => ({ removed: 0 }),
     },
@@ -288,6 +293,27 @@ describe("BatchView newly created tests", () => {
     await waitFor(() => expect(checkedByName().Alpha).toBe(true));
 
     expect(checkedByName().Beta).toBe(false);
+  });
+});
+
+describe("BatchView run options", () => {
+  it("lets a batch run headless AND capture screenshots", async () => {
+    // These used to be mutually exclusive. Headless Chromium screenshots
+    // exactly as well, and for a batch it's the more useful combination —
+    // capturing a whole suite without a browser window stealing focus once per
+    // test in it.
+    renderView();
+    await rowNames();
+
+    fireEvent.click(screen.getByLabelText(/run this batch headless/i));
+    const capture = screen.getByLabelText(/capture screenshots/i);
+    expect(capture.getAttribute("data-disabled") ?? capture.getAttribute("disabled")).toBeNull();
+    fireEvent.click(capture);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Run/ }));
+    const opts = batchRun.mock.calls[0][1] as { runHeadless?: boolean; captureArtifacts?: boolean };
+    expect(opts.runHeadless).toBe(true);
+    expect(opts.captureArtifacts).toBe(true);
   });
 });
 

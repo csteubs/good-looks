@@ -314,17 +314,22 @@ export function TestDetailView() {
             Run headless
           </label>
           <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+            {/* Independent of "Run headless". Headless Chromium renders to an
+                offscreen surface, so page.screenshot() works exactly the same —
+                it's how visual regression testing is normally done. Headless is
+                arguably the BETTER mode for it, since a headed run drags in
+                window chrome, focus rings and whatever display it landed on,
+                all of which read as visual changes nobody made. */}
             <Checkbox
-              checked={runHeadless ? false : captureArtifacts}
+              checked={captureArtifacts}
               onCheckedChange={(v) => {
-                if (runHeadless) return; // disabled when headless — ignore stray toggles
                 const next = v === true;
                 setCaptureArtifacts(next);
                 api.tests.setCaptureArtifacts(id, next).catch(() => {
                   /* best-effort persist; the toggle still applies to this run */
                 });
               }}
-              disabled={runInfo?.running || runHeadless}
+              disabled={runInfo?.running}
               aria-label="Capture screenshots on this run"
             />
             Capture screenshots

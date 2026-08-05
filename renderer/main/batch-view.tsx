@@ -374,13 +374,14 @@ export function BatchView() {
             Headless
           </label>
           <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+            {/* Independent of Headless, same as the per-test toggle: headless
+                Chromium screenshots exactly as well, and for a batch it's the
+                more useful combination — capture a whole suite without a browser
+                window stealing focus for every test in it. */}
             <Checkbox
-              checked={runHeadless ? false : captureArtifacts}
-              onCheckedChange={(v) => {
-                if (runHeadless) return;
-                setCaptureArtifacts(v === true);
-              }}
-              disabled={running || runHeadless}
+              checked={captureArtifacts}
+              onCheckedChange={(v) => setCaptureArtifacts(v === true)}
+              disabled={running}
               aria-label="Capture screenshots during this batch"
             />
             Capture screenshots
