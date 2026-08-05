@@ -54,14 +54,27 @@ const lib = [t("a"), t("b"), t("c"), t("d")];
 assert(ids(applyOrder(lib, [])) === "a,b,c,d", "no stored order → library order");
 assert(ids(applyOrder(lib, ["d", "c", "b", "a"])) === "d,c,b,a", "a full stored order is honored");
 assert(
-  ids(applyOrder(lib, ["c"])) === "c,a,b,d",
-  "a partial order puts listed tests first, the rest in library order",
+  ids(applyOrder(lib, ["c"])) === "a,b,d,c",
+  "tests the order doesn't mention come first, in library order",
 );
-// New tests must land at the END, not wherever their id sorts — otherwise
-// adding a test silently reshuffles a curated suite.
+// A newly recorded test goes to the TOP. It used to be appended, which on a
+// library of any size put it off the bottom of the list — indistinguishable
+// from not having been created. The sidebar is newest-first for the same
+// reason; Batch disagreeing with it was the confusing part.
 assert(
-  ids(applyOrder([...lib, t("e")], ["d", "c", "b", "a"])) === "d,c,b,a,e",
-  "a newly added test lands at the end",
+  ids(applyOrder([t("e"), ...lib], ["d", "c", "b", "a"])) === "e,d,c,b,a",
+  "a newly added test leads the list",
+);
+// …and the curated order underneath it is untouched.
+assert(
+  ids(applyOrder([t("e"), ...lib], ["d", "c", "b", "a"])).slice(2) === "d,c,b,a",
+  "adding a test does not reshuffle the curated suite below it",
+);
+// Two new tests keep library order between themselves rather than arriving
+// in an arbitrary one.
+assert(
+  ids(applyOrder([t("f"), t("e"), ...lib], ["d", "c", "b", "a"])) === "f,e,d,c,b,a",
+  "several new tests lead in library order",
 );
 // Deleted tests leave no gap and no ghost.
 assert(
@@ -69,7 +82,7 @@ assert(
   "ids for deleted tests are ignored",
 );
 assert(
-  ids(applyOrder(lib, ["b", "b", "a"])) === "b,a,c,d",
+  ids(applyOrder(lib, ["b", "b", "a"])) === "c,d,b,a",
   "a duplicated id in a corrupt stored order is not duplicated in the result",
 );
 assert(applyOrder([], ["a", "b"]).length === 0, "an empty library yields nothing");
@@ -119,12 +132,45 @@ for (const [from, to] of [["a", "d"], ["d", "a"], ["b", "c"], ["c", "b"]]) {
   );
 }
 
+// ── a new test's position SURVIVES the drift rewrite ─────────────────
+//
+// The view rewrites the stored order whenever it drifts (orderIsStale →
+// setSettings(orderIdsOf(applyOrder(...)))). So placing a new test at the top
+// is only worth anything if that placement is what gets persisted — otherwise
+// it leads the list once and drops on the next render, which is worse than
+// consistently trailing.
+{
+  const curated = ["d", "c", "b", "a"];
+  const grown = [t("e"), ...lib];
+  assert(orderIsStale(curated, grown), "adding a test makes the stored order stale");
+
+  const rewritten = orderIdsOf(applyOrder(grown, curated));
+  assert(rewritten.join(",") === "e,d,c,b,a", "the rewrite records the new test at the top");
+  // Applying the rewritten order must be a no-op — a second pass that moved
+  // anything would mean the list shuffles every time the view re-renders.
+  assert(
+    ids(applyOrder(grown, rewritten)) === "e,d,c,b,a",
+    "re-applying the rewritten order changes nothing (the position is stable)",
+  );
+  assert(!orderIsStale(rewritten, grown), "and the rewritten order is no longer stale");
+}
+
 // ── isCustomOrder ────────────────────────────────────────────────────
 assert(!isCustomOrder(lib, []), "no stored order → not custom");
 assert(!isCustomOrder(lib, ["a", "b", "c", "d"]), "an order matching the library is not custom");
 assert(isCustomOrder(lib, ["b", "a", "c", "d"]), "a swapped pair is custom");
-assert(isCustomOrder(lib, ["d"]), "a partial order that moves a test is custom");
-assert(!isCustomOrder(lib, ["a"]), "a partial order that changes nothing is not custom");
+// Both of these flipped when unlisted tests moved to the front, and both are
+// right under the new rule. isCustomOrder asks one question — "does this differ
+// from plain library order?" — and "d" pinned last now matches library order
+// exactly, while "a" pinned last no longer does.
+assert(
+  !isCustomOrder(lib, ["d"]),
+  "pinning the test that is already last changes nothing, so Reset order stays hidden",
+);
+assert(
+  isCustomOrder(lib, ["a"]),
+  "pinning the test that was first moves it below the rest, so that IS a custom order",
+);
 assert(!isCustomOrder(lib, ["zzz"]), "an order of only unknown ids is not custom");
 assert(!isCustomOrder([], ["a"]), "an empty library is never custom");
 

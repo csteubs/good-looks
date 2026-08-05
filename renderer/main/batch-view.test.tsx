@@ -107,12 +107,41 @@ describe("BatchView ordering", () => {
     expect(await rowNames()).toEqual(["Gamma", "Alpha", "Beta"]);
   });
 
-  it("puts a test added since the order was saved at the END", async () => {
-    // A curated suite must not reshuffle just because a test was recorded.
+  it("puts a test added since the order was saved at the TOP", async () => {
+    // It used to be appended. On a library of any size that put a
+    // just-recorded test off the bottom of the list, which reads as it not
+    // having been created — the same complaint the selection fix addressed
+    // from the other direction. The sidebar is newest-first; Batch disagreeing
+    // with it was the confusing part.
     settings = { batchOrder: ["c", "b", "a"], defaultRunBrowser: "chromium" };
-    library = [...library, test_("d", "Delta")];
+    library = [test_("d", "Delta"), ...library];
     renderView();
-    expect(await rowNames()).toEqual(["Gamma", "Beta", "Alpha", "Delta"]);
+    expect(await rowNames()).toEqual(["Delta", "Gamma", "Beta", "Alpha"]);
+  });
+
+  it("leaves the curated order below the new test untouched", async () => {
+    // The reason new tests were appended in the first place: adding one must
+    // not reshuffle a suite someone arranged by hand.
+    settings = { batchOrder: ["c", "b", "a"], defaultRunBrowser: "chromium" };
+    library = [test_("d", "Delta"), ...library];
+    renderView();
+    expect((await rowNames()).slice(1)).toEqual(["Gamma", "Beta", "Alpha"]);
+  });
+
+  it("persists the new test's position rather than letting it drop next render", async () => {
+    // The view rewrites a drifted order. Leading the list is only worth
+    // anything if that placement is what gets written back — otherwise the test
+    // leads once and drops on the next render, which is worse than consistently
+    // trailing.
+    settings = { batchOrder: ["c", "b", "a"], defaultRunBrowser: "chromium" };
+    library = [test_("d", "Delta"), ...library];
+    renderView();
+    await rowNames();
+    await waitFor(() =>
+      expect(setSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ batchOrder: ["d", "c", "b", "a"] }),
+      ),
+    );
   });
 
   it("still shows every test when the stored order references a deleted one", async () => {
@@ -212,7 +241,12 @@ describe("BatchView newly created tests", () => {
     await waitFor(() => expect(screen.getAllByLabelText(/^Include /)).toHaveLength(4));
 
     fireEvent.click(screen.getByRole("button", { name: /^Run/ }));
-    expect(batchRun.mock.calls[0][0]).toEqual(["a", "b", "c", "d"]);
+    // Asserted as a SET. This test is about the new test being included at all
+    // — the bug was it being silently dropped. Run order is a separate concern
+    // with its own tests above, and pinning it here made this fail when new
+    // tests moved to the top of the list.
+    expect([...batchRun.mock.calls[0][0]].sort()).toEqual(["a", "b", "c", "d"]);
+    expect(batchRun.mock.calls[0][0]).toContain("d");
   });
 
   it("ticks a test that only appears in the refetch after a stale first list", async () => {

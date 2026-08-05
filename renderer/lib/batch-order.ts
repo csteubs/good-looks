@@ -15,25 +15,31 @@
 import type { TestRecord } from "./recorder-types";
 
 /**
- * Sort tests by the stored order: listed ids first in that order, then
- * everything else in library order.
+ * Sort tests by the stored order: anything the order doesn't mention FIRST, in
+ * library order, then the listed ids in their stored order.
  *
- * New tests therefore land at the END rather than wherever their id happens to
- * sort, and ids for deleted tests are ignored rather than leaving gaps.
+ * A test the stored order has never seen is one you just recorded, and it leads
+ * the list for the same reason the sidebar is newest-first: it's the one you
+ * came here to run. Appending it instead buried it below a curated suite, where
+ * on a library of any size it sat off the bottom of the list and read as never
+ * having been created.
+ *
+ * The curated order itself is untouched — reordered tests keep their positions
+ * relative to each other — and ids for deleted tests are ignored rather than
+ * leaving gaps.
  */
 export function applyOrder(tests: TestRecord[], order: string[]): TestRecord[] {
   const byId = new Map(tests.map((t) => [t.id, t]));
+  const listed = new Set(order.filter((id) => byId.has(id)));
+  // Unlisted first, in library order (newest first, matching the sidebar).
+  const ordered: TestRecord[] = tests.filter((t) => !listed.has(t.id));
   const seen = new Set<string>();
-  const ordered: TestRecord[] = [];
   for (const id of order) {
     const t = byId.get(id);
     // Skip unknown ids (deleted tests) and duplicates (a corrupt stored order).
     if (!t || seen.has(id)) continue;
     seen.add(id);
     ordered.push(t);
-  }
-  for (const t of tests) {
-    if (!seen.has(t.id)) ordered.push(t);
   }
   return ordered;
 }
