@@ -18,7 +18,7 @@ import {
   ToolbarContent,
   ToolbarTitle,
 } from "@glaze/core/components";
-import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, Sparkles, Wand2, X } from "lucide-react";
+import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, RotateCcw, Sparkles, Wand2, X } from "lucide-react";
 
 import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
@@ -446,6 +446,7 @@ function DebugPanel({
 export function RecordingView() {
   const {
     state,
+    stepsLoaded,
     liveSteps,
     pause,
     resume,
@@ -617,9 +618,13 @@ export function RecordingView() {
     if (s) setSelectedStepId(s.id);
   }, [replayRun, liveSteps]);
 
-  // Controls stay inert until the training browser has loaded, and while a
-  // "Replay from current step" run is in flight.
-  const controlsDisabled = !state.pageReady || running;
+  // Controls stay inert until the training browser has loaded its first page,
+  // until THIS window actually holds the step list, and while a replay is in
+  // flight. The steps clause matters for a window that opened mid-session and
+  // missed the initial `recorder:steps` push: editing against a list you have
+  // not received yet inserts at the wrong position, and the insert cursor the
+  // backend sent means nothing without the rows it points between.
+  const controlsDisabled = !state.pageReady || !stepsLoaded || running;
 
   // Drag-to-reorder bookkeeping.
   const [dragId, setDragId] = React.useState<string | null>(null);
@@ -706,6 +711,10 @@ export function RecordingView() {
       <div className="flex items-center gap-3 border-b border-separator px-4 py-3">
         {!state.pageReady ? (
           <Status variant="warning">Loading page…</Status>
+        ) : !stepsLoaded ? (
+          // Disabled controls with a "Recording" badge reads as the trainer
+          // being broken. Name the wait instead.
+          <Status variant="warning">Loading steps…</Status>
         ) : running ? (
           <Status variant="loading">Running</Status>
         ) : (
@@ -738,7 +747,10 @@ export function RecordingView() {
           aria-label="Replay from the current step"
           title="Replay slowly from the selected step (or the first step) through the end, streaming each step's output to the Console"
         >
-          <Play className="size-3.5" /> Replay from current step
+          {/* Return arrow, matching the docked panel — the same action must not
+              wear a different glyph in the two trainers. Here a text label
+              disambiguates it from Pause/Resume; in the panel nothing does. */}
+          <RotateCcw className="size-3.5" /> Replay from current step
         </Button>
         {replayStatus ? (
           <Text variant="small" color="secondary" className="shrink-0">

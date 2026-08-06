@@ -16,6 +16,27 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-06 — Trainer waits for its step list, and opens the cursor after the navigation
+
+Three defects around opening a trainer session, found together.
+
+- **A window that opened mid-session never got the steps.** `recorder:steps` is a PUSH whose first fire happens inside `recorder:start`, before the training browser has even loaded. The docked trainer panel is created later (once the page is ready), so it missed that broadcast entirely and showed an EMPTY step list for a test with a dozen steps — until the user happened to mutate something, at which point they all appeared. Fixed by adding `recorder:getSteps` and having the store ASK on mount as well as listen. A push is not a substitute for being able to ask; any future window inherits the fix.
+- **Controls were live before the steps were.** `controlsDisabled` gated only on `pageReady`, which is about the BROWSER, not about this window's data. Every trainer control acts relative to the step list — the insert cursor decides where the next captured step lands — so acting before it arrives inserts at the wrong position or does nothing, both silently. Now gated on a `stepsLoaded` flag as well, in both trainers. The status badge reads "Loading steps…" rather than leaving a "Recording" badge above a row of dead controls, which reads as a broken trainer.
+- **The insert cursor started at the END of the test.** Opening a session executes exactly one thing — the initial navigation; no recorded step is replayed (that auto-replay was removed earlier for flying through the whole test). So the session's position is "just past the goto", but the cursor defaulted to `existingSteps.length`. Recording three clicks at the start of a checkout flow appended them after the final assertion: nothing errors, every step is present, and the order is wrong until the test runs. `initialCursor(editing, stepCount)` now returns 1 when continuing an existing test. A NEW recording still passes 0 and its `goto` advances the cursor to 1 through the normal insert path, so both cases converge on one rule rather than two.
+
+- **Confirmed NOT broken:** nothing auto-runs a recorded step on open. `replayStep` / `replayFromStart` / `replayAll` / `replayFromCurrent` are reachable only from an explicit user action; the initial navigation is the only thing executed.
+- **Files:** `main/recorder/types.ts` (`initialCursor`) + `initial-cursor.test.ts`, `main/services/recorder-service.ts`, `main/handlers/index.ts`, `renderer/lib/api.ts`, `renderer/main/recorder-store.tsx`, both trainer views + all three test suites.
+- **Verified:** `lint`, `type-check`, `test:all` (825 tests) and `build` green. Mutation-tested per CLAUDE.md: restoring the end-of-list cursor fails 1 test, dropping the `stepsLoaded` gate fails 1 test in each trainer, and removing the catch-up fetch fails 2 store tests.
+
+### 2026-08-06 — Replay is a return arrow, not a play triangle
+
+- **Symptom:** in the docked trainer panel, "Replay from the current step" and the pause/resume control sat side by side as two identical ▶ triangles.
+- **Why it hid:** the neighbour is a TOGGLE. While recording it draws a pause bar, so the pair looks fine; the collision only appears once the user pauses and the button becomes a play triangle. Both controls render correctly and both have correct accessible names, so nothing in the DOM is wrong — the two are simply indistinguishable to look at, while doing very different things (replay the recorded steps vs. carry on recording). The panel's tool row is icon-only at ~360px, so the glyph is the entire signal and the label is a tooltip you get after hovering.
+- **Fix:** `RotateCcw` (a return/repeat arrow) for replay, in **both** trainers. The main window keeps a text label so it never had the collision, but the same action must not wear a different glyph in the two windows — and if that row ever tightens to icon-only, the bug would arrive silently.
+- **Testing:** icons are asserted by GLYPH, not by label. Every lucide icon ships a `lucide-<kebab-name>` class, which is the only thing in the DOM naming the shape the user sees; accessible names are useless here precisely because the bug is two differently-labelled controls drawing the same picture. `glyphOf()` reads that class in both suites. Beyond pinning the specific pair, `trainer-panel-view.test.tsx` asserts the whole tool row has no duplicate glyphs, so a future tool reusing one fails without anyone remembering this entry.
+- **Files:** `renderer/trainer/trainer-panel-view.tsx`, `renderer/main/recording-view.tsx`, + both test suites (6 new tests).
+- **Verified:** `lint`, `type-check`, `test:all` (809 tests) and `build` green; reverting the icon turns 3 panel tests and 2 main-window tests red.
+
 ### 2026-08-06 — Sticky trainer panel docked to the training browser (mabl Trainer)
 
 - **Goal:** Remove the window ping-pong that dominates training. The browser is its own window; every control lived in the main app window, so recording one assertion was click-in-page → find app window → click Assert → find browser → click element. mabl solves this by docking its Trainer to the right edge of the app under test.

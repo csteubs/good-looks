@@ -29,6 +29,10 @@ function emit(channel: string, payload: unknown) {
   });
 }
 
+/** What `recorder:getSteps` resolves to. Mutable so a test can stand in for a
+ *  session that was already under way when this window opened. */
+let fetchedSteps: Step[] = [];
+
 vi.mock("../lib/api", () => ({
   api: {
     on: (channel: string, cb: Handler) => {
@@ -38,6 +42,10 @@ vi.mock("../lib/api", () => ({
     },
     recorder: {
       getState: async () => baseState(),
+      // A window that opens mid-session missed the initial `recorder:steps`
+      // push, so the store ASKS on mount. Served from a mutable fixture so a
+      // test can decide what was already recorded before this window existed.
+      getSteps: async () => fetchedSteps,
       getDebugLogs: async () => [],
       start: async () => baseState(),
       pause: async () => baseState(),
@@ -82,11 +90,12 @@ function baseState(): RecorderState {
 
 /** Renders the store's state as text so tests can assert on it. */
 function Probe() {
-  const { state, liveSteps, runs, replayRun } = useRecorder();
+  const { state, liveSteps, stepsLoaded, runs, replayRun } = useRecorder();
   return (
     <div>
       <span data-testid="recording">{String(state.recording)}</span>
       <span data-testid="steps">{liveSteps.map((s) => s.id).join(",")}</span>
+      <span data-testid="steps-loaded">{String(stepsLoaded)}</span>
       <span data-testid="run-lines">{(runs["t1"]?.lines ?? []).join("|")}</span>
       <span data-testid="run-running">{String(runs["t1"]?.running ?? "none")}</span>
       <span data-testid="run-code">{String(runs["t1"]?.code ?? "none")}</span>
@@ -115,6 +124,54 @@ const text = (id: string) => screen.getByTestId(id).textContent;
 
 beforeEach(() => {
   handlers.clear();
+  fetchedSteps = [];
+});
+
+describe("catching up on a session already under way", () => {
+  // The trainer panel window is created AFTER `recorder:start` has broadcast the
+  // step list, so it never receives that push. Without an explicit fetch it
+  // shows an empty step list for a test that has twelve steps, and — because
+  // the insert cursor points between rows that are not there — silently records
+  // into the wrong position. A push is not a substitute for being able to ask.
+
+  it("starts out not holding the step list", () => {
+    // Before anything resolves, the store must not claim to have steps.
+    renderStore();
+    expect(text("steps")).toBe("");
+  });
+
+  it("fetches the steps it missed", async () => {
+    fetchedSteps = [
+      { id: "s1", type: "goto", timestamp: 0 } as Step,
+      { id: "s2", type: "click", timestamp: 0 } as Step,
+    ];
+    renderStore();
+    await act(async () => {});
+    expect(text("steps")).toBe("s1,s2");
+    expect(text("steps-loaded")).toBe("true");
+  });
+
+  it("still prefers a later push over the fetched snapshot", async () => {
+    // The fetch is a catch-up, not a source of truth. The backend owns
+    // ordering, so whatever it broadcasts next wins.
+    fetchedSteps = [{ id: "old", type: "click", timestamp: 0 } as Step];
+    renderStore();
+    await act(async () => {});
+    expect(text("steps")).toBe("old");
+    act(() => {
+      emit("recorder:steps", [{ id: "new", type: "click", timestamp: 0 }]);
+    });
+    expect(text("steps")).toBe("new");
+  });
+
+  it("marks the list loaded when a push arrives first", () => {
+    // The main window's ordinary path: the push beats the fetch.
+    renderStore();
+    act(() => {
+      emit("recorder:steps", [{ id: "a", type: "click", timestamp: 0 }]);
+    });
+    expect(text("steps-loaded")).toBe("true");
+  });
 });
 
 describe("recorder state events", () => {

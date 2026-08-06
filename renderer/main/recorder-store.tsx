@@ -85,6 +85,13 @@ const EMPTY_STATE: RecorderState = {
 interface RecorderContextValue {
   state: RecorderState;
   liveSteps: Step[];
+  /** True once THIS window holds the session's step list.
+   *
+   *  `recorder:steps` is a push whose first fire happens inside `recorder:start`,
+   *  so a window created later in the session (the docked panel) never sees it.
+   *  Controls must stay inert until the list is actually here — acting on a step
+   *  list you have not received yet edits the wrong position, or nothing. */
+  stepsLoaded: boolean;
   runs: Record<string, RunInfo>;
   start: (url: string, name: string, testId?: string) => Promise<void>;
   pause: () => void;
@@ -172,6 +179,7 @@ export function RecorderProvider({
 }) {
   const [state, setState] = React.useState<RecorderState>(EMPTY_STATE);
   const [liveSteps, setLiveSteps] = React.useState<Step[]>([]);
+  const [stepsLoaded, setStepsLoaded] = React.useState(false);
   const [picked, setPicked] = React.useState<PickedElement | null>(null);
   const [refiningStepId, setRefiningStepId] = React.useState<string | null>(null);
   const [contextAction, setContextAction] = React.useState<ContextAction | null>(null);
@@ -194,7 +202,10 @@ export function RecorderProvider({
     const offState = api.on<RecorderState>("recorder:state", (s) => setState(s));
     // The backend now owns step ordering (insert/reorder/edit), so it broadcasts
     // the whole list after every change and we replace our copy.
-    const offSteps = api.on<Step[]>("recorder:steps", (steps) => setLiveSteps(steps ?? []));
+    const offSteps = api.on<Step[]>("recorder:steps", (steps) => {
+      setLiveSteps(steps ?? []);
+      setStepsLoaded(true);
+    });
     const offPicked = api.on<PickedElement>("recorder:picked", (p) => setPicked(p));
     // The debug-screenshot shortcut fires with no visible effect otherwise —
     // you press a key and nothing happens, which is indistinguishable from the
@@ -228,6 +239,7 @@ export function RecorderProvider({
     );
     const offFinished = api.on<{ testId: string }>("recorder:finished", ({ testId }) => {
       setLiveSteps([]);
+      setStepsLoaded(false);
       finishedRef.current?.(testId);
     });
     const offOut = api.on<{ runId: string; chunk: string }>("runner:output", ({ runId, chunk }) => {
@@ -330,6 +342,17 @@ export function RecorderProvider({
     });
 
     api.recorder.getState().then(setState).catch(() => {});
+    // Ask, rather than only listening. The initial `recorder:steps` push fires
+    // during `recorder:start`; a window opened after that (the docked panel is
+    // created once the page is ready) would otherwise show an empty step list
+    // until the user happened to mutate something.
+    api.recorder
+      .getSteps()
+      .then((steps) => {
+        setLiveSteps(steps ?? []);
+        setStepsLoaded(true);
+      })
+      .catch(() => {});
 
     return () => {
       offState();
@@ -476,6 +499,7 @@ export function RecorderProvider({
   const value: RecorderContextValue = {
     state,
     liveSteps,
+    stepsLoaded,
     runs,
     start,
     pause,
