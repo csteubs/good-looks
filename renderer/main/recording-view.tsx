@@ -18,7 +18,7 @@ import {
   ToolbarContent,
   ToolbarTitle,
 } from "@glaze/core/components";
-import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, Sparkles, Wand2, X } from "lucide-react";
+import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, RotateCcw, Sparkles, Wand2, X } from "lucide-react";
 
 import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
@@ -738,7 +738,10 @@ export function RecordingView() {
           aria-label="Replay from the current step"
           title="Replay slowly from the selected step (or the first step) through the end, streaming each step's output to the Console"
         >
-          <Play className="size-3.5" /> Replay from current step
+          {/* Return arrow, matching the docked panel — the same action must not
+              wear a different glyph in the two trainers. Here a text label
+              disambiguates it from Pause/Resume; in the panel nothing does. */}
+          <RotateCcw className="size-3.5" /> Replay from current step
         </Button>
         {replayStatus ? (
           <Text variant="small" color="secondary" className="shrink-0">

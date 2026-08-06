@@ -41,6 +41,7 @@ import {
   Pause,
   Play,
   Plus,
+  RotateCcw,
   Shrink,
   Wand2,
   X,
@@ -445,12 +446,18 @@ export function TrainerPanelView() {
           <Wand2 className="size-3.5" />
         </ToolButton>
         <div className="ml-auto flex shrink-0 items-center gap-1">
+          {/* Replay is a RETURN arrow, not a play triangle. The control beside
+              it is a pause/resume TOGGLE, so the moment the user pauses it
+              becomes a play triangle too — leaving two identical glyphs side by
+              side, each doing something quite different (replay the recorded
+              steps vs. carry on recording). Both are icon-only at this width,
+              so the label is a tooltip and the glyph is all there is to go on. */}
           <ToolButton
             label="Replay from the current step"
             onClick={onReplayFromCurrent}
             disabled={controlsDisabled}
           >
-            <Play className="size-3.5" />
+            <RotateCcw className="size-3.5" />
           </ToolButton>
           {controlsDisabled ? null : state.paused ? (
             <ToolButton label="Resume recording" onClick={resume}>

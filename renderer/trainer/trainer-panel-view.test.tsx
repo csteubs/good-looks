@@ -134,6 +134,23 @@ function renderPanel() {
   );
 }
 
+/**
+ * The lucide glyph a control renders, e.g. "rotate-ccw".
+ *
+ * Every lucide icon ships a `lucide-<kebab-name>` class (see
+ * `createLucideIcon`), which is the only thing in the DOM that identifies the
+ * SHAPE the user actually sees. Accessible names are no help here — the whole
+ * class of bug below is two controls with different labels drawing the same
+ * picture.
+ */
+function glyphOf(button: HTMLElement): string {
+  const svg = button.querySelector("svg");
+  if (!svg) throw new Error("control renders no icon");
+  const cls = [...svg.classList].find((c) => c.startsWith("lucide-") && c !== "lucide-icon");
+  if (!cls) throw new Error(`no lucide glyph class on: ${svg.getAttribute("class")}`);
+  return cls.replace(/^lucide-/, "");
+}
+
 function ctx(over: Partial<ContextAction> = {}): ContextAction {
   return {
     kind: "assertion",
@@ -229,6 +246,56 @@ describe("tools reach their actions", () => {
     fireEvent.click(screen.getByRole("button", { name: /generate test/i }));
     expect(actions.stop).not.toHaveBeenCalled();
     expect(screen.getByText(/1 step will be saved/i)).toBeTruthy();
+  });
+});
+
+describe("tool icons stay distinguishable", () => {
+  // Every control in the tool row is ICON-ONLY — the label is a tooltip you get
+  // after hovering. So two controls drawing the same glyph are, in practice,
+  // the same button twice. Nothing else catches this: both render fine, both
+  // have correct accessible names, and the tests above pass either way.
+  //
+  // The specific trap is that Pause/Resume is a TOGGLE. Replay looked fine
+  // beside a pause bar; the moment the user pauses, the neighbour becomes a
+  // play triangle and the two are indistinguishable — while doing very
+  // different things (replay the recorded steps vs. carry on recording).
+
+  it("does not draw replay as a play triangle", () => {
+    renderPanel();
+    expect(glyphOf(screen.getByRole("button", { name: /replay from the current step/i })))
+      .not.toBe("play");
+  });
+
+  it("keeps replay distinct from resume once paused", () => {
+    // The regression, exactly: pause, then look at the two neighbours.
+    setStore({ state: state({ paused: true }) });
+    renderPanel();
+    const replay = glyphOf(screen.getByRole("button", { name: /replay from the current step/i }));
+    const resume = glyphOf(screen.getByRole("button", { name: /resume recording/i }));
+    expect(replay).not.toBe(resume);
+  });
+
+  it("keeps replay distinct from pause while recording", () => {
+    renderPanel();
+    const replay = glyphOf(screen.getByRole("button", { name: /replay from the current step/i }));
+    const pause = glyphOf(screen.getByRole("button", { name: /pause recording/i }));
+    expect(replay).not.toBe(pause);
+  });
+
+  it("gives every tool-row control its own glyph", () => {
+    // Generalises the rule rather than pinning today's four buttons: any future
+    // tool that reuses a glyph already in the row fails here.
+    setStore({ state: state({ paused: true }) });
+    renderPanel();
+    const labels = [
+      /add assertion/i,
+      /add step/i,
+      /generate steps with ai/i,
+      /replay from the current step/i,
+      /resume recording/i,
+    ];
+    const glyphs = labels.map((l) => glyphOf(screen.getByRole("button", { name: l })));
+    expect(new Set(glyphs).size).toBe(glyphs.length);
   });
 });
 

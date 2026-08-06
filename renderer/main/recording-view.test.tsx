@@ -122,6 +122,41 @@ beforeEach(() => {
   setStore();
 });
 
+/**
+ * The lucide glyph a control renders, e.g. "rotate-ccw". Every lucide icon
+ * ships a `lucide-<kebab-name>` class, which is the only thing in the DOM
+ * identifying the SHAPE the user sees — accessible names cannot distinguish two
+ * controls that draw the same picture. Mirrored in the panel's suite.
+ */
+function glyphOf(button: HTMLElement): string {
+  const svg = button.querySelector("svg");
+  if (!svg) throw new Error("control renders no icon");
+  const cls = [...svg.classList].find((c) => c.startsWith("lucide-") && c !== "lucide-icon");
+  if (!cls) throw new Error(`no lucide glyph class on: ${svg.getAttribute("class")}`);
+  return cls.replace(/^lucide-/, "");
+}
+
+describe("replay and pause stay visually distinct", () => {
+  // Here the two controls carry TEXT labels, so today nothing is ambiguous.
+  // The guard exists anyway for two reasons: the docked panel renders the same
+  // action icon-only (where the collision is real and this suite's sibling
+  // pins it), and the same glyph must not mean two things across the two
+  // trainers. If this view ever tightens to icon-only, the bug arrives silently.
+  it("does not draw replay as a play triangle", () => {
+    render(withAiDebug(<RecordingView />));
+    const replay = screen.getByRole("button", { name: /replay from the current step/i });
+    expect(glyphOf(replay)).not.toBe("play");
+  });
+
+  it("keeps replay distinct from resume once paused", () => {
+    setStore({ state: state({ paused: true }) });
+    render(withAiDebug(<RecordingView />));
+    const replay = glyphOf(screen.getByRole("button", { name: /replay from the current step/i }));
+    const resume = glyphOf(screen.getByRole("button", { name: /resume/i }));
+    expect(replay).not.toBe(resume);
+  });
+});
+
 describe("recording state", () => {
   it("shows the URL being recorded", () => {
     // The trainer header identifies the session by URL, not by test name.

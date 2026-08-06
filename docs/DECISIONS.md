@@ -16,6 +16,15 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-06 — Replay is a return arrow, not a play triangle
+
+- **Symptom:** in the docked trainer panel, "Replay from the current step" and the pause/resume control sat side by side as two identical ▶ triangles.
+- **Why it hid:** the neighbour is a TOGGLE. While recording it draws a pause bar, so the pair looks fine; the collision only appears once the user pauses and the button becomes a play triangle. Both controls render correctly and both have correct accessible names, so nothing in the DOM is wrong — the two are simply indistinguishable to look at, while doing very different things (replay the recorded steps vs. carry on recording). The panel's tool row is icon-only at ~360px, so the glyph is the entire signal and the label is a tooltip you get after hovering.
+- **Fix:** `RotateCcw` (a return/repeat arrow) for replay, in **both** trainers. The main window keeps a text label so it never had the collision, but the same action must not wear a different glyph in the two windows — and if that row ever tightens to icon-only, the bug would arrive silently.
+- **Testing:** icons are asserted by GLYPH, not by label. Every lucide icon ships a `lucide-<kebab-name>` class, which is the only thing in the DOM naming the shape the user sees; accessible names are useless here precisely because the bug is two differently-labelled controls drawing the same picture. `glyphOf()` reads that class in both suites. Beyond pinning the specific pair, `trainer-panel-view.test.tsx` asserts the whole tool row has no duplicate glyphs, so a future tool reusing one fails without anyone remembering this entry.
+- **Files:** `renderer/trainer/trainer-panel-view.tsx`, `renderer/main/recording-view.tsx`, + both test suites (6 new tests).
+- **Verified:** `lint`, `type-check`, `test:all` (809 tests) and `build` green; reverting the icon turns 3 panel tests and 2 main-window tests red.
+
 ### 2026-08-06 — Sticky trainer panel docked to the training browser (mabl Trainer)
 
 - **Goal:** Remove the window ping-pong that dominates training. The browser is its own window; every control lived in the main app window, so recording one assertion was click-in-page → find app window → click Assert → find browser → click element. mabl solves this by docking its Trainer to the right edge of the app under test.
