@@ -1,11 +1,39 @@
 # Dependencies
 node_modules/
 
-# Agent context (auto-generated, not worth versioning)
-.glaze_memory/
+# Build output. `npm run build` publishes to ../.glaze/build, outside this repo,
+# and clears its staging dir afterwards — but an aborted build leaves it behind.
+.build/
+dist/
 
-# App icons (binary, auto-generated)
+# Test and coverage output.
+# `coverage-summary.json` embeds absolute paths from the machine that ran it,
+# so a committed copy leaks a home directory and conflicts on every run.
+coverage/
+test-results/
+playwright-report/
+blob-report/
+
+# Agent scratch. The DOM snapshots in .glaze-tool-output embed absolute /Users
+# paths. .glaze_memory holds the frozen originals of docs/ARCHITECTURE.md and
+# docs/DECISIONS.md — superseded by those versioned copies, kept only as a
+# local artifact, and no longer updated by anything.
+.glaze_memory/
+.glaze-tool-output/
+tmp/
+
+# Generated assets. Icons are rebuilt from package.json's `iconDescription`;
+# .icon-hash is the cache key that tracks whether they are stale.
 app-icon.*
+.icon-hash
+
+# Per-machine editor and agent state. These were previously ignored only by a
+# global gitignore on one machine, which does not travel with a clone.
+.claude/settings.local.json
+.claude/.cc-writes/
+.claude/worktrees/
+.vscode/
+.idea/
 
 # OS files
 .DS_Store
@@ -13,6 +41,10 @@ Thumbs.db
 
 # Logs
 *.log
+npm-debug.log*
 
-# Glaze agent temporary files
-tmp/*
+# Environment files. The Anthropic API key is stored in the app's userData
+# directory, never in the repo — this is a guard in case that ever changes.
+.env
+.env.*
+!.env.example

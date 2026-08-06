@@ -1,0 +1,31 @@
+name: Repo hygiene
+
+# The full gate (lint, type-check, test:all, build) cannot run here: `@glaze/core`
+# resolves to the Glaze.app SDK install outside the repo, which does not exist on
+# a hosted runner. This workflow checks only what is verifiable without the SDK.
+# The real suite is a local pre-push gate — see the pull request template.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    name: Repo hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # No `npm ci` — installing dependencies proves nothing here and the
+      # checks read only tracked files plus the two manifests.
+      - name: Check repo hygiene
+        run: node .github/scripts/check-repo-hygiene.mjs
