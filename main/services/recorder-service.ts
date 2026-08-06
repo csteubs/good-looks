@@ -31,6 +31,8 @@ import {
   GUARDED_NAVIGATION_EVENTS,
   decideNavigation,
   isDuplicateContainment,
+  permissionAllowed,
+  DENIED_RECORDER_PERMISSIONS,
 } from "./recorder-navigation.js";
 import type { CookieSpec } from "../recorder/types.js";
 import {
@@ -654,6 +656,48 @@ export const recorderService = {
           if (selfLoad === target) selfLoad = null;
         });
     };
+
+    // ── Kill the escape at its source, not just at the events ────────
+    //
+    // Intercepting navigation events assumes the escape travels through an
+    // event we know to listen for. That assumption was already wrong once
+    // (will-redirect), and an event-by-event defence can only ever be as
+    // complete as the last incident. Handing a URL to the OS is a PERMISSION in
+    // this SDK — "openExternal", carrying the target in details.externalURL —
+    // so denying it on this window's session refuses the capability itself,
+    // whatever path asks for it.
+    //
+    // Scoped to the recorder's own private partition, so nothing else in the
+    // app is affected. Only openExternal is denied; every other permission is
+    // left as it was, because a training browser legitimately needs media,
+    // geolocation and the rest to reproduce a user's session.
+    try {
+      const recSession = wc.session;
+      recSession.setPermissionRequestHandler((_target, permission, callback, details) => {
+        if (!permissionAllowed(permission)) {
+          logContained(
+            String((details as { externalURL?: unknown })?.externalURL ?? ""),
+            "openExternal permission denied",
+            "permission-request",
+          );
+          callback(false);
+          return;
+        }
+        callback(true);
+      });
+      recSession.setPermissionCheckHandler((_target, permission) => permissionAllowed(permission));
+      logger.info("recorder", "Training window containment armed", {
+        deniedPermissions: [...DENIED_RECORDER_PERMISSIONS],
+        guardedEvents: [...GUARDED_NAVIGATION_EVENTS],
+      });
+    } catch (err) {
+      // If the SDK ever drops these, the event guards below are still in place
+      // — but this is the stronger of the two, so its absence is worth shouting
+      // about rather than degrading quietly.
+      logger.error("recorder", "Could not deny the openExternal permission for the training window", {
+        err: String(err),
+      });
+    }
 
     // A navigation we refused to let out. Logged loudly AND surfaced in the
     // trainer's Console, because the failure mode this guards against is

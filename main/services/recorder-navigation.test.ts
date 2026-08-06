@@ -17,9 +17,11 @@
 import { describe, it, expect } from "vitest";
 
 import {
+  DENIED_RECORDER_PERMISSIONS,
   GUARDED_NAVIGATION_EVENTS,
   decideNavigation,
   isDuplicateContainment,
+  permissionAllowed,
   type NavigationDetails,
 } from "./recorder-navigation.js";
 
@@ -215,5 +217,40 @@ describe("the invariant, stated directly", () => {
     for (const c of cases) {
       expect(decideNavigation(c, null).reason.length).toBeGreaterThan(0);
     }
+  });
+});
+
+
+describe("capability containment", () => {
+  it("refuses the openExternal permission outright", () => {
+    // The stronger guard. Intercepting events assumes the escape travels
+    // through an event we thought to listen for — an assumption already proven
+    // wrong once. Denying the capability refuses it whatever asks, by whatever
+    // path, including paths that raise no navigation event at all.
+    expect(permissionAllowed("openExternal")).toBe(false);
+    expect(DENIED_RECORDER_PERMISSIONS).toContain("openExternal");
+  });
+
+  it("leaves every other permission alone", () => {
+    // A training browser needs these to reproduce a real session; denying them
+    // would break recordings without preventing any escape.
+    for (const permission of [
+      "media",
+      "geolocation",
+      "notifications",
+      "clipboard-read",
+      "fullscreen",
+      "midi",
+      "storage-access",
+    ]) {
+      expect(permissionAllowed(permission), permission).toBe(true);
+    }
+  });
+
+  it("allows an unknown permission rather than breaking the page", () => {
+    // Opposite default from navigation, deliberately: an unrecognized
+    // permission cannot hand a URL to the OS, so failing closed here would
+    // break pages for no gain. The escape route is named, and it is denied.
+    expect(permissionAllowed("some-future-permission")).toBe(true);
   });
 });

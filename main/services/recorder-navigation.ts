@@ -124,3 +124,29 @@ export function isDuplicateContainment(
 ): boolean {
   return last !== null && last.url === url && now - last.at < windowMs;
 }
+
+
+// ── Capability-level containment ─────────────────────────────────────
+// Intercepting navigation events assumes the escape travels through an event
+// we thought to listen for. That assumption has already been wrong once, and an
+// event-by-event defence is only ever as complete as the last incident.
+//
+// Handing a URL to the OS is a PERMISSION in this SDK ("openExternal"), so
+// denying it refuses the capability itself — whatever asks, by whatever path.
+// This is the stronger of the two guards; the event handlers remain as a
+// second layer rather than the only one.
+
+/** Permissions the training window must never be granted. */
+export const DENIED_RECORDER_PERMISSIONS = ["openExternal"] as const;
+
+/**
+ * Whether the training window may be granted a permission.
+ *
+ * Everything except the denied set is allowed: a training browser legitimately
+ * needs media, geolocation and the rest to reproduce what a user's session
+ * looked like, and blanket-denying would break recordings for no safety gain.
+ * The one capability that can reach OUT of the app is the one refused.
+ */
+export function permissionAllowed(permission: string): boolean {
+  return !(DENIED_RECORDER_PERMISSIONS as readonly string[]).includes(permission);
+}

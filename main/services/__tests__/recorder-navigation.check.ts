@@ -18,7 +18,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { GUARDED_NAVIGATION_EVENTS } from "../recorder-navigation.js";
+import { DENIED_RECORDER_PERMISSIONS, GUARDED_NAVIGATION_EVENTS } from "../recorder-navigation.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const mainDir = resolve(here, "../..");
@@ -96,6 +96,30 @@ assert(
   "a child window created despite the deny is closed as a backstop",
 );
 
+// ── The capability itself is denied ──────────────────────────────────
+// The event guards are the second layer. This is the first: handing a URL to
+// the OS is a permission, and the training window is refused it.
+assert(
+  service.includes("setPermissionRequestHandler"),
+  "the training window installs a permission request handler",
+);
+assert(
+  service.includes("setPermissionCheckHandler"),
+  "…and a permission CHECK handler (a check that returns true bypasses the request)",
+);
+assert(
+  /permissionAllowed\(permission\)/.test(service),
+  "…both routed through permissionAllowed, so the denied set is defined in one place",
+);
+assert(
+  DENIED_RECORDER_PERMISSIONS.includes("openExternal"),
+  "openExternal is in the denied set",
+);
+assert(
+  service.includes("Training window containment armed"),
+  "the armed guards are logged at session start, so a future report says which build was running",
+);
+
 // ── No other route out of the app ────────────────────────────────────
 // shell.openExternal hands a URL to the OS by definition. There is no use for
 // it on any path the trainer can reach, and its absence is far easier to keep
@@ -112,13 +136,16 @@ function walk(dir: string): string[] {
 }
 
 {
+  // A CALL, not the word: "openExternal" also names the permission we deny, and
+  // matching the bare identifier would flag the very code doing the denying.
+  const CALLS_OPEN_EXTERNAL = /(?:shell|Shell)\s*\.\s*openExternal\s*\(|(?<![."'`\w])openExternal\s*\(/;
   const offenders = walk(mainDir).filter((file) => {
     if (file.endsWith("recorder-navigation.check.ts")) return false;
-    return /\bopenExternal\b/.test(readFileSync(file, "utf8"));
+    return CALLS_OPEN_EXTERNAL.test(readFileSync(file, "utf8"));
   });
   assert(
     offenders.length === 0,
-    `no main-process file calls openExternal (found: ${offenders.map((f) => f.replace(mainDir, "main")).join(", ") || "none"})`,
+    `no main-process file CALLS openExternal (found: ${offenders.map((f) => f.replace(mainDir, "main")).join(", ") || "none"})`,
   );
 }
 
