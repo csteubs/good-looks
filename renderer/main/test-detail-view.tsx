@@ -34,6 +34,7 @@ import { ChevronDown, Pencil, TriangleAlert, Trash2 } from "lucide-react";
 
 import { api } from "../lib/api";
 import { useRecorder } from "./recorder-store";
+import { hashScript } from "../lib/ai-debug-sessions";
 import {
   runSessionKey,
   useAiDebug,
@@ -167,6 +168,10 @@ export function TestDetailView() {
   const script = scriptQuery.data ?? "";
   const runOutput = runInfo?.lines.join("") ?? "";
   const recordId = runInfo?.recordId;
+  // Identifies the execution being debugged. The artifact id once the run has
+  // finished; before that, a hash of the output so far — which is what
+  // distinguishes one run from the next while it is still going.
+  const runKey = recordId ?? (runOutput ? hashScript(runOutput) : null);
 
   // Whether the finished run recorded console/network. Asked once per run
   // rather than assumed from the toggle: the toggle can be flipped after a run,
@@ -220,9 +225,10 @@ export function TestDetailView() {
       testId: id,
       label: test.name,
       testName: test.name,
+      runKey,
       context: runContext,
     });
-  }, [aiDebug, aiKey, id, test, runContext, script]);
+  }, [aiDebug, aiKey, id, test, runContext, runKey]);
 
   const saveName = async (name: string) => {
     const trimmed = name.trim();

@@ -972,6 +972,11 @@ export interface AiDebugSession {
   /** Backend llm request id while streaming; null once terminal. Owning this is
    *  what makes an orphaned request cancellable. */
   requestId: string | null;
+  /** Identifies the RUN this session describes — the artifact id, or a hash of
+   *  the run output before one exists. A session is about one execution, not
+   *  about a test in general: reopening the panel after a re-run must not show
+   *  a diagnosis of output that is no longer on screen. */
+  runKey?: string | null;
   /** Hash of the script the prompt was built from, so a diff computed against a
    *  since-edited script can be flagged instead of silently clobbering it. */
   scriptHash: string | null;

@@ -78,6 +78,9 @@ export interface OpenSessionInit {
   testId: string;
   label: string;
   testName: string;
+  /** Which run this is about. When it differs from the existing session's, the
+   *  session is RESET rather than reused — see openSession. */
+  runKey?: string | null;
   context: AiDebugContextData;
 }
 
@@ -147,6 +150,20 @@ const CHUNK_FLUSH_MS = 60;
 const PERSIST_THROTTLE_MS = 2000;
 
 export { runSessionKey, stepSessionKey };
+
+/** Strictly-increasing session timestamps.
+ *
+ *  `Date.now()` has millisecond resolution, and two sessions created in the
+ *  same tick would share a startedAt — which breaks two things that look
+ *  unrelated: the dialog's per-session state (draft, thread, fulfilment
+ *  counters) all key on startedAt, so a reset within the same millisecond
+ *  would silently reuse the previous run's state; and "stop the oldest stream"
+ *  would have no defined answer between two ties. */
+let lastStamp = 0;
+function nextStamp(): number {
+  lastStamp = Math.max(Date.now(), lastStamp + 1);
+  return lastStamp;
+}
 
 export function AiDebugProvider({ children }: { children: React.ReactNode }) {
   const [metas, setMetas] = React.useState<Record<string, AiDebugMeta>>({});
@@ -393,9 +410,30 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
   const openSession = React.useCallback(
     (init: OpenSessionInit) => {
       ctxRef.current[init.key] = init.context;
+      const prior = metaRef.current[init.key];
+      // A session is about ONE execution. Re-running the test and reopening the
+      // panel must not show the previous run's diagnosis, its diff, or its
+      // stale-script warning — all of which describe output that is no longer
+      // on screen. A differing runKey resets the session instead of reusing it.
+      const isNewRun =
+        Boolean(prior) && init.runKey != null && prior.runKey != null && prior.runKey !== init.runKey;
+      if (isNewRun && prior?.requestId) {
+        // The old request is answering about the old run, and its chunks route
+        // by key — leaving it alive would stream them into the new session.
+        void api.llm.cancel(prior.requestId).catch(() => {});
+        delete routeRef.current[prior.requestId];
+      }
+      if (isNewRun) {
+        delete pendingRef.current[init.key];
+        setContents((prev) => {
+          const next = { ...prev, [init.key]: EMPTY_CONTENT };
+          contentRef.current = next;
+          return next;
+        });
+      }
       setMetas((prev) => {
-        const existing = prev[init.key];
-        const now = Date.now();
+        const existing = isNewRun ? undefined : prev[init.key];
+        const now = nextStamp();
         const next: AiDebugMeta = existing
           ? {
               ...existing,
@@ -408,6 +446,7 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
               // script a prompt was SENT with; re-stamping it on open would
               // erase the mismatch that warns the user their edits predate the
               // diagnosis they are about to apply.
+              runKey: init.runKey ?? existing.runKey ?? null,
               updatedAt: now,
             }
           : {
@@ -421,6 +460,10 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
               requestId: null,
               // Stamped when the prompt is actually sent (see startStream).
               scriptHash: null,
+              runKey: init.runKey ?? null,
+              // A fresh startedAt is what resets the dialog's own per-session
+              // state (draft, thread, fulfilment counters), all of which key on
+              // it — so one reset here reaches every one of them.
               startedAt: now,
               updatedAt: now,
               readOnly: false,

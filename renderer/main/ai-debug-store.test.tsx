@@ -532,6 +532,125 @@ describe("hydration from disk", () => {
   });
 });
 
+// ── One session, one run ─────────────────────────────────────────────
+// A session describes ONE execution. Keying it by test id alone meant a
+// re-run reused the previous run's session, so reopening the panel showed a
+// diagnosis, a diff and a stale-script warning about output that was no longer
+// on screen.
+
+describe("re-running the test", () => {
+  function open(runKey: string) {
+    act(() => {
+      store.openSession({
+        key: KEY,
+        kind: "run",
+        testId: "t1",
+        label: "Checkout",
+        testName: "Checkout",
+        runKey,
+        context: {
+          kind: "run",
+          testName: "Checkout",
+          testUrl: "u",
+          script: "s",
+          output: "o",
+          imported: false,
+        },
+      });
+    });
+  }
+
+  it("clears the previous run's answer when a different run is debugged", async () => {
+    render(<Harness sessionKey={KEY} showView={false} />);
+    await waitFor(() => expect(store.hydrated).toBe(true));
+
+    open("run-a");
+    await startStream(KEY);
+    emit("llm:chunk", { requestId: "req-1", delta: "diagnosis of run A" });
+    emit("llm:done", { requestId: "req-1" });
+    await waitFor(() => expect(screen.getByTestId("content").textContent).toBe("diagnosis of run A"));
+
+    open("run-b");
+    await waitFor(() => expect(screen.getByTestId("content").textContent).toBe(""));
+    expect(store.sessions[0].status).toBe("idle");
+    expect(store.sessions[0].error).toBeNull();
+  });
+
+  it("clears the stale-script warning's basis along with the answer", async () => {
+    // The warning fires on a scriptHash from a SEND. Carrying it across runs
+    // is what put "the script changed after this diagnosis" on a diagnosis
+    // that had not been requested yet.
+    render(<Harness sessionKey={KEY} showView={false} />);
+    await waitFor(() => expect(store.hydrated).toBe(true));
+
+    open("run-a");
+    await act(async () => {
+      await store.startStream(KEY, [{ role: "user", content: "hi" }], { scriptHash: "aaaa1111" });
+    });
+    expect(store.sessions[0].scriptHash).toBe("aaaa1111");
+
+    open("run-b");
+    expect(store.sessions[0].scriptHash).toBeNull();
+  });
+
+  it("gives the new run a fresh identity, so per-session UI state resets too", async () => {
+    render(<Harness sessionKey={KEY} showView={false} />);
+    await waitFor(() => expect(store.hydrated).toBe(true));
+
+    open("run-a");
+    const first = store.sessions[0].startedAt;
+    open("run-b");
+    // The dialog's draft, thread and fulfilment counters all key on startedAt,
+    // so bumping it here is what resets every one of them at once.
+    expect(store.sessions[0].startedAt).not.toBe(first);
+    expect(store.sessions[0].runKey).toBe("run-b");
+  });
+
+  it("cancels a stream still answering about the previous run", async () => {
+    // Chunks route by session key, so a surviving request would stream the old
+    // run's answer into the new run's session.
+    render(<Harness sessionKey={KEY} showView={false} />);
+    await waitFor(() => expect(store.hydrated).toBe(true));
+
+    open("run-a");
+    await startStream(KEY);
+    open("run-b");
+
+    expect(h.cancel).toHaveBeenCalledWith("req-1");
+    emit("llm:chunk", { requestId: "req-1", delta: "late answer about run A" });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(screen.getByTestId("content").textContent).toBe("");
+  });
+
+  it("keeps the session when the same run is reopened", async () => {
+    render(<Harness sessionKey={KEY} showView={false} />);
+    await waitFor(() => expect(store.hydrated).toBe(true));
+
+    open("run-a");
+    await startStream(KEY);
+    emit("llm:chunk", { requestId: "req-1", delta: "keep me" });
+    emit("llm:done", { requestId: "req-1" });
+    await waitFor(() => expect(screen.getByTestId("content").textContent).toBe("keep me"));
+
+    // Minimizing and reopening the SAME run must not throw the answer away —
+    // that is the entire point of the feature.
+    open("run-a");
+    expect(screen.getByTestId("content").textContent).toBe("keep me");
+    expect(store.sessions[0].status).toBe("done");
+  });
+
+  it("does not reset a session restored from disk that has no run identity", async () => {
+    // Sessions persisted before runKey existed have none; treating "unknown"
+    // as "different" would wipe every restored diagnosis on first open.
+    h.listResult = [session({ content: "restored answer", runKey: undefined })];
+    render(<Harness sessionKey={KEY} showView={false} />);
+    await waitFor(() => expect(store.hydrated).toBe(true));
+
+    open("run-a");
+    expect(screen.getByTestId("content").textContent).toBe("restored answer");
+  });
+});
+
 describe("script hashing and staleness", () => {
   it("has no hash until a prompt is actually sent", async () => {
     render(<Harness sessionKey={KEY} />);

@@ -827,6 +827,11 @@ export interface AiDebugSession {
    *  kinds existed. */
   errorKind?: LlmErrorKind | null;
   requestId: string | null;
+  /** Identifies the RUN this session describes — the artifact id, or a hash of
+   *  the run output before one exists. A session is about one execution, not
+   *  about a test in general: reopening the panel after a re-run must not show
+   *  a diagnosis of output that is no longer on screen. */
+  runKey?: string | null;
   scriptHash: string | null;
   startedAt: number;
   updatedAt: number;

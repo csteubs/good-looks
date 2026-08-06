@@ -113,17 +113,24 @@ function runInfo(over: Partial<RunInfo> = {}): RunInfo {
   };
 }
 
-function renderApp() {
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>
+const qcRef = { current: null as QueryClient | null };
+
+function app() {
+  qcRef.current ??= new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return (
+    <QueryClientProvider client={qcRef.current}>
       <AiDebugProvider>
         <TestDetailView />
         <AiDebugHost />
         <AiDebugChip />
       </AiDebugProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+}
+
+function renderApp() {
+  qcRef.current = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(app());
 }
 
 function emit(channel: string, payload: unknown) {
@@ -500,5 +507,68 @@ describe("auto-scroll", () => {
 
     fireEvent.click(await findDebugIcon());
     expect(await screen.findByRole("button", { name: /Auto-scroll off/i })).toBeTruthy();
+  });
+});
+
+// ── Debugging a second run of the same test ──────────────────────────
+// Reported from the app: after re-running a test, opening "Debug with AI"
+// showed the PREVIOUS run's answer — with its diff, and a stale-script warning
+// about a diagnosis that had not been requested for this run at all.
+
+describe("after re-running the test", () => {
+  it("does not show the previous run's answer", async () => {
+    const { rerender } = renderApp();
+    fireEvent.click(await findDebugIcon());
+    fireEvent.click(await screen.findByRole("button", { name: /Send to AI/i }));
+    await waitFor(() => expect(h.chat).toHaveBeenCalled());
+    emit("llm:chunk", { requestId: "req-1", delta: "diagnosis of the FIRST run" });
+    emit("llm:done", { requestId: "req-1" });
+    await screen.findByText(/diagnosis of the FIRST run/);
+    fireEvent.click(screen.getByRole("button", { name: /^Minimize$/i }));
+
+    // A second run: new artifact id, different output.
+    h.runs = { t1: runInfo({ recordId: "rec-2", lines: ["Error: something else\n"] }) };
+    rerender(app());
+
+    fireEvent.click(await findDebugIcon());
+    // Back to the review phase for the new run, with the old answer gone.
+    expect(await screen.findByText(/Nothing is sent until you confirm/i)).toBeTruthy();
+    expect(screen.queryByText(/diagnosis of the FIRST run/)).toBeNull();
+  });
+
+  it("does not carry the previous run's stale-script warning over", async () => {
+    // What the screenshot showed: a warning that the script changed since a
+    // diagnosis, on a run whose diagnosis had never been requested.
+    h.listResult = [
+      session({
+        status: "done",
+        content: "old answer",
+        scriptHash: hashScript("a completely different script"),
+        runKey: "rec-old",
+      }),
+    ];
+    renderApp();
+    await waitFor(() => expect(screen.getByLabelText(toneFor("done").label)).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText(toneFor("done").label));
+    await screen.findByText(/Nothing is sent until you confirm/i);
+    expect(screen.queryByText(/script changed after this diagnosis/i)).toBeNull();
+    expect(screen.queryByText(/old answer/)).toBeNull();
+  });
+
+  it("keeps the answer when the SAME run is reopened", async () => {
+    renderApp();
+    fireEvent.click(await findDebugIcon());
+    fireEvent.click(await screen.findByRole("button", { name: /Send to AI/i }));
+    await waitFor(() => expect(h.chat).toHaveBeenCalled());
+    emit("llm:chunk", { requestId: "req-1", delta: "keep this answer" });
+    emit("llm:done", { requestId: "req-1" });
+    await screen.findByText(/keep this answer/);
+
+    fireEvent.click(screen.getByRole("button", { name: /^Minimize$/i }));
+    fireEvent.click(await findDebugIcon());
+    // Minimize and restore is the whole feature — it must not look like a
+    // re-run and throw the work away.
+    expect(await screen.findByText(/keep this answer/)).toBeTruthy();
   });
 });
