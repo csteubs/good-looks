@@ -279,11 +279,79 @@ describe("test creation paths", () => {
     // worse than not created at all.
     expect(rec.scriptPath).toBeTruthy();
     expect(fs.existsSync(rec.scriptPath)).toBe(true);
-    // No captured steps: the script is the source of truth, so it must be
-    // flagged as hand-edited or the next save would regenerate an empty spec
-    // over the generated one.
+    // The model's file is the runnable artifact, so it must be flagged as
+    // hand-edited or a later rename would regenerate a spec over it from the
+    // (lossy) parsed steps.
     expect(rec.scriptEdited).toBe(true);
+    // An empty test body genuinely has no steps — the point here is that this
+    // is the parse result, not a hardcoded [].
     expect(rec.steps).toEqual([]);
+  });
+
+  // The generated spec is the ONLY description of a prompt-driven test, so if
+  // it isn't translated into the Step[] model the detail view hides the Steps
+  // tab outright (it renders only when steps.length > 0) — the test looks like
+  // generation half-worked, with no per-step rows to inspect, replay or debug.
+  it("translates a generated spec into listable steps", async () => {
+    const rec = await invokeHandler<TestRecord>("tests:createFromPrompt", {
+      name: "Sign in",
+      url: "https://example.com",
+      source: [
+        "import { test, expect } from '@playwright/test';",
+        "",
+        "test('Sign in', async ({ page }) => {",
+        "  await page.goto('https://example.com');",
+        "  await page.getByLabel('Email').fill('test@example.com');",
+        "  await page.getByRole('button', { name: 'Sign in' }).click();",
+        "  await expect(page.getByRole('heading', { name: 'Welcome' })).toBeVisible();",
+        "});",
+        "",
+      ].join("\n"),
+    });
+
+    expect(rec.steps.map((s) => s.type)).toEqual(["goto", "fill", "click", "assert"]);
+    // Locators have to survive the translation too: a step row with no locator
+    // can't be replayed or healed, so a step list of the right LENGTH can still
+    // be useless.
+    expect(rec.steps[1].locator).toMatchObject({ k: "label", v: "Email" });
+    expect(rec.steps[2].locator).toMatchObject({ k: "role", role: "button", name: "Sign in" });
+    expect(rec.steps[3].assert).toBe("visible");
+    // Everything mapped, so the "steps may not reflect the script" banner must
+    // stay down — a warning on a clean parse trains the user to ignore it.
+    expect(rec.stepsDiverged).toBe(false);
+  });
+
+  it("flags a generated spec whose statements it could not fully map", async () => {
+    const rec = await invokeHandler<TestRecord>("tests:createFromPrompt", {
+      name: "Partly parseable",
+      url: "https://example.com",
+      source: [
+        "import { test, expect } from '@playwright/test';",
+        "",
+        "test('Partly parseable', async ({ page }) => {",
+        "  await page.goto('https://example.com');",
+        "  await page.evaluate(() => window.scrollTo(0, 500));",
+        "});",
+        "",
+      ].join("\n"),
+    });
+
+    // Steps are an undercount of the script here. Showing them without saying
+    // so is the silent failure: the user reads the Steps tab as the whole test.
+    expect(rec.stepsDiverged).toBe(true);
+  });
+
+  it("still creates a test when the generated spec cannot be parsed at all", async () => {
+    // Parsing is a nicety; the script runs either way. A spec the parser
+    // chokes on must not cost the user their generated test.
+    const rec = await invokeHandler<TestRecord>("tests:createFromPrompt", {
+      name: "Unparseable",
+      url: "https://example.com",
+      source: "// the model returned prose, not a spec\n",
+    });
+    expect(rec.id).toBeTruthy();
+    expect(rec.steps).toEqual([]);
+    expect(fs.existsSync(rec.scriptPath)).toBe(true);
   });
 
   it("makes a created test immediately listable and fetchable", async () => {

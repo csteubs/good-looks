@@ -522,8 +522,8 @@ export function TestDetailView() {
         <div className="px-4 pt-2">
           <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
             <Callout.Text>
-              Steps may not reflect the script — some statements from the last edit couldn&apos;t be
-              parsed back into steps.
+              Steps may not reflect the script — some statements in it couldn&apos;t be parsed back
+              into steps.
             </Callout.Text>
           </Callout>
         </div>

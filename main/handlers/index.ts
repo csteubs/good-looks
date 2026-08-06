@@ -553,8 +553,12 @@ export function registerHandlers(): void {
   );
 
   // Create a new test from an LLM-generated spec (prompt-driven generation).
-  // Unlike a recorded test, there are no captured steps — the script is the
-  // source of truth, so it's saved as scriptEdited with an empty steps array.
+  // The model writes spec source rather than steps, so the spec is parsed back
+  // into the app's Step[] model — same translation the import path does — or
+  // the test opens with no Steps tab at all and reads as "generation produced
+  // nothing I can inspect". `scriptEdited` stays true for the import path's
+  // reason: the model's verbatim file is the runnable artifact and must not be
+  // regenerated from the (lossy) parsed steps on a rename.
   ipcMain.handle(
     "tests:createFromPrompt",
     async (
@@ -565,20 +569,41 @@ export function registerHandlers(): void {
       const id = randomUUID();
       const now = Date.now();
       const name = params.name.trim() || "Generated test";
+      // A spec that won't parse is still a perfectly good test — it just shows
+      // Script only, exactly as before. Never fail the creation over it.
+      let steps: Step[] = [];
+      let stepsDiverged = false;
+      try {
+        const parsed = parseSpecDetailed(params.source);
+        steps = parsed.steps;
+        stepsDiverged = parsed.skipped > 0;
+        if (parsed.skipped > 0) {
+          logger.warn("handlers", "Generated spec has statements the parser couldn't map to steps", {
+            id,
+            skipped: parsed.skipped,
+          });
+        }
+      } catch (err) {
+        logger.warn("handlers", "Failed to parse steps from generated script", {
+          id,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
       const rec: TestRecord = {
         id,
         name,
         url: params.url.trim(),
         createdAt: now,
         updatedAt: now,
-        steps: [],
+        steps,
+        stepsDiverged,
         scriptPath: testStore.writeScript(id, params.source),
         scriptEdited: true,
         speed: params.speed ?? "fast",
         captureArtifacts: recorderSettingsStore.get().defaultCaptureArtifacts,
       };
       testStore.save(rec);
-      logger.info("handlers", "Created test from prompt", { id, name });
+      logger.info("handlers", "Created test from prompt", { id, name, steps: steps.length });
       return rec;
     },
   );
