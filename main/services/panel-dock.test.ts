@@ -162,6 +162,77 @@ describe("computeDock", () => {
   });
 });
 
+// A session recording at a window-size preset. The browser's width is then the
+// size the generated test replays at, not a footprint the user dragged, so the
+// default split would leave the page rendering at one width while the recorded
+// `viewport` step promises another — the two features cancelling out silently,
+// which is the whole failure mode the preset exists to prevent.
+describe("computeDock with a preserved browser width", () => {
+  const KEEP = { preserveBrowserWidth: true };
+
+  it("leaves the browser's width exactly alone", () => {
+    const { browser, panel } = expectSaneLayout(
+      computeDock(BROWSER, PANEL_WIDTH, WORK_AREA, "right", KEEP),
+    );
+    expect(browser.width).toBe(BROWSER.width);
+    expect(panel.width).toBe(PANEL_WIDTH);
+  });
+
+  it("grows the pair's footprint instead of splitting it", () => {
+    // The inverse of the default's total-preserving rule, stated directly.
+    const { browser, panel } = expectSaneLayout(
+      computeDock(BROWSER, PANEL_WIDTH, WORK_AREA, "right", KEEP),
+    );
+    expect(browser.width + panel.width).toBe(BROWSER.width + PANEL_WIDTH);
+  });
+
+  it("keeps a width BELOW the browser floor, which a mobile preset is", () => {
+    // 390×844 is the Mobile preset and is far under BROWSER_MIN_WIDTH. The
+    // floor stops docking from ACCIDENTALLY forcing a mobile layout; it must not
+    // override one the user explicitly asked to record at.
+    const mobile: Bounds = { x: 100, y: 100, width: 390, height: 844 };
+    expect(mobile.width).toBeLessThan(BROWSER_MIN_WIDTH);
+    const { browser } = expectSaneLayout(computeDock(mobile, PANEL_WIDTH, WORK_AREA, "right", KEEP));
+    expect(browser.width).toBe(390);
+  });
+
+  it("refuses to dock rather than resize a browser it was told not to", () => {
+    // The honest outcome when the preset plus a panel exceeds the display: the
+    // caller opens the panel undocked, which it already knows how to do.
+    const narrowDisplay: Bounds = { x: 0, y: 0, width: 1400, height: 900 };
+    const wide: Bounds = { x: 0, y: 0, width: 1280, height: 800 };
+    expect(computeDock(wide, PANEL_WIDTH, narrowDisplay, "right", KEEP)).toBeNull();
+    // …and the default split still docks there, so this is the flag's doing and
+    // not the display simply being too small for anything.
+    expectSaneLayout(computeDock(wide, PANEL_WIDTH, narrowDisplay), narrowDisplay);
+  });
+
+  it("still refuses on a display too small for a usable pair at all", () => {
+    const tiny: Bounds = { x: 0, y: 0, width: 500, height: 800 };
+    expect(computeDock(BROWSER, PANEL_WIDTH, tiny, "right", KEEP)).toBeNull();
+  });
+
+  it("preserves the width docking to either side", () => {
+    for (const side of ["left", "right"] as DockSide[]) {
+      const { browser } = expectSaneLayout(
+        computeDock(BROWSER, PANEL_WIDTH, WORK_AREA, side, KEEP),
+      );
+      expect(browser.width, `side ${side}`).toBe(BROWSER.width);
+    }
+  });
+
+  it("pulls the pair back on-screen without shrinking the browser", () => {
+    // A browser dragged against the right edge: the pair has to move left to
+    // fit, but moving is free — resizing is what would break the recording.
+    const hanging: Bounds = { x: 1700, y: 100, width: 1280, height: 800 };
+    const { browser, panel } = expectSaneLayout(
+      computeDock(hanging, PANEL_WIDTH, WORK_AREA, "right", KEEP),
+    );
+    expect(browser.width).toBe(1280);
+    expect(right(panel)).toBeLessThanOrEqual(right(WORK_AREA));
+  });
+});
+
 describe("computePanelFollow", () => {
   /** The docked starting arrangement every follow case begins from. */
   const DOCKED = computeDock(BROWSER, PANEL_WIDTH, WORK_AREA) as DockLayout;

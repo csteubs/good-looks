@@ -93,7 +93,15 @@ interface RecorderContextValue {
    *  list you have not received yet edits the wrong position, or nothing. */
   stepsLoaded: boolean;
   runs: Record<string, RunInfo>;
-  start: (url: string, name: string, testId?: string) => Promise<void>;
+  /** `viewport` is the New Recording dialog's window-size preset; omitted (or
+   *  null) keeps the trainer's default window size. Ignored when `testId` names
+   *  an existing test — that session opens at the size the test recorded. */
+  start: (
+    url: string,
+    name: string,
+    testId?: string,
+    viewport?: { width: number; height: number } | null,
+  ) => Promise<void>;
   pause: () => void;
   resume: () => void;
   stop: () => void;
@@ -384,10 +392,18 @@ export function RecorderProvider({
     api.recorder.getDebugLogs(state.testId).then(setDebugEntries).catch(() => {});
   }, [state.testId]);
 
-  const start = React.useCallback(async (url: string, name: string, testId?: string) => {
-    setLiveSteps([]);
-    await api.recorder.start(url, name, testId);
-  }, []);
+  const start = React.useCallback(
+    async (
+      url: string,
+      name: string,
+      testId?: string,
+      viewport?: { width: number; height: number } | null,
+    ) => {
+      setLiveSteps([]);
+      await api.recorder.start(url, name, testId, viewport);
+    },
+    [],
+  );
   const pause = React.useCallback(() => void api.recorder.pause(), []);
   const resume = React.useCallback(() => void api.recorder.resume(), []);
   const stop = React.useCallback(() => void api.recorder.stop(), []);

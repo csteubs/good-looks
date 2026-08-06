@@ -71,6 +71,27 @@ export interface PanelPlacement {
   side: DockSide;
 }
 
+/** Dock-time options. */
+export interface DockOptions {
+  /**
+   * Keep the browser's width exactly, and grow the pair's total footprint by
+   * the panel instead of splitting it.
+   *
+   * For a session recording at a WINDOW SIZE PRESET. The default split rests on
+   * "the user picked how much screen the training browser takes, and docking is
+   * not a licence to take more" — true when the width is just a window the user
+   * dragged, false when it is the page size the test replays at. Taking 360pt
+   * from a 390-wide mobile recording would leave the browser rendering one
+   * layout while the recorded `viewport` step promises another, which is the
+   * exact divergence the preset exists to prevent.
+   *
+   * Costs the honesty of the "won't fit" answer, not correctness: when the
+   * preset plus a panel exceeds the display, this returns `null` and the panel
+   * opens undocked rather than quietly resizing what it was told not to.
+   */
+  preserveBrowserWidth?: boolean;
+}
+
 /**
  * Split `browser`'s footprint into a browser and a panel pinned to `side`.
  *
@@ -87,6 +108,7 @@ export function computeDock(
   panelWidth: number,
   workArea: Bounds,
   side: DockSide = "right",
+  opts: DockOptions = {},
 ): DockLayout | null {
   const pw = Math.round(clamp(panelWidth, PANEL_MIN_WIDTH, workArea.width));
   const minTotal = BROWSER_MIN_WIDTH + pw;
@@ -94,9 +116,21 @@ export function computeDock(
   // Not "the panel won't fit" — "this display cannot hold a usable pair".
   if (workArea.width < minTotal) return null;
 
+  // A preserved width is the size the test replays at, so it is not negotiable:
+  // if the pair doesn't fit, refuse to dock rather than resize the browser. Not
+  // floored at BROWSER_MIN_WIDTH either — a 390-wide mobile preset is BELOW that
+  // floor by design, and the floor exists to stop docking from ACCIDENTALLY
+  // forcing a mobile layout, not to forbid one the user asked for.
+  if (opts.preserveBrowserWidth) {
+    const wanted = Math.round(browser.width) + pw;
+    if (wanted > workArea.width) return null;
+  }
+
   // Keep the footprint the user already chose, unless that would push the
   // browser under its floor; then grow, but never past the work area.
-  const total = Math.round(Math.min(Math.max(browser.width, minTotal), workArea.width));
+  const total = opts.preserveBrowserWidth
+    ? Math.round(browser.width) + pw
+    : Math.round(Math.min(Math.max(browser.width, minTotal), workArea.width));
 
   const height = Math.round(Math.min(browser.height, workArea.height));
   const y = Math.round(clamp(browser.y, workArea.y, workArea.y + workArea.height - height));

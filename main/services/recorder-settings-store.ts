@@ -8,6 +8,7 @@ import { app, logger } from "@glaze/core/backend";
 
 import { isRunBrowser } from "../recorder/types.js";
 import type { RecorderSettings, TestSpeed } from "../recorder/types.js";
+import { normalizeViewport } from "../recorder/window-size.js";
 import { DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 
 /** Bounds for `artifactRetainedRuns`. 1 keeps only the newest run (the pinned
@@ -38,6 +39,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   // the user asks for it. The in-window trainer is unchanged either way.
   trainerPanelEnabled: false,
   defaultRunSpeed: "slow",
+  defaultWindowSize: null,
   autoHealEnabled: true,
   autoHealRetries: 3,
   autoHealAttemptTimeoutMs: 4000,
@@ -79,6 +81,10 @@ function read(): RecorderSettings {
           ? parsed.trainerPanelEnabled
           : DEFAULT_SETTINGS.trainerPanelEnabled,
       defaultRunSpeed: isTestSpeed(parsed.defaultRunSpeed) ? parsed.defaultRunSpeed : DEFAULT_SETTINGS.defaultRunSpeed,
+      // Normalized, not cast: these numbers size a native window and are
+      // written into a generated spec, so a hand-edited or corrupt file must
+      // fall back to the default rather than reach either.
+      defaultWindowSize: normalizeViewport(parsed.defaultWindowSize),
       autoHealEnabled: typeof parsed.autoHealEnabled === "boolean" ? parsed.autoHealEnabled : DEFAULT_SETTINGS.autoHealEnabled,
       autoHealRetries:
         typeof parsed.autoHealRetries === "number" && parsed.autoHealRetries > 0
@@ -173,6 +179,13 @@ export const recorderSettingsStore = {
       defaultRunSpeed: update.defaultRunSpeed !== undefined && isTestSpeed(update.defaultRunSpeed)
         ? update.defaultRunSpeed
         : current.defaultRunSpeed,
+      // `null` is a real choice here ("Default" in the picker), so the update
+      // is applied whenever the key is PRESENT — testing truthiness would make
+      // going back to the default size impossible.
+      defaultWindowSize:
+        update.defaultWindowSize !== undefined
+          ? normalizeViewport(update.defaultWindowSize)
+          : current.defaultWindowSize,
       autoHealEnabled: update.autoHealEnabled !== undefined ? update.autoHealEnabled : current.autoHealEnabled,
       autoHealRetries:
         update.autoHealRetries !== undefined && typeof update.autoHealRetries === "number" && update.autoHealRetries > 0
@@ -253,6 +266,7 @@ export const recorderSettingsStore = {
       showUrlBar: next.showUrlBar,
       trainerPanelEnabled: next.trainerPanelEnabled,
       defaultRunSpeed: next.defaultRunSpeed,
+      defaultWindowSize: next.defaultWindowSize,
       autoHealEnabled: next.autoHealEnabled,
       autoHealRetries: next.autoHealRetries,
       autoHealAttemptTimeoutMs: next.autoHealAttemptTimeoutMs,

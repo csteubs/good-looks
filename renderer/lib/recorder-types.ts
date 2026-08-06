@@ -585,6 +585,10 @@ export interface RecorderSettings {
   /** Open the trainer panel docked beside the training browser (default false). */
   trainerPanelEnabled: boolean;
   defaultRunSpeed: TestSpeed;
+  /** browser window size for new recordings, or null for the trainer's own
+   *  default (mirror of main types). Also recorded as the test's first
+   *  `viewport` step so it replays at the size it was recorded at. */
+  defaultWindowSize: { width: number; height: number } | null;
   /** Auto-Heal engine enabled (default true). */
   autoHealEnabled: boolean;
   /** how many heal attempts before giving up (default 3). */

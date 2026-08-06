@@ -68,8 +68,12 @@ export const api = {
     undock: () => ipc().invoke<{ docked: boolean }>("trainerPanel:undock"),
   },
   recorder: {
-    start: (url: string, name: string, testId?: string) =>
-      ipc().invoke<RecorderState>("recorder:start", { url, name, testId }),
+    start: (
+      url: string,
+      name: string,
+      testId?: string,
+      viewport?: { width: number; height: number } | null,
+    ) => ipc().invoke<RecorderState>("recorder:start", { url, name, testId, viewport }),
     pause: () => ipc().invoke<RecorderState>("recorder:pause"),
     resume: () => ipc().invoke<RecorderState>("recorder:resume"),
     setAssert: (mode: AssertKind | null, soft = false) =>

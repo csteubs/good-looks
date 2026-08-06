@@ -43,6 +43,7 @@ import {
   normalizeRawStep,
   normalizeRawSteps,
 } from "../recorder/types.js";
+import { normalizeViewport, recordedViewport, type Viewport } from "../recorder/window-size.js";
 import {
   applyCookieStep,
   clearCookies,
@@ -95,6 +96,12 @@ const SHOW_FALLBACK_MS = 1500;
 // let the trainer proceed (controls enable). The window itself is shown far
 // earlier (see SHOW_FALLBACK_MS); this only bounds `pageReady`.
 const LOAD_TIMEOUT_MS = 15000;
+// Frame size of a trainer window opened with no size preset. Deliberately the
+// FRAME rather than the page: with no preset there is no size to honour, so the
+// window is sized to sit comfortably on a laptop display, and whatever page
+// area that leaves is what the user records at.
+const DEFAULT_WINDOW_WIDTH = 1200;
+const DEFAULT_WINDOW_HEIGHT = 820;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** Race a page `executeJavaScript` against a timeout so one hanging/navigating
@@ -644,7 +651,14 @@ export const recorderService = {
     return session ? [...session.steps] : [];
   },
 
-  async start(params: { url: string; name?: string; testId?: string }): Promise<RecorderState> {
+  async start(params: {
+    url: string;
+    name?: string;
+    testId?: string;
+    /** page size to record at, from the New Recording dialog's preset picker.
+     *  Omitted (or null) keeps the trainer's default window size. */
+    viewport?: { width: number; height: number } | null;
+  }): Promise<RecorderState> {
     if (session) {
       recWindow?.focus();
       return currentState();
@@ -678,7 +692,7 @@ export const recorderService = {
       assertMode: null,
       assertSoft: false,
       refineMode: false,
-      cursor: initialCursor(editing, existingSteps.length),
+      cursor: initialCursor(editing, existingSteps),
       editing,
       createdAt,
       showUrlBar: recorderSettingsStore.get().showUrlBar,
@@ -694,15 +708,33 @@ export const recorderService = {
     // modal immediately — before the window even appears.
     broadcastState();
 
+    // The size this session runs at. A new recording takes the dialog's preset;
+    // an existing one takes the size it was already recorded at, so re-opening
+    // a mobile test doesn't drop it into a desktop-width window and capture
+    // steps against a layout the test will never see.
+    const viewport: Viewport | null = editing
+      ? recordedViewport(existingSteps)
+      : normalizeViewport(params.viewport);
+
     // Initial navigation is the first step; later navigations are consequences of
     // recorded interactions (the window has no address bar). Skip when editing —
     // the existing steps already start with one.
-    if (!editing) addStep({ type: "goto", url });
+    if (!editing) {
+      // Viewport BEFORE goto: the generated spec has to size the page before it
+      // navigates, or the first paint (and anything the site decides from it,
+      // like a mobile layout) happens at the runner's default size.
+      if (viewport) addStep({ type: "viewport", width: viewport.width, height: viewport.height });
+      addStep({ type: "goto", url });
+    }
 
     recWindow = new BrowserWindow({
       windowKey: "recorder",
-      width: 1200,
-      height: 820,
+      // With a preset, the numbers are the PAGE size (useContentSize), because
+      // that's what the recorded viewport step replays at — sizing the frame
+      // instead would leave the page short by the title bar's height.
+      width: viewport?.width ?? DEFAULT_WINDOW_WIDTH,
+      height: viewport?.height ?? DEFAULT_WINDOW_HEIGHT,
+      useContentSize: !!viewport,
       title: (editing ? "Editing — " : "Recording — ") + url,
       titleBarStyle: "default", // native draggable frame for an external page
       show: false,
@@ -712,6 +744,15 @@ export const recorderService = {
         // instead of inheriting state from a previous recording.
         partition: `recorder-incognito-${randomUUID()}`,
       },
+    });
+
+    // Worth a line in the log: the OS clamps a window that doesn't fit the
+    // display, so a preset larger than the screen records steps at one size and
+    // replays them at another. The recorded viewport is the authoritative one.
+    logger.info("recorder", "Opened the training window", {
+      testId,
+      editing,
+      pageSize: viewport ? `${viewport.width}x${viewport.height}` : "default",
     });
 
     const wc = recWindow.webContents;
@@ -1042,8 +1083,13 @@ export const recorderService = {
     // Opened only once the browser is genuinely up: docking resizes that window,
     // and a panel that appeared next to a window which then failed to open would
     // be a floating orphan with nothing to control.
+    //
+    // `fixedBrowserWidth` when this session has a size: docking normally takes
+    // its width out of the training browser, which would leave the page
+    // rendering at one width while the recorded `viewport` step promises
+    // another — the two features would quietly cancel out.
     if (recorderSettingsStore.get().trainerPanelEnabled && recWindow && !recWindow.isDestroyed()) {
-      await openTrainerPanel(recWindow).catch((err) => {
+      await openTrainerPanel(recWindow, { fixedBrowserWidth: viewport !== null }).catch((err) => {
         // The panel is an accelerator, not the trainer — the main window still
         // has the full one. Failing to open it must not fail the session.
         logger.warn("recorder", "Could not open the trainer panel", { err: String(err) });

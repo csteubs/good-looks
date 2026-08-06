@@ -34,19 +34,13 @@ import { buildGenerateMessages } from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
 import type { TestSpeed } from "../lib/recorder-types";
 import { useLlmChat } from "../lib/use-llm-chat";
+// Shared with the New Recording dialog's window-size picker — both dialogs ask
+// the user the same question, so they offer the same sizes. "Default" leaves it
+// unset (the runner uses its own default; the prompt just won't mention a size).
+import { VIEWPORT_PRESETS, viewportForPresetId } from "../lib/viewport-presets";
 
 const SPEEDS: TestSpeed[] = ["fast", "medium", "slow"];
 const SPEED_LABEL: Record<TestSpeed, string> = { fast: "Fast", medium: "Medium", slow: "Slow" };
-
-// Common viewport presets. "Default" leaves it unset (the runner uses its own
-// default; the prompt just won't mention a size).
-const VIEWPORT_PRESETS = [
-  { id: "default", label: "Default", w: 0, h: 0 },
-  { id: "desktop", label: "Desktop 1280×800", w: 1280, h: 800 },
-  { id: "laptop", label: "Laptop 1440×900", w: 1440, h: 900 },
-  { id: "tablet", label: "Tablet 768×1024", w: 768, h: 1024 },
-  { id: "mobile", label: "Mobile 390×844", w: 390, h: 844 },
-] as const;
 
 // Reuse the AI debug panel's code-block rendering: fenced code in a bordered
 // card with a language label and per-block copy.
@@ -127,11 +121,10 @@ export function GenerateTestDialog({
     }
   }, [open]);
 
-  const viewport = React.useMemo(() => {
-    const preset = VIEWPORT_PRESETS.find((p) => p.id === viewportId);
-    if (!preset || preset.w === 0) return undefined;
-    return { width: preset.w, height: preset.h };
-  }, [viewportId]);
+  const viewport = React.useMemo(
+    () => viewportForPresetId(viewportId) ?? undefined,
+    [viewportId],
+  );
 
   const canGenerate = prompt.trim().length > 0 && url.trim().length > 0;
 

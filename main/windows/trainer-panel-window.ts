@@ -88,6 +88,16 @@ const seenEvents = new Set<string>();
  *  shown once per session rather than on every re-dock. */
 let viewportHintSent = false;
 
+/**
+ * Whether this session's browser width is the size the test replays at (a
+ * window-size preset), rather than a footprint the user happened to drag.
+ *
+ * Set once per session at open and read by every later dock, because the user
+ * can undock and re-dock: a re-dock that forgot this would shrink the browser
+ * the initial dock deliberately left alone.
+ */
+let preserveBrowserWidth = false;
+
 /** Whether leaving full screen should restore the dock. Set on entry so a
  *  user who was undocked before going full screen stays undocked after. */
 let reDockOnLeaveFullScreen = false;
@@ -216,8 +226,15 @@ function attachFollower(win: BrowserWindow): void {
  *
  * Safe to call when the display cannot fit both windows: the panel opens
  * undocked rather than not at all, so the tools stay reachable.
+ *
+ * Pass `fixedBrowserWidth` when the session is recording at a window-size
+ * preset. Docking then places the panel BESIDE the browser at its current
+ * width instead of taking that width from it — see `DockOptions`.
  */
-export async function openTrainerPanel(recWindow: BrowserWindow): Promise<void> {
+export async function openTrainerPanel(
+  recWindow: BrowserWindow,
+  opts: { fixedBrowserWidth?: boolean } = {},
+): Promise<void> {
   if (isLive(panelWindow)) {
     panelWindow.show();
     return;
@@ -227,10 +244,11 @@ export async function openTrainerPanel(recWindow: BrowserWindow): Promise<void> 
   browserWindow = recWindow;
   seenEvents.clear();
   viewportHintSent = false;
+  preserveBrowserWidth = !!opts.fixedBrowserWidth;
 
   const browserBounds = recWindow.getBounds();
   const workArea = workAreaFor(browserBounds);
-  const layout = computeDock(browserBounds, WIDTH, workArea, "right");
+  const layout = computeDock(browserBounds, WIDTH, workArea, "right", { preserveBrowserWidth });
 
   panelWindow = new BrowserWindow({
     windowKey: "trainer-panel",
@@ -301,8 +319,13 @@ export async function openTrainerPanel(recWindow: BrowserWindow): Promise<void> 
  * different layout than it did a moment earlier — and than it will on a real
  * run, which uses whatever viewport the spec sets. Silent would be the wrong
  * call: the user would be recording against a layout they did not choose.
+ *
+ * Not sent when the browser's width was preserved: nothing narrowed, and a
+ * warning about a layout change that did not happen would send the user looking
+ * for a problem in the one case the geometry is guaranteed correct.
  */
 function noteViewportChange(width: number): void {
+  if (preserveBrowserWidth) return;
   if (viewportHintSent) return;
   viewportHintSent = true;
   sendToMain("trainerPanel:viewportNarrowed", { width });
@@ -314,7 +337,10 @@ export function undock(reason: string): void {
   const side = dockSide;
   dockSide = null;
 
-  if (isLive(browserWindow)) {
+  // Nothing to give back when the dock never took any: growing the browser here
+  // would push it PAST its preset — undocking would silently change the size the
+  // recording is being made at, in the opposite direction to docking.
+  if (isLive(browserWindow) && !preserveBrowserWidth) {
     const bounds = browserWindow.getBounds();
     applyBounds(browserWindow, computeUndock(bounds, WIDTH, workAreaFor(bounds), side), "browser");
   }
@@ -329,9 +355,12 @@ export function dock(): void {
 
   const browserBounds = browserWindow.getBounds();
   const workArea = workAreaFor(browserBounds);
-  const layout = computeDock(browserBounds, WIDTH, workArea, "right");
+  const layout = computeDock(browserBounds, WIDTH, workArea, "right", { preserveBrowserWidth });
   if (!layout) {
-    logger.info("trainer-panel", "Cannot dock — display too small", { workArea });
+    logger.info("trainer-panel", "Cannot dock — display too small", {
+      workArea,
+      preserveBrowserWidth,
+    });
     sendToMain("trainerPanel:undocked", { reason: "no-room" });
     return;
   }

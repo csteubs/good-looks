@@ -972,6 +972,11 @@ export interface RecorderSettings {
    *  actions during runs); persisted so the New Recording dialog remembers the
    *  last choice. Defaults to "slow" so runs are watchable by default. */
   defaultRunSpeed: TestSpeed;
+  /** browser window size for new recordings, or null for the trainer's own
+   *  default. Persisted so the New Recording dialog remembers the last preset.
+   *  A chosen size also becomes the recording's first `viewport` step, so the
+   *  test replays at the size it was recorded at — see recorder/window-size.ts. */
+  defaultWindowSize: { width: number; height: number } | null;
   /** Auto-Heal engine enabled (default true). When a step's locator fails to
    *  resolve during replay, the engine probes the page for alternative target
    *  elements using all locator strategies + context from past runs. */
@@ -1358,12 +1363,24 @@ export interface AiDebugSessionsFile {
  * sitting on the starting URL, appending to the end is the one position that is
  * almost certainly wrong.
  *
- * A NEW recording passes `stepCount: 0`; its `goto` is added immediately after
- * and pushes the cursor to 1 by the normal insert path, so both cases converge
- * on the same place.
+ * A NEW recording passes an empty list; its `goto` (and the `viewport` step
+ * ahead of it, when the session has a window-size preset) is added immediately
+ * after and pushes the cursor along by the normal insert path, so both cases
+ * converge on the same place.
+ *
+ * Takes the STEPS rather than a count because the navigation is not always
+ * index 0: a test recorded at a window-size preset opens with a `viewport`
+ * step, and a cursor hardcoded to 1 would drop every newly captured step
+ * BETWEEN the viewport and the goto — i.e. before the page it was recorded
+ * against had even been navigated to.
  */
-export function initialCursor(editing: boolean, stepCount: number): number {
-  if (!editing) return stepCount;
-  // Just past the navigation step, or the end of a shorter list.
-  return Math.min(1, stepCount);
+export function initialCursor(editing: boolean, steps: readonly Step[]): number {
+  if (!editing) return steps.length;
+  const navIndex = steps.findIndex((s) => s.type === "goto");
+  // No navigation to sit past (shouldn't happen — an existing test always has
+  // its goto): fall back to the front of the list rather than the end, which is
+  // the position this function exists to stop being the default.
+  if (navIndex === -1) return Math.min(1, steps.length);
+  // Just past the navigation, or the end of a shorter list.
+  return Math.min(navIndex + 1, steps.length);
 }
