@@ -11,6 +11,8 @@ import { describe, it, expect } from "vitest";
 
 import {
   ProviderError,
+  approxTokens,
+  describeEmptyResponse,
   describeHttpFailure,
   extractProviderMessage,
   isModelUnavailable,
@@ -180,5 +182,87 @@ describe("ProviderError", () => {
     expect(TRANSPORT_PATTERNS.test(decoded.message)).toBe(true);
     expect(decoded).toBeInstanceOf(ProviderError);
     expect(new Error("fetch failed")).not.toBeInstanceOf(ProviderError);
+  });
+});
+
+describe("describeEmptyResponse", () => {
+  const base = {
+    provider: "lmstudio" as const,
+    model: "prism-ml/bonsai-27b",
+    promptChars: 3134,
+    eventCount: 12,
+    finishReason: "stop" as string | null,
+    deltaFields: ["role", "content"],
+    sawReasoning: false,
+  };
+
+  it("rules out a connection problem when the model just ends its turn", () => {
+    // The reported symptom that led here: a job minimized mid-stream came back
+    // failed, and the message's vague "may have hit a token limit, or the
+    // prompt may have been too long" made a clean completion look like a
+    // dropped connection.
+    const message = describeEmptyResponse({ ...base, deltaFields: ["role"] });
+    expect(message).toMatch(/not a connection or timeout problem/i);
+    expect(message).toContain("finish reason: stop");
+    expect(message).toMatch(/chat template/i);
+  });
+
+  it("reports the prompt size so a context-length setting can be judged", () => {
+    // 3134 chars ≈ 784 tokens — nowhere near a context limit, which is exactly
+    // why the old message's "prompt may have been too long" was misleading.
+    const message = describeEmptyResponse({ ...base, deltaFields: ["role"] });
+    expect(message).toContain("784");
+    expect(approxTokens(3134)).toBe(784);
+  });
+
+  it("blames the token limit only when the provider says so", () => {
+    const message = describeEmptyResponse({
+      ...base,
+      finishReason: "length",
+      deltaFields: ["role"],
+    });
+    expect(message).toMatch(/hit its token limit/i);
+    expect(message).toMatch(/Raise the context length/i);
+    // And the generic template advice must not also appear — two competing
+    // explanations is how a user ends up changing the wrong setting.
+    expect(message).not.toMatch(/chat template/i);
+  });
+
+  it("names our own bug when the answer arrived in a field we don't read", () => {
+    // The one cause the user cannot possibly diagnose and we can: from the
+    // outside it is indistinguishable from a model that said nothing.
+    const message = describeEmptyResponse({
+      ...base,
+      deltaFields: ["role", "text", "output_text"],
+    });
+    expect(message).toMatch(/fields this app doesn't read/i);
+    expect(message).toContain("text, output_text");
+    expect(message).toMatch(/please report it/i);
+  });
+
+  it("does not cry bug over the fields we do read", () => {
+    const message = describeEmptyResponse({
+      ...base,
+      deltaFields: ["role", "content", "reasoning_content", "reasoning"],
+    });
+    expect(message).not.toMatch(/fields this app doesn't read/i);
+  });
+
+  it("keeps the reasoning-model explanation, now with the prompt size", () => {
+    const message = describeEmptyResponse({ ...base, sawReasoning: true });
+    expect(message).toMatch(/spent its whole response thinking/i);
+    expect(message).toContain("784");
+  });
+
+  it("separates 'sent nothing at all' from 'sent events with no text'", () => {
+    const silent = describeEmptyResponse({ ...base, eventCount: 0, deltaFields: [] });
+    expect(silent).toMatch(/sent no data at all/i);
+    expect(silent).toMatch(/not a connection problem/i);
+  });
+
+  it("names the model and provider the user chose, not a generic 'local server'", () => {
+    const message = describeEmptyResponse({ ...base, deltaFields: ["role"] });
+    expect(message).toContain("prism-ml/bonsai-27b");
+    expect(message).toContain("LM Studio");
   });
 });

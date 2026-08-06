@@ -463,6 +463,24 @@ function collectRunHeals(
   return events.length;
 }
 
+/** CSI escape sequences — Playwright's `line` reporter redraws its progress
+ *  line with cursor-up + erase-line, and colours failures.
+ *
+ *  Stripped at the same choke point as redaction, for the same reason: these
+ *  bytes are meaningless outside a terminal, and all three consumers suffer
+ *  from them. The Output panel renders them as visible mojibake (`⌧[1A⌧[2K`),
+ *  the log file keeps them forever, and — worst — they are sent verbatim to
+ *  the model in the Debug-with-AI prompt, where they spend context on cursor
+ *  movements and give the model garbage to reason about. */
+// Built from a char code rather than a regex literal: ESC is a control
+// character, and `no-control-regex` rejects it inline. Disabling that rule
+// here would also disable it for anything added to this file later.
+const ANSI_ESCAPE = new RegExp(String.fromCharCode(27) + "\\[[0-9;?]*[A-Za-z]", "g");
+
+export function stripAnsi(text: string): string {
+  return text.replace(ANSI_ESCAPE, "");
+}
+
 function emitOutput(runId: string, stream: "stdout" | "stderr" | "system", chunk: string): void {
   // Redact HERE, at the single point every byte of run output passes through,
   // rather than at each consumer. The live stream feeds the Output panel and
@@ -472,7 +490,7 @@ function emitOutput(runId: string, stream: "stdout" | "stderr" | "system", chunk
   // Chunk-boundary caveat: a secret split across two chunks survives this. The
   // buffered log is redacted again on write, which catches those; the live
   // stream can't be, since it has already been sent.
-  const safe = redactWithSnapshot(chunk);
+  const safe = stripAnsi(redactWithSnapshot(chunk));
   const buf = logBuffers.get(runId);
   if (buf) buf.push(safe);
   sendToMain("runner:output", { runId, stream, chunk: safe });

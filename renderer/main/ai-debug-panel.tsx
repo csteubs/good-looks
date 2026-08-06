@@ -376,6 +376,14 @@ function useModelPicker(open: boolean) {
   const [modelName, setModelName] = React.useState<string | null>(null);
   const [models, setModels] = React.useState<LlmModel[]>([]);
 
+  // Restoring a minimized dialog re-runs this. Listing models is a request to
+  // the provider, so refetching every time put a GET /v1/models on the wire on
+  // each restore — noise that shows up in the server's log right next to an
+  // in-flight completion and reads like the reopen is doing something to it.
+  // The list only changes when the user changes providers or loads a model, so
+  // fetch it once and refresh only when the provider actually differs.
+  const loadedProviderRef = React.useRef<string | null>(null);
+
   React.useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -384,9 +392,12 @@ function useModelPicker(open: boolean) {
       .then(async (cfg) => {
         if (cancelled) return;
         setModelName(cfg.model);
+        if (loadedProviderRef.current === cfg.provider) return;
         try {
           const st = await api.llm.status(cfg.provider);
-          if (!cancelled) setModels(st.models);
+          if (cancelled) return;
+          loadedProviderRef.current = cfg.provider;
+          setModels(st.models);
         } catch {
           if (!cancelled) setModels([]);
         }

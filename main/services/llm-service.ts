@@ -13,7 +13,12 @@ import { logger } from "@glaze/core/backend";
 import { anthropicKeyStore } from "./anthropic-key-store.js";
 import { sendToMain } from "./app-window.js";
 import { llmConfigStore } from "./llm-config-store.js";
-import { ProviderError, describeHttpFailure, providerLabel } from "./llm/provider-errors.js";
+import {
+  ProviderError,
+  describeEmptyResponse,
+  describeHttpFailure,
+  providerLabel,
+} from "./llm/provider-errors.js";
 import type {
   LlmChatParams,
   LlmMessage,
@@ -187,6 +192,12 @@ async function runChat(
     // reported rather than ending as a silent, indistinguishable success.
     let sawContent = false;
     let sawReasoning = false;
+    // Evidence for diagnosing a stream that ends with no answer. Without it the
+    // only honest thing we could say was "something returned nothing", which is
+    // where the misleading "prompt may have been too long" guess came from.
+    let eventCount = 0;
+    let finishReason: string | null = null;
+    const deltaFields = new Set<string>();
     for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
       buffer += decoder.decode(chunk, { stream: true });
       let nl: number;
@@ -208,13 +219,30 @@ async function runChat(
               throw new Error(msg || "Anthropic streaming error.");
             }
           } else {
-            const choice = (
+            eventCount++;
+            const first = (
               json as {
                 choices?: Array<{
-                  delta?: { content?: string; reasoning_content?: string; reasoning?: string };
+                  finish_reason?: string | null;
+                  delta?: {
+                    content?: string;
+                    reasoning_content?: string;
+                    reasoning?: string;
+                    [key: string]: unknown;
+                  };
                 }>;
               }
-            ).choices?.[0]?.delta;
+            ).choices?.[0];
+            if (first?.finish_reason) finishReason = first.finish_reason;
+            const choice = first?.delta;
+            // Record every field that actually carried something. A model
+            // streaming its answer under a name we don't read looks exactly
+            // like a model that said nothing — this is what tells them apart.
+            if (choice) {
+              for (const [k, v] of Object.entries(choice)) {
+                if (typeof v === "string" ? v.length > 0 : v != null) deltaFields.add(k);
+              }
+            }
             const delta = choice?.content;
             if (delta) {
               sawContent = true;
@@ -256,12 +284,23 @@ async function runChat(
       //
       // The reasoning case is worth naming separately, because the fix is
       // different: the model was working, it just never stopped thinking.
-      const message = sawReasoning
-        ? "The model spent its whole response thinking and never produced an answer. " +
-          "Reasoning models need room for both — raise the model's token limit in your " +
-          "local server, or pick a non-reasoning model for this."
-        : "The model returned an empty response. It may have hit a token limit, or the " +
-          "prompt may have been too long for its context window.";
+      const message = describeEmptyResponse({
+        provider,
+        model,
+        promptChars: params.messages.reduce((n, m) => n + m.content.length, 0),
+        eventCount,
+        finishReason,
+        deltaFields: [...deltaFields],
+        sawReasoning,
+      });
+      logger.warn("llm", "Chat stream produced no answer", {
+        requestId,
+        model,
+        eventCount,
+        finishReason,
+        deltaFields: [...deltaFields],
+        sawReasoning,
+      });
       sendToMain("llm:error", { requestId, message });
       return;
     }

@@ -303,7 +303,62 @@ describe("chat() streaming", () => {
     const { events } = await collect(["data: [DONE]"]);
     const final = last(events);
     expect(final?.channel).toBe("llm:error");
-    expect(String(final?.payload.message)).toMatch(/empty response/i);
+    // "Sent no data at all" is a different situation from a stream that
+    // delivered events carrying no text, and the fixes differ, so the message
+    // distinguishes them rather than calling both "an empty response".
+    expect(String(final?.payload.message)).toMatch(/sent no data at all/i);
+    expect(String(final?.payload.message)).toMatch(/not a connection problem/i);
+  });
+
+  // ── Streams that end with no answer ────────────────────────────────
+  // The reported symptom: a job minimized mid-stream came back failed, and the
+  // message ("may have hit a token limit, or the prompt may have been too long
+  // for its context window") made a clean completion look like a dropped
+  // connection. It guessed at two causes and gave no way to tell them apart —
+  // for a prompt that measured ~780 tokens, both guesses were wrong.
+
+  it("says a content-less stream completed rather than implying it was cut off", async () => {
+    const { events } = await collect([
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}`,
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}`,
+      "data: [DONE]",
+    ]);
+    const message = String(last(events)?.payload.message);
+    expect(last(events)?.channel).toBe("llm:error");
+    expect(message).toMatch(/not a connection or timeout problem/i);
+    expect(message).toContain("finish reason: stop");
+    // Names the model, so a user running several knows which one misbehaved.
+    expect(message).toContain("test-model");
+  });
+
+  it("blames the token limit only when the provider reports finish_reason=length", async () => {
+    const { events } = await collect([
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}`,
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: "length" }] })}`,
+      "data: [DONE]",
+    ]);
+    const message = String(last(events)?.payload.message);
+    expect(message).toMatch(/hit its token limit/i);
+    expect(message).toMatch(/raise the context length/i);
+  });
+
+  it("surfaces an answer streamed into a field it doesn't read as OUR bug", async () => {
+    // Otherwise indistinguishable from a model that said nothing — and the
+    // user has no way to find it. This is the case worth reporting loudly.
+    const { events } = await collect([
+      `data: ${JSON.stringify({ choices: [{ index: 0, delta: { output_text: "the answer" }, finish_reason: null }] })}`,
+      "data: [DONE]",
+    ]);
+    const message = String(last(events)?.payload.message);
+    expect(message).toMatch(/fields this app doesn't read/i);
+    expect(message).toContain("output_text");
+  });
+
+  it("reports the prompt size so a context setting can be compared against it", async () => {
+    const { events } = await collect(["data: [DONE]"]);
+    // collect() sends a two-character prompt, so this is the floor case; what
+    // matters is that a number is reported at all rather than a guess.
+    expect(String(last(events)?.payload.message)).toMatch(/sent no data at all/i);
   });
 
   it("still streams an ordinary non-reasoning model unchanged", async () => {

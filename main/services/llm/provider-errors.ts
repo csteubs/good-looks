@@ -145,3 +145,93 @@ export function describeHttpFailure(opts: {
   if (detail) return `${label} couldn't run this request. ${detail}`;
   return `${label} couldn't run this request (HTTP ${status}).`;
 }
+
+// ── Empty responses ──────────────────────────────────────────────────
+// A stream that ends cleanly with zero tokens of answer. The old message
+// guessed — "may have hit a token limit, or the prompt may have been too long"
+// — which is worse than useless when the prompt was 784 tokens: it sends the
+// user to widen a context window that was never the problem, and it hides the
+// one fact that rules out a whole class of theories, namely that the request
+// COMPLETED rather than being cut off.
+//
+// So report what actually happened on the wire. `finish_reason` distinguishes
+// "stopped at a limit" from "ended its turn", and the set of delta fields seen
+// catches the case this app can genuinely get wrong: a model streaming its
+// answer in a field we don't read, which is otherwise indistinguishable from a
+// model that said nothing at all.
+
+/** Fields we know how to read out of an OpenAI-compatible streamed delta. */
+export const KNOWN_DELTA_FIELDS = ["content", "reasoning_content", "reasoning", "role"];
+
+export interface EmptyResponseFacts {
+  provider: LlmProvider;
+  model: string;
+  /** Total characters across every prompt message. */
+  promptChars: number;
+  /** How many SSE data events carried a parseable payload. */
+  eventCount: number;
+  /** The last `finish_reason` the provider reported, if any. */
+  finishReason: string | null;
+  /** Every delta field seen carrying a non-empty value. */
+  deltaFields: string[];
+  /** True when the model streamed thinking but never an answer. */
+  sawReasoning: boolean;
+}
+
+/** ~4 characters per token. Rough on purpose: it is used to say "about N
+ *  tokens" so a user can compare against a context-length setting, not to
+ *  make any decision in code. */
+export function approxTokens(chars: number): number {
+  return Math.max(1, Math.round(chars / 4));
+}
+
+export function describeEmptyResponse(facts: EmptyResponseFacts): string {
+  const { provider, model, promptChars, eventCount, finishReason, deltaFields, sawReasoning } =
+    facts;
+  const label = providerLabel(provider);
+  const size = `The prompt was about ${approxTokens(promptChars).toLocaleString()} tokens.`;
+
+  if (sawReasoning) {
+    return (
+      `The model spent its whole response thinking and never produced an answer. ${size} ` +
+      "Reasoning models need room for both — raise the model's token limit in " +
+      `${label}, or pick a non-reasoning model for this.`
+    );
+  }
+
+  // A field we don't parse is the one cause the USER cannot diagnose and we
+  // can: name it, because it means the answer arrived and this app dropped it.
+  const unknown = deltaFields.filter((f) => !KNOWN_DELTA_FIELDS.includes(f));
+  if (unknown.length > 0) {
+    return (
+      `${model} streamed its response in fields this app doesn't read (${unknown.join(", ")}), ` +
+      `so the answer was received but not displayed. This is a bug — please report it. ${size}`
+    );
+  }
+
+  if (finishReason === "length") {
+    return (
+      `${model} hit its token limit before writing any answer. ${size} ` +
+      `Raise the context length (or max tokens) for this model in ${label}, or pick a model with a larger context window.`
+    );
+  }
+
+  if (eventCount === 0) {
+    return (
+      `${label} accepted the request but sent no data at all. ` +
+      `The request completed without an error, so this is not a connection problem — ` +
+      `check ${label}'s own logs for this model.`
+    );
+  }
+
+  // Events arrived, none carried text, and nothing hit a limit: the model
+  // ended its turn immediately. In practice that is a prompt-format problem
+  // for the specific model rather than anything about the request.
+  return (
+    `${model} ended its turn without generating any text${
+      finishReason ? ` (finish reason: ${finishReason})` : ""
+    }. The request completed normally, so this is not a connection or timeout problem. ${size} ` +
+    `This usually means the model's chat template doesn't match how ${label} is prompting it — ` +
+    `try a different model, or re-download this one.`
+  );
+}
