@@ -1347,3 +1347,40 @@ export interface AiDebugSessionsFile {
   version: number;
   sessions: AiDebugSession[];
 }
+
+/**
+ * Where the insert cursor sits when a trainer session opens.
+ *
+ * Opening a session executes exactly ONE thing: the initial navigation. No
+ * recorded step is replayed (that auto-replay was removed — it flew through the
+ * whole test and could wedge the backend). So the session's position in the
+ * test is "just past the goto", and the cursor — which decides where the next
+ * captured step lands — belongs there.
+ *
+ * It used to default to the END of the list when continuing an existing test,
+ * which quietly meant every newly recorded step was appended after the last
+ * one, no matter where in the flow the user actually was. Since the browser is
+ * sitting on the starting URL, appending to the end is the one position that is
+ * almost certainly wrong.
+ *
+ * A NEW recording passes an empty list; its `goto` (and the `viewport` step
+ * ahead of it, when the session has a window-size preset) is added immediately
+ * after and pushes the cursor along by the normal insert path, so both cases
+ * converge on the same place.
+ *
+ * Takes the STEPS rather than a count because the navigation is not always
+ * index 0: a test recorded at a window-size preset opens with a `viewport`
+ * step, and a cursor hardcoded to 1 would drop every newly captured step
+ * BETWEEN the viewport and the goto — i.e. before the page it was recorded
+ * against had even been navigated to.
+ */
+export function initialCursor(editing: boolean, steps: readonly Step[]): number {
+  if (!editing) return steps.length;
+  const navIndex = steps.findIndex((s) => s.type === "goto");
+  // No navigation to sit past (shouldn't happen — an existing test always has
+  // its goto): fall back to the front of the list rather than the end, which is
+  // the position this function exists to stop being the default.
+  if (navIndex === -1) return Math.min(1, steps.length);
+  // Just past the navigation, or the end of a shorter list.
+  return Math.min(navIndex + 1, steps.length);
+}

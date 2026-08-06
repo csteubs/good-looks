@@ -36,6 +36,7 @@ import {
 } from "./recorder-navigation.js";
 import type { CookieSpec } from "../recorder/types.js";
 import {
+  initialCursor,
   MAX_DRAIN_BYTES,
   MAX_STEP_STRING_LENGTH,
   normalizePickedElement,
@@ -635,6 +636,21 @@ export const recorderService = {
     return currentState();
   },
 
+  /**
+   * The session's current steps, for a window that opened after they were
+   * broadcast.
+   *
+   * `recorder:steps` is a PUSH, and the initial one fires inside `start()` —
+   * before the training browser has even loaded. Any window created later in
+   * the session (the docked trainer panel is created once the page is ready)
+   * misses it completely and would show an empty step list until the user
+   * happened to mutate something. A push is not a substitute for being able to
+   * ask.
+   */
+  getSteps(): Step[] {
+    return session ? [...session.steps] : [];
+  },
+
   async start(params: {
     url: string;
     name?: string;
@@ -676,7 +692,7 @@ export const recorderService = {
       assertMode: null,
       assertSoft: false,
       refineMode: false,
-      cursor: existingSteps.length,
+      cursor: initialCursor(editing, existingSteps),
       editing,
       createdAt,
       showUrlBar: recorderSettingsStore.get().showUrlBar,
