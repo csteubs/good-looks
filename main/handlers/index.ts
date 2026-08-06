@@ -106,8 +106,15 @@ export function registerHandlers(): void {
   // ── Recorder handlers ───────────────────────────────────────────────
   ipcMain.handle(
     "recorder:start",
-    async (_e, params: { url: string; name?: string; testId?: string }) =>
-      recorderService.start(params),
+    async (
+      _e,
+      params: {
+        url: string;
+        name?: string;
+        testId?: string;
+        viewport?: { width: number; height: number } | null;
+      },
+    ) => recorderService.start(params),
   );
   ipcMain.handle("recorder:pause", async () => recorderService.pause());
   ipcMain.handle("recorder:resume", async () => recorderService.resume());

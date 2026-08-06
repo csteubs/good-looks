@@ -31,6 +31,12 @@ import { api } from "../lib/api";
 import type { LlmProvider, LlmProviderStatus } from "../lib/llm-types";
 import type { ArtifactUsage, RunBrowser, TestSpeed } from "../lib/recorder-types";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
+import {
+  DEFAULT_VIEWPORT_PRESET_ID,
+  VIEWPORT_PRESETS,
+  presetIdForViewport,
+  viewportForPresetId,
+} from "../lib/viewport-presets";
 
 const SPEEDS: TestSpeed[] = ["slow", "medium", "fast"];
 const SPEED_LABEL: Record<TestSpeed, string> = { slow: "Slow", medium: "Medium", fast: "Fast" };
@@ -71,6 +77,7 @@ export function SettingsView() {
   // ── Trainer settings ─────────────────────────────────────────────────
   const [showUrlBar, setShowUrlBar] = useState(true);
   const [defaultRunSpeed, setDefaultRunSpeed] = useState<TestSpeed>("slow");
+  const [defaultWindowSize, setDefaultWindowSize] = useState<string>(DEFAULT_VIEWPORT_PRESET_ID);
   const [defaultCaptureArtifacts, setDefaultCaptureArtifacts] = useState(false);
   const [defaultRecordLogs, setDefaultRecordLogs] = useState(false);
   const [recordAllHeaders, setRecordAllHeaders] = useState(false);
@@ -127,6 +134,7 @@ export function SettingsView() {
       .then((settings) => {
         setShowUrlBar(settings.showUrlBar);
         setDefaultRunSpeed(settings.defaultRunSpeed ?? "slow");
+        setDefaultWindowSize(presetIdForViewport(settings.defaultWindowSize ?? null));
         setDefaultCaptureArtifacts(settings.defaultCaptureArtifacts ?? false);
         setDefaultRecordLogs(settings.defaultRecordLogs ?? false);
         setRecordAllHeaders(settings.recordAllHeaders ?? false);
@@ -174,6 +182,13 @@ export function SettingsView() {
     const next = value as TestSpeed;
     setDefaultRunSpeed(next);
     api.recorder.setSettings({ defaultRunSpeed: next }).catch((error) => {
+      toast.error(`Failed to save setting: ${error}`);
+    });
+  };
+
+  const handleDefaultWindowSizeChange = (value: string) => {
+    setDefaultWindowSize(value);
+    api.recorder.setSettings({ defaultWindowSize: viewportForPresetId(value) }).catch((error) => {
       toast.error(`Failed to save setting: ${error}`);
     });
   };
@@ -678,6 +693,28 @@ export function SettingsView() {
                   </SegmentedControlItem>
                 ))}
               </SegmentedControl>
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="default-window-size">Default window size</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Size of the browser window new recordings open in. The size is recorded with the
+                  test, so it replays at the size it was recorded at. “Default” fits the window to
+                  your screen and records no size.
+                </p>
+              </FieldContent>
+              <Select value={defaultWindowSize} onValueChange={handleDefaultWindowSizeChange}>
+                <SelectTrigger id="default-window-size" className="w-52">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {VIEWPORT_PRESETS.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Field>
             <Field orientation="horizontal">
               <FieldContent>

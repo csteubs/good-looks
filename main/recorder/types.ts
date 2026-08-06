@@ -968,6 +968,11 @@ export interface RecorderSettings {
    *  actions during runs); persisted so the New Recording dialog remembers the
    *  last choice. Defaults to "slow" so runs are watchable by default. */
   defaultRunSpeed: TestSpeed;
+  /** browser window size for new recordings, or null for the trainer's own
+   *  default. Persisted so the New Recording dialog remembers the last preset.
+   *  A chosen size also becomes the recording's first `viewport` step, so the
+   *  test replays at the size it was recorded at — see recorder/window-size.ts. */
+  defaultWindowSize: { width: number; height: number } | null;
   /** Auto-Heal engine enabled (default true). When a step's locator fails to
    *  resolve during replay, the engine probes the page for alternative target
    *  elements using all locator strategies + context from past runs. */

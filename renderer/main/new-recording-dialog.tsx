@@ -1,8 +1,25 @@
 import * as React from "react";
-import { Dialog, Field, Input, SegmentedControl, SegmentedControlItem } from "@glaze/core/components";
+import {
+  Dialog,
+  Field,
+  Input,
+  SegmentedControl,
+  SegmentedControlItem,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@glaze/core/components";
 
 import { api } from "../lib/api";
 import type { TestSpeed } from "../lib/recorder-types";
+import {
+  DEFAULT_VIEWPORT_PRESET_ID,
+  VIEWPORT_PRESETS,
+  presetIdForViewport,
+  viewportForPresetId,
+} from "../lib/viewport-presets";
 import { useRecorder } from "./recorder-store";
 
 const SPEEDS: TestSpeed[] = ["slow", "medium", "fast"];
@@ -23,16 +40,23 @@ export function NewRecordingDialog({
   // inherit this speed; the sidebar "Adjust Test Speed" menu still overrides
   // per-test.
   const [speed, setSpeed] = React.useState<TestSpeed>("slow");
+  // Window size is persisted the same way. It sizes the training window AND is
+  // recorded as the test's first viewport step, so the test replays at the size
+  // it was recorded at instead of the runner's own default.
+  const [windowSize, setWindowSize] = React.useState<string>(DEFAULT_VIEWPORT_PRESET_ID);
   const canStart = url.trim().length > 0;
 
-  // Load the persisted default when the dialog opens.
+  // Load the persisted defaults when the dialog opens.
   React.useEffect(() => {
     if (!open) return;
     api.recorder
       .getSettings()
-      .then((s) => setSpeed(s.defaultRunSpeed ?? "slow"))
+      .then((s) => {
+        setSpeed(s.defaultRunSpeed ?? "slow");
+        setWindowSize(presetIdForViewport(s.defaultWindowSize ?? null));
+      })
       .catch(() => {
-        /* keep default */
+        /* keep defaults */
       });
   }, [open]);
 
@@ -41,6 +65,13 @@ export function NewRecordingDialog({
     setSpeed(next);
     // Persist so Settings stays in sync and the next recording remembers it.
     void api.recorder.setSettings({ defaultRunSpeed: next }).catch(() => {
+      /* non-fatal — the in-memory choice still applies for this recording */
+    });
+  };
+
+  const handleWindowSizeChange = (v: string) => {
+    setWindowSize(v);
+    void api.recorder.setSettings({ defaultWindowSize: viewportForPresetId(v) }).catch(() => {
       /* non-fatal — the in-memory choice still applies for this recording */
     });
   };
@@ -54,7 +85,12 @@ export function NewRecordingDialog({
       confirmLabel="Start recording"
       confirmDisabled={!canStart}
       onConfirm={async () => {
-        await start(url.trim(), name.trim() || "Recorded test");
+        await start(
+          url.trim(),
+          name.trim() || "Recorded test",
+          undefined,
+          viewportForPresetId(windowSize),
+        );
         setUrl("");
         setName("");
       }}
@@ -70,6 +106,24 @@ export function NewRecordingDialog({
         </Field>
         <Field label="Test name" orientation="vertical">
           <Input placeholder="My test" value={name} onChange={(e) => setName(e.target.value)} />
+        </Field>
+        <Field
+          label="Window size"
+          orientation="vertical"
+          description="Size of the browser window this records in. The test replays at this size too."
+        >
+          <Select value={windowSize} onValueChange={handleWindowSizeChange}>
+            <SelectTrigger size="small">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {VIEWPORT_PRESETS.map((p) => (
+                <SelectItem key={p.id} value={p.id}>
+                  {p.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
         <Field label="Run speed" orientation="vertical">
           <SegmentedControl
