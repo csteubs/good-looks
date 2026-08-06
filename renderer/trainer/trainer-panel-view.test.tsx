@@ -114,6 +114,7 @@ function setStore(over: Record<string, unknown> = {}) {
   store = {
     state: state(),
     liveSteps: [] as Step[],
+    stepsLoaded: true,
     replayRun: null,
     executing: false,
     replayStepStatus: {},
@@ -246,6 +247,42 @@ describe("tools reach their actions", () => {
     fireEvent.click(screen.getByRole("button", { name: /generate test/i }));
     expect(actions.stop).not.toHaveBeenCalled();
     expect(screen.getByText(/1 step will be saved/i)).toBeTruthy();
+  });
+});
+
+describe("nothing is usable until the steps have arrived", () => {
+  // The panel window is created AFTER `recorder:start` has already broadcast
+  // the step list, so it never sees that push — it has to ask for the steps,
+  // and until they arrive it holds a list it knows nothing about. Every control
+  // here acts relative to that list (the insert cursor decides where the next
+  // captured step lands), so acting early edits the wrong position or nothing
+  // at all. Silent both ways.
+
+  it("disables the tools while the steps are still in flight", () => {
+    setStore({ stepsLoaded: false });
+    renderPanel();
+    for (const name of [/add step/i, /add assertion/i, /replay from the current step/i]) {
+      expect(screen.getByRole("button", { name }).hasAttribute("disabled")).toBe(true);
+    }
+  });
+
+  it("says what it is waiting for", () => {
+    // Disabled controls under a "Recording" badge reads as a broken trainer.
+    setStore({ stepsLoaded: false });
+    renderPanel();
+    expect(screen.getByText(/loading steps/i)).toBeTruthy();
+  });
+
+  it("enables them once the steps are here", () => {
+    setStore({ stepsLoaded: true });
+    renderPanel();
+    expect(screen.getByRole("button", { name: /add step/i }).hasAttribute("disabled")).toBe(false);
+  });
+
+  it("keeps them disabled if the page is not ready either", () => {
+    setStore({ stepsLoaded: true, state: state({ pageReady: false }) });
+    renderPanel();
+    expect(screen.getByRole("button", { name: /add step/i }).hasAttribute("disabled")).toBe(true);
   });
 });
 

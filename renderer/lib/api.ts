@@ -111,6 +111,9 @@ export const api = {
     stop: () => ipc().invoke<void>("recorder:stop"),
     discardExit: () => ipc().invoke<void>("recorder:discardExit"),
     getState: () => ipc().invoke<RecorderState>("recorder:getState"),
+    /** Current session steps. A window opening mid-session missed the initial
+     *  `recorder:steps` push, so it has to ask. */
+    getSteps: () => ipc().invoke<Step[]>("recorder:getSteps"),
     getSettings: () => ipc().invoke<RecorderSettings>("recorder:getSettings"),
     setSettings: (update: Partial<RecorderSettings>) =>
       ipc().invoke<RecorderSettings>("recorder:setSettings", update),

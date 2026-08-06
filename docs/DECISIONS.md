@@ -16,6 +16,18 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-06 — Trainer waits for its step list, and opens the cursor after the navigation
+
+Three defects around opening a trainer session, found together.
+
+- **A window that opened mid-session never got the steps.** `recorder:steps` is a PUSH whose first fire happens inside `recorder:start`, before the training browser has even loaded. The docked trainer panel is created later (once the page is ready), so it missed that broadcast entirely and showed an EMPTY step list for a test with a dozen steps — until the user happened to mutate something, at which point they all appeared. Fixed by adding `recorder:getSteps` and having the store ASK on mount as well as listen. A push is not a substitute for being able to ask; any future window inherits the fix.
+- **Controls were live before the steps were.** `controlsDisabled` gated only on `pageReady`, which is about the BROWSER, not about this window's data. Every trainer control acts relative to the step list — the insert cursor decides where the next captured step lands — so acting before it arrives inserts at the wrong position or does nothing, both silently. Now gated on a `stepsLoaded` flag as well, in both trainers. The status badge reads "Loading steps…" rather than leaving a "Recording" badge above a row of dead controls, which reads as a broken trainer.
+- **The insert cursor started at the END of the test.** Opening a session executes exactly one thing — the initial navigation; no recorded step is replayed (that auto-replay was removed earlier for flying through the whole test). So the session's position is "just past the goto", but the cursor defaulted to `existingSteps.length`. Recording three clicks at the start of a checkout flow appended them after the final assertion: nothing errors, every step is present, and the order is wrong until the test runs. `initialCursor(editing, stepCount)` now returns 1 when continuing an existing test. A NEW recording still passes 0 and its `goto` advances the cursor to 1 through the normal insert path, so both cases converge on one rule rather than two.
+
+- **Confirmed NOT broken:** nothing auto-runs a recorded step on open. `replayStep` / `replayFromStart` / `replayAll` / `replayFromCurrent` are reachable only from an explicit user action; the initial navigation is the only thing executed.
+- **Files:** `main/recorder/types.ts` (`initialCursor`) + `initial-cursor.test.ts`, `main/services/recorder-service.ts`, `main/handlers/index.ts`, `renderer/lib/api.ts`, `renderer/main/recorder-store.tsx`, both trainer views + all three test suites.
+- **Verified:** `lint`, `type-check`, `test:all` (825 tests) and `build` green. Mutation-tested per CLAUDE.md: restoring the end-of-list cursor fails 1 test, dropping the `stepsLoaded` gate fails 1 test in each trainer, and removing the catch-up fetch fails 2 store tests.
+
 ### 2026-08-06 — Replay is a return arrow, not a play triangle
 
 - **Symptom:** in the docked trainer panel, "Replay from the current step" and the pause/resume control sat side by side as two identical ▶ triangles.

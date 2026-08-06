@@ -132,6 +132,7 @@ function ToolButton({
 export function TrainerPanelView() {
   const {
     state,
+    stepsLoaded,
     liveSteps,
     pause,
     resume,
@@ -173,7 +174,13 @@ export function TrainerPanelView() {
   } | null>(null);
 
   const running = executing || !!replayRun?.running;
-  const controlsDisabled = !state.pageReady || running;
+  // Controls stay inert until the training browser has loaded its first page,
+  // until THIS window actually holds the step list, and while a replay is in
+  // flight. The steps clause matters for a window that opened mid-session and
+  // missed the initial `recorder:steps` push: editing against a list you have
+  // not received yet inserts at the wrong position, and the insert cursor the
+  // backend sent means nothing without the rows it points between.
+  const controlsDisabled = !state.pageReady || !stepsLoaded || running;
 
   // Dock state is owned by the backend (it moves real windows), so the button
   // reflects what actually happened rather than an optimistic local guess —
@@ -295,6 +302,8 @@ export function TrainerPanelView() {
       <div className="drag-region flex items-center gap-2 border-b border-separator px-3 pb-2 pt-9">
         {!state.pageReady ? (
           <Status variant="warning">Loading…</Status>
+        ) : !stepsLoaded ? (
+          <Status variant="warning">Loading steps…</Status>
         ) : running ? (
           <Status variant="loading">Running</Status>
         ) : (

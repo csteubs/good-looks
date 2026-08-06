@@ -93,6 +93,7 @@ function setStore(over: Record<string, unknown> = {}) {
   store = {
     state: state(),
     liveSteps: [] as Step[],
+    stepsLoaded: true,
     replayRun: null,
     executing: false,
     replayStepStatus: {},
@@ -135,6 +136,34 @@ function glyphOf(button: HTMLElement): string {
   if (!cls) throw new Error(`no lucide glyph class on: ${svg.getAttribute("class")}`);
   return cls.replace(/^lucide-/, "");
 }
+
+describe("nothing is usable until the steps have arrived", () => {
+  // The step list arrives as a PUSH (`recorder:steps`). Until this window holds
+  // it, every control acts relative to a list it does not have — and the insert
+  // cursor the backend sent means nothing without the rows it points between.
+  // Both failure modes are silent: the step lands in the wrong place, or the
+  // click does nothing.
+
+  it("disables the tools while the steps are still in flight", () => {
+    setStore({ stepsLoaded: false });
+    render(withAiDebug(<RecordingView />));
+    for (const name of [/add step/i, /replay from the current step/i]) {
+      expect(screen.getByRole("button", { name }).hasAttribute("disabled")).toBe(true);
+    }
+  });
+
+  it("says what it is waiting for", () => {
+    setStore({ stepsLoaded: false });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.getByText(/loading steps/i)).toBeTruthy();
+  });
+
+  it("enables them once the steps are here", () => {
+    setStore({ stepsLoaded: true });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.getByRole("button", { name: /add step/i }).hasAttribute("disabled")).toBe(false);
+  });
+});
 
 describe("replay and pause stay visually distinct", () => {
   // Here the two controls carry TEXT labels, so today nothing is ambiguous.

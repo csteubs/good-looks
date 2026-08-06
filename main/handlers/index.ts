@@ -185,6 +185,7 @@ export function registerHandlers(): void {
     recorderService.discardExit();
   });
   ipcMain.handle("recorder:getState", async () => recorderService.getState());
+  ipcMain.handle("recorder:getSteps", async () => recorderService.getSteps());
   // Trainer panel docking. Dock state lives in the backend because it moves
   // real windows and docking can be REFUSED (a display too small to hold both);
   // the panel reflects what actually happened rather than assuming it worked.
