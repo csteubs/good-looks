@@ -47,6 +47,55 @@ export class Notification {
   show(): void {}
 }
 
+/**
+ * Inert window and display stand-ins.
+ *
+ * check:trainer-panel imports `trainer-panel-window.ts` for its FOLLOW_EVENTS
+ * list, which drags in `BrowserWindow` and `screen`. The check reads SOURCE and
+ * never opens anything, so these exist only to make the module importable —
+ * constructing a window here must never reach the native host.
+ *
+ * `screen` returns a plausible display so that if a future check does call the
+ * geometry helpers, it gets arithmetic rather than a crash.
+ */
+export class BrowserWindow {
+  static getAllWindows(): BrowserWindow[] {
+    return [];
+  }
+  constructor(_options?: unknown) {}
+  isDestroyed(): boolean {
+    return true;
+  }
+  on(): this {
+    return this;
+  }
+  once(): this {
+    return this;
+  }
+  show(): void {}
+  hide(): void {}
+  close(): void {}
+  setBounds(_bounds?: unknown): void {}
+  getBounds(): { x: number; y: number; width: number; height: number } {
+    return { x: 0, y: 0, width: 1200, height: 820 };
+  }
+  async loadURL(_url: string): Promise<void> {}
+}
+
+const STUB_DISPLAY = {
+  id: 1,
+  label: "stub",
+  bounds: { x: 0, y: 0, width: 1920, height: 1080 },
+  workArea: { x: 0, y: 25, width: 1920, height: 1055 },
+};
+
+export const screen = {
+  getPrimaryDisplay: () => STUB_DISPLAY,
+  getAllDisplays: () => [STUB_DISPLAY],
+  getDisplayMatching: (_rect?: unknown) => STUB_DISPLAY,
+  getDisplayNearestPoint: (_point?: unknown) => STUB_DISPLAY,
+};
+
 /** Stand-in for the encrypted-secret API.
  *
  *  The "encryption" below is a reversible marker, not a cipher. That's safe

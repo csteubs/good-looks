@@ -62,6 +62,11 @@ import type {
   TestRecord,
 } from "../recorder/types.js";
 import { sendToMain } from "./app-window.js";
+import {
+  closeTrainerPanel,
+  isTrainerPanelOpen,
+  openTrainerPanel,
+} from "../windows/trainer-panel-window.js";
 import { recorderDebugStore } from "./recorder-debug-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { runHistoryStore } from "./run-history-store.js";
@@ -564,11 +569,34 @@ export interface ContextAction {
   prefillText: string;
   /** the element's current value — prefills value asserts */
   prefillValue: string;
+  /**
+   * Which trainer should act on this.
+   *
+   * The event is BROADCAST — both the main window and the docked panel receive
+   * every push — and without an address both would open a prefilled Add-step
+   * dialog for one right-click. Addressed rather than point-to-point so the
+   * single `sendToMain` fan-out stays the only delivery path; each view ignores
+   * what is not for it. Absent means "main", for records predating the panel.
+   */
+  target?: TrainerTarget;
 }
 
-/** Push a context-menu action to the main window's Add-step dialog. */
+/** The two windows that can host a trainer. */
+export type TrainerTarget = "main" | "panel";
+
+/**
+ * Push a context-menu action to whichever trainer should handle it.
+ *
+ * The docked panel wins when it is open: the user just right-clicked in the
+ * training browser, and the panel is the trainer sitting against it. Opening
+ * the dialog in the main window instead would put it behind the browser — the
+ * exact window hunt this feature removes.
+ */
 function ctxAction(action: ContextAction): void {
-  sendToMain("recorder:contextAction", action);
+  sendToMain("recorder:contextAction", {
+    ...action,
+    target: isTrainerPanelOpen() ? "panel" : "main",
+  } satisfies ContextAction);
 }
 
 /** Keep the native title bar showing the current page's URL (the trainer's
@@ -982,6 +1010,7 @@ export const recorderService = {
       // Tear down the session without finalizing (no steps to save).
       const failedId = session.testId;
       session = null;
+      closeTrainerPanel();
       if (recWindow && !recWindow.isDestroyed()) recWindow.close();
       recWindow = null;
       stopPolling();
@@ -993,6 +1022,18 @@ export const recorderService = {
     session.pageReady = true;
     startPolling();
     broadcastState();
+
+    // Opened only once the browser is genuinely up: docking resizes that window,
+    // and a panel that appeared next to a window which then failed to open would
+    // be a floating orphan with nothing to control.
+    if (recorderSettingsStore.get().trainerPanelEnabled && recWindow && !recWindow.isDestroyed()) {
+      await openTrainerPanel(recWindow).catch((err) => {
+        // The panel is an accelerator, not the trainer — the main window still
+        // has the full one. Failing to open it must not fail the session.
+        logger.warn("recorder", "Could not open the trainer panel", { err: String(err) });
+      });
+    }
+
     return currentState();
   },
 
@@ -1635,6 +1676,10 @@ export const recorderService = {
    *  Exit" action. Tears down the session directly (no spec generation, no
    *  test record save) and closes the window. */
   discardExit(): void {
+    // Before the window closes: closing the panel undocks it first, which gives
+    // the training browser back the width docking took. Once the window is gone
+    // there is nothing left to restore.
+    closeTrainerPanel();
     if (session) {
       const s = session;
       session = null;
@@ -1658,6 +1703,7 @@ export const recorderService = {
 
 async function finalize(): Promise<void> {
   stopPolling();
+  closeTrainerPanel();
   const s = session;
   session = null;
   recWindow = null;

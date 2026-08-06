@@ -69,6 +69,40 @@ function editableField(
   }
 }
 
+/**
+ * Thin clickable strip between rows that moves the insert cursor.
+ *
+ * Lives beside StepRow rather than in either view because BOTH step lists —
+ * the main window's trainer and the docked panel's — need it, and an insert
+ * cursor that behaves differently in the two would be a confusing bug: the
+ * cursor decides where the next captured step lands.
+ */
+export function CursorGap({
+  active,
+  onClick,
+  disabled,
+}: {
+  active: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="group/gap flex h-2 w-full items-center px-2 disabled:cursor-default"
+      aria-label="Move insert point here"
+    >
+      <span
+        className={`h-0.5 w-full rounded-full ${
+          active ? "bg-accent" : disabled ? "bg-transparent" : "bg-transparent group-hover/gap:bg-separator"
+        }`}
+      />
+    </button>
+  );
+}
+
 export interface StepDragProps {
   onDragStart: () => void;
   onDragEnter: () => void;
