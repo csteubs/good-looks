@@ -196,6 +196,18 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     // the element under the cursor and pushes the chosen action; the trainer
     // opens the Add-step dialog prefilled from it.
     const offCtx = api.on<ContextAction>("recorder:contextAction", (a) => setContextAction(a));
+    // A navigation that tried to leave the training window. Surfaced rather
+    // than logged quietly: when this protection fails the damage happens in
+    // ANOTHER application, where the app can neither see nor undo it — so the
+    // one time it engages, the user should know it did.
+    const offBlocked = api.on<{ url: string; reason: string }>(
+      "recorder:navigationBlocked",
+      ({ url, reason }) => {
+        toast.warning(
+          `Kept inside the training window: ${url || "a navigation"} (${reason})`,
+        );
+      },
+    );
     const offFinished = api.on<{ testId: string }>("recorder:finished", ({ testId }) => {
       setLiveSteps([]);
       qc.invalidateQueries({ queryKey: ["tests"] });
@@ -310,6 +322,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       offPicked();
       offCaptured();
       offCtx();
+      offBlocked();
       offFinished();
       offOut();
       offStep();

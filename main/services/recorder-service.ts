@@ -11,7 +11,7 @@
 import { randomUUID } from "crypto";
 
 import { BrowserWindow, logger, Menu } from "@glaze/core/backend";
-import type { MenuItemConstructorOptions } from "@glaze/core/backend";
+import type { MenuItemConstructorOptions, WebContentsNavigationEvent } from "@glaze/core/backend";
 
 import {
   ATTR_ASSERT,
@@ -27,6 +27,11 @@ import { buildReplayScript } from "./step-replayer.js";
 import { healStep } from "./auto-heal.js";
 import { healJournalStore } from "./heal-journal-store.js";
 import { createTrainerWindowGate } from "./trainer-window-gate.js";
+import {
+  GUARDED_NAVIGATION_EVENTS,
+  decideNavigation,
+  isDuplicateContainment,
+} from "./recorder-navigation.js";
 import type { CookieSpec } from "../recorder/types.js";
 import {
   applyCookieStep,
@@ -650,9 +655,25 @@ export const recorderService = {
         });
     };
 
+    // A navigation we refused to let out. Logged loudly AND surfaced in the
+    // trainer's Console, because the failure mode this guards against is
+    // invisible from inside the app — the damage happens in another program.
+    const logContained = (url: string, reason: string, event: string): void => {
+      logger.warn("recorder", "Blocked a navigation from leaving the training window", {
+        event,
+        reason,
+        url,
+      });
+      sendToMain("recorder:navigationBlocked", { url, reason, event });
+    };
+
     // window.open / target=_blank that reach the native layer: keep in-window.
+    // Always denied — an http(s) target is re-issued inside this window, and
+    // anything else is dropped rather than handed to the OS.
     wc.setWindowOpenHandler((details) => {
-      if (/^https?:/i.test(details?.url ?? "")) loadNavInWindow(details.url);
+      const decision = decideNavigation({ url: details?.url, isMainFrame: true }, null);
+      if (decision.action === "load-in-window") loadNavInWindow(decision.url);
+      else logContained(details?.url ?? "", decision.reason, "window-open");
       return { action: "deny" };
     });
 
@@ -667,22 +688,51 @@ export const recorderService = {
 
     wc.on("dom-ready", () => void injectCapture());
 
-    // Glaze routes cross-origin main-frame link navigations to the system
-    // browser by default. Intercept them and load in the recorder window so all
-    // navigation stays inside the trainer. Same-document (SPA) navigations are
-    // left alone. Drain first so the click that triggered the nav isn't lost.
-    wc.on("will-navigate", (details) => {
+    // Glaze routes cross-origin main-frame navigations to the SYSTEM BROWSER by
+    // default, so every event that can carry one has to be intercepted — not
+    // just `will-navigate`. `will-redirect` is the gap that actually escaped: a
+    // server 302 to another origin fires that instead, so a click that started
+    // same-origin left the trainer the moment the site redirected, which a
+    // Shopify checkout does as a matter of course.
+    //
+    // decideNavigation decides; this only carries the decision out. It fails
+    // CLOSED — anything not provably safe is contained or blocked.
+    let lastContained: { url: string; at: number } | null = null;
+    const guardNavigation = (event: string) => (details: WebContentsNavigationEvent) => {
       void drain();
-      const target = details.url;
-      if (!details.isMainFrame || details.isSameDocument) return;
-      if (!/^https?:/i.test(target)) return;
-      if (selfLoad === target) {
-        selfLoad = null;
+      const decision = decideNavigation(details, selfLoad);
+
+      if (decision.action === "allow") {
+        if (selfLoad !== null && details?.url === selfLoad) selfLoad = null;
         return;
       }
-      details.preventDefault();
-      loadNavInWindow(target);
-    });
+
+      // Cancel FIRST. Everything after this point is best-effort; the one thing
+      // that must happen on every path is that the default never runs.
+      try {
+        details.preventDefault();
+      } catch (err) {
+        logger.error("recorder", "Could not cancel a navigation — it may reach the system browser", {
+          event,
+          url: String(details?.url ?? ""),
+          err: String(err),
+        });
+      }
+
+      if (decision.action === "block") {
+        logContained(String(details?.url ?? ""), decision.reason, event);
+        return;
+      }
+
+      const now = Date.now();
+      if (isDuplicateContainment(lastContained, decision.url, now)) return;
+      lastContained = { url: decision.url, at: now };
+      loadNavInWindow(decision.url);
+    };
+
+    for (const event of GUARDED_NAVIGATION_EVENTS) {
+      wc.on(event, guardNavigation(event));
+    }
 
     wc.on("did-navigate", () => {
       void drain();
