@@ -24,7 +24,7 @@ import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, Pi
 import { computeStepDepths, describeStep } from "../lib/describe-step";
 import { locatorToPrompt } from "../lib/llm-prompts";
 import { useRecorder, type ReplayRun } from "./recorder-store";
-import { StepRow } from "./step-row";
+import { CursorGap, StepRow } from "./step-row";
 import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "./add-step-dialog";
 import { stepSessionKey, useAiDebug } from "./ai-debug-store";
 import { parseSessionKey } from "../lib/ai-debug-sessions";
@@ -101,33 +101,6 @@ interface NativeMenu {
 }
 function nativeMenu(): NativeMenu {
   return (window as unknown as { glazeAPI: { Menu: NativeMenu } }).glazeAPI.Menu;
-}
-
-/** Thin clickable strip between rows that moves the insert cursor. */
-function CursorGap({
-  active,
-  onClick,
-  disabled,
-}: {
-  active: boolean;
-  onClick: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="group/gap flex h-2 w-full items-center px-2 disabled:cursor-default"
-      aria-label="Move insert point here"
-    >
-      <span
-        className={`h-0.5 w-full rounded-full ${
-          active ? "bg-accent" : disabled ? "bg-transparent" : "bg-transparent group-hover/gap:bg-separator"
-        }`}
-      />
-    </button>
-  );
 }
 
 const LEVEL_TONE: Record<"info" | "warn" | "error", string> = {
@@ -579,6 +552,14 @@ export function RecordingView() {
   React.useEffect(() => {
     if (!contextAction) return;
     const a = contextAction;
+    // Addressed to the docked panel: the user right-clicked in the training
+    // browser and the panel is the trainer beside it. Both windows receive the
+    // broadcast, so without this check one right-click opens two prefilled
+    // dialogs — and the one back here is behind the browser anyway.
+    if (a.target === "panel") {
+      clearContextAction();
+      return;
+    }
     if (a.kind === "refine") {
       // Hand the context-picked element to the Refine Selector flow: seed the
       // shared `picked` state and enter refine mode targeting a fresh insert.
