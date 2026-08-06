@@ -23,6 +23,22 @@ export const app = {
 const noop = (..._args: unknown[]): void => {};
 export const logger = { info: noop, warn: noop, error: noop, debug: noop };
 
+/** Inert file/message dialogs. A check drives the import pipeline with paths it
+ *  supplies directly, so the picker must never actually open — cancelling is
+ *  the honest stand-in for "the user was never asked". */
+export const dialog = {
+  async showOpenDialog(_options?: unknown): Promise<{ canceled: boolean; filePaths: string[] }> {
+    return { canceled: true, filePaths: [] };
+  },
+  async showSaveDialog(_options?: unknown): Promise<{ canceled: boolean; filePath?: string }> {
+    return { canceled: true };
+  },
+  async showMessageBox(_options?: unknown): Promise<{ response: number }> {
+    return { response: 0 };
+  },
+  async showErrorBox(_title?: string, _content?: string): Promise<void> {},
+};
+
 /** Inert stand-in so modules that CAN post a notification are importable in a
  *  check. The checks drive the pure decision helper (buildRunNotice), not this
  *  — constructing one here must never try to reach the notification centre. */
