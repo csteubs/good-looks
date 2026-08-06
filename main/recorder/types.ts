@@ -662,6 +662,13 @@ export interface RecorderSettings {
    *  request URLs — cheap to collect, but data at rest the user didn't ask
    *  for. */
   defaultRecordLogs: boolean;
+  /** EXPERIMENTAL. A test being re-run normally discards its AI debug session,
+   *  so each run starts from a blank slate. With this on, a session that is
+   *  STILL STREAMING survives instead — marked as belonging to the previous
+   *  run and reachable only from the global chip. Finished sessions are
+   *  cleared either way: the thing worth protecting is work in progress, not a
+   *  stale answer. Default false. */
+  keepRunningAiDebugJobs: boolean;
   /** Record EVERY request/response header rather than the allowlist in
    *  log-capture-source.ts (default false). The allowlist covers CORS and
    *  caching, which is what headers are usually wanted for; this is the
@@ -977,6 +984,11 @@ export interface AiDebugSession {
    *  about a test in general: reopening the panel after a re-run must not show
    *  a diagnosis of output that is no longer on screen. */
   runKey?: string | null;
+  /** True when this session outlived the run it describes — kept alive only
+   *  because it was still streaming and the user opted to preserve running
+   *  jobs. Everything showing it must say so: its answer is about output that
+   *  is no longer on screen. */
+  superseded?: boolean;
   /** Hash of the script the prompt was built from, so a diff computed against a
    *  since-edited script can be flagged instead of silently clobbering it. */
   scriptHash: string | null;

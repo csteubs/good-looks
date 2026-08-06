@@ -103,6 +103,10 @@ export interface AiDebugContextValue {
   discard: (key: string) => void;
   /** Cancel a live request but keep the session and its partial output. */
   stopStream: (key: string) => void;
+  /** Mark a session as outliving the run it describes. Used when a still-live
+   *  job is preserved across a re-run instead of being discarded — every
+   *  surface must then say the answer is about earlier output. */
+  markSuperseded: (key: string) => void;
   /** Begin (or restart) a stream. `scriptHash` records the script the prompt
    *  was built from, stamped at SEND time. Returns why it was refused, if it was. */
   startStream: (
@@ -462,6 +466,8 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
               // erase the mismatch that warns the user their edits predate the
               // diagnosis they are about to apply.
               runKey: init.runKey ?? existing.runKey ?? null,
+              // Reopening for the run it actually belongs to clears the flag.
+              superseded: init.runKey != null && init.runKey === existing.runKey ? false : existing.superseded,
               updatedAt: now,
             }
           : {
@@ -476,6 +482,7 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
               // Stamped when the prompt is actually sent (see startStream).
               scriptHash: null,
               runKey: init.runKey ?? null,
+              superseded: false,
               // A fresh startedAt is what resets the dialog's own per-session
               // state (draft, thread, fulfilment counters), all of which key on
               // it — so one reset here reaches every one of them.
@@ -543,6 +550,14 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
     if (!meta?.requestId) return;
     void api.llm.cancel(meta.requestId).catch(() => {});
   }, []);
+
+  const markSuperseded = React.useCallback(
+    (key: string) => {
+      if (metaRef.current[key]?.superseded) return;
+      patchMeta(key, { superseded: true });
+    },
+    [patchMeta],
+  );
 
   const capacityFor = React.useCallback(
     (key: string) => canStartStream(Object.values(metaRef.current), key),
@@ -616,6 +631,7 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
       expand,
       discard,
       stopStream,
+      markSuperseded,
       startStream,
       capacityFor,
       getContext,
@@ -631,6 +647,7 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
       expand,
       discard,
       stopStream,
+      markSuperseded,
       startStream,
       capacityFor,
       getContext,

@@ -595,6 +595,7 @@ export interface RecorderSettings {
   defaultCaptureArtifacts: boolean;
   defaultRecordLogs: boolean;
   recordAllHeaders: boolean;
+  keepRunningAiDebugJobs: boolean;
   /** default value of the per-test "Run headless" toggle (default false). */
   defaultRunHeadless: boolean;
   /** default browser engine for tests with no preference (default "chromium"). */
@@ -832,6 +833,11 @@ export interface AiDebugSession {
    *  about a test in general: reopening the panel after a re-run must not show
    *  a diagnosis of output that is no longer on screen. */
   runKey?: string | null;
+  /** True when this session outlived the run it describes — kept alive only
+   *  because it was still streaming and the user opted to preserve running
+   *  jobs. Everything showing it must say so: its answer is about output that
+   *  is no longer on screen. */
+  superseded?: boolean;
   scriptHash: string | null;
   startedAt: number;
   updatedAt: number;

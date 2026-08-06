@@ -951,6 +951,15 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
               </Callout.Text>
             </Callout>
           ) : null}
+          {session?.superseded ? (
+            <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+              <Callout.Text>
+                This job is about an <strong>earlier run</strong> — the test has been run again
+                since it started. It was kept because it was still working; its diagnosis describes
+                output that is no longer on screen.
+              </Callout.Text>
+            </Callout>
+          ) : null}
           {refused ? (
             <CapacityNotice decision={refused} onStopOldest={() => void send(true)} />
           ) : null}

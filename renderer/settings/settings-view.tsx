@@ -74,6 +74,7 @@ export function SettingsView() {
   const [defaultCaptureArtifacts, setDefaultCaptureArtifacts] = useState(false);
   const [defaultRecordLogs, setDefaultRecordLogs] = useState(false);
   const [recordAllHeaders, setRecordAllHeaders] = useState(false);
+  const [keepRunningAiDebugJobs, setKeepRunningAiDebugJobs] = useState(false);
   const [defaultRunHeadless, setDefaultRunHeadless] = useState(false);
   const [defaultRunBrowser, setDefaultRunBrowser] = useState<RunBrowser>("chromium");
   const [artifactRetainedRuns, setArtifactRetainedRuns] = useState(10);
@@ -129,6 +130,7 @@ export function SettingsView() {
         setDefaultCaptureArtifacts(settings.defaultCaptureArtifacts ?? false);
         setDefaultRecordLogs(settings.defaultRecordLogs ?? false);
         setRecordAllHeaders(settings.recordAllHeaders ?? false);
+        setKeepRunningAiDebugJobs(settings.keepRunningAiDebugJobs ?? false);
         setDefaultRunHeadless(settings.defaultRunHeadless ?? false);
         setDefaultRunBrowser(settings.defaultRunBrowser ?? "chromium");
         setArtifactRetainedRuns(settings.artifactRetainedRuns ?? 10);
@@ -198,6 +200,15 @@ export function SettingsView() {
     setRecordAllHeaders(checked);
     try {
       await api.recorder.setSettings({ recordAllHeaders: checked });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleKeepRunningAiDebugJobsChange = async (checked: boolean) => {
+    setKeepRunningAiDebugJobs(checked);
+    try {
+      await api.recorder.setSettings({ keepRunningAiDebugJobs: checked });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
     }
@@ -1204,6 +1215,31 @@ export function SettingsView() {
                 </Select>
               </Field>
             )}
+          </FieldGroup>
+        </FieldSet>
+
+        <FieldSet>
+          <FieldGroup>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="keep-running-ai-debug-jobs">
+                  Experimental: keep a running AI debug job when a test is re-run
+                </FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Re-running a test normally clears its AI debug session, so each run starts from a
+                  blank slate. With this on, a job that is still working survives the re-run instead
+                  of being cancelled — reachable from the AI debug chip and marked as belonging to
+                  the previous run. Finished answers are still cleared either way. Useful with a
+                  slow local model, at the cost of a session on screen that describes output you can
+                  no longer see.
+                </p>
+              </FieldContent>
+              <Switch
+                id="keep-running-ai-debug-jobs"
+                checked={keepRunningAiDebugJobs}
+                onCheckedChange={handleKeepRunningAiDebugJobsChange}
+              />
+            </Field>
           </FieldGroup>
         </FieldSet>
       </div>

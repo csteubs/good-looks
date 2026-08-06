@@ -64,7 +64,10 @@ export function AiDebugChip() {
                 title={t.label}
               >
                 <Sparkles className={`size-3.5 shrink-0 ${t.className}`} />
-                <span className="min-w-0 flex-1 truncate text-small text-primary">{s.label}</span>
+                <span className="min-w-0 flex-1 truncate text-small text-primary">
+                  {s.label}
+                  {s.superseded ? " · previous run" : ""}
+                </span>
                 <span className="shrink-0 text-small text-tertiary">{t.label}</span>
               </button>
             );

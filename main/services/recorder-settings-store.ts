@@ -46,6 +46,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   defaultA11yChecks: false,
   defaultRecordLogs: false,
   recordAllHeaders: false,
+  keepRunningAiDebugJobs: false,
   debugScreenshots: false,
   defaultRunHeadless: false,
   defaultRunBrowser: "chromium",
@@ -96,6 +97,10 @@ function read(): RecorderSettings {
         typeof parsed.recordAllHeaders === "boolean"
           ? parsed.recordAllHeaders
           : DEFAULT_SETTINGS.recordAllHeaders,
+      keepRunningAiDebugJobs:
+        typeof parsed.keepRunningAiDebugJobs === "boolean"
+          ? parsed.keepRunningAiDebugJobs
+          : DEFAULT_SETTINGS.keepRunningAiDebugJobs,
       debugScreenshots:
         typeof parsed.debugScreenshots === "boolean"
           ? parsed.debugScreenshots
@@ -182,6 +187,10 @@ export const recorderSettingsStore = {
           : current.defaultRecordLogs,
       recordAllHeaders:
         update.recordAllHeaders !== undefined ? update.recordAllHeaders : current.recordAllHeaders,
+      keepRunningAiDebugJobs:
+        update.keepRunningAiDebugJobs !== undefined
+          ? update.keepRunningAiDebugJobs
+          : current.keepRunningAiDebugJobs,
       debugScreenshots:
         update.debugScreenshots !== undefined
           ? update.debugScreenshots
@@ -239,6 +248,7 @@ export const recorderSettingsStore = {
       defaultA11yChecks: next.defaultA11yChecks,
       defaultRecordLogs: next.defaultRecordLogs,
       recordAllHeaders: next.recordAllHeaders,
+      keepRunningAiDebugJobs: next.keepRunningAiDebugJobs,
       debugScreenshots: next.debugScreenshots,
       defaultCaptureArtifacts: next.defaultCaptureArtifacts,
       defaultRunHeadless: next.defaultRunHeadless,

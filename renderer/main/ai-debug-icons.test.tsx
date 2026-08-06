@@ -358,6 +358,33 @@ describe("the run panel icon, across runs of one test", () => {
   });
 });
 
+describe("the icon for a job kept across a re-run (experimental)", () => {
+  function RunPanel({ testId, runKey }: { testId: string; runKey: string }) {
+    const status = useAiDebugStatus(runSessionKey(testId), runKey);
+    return <RunOutput info={info()} onDebug={() => {}} aiStatus={status} />;
+  }
+
+  it("leaves the new run's icon blank while the kept job stays visible on the chip", async () => {
+    // The kept job is deliberately still in the store, so this is exactly the
+    // case where a run-scoped icon earns its keep.
+    h.listResult = [session({ status: "streaming", runKey: "rec-1", superseded: true })];
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <RunPanel testId="t1" runKey="rec-2" />
+        <AiDebugChip />
+      </AiDebugProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText("Debug with AI")).toBeTruthy());
+    expect(screen.queryByLabelText(toneFor("streaming").label)).toBeNull();
+    // …but it is still reachable, and still says it is thinking.
+    expect(
+      screen.getByRole("button", { name: `AI debug — ${toneFor("streaming").label}` }),
+    ).toBeTruthy();
+  });
+});
+
 // ── The global chip ──────────────────────────────────────────────────
 
 describe("the global chip", () => {

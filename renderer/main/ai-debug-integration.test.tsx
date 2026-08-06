@@ -32,6 +32,7 @@ const h = vi.hoisted(() => ({
   script: "",
   hasLogs: false,
   runLogs: null as unknown,
+  keepRunningJobs: false,
 }));
 
 vi.mock("./recorder-store", () => ({
@@ -67,7 +68,10 @@ vi.mock("../lib/api", () => ({
       },
       updateSteps: async () => ({}),
     },
-    recorder: { getSettings: async () => ({}) as RecorderSettings },
+    recorder: {
+      getSettings: async () =>
+        ({ keepRunningAiDebugJobs: h.keepRunningJobs }) as unknown as RecorderSettings,
+    },
     runs: { captureOverhead: async () => null },
     artifacts: {
       hasLogs: async () => ({ hasLogs: h.hasLogs }),
@@ -180,6 +184,7 @@ beforeEach(() => {
   h.script = SCRIPT;
   h.hasLogs = false;
   h.runLogs = null;
+  h.keepRunningJobs = false;
 });
 
 describe("opening a session from the run output", () => {
@@ -646,5 +651,97 @@ describe("a session never survives into a different run", () => {
     expect(await screen.findByRole("button", { name: /^AI debug —/ })).toBeTruthy();
     fireEvent.click(await findDebugIcon());
     expect(await screen.findByText(/ANSWER ABOUT RUN ONE/)).toBeTruthy();
+  });
+});
+
+// ── Experimental: keeping a running job across a re-run ──────────────
+// Off by default, because the default has to be the blank slate. When on, the
+// thing protected is work in PROGRESS — a finished answer is still cleared,
+// since a stale answer is exactly what the blank-slate rule exists to stop.
+
+describe("keep-running-jobs (experimental, off by default)", () => {
+  async function startAndMinimize() {
+    fireEvent.click(await findDebugIcon());
+    fireEvent.click(await screen.findByRole("button", { name: /Send to AI/i }));
+    await waitFor(() => expect(h.chat).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: /^Minimize$/i }));
+    await screen.findByRole("button", { name: /^AI debug —/ });
+  }
+
+  function reRun() {
+    h.runs = { t1: runInfo({ recordId: "rec-2", startedAt: 2, lines: ["different\n"] }) };
+  }
+
+  it("keeps a still-streaming job when enabled, instead of cancelling it", async () => {
+    h.keepRunningJobs = true;
+    const { rerender } = renderApp();
+    await startAndMinimize();
+
+    reRun();
+    rerender(app());
+
+    // Still there, still live: no cancel, and chunks still land.
+    await waitFor(() => expect(screen.getByRole("button", { name: /^AI debug —/ })).toBeTruthy());
+    expect(h.cancel).not.toHaveBeenCalled();
+    emit("llm:chunk", { requestId: "req-1", delta: "finished after the re-run" });
+    emit("llm:done", { requestId: "req-1" });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: `AI debug — ${toneFor("done").label}` })).toBeTruthy(),
+    );
+  });
+
+  it("marks the kept job as belonging to the previous run", async () => {
+    // It must never read as a diagnosis of what is on screen now.
+    h.keepRunningJobs = true;
+    const { rerender } = renderApp();
+    await startAndMinimize();
+    reRun();
+    rerender(app());
+
+    fireEvent.click(await screen.findByRole("button", { name: /^AI debug —/ }));
+    expect(await screen.findByText(/about an/i)).toBeTruthy();
+    expect(screen.getByText(/no longer on screen/i)).toBeTruthy();
+  });
+
+  it("still leaves this run's own icon blank", async () => {
+    // The kept job belongs to the old run, so the run panel must not advertise
+    // it — that was the original complaint.
+    h.keepRunningJobs = true;
+    const { rerender } = renderApp();
+    await startAndMinimize();
+    reRun();
+    rerender(app());
+
+    await waitFor(() => expect(screen.getByLabelText("Debug with AI")).toBeTruthy());
+    expect(screen.queryByLabelText(toneFor("streaming").label)).toBeNull();
+  });
+
+  it("clears a FINISHED session even when enabled", async () => {
+    h.keepRunningJobs = true;
+    const { rerender } = renderApp();
+    fireEvent.click(await findDebugIcon());
+    fireEvent.click(await screen.findByRole("button", { name: /Send to AI/i }));
+    await waitFor(() => expect(h.chat).toHaveBeenCalled());
+    emit("llm:chunk", { requestId: "req-1", delta: "a finished answer" });
+    emit("llm:done", { requestId: "req-1" });
+    await screen.findByText(/a finished answer/);
+    fireEvent.click(screen.getByRole("button", { name: /^Minimize$/i }));
+
+    reRun();
+    rerender(app());
+
+    // Work in progress is what the setting protects; a stale answer is not.
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^AI debug —/ })).toBeNull());
+  });
+
+  it("cancels the running job when the setting is off", async () => {
+    h.keepRunningJobs = false;
+    const { rerender } = renderApp();
+    await startAndMinimize();
+    reRun();
+    rerender(app());
+
+    await waitFor(() => expect(h.cancel).toHaveBeenCalledWith("req-1"));
+    expect(screen.queryByRole("button", { name: /^AI debug —/ })).toBeNull();
   });
 });

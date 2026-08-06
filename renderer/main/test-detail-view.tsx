@@ -170,6 +170,7 @@ export function TestDetailView() {
   // the output instead would change on every streamed line, so a session opened
   // mid-run would look like it belonged to a different run one chunk later.
   const runKey = runInfo ? (recordId ?? `t${runInfo.startedAt}`) : null;
+  const keepRunningJobs = settingsQuery.data?.keepRunningAiDebugJobs ?? false;
   // Scoped to THIS run: a session from a previous run of the same test must not
   // colour the icon, or it promises an answer about output that is gone.
   const aiStatus = useAiDebugStatus(aiKey, runKey);
@@ -186,10 +187,27 @@ export function TestDetailView() {
     // Only on a DEFINITE mismatch. A session restored from disk before run
     // identities existed has none, and treating unknown as "different" would
     // delete every restored diagnosis the moment its test was opened.
-    if (existing && existing.runKey != null && existing.runKey !== runKey) {
-      aiDebug.discard(aiKey);
+    if (!existing || existing.runKey == null || existing.runKey === runKey) return;
+    // Already kept by an explicit opt-in. It must survive FINISHING, too —
+    // discarding it the moment its answer arrived would defeat the entire
+    // point of preserving it. It now lives until the user discards it.
+    if (existing.superseded) return;
+
+    // EXPERIMENTAL opt-in: a job that is still STREAMING survives the re-run
+    // rather than being thrown away mid-answer. It stops colouring this run's
+    // icon either way (useAiDebugStatus is run-scoped) and is reachable only
+    // from the global chip, marked as belonging to the previous run.
+    //
+    // A FINISHED session is discarded regardless of the setting: the thing
+    // worth protecting is work in progress, not a stale answer — and keeping
+    // stale answers around is the exact complaint this whole path exists to
+    // fix.
+    if (existing.status === "streaming" && keepRunningJobs) {
+      aiDebug.markSuperseded(aiKey);
+      return;
     }
-  }, [aiDebug, aiKey, runKey]);
+    aiDebug.discard(aiKey);
+  }, [aiDebug, aiKey, runKey, keepRunningJobs]);
 
   // Whether the finished run recorded console/network. Asked once per run
   // rather than assumed from the toggle: the toggle can be flipped after a run,
