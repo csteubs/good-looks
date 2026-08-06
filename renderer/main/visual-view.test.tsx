@@ -176,4 +176,24 @@ describe("VisualView run selection", () => {
     // opening each one.
     expect(document.body.textContent).toMatch(/3/);
   });
+
+  it("marks a run whose only finding was an accessibility one", async () => {
+    // `a11yNewSteps` was carried in the summary from the day the feature landed
+    // and read by nothing, so a run that was visually identical but newly
+    // inaccessible looked exactly like a clean one in this list.
+    replays = [summary({ runId: "r1", changedSteps: 0, a11yNewSteps: 2 })];
+    renderVisual();
+    await screen.findByText("Checkout");
+    expect(screen.getByLabelText("accessibility issues")).toBeTruthy();
+    // Its own marker: it must not borrow the visual-change one, which sends the
+    // user to a pixel diff that shows nothing.
+    expect(screen.queryByLabelText("visual change")).toBeNull();
+  });
+
+  it("leaves a clean run unmarked", async () => {
+    replays = [summary({ runId: "r1" })];
+    renderVisual();
+    await screen.findByText("Checkout");
+    expect(screen.queryByLabelText("accessibility issues")).toBeNull();
+  });
 });

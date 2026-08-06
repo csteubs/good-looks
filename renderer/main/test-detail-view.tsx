@@ -46,7 +46,9 @@ import { ScriptEditor, ScriptView } from "./script-view";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
 import { HealsPanel } from "./heals-panel";
+import { A11yPanel } from "./a11y-panel";
 import { computeStepDepths } from "../lib/describe-step";
+import { latestA11yRun } from "../lib/a11y-format";
 import {
   RUN_BROWSERS,
   RUN_BROWSER_LABELS,
@@ -122,6 +124,11 @@ export function TestDetailView() {
   // count is visible without opening the tab — an unreviewed heal means the
   // test may already have been changed underneath the user.
   const healsQuery = useQuery({ queryKey: ["heals", id], queryFn: () => api.heals.list(id) });
+  // Badged on the Accessibility tab, from the most recent run that actually
+  // checked — same reasoning as the Heals count: an unaccepted violation the
+  // user has to open a tab to discover is one they won't discover. Shares the
+  // ["runs"] key with Stats and the panel itself, so this is usually free.
+  const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
   // What capture costs FOR THIS TEST — the fair comparison, since different
   // tests do different amounts of work. Absent until this test has an
   // instrumented capture run to measure.
@@ -135,6 +142,7 @@ export function TestDetailView() {
   });
   const test = testQuery.data;
   const pendingHeals = (healsQuery.data ?? []).filter((h) => h.status === "pending").length;
+  const a11yNewSteps = latestA11yRun(runsQuery.data ?? [], id)?.a11yNewSteps ?? 0;
   const runInfo = runs[id];
 
   // Initialize the toggle from the test record (or the global default) once.
@@ -611,6 +619,16 @@ export function TestDetailView() {
                     {pendingHeals > 0 ? ` (${pendingHeals})` : ""}
                   </TabsTrigger>
                 )}
+                {/* Same imported-test exclusion as the two above, and for the
+                    same reason: the check runs from the capture fixture, which
+                    an imported spec never loads. A tab that could only ever be
+                    empty is worse than no tab. */}
+                {imported ? null : (
+                  <TabsTrigger value="a11y">
+                    Accessibility
+                    {a11yNewSteps > 0 ? ` (${a11yNewSteps})` : ""}
+                  </TabsTrigger>
+                )}
               </Tabs>
             </div>
             <TabsContent value="steps" className="min-h-0 flex-1">
@@ -673,6 +691,11 @@ export function TestDetailView() {
             {imported ? null : (
               <TabsContent value="heals" className="min-h-0 flex-1">
                 <HealsPanel test={test} />
+              </TabsContent>
+            )}
+            {imported ? null : (
+              <TabsContent value="a11y" className="min-h-0 flex-1">
+                <A11yPanel test={test} />
               </TabsContent>
             )}
           </TabsRoot>

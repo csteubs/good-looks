@@ -204,11 +204,17 @@ async function elementRect(page, target) {
  *
  * Never throws. An a11y check that fails must not fail the test — this is
  * reporting, not a gate.
+ *
+ * The caps are PASSED IN rather than closed over. The callback is serialized to
+ * source and re-evaluated inside the page, so it keeps no scope from this file:
+ * naming MAX_VIOLATIONS directly threw \`ReferenceError: MAX_VIOLATIONS is not
+ * defined\` in the page, AFTER axe had finished — every check paid its full cost,
+ * returned null, and the feature reported nothing at all while looking enabled.
  */
 async function runAxe(page) {
   try {
     if (page.isClosed && page.isClosed()) return null;
-    const raw = await page.evaluate(async () => {
+    const raw = await page.evaluate(async (caps) => {
       if (!window.axe) return null;
       // resultTypes trims what axe assembles: we only ever read violations, and
       // asking for passes/incomplete on a large page is most of the cost.
@@ -216,13 +222,13 @@ async function runAxe(page) {
         resultTypes: ["violations"],
         reporter: "v2",
       });
-      return (res.violations || []).slice(0, MAX_VIOLATIONS).map((v) => ({
+      return (res.violations || []).slice(0, caps.maxViolations).map((v) => ({
         id: v.id,
         impact: v.impact || "minor",
         help: v.help,
-        nodes: (v.nodes || []).slice(0, MAX_NODES).map((n) => (n.target || []).join(" ")),
+        nodes: (v.nodes || []).slice(0, caps.maxNodes).map((n) => (n.target || []).join(" ")),
       }));
-    });
+    }, { maxViolations: MAX_VIOLATIONS, maxNodes: MAX_NODES });
     return raw;
   } catch (err) {
     process.stderr.write("[glaze-a11y] check failed: " + String(err) + "\\n");

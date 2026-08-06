@@ -102,6 +102,49 @@ export function acceptKeysFor(violations: A11yViolation[] | undefined): string[]
   return out;
 }
 
+function plural(n: number, word: string): string {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+/**
+ * The one-line summary written to a run's Output panel when the check ran.
+ *
+ * It exists because the check used to be invisible from where the user actually
+ * stands. The results live in the Visual view; the toggle lives on the test.
+ * Between them was nothing at all, so "the page is clean", "the check never
+ * completed" and "this feature is broken" were the same observation — which is
+ * exactly how a fixture bug that broke every check went unnoticed.
+ *
+ * So `checks` — the number of axe runs that COMPLETED — is stated separately
+ * from what was found, and zero of them is reported as a fault rather than as a
+ * clean bill of health. A summary that said "no issues found" there would be
+ * the most confident possible way of being wrong.
+ */
+export function describeA11yOutcome(params: {
+  /** completed axe checks, from the capture manifest */
+  checks: number;
+  steps: readonly { a11y?: A11yResult }[];
+}): string {
+  const { checks, steps } = params;
+  if (checks <= 0) {
+    return "Accessibility: no check completed on this run — nothing was measured.";
+  }
+  const flagged = steps.filter((s) => (s.a11y?.newKeys.length ?? 0) > 0);
+  const newIssues = flagged.reduce((n, s) => n + (s.a11y?.newKeys.length ?? 0), 0);
+  const accepted = steps.reduce((n, s) => n + (s.a11y?.acceptedCount ?? 0), 0);
+  if (newIssues === 0) {
+    // Accepted issues are named rather than folded into "no issues": the run is
+    // clean against the baseline, not clean against the page.
+    return accepted > 0
+      ? `Accessibility: ${plural(checks, "check")}, no new issues (${accepted} previously accepted).`
+      : `Accessibility: ${plural(checks, "check")}, no issues found.`;
+  }
+  return `Accessibility: ${plural(newIssues, "new issue")} on ${plural(
+    flagged.length,
+    "step",
+  )} — open Visual to review.`;
+}
+
 /** The worst impact among a step's NEW violations, for badge colouring.
  *  Ranked by axe's own severity order rather than by count: one critical
  *  violation matters more than six minor ones. */
