@@ -16,7 +16,7 @@
 //      bare uuid at that point is useless.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { HealListEntry } from "../lib/recorder-types";
@@ -26,6 +26,8 @@ import { HealsView } from "./heals-view";
 let journal: HealListEntry[] = [];
 const accept = vi.fn(async (_id: string, _locator?: unknown) => null);
 const revert = vi.fn(async (_id: string) => null);
+const remove = vi.fn(async (_id: string) => ({ removed: 1 }));
+const clearAllSettled = vi.fn(async () => ({ removed: 2 }));
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -33,6 +35,8 @@ vi.mock("../lib/api", () => ({
       listAll: async () => journal,
       accept: (id: string, locator?: unknown) => accept(id, locator),
       revert: (id: string) => revert(id),
+      remove: (id: string) => remove(id),
+      clearAllSettled: () => clearAllSettled(),
     },
   },
 }));
@@ -252,6 +256,128 @@ describe("HealsView", () => {
     await screen.findByText("now");
     expect(screen.queryByRole("button", { name: /keep|apply/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /revert|dismiss/i })).toBeNull();
+  });
+});
+
+describe("HealsView deleting records", () => {
+  /** Open the confirmation behind `name` and return once its dialog is up. */
+  async function openConfirm(name: RegExp) {
+    fireEvent.click(await screen.findByRole("button", { name }));
+    return await screen.findByRole("alertdialog");
+  }
+
+  /** Press the Delete inside the open dialog, not the trigger that opened it —
+   *  both are labelled "Delete", and clicking the trigger again would close the
+   *  dialog and silently assert nothing. */
+  function confirmDelete(dialog: HTMLElement) {
+    const button = within(dialog)
+      .getAllByRole("button")
+      .find((b) => /^delete$/i.test(b.textContent ?? ""));
+    expect(button).toBeTruthy();
+    fireEvent.click(button as HTMLElement);
+  }
+
+  it("deletes the selected heal, and only after confirming", async () => {
+    journal = [heal({ id: "h7" })];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+
+    const dialog = await openConfirm(/^delete$/i);
+    // Opening the dialog must not delete anything by itself.
+    expect(remove).not.toHaveBeenCalled();
+    confirmDelete(dialog);
+    await waitFor(() => expect(remove).toHaveBeenCalledWith("h7"));
+  });
+
+  it("backs out cleanly when the confirmation is cancelled", async () => {
+    journal = [heal({ id: "h7" })];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+
+    const dialog = await openConfirm(/^delete$/i);
+    fireEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("warns that deleting an applied, unreviewed heal throws away the undo", async () => {
+    // The dangerous case. The step has ALREADY been changed on disk and this
+    // record holds the locator it replaced, so deleting it leaves the change in
+    // place with no way back. A generic "can't be undone" wouldn't say that.
+    journal = [heal({ applied: true, status: "pending" })];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+    const dialog = await openConfirm(/^delete$/i);
+    expect(within(dialog).getByText(/no way to undo it/i)).toBeTruthy();
+  });
+
+  it("doesn't cry wolf over a heal that changed nothing", async () => {
+    // Under "suggest" mode the stored test was never touched, so deleting the
+    // record costs nothing. Reusing the scary copy here is how a warning stops
+    // being read at all.
+    journal = [heal({ applied: false, status: "pending" })];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+    const dialog = await openConfirm(/^delete$/i);
+    expect(within(dialog).getByText(/never applied/i)).toBeTruthy();
+    expect(within(dialog).queryByText(/no way to undo it/i)).toBeNull();
+  });
+
+  it("offers delete on a settled heal, which review buttons no longer are", async () => {
+    journal = [heal({ status: "accepted" })];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+    await screen.findByText("now");
+    expect(screen.getByRole("button", { name: /^delete$/i })).toBeTruthy();
+    const dialog = await openConfirm(/^delete$/i);
+    expect(within(dialog).getByText(/removes the record only/i)).toBeTruthy();
+  });
+
+  it("drops the selection when its record is deleted", async () => {
+    // The detail pane is driven by the selected id. Left set, it goes on
+    // describing a heal that no longer exists — offering Delete, Keep and
+    // Revert on a record that is gone — until the refetch lands.
+    journal = [heal({ id: "h7" })];
+    renderView();
+    fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
+    await screen.findByText("now");
+
+    confirmDelete(await openConfirm(/^delete$/i));
+    await waitFor(() => expect(remove).toHaveBeenCalled());
+    expect(await screen.findByText(/Select a heal/i)).toBeTruthy();
+  });
+
+  it("clears settled history in bulk, keeping what still needs review", async () => {
+    journal = [
+      heal({ id: "a", status: "pending" }),
+      heal({ id: "b", status: "accepted" }),
+      heal({ id: "c", status: "reverted" }),
+    ];
+    renderView();
+    const dialog = await openConfirm(/clear history/i);
+    // The count is the user's only preview of what a bulk delete will take.
+    expect(within(dialog).getByText(/delete 2 settled heals\?/i)).toBeTruthy();
+    expect(within(dialog).getByText(/needing review are kept/i)).toBeTruthy();
+    confirmDelete(dialog);
+    await waitFor(() => expect(clearAllSettled).toHaveBeenCalled());
+  });
+
+  it("hides Clear history when there is no settled history to clear", async () => {
+    journal = [heal({ id: "a", status: "pending" })];
+    renderView();
+    await screen.findByText('getByTestId("submit-v1").click()');
+    expect(screen.queryByRole("button", { name: /clear history/i })).toBeNull();
+  });
+
+  it("never offers a way to bulk-delete heals that still need review", async () => {
+    // A pending heal is the only stored copy of the locator its step used to
+    // have. One click that took those with it would destroy the undo for
+    // changes already made to tests — the thing the journal exists to prevent.
+    journal = [heal({ id: "a", status: "pending" }), heal({ id: "b", status: "accepted" })];
+    renderView();
+    const dialog = await openConfirm(/clear history/i);
+    expect(within(dialog).getByText(/delete 1 settled heal\?/i)).toBeTruthy();
+    expect(within(dialog).queryByText(/all heals|everything/i)).toBeNull();
   });
 });
 

@@ -166,4 +166,33 @@ export const healJournalStore = {
     if (removed > 0) writeAll(kept);
     return { removed };
   },
+
+  /** Forget settled entries across EVERY test, keeping anything still pending.
+   *
+   *  The cross-test sibling of `clearSettled`, for the Heals view — which lists
+   *  every test's heals, so a per-test clear can't empty what it shows. Pending
+   *  entries are kept here for the same reason the prune cap keeps them: a
+   *  pending entry is the undo for a change already made to a test. */
+  clearAllSettled(): { removed: number } {
+    const all = readAll();
+    const kept = all.filter((e) => e.status === "pending");
+    const removed = all.length - kept.length;
+    if (removed > 0) writeAll(kept);
+    return { removed };
+  },
+
+  /** Delete one entry outright. Returns how many were removed (0 if the id is
+   *  unknown), so a double-click reports honestly rather than throwing.
+   *
+   *  Unlike the prune cap, this WILL drop a pending entry — the cap protects
+   *  the user from losing an undo they never saw, but an explicit delete is the
+   *  user saying they don't want the record. The UI is what has to make the
+   *  consequence plain before asking. */
+  remove(id: string): { removed: number } {
+    const all = readAll();
+    const kept = all.filter((e) => e.id !== id);
+    const removed = all.length - kept.length;
+    if (removed > 0) writeAll(kept);
+    return { removed };
+  },
 };

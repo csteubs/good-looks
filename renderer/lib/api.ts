@@ -195,6 +195,10 @@ export const api = {
     revert: (id: string) => ipc().invoke<HealEntry | null>("heals:revert", { id }),
     clearSettled: (testId: string) =>
       ipc().invoke<{ removed: number }>("heals:clearSettled", { testId }),
+    /** Delete one journal entry. The test itself is left as the heal left it. */
+    remove: (id: string) => ipc().invoke<{ removed: number }>("heals:remove", { id }),
+    /** Clear settled heals across every test; pending ones are kept. */
+    clearAllSettled: () => ipc().invoke<{ removed: number }>("heals:clearAllSettled"),
   },
   batch: {
     run: (

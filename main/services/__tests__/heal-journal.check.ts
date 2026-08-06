@@ -9,6 +9,8 @@
 //   • the original locator is stored, or there is no undo;
 //   • revert actually restores it, and only when something was applied;
 //   • pruning never drops a PENDING entry — that entry IS the undo record;
+//   • a bulk clear doesn't either, for the same reason, while an explicit
+//     single delete does — that one is the user's own call;
 //   • the two apply modes differ in exactly one way (does the test change?).
 //
 // Driven against the real store writing to a temp userData dir. Bundled with
@@ -134,6 +136,79 @@ function main(): void {
       healJournalStore.list("all-a").length,
       2,
       "…and the per-test list is unaffected",
+    );
+  }
+
+  // ── 3c. Deleting individual records ──────────────────────────────────────
+  //
+  // The Heals view lets the user delete a record outright. Two properties
+  // matter: it removes exactly one entry (a heal's id is the only thing telling
+  // two heals of the same step apart), and an unknown id is a no-op rather than
+  // a throw — the view can fire a delete twice from a double-click.
+  {
+    healJournalStore.deleteTest("del");
+    const d1 = record("del", { stepId: "d1" });
+    const d2 = record("del", { stepId: "d2" });
+    assertEqual(healJournalStore.remove(d1.id), { removed: 1 }, "removing a heal reports one removed");
+    assertEqual(
+      healJournalStore.list("del").map((e) => e.stepId),
+      ["d2"],
+      "…and takes only that one with it",
+    );
+    assertEqual(healJournalStore.get(d1.id), null, "a removed heal is really gone");
+    assertEqual(
+      healJournalStore.remove(d1.id),
+      { removed: 0 },
+      "removing it again is a no-op, not an error",
+    );
+    assertEqual(
+      healJournalStore.remove("no-such-id"),
+      { removed: 0 },
+      "an unknown id removes nothing",
+    );
+
+    // A PENDING entry can be removed too — the prune cap protects the user from
+    // silently losing an undo they never saw, but an explicit delete is the
+    // user's own call. The UI is what has to spell out the cost first.
+    assertEqual(healJournalStore.get(d2.id)?.status, "pending", "d2 is still pending");
+    assertEqual(healJournalStore.remove(d2.id), { removed: 1 }, "an explicit delete can remove a pending heal");
+  }
+
+  // ── 3d. Clearing settled history across every test ───────────────────────
+  //
+  // The cross-test sibling of clearSettled, for the Heals view. Same rule: a
+  // pending entry is a live undo, so a bulk clear must never take one.
+  {
+    healJournalStore.deleteTest("ca-a");
+    healJournalStore.deleteTest("ca-b");
+    const keepA = record("ca-a", { stepId: "keep" });
+    const goneA = record("ca-a", { stepId: "gone" });
+    const goneB = record("ca-b", { stepId: "gone-b" });
+    healJournalStore.setStatus(goneA.id, "accepted");
+    healJournalStore.setStatus(goneB.id, "reverted");
+
+    const before = healJournalStore.listAll().filter((e) => e.status === "pending").length;
+    const swept = healJournalStore.clearAllSettled();
+    assert(swept.removed > 0, `clearAllSettled reports what it removed (${swept.removed})`);
+    assertEqual(
+      healJournalStore.listAll().filter((e) => e.status !== "pending").length,
+      0,
+      "clearAllSettled leaves no settled entry, in any test",
+    );
+    assertEqual(
+      healJournalStore.listAll().length,
+      before,
+      "…and every pending entry survives — a pending entry is a live undo",
+    );
+    assertEqual(
+      healJournalStore.get(keepA.id)?.stepId,
+      "keep",
+      "the pending entry kept is the right one",
+    );
+    assertEqual(
+      healJournalStore.clearAllSettled(),
+      { removed: 0 },
+      "clearing an already-clear history removes nothing",
     );
   }
 

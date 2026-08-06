@@ -9,21 +9,30 @@
 // Master/detail rather than expanding rows, because a heal's detail is wide —
 // two locators, a candidate list, the run it came from — and cramming that into
 // a list row is how the Stability panel ended up overflowing.
+//
+// Deleting records: one at a time from the detail pane, or "Clear history" for
+// every SETTLED heal at once. There is deliberately no "delete everything" —
+// a pending, applied heal is the only stored copy of the locator its step used
+// to have, so a bulk sweep that took those with it would quietly destroy the
+// undo for changes already made to tests, which is the whole point of the
+// journal. Per-record delete can still remove one, and says so before asking.
 
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertDialog,
   Badge,
   Button,
   ScrollArea,
   Text,
   Toolbar,
+  ToolbarActions,
   ToolbarContent,
   ToolbarDescription,
   ToolbarTitle,
   toast,
 } from "@glaze/core/components";
-import { Check, RotateCcw, Wand2 } from "lucide-react";
+import { Check, RotateCcw, Trash2, Wand2 } from "lucide-react";
 
 import { api } from "../lib/api";
 import { clampPage, pageSlice, PAGE_SIZE } from "../lib/paginate";
@@ -85,15 +94,34 @@ function HealRow({
   );
 }
 
+/** What deleting this record actually costs, said plainly.
+ *
+ *  The three cases are genuinely different, and the dangerous one is easy to
+ *  miss: a PENDING + APPLIED heal means the stored test has already been
+ *  changed and this entry holds the original locator. Delete it and the change
+ *  stays while the way back is gone. A generic "this can't be undone" would
+ *  read as boilerplate on the two harmless cases and under-sell that one. */
+function deleteWarning(entry: HealListEntry): string {
+  if (entry.status !== "pending") {
+    return "This removes the record only. The test keeps the locator you settled on.";
+  }
+  if (entry.applied) {
+    return "Auto-Heal has already changed this step, and this record holds the locator it replaced — the only way back. Deleting it leaves the change in place with no way to undo it. Revert first if you want the original locator back.";
+  }
+  return "This heal was never applied, so the test is unchanged either way. Deleting it just drops the suggestion.";
+}
+
 function HealDetail({
   entry,
   onAccept,
   onRevert,
+  onDelete,
   busy,
 }: {
   entry: HealListEntry;
   onAccept: (locator?: Locator) => void;
   onRevert: () => void;
+  onDelete: () => void;
   busy: boolean;
 }) {
   const settled = entry.status !== "pending";
@@ -152,18 +180,37 @@ function HealDetail({
           </div>
         </div>
 
-        {!settled ? (
-          <div className="flex flex-wrap items-center gap-2">
-            <Button size="small" disabled={busy} onClick={() => onAccept()}>
-              <Check className="size-4" />
-              {entry.applied ? "Keep" : "Apply"}
-            </Button>
-            <Button size="small" variant="secondary" disabled={busy} onClick={onRevert}>
-              <RotateCcw className="size-4" />
-              {entry.applied ? "Revert" : "Dismiss"}
-            </Button>
-          </div>
-        ) : null}
+        {/* One action row whether or not the heal is settled: accept/revert are
+            the review decision, Delete is about the record itself, so it sits
+            apart rather than reading as a third way to answer the question. */}
+        <div className="flex flex-wrap items-center gap-2">
+          {!settled ? (
+            <>
+              <Button size="small" disabled={busy} onClick={() => onAccept()}>
+                <Check className="size-4" />
+                {entry.applied ? "Keep" : "Apply"}
+              </Button>
+              <Button size="small" variant="secondary" disabled={busy} onClick={onRevert}>
+                <RotateCcw className="size-4" />
+                {entry.applied ? "Revert" : "Dismiss"}
+              </Button>
+            </>
+          ) : null}
+          <div className="flex-1" />
+          <AlertDialog
+            trigger={
+              <Button size="small" variant="ghost" disabled={busy}>
+                <Trash2 className="size-4" />
+                Delete
+              </Button>
+            }
+            title="Delete this heal record?"
+            description={deleteWarning(entry)}
+            confirmLabel="Delete"
+            confirmVariant="destructive"
+            onConfirm={onDelete}
+          />
+        </div>
 
         {alternatives.length > 0 ? (
           <div className="flex flex-col gap-1">
@@ -235,8 +282,30 @@ export function HealsView() {
     onSuccess: invalidate,
     onError: (err: unknown) => toast.error(String(err)),
   });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.heals.remove(id),
+    onSuccess: () => {
+      // Drop the selection with the record. `selected` is looked up by id so it
+      // would fall to null on its own once the query settles, but only after a
+      // frame of the detail pane describing a heal that no longer exists.
+      setSelectedId(null);
+      invalidate();
+      toast.success("Heal deleted");
+    },
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+  const clearSettled = useMutation({
+    mutationFn: () => api.heals.clearAllSettled(),
+    onSuccess: (res) => {
+      setSelectedId(null);
+      invalidate();
+      toast.success(`Cleared ${res.removed} heal${res.removed === 1 ? "" : "s"}`);
+    },
+    onError: (err: unknown) => toast.error(String(err)),
+  });
 
   const pending = entries.filter((e) => e.status === "pending").length;
+  const settledCount = entries.length - pending;
 
   return (
     <div className="flex h-full flex-col">
@@ -248,6 +317,26 @@ export function HealsView() {
             {pending > 0 ? ` · ${pending} needing review` : ""}
           </ToolbarDescription>
         </ToolbarContent>
+        {/* Only settled heals can be swept in bulk. Offering "clear everything"
+            would let one click delete the undo for changes already made to
+            tests, which is the one thing this journal exists to prevent. */}
+        {settledCount > 0 ? (
+          <ToolbarActions>
+            <AlertDialog
+              trigger={
+                <Button variant="glass" size="small" disabled={clearSettled.isPending}>
+                  <Trash2 className="size-4" />
+                  Clear history
+                </Button>
+              }
+              title={`Delete ${settledCount} settled heal${settledCount === 1 ? "" : "s"}?`}
+              description="This removes every heal you've already accepted or reverted, across all tests. Heals still needing review are kept, and no test is changed."
+              confirmLabel="Delete"
+              confirmVariant="destructive"
+              onConfirm={() => clearSettled.mutate()}
+            />
+          </ToolbarActions>
+        ) : null}
       </Toolbar>
 
       {entries.length === 0 ? (
@@ -282,9 +371,10 @@ export function HealsView() {
             {selected ? (
               <HealDetail
                 entry={selected}
-                busy={accept.isPending || revert.isPending}
+                busy={accept.isPending || revert.isPending || remove.isPending}
                 onAccept={(locator) => accept.mutate({ id: selected.id, locator })}
                 onRevert={() => revert.mutate(selected.id)}
+                onDelete={() => remove.mutate(selected.id)}
               />
             ) : (
               <div className="flex flex-1 items-center justify-center p-8">

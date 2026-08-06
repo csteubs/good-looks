@@ -471,6 +471,17 @@ export function registerHandlers(): void {
     healJournalStore.clearSettled(params.testId),
   );
 
+  /** Delete one journal entry. Purely a record delete — the test is left exactly
+   *  as the heal left it, which is why the UI has to say so before asking. */
+  ipcMain.handle("heals:remove", async (_e, params: { id: string }) =>
+    healJournalStore.remove(params.id),
+  );
+
+  /** Clear settled heals across every test, for the Heals view. Separate from
+   *  `heals:clearSettled` rather than a testId-optional version of it: a missing
+   *  param would then silently mean "wipe everything". */
+  ipcMain.handle("heals:clearAllSettled", async () => healJournalStore.clearAllSettled());
+
   // Hide a test from the sidebar without deleting its record or script file.
   ipcMain.handle(
     "tests:setHidden",
