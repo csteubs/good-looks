@@ -1342,3 +1342,28 @@ export interface AiDebugSessionsFile {
   version: number;
   sessions: AiDebugSession[];
 }
+
+/**
+ * Where the insert cursor sits when a trainer session opens.
+ *
+ * Opening a session executes exactly ONE thing: the initial navigation. No
+ * recorded step is replayed (that auto-replay was removed — it flew through the
+ * whole test and could wedge the backend). So the session's position in the
+ * test is "just past the goto", and the cursor — which decides where the next
+ * captured step lands — belongs there.
+ *
+ * It used to default to the END of the list when continuing an existing test,
+ * which quietly meant every newly recorded step was appended after the last
+ * one, no matter where in the flow the user actually was. Since the browser is
+ * sitting on the starting URL, appending to the end is the one position that is
+ * almost certainly wrong.
+ *
+ * A NEW recording passes `stepCount: 0`; its `goto` is added immediately after
+ * and pushes the cursor to 1 by the normal insert path, so both cases converge
+ * on the same place.
+ */
+export function initialCursor(editing: boolean, stepCount: number): number {
+  if (!editing) return stepCount;
+  // Just past the navigation step, or the end of a shorter list.
+  return Math.min(1, stepCount);
+}
