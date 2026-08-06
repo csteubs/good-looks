@@ -1044,14 +1044,18 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                   </Button>
                 </div>
               ) : null}
-              {/* flex-1 + min-h-0 so the response FILLS the dialog instead of
+              {/* Both halves are needed and they do different jobs.
+                  flex-1 + min-h-0 makes the pane FILL the dialog instead of
                   shrinking to its content and leaving the lower half empty.
-                  min-h-0 is the load-bearing half: without it a flex child
-                  refuses to shrink below its content and the parent overflows
-                  instead of the child scrolling. */}
+                  max-h-[56vh] is what actually CLIPS: the dialog body is
+                  max-height, not height, so `h-full` on the viewport resolves
+                  against an auto height and never bounds anything — the
+                  streamed text then ran straight out through the bottom of the
+                  dialog. A definite max-height on both root and viewport is the
+                  only shape in this codebase that reliably scrolls. */}
               <ScrollArea
-                className="min-h-0 flex-1 rounded-md border border-separator"
-                viewportClassName="h-full"
+                className="min-h-0 flex-1 max-h-[56vh] rounded-md border border-separator"
+                viewportClassName="max-h-[56vh]"
                 autoScrollToBottom={draft.autoScroll}
                 autoScrollDeps={[content.length, reasoning.length]}
               >
@@ -1268,8 +1272,8 @@ export function StepAiDebugDialog({ sessionKey }: { sessionKey: string }) {
             <CapacityNotice decision={refused} onStopOldest={() => void runDiagnosis(true)} />
           ) : null}
           <ScrollArea
-            className="min-h-0 flex-1 rounded-md border border-separator"
-            viewportClassName="h-full"
+            className="min-h-0 flex-1 max-h-[56vh] rounded-md border border-separator"
+            viewportClassName="max-h-[56vh]"
             autoScrollToBottom={autoScroll}
             autoScrollDeps={[content.length]}
           >

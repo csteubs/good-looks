@@ -132,11 +132,26 @@ export function useAiDebugContent(key: string | null): AiDebugContent {
   return (key ? all[key] : null) ?? EMPTY_CONTENT;
 }
 
-/** Status of one session, for an icon. Null when no session exists for it. */
-export function useAiDebugStatus(key: string | null): AiDebugStatus | null {
+/**
+ * Status of one session, for an icon. Null when no session applies.
+ *
+ * `runKey` scopes the answer to ONE execution. A session outlives the run it
+ * describes — it is only reset when reopened — so without this the run panel
+ * kept advertising the previous run's green "answer ready" after a re-run, for
+ * output no longer on screen. Clicking it then reset the session and showed an
+ * empty review form, so the icon had been lying the whole time.
+ *
+ * A session with NO recorded runKey (persisted before that field existed)
+ * matches anything: treating unknown as "a different run" would blank the icon
+ * for every restored session.
+ */
+export function useAiDebugStatus(key: string | null, runKey?: string | null): AiDebugStatus | null {
   const { sessions } = useAiDebug();
   if (!key) return null;
-  return sessions.find((s) => s.key === key)?.status ?? null;
+  const session = sessions.find((s) => s.key === key);
+  if (!session) return null;
+  if (runKey != null && session.runKey != null && session.runKey !== runKey) return null;
+  return session.status;
 }
 
 /** Coalesce streamed chunks before committing them to React state. At ~60ms a

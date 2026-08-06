@@ -34,7 +34,6 @@ import { ChevronDown, Pencil, TriangleAlert, Trash2 } from "lucide-react";
 
 import { api } from "../lib/api";
 import { useRecorder } from "./recorder-store";
-import { hashScript } from "../lib/ai-debug-sessions";
 import {
   runSessionKey,
   useAiDebug,
@@ -164,14 +163,33 @@ export function TestDetailView() {
   // when a session restored from disk is reopened here.
   const aiDebug = useAiDebug();
   const aiKey = runSessionKey(id);
-  const aiStatus = useAiDebugStatus(aiKey);
   const script = scriptQuery.data ?? "";
   const runOutput = runInfo?.lines.join("") ?? "";
   const recordId = runInfo?.recordId;
-  // Identifies the execution being debugged. The artifact id once the run has
-  // finished; before that, a hash of the output so far — which is what
-  // distinguishes one run from the next while it is still going.
-  const runKey = recordId ?? (runOutput ? hashScript(runOutput) : null);
+  // Identifies the execution being debugged, STABLY for its whole life. Hashing
+  // the output instead would change on every streamed line, so a session opened
+  // mid-run would look like it belonged to a different run one chunk later.
+  const runKey = runInfo ? (recordId ?? `t${runInfo.startedAt}`) : null;
+  // Scoped to THIS run: a session from a previous run of the same test must not
+  // colour the icon, or it promises an answer about output that is gone.
+  const aiStatus = useAiDebugStatus(aiKey, runKey);
+
+  // A session belongs to ONE run. When the run changes, drop it outright rather
+  // than waiting for the panel to be reopened: leaving it in the store meant it
+  // was still reachable — and still showing the previous run's answer — from
+  // the global chip, which restores a session without going through
+  // openSession's reset. Discarding also cancels any request still answering
+  // about output that is no longer on screen.
+  React.useEffect(() => {
+    if (!runKey) return;
+    const existing = aiDebug.sessions.find((s) => s.key === aiKey);
+    // Only on a DEFINITE mismatch. A session restored from disk before run
+    // identities existed has none, and treating unknown as "different" would
+    // delete every restored diagnosis the moment its test was opened.
+    if (existing && existing.runKey != null && existing.runKey !== runKey) {
+      aiDebug.discard(aiKey);
+    }
+  }, [aiDebug, aiKey, runKey]);
 
   // Whether the finished run recorded console/network. Asked once per run
   // rather than assumed from the toggle: the toggle can be flipped after a run,
@@ -211,11 +229,16 @@ export function TestDetailView() {
   // Keep a live session's context fresh (the script or run output can change
   // under it) and re-ground one restored from disk, which has no context at all
   // until the view that owns it renders again.
+  // Deliberately NOT gated on aiStatus: that is now scoped to the current run,
+  // and a session from a previous run still needs the live script attached so
+  // its diff is computed against what applying would actually overwrite.
+  // "Which icon colour" and "does this session need context" are different
+  // questions and must not share a condition.
+  const hasSession = aiDebug.sessions.some((s) => s.key === aiKey);
   React.useEffect(() => {
-    if (!runContext) return;
-    if (!aiStatus) return;
+    if (!runContext || !hasSession) return;
     aiDebug.attachContext(aiKey, runContext);
-  }, [aiDebug, aiKey, runContext, aiStatus, script]);
+  }, [aiDebug, aiKey, runContext, hasSession]);
 
   const openAiDebug = React.useCallback(() => {
     if (!test || !runContext) return;

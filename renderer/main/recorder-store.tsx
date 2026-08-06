@@ -61,6 +61,10 @@ export interface RunInfo {
   /** Artifact id for this execution, once it finishes. Distinct from the map
    *  key, which is the TEST id — every run of a test shares that. */
   recordId?: string;
+  /** When this execution STARTED. Identifies the run from the first moment,
+   *  where recordId only arrives at the end — so anything keyed on "which run
+   *  is this" is stable for the whole run instead of changing under it. */
+  startedAt: number;
 }
 
 const EMPTY_STATE: RecorderState = {
@@ -201,7 +205,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     });
     const offOut = api.on<{ runId: string; chunk: string }>("runner:output", ({ runId, chunk }) => {
       setRuns((prev) => {
-        const cur = prev[runId] ?? { lines: [], running: true, code: null, stepStatus: {} };
+        const cur = prev[runId] ?? { lines: [], running: true, code: null, stepStatus: {}, startedAt: Date.now() };
         return { ...prev, [runId]: { ...cur, lines: [...cur.lines, chunk] } };
       });
     });
@@ -212,7 +216,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       ok: boolean;
     }>("runner:step", ({ runId, index, status, ok }) => {
       setRuns((prev) => {
-        const cur = prev[runId] ?? { lines: [], running: true, code: null, stepStatus: {} };
+        const cur = prev[runId] ?? { lines: [], running: true, code: null, stepStatus: {}, startedAt: Date.now() };
         const stepStatus = { ...cur.stepStatus };
         if (status === "begin") {
           stepStatus[index] = "running";
@@ -226,7 +230,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       "runner:done",
       ({ runId, code, recordId }) => {
         setRuns((prev) => {
-          const cur = prev[runId] ?? { lines: [], running: false, code, stepStatus: {} };
+          const cur = prev[runId] ?? { lines: [], running: false, code, stepStatus: {}, startedAt: Date.now() };
           return { ...prev, [runId]: { ...cur, running: false, code, recordId } };
         });
       },
@@ -429,7 +433,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   }, []);
   const clearPicked = React.useCallback(() => setPicked(null), []);
   const run = React.useCallback((id: string, captureArtifacts?: boolean, headless?: boolean, browser?: RunBrowser) => {
-    setRuns((prev) => ({ ...prev, [id]: { lines: [], running: true, code: null, stepStatus: {} } }));
+    setRuns((prev) => ({
+      ...prev,
+      [id]: { lines: [], running: true, code: null, stepStatus: {}, startedAt: Date.now() },
+    }));
     // headed = not headless — the trainer path is unaffected (separate channel).
     api.runner.run(id, !headless, captureArtifacts, headless, browser).catch(() => {});
   }, []);

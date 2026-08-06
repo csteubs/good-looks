@@ -15,7 +15,7 @@ import { RunOutput } from "./run-output";
 import type { RunInfo } from "./recorder-store";
 
 function info(over: Partial<RunInfo> = {}): RunInfo {
-  return { lines: ["output line\n"], running: false, code: 1, stepStatus: {}, ...over };
+  return { lines: ["output line\n"], running: false, code: 1, stepStatus: {}, startedAt: 1, ...over };
 }
 
 const debugButton = () =>

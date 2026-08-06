@@ -107,6 +107,7 @@ function runInfo(over: Partial<RunInfo> = {}): RunInfo {
     running: false,
     code: 1,
     stepStatus: {},
+    startedAt: 1,
     // The artifact id for this execution, set by runner:done in the real store.
     recordId: "rec-1",
     ...over,
@@ -548,9 +549,9 @@ describe("after re-running the test", () => {
       }),
     ];
     renderApp();
-    await waitFor(() => expect(screen.getByLabelText(toneFor("done").label)).toBeTruthy());
-
-    fireEvent.click(screen.getByLabelText(toneFor("done").label));
+    // The icon is scoped to the CURRENT run, so a session about "rec-old"
+    // doesn't colour it — it shows the plain, unstarted affordance.
+    fireEvent.click(await findDebugIcon());
     await screen.findByText(/Nothing is sent until you confirm/i);
     expect(screen.queryByText(/script changed after this diagnosis/i)).toBeNull();
     expect(screen.queryByText(/old answer/)).toBeNull();
@@ -570,5 +571,80 @@ describe("after re-running the test", () => {
     // Minimize and restore is the whole feature — it must not look like a
     // re-run and throw the work away.
     expect(await screen.findByText(/keep this answer/)).toBeTruthy();
+  });
+});
+
+// ── A blank slate between runs ───────────────────────────────────────
+// Reported twice from the app: the previous run's output kept showing up. The
+// session must not merely be reset when reopened — it must be GONE the moment
+// the run changes, because the global chip restores a session without going
+// through openSession, so anything left in the store stayed reachable.
+
+describe("a session never survives into a different run", () => {
+  async function debugFirstRun() {
+    fireEvent.click(await findDebugIcon());
+    fireEvent.click(await screen.findByRole("button", { name: /Send to AI/i }));
+    await waitFor(() => expect(h.chat).toHaveBeenCalled());
+    emit("llm:chunk", { requestId: "req-1", delta: "ANSWER ABOUT RUN ONE" });
+    emit("llm:done", { requestId: "req-1" });
+    await screen.findByText(/ANSWER ABOUT RUN ONE/);
+  }
+
+  it("is dropped from the store as soon as the run changes", async () => {
+    const { rerender } = renderApp();
+    await debugFirstRun();
+    fireEvent.click(screen.getByRole("button", { name: /^Minimize$/i }));
+
+    h.runs = { t1: runInfo({ recordId: "rec-2", startedAt: 2, lines: ["different\n"] }) };
+    rerender(app());
+
+    // Not merely reset — gone. The chip is the tell: it renders only while a
+    // session exists, so its disappearance proves nothing is left behind.
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^AI debug —/ })).toBeNull());
+  });
+
+  it("cannot be reached from the chip after a re-run", async () => {
+    const { rerender } = renderApp();
+    await debugFirstRun();
+    fireEvent.click(screen.getByRole("button", { name: /^Minimize$/i }));
+    await screen.findByRole("button", { name: /^AI debug —/ });
+
+    h.runs = { t1: runInfo({ recordId: "rec-2", startedAt: 2, lines: ["different\n"] }) };
+    rerender(app());
+    await waitFor(() => expect(screen.queryByRole("button", { name: /^AI debug —/ })).toBeNull());
+
+    // And the panel opens blank rather than on the old answer.
+    fireEvent.click(await findDebugIcon());
+    expect(await screen.findByText(/Nothing is sent until you confirm/i)).toBeTruthy();
+    expect(screen.queryByText(/ANSWER ABOUT RUN ONE/)).toBeNull();
+  });
+
+  it("cancels a job still answering about the run that was replaced", async () => {
+    const { rerender } = renderApp();
+    fireEvent.click(await findDebugIcon());
+    fireEvent.click(await screen.findByRole("button", { name: /Send to AI/i }));
+    await waitFor(() => expect(h.chat).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: /^Minimize$/i }));
+
+    h.runs = { t1: runInfo({ recordId: "rec-2", startedAt: 2, lines: ["different\n"] }) };
+    rerender(app());
+
+    await waitFor(() => expect(h.cancel).toHaveBeenCalledWith("req-1"));
+  });
+
+  it("survives a re-render that is NOT a new run", async () => {
+    // The identity is stable for a run's whole life, so ordinary re-renders —
+    // output streaming in, a query resolving — must not look like a re-run and
+    // throw away work in progress.
+    const { rerender } = renderApp();
+    await debugFirstRun();
+    fireEvent.click(screen.getByRole("button", { name: /^Minimize$/i }));
+
+    h.runs = { t1: runInfo({ recordId: "rec-1", startedAt: 1, lines: ["Error: boom\n", "more\n"] }) };
+    rerender(app());
+
+    expect(await screen.findByRole("button", { name: /^AI debug —/ })).toBeTruthy();
+    fireEvent.click(await findDebugIcon());
+    expect(await screen.findByText(/ANSWER ABOUT RUN ONE/)).toBeTruthy();
   });
 });
