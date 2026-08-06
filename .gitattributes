@@ -1,0 +1,17 @@
+# Normalise line endings in the repo, check out native on each platform.
+* text=auto eol=lf
+
+# Explicitly binary, so git never tries to diff or convert them.
+*.png binary
+*.icns binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# Generated. Collapsed in GitHub diffs and excluded from language stats so a
+# lockfile bump does not bury a real review.
+package-lock.json linguist-generated=true -diff
+
+# Documentation, not source, for language stats.
+CLAUDE.md linguist-documentation=true
+docs/** linguist-documentation=true

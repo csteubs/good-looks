@@ -1,10 +1,15 @@
 # CLAUDE.md
 
-Handoff doc for working on **Good Looks!** (a Playwright test recorder) outside the Glaze app, e.g. from Claude Code CLI run directly in this folder. This app is also actively developed through the Glaze app itself (a separate agent with its own build/launch/live-preview tooling) — both work against the same git history, so read the "Working alongside the Glaze app" section below before making changes.
+Working rules for **Good Looks!** (a Playwright test recorder). This file, `docs/ARCHITECTURE.md`, and `docs/DECISIONS.md` are the three docs that matter; all three are versioned and hand-maintained in this repo.
+
+The codebase is developed here — from a terminal or editor in this folder — and changes land through branches and pull requests (see "Making a change"). The Glaze app is still the **build and launch host**: it is the only thing that can package the native shell, run the app, and show you the UI. It no longer *develops* the code.
 
 ## What this app does
 
-Records interactions on any website (clicks, typing, navigation, assertions) and generates runnable `@playwright/test` specs from them. Full feature history and architecture decisions live in `.glaze_memory/PROJECT-CONTEXT.md` (gitignored, but present on disk) — **read it before any non-trivial change**, it's the canonical source of truth for what's already built and why.
+Records interactions on any website (clicks, typing, navigation, assertions) and generates runnable `@playwright/test` specs from them.
+
+- **`docs/ARCHITECTURE.md`** — the per-file map of what exists and why. **Read it before any non-trivial change**; it is the fastest way to find the module that already does what you were about to write.
+- **`docs/DECISIONS.md`** — the dated record of *why* each feature landed the way it did. When something looks over-built, this usually names the failure it was built against.
 
 ## Architecture
 
@@ -29,6 +34,8 @@ mcp/                 standalone MCP server exposing the test library to external
                      (list_tests, get_test, list_runs, get_run_log, run_test, run_batch,
                       capture_app, get_screenshot)
                      — see mcp/README.md
+docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated rationale)
+.github/             PR template, hygiene workflow, and the script it runs
 glaze.ts             thin wrapper that resolves the Glaze CLI relative to this folder's SDK install
 vitest.config.ts     test runner config (node + jsdom projects, @glaze/core aliasing)
 *.test.ts(x)         Vitest tests, colocated with the code they cover
@@ -40,14 +47,15 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 
 - `npm install --include=dev` — install deps (plain `npm install` under `NODE_ENV=production` prunes devDeps)
 - `npm run lint` / `npm run type-check` / `npm run test:all` — must pass before considering a change done
-- `npm run build` — runs the SDK's build pipeline (Vite + tsc). This only compiles; it does not package or launch the native app shell — that step happens inside the Glaze app itself (see below).
+- `npm run build` — runs the SDK's build pipeline (Vite + tsc). This only compiles; it does not package or launch the native app shell — that happens in the Glaze app (see "Making a change").
 - `npm run dev` / `npm run dev:renderer` — dev servers
 - `npm test` (Vitest, one pass) / `npm run test:watch` / `npm run test:coverage`
 - `npm run test:checks` — the standalone `check:*` scripts; `npm run test:all` runs those **and** Vitest
+- `npm run check:repo-hygiene` — repo-level checks (no generated files committed, no absolute paths, no secrets, lockfile in sync). This is the only part of the gate CI can run.
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. Roughly 330 Vitest tests and 16 checks today.
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 737 Vitest tests and 26 checks as of 2026-08-06.
 
 - **Vitest** (`vitest.config.ts`) has two projects. **`node`**: `main/**/*.test.ts`, `mcp/**/*.test.ts`, `renderer/lib/**/*.test.ts`. **`dom`** (jsdom): `renderer/**/*.test.tsx` plus `main/**/*.dom.test.ts` — that suffix is for BACKEND code needing a document (the injected replayer and Auto-Heal probe are evaluated for real). The node project explicitly excludes `*.dom.test.ts`; without that they match both globs and run again with no DOM, failing for unrelated reasons.
 - **`check:*` scripts** predate Vitest and are kept, not migrated — they catch real bugs and a rewrite would risk that for tooling neatness. Plain assertions + a non-zero exit; no runner. Two are deliberately *source-level* (`check:ai-debug-scroll`, `check:scroll-layout`) because they guard layout contracts that jsdom cannot observe.
@@ -93,7 +101,7 @@ Importing clones or reads a folder of someone else's Playwright code and copies 
 
 ## Hard constraints
 
-- **Edit only** inside `main/`, `renderer/`, `mcp/`, `glaze.ts`, `package.json`, `tsconfig.json`. Never edit or create files in `.glaze/`, `build/`, `node_modules/`, `@glaze/core`, or any `sdk/current/@glaze/core` path — these are generated or protected; changes there are silently lost or break the build.
+- **Never edit or create files in `.glaze/`, `build/`, `node_modules/`, `@glaze/core`, or any `sdk/current/@glaze/core` path** — these are generated or protected; changes there are silently lost or break the build. Everything else in this repo is yours to maintain: application code in `main/`, `renderer/`, `mcp/`; config in `glaze.ts`, `package.json`, `tsconfig.json`, `vitest.config.ts`; and repo-level files (`README.md`, `CLAUDE.md`, `docs/`, `.github/`, `.gitignore`, `.gitattributes`).
 - `@glaze/core` resolves through this project's tsconfig path aliases and ESM loader hooks pointing at the Glaze SDK install — never `npm install @glaze/core`, and never run `glaze` as a global CLI install.
 - **Forbidden imports** (cause runtime breakage): `backendNativeBridge`, `@glaze/core/backend/internal`, `GlazeIPCServer`, `GlazeLifecycle`, `registerNativeApiHandlers`, `wireProtocolHandlers`. Use the public `@glaze/core/backend` exports instead (`dialog`, `shell`, `clipboard`, `Notification`, `Menu`, `Tray`, …). Don't suppress `no-restricted-imports` for these — if an API genuinely isn't exported, it isn't available here.
 - Don't install or configure Xcode, run `xcode-select --install`, or otherwise touch Xcode setup from this project.
@@ -108,9 +116,32 @@ Importing clones or reads a folder of someone else's Playwright code and copies 
 
 These are read-only.
 
-## Working alongside the Glaze app
+## Making a change
 
-- After changing code, run `npm run lint && npm run type-check && npm run test:all` (and `npm run build` to confirm the production build compiles). Lint/type-check/build are what the Glaze app's own build step runs; `test:all` is this project's own suite and will NOT be run for you — see the Testing section.
-- Adding a feature? Add tests with it. A suite nobody extends decays into one nobody trusts, and most of the bugs found in this codebase so far were silent — wrong behaviour that threw no error and looked fine on screen.
-- This CLI can't launch the native app or visually inspect the running UI — only the Glaze app can build the native shell, launch it, and preview it live. After a UI-affecting change, open the Glaze app (or describe the change in its chat) to rebuild, launch, and verify it before treating the change as done.
-- Commit your own changes normally (`git add` / `git commit`); the Glaze app commits its own changes the same way, so `git log` will show both interleaved. No remote is configured — this is a local-only repo.
+Feature work happens on a branch and lands through a pull request. `main` is the integration branch.
+
+```bash
+git switch -c feat/step-reordering
+```
+
+Branch names: `feat/…`, `fix/…`, `chore/…`, `docs/…`.
+
+**1. Write the change, and tests with it.** A suite nobody extends decays into one nobody trusts, and most bugs found in this codebase so far were silent — wrong behaviour that threw no error and looked fine on screen. See the Testing section for the conventions that matter, especially *verify a test can fail*.
+
+**2. Run the full gate.** Nothing runs it for you; CI cannot (see below).
+
+```bash
+npm run lint && npm run type-check && npm run test:all && npm run build
+```
+
+**3. Verify in the Glaze app.** A terminal here cannot launch the native app or inspect the running UI — only the Glaze app can build the native shell, launch it, and preview it live. After any UI-affecting change, rebuild and launch there and confirm the change before calling it done. This is the step most easily skipped and the one that catches what tests cannot.
+
+**4. Update the docs in the same commit.** If the change adds a service, moves a boundary, or invalidates something in `docs/ARCHITECTURE.md`, fix that entry. If it involved a real decision — a trade-off, a rejected alternative, a non-obvious constraint — add an entry to `docs/DECISIONS.md`. These were kept current automatically until 2026-08-06; they now stay accurate only if changes carry them.
+
+**5. Open a pull request.** `.github/pull_request_template.md` carries the checklist, including the two security boundaries below.
+
+### What CI does and does not do
+
+`.github/workflows/repo-hygiene.yml` runs on every push and pull request, but it checks only repo hygiene — no generated files committed, no absolute paths, no secrets, lockfile in sync.
+
+It **cannot** run lint, type-check, the test suite, or the build: `@glaze/core` resolves to the Glaze.app SDK install outside this repo, which does not exist on a hosted runner. That is why step 2 is a local gate rather than something a green checkmark can vouch for. A self-hosted macOS runner with Glaze installed is the only route to the real suite in CI.
