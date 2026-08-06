@@ -138,7 +138,11 @@ function saveRunRecord(record, logText) {
  * @returns {{ runId, status, exitCode, startedAt, finishedAt, durationMs, output }}
  */
 async function executeTest(test, { playwright, browser, batchId, timeoutMs }) {
-  const scriptsDir = path.dirname(test.scriptPath);
+  // The scripts ROOT, not the spec's own directory. An imported test's spec
+  // lives in a sandbox subdirectory beside the sibling modules it imports, so
+  // deriving the root from the spec would drop a config and a node_modules
+  // link into that sandbox — and resolve the spec against the wrong base.
+  const scriptsDir = path.join(dataDir, "recorder", "scripts");
   ensureModuleResolution(scriptsDir, playwright.nodeModules);
   ensurePlaywrightConfig(scriptsDir);
 
@@ -149,7 +153,10 @@ async function executeTest(test, { playwright, browser, batchId, timeoutMs }) {
     NODE_PATH: playwright.nodeModules,
     PW_SLOWMO_MS: String(SLOW_MO_MS[test.speed ?? "fast"] ?? 0),
   };
-  const specFile = path.basename(test.scriptPath);
+  // Relative to the scripts root, so a sandboxed spec resolves as
+  // `imported/<id>/tests/foo.spec.ts` rather than a bare basename that only
+  // matches when the spec sits flat.
+  const specFile = path.relative(scriptsDir, test.scriptPath);
 
   const startedAt = Date.now();
   const { exitCode, output } = await new Promise((resolve) => {

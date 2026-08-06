@@ -45,6 +45,10 @@ export interface ImportResult {
 interface FoundTest {
   filePath: string;
   content: string;
+  /** Root of the project this file was scanned from. Every file an imported
+   *  spec is allowed to pull in must live under it — see `copyRelativeImports`,
+   *  where it is the containment boundary rather than a convenience. */
+  root: string;
 }
 
 /** Extensions we'll copy as relative-import siblings of an imported spec. */
@@ -80,25 +84,95 @@ export function resolveSibling(dir: string, spec: string): string | null {
   return null;
 }
 
-/** Copy an imported spec's relative-import siblings into the scripts dir so the
- *  spec can run standalone (the original folder/git checkout won't be present
- *  at run time). Recurses into each copied sibling for its own relative imports.
- *  Returns the list of copied destination paths (excluding the spec itself). */
+/** Directory an imported test owns outright: its spec, its siblings, nothing
+ *  else. Named by test id, so two imports of the same project can't collide
+ *  and deleting one can't take the other's files with it. */
+export function importedSandboxDir(id: string): string {
+  return path.join(getScriptsDir(), "imported", id);
+}
+
+/** True when `child` is `parent` itself or sits underneath it.
+ *
+ *  Compares resolved paths and requires a separator at the boundary, so
+ *  `/a/scripts-evil` is not treated as living inside `/a/scripts`. */
+export function isInside(parent: string, child: string): boolean {
+  const p = path.resolve(parent);
+  const c = path.resolve(child);
+  return c === p || c.startsWith(p + path.sep);
+}
+
+/** Resolve a path through any symlinks, or null if it doesn't resolve.
+ *
+ *  `resolveSibling` proves a path is a FILE via `statSync`, which follows
+ *  symlinks — and `copyFileSync` then copies what the link points AT. So a
+ *  repo shipping `helpers.js -> ~/.ssh/id_rsa` would have that file's contents
+ *  copied into the app's scripts dir at import time, before anything is run.
+ *  Containment has to be judged on the real path, not the link's. */
+function realOrNull(p: string): string | null {
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Copy an imported spec's relative-import siblings so the spec can run
+ * standalone — the original folder or git checkout won't be there at run time.
+ * Recurses into each copied sibling for its own relative imports. Returns the
+ * destination paths copied.
+ *
+ * TWO boundaries, and both are load-bearing:
+ *
+ *   • `projectRoot` bounds what may be READ. A specifier is just text in a file
+ *     the importer controls, and `path.resolve` walks `..` as far as it is
+ *     told, so `import "../../../../../../../evil.js"` resolved to any file on
+ *     the machine. A spec importing outside its own project cannot be made
+ *     standalone anyway, so refusing is the honest behaviour, not a compromise.
+ *
+ *   • `destRoot` bounds what may be WRITTEN. Destinations used to be built as
+ *     `join(scriptsDir, relative(specDir, resolved))`, and a `rel` starting
+ *     with `..` walked straight back out — the deeper the spec sat in the
+ *     importer's own tree, the further out it reached, up to and past the
+ *     filesystem root. Importing a repository, without running a single test,
+ *     could drop attacker-controlled content at an attacker-chosen absolute
+ *     path (`~/Library/LaunchAgents/…` being the obvious one) and create the
+ *     directories to get there.
+ *
+ * The containment assert is kept even though paths are now derived from
+ * `projectRoot` and so should never escape. Layout logic drifts; an assert
+ * doesn't.
+ */
 function copyRelativeImports(
   specSource: string,
   specDir: string,
-  scriptsDir: string,
+  destRoot: string,
+  projectRoot: string,
 ): string[] {
   const copied: string[] = [];
-  const seen = new Set<string>(); // by resolved source path
+  const seen = new Set<string>(); // by real source path
   let totalBytes = 0;
+
+  // Compare real path against REAL root. Sources are resolved through symlinks
+  // to judge them honestly, and on macOS the project root routinely contains a
+  // symlinked segment of its own — /var is a link to /private/var, so anything
+  // under a temp dir resolves to a path that shares no prefix with the root as
+  // it was handed in. Judged against the unresolved root, every legitimate
+  // sibling looks like an escape and nothing gets copied at all.
+  const realRoot = realOrNull(projectRoot) ?? path.resolve(projectRoot);
 
   const queue: { src: string; rel: string }[] = [];
   const enqueue = (spec: string, fromDir: string) => {
     const resolved = resolveSibling(fromDir, spec);
-    if (!resolved || seen.has(resolved)) return;
-    seen.add(resolved);
-    queue.push({ src: resolved, rel: path.relative(specDir, resolved) });
+    if (!resolved) return;
+    const real = realOrNull(resolved);
+    if (!real || seen.has(real)) return;
+    if (!isInside(realRoot, real)) {
+      logger.warn("import", "Refused a sibling outside the imported project", { spec });
+      return;
+    }
+    seen.add(real);
+    queue.push({ src: real, rel: path.relative(realRoot, real) });
   };
 
   // Seed from the spec's own relative imports.
@@ -119,7 +193,11 @@ function copyRelativeImports(
       logger.warn("import", "Sibling copy byte cap reached; stopping", { rel });
       break;
     }
-    const dest = path.join(scriptsDir, rel);
+    const dest = path.join(destRoot, rel);
+    if (!isInside(destRoot, dest)) {
+      logger.warn("import", "Refused a sibling destination outside the sandbox", { rel });
+      continue;
+    }
     try {
       fs.mkdirSync(path.dirname(dest), { recursive: true });
       fs.copyFileSync(src, dest);
@@ -155,7 +233,7 @@ export function scanDir(root: string): FoundTest[] {
         walk(full, depth + 1);
       } else if (entry.isFile() && TEST_FILE_RE.test(entry.name)) {
         try {
-          found.push({ filePath: full, content: fs.readFileSync(full, "utf-8") });
+          found.push({ filePath: full, content: fs.readFileSync(full, "utf-8"), root });
         } catch {
           /* unreadable file — skip */
         }
@@ -182,18 +260,28 @@ export function extractName(content: string, filePath: string): string {
 
 function importFound(found: FoundTest[]): ImportResult {
   const created: TestRecord[] = [];
-  const scriptsDir = getScriptsDir();
   for (const f of found) {
     const id = randomUUID();
-    const scriptPath = testStore.writeScript(id, f.content);
     const now = Date.now();
     // An imported spec may reference sibling modules (`./fixtures.js`,
-    // `./helpers.js`, …) that live next to it in the source tree. The spec
-    // runs from the scripts dir, where those siblings don't exist — so copy
-    // them in (preserving relative paths) at import time, while the source
-    // folder / git checkout is still on disk.
+    // `../helpers/db.ts`, …) that live around it in the source tree. The
+    // original folder or git checkout won't be there at run time, so they're
+    // copied in at import time — and the spec and its siblings keep the
+    // positions they had RELATIVE TO THE PROJECT ROOT, inside a directory of
+    // this test's own.
+    //
+    // That layout is what makes containment possible. Flattening the spec to
+    // the scripts dir meant a sibling one level up had to be written one level
+    // ABOVE the scripts dir for the spec's own `../` to still find it — so
+    // escaping was load-bearing, and there was no line to draw. Preserving the
+    // structure means every relative import resolves exactly as it did in the
+    // original project while nothing has to leave the sandbox.
+    const sandbox = importedSandboxDir(id);
     const specDir = path.dirname(f.filePath);
-    const siblings = copyRelativeImports(f.content, specDir, scriptsDir);
+    const scriptPath = path.join(sandbox, path.relative(f.root, f.filePath));
+    fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+    fs.writeFileSync(scriptPath, f.content, "utf-8");
+    const siblings = copyRelativeImports(f.content, specDir, sandbox, f.root);
     // Analyze the file and translate its test() bodies into the app's Step[]
     // model so the imported test shows up in the Steps view. When nothing
     // could be parsed, leave steps empty and fall back to a script-only
@@ -212,6 +300,7 @@ function importFound(found: FoundTest[]): ImportResult {
       scriptPath,
       scriptEdited: true,
       sourceDir: specDir,
+      sourceRoot: f.root,
     };
     testStore.save(record);
     created.push(record);
@@ -241,7 +330,21 @@ export function repairImports(id: string): string[] {
     throw new Error("This test has no recorded source folder, so its sibling modules can't be re-copied.");
   }
   const source = testStore.readScript(id);
-  return copyRelativeImports(source, rec.sourceDir, getScriptsDir());
+  // The two roots have to be picked together, because `rel` is measured from
+  // one and applied to the other. Splitting them — say, a project-relative
+  // `rel` written under the SPEC's directory — silently nests every sibling one
+  // level too deep, and the spec's imports stop resolving.
+  //
+  // Sandboxed: paths are project-relative, so they rebase onto the sandbox root.
+  // Pre-sandbox: `sourceRoot` is absent, and the flat layout measured from the
+  // spec's own directory. That's also the tightest boundary certainly right for
+  // those records, so a repair can only write beside the script it repairs. A
+  // test whose project reached ABOVE its spec dir needs re-importing to regain
+  // that — the honest trade for no longer writing outside the scripts dir.
+  const [destRoot, projectRoot] = rec.sourceRoot
+    ? [importedSandboxDir(id), rec.sourceRoot]
+    : [path.dirname(rec.scriptPath), rec.sourceDir];
+  return copyRelativeImports(source, rec.sourceDir, destRoot, projectRoot);
 }
 
 export const importService = {

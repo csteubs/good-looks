@@ -237,6 +237,10 @@ export interface TestRecord {
   /** absolute path to the folder a test was imported from, so its sibling
    *  modules (e.g. `./helpers.js`) can be re-copied into the scripts dir */
   sourceDir?: string;
+  /** absolute path to the ROOT of the imported project, which bounds what that
+   *  test's spec is allowed to pull in. Absent on tests imported before the
+   *  import sandbox existed — see `repairImports` for what that costs them. */
+  sourceRoot?: string;
   /** true when the user removed the test from the sidebar view — the record
    *  and its script file are kept on disk; the sidebar just hides it. */
   hidden?: boolean;

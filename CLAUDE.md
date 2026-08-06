@@ -81,6 +81,16 @@ The trainer loads **arbitrary untrusted websites**, and the injected capture scr
 - **Fixing the boundary is not enough on its own.** Tests recorded before a fix are already on disk and are regenerated from their stored steps, so the generator needs its own guard regardless.
 - Guarded by `check:step-ingest`, which pins both properties independently.
 
+## An imported project is untrusted input too
+
+Importing clones or reads a folder of someone else's Playwright code and copies the files an imported spec relative-imports, so it still runs once the checkout is gone. A relative specifier is text in a file the *importer* wrote, and `path.resolve` walks `..` as far as it's told — so the copy destination used to escape the scripts dir entirely, reaching an arbitrary absolute path. That fires on **import**, before any test is run, which is exactly when the user believes they're only looking.
+
+- **Each imported test owns `scripts/imported/<id>/`.** Its spec and siblings keep their positions *relative to the project root*, so `../helpers/x.ts` resolves as it did in the original project without anything leaving that directory. Do not flatten an imported spec into the scripts dir — the old layout made escaping load-bearing, because a sibling one level up had to be written one level above the scripts dir for the spec's own `../` to find it.
+- **Two boundaries in `copyRelativeImports`, both required:** `projectRoot` bounds what may be read, `destRoot` bounds what may be written. Keep the destination assert even when the paths are derived and "can't" escape.
+- **Judge containment on real paths, both sides.** `statSync`/`copyFileSync` follow symlinks, so a repo shipping `helpers.js -> ~/.ssh/id_rsa` would copy that file's contents in. And realpath the ROOT too: on macOS `/var` is a link to `/private/var`, so comparing a resolved path against an unresolved root rejects every legitimate sibling.
+- `testStore.writeScript` writes to the record's existing path when it's inside the scripts dir, so editing an imported spec doesn't move it away from its siblings; `remove` deletes the whole sandbox.
+- Guarded by `check:import-sandbox`.
+
 ## Hard constraints
 
 - **Edit only** inside `main/`, `renderer/`, `mcp/`, `glaze.ts`, `package.json`, `tsconfig.json`. Never edit or create files in `.glaze/`, `build/`, `node_modules/`, `@glaze/core`, or any `sdk/current/@glaze/core` path — these are generated or protected; changes there are silently lost or break the build.

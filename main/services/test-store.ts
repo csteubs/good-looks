@@ -35,6 +35,14 @@ export function scriptPathFor(id: string): string {
   return path.join(scriptsDir(), id + ".spec.ts");
 }
 
+/** Whether a stored path still lives under the scripts dir. Guards the writes
+ *  and deletes that take their path from a record rather than deriving it. */
+function isInsideScripts(p: string): boolean {
+  const root = path.resolve(scriptsDir());
+  const resolved = path.resolve(p);
+  return resolved === root || resolved.startsWith(root + path.sep);
+}
+
 function readAll(): TestRecord[] {
   try {
     const raw = fs.readFileSync(indexFile(), "utf-8");
@@ -89,9 +97,23 @@ export const testStore = {
     logger.info("recorder", "Saved test record", { id: record.id, steps: record.steps.length });
   },
 
+  /** Write a test's script, returning where it landed.
+   *
+   *  An imported test's spec lives inside its own sandbox directory rather than
+   *  flat in the scripts dir, so "this test's script" is wherever the record
+   *  already says it is. Writing to the default path instead would move the
+   *  spec away from the sibling modules it imports, and editing an imported
+   *  test would break it — with the record still pointing at the old file.
+   *
+   *  Only an existing path INSIDE the scripts dir is honoured. A record whose
+   *  scriptPath somehow points elsewhere gets the default rather than a write
+   *  wherever it happens to name. */
   writeScript(id: string, source: string): string {
     ensureDirs();
-    const p = scriptPathFor(id);
+    const existing = this.get(id)?.scriptPath;
+    const p =
+      existing && isInsideScripts(existing) ? existing : scriptPathFor(id);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, source, "utf-8");
     return p;
   },
@@ -130,6 +152,17 @@ export const testStore = {
     const rec = all.find((t) => t.id === id);
     if (rec) {
       try { fs.rmSync(rec.scriptPath, { force: true }); } catch { /* ignore */ }
+      // An imported test owns a whole directory — its spec plus every sibling
+      // module copied in with it. Removing only the spec would leave those
+      // behind for good, since nothing else knows they were ever its.
+      //
+      // Derived from the id and re-checked against the scripts dir rather than
+      // taken from the record: this is a recursive delete, and the one input it
+      // must not trust is a stored path.
+      const sandbox = path.join(scriptsDir(), "imported", id);
+      if (isInsideScripts(sandbox)) {
+        try { fs.rmSync(sandbox, { recursive: true, force: true }); } catch { /* ignore */ }
+      }
     }
     writeAll(all.filter((t) => t.id !== id));
   },
