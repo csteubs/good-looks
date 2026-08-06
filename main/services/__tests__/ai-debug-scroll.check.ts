@@ -9,10 +9,21 @@
 // to also pass `viewportClassName="max-h-[..vh]"` so the viewport itself is
 // constrained and actually scrolls when content overflows.
 //
-// This check reads the source file and verifies every ScrollArea that sets a
-// `max-h-[..vh]` className also sets a matching `viewportClassName`. It guards
-// against reintroducing the non-scrolling dialog the next time someone touches
-// these ScrollAreas.
+// There are now TWO valid shapes, and each has its own way of going wrong:
+//
+//   CONSTRAINED — `max-h-[..vh]` on the root. Needs a matching
+//   `viewportClassName` or the viewport grows past it and never scrolls.
+//
+//   FILL — `flex-1` so the pane occupies the dialog. Needs `min-h-0` (a flex
+//   child otherwise refuses to shrink below its content, so the PARENT
+//   overflows instead of the child scrolling) and `viewportClassName="h-full"`
+//   (without a bounded viewport there is again nothing to scroll). Missing
+//   flex-1 is the failure that shipped: the response pane sized itself to its
+//   content and sat in the top half of an otherwise empty dialog.
+//
+// This check reads the source file and verifies every ScrollArea satisfies one
+// shape or the other. It guards against reintroducing either non-scrolling
+// dialog the next time someone touches these ScrollAreas.
 //
 // No test runner exists in this project (see package.json) — plain assertions +
 // a non-zero exit code on failure stand in for one. Run with:
@@ -72,31 +83,54 @@ assert(
 );
 
 let checked = 0;
+let fillCount = 0;
 for (const tag of openingTags) {
-  // Extract the max-h value from className="..."
-  const classNameMatch = tag.match(/className="[^"]*max-h-\[(\d+)vh\][^"]*"/);
-  if (!classNameMatch) continue; // not a constrained ScrollArea
-  const vh = classNameMatch[1];
+  const className = tag.match(/className="([^"]*)"/)?.[1] ?? "";
+  const viewport = tag.match(/viewportClassName="([^"]*)"/)?.[1] ?? null;
 
-  // Must NOT have overflow-hidden (the old broken fix that clipped without scrolling)
-  assert(
-    !/overflow-hidden/.test(tag),
-    `ScrollArea max-h-[${vh}vh] does not use overflow-hidden (clips without scrolling)`,
-  );
+  // The old broken "fix" — clips the overflow without ever scrolling it.
+  assert(!/overflow-hidden/.test(tag), "ScrollArea does not use overflow-hidden");
 
-  // Must have viewportClassName with the same max-h
-  const viewportMatch = tag.match(/viewportClassName="([^"]*)"/);
-  assert(
-    viewportMatch !== null && viewportMatch[1].includes(`max-h-[${vh}vh]`),
-    `ScrollArea max-h-[${vh}vh] has viewportClassName="max-h-[${vh}vh]"`,
-  );
+  const vh = className.match(/max-h-\[(\d+)vh\]/)?.[1];
+  const fills = /\bflex-1\b/.test(className);
 
-  checked++;
+  if (vh) {
+    assert(
+      viewport !== null && viewport.includes(`max-h-[${vh}vh]`),
+      `constrained ScrollArea max-h-[${vh}vh] has viewportClassName="max-h-[${vh}vh]"`,
+    );
+    checked++;
+  }
+
+  if (fills) {
+    // Both halves matter and they fail differently: without min-h-0 the parent
+    // overflows, without a bounded viewport nothing scrolls at all.
+    assert(
+      /\bmin-h-0\b/.test(className),
+      "filling ScrollArea (flex-1) also sets min-h-0, or it refuses to shrink below its content",
+    );
+    assert(
+      viewport !== null && (/\bh-full\b/.test(viewport) || /max-h-/.test(viewport)),
+      'filling ScrollArea (flex-1) sets viewportClassName="h-full" so the viewport is bounded',
+    );
+    fillCount++;
+    checked++;
+  }
+
+  // A ScrollArea that neither fills nor is constrained can only grow forever.
+  if (!vh && !fills) {
+    assert(
+      /max-h-/.test(className),
+      `ScrollArea is bounded somehow (neither flex-1 nor max-h-[..vh]): ${className}`,
+    );
+    checked++;
+  }
 }
 
+assert(checked >= 4, `checked every ScrollArea (checked ${checked})`);
 assert(
-  checked >= 3,
-  `checked at least 3 constrained ScrollAreas (checked ${checked})`,
+  fillCount >= 2,
+  `the two streamed-response panes fill their dialog (found ${fillCount})`,
 );
 
 if (failures > 0) {

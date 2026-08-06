@@ -6,6 +6,7 @@
 import * as React from "react";
 import { Button, Callout, Dialog, Field, ScrollArea, Text, Textarea, toast } from "@glaze/core/components";
 import {
+  ArrowDownToLine,
   Check,
   ChevronDown,
   Copy,
@@ -351,6 +352,10 @@ interface SessionDraft {
   additionalContext: string;
   followUp: string;
   applied: boolean;
+  /** Follow the stream as it arrives. On by default — a response you have to
+   *  chase is a response you stop watching — but a user reading something
+   *  further up must be able to stop the yank. */
+  autoScroll: boolean;
 }
 
 const drafts = new Map<string, SessionDraft>();
@@ -391,6 +396,7 @@ function draftFor(key: string, startedAt: number, status: AiDebugStatus): Sessio
     additionalContext: "",
     followUp: "",
     applied: false,
+    autoScroll: true,
   };
 }
 
@@ -482,6 +488,22 @@ function dialogTitle(
     );
   }
   return modelName ? `${prefix} ${modelName}` : `${prefix} AI`;
+}
+
+/** Follow-the-stream toggle, sitting with the other response controls. */
+function AutoScrollToggle({ on, onChange }: { on: boolean; onChange: (next: boolean) => void }) {
+  return (
+    <Button
+      iconOnly
+      size="small"
+      variant={on ? "muted" : "transparent"}
+      onClick={() => onChange(!on)}
+      aria-label={on ? "Auto-scroll on" : "Auto-scroll off"}
+      title={on ? "Auto-scroll on — click to stop following" : "Auto-scroll off — click to follow"}
+    >
+      <ArrowDownToLine className={`size-3.5 ${on ? "" : "opacity-50"}`} />
+    </Button>
+  );
 }
 
 /** Minimize / discard, shown on both dialogs. Minimize is the DEFAULT dismissal
@@ -907,6 +929,12 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
               {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
             </Button>
           ) : null}
+          {!reviewing ? (
+            <AutoScrollToggle
+              on={draft.autoScroll}
+              onChange={(next) => setDraft({ autoScroll: next })}
+            />
+          ) : null}
           <SessionControls sessionKey={sessionKey} />
         </span>
       }
@@ -1016,13 +1044,18 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                   </Button>
                 </div>
               ) : null}
+              {/* flex-1 + min-h-0 so the response FILLS the dialog instead of
+                  shrinking to its content and leaving the lower half empty.
+                  min-h-0 is the load-bearing half: without it a flex child
+                  refuses to shrink below its content and the parent overflows
+                  instead of the child scrolling. */}
               <ScrollArea
-                className="max-h-[56vh] rounded-md border border-separator"
-                viewportClassName="max-h-[56vh]"
-                autoScrollToBottom
+                className="min-h-0 flex-1 rounded-md border border-separator"
+                viewportClassName="h-full"
+                autoScrollToBottom={draft.autoScroll}
                 autoScrollDeps={[content.length, reasoning.length]}
               >
-                <div className="flex flex-col gap-1 p-3">
+                <div className="flex min-h-full flex-col gap-1 p-3">
                   {status === "error" && session?.error ? (
                     <pre className="text-small overflow-x-auto whitespace-pre-wrap break-words text-primary">
                       {friendlyError(session.error, session.errorKind)}
@@ -1038,15 +1071,19 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                       ),
                     )
                   ) : status === "streaming" ? (
-                    <div className="flex flex-col gap-1">
+                    <div className="flex min-h-0 flex-1 flex-col gap-1">
                       <p className="text-small text-secondary">
                         {modelName ? `Thinking with ${modelName}…` : "Thinking…"}
                       </p>
                       {/* A reasoning model can spend a long time here with no
                           answer yet. Showing the thinking as it arrives is the
                           difference between "working" and "hung". */}
+                      {/* Scrolls with everything else rather than in its own
+                          160px box: a nested scroller capped the thinking to
+                          ~9 lines in the middle of an empty panel, and put it
+                          outside the reach of auto-scroll. */}
                       {reasoning ? (
-                        <pre className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words border-l-2 border-separator pl-2 font-mono text-[11px] text-tertiary">
+                        <pre className="whitespace-pre-wrap break-words border-l-2 border-separator pl-2 font-mono text-[11px] text-tertiary">
                           {reasoning}
                         </pre>
                       ) : null}
@@ -1109,6 +1146,7 @@ export function StepAiDebugDialog({ sessionKey }: { sessionKey: string }) {
 
   const [copied, setCopied] = React.useState(false);
   const [refused, setRefused] = React.useState<Extract<StartDecision, { ok: false }> | null>(null);
+  const [autoScroll, setAutoScroll] = React.useState(true);
   const { modelName, models, confirmModel, currentModel } = useModelPicker(open);
   const disabledEnhancements = useDisabledEnhancements();
   const thinkingGifEnabled = !disabledEnhancements.has("aiThinkingGif");
@@ -1209,6 +1247,7 @@ export function StepAiDebugDialog({ sessionKey }: { sessionKey: string }) {
               {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
             </Button>
           ) : null}
+          <AutoScrollToggle on={autoScroll} onChange={setAutoScroll} />
           <SessionControls sessionKey={sessionKey} />
         </span>
       }
@@ -1229,12 +1268,12 @@ export function StepAiDebugDialog({ sessionKey }: { sessionKey: string }) {
             <CapacityNotice decision={refused} onStopOldest={() => void runDiagnosis(true)} />
           ) : null}
           <ScrollArea
-            className="max-h-[56vh] rounded-md border border-separator"
-            viewportClassName="max-h-[56vh]"
-            autoScrollToBottom
+            className="min-h-0 flex-1 rounded-md border border-separator"
+            viewportClassName="h-full"
+            autoScrollToBottom={autoScroll}
             autoScrollDeps={[content.length]}
           >
-            <div className="flex flex-col gap-1 p-3">
+            <div className="flex min-h-full flex-col gap-1 p-3">
               {status === "error" && session?.error ? (
                 <pre className="text-small overflow-x-auto whitespace-pre-wrap break-words text-primary">
                   {friendlyError(session.error, session.errorKind)}

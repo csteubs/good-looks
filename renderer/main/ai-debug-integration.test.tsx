@@ -448,3 +448,57 @@ describe("when the model asks for logs", () => {
     expect(screen.queryByText(/asked for the console output/i)).toBeNull();
   });
 });
+
+// ── Following the stream ─────────────────────────────────────────────
+// A response you have to chase is a response you stop watching, so auto-scroll
+// is on by default. But a user reading something further up must be able to
+// stop the yank without losing the stream — hence a toggle rather than a fixed
+// behaviour, and one that survives minimizing.
+
+describe("auto-scroll", () => {
+  async function streamSomething() {
+    fireEvent.click(await findDebugIcon());
+    fireEvent.click(await screen.findByRole("button", { name: /Send to AI/i }));
+    await waitFor(() => expect(h.chat).toHaveBeenCalled());
+    emit("llm:chunk", { requestId: "req-1", delta: "a partial answer" });
+  }
+
+  it("is on by default once a response pane exists", async () => {
+    renderApp();
+    await streamSomething();
+    expect(await screen.findByRole("button", { name: /Auto-scroll on/i })).toBeTruthy();
+  });
+
+  it("is absent during prompt review, where there is no stream to follow", async () => {
+    renderApp();
+    fireEvent.click(await findDebugIcon());
+    await screen.findByText(/Nothing is sent until you confirm/i);
+    expect(screen.queryByRole("button", { name: /Auto-scroll/i })).toBeNull();
+  });
+
+  it("toggles off and back on", async () => {
+    renderApp();
+    await streamSomething();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Auto-scroll on/i }));
+    expect(await screen.findByRole("button", { name: /Auto-scroll off/i })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /Auto-scroll off/i }));
+    expect(await screen.findByRole("button", { name: /Auto-scroll on/i })).toBeTruthy();
+  });
+
+  it("remembers being switched off across a minimize and restore", async () => {
+    // The draft holds it, not component state — the dialog is unmounted while
+    // minimized, so local state would silently re-enable the yank.
+    renderApp();
+    await streamSomething();
+    fireEvent.click(await screen.findByRole("button", { name: /Auto-scroll on/i }));
+    await screen.findByRole("button", { name: /Auto-scroll off/i });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Minimize$/i }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Auto-scroll/i })).toBeNull());
+
+    fireEvent.click(await findDebugIcon());
+    expect(await screen.findByRole("button", { name: /Auto-scroll off/i })).toBeTruthy();
+  });
+});
