@@ -9,6 +9,11 @@ import { fileURLToPath } from "url";
 
 import { appHandlers } from "./app.js";
 import { getSettingsWindow, openSettingsWindow } from "../windows/settings-window.js";
+import {
+  dock as dockTrainerPanel,
+  isTrainerPanelDocked,
+  undock as undockTrainerPanel,
+} from "../windows/trainer-panel-window.js";
 import { recorderService } from "../services/recorder-service.js";
 import { batchRunner } from "../services/batch-runner.js";
 import { batchHistoryStore } from "../services/batch-history-store.js";
@@ -187,6 +192,18 @@ export function registerHandlers(): void {
     recorderService.discardExit();
   });
   ipcMain.handle("recorder:getState", async () => recorderService.getState());
+  // Trainer panel docking. Dock state lives in the backend because it moves
+  // real windows and docking can be REFUSED (a display too small to hold both);
+  // the panel reflects what actually happened rather than assuming it worked.
+  ipcMain.handle("trainerPanel:dock", async () => {
+    dockTrainerPanel();
+    return { docked: isTrainerPanelDocked() };
+  });
+  ipcMain.handle("trainerPanel:undock", async () => {
+    undockTrainerPanel("user");
+    return { docked: isTrainerPanelDocked() };
+  });
+
   ipcMain.handle("recorder:getSettings", async () => recorderSettingsStore.get());
   ipcMain.handle(
     "recorder:setSettings",

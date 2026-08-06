@@ -582,6 +582,8 @@ export interface PickedElement {
 
 export interface RecorderSettings {
   showUrlBar: boolean;
+  /** Open the trainer panel docked beside the training browser (default false). */
+  trainerPanelEnabled: boolean;
   defaultRunSpeed: TestSpeed;
   /** browser window size for new recordings, or null for the trainer's own
    *  default (mirror of main types). Also recorded as the test's first
@@ -658,7 +660,14 @@ export interface ContextAction {
   picked: PickedElement | null;
   prefillText: string;
   prefillValue: string;
+  /** Which trainer window should act on this — the event is broadcast to both,
+   *  and unaddressed it would open two prefilled dialogs for one right-click.
+   *  Absent means "main". */
+  target?: TrainerTarget;
 }
+
+/** The two windows that can host a trainer. */
+export type TrainerTarget = "main" | "panel";
 
 /** A single verbose diagnostic line produced while replaying a step. */
 export interface DebugLogLine {

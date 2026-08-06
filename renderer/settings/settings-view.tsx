@@ -76,6 +76,7 @@ export function SettingsView() {
 
   // ── Trainer settings ─────────────────────────────────────────────────
   const [showUrlBar, setShowUrlBar] = useState(true);
+  const [trainerPanelEnabled, setTrainerPanelEnabled] = useState(false);
   const [defaultRunSpeed, setDefaultRunSpeed] = useState<TestSpeed>("slow");
   const [defaultWindowSize, setDefaultWindowSize] = useState<string>(DEFAULT_VIEWPORT_PRESET_ID);
   const [defaultCaptureArtifacts, setDefaultCaptureArtifacts] = useState(false);
@@ -133,6 +134,7 @@ export function SettingsView() {
       .getSettings()
       .then((settings) => {
         setShowUrlBar(settings.showUrlBar);
+        setTrainerPanelEnabled(settings.trainerPanelEnabled);
         setDefaultRunSpeed(settings.defaultRunSpeed ?? "slow");
         setDefaultWindowSize(presetIdForViewport(settings.defaultWindowSize ?? null));
         setDefaultCaptureArtifacts(settings.defaultCaptureArtifacts ?? false);
@@ -173,6 +175,15 @@ export function SettingsView() {
     setShowUrlBar(checked);
     try {
       await api.recorder.setSettings({ showUrlBar: checked });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleTrainerPanelChange = async (checked: boolean) => {
+    setTrainerPanelEnabled(checked);
+    try {
+      await api.recorder.setSettings({ trainerPanelEnabled: checked });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
     }
@@ -669,6 +680,22 @@ export function SettingsView() {
                 id="show-url-bar"
                 checked={showUrlBar}
                 onCheckedChange={handleShowUrlBarChange}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="trainer-panel">Dock the trainer to the browser</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Opens the step list and tools in a narrow panel pinned beside the training
+                  browser, so you don't have to switch windows for every step. The panel follows
+                  the browser when you move or resize it, and can be undocked. Docking narrows
+                  the training browser to make room.
+                </p>
+              </FieldContent>
+              <Switch
+                id="trainer-panel"
+                checked={trainerPanelEnabled}
+                onCheckedChange={handleTrainerPanelChange}
               />
             </Field>
             <Field orientation="horizontal">

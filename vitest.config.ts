@@ -15,9 +15,15 @@
 //     bundles, so component tests exercise the actual design system rather than
 //     a hand-written fake that can drift from it.
 //
-// The SDK path is resolved from this file rather than hardcoded, so the config
-// keeps working if the SDK moves.
+// The SDK and node_modules paths are DISCOVERED by walking up from this file
+// rather than fixed at a set number of `..` hops. A single hardcoded depth only
+// holds while the config sits at the project root: run the suite from a git
+// worktree (`.claude/worktrees/<branch>/`) and the same relative path lands
+// three directories short, so `@glaze/core/components` and React both fail to
+// resolve and EVERY component test errors at import with a message that reads
+// like a missing dependency. Same candidate-list idiom as `glaze.ts`.
 
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
@@ -25,8 +31,24 @@ import react from "@vitejs/plugin-react";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
+/** Nearest ancestor of `here` (inclusive) containing `rel`, else `here/rel`. */
+function findUp(rel: string): string {
+  let dir = here;
+  for (;;) {
+    const candidate = path.join(dir, rel);
+    if (fs.existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) return path.join(here, rel);
+    dir = parent;
+  }
+}
+
 /** The Glaze SDK install this project builds against (see tsconfig paths). */
-const SDK = path.resolve(here, "../../../sdk/current/@glaze/core");
+const SDK = findUp(path.join("sdk", "current", "@glaze", "core"));
+
+/** The installed dependency tree. In a worktree this resolves to the main
+ *  checkout's, which is what we want: one React instance, shared. */
+const MODULES = findUp("node_modules");
 
 /** The SDK bundles live OUTSIDE this project root, so bare `react` imports
  *  inside them can't resolve against the app's node_modules on their own.
@@ -35,16 +57,16 @@ const SDK = path.resolve(here, "../../../sdk/current/@glaze/core");
  *  two copies produce "invalid hook call" failures that look like component
  *  bugs. */
 const reactAliases = {
-  react: path.resolve(here, "node_modules/react"),
-  "react-dom": path.resolve(here, "node_modules/react-dom"),
-  "react/jsx-runtime": path.resolve(here, "node_modules/react/jsx-runtime.js"),
-  "react/jsx-dev-runtime": path.resolve(here, "node_modules/react/jsx-dev-runtime.js"),
-  "react-dom/client": path.resolve(here, "node_modules/react-dom/client.js"),
+  react: path.join(MODULES, "react"),
+  "react-dom": path.join(MODULES, "react-dom"),
+  "react/jsx-runtime": path.join(MODULES, "react/jsx-runtime.js"),
+  "react/jsx-dev-runtime": path.join(MODULES, "react/jsx-dev-runtime.js"),
+  "react-dom/client": path.join(MODULES, "react-dom/client.js"),
   // Same problem, same fix: every bare specifier the SDK bundle imports has to
   // be pinned to this project's copy. To find the current set if the SDK is
   // upgraded and a test suddenly can't resolve something:
   //   grep -ohE 'from"[^".][^"]*"' <sdk>/components.js | sort -u
-  "@tanstack/react-query": path.resolve(here, "node_modules/@tanstack/react-query"),
+  "@tanstack/react-query": path.join(MODULES, "@tanstack/react-query"),
 };
 
 /** `sonner` is a dependency of the SDK bundle, not of this app — the real

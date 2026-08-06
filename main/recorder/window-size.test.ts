@@ -149,4 +149,51 @@ describe("recorder-service wiring", () => {
       "normalizeViewport(params.viewport)",
     );
   });
+
+  it("tells the trainer panel not to take the preset's width", () => {
+    // The two features cancel out otherwise, silently: docking normally takes
+    // the panel's width OUT of the training browser, so the page renders at one
+    // width while the recorded viewport step promises another. Nothing errors —
+    // the recording is just made against the wrong layout.
+    expect(serviceSource()).toContain("fixedBrowserWidth: viewport !== null");
+  });
+});
+
+describe("trainer-panel wiring", () => {
+  function panelSource(): string {
+    return readFileSync(new URL("../windows/trainer-panel-window.ts", import.meta.url), "utf-8");
+  }
+
+  it("passes the preserved width to every dock, not just the first", () => {
+    // The user can undock and re-dock mid-session. A re-dock that forgot would
+    // shrink the browser the initial dock deliberately left alone — the bug
+    // would appear only after an undock/dock round trip.
+    const src = panelSource();
+    const docks = [...src.matchAll(/computeDock\([^)]*\)/g)].map((m) => m[0]);
+    expect(docks.length).toBeGreaterThanOrEqual(2);
+    for (const call of docks) {
+      expect(call, `a computeDock call ignores the preserved width: ${call}`).toContain(
+        "preserveBrowserWidth",
+      );
+    }
+  });
+
+  it("does not hand back width it never took, on undock", () => {
+    // computeUndock GROWS the browser by the panel width. Running it after a
+    // dock that preserved the width would push the browser past its preset —
+    // undocking would change the recording size in the opposite direction.
+    expect(panelSource()).toMatch(/isLive\(browserWindow\)\s*&&\s*!preserveBrowserWidth/);
+  });
+
+  it("does not warn that the viewport narrowed when it did not", () => {
+    // The warning tells the user a responsive site may have re-laid out. With
+    // the width preserved nothing changed, and the warning would send them
+    // looking for a problem in the one case the geometry is right.
+    const src = panelSource();
+    const start = src.indexOf("function noteViewportChange");
+    expect(start).toBeGreaterThan(-1);
+    expect(src.slice(start, src.indexOf("}", start))).toContain(
+      "if (preserveBrowserWidth) return;",
+    );
+  });
 });

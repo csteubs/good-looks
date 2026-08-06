@@ -3,8 +3,6 @@
 // React Query (which owns persisted test data).
 
 import * as React from "react";
-import { useNavigate } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
 
 import { toast } from "@glaze/core/components";
 
@@ -161,7 +159,25 @@ export function useRecorder(): RecorderContextValue {
   return ctx;
 }
 
-export function RecorderProvider({ children }: { children: React.ReactNode }) {
+/**
+ * What to do when a recording finishes.
+ *
+ * Injected rather than done here, because the provider now mounts in TWO
+ * windows: the main window, which navigates to the finished test and
+ * invalidates its queries, and the trainer panel, which has no router to
+ * navigate and no test list to invalidate. Calling `useNavigate` in the
+ * provider would throw outright in the panel — a router hook is not optional at
+ * runtime just because the value is unused.
+ */
+export type OnRecordingFinished = (testId: string) => void;
+
+export function RecorderProvider({
+  children,
+  onFinished,
+}: {
+  children: React.ReactNode;
+  onFinished?: OnRecordingFinished;
+}) {
   const [state, setState] = React.useState<RecorderState>(EMPTY_STATE);
   const [liveSteps, setLiveSteps] = React.useState<Step[]>([]);
   const [picked, setPicked] = React.useState<PickedElement | null>(null);
@@ -177,8 +193,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
   // True while any replay (single step / from-current) is in flight — drives
   // the "Running" status and locks step editing.
   const [executing, setExecuting] = React.useState(false);
-  const navigate = useNavigate();
-  const qc = useQueryClient();
+  // Held in a ref so a caller passing an inline arrow doesn't retear down and
+  // re-subscribe every push listener on each render.
+  const finishedRef = React.useRef(onFinished);
+  finishedRef.current = onFinished;
 
   React.useEffect(() => {
     const offState = api.on<RecorderState>("recorder:state", (s) => setState(s));
@@ -218,10 +236,7 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
     );
     const offFinished = api.on<{ testId: string }>("recorder:finished", ({ testId }) => {
       setLiveSteps([]);
-      qc.invalidateQueries({ queryKey: ["tests"] });
-      qc.invalidateQueries({ queryKey: ["test", testId] });
-      qc.invalidateQueries({ queryKey: ["script", testId] });
-      navigate({ to: "/test/$id", params: { id: testId } });
+      finishedRef.current?.(testId);
     });
     const offOut = api.on<{ runId: string; chunk: string }>("runner:output", ({ runId, chunk }) => {
       setRuns((prev) => {
@@ -339,7 +354,10 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
       offReplayStep();
       offReplayLog();
     };
-  }, [navigate, qc]);
+    // Subscribe once. `onFinished` is read through a ref precisely so it cannot
+    // appear here — a changing callback would tear down and re-subscribe every
+    // push listener, and a step captured during that gap is simply lost.
+  }, []);
 
   // Load persisted debug logs whenever the active session's test changes, so
   // the panel shows prior replay diagnostics after reopening the trainer.

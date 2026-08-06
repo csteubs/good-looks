@@ -35,6 +35,9 @@ function clampRetained(n: number): number {
 
 const DEFAULT_SETTINGS: RecorderSettings = {
   showUrlBar: true,
+  // Opt-in: the panel moves and resizes real windows, so it stays off until
+  // the user asks for it. The in-window trainer is unchanged either way.
+  trainerPanelEnabled: false,
   defaultRunSpeed: "slow",
   defaultWindowSize: null,
   autoHealEnabled: true,
@@ -73,6 +76,10 @@ function read(): RecorderSettings {
     const parsed = JSON.parse(fs.readFileSync(settingsFile(), "utf-8")) as Partial<RecorderSettings>;
     return {
       showUrlBar: typeof parsed.showUrlBar === "boolean" ? parsed.showUrlBar : DEFAULT_SETTINGS.showUrlBar,
+      trainerPanelEnabled:
+        typeof parsed.trainerPanelEnabled === "boolean"
+          ? parsed.trainerPanelEnabled
+          : DEFAULT_SETTINGS.trainerPanelEnabled,
       defaultRunSpeed: isTestSpeed(parsed.defaultRunSpeed) ? parsed.defaultRunSpeed : DEFAULT_SETTINGS.defaultRunSpeed,
       // Normalized, not cast: these numbers size a native window and are
       // written into a generated spec, so a hand-edited or corrupt file must
@@ -165,6 +172,10 @@ export const recorderSettingsStore = {
     const current = read();
     const next: RecorderSettings = {
       showUrlBar: update.showUrlBar !== undefined ? update.showUrlBar : current.showUrlBar,
+      trainerPanelEnabled:
+        update.trainerPanelEnabled !== undefined
+          ? update.trainerPanelEnabled
+          : current.trainerPanelEnabled,
       defaultRunSpeed: update.defaultRunSpeed !== undefined && isTestSpeed(update.defaultRunSpeed)
         ? update.defaultRunSpeed
         : current.defaultRunSpeed,
@@ -253,6 +264,7 @@ export const recorderSettingsStore = {
     fs.writeFileSync(settingsFile(), JSON.stringify(next, null, 2), "utf-8");
     logger.info("recorder", "Saved trainer settings", {
       showUrlBar: next.showUrlBar,
+      trainerPanelEnabled: next.trainerPanelEnabled,
       defaultRunSpeed: next.defaultRunSpeed,
       defaultWindowSize: next.defaultWindowSize,
       autoHealEnabled: next.autoHealEnabled,

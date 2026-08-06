@@ -61,6 +61,12 @@ function ipc(): Ipc {
 }
 
 export const api = {
+  /** Docking of the trainer panel beside the training browser. Both return the
+   *  resulting state — docking can be refused when the display is too small. */
+  trainerPanel: {
+    dock: () => ipc().invoke<{ docked: boolean }>("trainerPanel:dock"),
+    undock: () => ipc().invoke<{ docked: boolean }>("trainerPanel:undock"),
+  },
   recorder: {
     start: (
       url: string,
