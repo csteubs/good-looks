@@ -964,6 +964,10 @@ export interface PickedElement {
 export interface RecorderSettings {
   /** show the current page's URL in the training window's title bar (default true) */
   showUrlBar: boolean;
+  /** Open the trainer panel docked beside the training browser (default false).
+   *  Opt-in while the docking behaviour beds in — the in-window trainer stays
+   *  the default and is unaffected either way. */
+  trainerPanelEnabled: boolean;
   /** default playback speed for new recordings (adds a slowMo delay between
    *  actions during runs); persisted so the New Recording dialog remembers the
    *  last choice. Defaults to "slow" so runs are watchable by default. */
