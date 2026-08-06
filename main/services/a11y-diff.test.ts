@@ -14,11 +14,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   acceptKeysFor,
+  describeA11yOutcome,
   diffViolations,
   hasNewViolations,
   keysOf,
   violationKey,
   worstNewImpact,
+  type A11yResult,
   type A11yViolation,
 } from "./a11y-diff.js";
 
@@ -152,6 +154,60 @@ describe("worstNewImpact", () => {
   it("is null when nothing is new", () => {
     const result = diffViolations([v({ id: "a", nodes: [".1"] })], ["a|.1"]);
     expect(worstNewImpact(result ?? undefined)).toBeNull();
+  });
+});
+
+describe("describeA11yOutcome", () => {
+  const step = (a11y?: A11yResult) => ({ a11y });
+
+  it("reports zero completed checks as a fault, not as a clean page", () => {
+    // THE test in this block. Every axe check in this app failed for months
+    // behind a swallowed error, and the only reason nobody could tell is that
+    // "found nothing" and "measured nothing" were indistinguishable. A summary
+    // that answered "no issues found" here would restate that bug in words.
+    const line = describeA11yOutcome({ checks: 0, steps: [step(), step()] });
+    expect(line).toMatch(/no check completed/i);
+    expect(line).not.toMatch(/no issues found/i);
+  });
+
+  it("says the page was clean only when checks actually ran", () => {
+    expect(describeA11yOutcome({ checks: 4, steps: [step(), step()] })).toBe(
+      "Accessibility: 4 checks, no issues found.",
+    );
+  });
+
+  it("counts new issues and the steps carrying them, and points at the results", () => {
+    // The results live in a different view; a summary that reported a count
+    // without saying where to look leaves the user exactly where they started.
+    const line = describeA11yOutcome({
+      checks: 3,
+      steps: [
+        step({ violations: [], newKeys: ["color-contrast|.a", "label|#b"], acceptedCount: 0 }),
+        step({ violations: [], newKeys: ["label|#c"], acceptedCount: 0 }),
+        step(),
+      ],
+    });
+    expect(line).toBe("Accessibility: 3 new issues on 2 steps — open Visual to review.");
+  });
+
+  it("distinguishes clean-against-the-baseline from clean-against-the-page", () => {
+    // "No issues found" on a page with six accepted violations is false, and
+    // it's the sentence that makes a baseline feel like a fix.
+    expect(
+      describeA11yOutcome({
+        checks: 2,
+        steps: [step({ violations: [], newKeys: [], acceptedCount: 6 })],
+      }),
+    ).toBe("Accessibility: 2 checks, no new issues (6 previously accepted).");
+  });
+
+  it("says one issue, not 1 issues", () => {
+    expect(
+      describeA11yOutcome({
+        checks: 1,
+        steps: [step({ violations: [], newKeys: ["label|#a"], acceptedCount: 0 })],
+      }),
+    ).toBe("Accessibility: 1 new issue on 1 step — open Visual to review.");
   });
 });
 

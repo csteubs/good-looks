@@ -42,10 +42,10 @@ import {
 } from "lucide-react";
 
 import { api } from "../lib/api";
-import { countA11ySteps, worstNewImpact } from "../lib/a11y-format";
+import { countA11ySteps } from "../lib/a11y-format";
+import { A11yBadge, A11yViolationList } from "./a11y-violations";
 import type {
   A11yResult,
-  A11yViolation,
   Annotation,
   ReplayStep,
   ReplayStepStatus,
@@ -115,42 +115,9 @@ function diffBadgeColor(state: VisualDiffState): "green" | "orange" | "yellow" |
   }
 }
 
-/** Exported for tests: this badge is the visual verdict a user acts on, and
- *  its wording carries claims (page vs element scope, regions excluded) that
- *  are wrong in a way nothing else would catch. */
-/** Colour for an impact level, ranked the way axe ranks it. A "minor" and a
- *  "critical" violation must not look the same — the whole point of triage is
- *  knowing which to read first. */
-const IMPACT_COLOR: Record<A11yViolation["impact"], "red" | "orange" | "yellow" | "secondary"> = {
-  critical: "red",
-  serious: "orange",
-  moderate: "yellow",
-  minor: "secondary",
-};
-
-/** Compact "N accessibility issues" badge for the step detail row. */
-export function A11yBadge({ result }: { result: A11yResult }) {
-  const isNew = result.newKeys.length;
-  if (isNew === 0) {
-    // Checked and found nothing unaccepted. Worth saying explicitly — silence
-    // reads as "the check didn't run", which is a different thing entirely.
-    return (
-      <Badge color="secondary" className="shrink-0">
-        <Accessibility className="size-3.5" />
-        {result.acceptedCount > 0 ? `${result.acceptedCount} accepted` : "No a11y issues"}
-      </Badge>
-    );
-  }
-  const worst = worstNewImpact(result);
-  return (
-    <Badge color={worst ? IMPACT_COLOR[worst] : "orange"} className="shrink-0">
-      <Accessibility className="size-3.5" />
-      {isNew} new a11y issue{isNew === 1 ? "" : "s"}
-    </Badge>
-  );
-}
-
-/** The violations themselves, listed under the step detail row. */
+/** The violations themselves, listed under the step detail row: the shared list
+ *  plus the controls that only make sense against a RUN — collapse, and accept.
+ *  The Accessibility tab renders the same list with its own controls. */
 function A11yDetail({
   result,
   onAccept,
@@ -163,7 +130,6 @@ function A11yDetail({
   accepted: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
-  const newSet = new Set(result.newKeys);
   if (result.violations.length === 0) return null;
 
   return (
@@ -191,38 +157,8 @@ function A11yDetail({
         ) : null}
       </div>
       {open ? (
-        <div className="flex flex-col gap-2 pt-2">
-          {result.violations.map((v, i) => {
-            const isNew = v.nodes.length
-              ? v.nodes.some((t) => newSet.has(`${v.id}|${t}`))
-              : newSet.has(`${v.id}|`);
-            return (
-              <div
-                key={i}
-                className={`rounded-md border p-2 ${
-                  isNew ? "border-separator" : "border-separator opacity-60"
-                }`}
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge color={IMPACT_COLOR[v.impact]}>{v.impact}</Badge>
-                  <code className="font-mono text-xs text-secondary">{v.id}</code>
-                  {!isNew ? <Badge color="secondary">accepted</Badge> : null}
-                </div>
-                <Text variant="small" className="pt-1">
-                  {v.help}
-                </Text>
-                {v.nodes.length > 0 ? (
-                  <div className="flex flex-col gap-0.5 pt-1">
-                    {v.nodes.map((t, j) => (
-                      <code key={j} className="truncate font-mono text-[11px] text-tertiary">
-                        {t}
-                      </code>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
+        <div className="pt-2">
+          <A11yViolationList result={result} />
         </div>
       ) : null}
     </div>
@@ -1536,6 +1472,18 @@ function RunList({
                 </Text>
                 {r.changedSteps > 0 ? (
                   <Eye className="size-3.5 shrink-0 text-support-orange" aria-label="visual change" />
+                ) : null}
+                {/* The summary has carried this count since the feature landed
+                    and nothing read it, so a run whose only finding was an
+                    accessibility one looked identical to a clean one — you had
+                    to open every run to find out. Its own icon, not a shared
+                    one: "something changed visually" and "something is
+                    inaccessible" send you to different places. */}
+                {(r.a11yNewSteps ?? 0) > 0 ? (
+                  <Accessibility
+                    className="size-3.5 shrink-0 text-support-orange"
+                    aria-label="accessibility issues"
+                  />
                 ) : null}
               </div>
               <Text variant="small" color="tertiary">

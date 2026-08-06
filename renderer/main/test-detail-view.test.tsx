@@ -11,12 +11,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import type { RecorderSettings, Step, TestRecord } from "../lib/recorder-types";
+import type { RecorderSettings, RunRecord, Step, TestRecord } from "../lib/recorder-types";
 import { TestDetailView } from "./test-detail-view";
 import { withAiDebug } from "../__tests__/ai-debug-harness";
 
 let test_: TestRecord | null = null;
 let settings: Partial<RecorderSettings> = {};
+let runs: RunRecord[] = [];
 
 const run = vi.fn();
 const setHeadless = vi.fn(async () => ({}) as TestRecord);
@@ -51,7 +52,9 @@ vi.mock("../lib/api", () => ({
       updateSteps: (...a: Parameters<typeof updateSteps>) => updateSteps(...a),
     },
     recorder: { getSettings: async () => settings as RecorderSettings },
-    runs: { captureOverhead: async () => null },
+    runs: { captureOverhead: async () => null, list: async () => runs },
+    heals: { list: async () => [] },
+    artifacts: { getReplay: async () => null },
     aiDebug: {
       list: async () => [],
       save: async (s: unknown) => s,
@@ -93,7 +96,49 @@ function renderView() {
 beforeEach(() => {
   vi.clearAllMocks();
   test_ = record();
+  runs = [];
   settings = { defaultRunBrowser: "chromium", defaultRunHeadless: false, defaultCaptureArtifacts: false };
+});
+
+describe("the Accessibility tab", () => {
+  it("sits after Heals, so the run-related tabs stay together", async () => {
+    // Placement is the whole request: it belongs beside Heals, not buried at
+    // the front where it would push Steps and Script along.
+    renderView();
+    const tabs = await screen.findAllByRole("tab");
+    const names = tabs.map((t) => t.textContent);
+    expect(names[names.length - 1]).toMatch(/Accessibility/);
+    expect(names[names.length - 2]).toMatch(/Heals/);
+  });
+
+  it("badges the unaccepted count from the most recent CHECKED run", async () => {
+    // A later run with the toggle off must not clear the badge — the user
+    // would read a cleared badge as the issues having been fixed.
+    runs = [
+      { id: "r2", testId: "t1", startedAt: 2_000 } as RunRecord,
+      { id: "r1", testId: "t1", startedAt: 1_000, a11yChecks: 4, a11yNewSteps: 3 } as RunRecord,
+    ];
+    renderView();
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /Accessibility \(3\)/ })).toBeTruthy(),
+    );
+  });
+
+  it("carries no count when nothing is unaccepted", async () => {
+    runs = [{ id: "r1", testId: "t1", startedAt: 1_000, a11yChecks: 4 } as RunRecord];
+    renderView();
+    const tab = await screen.findByRole("tab", { name: /Accessibility/ });
+    expect(tab.textContent).toBe("Accessibility");
+  });
+
+  it("is not offered for an imported test", async () => {
+    // The check runs from the capture fixture, which an imported spec never
+    // loads — the tab could only ever be empty.
+    test_ = record({ sourceDir: "/imported/project" });
+    renderView();
+    await screen.findByText("Checkout");
+    expect(screen.queryByRole("tab", { name: /Accessibility/ })).toBeNull();
+  });
 });
 
 describe("run controls", () => {

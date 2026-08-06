@@ -16,6 +16,102 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-06 — "Check accessibility" never reported anything: a closure that didn't survive the page boundary
+
+**The symptom:** the per-test toggle and the global default both worked, runs
+took visibly longer with it on, and no result ever appeared anywhere — no
+badges in the replay, no accessibility line in Stats. The run log carried
+`[glaze-a11y] check failed: ReferenceError: MAX_VIOLATIONS is not defined`,
+43 times across the retained logs.
+
+**The cause:** `runAxe` in `capture-fixture-source.ts` closed over the fixture's
+own `MAX_VIOLATIONS` / `MAX_NODES` from inside a `page.evaluate` callback.
+`page.evaluate` serializes its callback to source and re-evaluates it **in the
+page**, which keeps no scope from the fixture module — so the compaction step
+threw. The caps are now passed as an argument instead.
+
+**Why it stayed invisible for so long, which is the part worth remembering:**
+every safety property of this feature worked exactly as designed and each one
+removed a signal. The throw happened *after* `axe.run` resolved, so the run paid
+the full cost and looked busy. `runAxe` never throws by design — accessibility is
+reporting, not a gate — so it returned `null`. `null` is also the legitimate
+"axe was never injected" answer, so nothing downstream could tell the two apart:
+the manifest got no `a11y` entry, `enrichWithA11y` had nothing to enrich, the
+replay had no payload to badge, and `capture-overhead.ts` counts a run as an
+accessibility run only when `a11yChecks > 0` — which was always 0 — so Stats
+stayed silent too. A feature can be fully built, fully tested, and still report
+nothing, if the one unguarded step is the one that crosses into the browser.
+
+**Why the suite missed it:** `check:visual-pipeline` seeds manifest entries
+directly and drives the diff/baseline logic without a browser — which is what
+makes it fast and is still right. Nothing evaluated the fixture's axe callback
+the way Playwright does. `capture-fixture-a11y.dom.test.ts` now extracts `runAxe`
+from the shipped string and runs it against a fake `page` whose `evaluate`
+**deliberately re-evaluates the callback from its source**, reproducing the scope
+loss. Writing that fake the obvious way — calling the callback directly — passes
+against the bug, so the isolation is the test.
+
+**Rule this generalizes to:** a `page.evaluate` / `addInitScript` callback is a
+boundary as real as the capture boundary in `CLAUDE.md`. Nothing from the
+enclosing module reaches the other side; pass it as an argument, and test it by
+evaluating what ships.
+
+**Then the reason it took months to notice, fixed as its own problem.** The bug
+was cheap; being unable to see it was not. Between the toggle (on the test) and
+the results (in the Visual view) there was nothing at all, so three different
+situations produced one identical observation: nothing.
+
+- **`describeA11yOutcome`** (`a11y-diff.ts`, pure) writes one line into the run's
+  own Output panel, next to the existing "Capturing screenshots" / "Recording
+  console and network" notices — plus a matching "Checking accessibility for
+  this run" before it, since a check that only announces itself by making the
+  run slower announces nothing. The line states the number of **completed**
+  checks separately from what was found, and **zero completed checks is reported
+  as a fault**, never as "no issues found". That distinction is the whole point:
+  it is the sentence that would have surfaced this bug on day one, and the test
+  that pins it is the first one in its block.
+- **The Visual run list** now marks runs with unaccepted violations. The count
+  (`a11yNewSteps`) had been computed, stored and shipped to the renderer since
+  the feature landed, and read by nothing — so a run that was visually identical
+  but newly inaccessible was indistinguishable from a clean one without opening
+  it. Its own `Accessibility` icon rather than the existing `Eye`: "something
+  changed visually" and "something is inaccessible" send you to different places.
+
+**The general lesson, worth more than the fix:** a result that is only visible
+somewhere the user has no reason to look is not a result. Both halves of this —
+the swallowed error and the invisible output — were failures of the same kind,
+and the working feature is the one that says what it did where the user already
+is.
+
+**Finally, the results themselves moved to the test.** A summary line says what
+happened; it does not say *what is wrong with the page*. Reading that still meant
+leaving the test, opening the Visual view, finding the right run and scrubbing to
+the right step — four navigations away from the toggle that asked for the check.
+So there is now an **"Accessibility" tab** on the test detail view
+(`a11y-panel.tsx`), placed after Heals.
+
+- **It describes the most recent run that CHECKED, not the most recent run**
+  (`latestA11yRun`). A later run with the toggle off must not blank the panel:
+  an empty result reads as "the issues were fixed", which is the most damaging
+  thing this feature could say incorrectly.
+- **That selector keys on `a11yMs`, not just `a11yChecks`,** so a run where axe
+  executed but every check failed still counts as "checked" — otherwise a broken
+  check would render the same empty state as a test nobody enabled it for. Same
+  rule as the summary line, one layer up.
+- **`a11y:resetBaseline` finally has a UI.** It had a handler and an API method
+  and no caller anywhere: accepting was one click and un-accepting was
+  impossible. "Reset accepted" is always offered, not just when something is
+  flagged — the moment you need it is right after an over-eager "Accept all",
+  when nothing is flagged any more.
+- **The violation rendering was extracted** (`a11y-violations.tsx`) rather than
+  copied. The impact colours ARE the triage and the new-vs-accepted split is the
+  verdict; two hand-written copies would drift into disagreeing about which
+  issues matter, and the drift would be invisible because both would look fine.
+- Imported tests don't get the tab, matching Variables and Heals: the check runs
+  from the capture fixture, which an imported spec never loads, so the tab could
+  only ever be empty.
+
+
 ### 2026-08-04 — A real test runner, and the first component/DOM tests
 
 **Goal:** "Are there unit tests for all app surfaces?" — no: 18 standalone assertion scripts covering pure logic, and zero coverage of 27 React components (~11k lines), the IPC layer, the injected capture script, or the replayer. This is the plan to close that, and its first three layers. (Commits `14b8b50`, `9b199d3`, `a6951f8`, `8905078`.)

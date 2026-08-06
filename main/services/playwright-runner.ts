@@ -21,6 +21,7 @@ import { notifyRunOutcome } from "./run-notifier.js";
 import { sendAlert } from "./alert-service.js";
 import { applyRetention } from "./retention.js";
 import { buildReplay, enrichWithA11y, enrichWithVisualDiffs } from "./replay-builder.js";
+import { describeA11yOutcome } from "./a11y-diff.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import { generateSpec, generateSpecDetailed, secretEnvName } from "./script-generator.js";
 import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "./glaze-runtime-source.js";
@@ -678,6 +679,7 @@ export const playwrightRunner = {
       let capturingRun = false;
       // Declared out here because the finally block reads them: everything
       // below is set inside the try, which the finally cannot see into.
+      let checkedAccessibility = false;
       let healDir = "";
       let healMapPath = "";
       let healApplyMode: HealApplyMode = "suggest";
@@ -719,6 +721,7 @@ export const playwrightRunner = {
         const recordLogs = (rec.recordLogs ?? healSettings.defaultRecordLogs) && !rec.sourceDir;
         const axeFile = axePath(nodeModules);
         const a11y = wantA11y && fs.existsSync(axeFile);
+        checkedAccessibility = a11y;
         if (wantA11y && !a11y) {
           emitOutput(runId, "system", "Accessibility checks skipped: axe-core was not found.\n");
         }
@@ -828,6 +831,10 @@ export const playwrightRunner = {
         emitOutput(runId, "system", "Running " + path.basename(rec.scriptPath) + "…\n");
         if (capturing) emitOutput(runId, "system", "Capturing screenshots for this run.\n");
         if (recordLogs) emitOutput(runId, "system", "Recording console and network for this run.\n");
+        // Announced like the other two. Without it the only evidence the check
+        // was even armed was the run taking longer — and axe is slow enough
+        // that "slower than usual" is not evidence of anything.
+        if (a11y) emitOutput(runId, "system", "Checking accessibility for this run.\n");
         // Use our custom StepReporter (emits per-step progress markers) plus
         // the built-in `line` reporter for the human-readable Output panel.
         const args = [
@@ -890,6 +897,10 @@ export const playwrightRunner = {
         // same runId so the Phase 2 timeline can retrieve it.
         const statuses = stepStatusMaps.get(runId) ?? {};
         stepStatusMaps.delete(runId);
+        // Read once, up here, because both the replay summary below and the
+        // overhead numbers further down need it — and the summary has to be
+        // emitted before the log buffer is drained a few lines later.
+        const manifest = capturingRun ? artifactStore.readManifest(rec.id, recordId) : null;
         // Filled in from the replay when capturing, so the notification can
         // mention visual changes and name the failing step.
         let changedSteps = 0;
@@ -919,6 +930,17 @@ export const playwrightRunner = {
             // this test. Reported only — this never touches runStatus.
             a11yNewSteps = enrichWithA11y(replay, rec.a11yBaseline);
             artifactStore.writeReplay(rec.id, recordId, replay);
+            // Say what the check did, in the Output panel the user is already
+            // looking at. The results themselves live in the Visual view, and
+            // nothing used to point there — or admit when nothing was measured.
+            if (checkedAccessibility) {
+              emitOutput(
+                runId,
+                "system",
+                describeA11yOutcome({ checks: manifest?.a11yChecks ?? 0, steps: replay.steps }) +
+                  "\n",
+              );
+            }
             changedSteps = replay.steps.filter((st) => st.diff?.state === "changed").length;
             if (replay.failedIndex !== null) {
               failedLabel = replay.steps[replay.failedIndex]?.label;
@@ -938,12 +960,11 @@ export const playwrightRunner = {
         let shotCount: number | undefined;
         let a11yMs: number | undefined;
         let a11yCheckCount: number | undefined;
-        if (capturingRun) {
-          const manifest = artifactStore.readManifest(rec.id, recordId);
-          captureOverheadMs = manifest?.captureMs;
-          shotCount = manifest?.shotCount ?? manifest?.steps.length;
-          a11yMs = manifest?.a11yMs;
-          a11yCheckCount = manifest?.a11yChecks;
+        if (manifest) {
+          captureOverheadMs = manifest.captureMs;
+          shotCount = manifest.shotCount ?? manifest.steps.length;
+          a11yMs = manifest.a11yMs;
+          a11yCheckCount = manifest.a11yChecks;
         }
         try {
           runHistoryStore.append(
