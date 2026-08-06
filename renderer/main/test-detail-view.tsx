@@ -47,11 +47,32 @@ import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
 import { HealsPanel } from "./heals-panel";
 import { computeStepDepths } from "../lib/describe-step";
-import { RUN_BROWSERS, RUN_BROWSER_LABELS, type RunBrowser } from "../lib/recorder-types";
+import {
+  RUN_BROWSERS,
+  RUN_BROWSER_LABELS,
+  type RunBrowser,
+  type Step,
+  type TestRecord,
+} from "../lib/recorder-types";
 
 /** Compact ms for the inline capture-cost hint next to the toggle. */
 function fmtCaptureMs(ms: number): string {
   return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
+/** What to say when a record admits its steps and its script disagree. Three
+ *  cases, not one: a warning that prescribes a fix the test can't perform is
+ *  its own bug, and an imported spec is never regenerated from steps. The
+ *  reason is absent on records written before it was tracked — back then a
+ *  lossy parse was the only way to get here. */
+function divergedMessage(test: TestRecord): string {
+  if (test.stepsDivergedReason !== "unapplied") {
+    return "Steps may not reflect the script — some statements in it couldn't be parsed back into steps.";
+  }
+  if (test.sourceDir) {
+    return "These steps aren't in the script — this test runs the file it was imported with, and that file is never regenerated from steps.";
+  }
+  return "These steps aren't in the script — they were saved without regenerating it, so runs still use the script as it was. Edit Steps, save, then choose “Regenerate script” to apply them.";
 }
 
 export function TestDetailView() {
@@ -66,6 +87,10 @@ export function TestDetailView() {
   const [editingScript, setEditingScript] = React.useState(false);
   const [scriptDraft, setScriptDraft] = React.useState("");
   const [editingSteps, setEditingSteps] = React.useState(false);
+  // Edited steps waiting on the "what about the script?" question. Only set for
+  // a test whose script isn't generated from its steps; null the rest of the
+  // time, which is also what closes the dialog.
+  const [pendingSteps, setPendingSteps] = React.useState<Step[] | null>(null);
   const [trainerConfirmOpen, setTrainerConfirmOpen] = React.useState(false);
   // Per-test visual-testing gate — remembers the user's "Capture screenshots"
   // choice between sessions. Falls back to the global Settings default when the
@@ -217,6 +242,21 @@ export function TestDetailView() {
     queryFn: () => (recordId ? api.artifacts.hasLogs(id, recordId) : Promise.resolve({ hasLogs: false })),
     enabled: Boolean(recordId),
   });
+
+  // Write an edited step list back. `regenerate` is what the save-time question
+  // resolves to; it's ignored for a test whose script is generated from steps
+  // anyway, and refused backend-side for an imported one.
+  const commitSteps = React.useCallback(
+    async (steps: Step[], regenerate: boolean) => {
+      await api.tests.updateSteps(id, steps, { regenerate });
+      qc.invalidateQueries({ queryKey: ["test", id] });
+      qc.invalidateQueries({ queryKey: ["script", id] });
+      qc.invalidateQueries({ queryKey: ["tests"] });
+      setPendingSteps(null);
+      setEditingSteps(false);
+    },
+    [id, qc],
+  );
 
   const applyScript = React.useCallback(
     async (source: string) => {
@@ -521,10 +561,7 @@ export function TestDetailView() {
       {test.stepsDiverged ? (
         <div className="px-4 pt-2">
           <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
-            <Callout.Text>
-              Steps may not reflect the script — some statements in it couldn&apos;t be parsed back
-              into steps.
-            </Callout.Text>
+            <Callout.Text>{divergedMessage(test)}</Callout.Text>
           </Callout>
         </div>
       ) : null}
@@ -534,13 +571,19 @@ export function TestDetailView() {
       {editingSteps ? (
         <EditStepsView
           steps={test.steps}
+          scriptEdited={Boolean(test.scriptEdited)}
+          imported={Boolean(test.sourceDir)}
           onCancel={() => setEditingSteps(false)}
           onSave={async (steps) => {
-            await api.tests.updateSteps(id, steps);
-            qc.invalidateQueries({ queryKey: ["test", id] });
-            qc.invalidateQueries({ queryKey: ["script", id] });
-            qc.invalidateQueries({ queryKey: ["tests"] });
-            setEditingSteps(false);
+            // A script that isn't generated from steps can't be updated behind
+            // the user's back, and it can't be silently left behind either —
+            // ask, with both outcomes spelled out. Everything else saves and
+            // regenerates as it always did.
+            if (test.scriptEdited) {
+              setPendingSteps(steps);
+              return;
+            }
+            await commitSteps(steps, false);
           }}
         />
       ) : (() => {
@@ -639,6 +682,34 @@ export function TestDetailView() {
       {/* The dialog itself is rendered by AiDebugHost above the router, so a
           minimized session outlives this view. */}
       {runInfo ? <RunOutput info={runInfo} onDebug={openAiDebug} aiStatus={aiStatus} /> : null}
+
+      {/* Asked at SAVE, not when Edit Steps is opened: this is a question about
+          what to do with the edits, and it can only be answered once they
+          exist. Cancelling returns to the editor with the draft intact. */}
+      {pendingSteps ? (
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setPendingSteps(null);
+          }}
+          title={
+            test.sourceDir ? "Save steps without changing the script?" : "Apply these steps to the script?"
+          }
+          description={
+            test.sourceDir
+              ? "This test runs the file it was imported with, and that file is never regenerated — a generated spec would lose the imports and anything else the step list can't express. The edited steps are saved as this test's step list, and the test is flagged as out of sync with its script."
+              : "This test's script was edited directly, so it isn't generated from these steps. Regenerating rebuilds it from the step list and discards anything the steps can't express. Saving without regenerating leaves the script — and every run — exactly as it is, and flags the test as out of sync."
+          }
+          confirmLabel={test.sourceDir ? "Save steps" : "Regenerate script"}
+          confirmVariant="accent"
+          onConfirm={() => commitSteps(pendingSteps, !test.sourceDir)}
+          secondaryAction={
+            test.sourceDir
+              ? undefined
+              : { label: "Save steps only", onClick: () => commitSteps(pendingSteps, false) }
+          }
+        />
+      ) : null}
 
       <Dialog
         open={renameOpen}

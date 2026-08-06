@@ -23,7 +23,7 @@ import {
 } from "../services/__tests__/glaze-backend-stub.js";
 import { registerHandlers } from "./index.js";
 import { testStore } from "../services/test-store.js";
-import type { TestRecord } from "../recorder/types.js";
+import type { Step, TestRecord } from "../recorder/types.js";
 
 // Safe to set after the imports: the stub resolves app.getPath() lazily on
 // every call (deliberately, so tests can point userData at a temp dir), and
@@ -381,5 +381,121 @@ describe("test creation paths", () => {
     // The import paths reach the filesystem and a network clone, so what's
     // checked here is the boundary: a missing URL is reported, not swallowed.
     await expect(invokeHandler("tests:importGit", {})).rejects.toThrow();
+  });
+});
+
+// ── Editing steps ──────────────────────────────────────────────────────────
+//
+// "Edit Steps" saves a step list; the .spec.ts is what actually runs. For a
+// test whose script isn't generated from its steps — hand-edited, imported, or
+// written by the model from a prompt — those two can disagree, and this handler
+// decides which one wins. It used to save the steps, skip the regeneration and
+// say nothing: the Steps tab updated, the run didn't, and nothing on screen
+// admitted it. So what's pinned here is not just "does it regenerate" but
+// "does the record afterwards describe what will actually run".
+describe("tests:updateSteps — steps, script, and whether they agree", () => {
+  const HAND_EDITED = "// hand-written by the user, not generated\n";
+
+  /** A one-step list that lands in the generated spec verbatim, so the script
+   *  file can be read back to tell regenerated from untouched. */
+  function stepsFor(url: string): Step[] {
+    return [{ id: "s1", timestamp: 1, type: "goto", url } as Step];
+  }
+
+  it("regenerates the script when the script is generated from the steps", async () => {
+    const rec = seedTest("t-steps-plain");
+    testStore.writeScript(rec.id, HAND_EDITED);
+
+    const updated = await invokeHandler<TestRecord>("tests:updateSteps", {
+      id: rec.id,
+      steps: stepsFor("https://regenerated.test/"),
+    });
+
+    expect(fs.readFileSync(updated.scriptPath, "utf-8")).toContain("https://regenerated.test/");
+    expect(updated.stepsDiverged).toBe(false);
+  });
+
+  it("keeps a hand-edited script but records that the steps aren't in it", async () => {
+    const rec = seedTest("t-steps-edited");
+    rec.scriptEdited = true;
+    testStore.save(rec);
+    testStore.writeScript(rec.id, HAND_EDITED);
+
+    const updated = await invokeHandler<TestRecord>("tests:updateSteps", {
+      id: rec.id,
+      steps: stepsFor("https://never-ran.test/"),
+    });
+
+    // The edit IS saved — that half always worked.
+    expect(updated.steps.map((s) => s.type)).toEqual(["goto"]);
+    // And the script is still the user's, untouched.
+    expect(fs.readFileSync(updated.scriptPath, "utf-8")).toBe(HAND_EDITED);
+    // The part that was missing: the record now admits the two disagree, which
+    // is what puts the warning on screen. Without it the user is told nothing.
+    expect(updated.stepsDiverged).toBe(true);
+    expect(updated.stepsDivergedReason).toBe("unapplied");
+  });
+
+  it("regenerates over a hand-edited script when explicitly asked, and stops calling it hand-edited", async () => {
+    const rec = seedTest("t-steps-regen");
+    rec.scriptEdited = true;
+    testStore.save(rec);
+    testStore.writeScript(rec.id, HAND_EDITED);
+
+    const updated = await invokeHandler<TestRecord>("tests:updateSteps", {
+      id: rec.id,
+      steps: stepsFor("https://applied.test/"),
+      regenerate: true,
+    });
+
+    expect(fs.readFileSync(updated.scriptPath, "utf-8")).toContain("https://applied.test/");
+    expect(updated.stepsDiverged).toBe(false);
+    expect(updated.stepsDivergedReason).toBeUndefined();
+    // The spec is generated from the steps again. Leaving the flag set would
+    // keep warning about edits that no longer exist and, worse, would make the
+    // NEXT step edit a no-op all over again.
+    expect(updated.scriptEdited).toBe(false);
+  });
+
+  it("takes only a real boolean as permission to overwrite the script", async () => {
+    // Same boundary rule as everything else the renderer sends: this one
+    // authorizes destroying the user's script, so a truthy string is not a yes.
+    const rec = seedTest("t-steps-truthy");
+    rec.scriptEdited = true;
+    testStore.save(rec);
+    testStore.writeScript(rec.id, HAND_EDITED);
+
+    const updated = await invokeHandler<TestRecord>("tests:updateSteps", {
+      id: rec.id,
+      steps: stepsFor("https://not-authorized.test/"),
+      regenerate: "true",
+    });
+
+    expect(fs.readFileSync(updated.scriptPath, "utf-8")).toBe(HAND_EDITED);
+    expect(updated.stepsDiverged).toBe(true);
+  });
+
+  it("never regenerates an imported test's verbatim spec, even when asked to", async () => {
+    // An imported spec is a file someone else wrote, sitting next to the sibling
+    // modules it imports. A generated one carries neither those imports nor
+    // anything else the parser couldn't classify — and the original is gone.
+    const id = "t-steps-imported";
+    const rec = seedTest(id);
+    rec.scriptEdited = true;
+    rec.sourceDir = "/somewhere/else/tests";
+    rec.scriptPath = path.join(userData, "recorder", "scripts", "imported", id, "checkout.spec.ts");
+    testStore.save(rec);
+    fs.mkdirSync(path.dirname(rec.scriptPath), { recursive: true });
+    fs.writeFileSync(rec.scriptPath, HAND_EDITED, "utf-8");
+
+    const updated = await invokeHandler<TestRecord>("tests:updateSteps", {
+      id,
+      steps: stepsFor("https://would-have-clobbered.test/"),
+      regenerate: true,
+    });
+
+    expect(fs.readFileSync(updated.scriptPath, "utf-8")).toBe(HAND_EDITED);
+    expect(updated.scriptEdited).toBe(true);
+    expect(updated.stepsDiverged).toBe(true);
   });
 });

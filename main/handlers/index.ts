@@ -506,6 +506,7 @@ export function registerHandlers(): void {
         const { steps, skipped } = parseSpecDetailed(params.source);
         rec.steps = steps;
         rec.stepsDiverged = skipped > 0;
+        rec.stepsDivergedReason = skipped > 0 ? "parse" : undefined;
         if (skipped > 0) {
           logger.warn("handlers", "Script has statements the parser couldn't map to steps", {
             id: rec.id,
@@ -526,10 +527,18 @@ export function registerHandlers(): void {
 
   // Update the steps of a saved test directly (no trainer browser). Used by the
   // "Edit Steps" mode: add / rearrange / remove steps in the detail view, then
-  // regenerate the spec from the new step list (unless the script was hand-edited).
+  // regenerate the spec from the new step list.
+  //
+  // When the script is NOT generated from the steps — hand-edited, imported, or
+  // written by the model from a prompt — saving steps cannot quietly change what
+  // runs, so the caller has to say which it wants. `regenerate` rebuilds the spec
+  // from the steps (discarding whatever the step list can't represent); without
+  // it the steps are stored and the record is marked diverged, because the Steps
+  // tab now describes something the runner will never execute. Saying nothing was
+  // the old behaviour and it read as an edit that worked.
   ipcMain.handle(
     "tests:updateSteps",
-    async (_e, params: { id: string; steps: Step[] }) => {
+    async (_e, params: { id: string; steps: Step[]; regenerate?: boolean }) => {
       const rec = testStore.get(params.id);
       if (!rec) throw new Error("Test not found: " + params.id);
       // The second way a step list reaches the generator, so it gets the same
@@ -539,12 +548,25 @@ export function registerHandlers(): void {
       rec.steps = Array.isArray(params.steps)
         ? params.steps.map(normalizeStep).filter((s): s is Step => s !== null)
         : [];
-      // A hand-edited script is the source of truth — don't clobber it. For
-      // app-generated tests, regenerate from the edited steps so the script
-      // stays in sync. Clear any divergence flag since the steps are now clean.
-      if (!rec.scriptEdited) {
+      // An imported test is never regenerated, however the renderer asks: its
+      // spec is a verbatim file whose sibling modules were copied in alongside
+      // it, and a generated one would carry neither those imports nor anything
+      // else the parser couldn't classify — with the original already gone.
+      // `=== true` because this crosses the IPC boundary: a truthy string must
+      // not authorize overwriting the user's script.
+      const regenerate =
+        !rec.scriptEdited || (params.regenerate === true && !rec.sourceDir);
+      if (regenerate) {
         rec.scriptPath = testStore.regenerateScript(rec);
         rec.stepsDiverged = false;
+        rec.stepsDivergedReason = undefined;
+        // The spec is generated from these steps again, so "edited manually" is
+        // no longer true — leaving it set would keep asking about edits that no
+        // longer exist, and would block the next step edit from applying.
+        rec.scriptEdited = false;
+      } else {
+        rec.stepsDiverged = true;
+        rec.stepsDivergedReason = "unapplied";
       }
       rec.updatedAt = Date.now();
       testStore.save(rec);
@@ -597,6 +619,7 @@ export function registerHandlers(): void {
         updatedAt: now,
         steps,
         stepsDiverged,
+        stepsDivergedReason: stepsDiverged ? "parse" : undefined,
         scriptPath: testStore.writeScript(id, params.source),
         scriptEdited: true,
         speed: params.speed ?? "fast",

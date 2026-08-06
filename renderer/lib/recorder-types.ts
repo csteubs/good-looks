@@ -181,6 +181,11 @@ export interface TestRecord {
   sourceDir?: string;
   hidden?: boolean;
   stepsDiverged?: boolean;
+  /** Why the steps and the script disagree (mirrors main TestRecord).
+   *  `"parse"`: statements in the script couldn't be mapped back into steps.
+   *  `"unapplied"`: edited steps were saved but the script wasn't regenerated
+   *  from them. Absent on older records — read that as `"parse"`. */
+  stepsDivergedReason?: "parse" | "unapplied";
   /** Per-test screenshot-capture preference (mirrors main TestRecord). */
   recordLogs?: boolean;
   captureArtifacts?: boolean;
