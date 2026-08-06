@@ -128,8 +128,16 @@ export const api = {
       ipc().invoke<TestRecord>("tests:rename", { id, name }),
     updateScript: (id: string, source: string) =>
       ipc().invoke<TestRecord>("tests:updateScript", { id, source }),
-    updateSteps: (id: string, steps: Step[]) =>
-      ipc().invoke<TestRecord>("tests:updateSteps", { id, steps }),
+    /** `regenerate` rebuilds the .spec.ts from these steps even when it was
+     *  hand-edited / imported / model-written. Without it such a test keeps its
+     *  script and is marked diverged — the steps are saved, the run is not
+     *  affected. Ignored for generated tests, which always regenerate. */
+    updateSteps: (id: string, steps: Step[], opts?: { regenerate?: boolean }) =>
+      ipc().invoke<TestRecord>("tests:updateSteps", {
+        id,
+        steps,
+        regenerate: opts?.regenerate === true,
+      }),
     createFromPrompt: (params: {
       name: string;
       url: string;

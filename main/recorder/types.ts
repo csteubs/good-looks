@@ -244,10 +244,17 @@ export interface TestRecord {
   /** true when the user removed the test from the sidebar view — the record
    *  and its script file are kept on disk; the sidebar just hides it. */
   hidden?: boolean;
-  /** true when the script was resynced to steps (e.g. after an LLM-apply)
-   *  and the parser had to skip statements it couldn't classify — the steps
-   *  count may not fully reflect the script. */
+  /** true when the steps on record and the .spec.ts that actually runs are not
+   *  the same test. See `stepsDivergedReason` for which way round. */
   stepsDiverged?: boolean;
+  /** Why the two are out of sync, so the warning can be acted on rather than
+   *  merely noticed. `"parse"`: the script was resynced to steps (e.g. after an
+   *  LLM-apply) and the parser skipped statements it couldn't classify, so the
+   *  steps UNDERCOUNT the script. `"unapplied"`: edited steps were saved
+   *  against a script that isn't generated from them, so the script — and every
+   *  run — is missing those edits. Absent on records written before the reason
+   *  was tracked; treat that as `"parse"`, the only cause that existed then. */
+  stepsDivergedReason?: "parse" | "unapplied";
   /** Visual-diff sensitivity for capture runs (Phase 3): the percent of pixels
    *  (0–100) allowed to change vs the pinned baseline before a step is flagged
    *  "visual change detected". Absent → DEFAULT_VISUAL_THRESHOLD. */

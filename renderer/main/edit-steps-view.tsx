@@ -1,13 +1,16 @@
 // "Edit Steps" mode for the test detail view — add, rearrange, and remove
 // steps without opening the training browser. Operates on a local draft of
 // the Step[] and commits to the backend via tests:updateSteps, which
-// regenerates the spec from the new step list (unless the script was
-// hand-edited). Only locator-free step types can be added here; element-
-// targeted steps still need the trainer's browser picker.
+// regenerates the spec from the new step list. When the script is NOT
+// generated from steps, the owning view asks the user what to do with it on
+// save — this editor's job is to warn up front that saving alone won't change
+// the run. Only locator-free step types can be added here; element-targeted
+// steps still need the trainer's browser picker.
 
 import * as React from "react";
 import {
   Button,
+  Callout,
   Dialog,
   Field,
   Input,
@@ -20,7 +23,7 @@ import {
   SelectValue,
   Text,
 } from "@glaze/core/components";
-import { Plus, ListPlus } from "lucide-react";
+import { Plus, ListPlus, TriangleAlert } from "lucide-react";
 
 import type { AssertKind, RawStep, Step } from "../lib/recorder-types";
 import { StepRow } from "./step-row";
@@ -67,11 +70,24 @@ function uid(): string {
 
 export interface EditStepsViewProps {
   steps: Step[];
+  /** True when the script is NOT generated from these steps — hand-edited,
+   *  imported, or written by the model. Saving then can't quietly update what
+   *  runs, so say so BEFORE the user spends time editing, not only at save. */
+  scriptEdited?: boolean;
+  /** True for an imported test, whose verbatim spec is never regenerated —
+   *  editing steps here can only ever change the list, not the run. */
+  imported?: boolean;
   onCancel: () => void;
   onSave: (steps: Step[]) => Promise<void>;
 }
 
-export function EditStepsView({ steps: initialSteps, onCancel, onSave }: EditStepsViewProps) {
+export function EditStepsView({
+  steps: initialSteps,
+  scriptEdited,
+  imported,
+  onCancel,
+  onSave,
+}: EditStepsViewProps) {
   const [draft, setDraft] = React.useState<Step[]>(initialSteps);
   const [saving, setSaving] = React.useState(false);
   const [addKind, setAddKind] = React.useState<EditStepKind | null>(null);
@@ -152,6 +168,17 @@ export function EditStepsView({ steps: initialSteps, onCancel, onSave }: EditSte
           {saving ? "Saving…" : "Save"}
         </Button>
       </div>
+      {scriptEdited ? (
+        <div className="px-4 pt-2">
+          <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+            <Callout.Text>
+              {imported
+                ? "This test runs its imported script, and that file is never regenerated. Saving updates this step list only — the run won't change."
+                : "This test's script isn't generated from these steps — it was edited directly. Saving asks whether to rebuild the script from these steps or leave it as it is."}
+            </Callout.Text>
+          </Callout>
+        </div>
+      ) : null}
       <div className="flex min-h-0 flex-1 flex-col">
         {draft.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 p-4">

@@ -40,6 +40,33 @@ describe("rendering", () => {
   });
 });
 
+// Whether editing here can change what runs depends on the test, and the user
+// can't tell by looking at the step rows. Saying it only at save time means the
+// work is already done; saying nothing at all is how this whole flow used to
+// read as working when it changed nothing.
+describe("warning when the script isn't generated from these steps", () => {
+  it("says saving asks about the script when the script was edited directly", () => {
+    render(<EditStepsView steps={STEPS} scriptEdited onCancel={vi.fn()} onSave={vi.fn()} />);
+    expect(screen.getByText(/isn't generated from these steps/i)).toBeTruthy();
+  });
+
+  it("says an imported script is never regenerated, rather than offering hope", () => {
+    // Different promise from the hand-edited case: there is no "apply these"
+    // for an imported spec, so the warning must not imply one.
+    render(
+      <EditStepsView steps={STEPS} scriptEdited imported onCancel={vi.fn()} onSave={vi.fn()} />,
+    );
+    expect(screen.getByText(/never regenerated/i)).toBeTruthy();
+    expect(screen.queryByText(/isn't generated from these steps/i)).toBeNull();
+  });
+
+  it("stays quiet for a test whose script is generated from its steps", () => {
+    renderEditor();
+    expect(screen.queryByText(/isn't generated from these steps/i)).toBeNull();
+    expect(screen.queryByText(/never regenerated/i)).toBeNull();
+  });
+});
+
 describe("the draft/commit boundary", () => {
   it("saves the current draft", async () => {
     const { onSave } = renderEditor();
