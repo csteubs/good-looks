@@ -19,6 +19,8 @@
 // source, exactly as Playwright does. Running it in the same scope — the
 // obvious way to write this test — would pass against the bug.
 
+/* global window */
+
 import { describe, expect, it, vi } from "vitest";
 
 import { captureFixtureSource } from "./capture-fixture-source.js";
