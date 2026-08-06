@@ -430,6 +430,327 @@ export function normalizeDatasets(input: unknown): Dataset[] {
   return out;
 }
 
+// ── Step normalization at the capture boundary ─────────────────────────────
+//
+// The injected capture script hands steps back through a DOM ATTRIBUTE on
+// documentElement (`data-pw-queue`). That attribute is shared with the page —
+// which is an arbitrary, untrusted website — so anything on it is attacker
+// input, not our own script's output. The page can write the attribute itself.
+//
+// What made that dangerous is the sink: recorded steps are compiled into a
+// .spec.ts and later EXECUTED by Playwright in Node. Every string field is
+// escaped by the generator via JSON.stringify, but the numeric fields were
+// interpolated as-is on the strength of their TypeScript type — and a type is
+// not a runtime check. A page writing `count: "0); <arbitrary node code>; ("`
+// got that code into the generated spec verbatim.
+//
+// So a step arriving from the page is rebuilt field by field here, out of
+// values that have each been checked. Not filtered — REBUILT: spreading the
+// input and overwriting known keys would carry every unknown key along with
+// it, and the next field added to the generator would silently become a hole
+// again.
+
+export const STEP_TYPES: StepType[] = [
+  "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
+  "wait", "viewport", "if", "endif", "cookie", "capture", "runFlow",
+];
+
+export const ASSERT_KINDS: AssertKind[] = [
+  "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked",
+  "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs", "title",
+];
+
+export const CONDITION_KINDS: ConditionKind[] = [
+  "visible", "hidden", "exists", "enabled", "disabled", "checked", "unchecked",
+  "urlContains", "titleContains",
+];
+
+export const LOCATOR_KINDS: LocatorKind[] = [
+  "testid", "role", "label", "placeholder", "text", "css", "xpath",
+];
+
+export const COOKIE_ACTIONS: CookieAction[] = ["set", "delete", "clearAll"];
+
+export const COOKIE_SAME_SITE: CookieSameSite[] = [
+  "unspecified", "no_restriction", "lax", "strict",
+];
+
+/** Bounds for a captured step. Generous — a real locator or assertion text is
+ *  orders of magnitude under these — but finite, so a hostile page cannot make
+ *  the recorder hold an unbounded string. */
+export const MAX_STEP_STRING_LENGTH = 8000;
+export const MAX_FINGERPRINT_CANDIDATES = 40;
+export const MAX_FINGERPRINT_ATTRIBUTES = 40;
+export const MAX_FLOW_ARGS = 50;
+/** Steps accepted from a single drain of the capture queue. A real recording
+ *  produces a handful per poll; anything near this is not a person clicking. */
+export const MAX_STEPS_PER_DRAIN = 500;
+/** Size cap on the queue attribute itself, applied BEFORE parsing. Per-field
+ *  limits can't help here — `JSON.parse` has to materialize the whole string
+ *  first, and the page chooses how long that string is. */
+export const MAX_DRAIN_BYTES = 2_000_000;
+
+function oneOf<T extends string>(v: unknown, allowed: readonly T[]): T | undefined {
+  return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : undefined;
+}
+
+function str(v: unknown): string | undefined {
+  return typeof v === "string" ? v.slice(0, MAX_STEP_STRING_LENGTH) : undefined;
+}
+
+/** A finite integer within bounds, or undefined.
+ *
+ *  The load-bearing one. `Number.isFinite` rejects a string, NaN and Infinity;
+ *  `Math.trunc` means a float can't reach the generator either, since `1e21`
+ *  stringifies to exponential notation and `0.1+0.2` to 17 digits — both are
+ *  valid JS, but neither is what the user recorded. */
+function int(v: unknown, min: number, max: number): number | undefined {
+  if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
+  const n = Math.trunc(v);
+  return n >= min && n <= max ? n : undefined;
+}
+
+function bool(v: unknown): boolean | undefined {
+  return v === true ? true : undefined;
+}
+
+function normalizeLocator(input: unknown): Locator | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const l = input as Partial<Locator>;
+  const k = oneOf(l.k, LOCATOR_KINDS);
+  if (!k) return undefined;
+  const out: Locator = { k };
+  const v = str(l.v);
+  const role = str(l.role);
+  const name = str(l.name);
+  if (v !== undefined) out.v = v;
+  if (role !== undefined) out.role = role;
+  if (name !== undefined) out.name = name;
+  return out;
+}
+
+function normalizeFingerprint(input: unknown): ElementFingerprint | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const f = input as Partial<ElementFingerprint>;
+  const candidates: Locator[] = [];
+  if (Array.isArray(f.candidates)) {
+    for (const c of f.candidates) {
+      const loc = normalizeLocator(c);
+      if (loc) candidates.push(loc);
+      if (candidates.length >= MAX_FINGERPRINT_CANDIDATES) break;
+    }
+  }
+  const attributes: Record<string, string> = {};
+  if (f.attributes && typeof f.attributes === "object") {
+    let n = 0;
+    for (const [k, v] of Object.entries(f.attributes as Record<string, unknown>)) {
+      if (typeof v !== "string") continue;
+      attributes[k.slice(0, 200)] = v.slice(0, MAX_STEP_STRING_LENGTH);
+      if (++n >= MAX_FINGERPRINT_ATTRIBUTES) break;
+    }
+  }
+  const out: ElementFingerprint = {
+    tag: str(f.tag) ?? "",
+    description: str(f.description) ?? "",
+    candidates,
+    attributes,
+    depth: int(f.depth, 0, 10_000) ?? 0,
+  };
+  const text = str(f.text);
+  const neighborText = str(f.neighborText);
+  if (text !== undefined) out.text = text;
+  if (neighborText !== undefined) out.neighborText = neighborText;
+  // Normalized 0–1 geometry. Out-of-range numbers are dropped wholesale rather
+  // than clamped: a partial rect would read as a real measurement.
+  if (f.rect && typeof f.rect === "object") {
+    const r = f.rect as Partial<ElementFingerprint["rect"]>;
+    const nums = [r?.x, r?.y, r?.w, r?.h].map((n) =>
+      typeof n === "number" && Number.isFinite(n) ? n : undefined,
+    );
+    if (nums.every((n) => n !== undefined)) {
+      out.rect = { x: nums[0] as number, y: nums[1] as number, w: nums[2] as number, h: nums[3] as number };
+    }
+  }
+  return out;
+}
+
+function normalizeCookieSpec(input: unknown): CookieSpec | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const c = input as Partial<CookieSpec>;
+  const name = str(c.name);
+  if (name === undefined) return undefined;
+  const out: CookieSpec = { name };
+  const value = str(c.value);
+  const domain = str(c.domain);
+  const p = str(c.path);
+  const url = str(c.url);
+  if (value !== undefined) out.value = value;
+  if (domain !== undefined) out.domain = domain;
+  if (p !== undefined) out.path = p;
+  if (url !== undefined) out.url = url;
+  if (c.secure === true) out.secure = true;
+  if (c.httpOnly === true) out.httpOnly = true;
+  const sameSite = oneOf(c.sameSite, COOKIE_SAME_SITE);
+  if (sameSite) out.sameSite = sameSite;
+  const exp = int(c.expirationDate, 0, 4_102_444_800);
+  if (exp !== undefined) out.expirationDate = exp;
+  return out;
+}
+
+function normalizeFlowArgs(input: unknown): Record<string, string> | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const out: Record<string, string> = {};
+  let n = 0;
+  for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
+    // Flow parameter names are emitted as object keys in the generated spec, so
+    // they carry the same constraint as a variable name.
+    if (!isValidVariableName(k)) continue;
+    if (typeof v !== "string") continue;
+    out[k] = v.slice(0, MAX_STEP_STRING_LENGTH);
+    if (++n >= MAX_FLOW_ARGS) break;
+  }
+  return out;
+}
+
+/**
+ * Rebuild a step arriving from the capture queue out of checked values.
+ *
+ * Returns null when there is no usable step — an unknown `type` above all,
+ * since every downstream switch keys off it.
+ *
+ * Accepts `unknown` because it sits directly behind the page boundary.
+ */
+export function normalizeRawStep(input: unknown): RawStep | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const s = input as Record<string, unknown>;
+  const type = oneOf(s.type, STEP_TYPES);
+  if (!type) return null;
+
+  const out: RawStep = { type };
+  const locator = normalizeLocator(s.locator);
+  if (locator) out.locator = locator;
+
+  const value = str(s.value);
+  const label = str(s.label);
+  const url = str(s.url);
+  const text = str(s.text);
+  const attr = str(s.attr);
+  if (value !== undefined) out.value = value;
+  if (label !== undefined) out.label = label;
+  if (url !== undefined) out.url = url;
+  if (text !== undefined) out.text = text;
+  if (attr !== undefined) out.attr = attr;
+
+  const assert = oneOf(s.assert, ASSERT_KINDS);
+  const cond = oneOf(s.cond, CONDITION_KINDS);
+  if (assert) out.assert = assert;
+  if (cond) out.cond = cond;
+  if (bool(s.soft)) out.soft = true;
+
+  // The fields that reach the generator as bare numerals.
+  const count = int(s.count, 0, 1_000_000);
+  const width = int(s.width, 1, 100_000);
+  const height = int(s.height, 1, 100_000);
+  const waitMs = int(s.waitMs, 0, 3_600_000);
+  if (count !== undefined) out.count = count;
+  if (width !== undefined) out.width = width;
+  if (height !== undefined) out.height = height;
+  if (waitMs !== undefined) out.waitMs = waitMs;
+
+  const cookieAction = oneOf(s.cookieAction, COOKIE_ACTIONS);
+  if (cookieAction) out.cookieAction = cookieAction;
+  const cookie = normalizeCookieSpec(s.cookie);
+  if (cookie) out.cookie = cookie;
+
+  const captureVar = str(s.captureVar);
+  const captureAttr = str(s.captureAttr);
+  if (captureVar !== undefined) out.captureVar = captureVar;
+  if (captureAttr !== undefined) out.captureAttr = captureAttr;
+  if (isCaptureSource(s.captureFrom)) out.captureFrom = s.captureFrom;
+
+  const flowId = str(s.flowId);
+  if (flowId !== undefined) out.flowId = flowId;
+  const flowArgs = normalizeFlowArgs(s.flowArgs);
+  if (flowArgs && Object.keys(flowArgs).length > 0) out.flowArgs = flowArgs;
+
+  const fingerprint = normalizeFingerprint(s.fingerprint);
+  if (fingerprint) out.fingerprint = fingerprint;
+
+  return out;
+}
+
+/**
+ * Rebuild a picked element out of checked values.
+ *
+ * Arrives on the same page-writable channel as the step queue. Its fields reach
+ * the generator only through `Locator`, which the generator quotes — but it is
+ * the same boundary, and "not exploitable through today's sinks" is a property
+ * of the current code rather than of the data.
+ */
+export function normalizePickedElement(input: unknown): PickedElement | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const p = input as Record<string, unknown>;
+  const candidates: Locator[] = [];
+  if (Array.isArray(p.candidates)) {
+    for (const c of p.candidates) {
+      const loc = normalizeLocator(c);
+      if (loc) candidates.push(loc);
+      if (candidates.length >= MAX_FINGERPRINT_CANDIDATES) break;
+    }
+  }
+  const strMap = (v: unknown): Record<string, string> => {
+    const out: Record<string, string> = {};
+    if (!v || typeof v !== "object") return out;
+    let n = 0;
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+      if (typeof val !== "string") continue;
+      out[k.slice(0, 200)] = val.slice(0, MAX_STEP_STRING_LENGTH);
+      if (++n >= MAX_FINGERPRINT_ATTRIBUTES) break;
+    }
+    return out;
+  };
+  return {
+    tag: str(p.tag) ?? "",
+    description: str(p.description) ?? "",
+    candidates,
+    css: strMap(p.css),
+    attributes: strMap(p.attributes),
+  };
+}
+
+/** Every usable step from one drain of the capture queue, capped. */
+export function normalizeRawSteps(input: unknown): RawStep[] {
+  if (!Array.isArray(input)) return [];
+  const out: RawStep[] = [];
+  for (const raw of input) {
+    const step = normalizeRawStep(raw);
+    if (step) out.push(step);
+    if (out.length >= MAX_STEPS_PER_DRAIN) break;
+  }
+  return out;
+}
+
+/**
+ * The `Step` counterpart, for step lists arriving over IPC rather than from the
+ * page. Keeps the caller's id and timestamp when they're usable and mints
+ * neither — a step list is edited in place, so inventing an id here would
+ * detach it from everything that references it (heal journal, visual masks).
+ */
+export function normalizeStep(input: unknown): Step | null {
+  const raw = normalizeRawStep(input);
+  if (!raw) return null;
+  const s = input as Record<string, unknown>;
+  const id = str(s.id);
+  if (!id) return null;
+  const step: Step = { ...raw, id, timestamp: int(s.timestamp, 0, Number.MAX_SAFE_INTEGER) ?? 0 };
+  if (bool(s.continueOnFailure)) step.continueOnFailure = true;
+  if (bool(s.disabled)) step.disabled = true;
+  if (Array.isArray(s.varRefs)) {
+    step.varRefs = s.varRefs.filter((n): n is string => isValidVariableName(n));
+  }
+  return step;
+}
+
 /** Matches a `${name}` reference in a step's value. Deliberately narrow: only a
  *  bare identifier, so a literal `${...}` containing anything else (an actual
  *  price string, a template someone typed) is left alone as text. */

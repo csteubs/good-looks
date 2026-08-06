@@ -36,6 +36,13 @@ import {
 } from "./recorder-navigation.js";
 import type { CookieSpec } from "../recorder/types.js";
 import {
+  MAX_DRAIN_BYTES,
+  MAX_STEP_STRING_LENGTH,
+  normalizePickedElement,
+  normalizeRawStep,
+  normalizeRawSteps,
+} from "../recorder/types.js";
+import {
   applyCookieStep,
   clearCookies,
   deleteCookie,
@@ -471,16 +478,22 @@ async function applyStateAttributes(): Promise<void> {
   const soft = session.assertSoft ? "1" : "0";
   const refine = session.refineMode ? "1" : "0";
   const crosshair = session.assertMode || session.refineMode;
+  // Every interpolated value goes in as a JSON literal rather than being pasted
+  // between hand-written quotes. `assert` is an AssertKind off an IPC param, so
+  // a quote in it would close the string early and the rest would be evaluated
+  // as code — in the page that is currently loaded, i.e. whatever site the user
+  // is recording against. Nothing reaching here is page-controlled today; this
+  // is so that stays a property of the code rather than of the caller.
   await wc.executeJavaScript(
-    '(function(){var e=document.documentElement;' +
-      'e.setAttribute("' + ATTR_PAUSED + '","' + paused + '");' +
-      'e.setAttribute("' + ATTR_ASSERT + '","' + assert + '");' +
-      'e.setAttribute("' + ATTR_ASSERT_SOFT + '","' + soft + '");' +
-      'e.setAttribute("' + ATTR_REFINE + '","' + refine + '");' +
-      'try{if(document.body)document.body.style.cursor=' +
-      (crosshair ? '"crosshair"' : '""') +
-      ';}catch(_){}' +
-      'try{if("' + refine + '"!=="1"){var b=document.querySelector("[data-pw-refine-box]");if(b)b.style.display="none";}}catch(_){}' +
+    "(function(){var e=document.documentElement;" +
+      "e.setAttribute(" + JSON.stringify(ATTR_PAUSED) + "," + JSON.stringify(paused) + ");" +
+      "e.setAttribute(" + JSON.stringify(ATTR_ASSERT) + "," + JSON.stringify(assert) + ");" +
+      "e.setAttribute(" + JSON.stringify(ATTR_ASSERT_SOFT) + "," + JSON.stringify(soft) + ");" +
+      "e.setAttribute(" + JSON.stringify(ATTR_REFINE) + "," + JSON.stringify(refine) + ");" +
+      "try{if(document.body)document.body.style.cursor=" +
+      JSON.stringify(crosshair ? "crosshair" : "") +
+      ";}catch(_){}" +
+      "try{if(" + JSON.stringify(refine) + '!=="1"){var b=document.querySelector("[data-pw-refine-box]");if(b)b.style.display="none";}}catch(_){}' +
       "})()",
   );
 }
@@ -490,8 +503,13 @@ async function drainPicked(): Promise<void> {
   if (!recWindow || recWindow.isDestroyed() || !session || !session.refineMode) return;
   try {
     const json = (await recWindow.webContents.executeJavaScript(DRAIN_PICKED_SCRIPT)) as string;
-    if (!json) return;
-    const picked = JSON.parse(json) as PickedElement;
+    if (typeof json !== "string" || !json) return;
+    if (json.length > MAX_DRAIN_BYTES) {
+      logger.warn("recorder", "Discarded an oversized picked element", { bytes: json.length });
+      return;
+    }
+    const picked = normalizePickedElement(JSON.parse(json));
+    if (!picked) return;
     // The page already left refine mode on click; mirror it in the session and
     // drop the overlay. Stay paused until the review dialog resolves (endRefine).
     session.refineMode = false;
@@ -503,12 +521,24 @@ async function drainPicked(): Promise<void> {
   }
 }
 
+/** Poll the capture queue and ingest whatever the injected script recorded.
+ *
+ *  The queue is a DOM attribute, and the DOM belongs to the page — an arbitrary
+ *  website. So this is a trust boundary, not an internal handoff: what comes
+ *  back is treated as hostile input and rebuilt by `normalizeRawSteps` before
+ *  anything downstream sees it. Steps compile into a spec that is later
+ *  executed, so an unchecked field here is remote code execution later. */
 async function drain(): Promise<void> {
   if (!recWindow || recWindow.isDestroyed() || !session) return;
   try {
     const json = (await recWindow.webContents.executeJavaScript(DRAIN_SCRIPT)) as string;
-    const raw = JSON.parse(json) as RawStep[];
-    for (const step of raw) addStep(step);
+    if (typeof json !== "string") return;
+    if (json.length > MAX_DRAIN_BYTES) {
+      logger.warn("recorder", "Discarded an oversized capture queue", { bytes: json.length });
+      return;
+    }
+    const steps = normalizeRawSteps(JSON.parse(json));
+    for (const step of steps) addStep(step);
   } catch {
     // Page may be mid-navigation; the next poll will catch up.
   }
@@ -794,18 +824,28 @@ export const recorderService = {
       void (async () => {
         if (!recWindow || recWindow.isDestroyed() || !session) return;
         const zoom = wc.getZoomFactor?.() ?? 1;
-        const px = zoom === 1 ? params.x : Math.round(params.x / zoom);
-        const py = zoom === 1 ? params.y : Math.round(params.y / zoom);
-        let resolved: { picked: PickedElement; text: string; value: string } | null = null;
+        // Rounded on both branches so what lands in the script template below is
+        // always a numeral, whatever the native layer hands us.
+        const px = Math.round(zoom === 1 ? params.x : params.x / zoom);
+        const py = Math.round(zoom === 1 ? params.y : params.y / zoom);
+        let picked: PickedElement | null = null;
+        let prefillText = "";
+        let prefillValue = "";
         try {
           const json = (await wc.executeJavaScript(`(${PICK_AT_POINT_SCRIPT})(${px}, ${py})`)) as string;
-          if (json) resolved = JSON.parse(json) as { picked: PickedElement; text: string; value: string };
+          // The third route out of the page, and normalized like the other two.
+          // Nothing here reaches a raw sink today — the locators are quoted by
+          // the generator and the label only renders in a native menu — but the
+          // page chooses every byte of it, including how many.
+          if (typeof json === "string" && json && json.length <= MAX_DRAIN_BYTES) {
+            const parsed = JSON.parse(json) as Record<string, unknown>;
+            picked = normalizePickedElement(parsed?.picked);
+            prefillText = typeof parsed?.text === "string" ? parsed.text.slice(0, MAX_STEP_STRING_LENGTH) : "";
+            prefillValue = typeof parsed?.value === "string" ? parsed.value.slice(0, MAX_STEP_STRING_LENGTH) : "";
+          }
         } catch {
           // Page may be mid-navigation; show the menu without a target.
         }
-        const picked = resolved?.picked ?? null;
-        const prefillText = resolved?.text ?? "";
-        const prefillValue = resolved?.value ?? "";
         const targetLabel = picked ? picked.description || picked.tag : "No element here";
 
         // Assert element submenu (element-aware). Text/value kinds prefill the
@@ -1034,7 +1074,12 @@ export const recorderService = {
   /** Insert a manually-added or AI-generated step at `index` (default: cursor). */
   insertStep(raw: RawStep, index?: number): RecorderState {
     if (session) {
-      const step: Step = { id: randomUUID(), timestamp: Date.now(), ...raw };
+      // Normalized for the same reason the drain is: this arrives over IPC, and
+      // its fields reach the generator through the identical path. A step the
+      // page couldn't sneak in the front door shouldn't get in the side one.
+      const clean = normalizeRawStep(raw);
+      if (!clean) return currentState();
+      const step: Step = { id: randomUUID(), timestamp: Date.now(), ...clean };
       const at = index == null ? clampCursor(session.cursor) : clampCursor(index);
       session.steps.splice(at, 0, step);
       session.cursor = at + 1;

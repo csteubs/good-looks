@@ -50,6 +50,7 @@ import {
   isRunBrowser,
   isValidVariableName,
   normalizeDatasets,
+  normalizeStep,
   normalizeTags,
   normalizeVariables,
 } from "../recorder/types.js";
@@ -531,7 +532,13 @@ export function registerHandlers(): void {
     async (_e, params: { id: string; steps: Step[] }) => {
       const rec = testStore.get(params.id);
       if (!rec) throw new Error("Test not found: " + params.id);
-      rec.steps = params.steps;
+      // The second way a step list reaches the generator, so it gets the same
+      // treatment as the capture queue. A step that can't be normalized is
+      // dropped rather than failing the save — the alternative is an edit that
+      // silently does nothing because one row was malformed.
+      rec.steps = Array.isArray(params.steps)
+        ? params.steps.map(normalizeStep).filter((s): s is Step => s !== null)
+        : [];
       // A hand-edited script is the source of truth — don't clobber it. For
       // app-generated tests, regenerate from the edited steps so the script
       // stays in sync. Clear any divergence flag since the steps are now clean.

@@ -14,6 +14,27 @@ function q(s: string): string {
   return JSON.stringify(s ?? "");
 }
 
+/**
+ * Render a numeric field as a bare JS numeral.
+ *
+ * Every string this generator emits goes through `q`, which escapes it. The
+ * numeric fields have no such step — they are concatenated straight into source
+ * text — so their TYPE was doing the escaping, and a type is erased at runtime.
+ * A step carrying `count: "0); <arbitrary node code>; ("` produced a spec that
+ * ran that code, and specs run in Node with the user's privileges.
+ *
+ * Steps are normalized at the capture boundary now, but this is not belt and
+ * braces: tests recorded BEFORE that fix are already on disk, and they are
+ * regenerated from their stored steps. This is the check that covers them, and
+ * the one that holds if a future writer into the step list forgets.
+ */
+function num(v: unknown, fallback: number): string {
+  if (typeof v !== "number" || !Number.isFinite(v)) return String(fallback);
+  // Integers only: `1e21` and `0.30000000000000004` are valid JS but neither is
+  // a viewport or an element count anyone recorded.
+  return String(Math.trunc(v));
+}
+
 /** Env var a secret variable's value arrives in. The name is already a valid
  *  JS identifier (enforced by `isValidVariableName`), so it needs no escaping,
  *  and it is used verbatim rather than upper-cased — folding case would let
@@ -124,7 +145,7 @@ function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>
     case "attribute":
       return "await " + x + ".toHaveAttribute(" + q(step.attr ?? "") + ", " + valueExpr(step.value, vars) + ");";
     case "count":
-      return "await " + x + ".toHaveCount(" + (step.count ?? 0) + ");";
+      return "await " + x + ".toHaveCount(" + num(step.count, 0) + ");";
     case "visible":
     default:
       return "await " + x + ".toBeVisible();";
@@ -259,14 +280,14 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
         ? "await " + target + ".press(" + q(step.value ?? "") + ");"
         : "await page.keyboard.press(" + q(step.value ?? "") + ");";
     case "wait":
-      if (typeof step.waitMs === "number") return "await page.waitForTimeout(" + step.waitMs + ");";
+      if (typeof step.waitMs === "number") return "await page.waitForTimeout(" + num(step.waitMs, 0) + ");";
       return target ? "await " + target + ".waitFor();" : null;
     case "viewport":
       return (
         "await page.setViewportSize({ width: " +
-        (step.width ?? 1280) +
+        num(step.width, 1280) +
         ", height: " +
-        (step.height ?? 800) +
+        num(step.height, 800) +
         " });"
       );
     case "cookie":
