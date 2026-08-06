@@ -266,6 +266,12 @@ export interface TestRecord {
    *  any real site reports dozens of pre-existing problems and the feature is
    *  ignored from then on. */
   a11yBaseline?: Record<string, string[]>;
+  /** Per-test console+network recording preference, remembered between
+   *  sessions. When absent, `RecorderSettings.defaultRecordLogs` applies.
+   *  Independent of `captureArtifacts` again: this one writes page-controlled
+   *  text and request URLs to disk, so it must never be bought by asking for
+   *  screenshots. */
+  recordLogs?: boolean;
   /** Per-test screenshot-capture preference, remembered between sessions.
    *  When absent, the global `RecorderSettings.defaultCaptureArtifacts`
    *  applies. Set from the test detail toolbar's "Capture screenshots" toggle. */
@@ -651,6 +657,16 @@ export interface RecorderSettings {
   /** default value of the per-test "Capture screenshots" toggle for tests
    *  that haven't set their own preference (default false). */
   defaultCaptureArtifacts: boolean;
+  /** default value of the per-test "Record console & network" toggle (default
+   *  FALSE). Off by default because it persists page console output and
+   *  request URLs — cheap to collect, but data at rest the user didn't ask
+   *  for. */
+  defaultRecordLogs: boolean;
+  /** Record EVERY request/response header rather than the allowlist in
+   *  log-capture-source.ts (default false). The allowlist covers CORS and
+   *  caching, which is what headers are usually wanted for; this is the
+   *  explicit escape hatch for anything else, and it can capture credentials. */
+  recordAllHeaders: boolean;
   /** default value of the per-test "Check accessibility" toggle (default
    *  false). Off by default because axe typically costs more per step than
    *  everything else the step does. */

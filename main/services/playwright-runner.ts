@@ -712,6 +712,11 @@ export const playwrightRunner = {
         // default. Like capture, app-generated tests only — an imported spec's
         // actions aren't ones we hooked.
         const wantA11y = (rec.a11yChecks ?? healSettings.defaultA11yChecks) && !rec.sourceDir;
+        // Console + network recording. Same per-test-with-global-default shape
+        // as capture and a11y, and app-generated tests only for the same
+        // reason: an imported spec never gets the fixture that does the
+        // recording.
+        const recordLogs = (rec.recordLogs ?? healSettings.defaultRecordLogs) && !rec.sourceDir;
         const axeFile = axePath(nodeModules);
         const a11y = wantA11y && fs.existsSync(axeFile);
         if (wantA11y && !a11y) {
@@ -750,7 +755,7 @@ export const playwrightRunner = {
         // The redirect is what puts the fixture in the spec's import path, and
         // the fixture is where BOTH capture and healing live — so a heal-only
         // run needs it too.
-        if ((captureArtifacts || healing || a11y) && !rec.sourceDir) {
+        if ((captureArtifacts || healing || a11y || recordLogs) && !rec.sourceDir) {
           ensureCaptureFixture(scriptsDir);
           ensureHealFixture(scriptsDir);
           const prepared = prepareCaptureSpec(scriptsDir, specToRun, recordId);
@@ -822,6 +827,7 @@ export const playwrightRunner = {
         const slowMo = SLOW_MO_MS[rec.speed ?? "fast"];
         emitOutput(runId, "system", "Running " + path.basename(rec.scriptPath) + "…\n");
         if (capturing) emitOutput(runId, "system", "Capturing screenshots for this run.\n");
+        if (recordLogs) emitOutput(runId, "system", "Recording console and network for this run.\n");
         // Use our custom StepReporter (emits per-step progress markers) plus
         // the built-in `line` reporter for the human-readable Output panel.
         const args = [
@@ -847,6 +853,8 @@ export const playwrightRunner = {
           GLAZE_HEAL_MAP: healMapPath,
           PW_SLOWMO_MS: String(slowMo),
           GLAZE_CAPTURE_ARTIFACTS: capturing ? "1" : "0",
+          GLAZE_RECORD_LOGS: recordLogs ? "1" : "0",
+          GLAZE_RECORD_ALL_HEADERS: healSettings.recordAllHeaders ? "1" : "0",
           GLAZE_ARTIFACT_DIR: artifactDir,
           GLAZE_TEST_ID: rec.id,
           GLAZE_RUN_ID: recordId,
@@ -996,7 +1004,10 @@ export const playwrightRunner = {
             browser: runBrowser,
           });
         }
-        sendToMain("runner:done", { runId, code: exitCode });
+        // recordId identifies this execution's artifact directory. The
+        // renderer needs it to ask for the run's recorded console/network —
+        // runId is the TEST id, which every run of that test shares.
+        sendToMain("runner:done", { runId, code: exitCode, recordId });
       }
       return exitCode;
     })();

@@ -11,6 +11,7 @@ import {
   Copy,
   Minimize2,
   RotateCcw,
+  FileSearch,
   Send,
   Square,
   Trash2,
@@ -22,6 +23,13 @@ import glitchGif from "./assets/glitch.gif";
 
 import { api } from "../lib/api";
 import { MAX_ACTIVE_STREAMS, hashScript, isStale, type StartDecision } from "../lib/ai-debug-sessions";
+import { buildLogPayload, type LogPayload } from "../lib/ai-log-payload";
+import {
+  describeNeed,
+  parseLogRequest,
+  stripLogRequest,
+  type LogRequest,
+} from "../lib/ai-log-request";
 import { diffLines, diffSummary, type DiffLine } from "../lib/line-diff";
 import { friendlyError } from "../lib/llm-errors";
 import type { LlmMessage, LlmModel } from "../lib/llm-types";
@@ -346,6 +354,27 @@ interface SessionDraft {
 }
 
 const drafts = new Map<string, SessionDraft>();
+/** Which needs a session has already supplied, and how many times. A model that
+ *  keeps asking would otherwise loop the user through the same approval — and
+ *  each fulfilment is another copy of the data in the conversation. */
+const fulfilments = new Map<
+  string,
+  { startedAt: number; sent: Set<string>; count: number; declined: Set<string> }
+>();
+/** Hard stop on fulfilments per session. */
+export const MAX_LOG_FULFILMENTS = 3;
+
+/** Keyed by session AND its start time. A discarded session's key can be
+ *  reused by a new debug of the same run, and inheriting "already sent" would
+ *  leave the new session showing a fulfilment that never happened — and quietly
+ *  spending its cap. */
+function fulfilmentState(key: string, startedAt: number) {
+  const existing = fulfilments.get(key);
+  if (existing && existing.startedAt === startedAt) return existing;
+  const state = { startedAt, sent: new Set<string>(), count: 0, declined: new Set<string>() };
+  fulfilments.set(key, state);
+  return state;
+}
 /** Conversation history per session, so a follow-up after a minimize still
  *  carries the original prompt rather than starting a fresh thread. */
 const threads = new Map<string, LlmMessage[]>();
@@ -368,6 +397,7 @@ function draftFor(key: string, startedAt: number, status: AiDebugStatus): Sessio
 export function forgetDraft(key: string): void {
   drafts.delete(key);
   threads.delete(key);
+  fulfilments.delete(key);
 }
 
 /** Fetch the configured model, and the model list for its provider. Shared by
@@ -485,6 +515,113 @@ function SessionControls({ sessionKey }: { sessionKey: string }) {
   );
 }
 
+/** The model asked for the run's recorded console/network.
+ *
+ *  Nothing is sent by clicking "Ask" — that only FETCHES and shows the payload.
+ *  Sending is a second, explicit click on a payload the user has seen in full.
+ *  The data is page-controlled text and request URLs, and with a hosted
+ *  provider selected it leaves the machine, so "the model asked for it" is not
+ *  on its own a reason to hand it over. */
+function LogRequestCard({
+  request,
+  payload,
+  fulfilled,
+  logsMissing,
+  onFetch,
+  onSend,
+  onDecline,
+}: {
+  request: LogRequest;
+  payload: LogPayload | null;
+  fulfilled: boolean;
+  logsMissing: boolean;
+  onFetch: () => void;
+  onSend: () => void;
+  onDecline: () => void;
+}) {
+  const [showPayload, setShowPayload] = React.useState(false);
+
+  if (fulfilled) {
+    return (
+      <Callout color="green" icon={<Check className="size-4" />}>
+        <Callout.Text>Sent {describeNeed(request.need)} to the model.</Callout.Text>
+      </Callout>
+    );
+  }
+
+  // Recording is off by default, so this is the common first-time case and it
+  // needs to say what to DO — reporting "no logs" would read as "the page was
+  // silent", which is a different and misleading thing.
+  if (logsMissing) {
+    return (
+      <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+        <Callout.Text>
+          The model asked for {describeNeed(request.need)}, but this run didn&apos;t record it. Turn
+          on &ldquo;Record console &amp; network&rdquo; in the toolbar and run the test again to
+          give the model this data.
+        </Callout.Text>
+      </Callout>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-separator bg-control-subtle p-3">
+      <div className="flex items-start gap-2">
+        <FileSearch className="mt-0.5 size-4 shrink-0 text-accent" />
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <Text variant="small-strong">The model asked for {describeNeed(request.need)}</Text>
+          {request.why ? (
+            <Text variant="small" color="secondary">
+              “{request.why}”
+            </Text>
+          ) : null}
+        </div>
+      </div>
+
+      {payload ? (
+        <>
+          <Text variant="small" color="secondary">
+            {payload.consoleCount} console {payload.consoleCount === 1 ? "entry" : "entries"} (
+            {payload.consoleErrors} errors/warnings) · {payload.networkCount}{" "}
+            {payload.networkCount === 1 ? "request" : "requests"} ({payload.networkFailures} failed)
+            · about {payload.approxTokens.toLocaleString()} tokens
+            {payload.omitted > 0 ? ` · ${payload.omitted} not included` : ""}
+          </Text>
+          <button
+            type="button"
+            onClick={() => setShowPayload((v) => !v)}
+            className="self-start text-small text-accent hover:underline"
+          >
+            {showPayload ? "Hide" : "Review"} exactly what will be sent
+          </button>
+          {showPayload ? (
+            <ScrollArea className="max-h-56 rounded-md border border-separator" viewportClassName="max-h-56">
+              <pre className="text-small-mono whitespace-pre-wrap break-words p-2 text-primary">
+                {payload.text}
+              </pre>
+            </ScrollArea>
+          ) : null}
+        </>
+      ) : null}
+
+      <div className="flex items-center justify-end gap-2">
+        <Button size="small" variant="muted" onClick={onDecline}>
+          Decline
+        </Button>
+        {payload ? (
+          <Button size="small" variant="accent" onClick={onSend}>
+            <Send className="size-3.5" /> Send this data
+          </Button>
+        ) : (
+          <Button size="small" variant="glass" onClick={onFetch}>
+            Show me what it would send
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Explains a refused send. The cap exists because local providers serialize
  *  requests, so a third stream would sit "thinking" without progressing. */
 function CapacityNotice({
@@ -535,6 +672,10 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
 
   const [copied, setCopied] = React.useState(false);
   const [refused, setRefused] = React.useState<Extract<StartDecision, { ok: false }> | null>(null);
+  // A pending request from the model, and the payload once the user asks to see
+  // it. Payload stays null until then — fetching is itself a decision.
+  const [logPayload, setLogPayload] = React.useState<LogPayload | null>(null);
+  const [logsMissing, setLogsMissing] = React.useState(false);
   const { modelName, models, confirmModel, currentModel } = useModelPicker(open);
   const disabledEnhancements = useDisabledEnhancements();
   const thinkingGifEnabled = !disabledEnhancements.has("aiThinkingGif");
@@ -644,7 +785,73 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
     }
   };
 
-  const segments = parseResponse(content);
+  // A request is only honoured once streaming has FINISHED — a fenced block is
+  // not complete until its closing fence has arrived, and offering to send data
+  // on a half-streamed block would be acting on a sentence the model hasn't
+  // finished writing.
+  const logRequest = React.useMemo<LogRequest | null>(
+    () => (status === "done" ? parseLogRequest(content) : null),
+    [status, content],
+  );
+  const fulfil = logRequest ? fulfilmentState(sessionKey, session?.startedAt ?? 0) : null;
+  const needKey = logRequest ? logRequest.need.join("+") : "";
+  const alreadySent = Boolean(fulfil && fulfil.sent.has(needKey));
+  const declined = Boolean(fulfil && fulfil.declined.has(needKey));
+  const atFulfilmentCap = Boolean(fulfil && fulfil.count >= MAX_LOG_FULFILMENTS);
+  const showLogRequest = Boolean(logRequest) && !declined && !atFulfilmentCap;
+  // Known up front when the run recorded nothing: make the user click "show me"
+  // only to be told there is nothing to show would be a pointless round trip.
+  const noLogsRecorded = logsMissing || runCtx?.logsAvailable === false || !runCtx?.recordId;
+
+  const fetchLogPayload = React.useCallback(async () => {
+    if (!logRequest || !runCtx?.recordId || !session) return;
+    try {
+      const logs = await api.artifacts.getLogs(session.testId, runCtx.recordId);
+      if (!logs) {
+        setLogsMissing(true);
+        return;
+      }
+      setLogsMissing(false);
+      setLogPayload(buildLogPayload(logs, logRequest.need));
+    } catch {
+      setLogsMissing(true);
+    }
+  }, [logRequest, runCtx?.recordId, session]);
+
+  const sendLogPayload = React.useCallback(async () => {
+    if (!logPayload || !logRequest) return;
+    const thread = threads.get(sessionKey);
+    if (!thread || !content) return;
+    const state = fulfilmentState(sessionKey, session?.startedAt ?? 0);
+    const model = await currentModel();
+    const messages: LlmMessage[] = [
+      ...thread,
+      { role: "assistant", content },
+      { role: "user", content: logPayload.text },
+    ];
+    threads.set(sessionKey, messages);
+    const decision = await store.startStream(sessionKey, messages, { model });
+    if (!decision.ok) {
+      setRefused(decision);
+      return;
+    }
+    state.sent.add(needKey);
+    state.count += 1;
+    setRefused(null);
+    setLogPayload(null);
+  }, [logPayload, logRequest, sessionKey, content, currentModel, store, needKey, session?.startedAt]);
+
+  const declineLogRequest = React.useCallback(() => {
+    fulfilmentState(sessionKey, session?.startedAt ?? 0).declined.add(needKey);
+    setLogPayload(null);
+    // Re-render: the Sets above are outside React state on purpose (they must
+    // survive minimize), so nudge the draft to reflect the decision.
+    setDraft({});
+  }, [sessionKey, needKey, setDraft, session?.startedAt]);
+
+  // Prose only — the machine-readable request block is rendered as the card
+  // below, not as text the user has to read past.
+  const segments = parseResponse(logRequest ? stripLogRequest(content) : content);
 
   return (
     <Dialog
@@ -843,6 +1050,19 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                           {reasoning}
                         </pre>
                       ) : null}
+                    </div>
+                  ) : null}
+                  {showLogRequest && logRequest ? (
+                    <div className="mt-2">
+                      <LogRequestCard
+                        request={logRequest}
+                        payload={logPayload}
+                        fulfilled={alreadySent}
+                        logsMissing={noLogsRecorded}
+                        onFetch={() => void fetchLogPayload()}
+                        onSend={() => void sendLogPayload()}
+                        onDecline={declineLogRequest}
+                      />
                     </div>
                   ) : null}
                   {correctedScript && diff ? (

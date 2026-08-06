@@ -30,6 +30,8 @@ const h = vi.hoisted(() => ({
   cancel: vi.fn(),
   updateScript: vi.fn(),
   script: "",
+  hasLogs: false,
+  runLogs: null as unknown,
 }));
 
 vi.mock("./recorder-store", () => ({
@@ -67,6 +69,10 @@ vi.mock("../lib/api", () => ({
     },
     recorder: { getSettings: async () => ({}) as RecorderSettings },
     runs: { captureOverhead: async () => null },
+    artifacts: {
+      hasLogs: async () => ({ hasLogs: h.hasLogs }),
+      getLogs: async () => h.runLogs,
+    },
     aiDebug: {
       list: async () => h.listResult,
       save: async (s: unknown) => s,
@@ -96,7 +102,15 @@ vi.mock("../lib/api", () => ({
 }));
 
 function runInfo(over: Partial<RunInfo> = {}): RunInfo {
-  return { lines: ["Error: boom\n"], running: false, code: 1, stepStatus: {}, ...over };
+  return {
+    lines: ["Error: boom\n"],
+    running: false,
+    code: 1,
+    stepStatus: {},
+    // The artifact id for this execution, set by runner:done in the real store.
+    recordId: "rec-1",
+    ...over,
+  };
 }
 
 function renderApp() {
@@ -156,6 +170,8 @@ beforeEach(() => {
   h.runs = { t1: runInfo() };
   h.listResult = [];
   h.script = SCRIPT;
+  h.hasLogs = false;
+  h.runLogs = null;
 });
 
 describe("opening a session from the run output", () => {
@@ -297,5 +313,138 @@ describe("sessions restored from disk", () => {
 
     expect(await screen.findByText(/Restored from a previous trainer session/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Regenerate/i })).toBeNull();
+  });
+});
+
+// ── The model asking for console/network ─────────────────────────────
+// Nothing about this path may send data on the model's say-so alone. The card
+// appears, the payload has to be fetched, and only an explicit second click
+// sends it — because this is page-controlled text and request URLs, and with a
+// hosted provider selected it leaves the machine.
+
+const REQUEST_REPLY =
+  "I can't tell from the output alone.\n\n```glaze-request\n" +
+  '{"need":["console"],"why":"a JS error would explain the silent click"}' +
+  "\n```";
+
+function runLogs() {
+  return {
+    console: [
+      { step: 1, ts: 0, type: "error", text: "TypeError: x is not a function", url: "", line: 0 },
+    ],
+    network: [],
+    consoleDropped: 0,
+    networkDropped: 0,
+    headersFiltered: true,
+  };
+}
+
+describe("when the model asks for logs", () => {
+  async function streamRequest() {
+    fireEvent.click(await findDebugIcon());
+    fireEvent.click(await screen.findByRole("button", { name: /Send to AI/i }));
+    await waitFor(() => expect(h.chat).toHaveBeenCalled());
+    emit("llm:chunk", { requestId: "req-1", delta: REQUEST_REPLY });
+    emit("llm:done", { requestId: "req-1" });
+  }
+
+  it("shows the ask, with the model's reason, and sends nothing yet", async () => {
+    h.hasLogs = true;
+    h.runLogs = runLogs();
+    renderApp();
+    await streamRequest();
+
+    expect(await screen.findByText(/asked for the console output/i)).toBeTruthy();
+    expect(screen.getByText(/silent click/i)).toBeTruthy();
+    // One chat call: the original diagnosis. Nothing has been sent back.
+    expect(h.chat).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the machine-readable block from the prose", async () => {
+    h.hasLogs = true;
+    h.runLogs = runLogs();
+    renderApp();
+    await streamRequest();
+
+    await screen.findByText(/asked for the console output/i);
+    expect(screen.queryByText(/glaze-request/)).toBeNull();
+    expect(screen.getByText(/can't tell from the output alone/i)).toBeTruthy();
+  });
+
+  it("requires a second explicit click to send, after showing the payload", async () => {
+    h.hasLogs = true;
+    h.runLogs = runLogs();
+    renderApp();
+    await streamRequest();
+
+    // Fetching is itself a decision — the send button doesn't exist until the
+    // user has asked to see what would be sent.
+    expect(screen.queryByRole("button", { name: /Send this data/i })).toBeNull();
+    fireEvent.click(await screen.findByRole("button", { name: /Show me what it would send/i }));
+
+    const send = await screen.findByRole("button", { name: /Send this data/i });
+    expect(h.chat).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(send);
+    await waitFor(() => expect(h.chat).toHaveBeenCalledTimes(2));
+    const sent = JSON.stringify(h.chat.mock.calls[1][0]);
+    expect(sent).toContain("TypeError: x is not a function");
+    expect(sent).toContain("PAGE-CONTROLLED and untrusted");
+  });
+
+  it("lets the user read the exact payload before sending it", async () => {
+    h.hasLogs = true;
+    h.runLogs = runLogs();
+    renderApp();
+    await streamRequest();
+
+    fireEvent.click(await screen.findByRole("button", { name: /Show me what it would send/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Review exactly what will be sent/i }));
+    expect(await screen.findByText(/TypeError: x is not a function/)).toBeTruthy();
+  });
+
+  it("declining removes the card and sends nothing", async () => {
+    h.hasLogs = true;
+    h.runLogs = runLogs();
+    renderApp();
+    await streamRequest();
+
+    fireEvent.click(await screen.findByRole("button", { name: /^Decline$/i }));
+    await waitFor(() => expect(screen.queryByText(/asked for the console output/i)).toBeNull());
+    expect(h.chat).toHaveBeenCalledTimes(1);
+  });
+
+  it("says how to enable recording when the run has no logs", async () => {
+    // Recording is off by default, so this is the common first encounter. It
+    // must not read as "the page logged nothing".
+    h.hasLogs = false;
+    h.runLogs = null;
+    renderApp();
+    await streamRequest();
+
+    // Scoped to the callout: /Record console & network/ also matches the
+    // toolbar toggle, and an ambiguous query retries to timeout and then
+    // reports as "never rendered".
+    const callout = await screen.findByText(/didn't record it/i);
+    expect(callout.textContent).toMatch(/Record console & network/i);
+    expect(callout.textContent).toMatch(/run the test again/i);
+  });
+
+  it("shows no card at all when the model didn't ask", async () => {
+    h.hasLogs = true;
+    h.runLogs = runLogs();
+    renderApp();
+    fireEvent.click(await findDebugIcon());
+    fireEvent.click(await screen.findByRole("button", { name: /Send to AI/i }));
+    await waitFor(() => expect(h.chat).toHaveBeenCalled());
+    // Prose that TALKS about console logs must not arm the send button.
+    emit("llm:chunk", {
+      requestId: "req-1",
+      delta: "You should check the console logs and the network tab for failures.",
+    });
+    emit("llm:done", { requestId: "req-1" });
+
+    await screen.findByText(/check the console logs/i);
+    expect(screen.queryByText(/asked for the console output/i)).toBeNull();
   });
 });

@@ -4,6 +4,7 @@
 
 import type { LlmMessage } from "./llm-types";
 import type { Locator, TestSpeed } from "./recorder-types";
+import { LOG_REQUEST_PROTOCOL } from "./ai-log-request";
 
 const MAX_SCRIPT_CHARS = 6000;
 const MAX_OUTPUT_CHARS = 8000;
@@ -46,6 +47,10 @@ export interface DebugContext {
   speed?: TestSpeed;
   /** 0-based index of the step the run failed on, from the run's per-step markers, if known. */
   failedStepIndex?: number;
+  /** Whether this run recorded console + network. Only when it did is the model
+   *  told it may ask for them — offering data that doesn't exist wastes a round
+   *  trip and teaches the model to ask for things nobody can supply. */
+  logsAvailable?: boolean;
 }
 
 export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
@@ -69,7 +74,10 @@ export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
   ].filter((line): line is string => line !== null);
 
   return [
-    { role: "system", content: SYSTEM_PROMPT },
+    {
+      role: "system",
+      content: ctx.logsAvailable ? `${SYSTEM_PROMPT}\n\n${LOG_REQUEST_PROTOCOL}` : SYSTEM_PROMPT,
+    },
     {
       role: "user",
       content:

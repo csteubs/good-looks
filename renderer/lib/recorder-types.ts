@@ -182,6 +182,7 @@ export interface TestRecord {
   hidden?: boolean;
   stepsDiverged?: boolean;
   /** Per-test screenshot-capture preference (mirrors main TestRecord). */
+  recordLogs?: boolean;
   captureArtifacts?: boolean;
   /** Per-test headless-run preference (mirrors main TestRecord). */
   runHeadless?: boolean;
@@ -592,6 +593,8 @@ export interface RecorderSettings {
   debugScreenshots: boolean;
   /** default value of the per-test "Capture screenshots" toggle (default false). */
   defaultCaptureArtifacts: boolean;
+  defaultRecordLogs: boolean;
+  recordAllHeaders: boolean;
   /** default value of the per-test "Run headless" toggle (default false). */
   defaultRunHeadless: boolean;
   /** default browser engine for tests with no preference (default "chromium"). */
@@ -775,6 +778,37 @@ export type AiDebugStatus =
   | "error"
   | "cancelled"
   | "interrupted";
+
+export interface ConsoleEntry {
+  step: number;
+  ts: number;
+  type: string;
+  text: string;
+  url: string;
+  line: number;
+}
+
+export interface NetworkEntry {
+  step: number;
+  ts: number;
+  ms: number;
+  method: string;
+  url: string;
+  resourceType: string;
+  status: number;
+  ok: boolean;
+  failure?: string;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
+}
+
+export interface RunLogs {
+  console: ConsoleEntry[];
+  network: NetworkEntry[];
+  consoleDropped: number;
+  networkDropped: number;
+  headersFiltered: boolean;
+}
 
 export type AiDebugKind = "run" | "step";
 

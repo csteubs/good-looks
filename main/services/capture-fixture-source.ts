@@ -16,6 +16,14 @@
 // Plain JavaScript (no TypeScript) because Playwright loads it via its own
 // Babel transform, which does not understand `import type`.
 
+import {
+  LOG_CAPTURE_HELPERS,
+  MAX_CONSOLE_HEAD,
+  MAX_CONSOLE_TAIL,
+  MAX_NETWORK_HEAD,
+  MAX_NETWORK_TAIL,
+} from "./log-capture-source.js";
+
 export const captureFixtureSource = `import { test as base, expect } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
@@ -33,6 +41,17 @@ const HEAL_ON = process.env.GLAZE_HEAL === "1";
 // without them, and it costs far more, so nobody should pay for one by asking
 // for the other.
 const A11Y_ON = process.env.GLAZE_A11Y === "1";
+// Console + network recording, gated independently again: it is far cheaper
+// than either screenshots or axe, but it writes page-controlled text and
+// request URLs to disk, so nobody should get it by asking for something else.
+const LOGS_ON = process.env.GLAZE_RECORD_LOGS === "1";
+// The user's explicit "record all headers (may include credentials)" opt-out
+// from the allowlist.
+const ALL_HEADERS = process.env.GLAZE_RECORD_ALL_HEADERS === "1";
+const MAX_CONSOLE_HEAD = ${MAX_CONSOLE_HEAD};
+const MAX_CONSOLE_TAIL = ${MAX_CONSOLE_TAIL};
+const MAX_NETWORK_HEAD = ${MAX_NETWORK_HEAD};
+const MAX_NETWORK_TAIL = ${MAX_NETWORK_TAIL};
 const AXE_PATH = process.env.GLAZE_AXE_PATH || "";
 // Caps on what a single step may record. A page with a systemic problem can
 // produce hundreds of nodes for one rule; storing them all would bloat every
@@ -57,6 +76,89 @@ const LOCATOR_ACTIONS = [
 // global) reads the current run's context safely.
 let ctx = null; // { dir, index, manifest, startedAt, captureMs, a11yMs, a11yChecks }
 let patched = false;
+
+${LOG_CAPTURE_HELPERS}
+
+/**
+ * Subscribe to console + network events for this page.
+ *
+ * Every entry records the step index that was current when it happened, so a
+ * failure can be correlated with what the page was doing at the time — the
+ * whole point of offering these to the model.
+ *
+ * Listeners are best-effort and must never fail the test: a handler that throws
+ * inside Playwright's event emitter would surface as an unhandled rejection and
+ * fail a run that was otherwise fine.
+ */
+function installLogCapture(page, logs) {
+  const started = new Map();
+
+  page.on("console", (msg) => {
+    try {
+      glazePush(logs.console, {
+        step: ctx ? ctx.index : 0,
+        ts: Date.now(),
+        type: String(msg.type()),
+        text: glazeTruncate(msg.text()),
+        url: glazeScrubUrl((msg.location && msg.location().url) || ""),
+        line: (msg.location && msg.location().lineNumber) || 0,
+      }, MAX_CONSOLE_HEAD, MAX_CONSOLE_TAIL);
+    } catch (e) { /* never throw into the run */ }
+  });
+
+  // An uncaught page exception is not a console message, and it is usually the
+  // most diagnostic single line available when a click "did nothing".
+  page.on("pageerror", (err) => {
+    try {
+      glazePush(logs.console, {
+        step: ctx ? ctx.index : 0,
+        ts: Date.now(),
+        type: "pageerror",
+        text: glazeTruncate(String((err && err.stack) || err)),
+        url: "",
+        line: 0,
+      }, MAX_CONSOLE_HEAD, MAX_CONSOLE_TAIL);
+    } catch (e) { /* ignore */ }
+  });
+
+  page.on("request", (req) => {
+    try { started.set(req, Date.now()); } catch (e) { /* ignore */ }
+  });
+
+  const record = (req, fields) => {
+    try {
+      const t0 = started.get(req) || Date.now();
+      started.delete(req);
+      glazePush(logs.network, Object.assign({
+        step: ctx ? ctx.index : 0,
+        ts: Date.now(),
+        ms: Date.now() - t0,
+        method: String(req.method()),
+        url: glazeScrubUrl(req.url()),
+        resourceType: String(req.resourceType()),
+        requestHeaders: glazeFilterHeaders(req.headers(), ALL_HEADERS),
+      }, fields), MAX_NETWORK_HEAD, MAX_NETWORK_TAIL);
+    } catch (e) { /* ignore */ }
+  };
+
+  page.on("response", (res) => {
+    let headers = {};
+    try { headers = res.headers(); } catch (e) { headers = {}; }
+    record(res.request(), {
+      status: res.status(),
+      ok: res.ok(),
+      responseHeaders: glazeFilterHeaders(headers, ALL_HEADERS),
+    });
+  });
+
+  // A request that never got a response — blocked, DNS failure, CORS refusal —
+  // has no status at all, and is exactly the case a failing test needs.
+  page.on("requestfailed", (req) => {
+    let failure = "";
+    try { failure = (req.failure() && req.failure().errorText) || ""; } catch (e) { failure = ""; }
+    record(req, { status: 0, ok: false, failure: glazeTruncate(failure) });
+  });
+}
 
 function describe(target, method, args) {
   let loc = "";
@@ -202,7 +304,7 @@ function patchOnce(page) {
   }
 }
 
-export const test = (((ON || A11Y_ON) && DIR) || HEAL_ON) ? base.extend({
+export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON) ? base.extend({
   page: async ({ page }, use, testInfo) => {
     // Healing is installed FIRST so its retry sits inside the capture wrapper:
     // a healed action should produce one screenshot of the successful result,
@@ -224,13 +326,17 @@ export const test = (((ON || A11Y_ON) && DIR) || HEAL_ON) ? base.extend({
     }
     // The manifest is what carries BOTH screenshots and violations, so it is
     // written whenever either is on — an a11y-only run still needs one.
-    if ((!ON && !A11Y_ON) || !DIR) {
+    if ((!ON && !A11Y_ON && !LOGS_ON) || !DIR) {
       await use(page);
       return;
     }
     try { fs.mkdirSync(DIR, { recursive: true }); } catch (e) { /* ignore */ }
     ctx = { dir: DIR, index: 0, manifest: [], startedAt: Date.now(), captureMs: 0, a11yMs: 0, a11yChecks: 0 };
-    patchOnce(page);
+    const logs = LOGS_ON ? { console: glazeMakeStore(), network: glazeMakeStore() } : null;
+    if (logs) installLogCapture(page, logs);
+    // Screenshots and a11y both hang off the action patch; logs do not, so a
+    // logs-only run must not pay for prototype patching it will never use.
+    if (ON || A11Y_ON) patchOnce(page);
     try {
       await use(page);
     } finally {
@@ -256,6 +362,23 @@ export const test = (((ON || A11Y_ON) && DIR) || HEAL_ON) ? base.extend({
         fs.writeFileSync(path.join(DIR, "manifest.json"), JSON.stringify(manifest, null, 2));
       } catch (err) {
         process.stderr.write("[glaze-capture] manifest write failed: " + String(err) + "\\n");
+      }
+      // Console + network go in their own files rather than the manifest: they
+      // are unbounded in a way per-step entries are not, and every existing
+      // manifest reader would have to parse past them.
+      if (logs) {
+        try {
+          const c = glazeDrain(logs.console);
+          const n = glazeDrain(logs.network);
+          fs.writeFileSync(path.join(DIR, "console.json"), JSON.stringify({
+            testId: TEST_ID, runId: RUN_ID, dropped: c.dropped, entries: c.entries,
+          }, null, 2));
+          fs.writeFileSync(path.join(DIR, "network.json"), JSON.stringify({
+            testId: TEST_ID, runId: RUN_ID, dropped: n.dropped, headersFiltered: !ALL_HEADERS, entries: n.entries,
+          }, null, 2));
+        } catch (err) {
+          process.stderr.write("[glaze-capture] log write failed: " + String(err) + "\\n");
+        }
       }
       ctx = null;
     }

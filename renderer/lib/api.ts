@@ -13,6 +13,7 @@ import type {
   TestVariable,
   AiDebugSession,
   DebugEntry,
+  RunLogs,
   LogSearchResult,
   Locator,
   RawStep,
@@ -139,6 +140,8 @@ export const api = {
       ipc().invoke<TestRecord>("tests:setSpeed", { id, speed }),
     setCaptureArtifacts: (id: string, captureArtifacts: boolean) =>
       ipc().invoke<TestRecord>("tests:setCaptureArtifacts", { id, captureArtifacts }),
+    setRecordLogs: (id: string, recordLogs: boolean) =>
+      ipc().invoke<TestRecord>("tests:setRecordLogs", { id, recordLogs }),
     setHeadless: (id: string, runHeadless: boolean) =>
       ipc().invoke<TestRecord>("tests:setHeadless", { id, runHeadless }),
     setBrowser: (id: string, runBrowser: RunBrowser) =>
@@ -268,6 +271,12 @@ export const api = {
       ipc().invoke<RunReplay | null>("artifacts:getReplay", { testId, runId }),
     readShot: (testId: string, runId: string, file: string) =>
       ipc().invoke<string | null>("artifacts:readShot", { testId, runId, file }),
+    /** Recorded console + network for one run (null when it recorded none).
+     *  Secrets are redacted backend-side before this returns. */
+    getLogs: (testId: string, runId: string) =>
+      ipc().invoke<RunLogs | null>("artifacts:getLogs", { testId, runId }),
+    hasLogs: (testId: string, runId: string) =>
+      ipc().invoke<{ hasLogs: boolean }>("artifacts:hasLogs", { testId, runId }),
     usage: () => ipc().invoke<ArtifactUsage>("artifacts:usage"),
     pruneNow: () => ipc().invoke<RetentionResult>("artifacts:pruneNow"),
   },

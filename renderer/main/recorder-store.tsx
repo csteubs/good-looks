@@ -58,6 +58,9 @@ export interface RunInfo {
   code: number | null;
   /** Per-step run status, keyed by step index (0-based). */
   stepStatus: Record<number, RunStepStatus>;
+  /** Artifact id for this execution, once it finishes. Distinct from the map
+   *  key, which is the TEST id — every run of a test shares that. */
+  recordId?: string;
 }
 
 const EMPTY_STATE: RecorderState = {
@@ -219,12 +222,15 @@ export function RecorderProvider({ children }: { children: React.ReactNode }) {
         return { ...prev, [runId]: { ...cur, stepStatus } };
       });
     });
-    const offDone = api.on<{ runId: string; code: number }>("runner:done", ({ runId, code }) => {
-      setRuns((prev) => {
-        const cur = prev[runId] ?? { lines: [], running: false, code, stepStatus: {} };
-        return { ...prev, [runId]: { ...cur, running: false, code } };
-      });
-    });
+    const offDone = api.on<{ runId: string; code: number; recordId?: string }>(
+      "runner:done",
+      ({ runId, code, recordId }) => {
+        setRuns((prev) => {
+          const cur = prev[runId] ?? { lines: [], running: false, code, stepStatus: {} };
+          return { ...prev, [runId]: { ...cur, running: false, code, recordId } };
+        });
+      },
+    );
     const offDebug = api.on<{ testId: string; entries: DebugEntry[] }>(
       "recorder:debugLogs",
       ({ entries }) => setDebugEntries(entries ?? []),

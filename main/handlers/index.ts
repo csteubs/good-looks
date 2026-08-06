@@ -250,6 +250,20 @@ export function registerHandlers(): void {
     },
   );
 
+  // Per-test "Record console & network" toggle. Kept separate from the capture
+  // toggle on purpose: this one persists page-controlled text and request URLs.
+  ipcMain.handle(
+    "tests:setRecordLogs",
+    async (_e, params: { id: string; recordLogs: boolean }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      rec.recordLogs = params.recordLogs;
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return rec;
+    },
+  );
+
   // Per-test "Run headless" preference, remembered between sessions. Absent →
   // use the global default from RecorderSettings. Only affects test runs.
   ipcMain.handle(
@@ -825,6 +839,21 @@ export function registerHandlers(): void {
       const buf = artifactStore.readShot(params.testId, params.runId, params.file);
       return buf ? `data:image/png;base64,${buf.toString("base64")}` : null;
     },
+  );
+
+  // Recorded console + network for one run. Secrets are redacted on the way
+  // out (see artifactStore.readLogs) — this is the last point before the data
+  // can reach a UI or an LLM prompt.
+  ipcMain.handle(
+    "artifacts:getLogs",
+    async (_e, params: { testId: string; runId: string }) =>
+      artifactStore.readLogs(params.testId, params.runId),
+  );
+  ipcMain.handle(
+    "artifacts:hasLogs",
+    async (_e, params: { testId: string; runId: string }) => ({
+      hasLogs: artifactStore.hasLogs(params.testId, params.runId),
+    }),
   );
 
   // ── Visual-diff handlers (Phase 3) ──────────────────────────────────

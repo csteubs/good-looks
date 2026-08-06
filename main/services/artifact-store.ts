@@ -18,6 +18,7 @@ import * as path from "path";
 import { app, logger } from "@glaze/core/backend";
 
 import type { A11yResult, A11yViolation } from "./a11y-diff.js";
+import { redactWithSnapshot } from "./secret-redaction.js";
 
 /** Default number of runs whose artifacts are retained per test.
  *  Sized against real usage: a captured run dir is ~0.6 MB for a small test
@@ -181,6 +182,49 @@ function artifactsDir(): string {
 
 function testDir(testId: string): string {
   return path.join(artifactsDir(), testId);
+}
+
+
+// ── Console + network recording ──────────────────────────────────────
+// Written by the capture fixture into the run dir as console.json /
+// network.json. Kept out of manifest.json because they are unbounded in a way
+// per-step entries are not, and every existing manifest reader would have to
+// parse past them.
+
+export interface ConsoleEntry {
+  /** Action index that was current when this was logged, for correlation. */
+  step: number;
+  ts: number;
+  /** console type (log/warn/error/debug/…) or "pageerror" for an uncaught throw. */
+  type: string;
+  text: string;
+  url: string;
+  line: number;
+}
+
+export interface NetworkEntry {
+  step: number;
+  ts: number;
+  ms: number;
+  method: string;
+  url: string;
+  resourceType: string;
+  /** 0 for a request that never got a response (blocked, DNS, CORS). */
+  status: number;
+  ok: boolean;
+  failure?: string;
+  requestHeaders?: Record<string, string>;
+  responseHeaders?: Record<string, string>;
+}
+
+export interface RunLogs {
+  console: ConsoleEntry[];
+  network: NetworkEntry[];
+  /** Entries dropped by the per-run cap, so a truncated log says so. */
+  consoleDropped: number;
+  networkDropped: number;
+  /** False when the run recorded every header (the explicit escape hatch). */
+  headersFiltered: boolean;
 }
 
 export const artifactStore = {
@@ -369,6 +413,48 @@ export const artifactStore = {
     } catch {
       return [];
     }
+  },
+
+
+  /** Read a run's recorded console + network, or null when the run has none
+   *  (recording was off, or the test is imported and never gets the fixture).
+   *
+   *  SECRETS ARE REDACTED HERE, not at write time. The fixture runs in
+   *  Playwright's own process and has no access to the secret snapshot, so it
+   *  can only do the STRUCTURAL scrubbing (header allowlist, credential-bearing
+   *  query parameters). The user's configured secret VALUES are stripped on the
+   *  way out, which is the last point before this data reaches a UI or a
+   *  prompt. Both are needed; neither is sufficient alone. */
+  readLogs(testId: string, runId: string): RunLogs | null {
+    const dir = this.runDir(testId, runId);
+    const readJson = <T>(name: string): T | null => {
+      try {
+        return JSON.parse(redactWithSnapshot(fs.readFileSync(path.join(dir, name), "utf-8"))) as T;
+      } catch {
+        return null;
+      }
+    };
+    const consoleFile = readJson<{ entries?: ConsoleEntry[]; dropped?: number }>("console.json");
+    const networkFile = readJson<{
+      entries?: NetworkEntry[];
+      dropped?: number;
+      headersFiltered?: boolean;
+    }>("network.json");
+    if (!consoleFile && !networkFile) return null;
+    return {
+      console: consoleFile?.entries ?? [],
+      network: networkFile?.entries ?? [],
+      consoleDropped: consoleFile?.dropped ?? 0,
+      networkDropped: networkFile?.dropped ?? 0,
+      headersFiltered: networkFile?.headersFiltered !== false,
+    };
+  },
+
+  /** Whether a run recorded logs at all — cheap enough to ask before offering
+   *  them to the model, without parsing megabytes to find out. */
+  hasLogs(testId: string, runId: string): boolean {
+    const dir = this.runDir(testId, runId);
+    return fs.existsSync(path.join(dir, "console.json")) || fs.existsSync(path.join(dir, "network.json"));
   },
 
   /** Read a run's manifest (the per-step artifact + outcome model), or null. */

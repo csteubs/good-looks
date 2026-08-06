@@ -77,6 +77,11 @@ export function TestDetailView() {
   // not silently buy an a11y audit as well.
   const [a11yChecks, setA11yChecks] = React.useState(false);
   const [a11yInited, setA11yInited] = React.useState(false);
+  // Per-test console+network recording. Independent of screenshots again: this
+  // one persists page-controlled text and request URLs, which is a different
+  // decision from persisting pictures.
+  const [recordLogs, setRecordLogs] = React.useState(false);
+  const [recordLogsInited, setRecordLogsInited] = React.useState(false);
   // Per-test "Run headless" choice — remembers whether this test's runs open a
   // visible browser. Falls back to the global Settings default. Runs only; the
   // trainer/"Edit in Trainer" flow is always headed.
@@ -121,6 +126,13 @@ export function TestDetailView() {
     setA11yChecks(test.a11yChecks ?? fallback);
     setA11yInited(true);
   }, [a11yInited, test, settingsQuery.data]);
+  // Same one-shot init for the console+network toggle.
+  React.useEffect(() => {
+    if (recordLogsInited || !test) return;
+    const fallback = settingsQuery.data?.defaultRecordLogs ?? false;
+    setRecordLogs(test.recordLogs ?? fallback);
+    setRecordLogsInited(true);
+  }, [recordLogsInited, test, settingsQuery.data]);
   // Initialize the headless toggle from the test record (or the global default) once.
   React.useEffect(() => {
     if (headlessInited || !test) return;
@@ -154,6 +166,16 @@ export function TestDetailView() {
   const aiStatus = useAiDebugStatus(aiKey);
   const script = scriptQuery.data ?? "";
   const runOutput = runInfo?.lines.join("") ?? "";
+  const recordId = runInfo?.recordId;
+
+  // Whether the finished run recorded console/network. Asked once per run
+  // rather than assumed from the toggle: the toggle can be flipped after a run,
+  // and what matters is what THIS run actually wrote.
+  const logsQuery = useQuery({
+    queryKey: ["run-logs-available", id, recordId],
+    queryFn: () => (recordId ? api.artifacts.hasLogs(id, recordId) : Promise.resolve({ hasLogs: false })),
+    enabled: Boolean(recordId),
+  });
 
   const applyScript = React.useCallback(
     async (source: string) => {
@@ -175,9 +197,11 @@ export function TestDetailView() {
       imported: Boolean(test.sourceDir),
       speed: test.speed,
       failedStepIndex,
+      recordId,
+      logsAvailable: Boolean(logsQuery.data?.hasLogs),
       onApplyScript: applyScript,
     };
-  }, [test, script, runOutput, failedStepIndex, applyScript]);
+  }, [test, script, runOutput, failedStepIndex, applyScript, recordId, logsQuery.data?.hasLogs]);
 
   // Keep a live session's context fresh (the script or run output can change
   // under it) and re-ground one restored from disk, which has no context at all
@@ -401,6 +425,24 @@ export function TestDetailView() {
                 )
               </Text>
             ) : null}
+          </label>
+          <label className="flex items-center gap-1.5 text-small text-secondary">
+            {/* Separate from screenshots on purpose: this writes page console
+                output and request URLs to disk. Off by default, and the model
+                can only ASK for the result — it is never attached automatically. */}
+            <Checkbox
+              checked={recordLogs}
+              onCheckedChange={(v) => {
+                const next = v === true;
+                setRecordLogs(next);
+                api.tests.setRecordLogs(id, next).catch(() => {
+                  /* best-effort persist; the toggle still applies to this run */
+                });
+              }}
+              disabled={runInfo?.running}
+              aria-label="Record console and network on this run"
+            />
+            Record console &amp; network
           </label>
           <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
             <Checkbox

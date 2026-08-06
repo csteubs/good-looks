@@ -72,6 +72,8 @@ export function SettingsView() {
   const [showUrlBar, setShowUrlBar] = useState(true);
   const [defaultRunSpeed, setDefaultRunSpeed] = useState<TestSpeed>("slow");
   const [defaultCaptureArtifacts, setDefaultCaptureArtifacts] = useState(false);
+  const [defaultRecordLogs, setDefaultRecordLogs] = useState(false);
+  const [recordAllHeaders, setRecordAllHeaders] = useState(false);
   const [defaultRunHeadless, setDefaultRunHeadless] = useState(false);
   const [defaultRunBrowser, setDefaultRunBrowser] = useState<RunBrowser>("chromium");
   const [artifactRetainedRuns, setArtifactRetainedRuns] = useState(10);
@@ -125,6 +127,8 @@ export function SettingsView() {
         setShowUrlBar(settings.showUrlBar);
         setDefaultRunSpeed(settings.defaultRunSpeed ?? "slow");
         setDefaultCaptureArtifacts(settings.defaultCaptureArtifacts ?? false);
+        setDefaultRecordLogs(settings.defaultRecordLogs ?? false);
+        setRecordAllHeaders(settings.recordAllHeaders ?? false);
         setDefaultRunHeadless(settings.defaultRunHeadless ?? false);
         setDefaultRunBrowser(settings.defaultRunBrowser ?? "chromium");
         setArtifactRetainedRuns(settings.artifactRetainedRuns ?? 10);
@@ -176,6 +180,24 @@ export function SettingsView() {
     setDefaultCaptureArtifacts(checked);
     try {
       await api.recorder.setSettings({ defaultCaptureArtifacts: checked });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleDefaultRecordLogsChange = async (checked: boolean) => {
+    setDefaultRecordLogs(checked);
+    try {
+      await api.recorder.setSettings({ defaultRecordLogs: checked });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleRecordAllHeadersChange = async (checked: boolean) => {
+    setRecordAllHeaders(checked);
+    try {
+      await api.recorder.setSettings({ recordAllHeaders: checked });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
     }
@@ -658,6 +680,44 @@ export function SettingsView() {
                 id="default-capture-artifacts"
                 checked={defaultCaptureArtifacts}
                 onCheckedChange={handleDefaultCaptureArtifactsChange}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="default-record-logs">
+                  Record console &amp; network by default
+                </FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  Default value of the “Record console &amp; network” toggle for new tests. Stores
+                  the page&apos;s console output and its request URLs with each run, so
+                  &ldquo;Debug with AI&rdquo; can offer them when the model asks. Off by default:
+                  it is page-controlled data kept on disk. Nothing is ever sent to a model without
+                  your explicit approval.
+                </p>
+              </FieldContent>
+              <Switch
+                id="default-record-logs"
+                checked={defaultRecordLogs}
+                onCheckedChange={handleDefaultRecordLogsChange}
+              />
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="record-all-headers">
+                  Record all request headers (may include credentials)
+                </FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  By default only a safe allowlist of headers is stored — content type, caching and
+                  CORS — and every other header is recorded by name with its value omitted. Turn
+                  this on only if you need a header outside that set: it will store Authorization,
+                  Cookie and anything else the page sends.
+                </p>
+              </FieldContent>
+              <Switch
+                id="record-all-headers"
+                checked={recordAllHeaders}
+                disabled={!defaultRecordLogs}
+                onCheckedChange={handleRecordAllHeadersChange}
               />
             </Field>
             <Field orientation="horizontal">

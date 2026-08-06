@@ -49,6 +49,12 @@ export interface AiDebugRunContext {
   imported: boolean;
   speed?: TestSpeed;
   failedStepIndex?: number;
+  /** Artifact id of the run being debugged, for fetching its recorded logs.
+   *  Absent until a run finishes. */
+  recordId?: string;
+  /** Whether that run actually recorded console/network. Drives whether the
+   *  model is even told it may ask. */
+  logsAvailable?: boolean;
   onApplyScript?: (source: string) => Promise<void>;
 }
 
