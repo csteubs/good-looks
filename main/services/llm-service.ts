@@ -21,6 +21,7 @@ import {
 } from "./llm/provider-errors.js";
 import type {
   LlmChatParams,
+  LlmErrorKind,
   LlmMessage,
   LlmModel,
   LlmProvider,
@@ -131,7 +132,7 @@ async function runChat(
   params: LlmChatParams,
 ): Promise<void> {
   if (!model) {
-    sendToMain("llm:error", { requestId, message: "No model selected." });
+    sendToMain("llm:error", { requestId, message: "No model selected.", kind: "no-model" });
     return;
   }
   const base = baseUrlFor(provider);
@@ -144,7 +145,8 @@ async function runChat(
       if (!key) {
         sendToMain("llm:error", {
           requestId,
-          message: "Add your Anthropic API key in Settings.",
+          message: "Add your Anthropic API key.",
+          kind: "auth" satisfies LlmErrorKind,
         });
         return;
       }
@@ -179,7 +181,8 @@ async function runChat(
       // The provider's own body is JSON meant for a client, not a person —
       // decode it into one actionable sentence rather than pasting it through.
       const text = await res.text().catch(() => "");
-      throw new ProviderError(describeHttpFailure({ status: res.status, body: text, provider, model }));
+      const failure = describeHttpFailure({ status: res.status, body: text, provider, model });
+      throw new ProviderError(failure.message, failure.kind);
     }
 
     // Both providers stream Server-Sent Events as `data: {json}` lines; only the
@@ -216,7 +219,7 @@ async function runChat(
               if (delta) sendToMain("llm:chunk", { requestId, delta });
             } else if (type === "error") {
               const msg = (json.error as { message?: string } | undefined)?.message;
-              throw new Error(msg || "Anthropic streaming error.");
+              throw new ProviderError(msg || "Anthropic streaming error.", "provider");
             }
           } else {
             eventCount++;
@@ -301,7 +304,7 @@ async function runChat(
         deltaFields: [...deltaFields],
         sawReasoning,
       });
-      sendToMain("llm:error", { requestId, message });
+      sendToMain("llm:error", { requestId, message, kind: "empty-response" satisfies LlmErrorKind });
       return;
     }
     sendToMain("llm:done", { requestId });
@@ -320,7 +323,7 @@ async function runChat(
       // "network error while fetching weights" would match the patterns below
       // and replace a correct, actionable message with "Make sure LM Studio is
       // running" — sending the user after a server that is up and answering.
-      const decoded = err instanceof ProviderError;
+      const decoded = err instanceof ProviderError ? err : null;
       const isConnError =
         !decoded && /abort|timeout|econnrefused|fetch failed|network/i.test(raw);
       const message = isConnError
@@ -328,8 +331,11 @@ async function runChat(
           ? `Could not reach Claude (${base}). Check your internet connection and try again.`
           : `Could not reach ${providerLabel(provider)} at ${base}. Make sure it is running.`
         : raw;
-      logger.warn("llm", "Chat request failed", { requestId, message });
-      sendToMain("llm:error", { requestId, message });
+      // A decoded provider failure keeps its own kind; anything else is either
+      // a recognized transport failure or genuinely unclassified.
+      const kind: LlmErrorKind = decoded ? decoded.kind : isConnError ? "connection" : "provider";
+      logger.warn("llm", "Chat request failed", { requestId, message, kind });
+      sendToMain("llm:error", { requestId, message, kind });
     }
   } finally {
     activeRequests.delete(requestId);

@@ -44,7 +44,7 @@ export function GenerateStepsDialog({
   onOpenChange: (open: boolean) => void;
   onInsert: (steps: RawStep[]) => void;
 }) {
-  const { content, status, error, start, stop } = useLlmChat();
+  const { content, status, error, errorKind, start, stop } = useLlmChat();
   const [prompt, setPrompt] = React.useState("");
   const [added, setAdded] = React.useState(false);
   // Optional selector the user picked to give the LLM as context. Null means
@@ -339,7 +339,7 @@ export function GenerateStepsDialog({
             <div className="flex flex-col gap-1 p-3">
               {status === "error" && error ? (
                 <pre className="text-small whitespace-pre-wrap break-words text-primary">
-                  {friendlyError(error)}
+                  {friendlyError(error, errorKind)}
                 </pre>
               ) : flowSteps ? (
                 flowSteps.map((s, i) => (

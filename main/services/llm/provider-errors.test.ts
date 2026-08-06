@@ -79,12 +79,16 @@ describe("isModelUnavailable", () => {
 
 describe("describeHttpFailure", () => {
   it("turns the LM Studio model-load failure into one actionable sentence", () => {
-    const message = describeHttpFailure({
+    const { message, kind } = describeHttpFailure({
       status: 400,
       body: LM_STUDIO_LOAD_FAILURE,
       provider: "lmstudio",
       model: "google/gemma-4-e4b",
     });
+
+    // The kind is what the UI routes on: it must NOT be "connection", however
+    // much the provider's quoted words look like one.
+    expect(kind).toBe("model-unavailable");
 
     // Names the problem, the model, and what to do — in that order.
     expect(message).toContain("LM Studio couldn't load the model");
@@ -100,12 +104,13 @@ describe("describeHttpFailure", () => {
   });
 
   it("tells an Ollama user to pull the model", () => {
-    const message = describeHttpFailure({
+    const { message, kind } = describeHttpFailure({
       status: 404,
       body: '{"error":"model \'llama3\' not found, try pulling it first"}',
       provider: "ollama",
       model: "llama3",
     });
+    expect(kind).toBe("model-unavailable");
     expect(message).toContain("ollama pull llama3");
     // The model branch wins over the generic 404 "check the server URL" advice,
     // which would point at a setting that is perfectly correct.
@@ -113,45 +118,65 @@ describe("describeHttpFailure", () => {
   });
 
   it("points at the URL setting for a genuine 404", () => {
-    const message = describeHttpFailure({
+    const { message, kind } = describeHttpFailure({
       status: 404,
       body: "Not Found",
       provider: "lmstudio",
       model: "any",
     });
+    // A wrong URL IS a connection problem, so this one does route there.
+    expect(kind).toBe("connection");
     expect(message).toMatch(/no endpoint at that address/i);
-    expect(message).toMatch(/Settings/);
   });
 
   it("names a bad API key without echoing the body", () => {
-    const message = describeHttpFailure({
+    const { message, kind } = describeHttpFailure({
       status: 401,
       body: '{"error":{"message":"invalid x-api-key"}}',
       provider: "anthropic",
       model: "claude-sonnet-5",
     });
+    expect(kind).toBe("auth");
     expect(message).toMatch(/rejected the API key/i);
-    expect(message).toMatch(/Settings/);
+    // The "where to fix it" half is the renderer's job now, so the backend
+    // message no longer hard-codes a Settings path that only one UI has.
+    expect(message).not.toMatch(/Settings/);
   });
 
   it("still says something useful when the body is empty", () => {
-    const message = describeHttpFailure({
+    const { message, kind } = describeHttpFailure({
       status: 500,
       body: "",
       provider: "lmstudio",
       model: "m",
     });
+    expect(kind).toBe("provider");
     expect(message).toBe("LM Studio couldn't run this request (HTTP 500).");
   });
 
   it("uses the provider's own words for anything it doesn't recognize", () => {
-    const message = describeHttpFailure({
+    const { message, kind } = describeHttpFailure({
       status: 400,
       body: '{"error":"context length exceeded"}',
       provider: "lmstudio",
       model: "m",
     });
+    expect(kind).toBe("provider");
     expect(message).toBe("LM Studio couldn't run this request. context length exceeded");
+  });
+
+  it("never classifies a provider failure as a connection problem", () => {
+    // The trap that shipped twice: provider bodies are quoted verbatim, so
+    // their wording can name transport concepts. Only OUR classification may
+    // decide, and a 4xx/5xx with a body is never a transport failure.
+    for (const body of [
+      '{"error":"network error while fetching weights"}',
+      '{"error":"upstream timeout"}',
+      '{"error":"connection closed"}',
+    ]) {
+      const { kind } = describeHttpFailure({ status: 400, body, provider: "lmstudio", model: "m" });
+      expect(kind).not.toBe("connection");
+    }
   });
 
   it("labels each provider by the name the user chose in Settings", () => {
@@ -167,16 +192,15 @@ describe("ProviderError", () => {
     // its wording is outside our control — this body puts "network" in it, and
     // llm-service's transport patterns would match, replacing an accurate
     // model-load message with "Make sure LM Studio is running".
-    const decoded = new ProviderError(
-      describeHttpFailure({
-        status: 400,
-        body: JSON.stringify({
-          error: 'Failed to load model "m". network error while fetching weights',
-        }),
-        provider: "lmstudio",
-        model: "m",
+    const failure = describeHttpFailure({
+      status: 400,
+      body: JSON.stringify({
+        error: 'Failed to load model "m". network error while fetching weights',
       }),
-    );
+      provider: "lmstudio",
+      model: "m",
+    });
+    const decoded = new ProviderError(failure.message, failure.kind);
     const TRANSPORT_PATTERNS = /abort|timeout|econnrefused|fetch failed|network/i;
 
     expect(TRANSPORT_PATTERNS.test(decoded.message)).toBe(true);

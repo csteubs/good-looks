@@ -27,6 +27,15 @@ export interface LlmConfig {
   baseUrls: Partial<Record<LlmProvider, string>>;
 }
 
+/** Mirror of main/services/llm/types.ts — see there for why this exists. */
+export type LlmErrorKind =
+  | "no-model"
+  | "auth"
+  | "model-unavailable"
+  | "provider"
+  | "empty-response"
+  | "connection";
+
 export interface LlmChatParams {
   messages: LlmMessage[];
   provider?: LlmProvider;

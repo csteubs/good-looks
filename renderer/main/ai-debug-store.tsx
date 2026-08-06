@@ -26,7 +26,7 @@ import {
   type StartDecision,
 } from "../lib/ai-debug-sessions";
 import type { AiDebugKind, AiDebugSession, AiDebugStatus, TestSpeed } from "../lib/recorder-types";
-import type { LlmMessage } from "../lib/llm-types";
+import type { LlmErrorKind, LlmMessage } from "../lib/llm-types";
 
 /** Metadata for one session — everything except the streamed text. */
 export type AiDebugMeta = Omit<AiDebugSession, "content" | "reasoning">;
@@ -251,14 +251,14 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
         });
       },
     );
-    const offError = api.on<{ requestId: string; message: string }>(
+    const offError = api.on<{ requestId: string; message: string; kind?: LlmErrorKind }>(
       "llm:error",
-      ({ requestId, message }) => {
+      ({ requestId, message, kind }) => {
         const key = routeRef.current[requestId];
         if (!key) return;
         delete routeRef.current[requestId];
         flushPending();
-        patchMeta(key, { status: "error", error: message, requestId: null });
+        patchMeta(key, { status: "error", error: message, errorKind: kind ?? null, requestId: null });
       },
     );
     return () => {
@@ -326,6 +326,7 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
             ...nextMetas[s.key],
             status: "interrupted",
             requestId: null,
+            errorKind: null,
             error:
               nextMetas[s.key].error ??
               "Interrupted — the app closed while the model was answering",
@@ -509,6 +510,7 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
         {
           status: "streaming",
           error: null,
+          errorKind: null,
           requestId: null,
           // Stamp what this prompt was built from, so a later approval can tell
           // whether the script has moved on since.
@@ -525,6 +527,7 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
         patchMeta(key, {
           status: "error",
           error: err instanceof Error ? err.message : String(err),
+          errorKind: null,
           requestId: null,
         });
       }

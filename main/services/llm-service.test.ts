@@ -317,6 +317,46 @@ describe("chat() streaming", () => {
   // connection. It guessed at two causes and gave no way to tell them apart —
   // for a prompt that measured ~780 tokens, both guesses were wrong.
 
+  it("labels an empty response by KIND, so the UI can't offer connection advice", async () => {
+    // The shipped bug this prevents: the renderer picked its fix-it hint by
+    // regex-matching the message, and this message contains the word "timeout"
+    // while explicitly denying one — so it got "check the connection" appended
+    // and contradicted itself in the same paragraph. The kind travels with the
+    // error now, and it is NOT "connection".
+    const { events } = await collect(["data: [DONE]"]);
+    const final = last(events);
+    expect(final?.channel).toBe("llm:error");
+    expect(final?.payload.kind).toBe("empty-response");
+  });
+
+  it("labels a transport failure as a connection error", async () => {
+    sentEvents.length = 0;
+    failFetch("fetch failed");
+    await llmService.chat({
+      messages: [{ role: "user", content: "hi" }],
+      provider: "lmstudio",
+      model: "test-model",
+    });
+    for (let i = 0; i < 200; i++) {
+      if (sentEvents.some((e) => e.channel === "llm:error")) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const final = last([...sentEvents]);
+    expect(final?.payload.kind).toBe("connection");
+  });
+
+  it("labels a missing model selection so the hint points at the model setting", async () => {
+    sentEvents.length = 0;
+    await llmService.chat({
+      messages: [{ role: "user", content: "hi" }],
+      provider: "lmstudio",
+      model: "",
+    });
+    const final = last([...sentEvents]);
+    expect(final?.channel).toBe("llm:error");
+    expect(final?.payload.kind).toBe("no-model");
+  });
+
   it("says a content-less stream completed rather than implying it was cut off", async () => {
     const { events } = await collect([
       `data: ${JSON.stringify({ choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}`,

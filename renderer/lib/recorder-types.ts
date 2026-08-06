@@ -1,5 +1,7 @@
 // Mirror of main/recorder/types.ts for the renderer. Keep shapes in sync.
 
+import type { LlmErrorKind } from "./llm-types";
+
 export type StepType =
   | "goto"
   | "click"
@@ -786,6 +788,10 @@ export interface AiDebugSession {
   content: string;
   reasoning: string;
   error: string | null;
+  /** Which kind of failure `error` was, so the UI offers the right fix without
+   *  re-deriving it from the message text. Absent on sessions stored before
+   *  kinds existed. */
+  errorKind?: LlmErrorKind | null;
   requestId: string | null;
   scriptHash: string | null;
   startedAt: number;

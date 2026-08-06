@@ -42,6 +42,29 @@ export interface LlmConfig {
   baseUrls: Partial<Record<LlmProvider, string>>;
 }
 
+/** Why a chat request failed, decided by the code that KNOWS — not inferred
+ *  downstream from the message text.
+ *
+ *  The renderer appends "and here is where to fix it" hints, and it used to
+ *  pick which hint by regex-matching the message. That misfires whenever a
+ *  message legitimately contains a trigger word: an empty-response message
+ *  saying "this is not a connection or timeout problem" matched /timeout/ and
+ *  had "check the connection" appended to it, contradicting itself in the same
+ *  paragraph. The kind travels with the error so the two can't disagree. */
+export type LlmErrorKind =
+  /** No model configured yet. */
+  | "no-model"
+  /** Missing/rejected credentials. */
+  | "auth"
+  /** The model could not be loaded or found by the provider. */
+  | "model-unavailable"
+  /** The provider answered, but with a failure of its own. */
+  | "provider"
+  /** The stream completed without producing any answer. */
+  | "empty-response"
+  /** We never got a usable response — server down, DNS, timeout, abort. */
+  | "connection";
+
 /** Parameters for a streaming chat completion. */
 export interface LlmChatParams {
   messages: LlmMessage[];

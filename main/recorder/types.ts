@@ -1,5 +1,7 @@
 // Shared recorder data model (backend). Mirror kept in renderer/lib/recorder-types.ts.
 
+import type { LlmErrorKind } from "../services/llm/types.js";
+
 export type StepType =
   | "goto"
   | "click"
@@ -947,6 +949,10 @@ export interface AiDebugSession {
   content: string;
   reasoning: string;
   error: string | null;
+  /** Which kind of failure `error` was, so the UI offers the right fix without
+   *  re-deriving it from the message text. Absent on sessions stored before
+   *  kinds existed. */
+  errorKind?: LlmErrorKind | null;
   /** Backend llm request id while streaming; null once terminal. Owning this is
    *  what makes an orphaned request cancellable. */
   requestId: string | null;

@@ -818,7 +818,7 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                 <div className="flex flex-col gap-1 p-3">
                   {status === "error" && session?.error ? (
                     <pre className="text-small overflow-x-auto whitespace-pre-wrap break-words text-primary">
-                      {friendlyError(session.error)}
+                      {friendlyError(session.error, session.errorKind)}
                     </pre>
                   ) : content ? (
                     segments.map((seg, i) =>
@@ -1017,7 +1017,7 @@ export function StepAiDebugDialog({ sessionKey }: { sessionKey: string }) {
             <div className="flex flex-col gap-1 p-3">
               {status === "error" && session?.error ? (
                 <pre className="text-small overflow-x-auto whitespace-pre-wrap break-words text-primary">
-                  {friendlyError(session.error)}
+                  {friendlyError(session.error, session.errorKind)}
                 </pre>
               ) : content ? (
                 segments.map((seg, i) =>

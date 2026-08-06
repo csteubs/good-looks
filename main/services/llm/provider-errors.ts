@@ -17,7 +17,7 @@
 //
 // Pure and dependency-free so it can be tested without a provider.
 
-import type { LlmProvider } from "./types.js";
+import type { LlmErrorKind, LlmProvider } from "./types.js";
 
 /** An error body long enough to be an HTML page rather than a message. Past
  *  this we keep a prefix — a wall of markup helps nobody, but the opening of a
@@ -35,9 +35,11 @@ const MAX_DETAIL = 300;
  *  "Make sure LM Studio is running" — sending the user after a server that is
  *  up and answering. */
 export class ProviderError extends Error {
-  constructor(message: string) {
+  readonly kind: LlmErrorKind;
+  constructor(message: string, kind: LlmErrorKind) {
     super(message);
     this.name = "ProviderError";
+    this.kind = kind;
   }
 }
 
@@ -112,38 +114,54 @@ function modelHint(provider: LlmProvider, model: string): string {
   return "Pick a different model.";
 }
 
-/** Build the message shown in the AI panel for a non-2xx chat response. */
+/** Build the message shown in the AI panel for a non-2xx chat response, with
+ *  the kind that decides which fix-it hint the renderer offers. Returned
+ *  together so the two can never be derived from each other and drift. */
 export function describeHttpFailure(opts: {
   status: number;
   body: string;
   provider: LlmProvider;
   model: string;
-}): string {
+}): { message: string; kind: LlmErrorKind } {
   const { status, body, provider, model } = opts;
   const label = providerLabel(provider);
   const detail = extractProviderMessage(body);
 
   if (status === 401 || status === 403) {
-    return provider === "anthropic"
-      ? "Claude rejected the API key. Check it in Settings → AI provider."
-      : `${label} rejected the request as unauthorized (HTTP ${status}).${detail ? ` ${detail}` : ""}`;
+    return {
+      kind: "auth",
+      message:
+        provider === "anthropic"
+          ? "Claude rejected the API key."
+          : `${label} rejected the request as unauthorized (HTTP ${status}).${detail ? ` ${detail}` : ""}`,
+    };
   }
 
   if (detail && isModelUnavailable(detail)) {
     // Lead with the actionable sentence; keep the provider's own words after
     // it, because the specific reason ("LM Link connection closed", out of
     // memory, wrong quantization) is what makes it fixable.
-    return `${label} couldn't load the model "${model}". ${modelHint(provider, model)} ${label} said: ${detail}`;
+    return {
+      kind: "model-unavailable",
+      message: `${label} couldn't load the model "${model}". ${modelHint(provider, model)} ${label} said: ${detail}`,
+    };
   }
 
   if (status === 404) {
-    return `${label} has no endpoint at that address (HTTP 404). Check the server URL in Settings → AI provider.${
-      detail ? ` ${label} said: ${detail}` : ""
-    }`;
+    return {
+      kind: "connection",
+      message: `${label} has no endpoint at that address (HTTP 404). Check the server URL.${
+        detail ? ` ${label} said: ${detail}` : ""
+      }`,
+    };
   }
 
-  if (detail) return `${label} couldn't run this request. ${detail}`;
-  return `${label} couldn't run this request (HTTP ${status}).`;
+  return {
+    kind: "provider",
+    message: detail
+      ? `${label} couldn't run this request. ${detail}`
+      : `${label} couldn't run this request (HTTP ${status}).`,
+  };
 }
 
 // ── Empty responses ──────────────────────────────────────────────────

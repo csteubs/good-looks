@@ -79,7 +79,7 @@ export function GenerateTestDialog({
 }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { content, status, error, start, stop } = useLlmChat();
+  const { content, status, error, errorKind, start, stop } = useLlmChat();
 
   const [prompt, setPrompt] = React.useState("");
   const [name, setName] = React.useState("");
@@ -322,7 +322,7 @@ export function GenerateTestDialog({
           >
             <div className="flex flex-col gap-1 p-3">
               {status === "error" && error ? (
-                <pre className="text-small whitespace-pre-wrap break-words text-primary">{friendlyError(error)}</pre>
+                <pre className="text-small whitespace-pre-wrap break-words text-primary">{friendlyError(error, errorKind)}</pre>
               ) : content ? (
                 segments.map((seg, i) =>
                   seg.type === "code" ? (

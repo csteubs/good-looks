@@ -5,7 +5,7 @@
 import * as React from "react";
 
 import { api } from "./api";
-import type { LlmMessage, LlmProvider } from "./llm-types";
+import type { LlmErrorKind, LlmMessage, LlmProvider } from "./llm-types";
 
 export type LlmChatStatus = "idle" | "streaming" | "done" | "error" | "cancelled";
 
@@ -17,6 +17,9 @@ export function useLlmChat() {
   const [reasoning, setReasoning] = React.useState("");
   const [status, setStatus] = React.useState<LlmChatStatus>("idle");
   const [error, setError] = React.useState<string | null>(null);
+  // Which kind of failure, so the UI picks a fix-it hint from the error itself
+  // rather than guessing from its wording.
+  const [errorKind, setErrorKind] = React.useState<LlmErrorKind | null>(null);
   const requestIdRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
@@ -32,11 +35,15 @@ export function useLlmChat() {
       if (requestId !== requestIdRef.current) return;
       setStatus(cancelled ? "cancelled" : "done");
     });
-    const offError = api.on<{ requestId: string; message: string }>("llm:error", ({ requestId, message }) => {
-      if (requestId !== requestIdRef.current) return;
-      setStatus("error");
-      setError(message);
-    });
+    const offError = api.on<{ requestId: string; message: string; kind?: LlmErrorKind }>(
+      "llm:error",
+      ({ requestId, message, kind }) => {
+        if (requestId !== requestIdRef.current) return;
+        setStatus("error");
+        setError(message);
+        setErrorKind(kind ?? null);
+      },
+    );
     return () => {
       offChunk();
       offDone();
@@ -53,6 +60,7 @@ export function useLlmChat() {
       setContent("");
       setReasoning("");
       setError(null);
+      setErrorKind(null);
       setStatus("streaming");
       try {
         const { requestId } = await api.llm.chat({ messages, ...options });
@@ -60,6 +68,7 @@ export function useLlmChat() {
       } catch (err) {
         setStatus("error");
         setError(err instanceof Error ? err.message : String(err));
+        setErrorKind(null);
       }
     },
     [],
@@ -69,5 +78,5 @@ export function useLlmChat() {
     if (requestIdRef.current) void api.llm.cancel(requestIdRef.current);
   }, []);
 
-  return { content, reasoning, status, error, start, stop };
+  return { content, reasoning, status, error, errorKind, start, stop };
 }
