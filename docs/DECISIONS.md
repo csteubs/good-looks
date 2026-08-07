@@ -16,6 +16,72 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-06 — Deleting a tag, from the Batch view's tag cluster
+
+**Goal:** Tags could be created and edited (sidebar → Edit Tags…) but never
+removed from the library. A typo or an abandoned grouping stayed in the chip row
+forever, and clearing it meant opening every test that carried it — which is
+also how you'd never be sure you got them all.
+
+**What was done:** The Batch view's chip row moved to `renderer/main/tag-cluster.tsx`
+as a bordered cluster, each real tag carrying an X behind a confirmation that
+states how many tests use it and names them. New `tests:deleteTag` handler over
+a new `testStore.removeTag`.
+
+**Key decisions:**
+
+1. **Delete lives with the tag vocabulary, create lives with the test.** Creating
+   stayed in the sidebar dialog — that's where you know which test you're
+   labelling. Deleting is library-wide, and the cluster is the only place the
+   whole vocabulary is visible at once *with counts*, which is what makes the
+   scope of the act legible.
+
+2. **The count is the point of the confirmation, not politeness.** A tag is the
+   batch's grouping key: deleting one silently re-scopes what "run smoke" means.
+   And unlike editing one test's tags, it can't be undone by re-typing — the tag
+   is gone from N tests and nothing remembers which. So the dialog leads with the
+   count and lists the affected test names (capped at 8, then "+N more").
+
+3. **One backend call, not a renderer loop over `tests:setTags`.** A loop
+   rewrites `tests.json` once per test and can strand the tag on half the library
+   if a call fails partway. `removeTag` does one `writeAll`.
+
+4. **Hidden tests are included, and that's why the toast doesn't echo the
+   preview.** `testStore.list()` filters hidden tests out, so a tag left on one is
+   invisible right up until the test is unhidden — at which point a deleted tag
+   reappears. `removeTag` therefore reads through `readAll()`. The renderer can't
+   see those tests, so its dialog count is a lower bound; the toast reports the
+   backend's real number instead of repeating what it guessed.
+
+5. **Matching is case-insensitive**, because `tagCounts` groups `smoke` and
+   `Smoke` into one chip. Deleting that chip case-sensitively would leave the
+   other spelling behind and the chip would return with a count of 1.
+
+6. **The X is a sibling button, not nested in the filter button.** A `<button>`
+   inside a `<button>` is invalid markup that swallows the inner click, so the
+   chip is a `<span>` holding both. The X is also the `AlertDialog`'s own trigger,
+   which means no open-state to keep in sync and focus returns to the chip on
+   cancel.
+
+7. **Visible at rest, not revealed on hover.** A hover-only X on a pill this
+   small is undiscoverable, and it's the entire affordance. It stays muted next
+   to the count; the red wash on its own hover is what carries "destructive".
+
+**Incidental finding:** the `border-token-border` / `bg-token-surface-raised` /
+`bg-token-hover` class names used throughout `renderer/` are **not** utilities the
+design system defines — they generate no CSS and have been silently doing nothing.
+Verified against the built stylesheet. The real names are `border-secondary`,
+`bg-well`/`bg-panel`, `bg-list-hover`, etc. `tag-cluster.tsx` uses the real ones;
+the rest of the renderer was left alone as out of scope.
+
+**Verification:** `handlers.test.ts` gained 5 tests for `tests:deleteTag`
+(case-insensitive removal, hidden tests, canonicalization, hostile input, unused
+tag) and `tag-cluster.test.tsx` 12 for the UI. Both suites were confirmed to fail
+against reverted behaviour: injecting an X that deletes without confirming, an X
+on "All", a case-sensitive count, and a toast echoing the preview each broke the
+test that guards it. Rendered against the real built stylesheet in light and dark
+to confirm the cluster and the X's states read correctly.
+
 ### 2026-08-06 — Showing which steps an AI change added
 
 **Symptom:** applying an AI-debug fix rewrote the spec, and the Steps tab quietly re-rendered a different list. Right steps, right order, no error — and nothing at all saying what had changed. The apply usually happens from the AI panel while the user is looking at the Run tab, so by the time they reach Steps the change is already history. Inserting an AI-generated flow in the trainer had the same shape: the list just got longer, often past the scroll.

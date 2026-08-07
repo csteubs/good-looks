@@ -167,6 +167,39 @@ export const testStore = {
     writeAll(all.filter((t) => t.id !== id));
   },
 
+  /** Strip a tag from every record that carries it, in ONE write. Returns how
+   *  many records changed.
+   *
+   *  Case-insensitive, matching how tags are grouped everywhere else: the UI
+   *  shows `smoke` and `Smoke` as a single chip, so deleting that chip has to
+   *  take both — otherwise it reappears the moment the query refetches, with a
+   *  count nobody can explain.
+   *
+   *  Reads through `readAll()` rather than `list()` on purpose: `list()` hides
+   *  hidden tests, and a tag left on one would be invisible right up until the
+   *  test was unhidden, at which point a supposedly deleted tag comes back.
+   *
+   *  One `writeAll` rather than N `save()` calls, so the deletion can't land on
+   *  half the library. */
+  removeTag(tag: string): number {
+    const key = tag.trim().toLowerCase();
+    if (!key) return 0;
+    const all = readAll();
+    const now = Date.now();
+    let changed = 0;
+    for (const rec of all) {
+      const before = rec.tags ?? [];
+      const kept = before.filter((t) => t.toLowerCase() !== key);
+      if (kept.length === before.length) continue;
+      rec.tags = kept;
+      rec.updatedAt = now;
+      changed++;
+    }
+    if (changed > 0) writeAll(all);
+    logger.info("recorder", "Deleted tag", { tag, changed });
+    return changed;
+  },
+
   /** Toggle a test's visibility in the sidebar without touching its files. */
   setHidden(id: string, hidden: boolean): void {
     const all = readAll();

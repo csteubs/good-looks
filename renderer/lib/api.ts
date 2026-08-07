@@ -169,6 +169,12 @@ export const api = {
       ipc().invoke<TestRecord>("tests:setBrowser", { id, runBrowser }),
     setTags: (id: string, tags: string[]) =>
       ipc().invoke<TestRecord>("tests:setTags", { id, tags }),
+    /** Remove a tag from every test that carries it (case-insensitive, hidden
+     *  tests included). Returns the canonical tag and how many records actually
+     *  changed — which can EXCEED what the UI counted, since the library the
+     *  renderer sees excludes hidden tests. */
+    deleteTag: (tag: string) =>
+      ipc().invoke<{ tag: string; removed: number }>("tests:deleteTag", { tag }),
     setHidden: (id: string, hidden: boolean) =>
       ipc().invoke<TestRecord | null>("tests:setHidden", { id, hidden }),
     setA11yChecks: (id: string, a11yChecks: boolean) =>
