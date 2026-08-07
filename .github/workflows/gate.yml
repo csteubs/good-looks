@@ -1,0 +1,131 @@
+name: Gate
+
+# The real gate — lint, type-check, the full test suite, and the build — running
+# on a hosted runner. This is what the Glaze tree could not do: `@glaze/core`
+# resolved to the Glaze.app SDK install outside the repo, so every one of these
+# commands failed there for reasons unrelated to the change under review, and
+# the merge gate was a checkbox in the pull request template instead.
+#
+# This branch has no dependency outside node_modules, so all of it runs here.
+
+on:
+  push:
+    branches: [main, shell/electron]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same ref makes the in-flight run irrelevant. Without this,
+# a branch pushed three times in a minute holds three macOS runners.
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Ubuntu on purpose: macOS runner minutes bill at roughly ten times the Linux
+  # rate, and nothing in this job is platform-specific — there is no
+  # `process.platform` branch anywhere under main/, renderer/ or mcp/, and the
+  # one place that reasons about macOS path aliasing (import-service's
+  # /var -> /private/var realpath handling) is written to be correct on a
+  # platform where that aliasing does not exist.
+  #
+  # The macOS-specific paths are still covered: `package` below runs
+  # `npm run build` on macOS before packaging.
+  gate:
+    name: Lint, type-check, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # `npm ci` triggers the postinstall that fetches the Electron binary
+      # (~100 MB). setup-node's cache covers ~/.npm but not this, and it is the
+      # slowest step in the job by a wide margin.
+      - name: Cache Electron binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
+
+      - run: npm ci
+
+      # Run separately rather than chained with && so a failure names the step
+      # that failed in the UI instead of collapsing into one red block.
+      - run: npm run lint
+      - run: npm run type-check
+      - run: npm run test:all
+      - run: npm run build
+
+  # macOS because the app is a macOS app: electron-builder targets it, and the
+  # end-to-end suite launches a real Electron process with real windows. This
+  # job is also where `npm run build` gets exercised on macOS, which is why the
+  # ubuntu job above is a safe place to run everything else.
+  package:
+    name: End-to-end and package
+    runs-on: macos-latest
+    needs: gate
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Cache Electron binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
+
+      - run: npm ci
+
+      - run: npm run build
+
+      # The only tests that boot the app: custom scheme, preload bridge, real
+      # windows. jsdom cannot reach any of it, so a break here is invisible to
+      # the ubuntu job however green it is.
+      - run: npx playwright test --config e2e/playwright.config.ts
+
+      # Traces and screenshots for the failures, which is the whole reason
+      # `trace: retain-on-failure` is set. Without this the report dies with
+      # the runner and a CI-only failure has to be reproduced blind.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+      - run: npx electron-builder --mac --dir
+
+      # `ditto` rather than handing the .app to upload-artifact directly: the
+      # bundle's Frameworks directory is a nest of symlinks, and the action
+      # dereferences them — which both breaks the bundle and multiplies its
+      # size. A ditto archive is also what macOS itself expects, so the
+      # download unzips into something Gatekeeper will treat normally.
+      - name: Archive the bundle
+        run: ditto -c -k --keepParent "dist/mac-arm64/Good Looks!.app" good-looks-mac-arm64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: good-looks-${{ github.event.pull_request.number || github.ref_name }}-mac-arm64
+          path: good-looks-mac-arm64.zip
+          # A preview build is interesting while its pull request is open and
+          # noise afterwards.
+          retention-days: 7
+          if-no-files-found: error

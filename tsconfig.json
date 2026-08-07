@@ -34,5 +34,5 @@
       "@shell/backend": ["./main/shell/backend"]
     }
   },
-  "include": ["renderer", "main", "mcp"]
+  "include": ["renderer", "main", "mcp", "e2e"]
 }
