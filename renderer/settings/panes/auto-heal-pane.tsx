@@ -9,13 +9,21 @@
 // The parameters unmount when Auto-Heal is off. They used to sit there
 // editable, writing settings that nothing would read.
 
-import { Input, Switch } from "@glaze/core/components";
+import { NumberInput, Switch } from "@glaze/core/components";
 
 import type { HealApplyMode } from "../../lib/recorder-types";
 import { clampHealRetries, clampHealTimeoutMs } from "../../lib/settings-schema";
 import { useSettingsController } from "../settings-controller";
 import { SettingRow, useRowVisible } from "../setting-row";
 import { PaneSection } from "../pane-section";
+
+// Both parameter controls share one width so their edges line up. "ms" used to
+// be a `<span>` OUTSIDE the input; because the row right-aligns its control,
+// that span pushed the field left by its own width and the two inputs sat on
+// different vertical lines. `NumberInput`'s `unit` renders the suffix INSIDE
+// the control, so the field is the whole control again and equal widths are
+// enough. Same fix as `storage-pane.tsx`; see DECISIONS 2026-08-07.
+const PARAM_CONTROL_WIDTH = "w-32";
 
 export function AutoHealPane() {
   const { settings, save } = useSettingsController();
@@ -63,15 +71,14 @@ export function AutoHealPane() {
           nested
           summary="How many times the engine retries finding candidates before giving up (1–10)."
         >
-          <Input
+          <NumberInput
             id="auto-heal-retries"
-            type="number"
             min={1}
             max={10}
             step={1}
-            className="w-24"
+            className={PARAM_CONTROL_WIDTH}
             value={settings.autoHealRetries ?? 3}
-            onChange={(e) => void save({ autoHealRetries: clampHealRetries(e.target.value) })}
+            onValueChange={(v) => void save({ autoHealRetries: clampHealRetries(v ?? "") })}
           />
         </SettingRow>
       ) : null}
@@ -83,22 +90,22 @@ export function AutoHealPane() {
           nested
           summary="How long to wait before a single heal attempt is considered timed out (1000–30000 ms)."
         >
-          <div className="flex items-center gap-2">
-            <Input
-              id="auto-heal-timeout"
-              type="number"
-              min={1000}
-              max={30000}
-              step={500}
-              className="w-32"
-              value={settings.autoHealAttemptTimeoutMs ?? 4000}
-              onChange={(e) =>
-                void save({ autoHealAttemptTimeoutMs: clampHealTimeoutMs(e.target.value) })
-              }
-              aria-label="Per-attempt timeout in milliseconds"
-            />
-            <span className="text-secondary text-sm">ms</span>
-          </div>
+          <NumberInput
+            id="auto-heal-timeout"
+            min={1000}
+            max={30000}
+            step={500}
+            unit="ms"
+            className={PARAM_CONTROL_WIDTH}
+            value={settings.autoHealAttemptTimeoutMs ?? 4000}
+            onValueChange={(v) =>
+              void save({ autoHealAttemptTimeoutMs: clampHealTimeoutMs(v ?? "") })
+            }
+            // The unit is `aria-hidden` decoration, so the accessible name has
+            // to say "milliseconds" itself — otherwise the label reads
+            // "Per-attempt timeout" with no unit anywhere a screen reader sees.
+            aria-label="Per-attempt timeout in milliseconds"
+          />
         </SettingRow>
       ) : null}
     </PaneSection>

@@ -106,6 +106,29 @@ describe("retention limits", () => {
     expect(savedPatch(controller)).toEqual({ artifactRetentionDays: 365 });
   });
 
+  it("keeps the days unit inside the control, at the same width as the row above", () => {
+    // The unit used to be a sibling `<span>`. Because the row right-aligns its
+    // control, that span displaced the field leftward by its own width and the
+    // two inputs in this section stopped lining up. jsdom cannot measure that,
+    // so pin the two things that cause it: the unit lives inside the control,
+    // and both controls declare the same width.
+    const { container } = renderPane(<StoragePane />);
+    const days = container.querySelector('[data-setting-row="artifact-retention-days"]');
+    const runs = container.querySelector('[data-setting-row="artifact-retained-runs"]');
+
+    const unit = days?.querySelector('[data-slot="number-input-unit"]');
+    expect(unit?.textContent).toBe("days");
+    // Inside the control, not beside it.
+    expect(unit?.closest('[data-slot="number-input"]')).not.toBeNull();
+
+    const width = (el: Element | null | undefined) =>
+      Array.from(el?.querySelector('[data-slot="number-input"]')?.classList ?? []).filter((c) =>
+        c.startsWith("w-"),
+      );
+    expect(width(days)).toEqual(width(runs));
+    expect(width(days).length).toBeGreaterThan(0);
+  });
+
   it("says the two rules are an AND, and that baselines are exempt", () => {
     // Both facts used to be repeated across two row descriptions; the section
     // description now carries them once.

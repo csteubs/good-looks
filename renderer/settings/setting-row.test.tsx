@@ -201,6 +201,41 @@ describe("nested rows", () => {
   });
 });
 
+describe("stacked rows", () => {
+  it("puts the control below the text rather than beside it", () => {
+    // jsdom has no layout engine, so the only observable difference is the
+    // orientation the Field is asked for. That IS the contract: horizontal is
+    // what squeezed the webhook row's label into a one-word-per-line ribbon.
+    const { container } = render(
+      <SettingRow id="x" label="Webhook URL" stacked>
+        <Switch id="x" />
+      </SettingRow>,
+    );
+    const row = container.querySelector('[data-setting-row="x"]');
+    expect(row?.getAttribute("data-orientation")).toBe("vertical");
+  });
+
+  it("leaves an ordinary row horizontal", () => {
+    const { container } = render(
+      <SettingRow id="x" label="Run headless">
+        <Switch id="x" />
+      </SettingRow>,
+    );
+    expect(container.querySelector('[data-setting-row="x"]')?.getAttribute("data-orientation")).toBe(
+      "horizontal",
+    );
+  });
+
+  it("still renders the control", () => {
+    render(
+      <SettingRow id="x" label="Webhook URL" stacked>
+        <Switch id="x" />
+      </SettingRow>,
+    );
+    expect(screen.getByRole("switch")).toBeTruthy();
+  });
+});
+
 describe("search filtering", () => {
   it("renders every row when no search is active", () => {
     render(
