@@ -82,6 +82,30 @@ on "All", a case-sensitive count, and a toast echoing the preview each broke the
 test that guards it. Rendered against the real built stylesheet in light and dark
 to confirm the cluster and the X's states read correctly.
 
+### 2026-08-06 — Showing which steps an AI change added
+
+**Symptom:** applying an AI-debug fix rewrote the spec, and the Steps tab quietly re-rendered a different list. Right steps, right order, no error — and nothing at all saying what had changed. The apply usually happens from the AI panel while the user is looking at the Run tab, so by the time they reach Steps the change is already history. Inserting an AI-generated flow in the trainer had the same shape: the list just got longer, often past the scroll.
+
+**Why the diff has to be content-based.** `tests:updateScript` re-parses the whole spec, and `spec-parser.ts`'s `makeStep` calls `randomUUID()` for **every** step on **every** parse. After an apply that changed one line, all N ids differ — so a diff by id marks the entire list as new, which is exactly as uninformative as marking none of it. The only thing that survives an apply is what a step *says*, so `renderer/lib/diff-steps.ts` compares an explicit signature of the user-visible fields. The alternative — making the parser preserve ids — was rejected: it would put the burden of a display concern on the security-sensitive parse path, and id stability across a re-parse is a much stronger claim than this feature needs.
+
+**The signature is a field list, not "the step minus id and timestamp".** Both directions have a failure mode; they are not symmetric. Enumerating means a field added to `Step` later is invisible to the diff — a *missed* highlight, which degrades to today's behaviour. Stripping means every future field is automatically significant, so one backend field that happens to be recomputed on parse would light up every row, permanently, with no obvious cause. A quiet under-report beats a loud wrong one.
+
+**Moves are cancelled against removals, one for one.** The bare LCS reports a reordered step as a removal plus an addition, so dragging a row would have claimed the AI added it. Each addition cancels against at most one identical removal — a `Set.has` would have swallowed a genuinely new duplicate whose twin happened to move in the same pass.
+
+**A substitution glows its replacement.** The most common AI fix is a swapped selector, and the resulting step is one the user has not seen. Counting it as "the same step, edited" would hide precisely the row they need to look at.
+
+**Deletions are unstyled, deliberately.** There is no row left to decorate, and decorating the neighbours would point at the wrong step. The step count on the tab is what carries removals — for additions, deletions and substitutions alike.
+
+**Inset outline, not border, and only `outline-color` animates.** Both were bugs before they were decisions. A real border participates in layout, so rows jump by 2px when the highlight clears, and it collides with the drag-over `border-t-2` on the same element at equal specificity — decided by stylesheet order rather than intent. And an earlier version pulsed a `box-shadow` glow, which silently erased the selection and run-status highlights: those are `ring-*` box-shadows, and an animation owns the whole property. Animating something nothing else uses is what lets a step be new **and** failing at once — the single most interesting row on the screen, where neither highlight may hide the other.
+
+**Not on a timer.** The obvious design is to fade the highlight after a few seconds. That fails the actual usage: the apply happens on a different tab, so the timer would expire before the user ever looked. It clears when the claim stops being true instead — the next apply, a hand edit of the steps, a new recording session.
+
+**Generated steps get their own insert path.** `insertStep` *clears* the highlight, because a hand edit retires it; routing AI-generated steps through it would leave them unmarked however good the diff is. `insertGeneratedSteps` sends them sequentially (each insert lands at the session cursor and advances it) and then re-reads `getSteps()` rather than waiting on the `recorder:steps` push — invoke replies and pushes are different channels with no ordering guarantee, and a diff run a beat early marks only the first inserted step. It diffs what actually landed, since backend normalization can reject a step the model produced.
+
+**Found while wiring it:** the Steps tab trigger is gated on the list being non-empty, and `TabsRoot` was uncontrolled. An apply that deleted every step removed the trigger while its content stayed selected, leaving an empty pane with nothing active in the tab bar. The tabs are now controlled with a fallback to Script.
+
+Guarded by `renderer/lib/diff-steps.test.ts`, the new blocks in `step-row.test.tsx` / `test-detail-view.test.tsx` / `recorder-store.test.tsx` / `recording-view.test.tsx` / `ai-debug-icons.test.tsx`, and `check:step-glow` — which pins the stylesheet, the outline-not-border and outline-color-only choices, and the insert-path wiring, none of which jsdom can observe.
+
 ### 2026-08-06 — Window size preset in the New Recording dialog
 
 **Symptom:** the New Recording dialog asked for a URL, a test name and a run speed, and gave no way to say how big the browser window should be. Every manual recording was made in one fixed 1200×820 window, so a mobile or tablet flow could not be recorded at all.

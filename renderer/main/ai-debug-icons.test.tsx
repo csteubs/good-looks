@@ -452,3 +452,86 @@ describe("the global chip", () => {
     );
   });
 });
+
+// ── Applying a fix must not disturb the icon ─────────────────────────
+//
+// The new-step highlight hangs off the apply path, one call away from the
+// session whose colour this suite exists to protect. Applying re-runs the
+// view's `runContext` memo (the apply handler is one of its inputs) and
+// re-attaches it, so every apply now pushes a fresh context object at a
+// finished session. If that ever moved the session — status reset, icon
+// re-rendered from scratch — the failure is silent in both directions: orange
+// on a finished job leaves the user waiting on nothing, and a lost green loses
+// them an answer they asked for.
+
+describe("applying a suggested fix", () => {
+  function renderFinishedSession() {
+    h.listResult = [session({ status: "done" })];
+    return render(
+      <AiDebugProvider>
+        <Capture />
+        <TestPanel testId="t1" />
+      </AiDebugProvider>,
+    );
+  }
+
+  const freshContext = (script: string) => ({
+    kind: "run" as const,
+    testName: "Checkout",
+    testUrl: "https://example.com",
+    script,
+    output: "",
+    imported: false,
+    onApplyScript: async () => {},
+  });
+
+  it("leaves a finished session reading as ready for review", async () => {
+    renderFinishedSession();
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    const before = iconClassOf(toneFor("done").label);
+    expect(before).toContain("text-support-green");
+
+    // What the view does after writing the script: hand the session the newly
+    // current script so a later diff is computed against what is really there.
+    act(() => store.attachContext(runSessionKey("t1"), freshContext("// corrected")));
+
+    expect(store.sessions.find((x) => x.key === runSessionKey("t1"))?.status).toBe("done");
+    expect(iconClassOf(toneFor("done").label)).toBe(before);
+  });
+
+  it("keeps a live job reading as still working", async () => {
+    // The other direction: an apply can land while a SECOND question is
+    // streaming, and must not flip that job to a finished colour.
+    h.listResult = [session({ status: "streaming" })];
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <TestPanel testId="t1" />
+      </AiDebugProvider>,
+    );
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    const before = iconClassOf(toneFor("streaming").label);
+    expect(before).toContain("text-support-orange");
+
+    act(() => store.attachContext(runSessionKey("t1"), freshContext("// corrected")));
+
+    expect(store.sessions.find((x) => x.key === runSessionKey("t1"))?.status).toBe("streaming");
+    expect(iconClassOf(toneFor("streaming").label)).toBe(before);
+  });
+
+  it("does not put a discarded session back on screen", async () => {
+    // The view re-attaches on every render, including renders that happen
+    // after the user discarded the job. Attaching must not be able to create
+    // a session, or a stale icon reappears with no way to get rid of it.
+    renderFinishedSession();
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+
+    act(() => store.discard(runSessionKey("t1")));
+    expect(store.sessions).toHaveLength(0);
+
+    act(() => store.attachContext(runSessionKey("t1"), freshContext("// corrected")));
+
+    expect(store.sessions).toHaveLength(0);
+    expect(screen.queryByLabelText(toneFor("done").label)).toBeNull();
+  });
+});
