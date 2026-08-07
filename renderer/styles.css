@@ -66,3 +66,69 @@
     animation: none;
   }
 }
+
+/**
+ * Replay outcome: the row that JUST ran, and whether it passed.
+ *
+ * Same mechanism as `.step-new` above and for the same reasons — `outline`
+ * rather than `border` (a border shifts the row 2px and fights the drag-over
+ * border utility on the same element), negative offset so it sits inside the
+ * rounded corners, and an animation that touches ONLY `outline-color` so the
+ * `ring-*` selection and run-status box-shadows survive underneath it.
+ *
+ * WHERE THIS DIFFERS FROM `.step-new`: it is ephemeral. `.step-new` says "an AI
+ * change put this row here" and holds until the list changes again; this says
+ * "this ran, just now" and clears itself after REPLAY_FLASH_MS. So it fades in
+ * one shot rather than pulsing forever — a pulse that only lives 2.5s reads as
+ * a flicker, and the fade is what makes the row's return to normal look
+ * deliberate instead of like the highlight failing.
+ *
+ * A row can be new AND just-replayed, and both draw an outline, so only one can
+ * win — step-row.tsx gives it to the flash while it lasts. That is the right
+ * way round: the outcome is the newer fact and the one the user is waiting on,
+ * and the `.step-new` outline returns underneath when it expires.
+ */
+@keyframes step-replay-pass {
+  0% {
+    outline-color: var(--color-support-green);
+  }
+  70% {
+    outline-color: var(--color-support-green);
+  }
+  100% {
+    outline-color: var(--color-support-green-40);
+  }
+}
+
+@keyframes step-replay-fail {
+  0% {
+    outline-color: var(--color-support-red);
+  }
+  70% {
+    outline-color: var(--color-support-red);
+  }
+  100% {
+    outline-color: var(--color-support-red-40);
+  }
+}
+
+.step-replay-pass {
+  outline: 1px solid var(--color-support-green);
+  outline-offset: -1px;
+  animation: step-replay-pass 2.5s ease-out 1 forwards;
+}
+
+.step-replay-fail {
+  outline: 1px solid var(--color-support-red);
+  outline-offset: -1px;
+  animation: step-replay-fail 2.5s ease-out 1 forwards;
+}
+
+/* The outline itself stays — it is the whole signal, and unlike the pulse above
+   there is nothing here that repeats. Only the fade is motion. */
+@media (prefers-reduced-motion: reduce) {
+  .step-replay-pass,
+  .step-replay-fail {
+    animation: none;
+  }
+}

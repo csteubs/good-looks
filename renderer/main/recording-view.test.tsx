@@ -99,6 +99,7 @@ function setStore(over: Record<string, unknown> = {}) {
     replayRun: null,
     executing: false,
     replayStepStatus: {},
+    replayFlash: {},
     debugEntries: [],
     picked: null,
     refiningStepId: null,
@@ -437,4 +438,45 @@ describe("steps the AI generated are marked as new", () => {
     expect(glowingRows()).toHaveLength(0);
   });
 
+});
+
+describe("a replay started in the docked panel", () => {
+  // The mirror of the panel's suite. `executing` and `replayRun` only ever get
+  // set in the window that called the store, so a replay launched from the
+  // docked panel leaves this window on "Recording" with every tool live — and
+  // an Add step here inserts into a session that is mid-replay with capture
+  // suspended. `state.replaying` is the backend's broadcast that makes both
+  // windows agree; these tests set it alone, exactly as the backend does.
+
+  it("says Replaying rather than Recording", () => {
+    setStore({ state: state({ replaying: true }) });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.getByText("Replaying")).toBeTruthy();
+    // Deliberately not `queryByText("Recording")`: the window's TOOLBAR TITLE
+    // reads "Recording" for the whole session and is not the status. Asserting
+    // its absence would pass only while the title happened to say something
+    // else, which is a test of the wrong element.
+    expect(screen.queryByText("Replaying")).not.toBe(null);
+  });
+
+  it("still says Running for a real Playwright run", () => {
+    // "Replaying" is specifically the in-window preview. A runner execution is
+    // a different thing with different semantics (a real browser, real
+    // actionability), and collapsing the two labels would hide which one the
+    // user is looking at.
+    setStore({ executing: true });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.getByText("Running")).toBeTruthy();
+  });
+
+  it("disables the tools that would act into the run", () => {
+    setStore({ state: state({ replaying: true }) });
+    render(withAiDebug(<RecordingView />));
+    // Queried by ROLE + accessible name, as the rest of this suite does: the
+    // main window's tools are text-labelled buttons, not the icon-only ones the
+    // narrow docked panel uses.
+    for (const name of [/add step/i, /replay from the current step/i]) {
+      expect(screen.getByRole("button", { name }).hasAttribute("disabled")).toBe(true);
+    }
+  });
 });

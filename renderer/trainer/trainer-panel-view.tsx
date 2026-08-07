@@ -151,6 +151,7 @@ export function TrainerPanelView() {
     replayRun,
     executing,
     replayStepStatus,
+    replayFlash,
     picked,
     refiningStepId,
     startRefine,
@@ -175,7 +176,12 @@ export function TrainerPanelView() {
     prefillValue?: string;
   } | null>(null);
 
-  const running = executing || !!replayRun?.running;
+  // `state.replaying` is what makes this true for a replay started in the MAIN
+  // window: `executing` and `replayRun` are both local to the window that asked
+  // for the run. Without it this panel stays on "Recording" with live controls
+  // while the browser beside it is being driven by a replay. See the mirror of
+  // this comment in recording-view.tsx.
+  const running = executing || !!replayRun?.running || state.replaying;
   // Controls stay inert until the training browser has loaded its first page,
   // until THIS window actually holds the step list, and while a replay is in
   // flight. The steps clause matters for a window that opened mid-session and
@@ -307,7 +313,7 @@ export function TrainerPanelView() {
         ) : !stepsLoaded ? (
           <Status variant="warning">Loading steps…</Status>
         ) : running ? (
-          <Status variant="loading">Running</Status>
+          <Status variant="loading">{state.replaying ? "Replaying" : "Running"}</Status>
         ) : (
           <Status variant={state.paused ? "warning" : "error"}>
             {state.paused ? "Paused" : state.editing ? "Editing" : "Recording"}
@@ -405,6 +411,7 @@ export function TrainerPanelView() {
                     onRefine={controlsDisabled ? undefined : () => startRefine(s.id)}
                     onEdit={controlsDisabled ? undefined : (patch) => updateStep(s.id, patch)}
                     runStatus={replayStepStatus[i]}
+                    replayFlash={replayFlash[i]}
                     isNew={newStepIds.has(s.id)}
                     indent={stepDepths[i]}
                     drag={

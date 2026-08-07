@@ -466,6 +466,7 @@ export function RecordingView() {
     replayRun,
     executing,
     replayStepStatus,
+    replayFlash,
     debugEntries,
     clearDebugEntry,
     picked,
@@ -588,7 +589,15 @@ export function RecordingView() {
   // "Running" covers ANY in-flight replay (single step or from-current), not
   // just the streamed run — so the status reads "Running" and step editing is
   // locked whenever the test is executing.
-  const running = executing || !!replayRun?.running;
+  //
+  // `state.replaying` is the term that makes this true for a replay THIS window
+  // did not start. The other two are local: `executing` is set by this window's
+  // own store call and `replayRun` only streams to the window that asked. With
+  // both trainers open on one session, that left the other one showing
+  // "Recording" with live controls during a run — and an Add step there lands
+  // mid-replay, in a session whose whole premise right now is that capture is
+  // off. The backend broadcasts `replaying` precisely so both windows agree.
+  const running = executing || !!replayRun?.running || state.replaying;
 
   // "Replay from current step": run slowly from the currently selected step
   // (or the first step if none is selected) through the end, streaming each
@@ -718,7 +727,11 @@ export function RecordingView() {
           // being broken. Name the wait instead.
           <Status variant="warning">Loading steps…</Status>
         ) : running ? (
-          <Status variant="loading">Running</Status>
+          // "Replaying" rather than "Running" when the backend says a replay
+          // owns the window: it is the state that explains why capture is off
+          // and why the controls are inert, and it is the one the user just
+          // caused. "Running" stays for a real Playwright run.
+          <Status variant="loading">{state.replaying ? "Replaying" : "Running"}</Status>
         ) : (
           <Status variant={state.paused ? "warning" : "error"}>
             {state.paused ? "Paused" : state.editing ? "Editing" : "Recording"}
@@ -864,6 +877,7 @@ export function RecordingView() {
                     onRefine={controlsDisabled ? undefined : () => startRefine(s.id)}
                     onEdit={controlsDisabled ? undefined : (patch) => updateStep(s.id, patch)}
                     runStatus={replayStepStatus[i]}
+                    replayFlash={replayFlash[i]}
                     isNew={newStepIds.has(s.id)}
                     indent={stepDepths[i]}
                     drag={controlsDisabled ? undefined : {

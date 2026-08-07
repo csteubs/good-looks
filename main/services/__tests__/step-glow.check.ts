@@ -153,6 +153,82 @@ assert(
   "diff-steps.ts: stepSignature ignores step.timestamp, for the same reason as the id",
 );
 
+// ── 6. The replay pass/fail flash ────────────────────────────────────
+//
+// A second outline highlight on the same row, drawn by the same mechanism for
+// the same reasons, and invisible to jsdom for the same reasons. It lives here
+// rather than in its own file because the properties below are not two
+// independent contracts — they are ONE contract about what may draw on a step
+// row, and the way to break it is to add a third highlight that ignores it.
+
+for (const cls of ["step-replay-pass", "step-replay-fail"]) {
+  assert(new RegExp(`\\.${cls}\\s*\\{`).test(css), `styles.css: defines the .${cls} rule`);
+
+  const start = css.indexOf(`.${cls} {`);
+  const flashRule = css.slice(start, css.indexOf("}", start));
+  assert(
+    /outline:/.test(flashRule) && !/(^|\s)border:/.test(flashRule),
+    `.${cls}: draws with outline, not border — same reason as .step-new above (a border shifts ` +
+      "the row and fights the drag-over border utility)",
+  );
+  assert(
+    /outline-offset:\s*-/.test(flashRule),
+    `.${cls}: negative outline-offset, so it sits inside the row's rounded corners`,
+  );
+  assert(
+    /animation:[^;]*forwards/.test(flashRule),
+    `.${cls}: holds its final frame (\`forwards\`) — without it the fade snaps back to full ` +
+      "opacity for the rest of the row's life, which is the opposite of ephemeral",
+  );
+  assert(
+    !/infinite/.test(flashRule),
+    `.${cls}: does NOT loop — this highlight lives ~2.5s, and a pulse that short reads as a ` +
+      "flicker rather than as a state",
+  );
+
+  const kf = css.slice(css.indexOf(`@keyframes ${cls}`), css.indexOf(`.${cls} {`));
+  assert(
+    /outline-color:/.test(kf),
+    `${cls}: animates outline-color`,
+  );
+  assert(
+    !/box-shadow:/.test(kf),
+    `${cls}: animates NO box-shadow — the row's selection and run-status highlights are ` +
+      "box-shadows (ring-*), and an animated box-shadow silently replaces them",
+  );
+}
+
+assert(
+  /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.step-replay-pass[\s\S]*animation:\s*none/.test(css),
+  "styles.css: the replay flash drops its motion under prefers-reduced-motion (the outline stays — " +
+    "it is the whole signal)",
+);
+
+// The component must pick ONE outline. Both .step-new and the flash set
+// `outline`, so a row that is new AND just-replayed would otherwise resolve by
+// stylesheet order — a choice neither caller made, and one that silently
+// changes if the rules are ever reordered.
+assert(
+  /replayFlash\?:\s*"pass"\s*\|\s*"fail"/.test(stepRow),
+  "step-row.tsx: takes a replayFlash prop",
+);
+assert(
+  /data-replay-flash=/.test(stepRow),
+  "step-row.tsx: exposes data-replay-flash, the handle the rendered tests have on the flash",
+);
+assert(
+  /replayFlash\s*\n?\s*\?[\s\S]{0,200}:\s*isNew/.test(stepRow),
+  "step-row.tsx: the flash and .step-new are mutually exclusive, flash first — two `outline` " +
+    "rules on one element resolve by stylesheet order otherwise",
+);
+
+for (const rel of ["renderer/main/recording-view.tsx", "renderer/trainer/trainer-panel-view.tsx"]) {
+  assert(
+    /replayFlash=\{/.test(read(rel)),
+    `${rel}: passes replayFlash to its StepRow — a list that never passes it can never flash`,
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

@@ -745,6 +745,10 @@ export interface RecorderState {
   assertSoft: boolean;
   cursor: number;
   refineMode: boolean;
+  /** true while a replay is running steps against the training window. Both
+   *  trainer windows disable their controls on it — see the note on the mirror
+   *  of this interface in main/recorder/types.ts. */
+  replaying: boolean;
   /** true once the trainer browser window has finished loading its first page */
   pageReady: boolean;
   /** true while the training browser window is opening but hasn't shown yet. */

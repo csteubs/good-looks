@@ -16,6 +16,31 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-06 — A replay must not record itself
+
+**The bug.** A replayed step is a real interaction in a live recording session: the injected replayer clicks a real element, and the capture script is listening on that same element. The four replay paths did each pause capture — but each did it by hand, and the copies had drifted. What none of them did was tell the *rest of the app*, which is where the visible damage was.
+
+**Three failures, all silent.**
+- **The other trainer window stays live.** The main window and the docked panel render one session, but `executing` and `replayRun` are set only in the window that called the store. A replay started in the panel left the main window on "Recording" with every tool enabled — and an Add step pressed there lands mid-replay, in a session whose entire premise at that moment is that capture is off. Fixed by adding `replaying` to the broadcast `RecorderState`; both views fold it into their existing `running` gate.
+- **Focus was never moved.** The replayer dispatches synthetic events, so clicks worked and nobody noticed — but a `press` step targets whatever the OS considers focused. Replaying a keystroke from the docked panel typed into the panel.
+- **Nothing said whether the step passed.** The row got a check or an X in a status column that persists until the next run. For the very common "replay one step, watch the browser, look back" loop, there was no answer to "did *that* one just work".
+
+**Chosen: one `withCaptureSuspended` helper, and every replay path goes through it.** Suspend → push the attribute → broadcast → focus the training window → settle → run → restore in a `finally`. The ordering is the whole content of the helper: `session.paused` alone changes nothing (the capture script gates on the `data-pw-paused` DOM attribute), and focus and settle are worthless after the body has run. It restores the *prior* pause state rather than false, so replaying while the user had deliberately paused does not resume recording behind their back.
+
+`check:replay-suspend` pins the shape at source level, because the real failure mode is a NEW path — someone adds `replayRange` next to the four, writes it the obvious way, and it records everything it replays. It also asserts no replay method touches `session.paused` directly, which is what let three of the four hand-rolled copies drift in the first place.
+
+**Rejected — per-window React state for "a replay is running".** It is what was already there, and it is precisely why one window could act into the other's replay. The backend owns step ordering for the same reason; this belongs beside it.
+
+**Rejected — moving focus back to the trainer when the run ends.** Recording resumes with the browser focused, which is where the next interaction goes. A second focus hop would put the user one click away from the thing they were about to do.
+
+**The pass/fail flash is an outline, not a border, and only `outline-color` animates.** Both constraints are inherited wholesale from the `.step-new` highlight (2026-08-06, "Glow the steps an AI change added"): a border shifts the row 2px and collides with the drag-over border utility, and animating `box-shadow` silently erases the `ring-*` selection and run-status highlights, which are box-shadows too. The flash is a third highlight on the same row and had no business rediscovering either.
+
+It is **ephemeral where `.step-new` is not** — 2.5s, matching the per-row replay tint already in `step-row.tsx` so the outline and the background clear together. That makes it a one-shot fade rather than a pulse: a pulse that lives 2.5s reads as a flicker. Because `.step-new` also draws an outline, the two cannot compose the way the outline/box-shadow pair does — `step-row.tsx` gives precedence to the flash and lets the glow return underneath when it expires, rather than letting stylesheet order decide.
+
+**The flash is keyed off the step's END event, not the replay's start.** A conditional wait runs up to its (preview-capped, 5s) timeout, so a flash timed from the start would already be gone by the time the step it describes finished. Each entry owns a cancellable timer, because replaying one step twice in quick succession otherwise has the first run's timer clear the second run's flash about a second early — which reads as the highlight being unreliable rather than as a bug.
+
+**One thing found in passing.** The `resized` listener added the same day logs manual window drags, and a replayed `viewport` step resizes that window through the same host API — so macOS fired it and the log gained a line claiming a manual resize that never happened, in the log that exists *because* manual resizes leave no other trace. Now gated on `replaying`.
+
 ### 2026-08-06 — Conditional waits ("Wait until"), and the comment that makes them survive a round trip
 
 **Goal:** the trainer could only wait for a fixed duration or for an element to appear. Add a third form — wait until a measurable condition holds, with the same vocabulary as assertions — and let the user pick more than one wait property at a time.

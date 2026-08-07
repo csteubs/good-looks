@@ -371,3 +371,76 @@ describe("viewport (window resize) rows", () => {
     expect(onEdit).toHaveBeenCalledWith({ width: 4000, height: 200 });
   });
 });
+
+describe("the replay pass/fail flash", () => {
+  // The ephemeral outline that says "this step just ran, and here's how it
+  // went". Its whole contract is a CSS class, so these tests can only assert
+  // that the right class lands on the row — what the class DRAWS is pinned at
+  // source level in check:step-glow, because jsdom has no animation engine and
+  // the rules could be deleted outright without failing anything here.
+
+  it("outlines a passing step in green", () => {
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} replayFlash="pass" />,
+    );
+    const row = container.firstElementChild!;
+    expect(row.className).toContain("step-replay-pass");
+    expect(row.getAttribute("data-replay-flash")).toBe("pass");
+  });
+
+  it("outlines a failing step in red", () => {
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} replayFlash="fail" />,
+    );
+    const row = container.firstElementChild!;
+    expect(row.className).toContain("step-replay-fail");
+    expect(row.getAttribute("data-replay-flash")).toBe("fail");
+  });
+
+  it("draws nothing when the step has not just been replayed", () => {
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} />,
+    );
+    const row = container.firstElementChild!;
+    expect(row.className).not.toContain("step-replay");
+    expect(row.getAttribute("data-replay-flash")).toBe(null);
+  });
+
+  it("wins over the new-step glow, and only for as long as it lasts", () => {
+    // Both draw an `outline`, so only one can be on the element — otherwise
+    // which one shows is decided by the order of two rules in a stylesheet,
+    // which is not a decision this component made. A step inserted by an AI fix
+    // and then immediately replayed is the row this actually happens to.
+    const { container, rerender } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} isNew replayFlash="fail" />,
+    );
+    const row = container.firstElementChild!;
+    expect(row.className).toContain("step-replay-fail");
+    expect(row.className).not.toContain("step-new");
+    // `isNew` is still true underneath — the row must not lose its provenance
+    // marker just because it was replayed once.
+    expect(row.getAttribute("data-new-step")).toBe("true");
+
+    // Flash expires; the glow comes back rather than the row going bare.
+    rerender(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} isNew />);
+    expect(container.firstElementChild!.className).toContain("step-new");
+  });
+
+  it("leaves the run-status highlight alone", () => {
+    // The run highlight is a `ring-*` box-shadow and the flash is an outline,
+    // which is the entire reason they are different CSS properties: a failing
+    // step that just replayed should show both, not whichever one rendered
+    // last.
+    const { container } = render(
+      <StepRow
+        index={0}
+        step={step({ type: "click", locator: LOCATOR })}
+        runStatus="failed"
+        replayFlash="fail"
+      />,
+    );
+    const row = container.firstElementChild!;
+    expect(row.className).toContain("step-replay-fail");
+    expect(row.className).toContain("ring-support-red/40");
+  });
+});
