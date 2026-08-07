@@ -109,7 +109,7 @@ export function TagsDialog({
                   key={s.tag.toLowerCase()}
                   type="button"
                   onClick={() => toggle(s.tag)}
-                  className="rounded-full border border-token-border px-2 py-0.5 text-small text-secondary transition-colors hover:bg-token-hover"
+                  className="rounded-full border border-separator px-2 py-0.5 text-small text-secondary transition-colors hover:bg-control-subtle"
                 >
                   {s.tag} · {s.count}
                 </button>
