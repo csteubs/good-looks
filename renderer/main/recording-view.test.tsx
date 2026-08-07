@@ -47,6 +47,7 @@ const actions = {
   setAssert: vi.fn(),
   deleteStep: vi.fn(),
   insertStep: vi.fn(),
+  insertGeneratedSteps: vi.fn(async () => {}),
   reorderStep: vi.fn(),
   updateStep: vi.fn(),
   applyHeal: vi.fn(),
@@ -94,6 +95,7 @@ function setStore(over: Record<string, unknown> = {}) {
     state: state(),
     liveSteps: [] as Step[],
     stepsLoaded: true,
+    newStepIds: new Set<string>(),
     replayRun: null,
     executing: false,
     replayStepStatus: {},
@@ -393,4 +395,46 @@ describe("per-step AI debug icons", () => {
     await waitFor(() => expect(screen.queryAllByLabelText("Debug this step with AI")).toHaveLength(0));
     expect(stepIcons()).toHaveLength(2);
   });
+});
+
+describe("steps the AI generated are marked as new", () => {
+  // The trainer's other route to "steps appeared that I didn't record": the
+  // Generate Steps dialog inserts a whole flow at once. Same silent failure as
+  // the detail view's Apply — the list grows with nothing saying which rows are
+  // the new ones, and in the trainer the list is often long enough that the
+  // additions scroll off.
+
+  const CLICK = { k: "text", v: "Sign in" } as const;
+
+  function glowingRows(): HTMLElement[] {
+    return Array.from(document.querySelectorAll<HTMLElement>('[data-new-step="true"]'));
+  }
+
+  it("glows the rows the store reports as new", () => {
+    setStore({
+      liveSteps: [
+        step("a", { type: "click", locator: CLICK }),
+        step("b", { type: "wait", waitMs: 500 }),
+        step("c", { type: "click", locator: CLICK }),
+      ],
+      newStepIds: new Set(["b"]),
+    });
+    render(withAiDebug(<RecordingView />));
+
+    expect(glowingRows()).toHaveLength(1);
+    expect(glowingRows()[0].textContent).toMatch(/500/);
+  });
+
+  it("glows nothing when the store reports nothing new", () => {
+    // The ordinary case — steps the user recorded by interacting with the page
+    // must never light up, or the highlight stops meaning anything.
+    setStore({
+      liveSteps: [step("a", { type: "click", locator: CLICK })],
+      newStepIds: new Set<string>(),
+    });
+    render(withAiDebug(<RecordingView />));
+
+    expect(glowingRows()).toHaveLength(0);
+  });
+
 });

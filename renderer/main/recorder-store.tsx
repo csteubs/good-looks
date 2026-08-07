@@ -7,6 +7,7 @@ import * as React from "react";
 import { toast } from "@glaze/core/components";
 
 import { api } from "../lib/api";
+import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import type {
   DebugCaptureSession,
   AssertKind,
@@ -92,6 +93,10 @@ interface RecorderContextValue {
    *  Controls must stay inert until the list is actually here — acting on a step
    *  list you have not received yet edits the wrong position, or nothing. */
   stepsLoaded: boolean;
+  /** Ids of steps the AI just added to the list (Generate Steps), so the step
+   *  rows can glow. Empty for steps the user added by hand: they know what they
+   *  just typed, and highlighting it would be noise. */
+  newStepIds: Set<string>;
   runs: Record<string, RunInfo>;
   /** `viewport` is the New Recording dialog's window-size preset; omitted (or
    *  null) keeps the trainer's default window size. Ignored when `testId` names
@@ -110,6 +115,10 @@ interface RecorderContextValue {
   setAssert: (mode: AssertKind | null, soft?: boolean) => void;
   deleteStep: (id: string) => void;
   insertStep: (step: RawStep, index?: number) => void;
+  /** Insert a batch of AI-generated steps and mark what landed as new, so the
+   *  step list can glow it. Separate from `insertStep` because only this path
+   *  produces steps the user did not write themselves. */
+  insertGeneratedSteps: (steps: RawStep[]) => Promise<void>;
   reorderStep: (id: string, toIndex: number) => void;
   updateStep: (id: string, patch: Partial<Step>) => void;
   /** Apply a user-chosen Auto-Heal candidate locator to a step. */
@@ -188,6 +197,13 @@ export function RecorderProvider({
   const [state, setState] = React.useState<RecorderState>(EMPTY_STATE);
   const [liveSteps, setLiveSteps] = React.useState<Step[]>([]);
   const [stepsLoaded, setStepsLoaded] = React.useState(false);
+  const [newStepIds, setNewStepIds] = React.useState<Set<string>>(() => new Set());
+  // Mirror of liveSteps for the callbacks below. They are created once (empty
+  // dep arrays, so the trainer's props don't rebuild on every captured step),
+  // which means reading `liveSteps` from their closure would read the list as
+  // it was when the provider first rendered — i.e. empty.
+  const liveStepsRef = React.useRef<Step[]>([]);
+  liveStepsRef.current = liveSteps;
   const [picked, setPicked] = React.useState<PickedElement | null>(null);
   const [refiningStepId, setRefiningStepId] = React.useState<string | null>(null);
   const [contextAction, setContextAction] = React.useState<ContextAction | null>(null);
@@ -400,6 +416,8 @@ export function RecorderProvider({
       viewport?: { width: number; height: number } | null,
     ) => {
       setLiveSteps([]);
+      // A new session's list has nothing to do with the last one's highlight.
+      setNewStepIds(new Set());
       await api.recorder.start(url, name, testId, viewport);
     },
     [],
@@ -412,21 +430,64 @@ export function RecorderProvider({
     (mode: AssertKind | null, soft = false) => void api.recorder.setAssert(mode, soft),
     [],
   );
+  // Any hand mutation of the list retires the "the AI added these" highlight:
+  // once the user is editing, the claim is no longer about a change made behind
+  // their back, and the tracked ids may not even be in the list any more.
+  const clearNewSteps = React.useCallback(() => {
+    setNewStepIds((prev) => (prev.size === 0 ? prev : new Set()));
+  }, []);
+
   // These mutations are echoed back via the recorder:steps broadcast, so there's
   // no optimistic local update — the backend list is the source of truth.
-  const deleteStep = React.useCallback((id: string) => void api.recorder.deleteStep(id), []);
+  const deleteStep = React.useCallback(
+    (id: string) => {
+      clearNewSteps();
+      void api.recorder.deleteStep(id);
+    },
+    [clearNewSteps],
+  );
   const insertStep = React.useCallback(
-    (step: RawStep, index?: number) => void api.recorder.insertStep(step, index),
-    [],
+    (step: RawStep, index?: number) => {
+      clearNewSteps();
+      void api.recorder.insertStep(step, index);
+    },
+    [clearNewSteps],
   );
   const reorderStep = React.useCallback(
-    (id: string, toIndex: number) => void api.recorder.reorderStep(id, toIndex),
-    [],
+    (id: string, toIndex: number) => {
+      clearNewSteps();
+      void api.recorder.reorderStep(id, toIndex);
+    },
+    [clearNewSteps],
   );
   const updateStep = React.useCallback(
-    (id: string, patch: Partial<Step>) => void api.recorder.updateStep(id, patch),
-    [],
+    (id: string, patch: Partial<Step>) => {
+      clearNewSteps();
+      void api.recorder.updateStep(id, patch);
+    },
+    [clearNewSteps],
   );
+
+  const insertGeneratedSteps = React.useCallback(async (steps: RawStep[]) => {
+    const before = liveStepsRef.current;
+    // Sequential, not `forEach`: each insert lands at the session cursor and
+    // advances it, so firing them concurrently leaves the order up to whichever
+    // IPC call the backend happens to service first.
+    for (const step of steps) {
+      await api.recorder.insertStep(step);
+    }
+    // Re-read rather than waiting for the `recorder:steps` push. The push and
+    // the invoke reply are different channels with no ordering guarantee
+    // between them, and the diff needs the settled list — if it ran a beat
+    // early it would mark only the first of the inserted steps.
+    const after = await api.recorder.getSteps().catch(() => null);
+    if (!after) return;
+    setLiveSteps(after);
+    setStepsLoaded(true);
+    // Normalization backend-side can drop a step the model produced, so this
+    // diffs what actually landed instead of assuming all of `steps` did.
+    setNewStepIds(computeNewStepIds(before, after));
+  }, []);
   const applyHeal = React.useCallback(
     (stepId: string, locator: Locator) => void api.recorder.applyHeal(stepId, locator),
     [],
@@ -516,6 +577,7 @@ export function RecorderProvider({
     state,
     liveSteps,
     stepsLoaded,
+    newStepIds,
     runs,
     start,
     pause,
@@ -524,6 +586,7 @@ export function RecorderProvider({
     setAssert,
     deleteStep,
     insertStep,
+    insertGeneratedSteps,
     reorderStep,
     updateStep,
     applyHeal,
