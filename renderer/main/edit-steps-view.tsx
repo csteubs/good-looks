@@ -28,6 +28,7 @@ import { Plus, ListPlus, TriangleAlert } from "lucide-react";
 import type { AssertKind, RawStep, Step } from "../lib/recorder-types";
 import { StepRow } from "./step-row";
 import { computeStepDepths } from "../lib/describe-step";
+import { clampViewportAxis, RESIZE_PRESETS } from "../lib/viewport-presets";
 
 // Locator-free step kinds offered in the "+ Add step" menu. Element-targeted
 // steps (most assertions, find, element conditions, wait-for-element) need
@@ -44,13 +45,6 @@ const KIND_LABEL: Record<EditStepKind, string> = {
 };
 
 const KINDS: EditStepKind[] = ["goto", "wait", "viewport", "press", "assertUrl", "assertTitle"];
-
-const VIEWPORTS = [
-  { id: "desktop", label: "Desktop 1280×800", w: 1280, h: 800 },
-  { id: "laptop", label: "Laptop 1440×900", w: 1440, h: 900 },
-  { id: "tablet", label: "Tablet 768×1024", w: 768, h: 1024 },
-  { id: "mobile", label: "Mobile 390×844", w: 390, h: 844 },
-] as const;
 
 interface NativeMenu {
   popup: (options: {
@@ -265,9 +259,15 @@ function EditStepAddDialog({
         return [{ type: "press", value: key || "Enter" }];
       case "viewport": {
         if (viewport === "custom") {
-          return [{ type: "viewport", width: Number(vw) || 1280, height: Number(vh) || 800 }];
+          return [
+            {
+              type: "viewport",
+              width: clampViewportAxis(vw, 1280),
+              height: clampViewportAxis(vh, 800),
+            },
+          ];
         }
-        const p = VIEWPORTS.find((v) => v.id === viewport);
+        const p = RESIZE_PRESETS.find((v) => v.id === viewport);
         return [{ type: "viewport", width: p?.w ?? 1280, height: p?.h ?? 800 }];
       }
       case "assertUrl":
@@ -336,7 +336,7 @@ function EditStepAddDialog({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {VIEWPORTS.map((v) => (
+                  {RESIZE_PRESETS.map((v) => (
                     <SelectItem key={v.id} value={v.id}>
                       {v.label}
                     </SelectItem>

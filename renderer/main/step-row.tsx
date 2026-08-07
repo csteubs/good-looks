@@ -20,6 +20,8 @@ import { Check, GripVertical, Loader2, MoreHorizontal, Pencil, Play, X } from "l
 import type { RunStepStatus } from "./recorder-store";
 
 import { describeStep } from "../lib/describe-step";
+import { DEFAULT_WAIT_TIMEOUT_MS } from "../lib/recorder-types";
+import { clampViewportAxis } from "../lib/viewport-presets";
 import type { Step, StepType } from "../lib/recorder-types";
 
 function badgeColor(type: StepType): "green" | "blue" | "secondary" | "purple" {
@@ -36,18 +38,53 @@ function badgeLabel(type: StepType): string {
   return type;
 }
 
+/**
+ * Parse a hand-typed `WIDTHxHEIGHT` into a viewport patch, or null.
+ *
+ * Accepts `x`, `×` and `,` as the separator because all three are what people
+ * actually type for a size, and rejects anything that doesn't yield two usable
+ * numbers — an unparseable draft leaves the step alone rather than resizing to
+ * something nobody asked for. The backend clamps the result again on write.
+ */
+export function parseSizeDraft(draft: string): { width: number; height: number } | null {
+  const m = draft.trim().match(/^(\d+)\s*[x×,]\s*(\d+)$/i);
+  if (!m) return null;
+  const width = clampViewportAxis(m[1], 0);
+  const height = clampViewportAxis(m[2], 0);
+  if (!width || !height) return null;
+  return { width, height };
+}
+
 /** The single field a step exposes for quick inline editing, if any. */
 function editableField(
   step: Step,
-): { key: "value" | "text" | "url" | "waitMs"; label: string; value: string } | null {
+): { key: "value" | "text" | "url" | "waitMs" | "timeoutMs" | "size"; label: string; value: string } | null {
   switch (step.type) {
     case "goto":
       return { key: "url", label: "URL", value: step.url ?? "" };
+    case "viewport":
+      // One field for both axes: a resize is a single decision ("make it
+      // mobile"), and two inputs in a row this narrow would each be about
+      // four characters wide.
+      return {
+        key: "size",
+        label: "Size (width×height)",
+        value: `${step.width ?? 1280}x${step.height ?? 800}`,
+      };
     case "fill":
     case "select":
     case "press":
       return { key: "value", label: "Value", value: step.value ?? "" };
     case "wait":
+      // A conditional wait's editable number is its TIMEOUT, not a duration —
+      // it has no waitMs at all. Without this the one number the user can see
+      // on the row would be the only one they couldn't change inline.
+      if (step.waitUntil)
+        return {
+          key: "timeoutMs",
+          label: "Timeout (ms)",
+          value: String(step.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
+        };
       return typeof step.waitMs === "number"
         ? { key: "waitMs", label: "Wait (ms)", value: String(step.waitMs) }
         : null;
@@ -122,6 +159,8 @@ export function StepRow({
   onEdit,
   drag,
   runStatus,
+  isNew,
+  replayFlash,
   indent = 0,
 }: {
   index: number;
@@ -135,6 +174,15 @@ export function StepRow({
   drag?: StepDragProps;
   /** Live run status of this step during a test run, for highlight. */
   runStatus?: RunStepStatus;
+  /** This step was just added to the list by something other than the user
+   *  typing it — an applied AI-debug fix, an inserted AI-generated flow — and
+   *  gets a pulsing green border until the list changes again. Only ADDED
+   *  steps are marked; removals are deliberately unstyled. */
+  isNew?: boolean;
+  /** This step just finished replaying, and whether it passed. Ephemeral — the
+   *  store clears it after REPLAY_FLASH_MS. Drawn as an outline, which is why
+   *  it and `isNew` are mutually exclusive below rather than additive. */
+  replayFlash?: "pass" | "fail";
   /** Nesting depth inside conditional blocks, for left indentation. */
   indent?: number;
 }) {
@@ -155,8 +203,22 @@ export function StepRow({
 
   function commitEdit() {
     if (!field || !onEdit) return setEditing(false);
+    if (field.key === "size") {
+      // An unparseable size commits NOTHING rather than a partial patch: a
+      // resize with only a width is not a smaller edit, it's a broken step.
+      const size = parseSizeDraft(draft);
+      if (size) onEdit(size);
+      return setEditing(false);
+    }
+    // The remaining numeric fields are parsed here rather than stored as the
+    // typed string: they are emitted into the spec as bare numerals, and a
+    // string reaching the generator is the shape of the original injection bug.
     const patch: Partial<Step> =
-      field.key === "waitMs" ? { waitMs: Number(draft) || 0 } : { [field.key]: draft };
+      field.key === "waitMs"
+        ? { waitMs: Number(draft) || 0 }
+        : field.key === "timeoutMs"
+          ? { timeoutMs: Number(draft) || DEFAULT_WAIT_TIMEOUT_MS }
+          : { [field.key]: draft };
     onEdit(patch);
     setEditing(false);
   }
@@ -191,9 +253,32 @@ export function StepRow({
         ? "bg-support-red-10"
         : "hover:bg-control-subtle";
 
+  // Additive rather than another arm of the `flash` chain above: run status and
+  // selection are transient states of a row, this is a claim about where the
+  // row came from, and a step can be new AND failing — which is the single most
+  // interesting row on the screen, so neither highlight may hide the other.
+  // `.step-new` animates only `outline-color`, which nothing else here touches
+  // (see renderer/styles.css), so the two compose instead of fighting.
+  //
+  // The replay flash and `.step-new` both draw an OUTLINE, so unlike the pair
+  // above these cannot compose — two outline rules on one element resolve by
+  // stylesheet order, which is not a decision either component made. The flash
+  // wins while it lasts: it is the newer fact and the one the user is waiting
+  // on, and it expires on its own, so `.step-new` comes back underneath rather
+  // than being lost.
+  const outlineClass = replayFlash
+    ? replayFlash === "pass"
+      ? "step-replay-pass"
+      : "step-replay-fail"
+    : isNew
+      ? "step-new"
+      : "";
+
   return (
     <div
-      className={`group flex items-center gap-2 rounded-md px-2 py-1 ${flash} ${
+      data-new-step={isNew ? "true" : undefined}
+      data-replay-flash={replayFlash}
+      className={`group flex items-center gap-2 rounded-md px-2 py-1 ${flash} ${outlineClass} ${
         selected && !runStatus ? "ring-1 ring-inset ring-accent" : ""
       } ${drag?.isOver ? "border-t-2 border-accent" : ""} ${
         drag?.isDragging ? "opacity-50" : ""
@@ -282,7 +367,11 @@ export function StepRow({
               )}
             </span>
           ) : null}
-          {onReplay && step.type !== "goto" && step.type !== "viewport" && step.type !== "endif" ? (
+          {/* `viewport` IS replayable on its own — it resizes the training
+              window, which is exactly the thing worth previewing before
+              trusting the step. `goto`/`endif` still aren't: one restarts the
+              session's navigation, the other is a block delimiter. */}
+          {onReplay && step.type !== "goto" && step.type !== "endif" ? (
             <Button
               iconOnly
               variant="transparent"

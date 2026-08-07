@@ -11,6 +11,16 @@ export interface LlmModel {
   id: string;
   /** Human-readable label (same as id for now). */
   label: string;
+  /**
+   * Whether the provider currently holds this model in memory, when it says so.
+   *
+   * THREE states, not two: `true` (loaded), `false` (downloaded but not
+   * loaded), and `undefined` (the provider doesn't report it — Ollama,
+   * Anthropic, or an LM Studio older than the /api/v0 REST API). `undefined`
+   * must not be shown as "not loaded": that would tell every Ollama user their
+   * models are cold, which is both wrong and unfixable from the UI.
+   */
+  loaded?: boolean;
 }
 
 export interface LlmMessage {

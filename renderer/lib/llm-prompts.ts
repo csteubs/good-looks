@@ -10,7 +10,9 @@ const MAX_SCRIPT_CHARS = 6000;
 const MAX_OUTPUT_CHARS = 8000;
 
 // Mirror of main/services/playwright-runner.ts SLOW_MO_MS — keep in sync.
-const SLOW_MO_MS: Record<TestSpeed, number> = { fast: 0, medium: 400, slow: 1200 };
+// Mirror of the runner's own table (playwright-runner.ts). The model is told
+// what the run ACTUALLY did, so these numbers have to be the real ones.
+const SLOW_MO_MS: Record<TestSpeed, number> = { fast: 0, medium: 400, slow: 1200, crawl: 2500 };
 
 // Errors are the most informative part of a long run output, so keep the tail.
 function truncateTail(text: string, max: number): string {
@@ -62,9 +64,16 @@ export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
     ctx.imported
       ? "Source: imported from an external Playwright project — this script is hand-authored, not recorder-generated, so the locator conventions above may not apply to it."
       : "Source: recorded in this app from user actions, generated using the locator conventions above.",
-    slowMo > 0
-      ? `Playback speed: "${ctx.speed}" (Playwright inserts an artificial ${slowMo}ms delay between actions) — timing/race issues are less likely here than on a fast run, so weigh other causes first.`
-      : `Playback speed: "fast" (no artificial delay between actions) — timing-sensitive failures (assertions firing before the page settles) are more likely here than on a slowed-down run.`,
+    // Crawl gets its own line rather than sharing the generic "slowed down"
+    // one. On a crawl run the runner has already waited for load, network
+    // quiet and a painted frame after every action, so "it was a race" is very
+    // nearly ruled out — and a model that spends its answer on waits the runner
+    // already inserted is worse than useless, because the advice looks correct.
+    ctx.speed === "crawl"
+      ? `Playback speed: "crawl" — Playwright inserts a ${slowMo}ms delay between actions AND the runner waits after EVERY action for the load event, for the network to go quiet, and for a painted frame before the next step begins. A timing/race explanation is therefore very unlikely, and adding waits to the test would not help: look for a genuinely wrong locator, changed page content, or a real application bug.`
+      : slowMo > 0
+        ? `Playback speed: "${ctx.speed}" (Playwright inserts an artificial ${slowMo}ms delay between actions) — timing/race issues are less likely here than on a fast run, so weigh other causes first.`
+        : `Playback speed: "fast" (no artificial delay between actions) — timing-sensitive failures (assertions firing before the page settles) are more likely here than on a slowed-down run.`,
     // If the spec was too long to include in full, the model can't reproduce
     // a complete file — ask for just the changed lines so no partial file gets
     // offered as an applyable full-file replacement.
@@ -190,7 +199,9 @@ export function buildGenerateMessages(ctx: GenerateContext): LlmMessage[] {
   if (ctx.speed && ctx.speed !== "fast") {
     const slowMo = SLOW_MO_MS[ctx.speed];
     optLines.push(
-      `Playback speed: "${ctx.speed}" — the runner inserts an artificial ${slowMo}ms delay between actions, so the test does not need its own waits.`,
+      ctx.speed === "crawl"
+        ? `Playback speed: "crawl" — the runner inserts a ${slowMo}ms delay between actions AND waits for the page to load, go quiet and paint after every one of them. Do not write any waits of your own; they are already there.`
+        : `Playback speed: "${ctx.speed}" — the runner inserts an artificial ${slowMo}ms delay between actions, so the test does not need its own waits.`,
     );
   }
   if (ctx.viewport) {
@@ -233,6 +244,7 @@ Output format:
   - assert: { "type": "assert", "assert": <kind>, "locator": {...}, "text": "...", "value": "...", "attr": "...", "count": 1, "soft": false }
     assert kinds: "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked", "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs", "title". "url"/"urlEndsWith"/"urlIs"/"title" are page-level and need no locator; use "value" for the expected string ("url" = contains, "urlEndsWith" = ends with, "urlIs" = exact match). "text"/"exactText" use "text". "value" uses "value". "attribute" uses "attr"+"value". "count" uses "count".
   - wait: { "type": "wait", "waitMs": 1000 }  (or omit waitMs and give a "locator" to wait for it)
+    A wait can also block on a condition instead: { "type": "wait", "waitUntil": <kind>, "locator": {...}, "timeoutMs": 10000 }. waitUntil kinds: "visible", "hidden", "exists", "enabled", "disabled", "checked", "unchecked", "text", "value", "count", "urlContains", "titleContains". "text" uses "text"; "value"/"urlContains"/"titleContains" use "value"; "count" uses "count". "urlContains"/"titleContains" are page-level and need no locator. Prefer a conditional wait over a fixed waitMs — a duration that is too short is flaky and one that is too long is slow.
   - viewport: { "type": "viewport", "width": <width>, "height": <height> } — ALWAYS emit a viewport step FIRST (before any action), using the exact width and height from the "Browser viewport" line in the user message. If no viewport is specified, use 1280x800.
 
 Rules:

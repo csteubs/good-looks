@@ -283,7 +283,7 @@ function StepScreenshot({
       <img
         src={src}
         alt={alt}
-        className="block max-h-full max-w-full rounded-md object-contain shadow-sm ring-1 ring-inset ring-token-border"
+        className="block max-h-full max-w-full rounded-md object-contain shadow-sm ring-1 ring-inset ring-[var(--color-border-separator)]"
       />
       {children}
     </div>
@@ -664,7 +664,7 @@ function MasksBaselinesDialog({
               {masks.map((m) => (
                 <div
                   key={m.id}
-                  className="flex items-center gap-2 rounded-md border border-token-border px-2 py-1.5"
+                  className="flex items-center gap-2 rounded-md border border-separator px-2 py-1.5"
                 >
                   <SquareDashed className="size-3.5 shrink-0 text-support-orange" />
                   {labelDraft?.id === m.id ? (
@@ -729,7 +729,7 @@ function MasksBaselinesDialog({
               {baselines.map((b) => (
                 <div
                   key={b.stepId}
-                  className="flex items-center gap-2 rounded-md border border-token-border px-2 py-1.5"
+                  className="flex items-center gap-2 rounded-md border border-separator px-2 py-1.5"
                 >
                   <Stamp className="size-3.5 shrink-0 text-tertiary" />
                   <Text variant="small-mono" className="min-w-0 flex-1 truncate" title={b.label}>
@@ -834,7 +834,7 @@ function RunComparisonDialog({
               return (
                 <div
                   key={s.stepId}
-                  className="flex items-center gap-2 rounded-md border border-token-border px-2 py-1.5"
+                  className="flex items-center gap-2 rounded-md border border-separator px-2 py-1.5"
                 >
                   <Text variant="small-mono" className="min-w-0 flex-1 truncate" title={s.label}>
                     {s.label}
@@ -1211,7 +1211,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
 
       {/* Screenshot */}
       <div className="min-h-0 flex-1 p-4">
-        <div className="relative flex h-full items-center justify-center overflow-hidden rounded-lg border border-token-border bg-token-surface p-3">
+        <div className="relative flex h-full items-center justify-center overflow-hidden rounded-lg border border-separator bg-well p-3">
           {/* Ignore-region editor toggle */}
           {step.screenshot ? (
             <div className="absolute left-3 top-3 z-10 flex items-center gap-2">
@@ -1225,7 +1225,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
                 {masking ? "Done" : "Ignore regions"}
               </Button>
               {masking ? (
-                <div className="flex items-center gap-1.5 rounded-md bg-token-surface-raised/90 px-2 py-1 shadow-sm">
+                <div className="flex items-center gap-1.5 rounded-md bg-popover px-2 py-1 shadow-sm">
                   <Switch
                     id="mask-all-steps"
                     checked={maskAllSteps}

@@ -171,7 +171,7 @@ export function CookiesPanel({
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-2 p-3">
           {/* Add / edit form */}
-          <div className="flex flex-col gap-2 rounded-md border border-token-border bg-token-surface-raised p-2">
+          <div className="flex flex-col gap-2 rounded-md border border-separator bg-panel p-2">
             <div className="flex items-center gap-2">
               <Input
                 variant="filled"
@@ -295,11 +295,11 @@ export function CookiesPanel({
 
           {/* Existing cookies */}
           {cookies.length > 0 ? (
-            <div className="rounded-md border border-token-border">
+            <div className="rounded-md border border-separator">
               {cookies.map((c) => (
                 <div
                   key={`${c.name}|${c.domain ?? ""}|${c.path ?? ""}`}
-                  className="flex items-center gap-2 border-b border-token-border px-2 py-1.5 last:border-b-0"
+                  className="flex items-center gap-2 border-b border-separator px-2 py-1.5 last:border-b-0"
                 >
                   <button
                     type="button"

@@ -87,6 +87,99 @@ describe("run status", () => {
   });
 });
 
+describe("newly-added highlight", () => {
+  // jsdom has no layout or animation engine, so the pulse itself cannot be
+  // observed here — `check:step-glow-css` pins the stylesheet side. What these
+  // tests own is the decision: WHICH rows claim to be new, and whether that
+  // claim quietly cancels one of the other highlights the row already carries.
+
+  /** The row element itself — the highlight lives on the row, not a child. */
+  function row(container: HTMLElement): HTMLElement {
+    const el = container.firstElementChild;
+    if (!(el instanceof HTMLElement)) throw new Error("StepRow rendered no element");
+    return el;
+  }
+
+  it("marks a new step", () => {
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} isNew />,
+    );
+    expect(row(container).getAttribute("data-new-step")).toBe("true");
+    expect(row(container).className).toContain("step-new");
+  });
+
+  it("does NOT mark an ordinary step", () => {
+    // The default matters more than it looks: every other caller of StepRow —
+    // the trainer, the step editor, the detail view — renders without this
+    // prop, and a truthy default would light up every row in the app.
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} />,
+    );
+    expect(row(container).hasAttribute("data-new-step")).toBe(false);
+    expect(row(container).className).not.toContain("step-new");
+  });
+
+  it("does NOT mark a step passed isNew={false}", () => {
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} isNew={false} />,
+    );
+    expect(row(container).hasAttribute("data-new-step")).toBe(false);
+  });
+
+  it("keeps the failed run highlight on a step that is also new", () => {
+    // A step the AI just added AND that just failed is the most important row
+    // on the screen. Earlier drafts put the new-step style in the same
+    // precedence chain as run status, which silently dropped one or the other.
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} runStatus="failed" isNew />,
+    );
+    expect(row(container).getAttribute("data-new-step")).toBe("true");
+    expect(row(container).className).toContain("step-new");
+    expect(container.innerHTML).toMatch(/support-red|red/);
+  });
+
+  it("keeps the passed run highlight on a step that is also new", () => {
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} runStatus="passed" isNew />,
+    );
+    expect(row(container).className).toContain("step-new");
+    expect(container.innerHTML).toMatch(/support-green|green/);
+  });
+
+  it("keeps the selection ring on a step that is also new", () => {
+    const plain = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} selected onSelect={() => {}} />,
+    );
+    const selectedClasses = row(plain.container).className;
+    expect(selectedClasses).toContain("ring-accent");
+
+    const { container } = render(
+      <StepRow index={1} step={step({ type: "click", locator: LOCATOR })} selected onSelect={() => {}} isNew />,
+    );
+    expect(row(container).className).toContain("ring-accent");
+    expect(row(container).className).toContain("step-new");
+  });
+
+  it("leaves the drag-over drop indicator intact", () => {
+    const { container } = render(
+      <StepRow
+        index={0}
+        step={step({ type: "click", locator: LOCATOR })}
+        isNew
+        drag={{
+          onDragStart: () => {},
+          onDragEnter: () => {},
+          onDragEnd: () => {},
+          isDragging: false,
+          isOver: true,
+        }}
+      />,
+    );
+    expect(row(container).className).toContain("border-accent");
+    expect(row(container).className).toContain("step-new");
+  });
+});
+
 describe("actions", () => {
   it("calls onSelect when the row is clicked", () => {
     const onSelect = vi.fn();
@@ -118,8 +211,9 @@ describe("actions", () => {
   });
 
   it("offers no replay control for steps that can't be replayed alone", () => {
-    // goto/viewport/endif aren't meaningful to replay in isolation.
-    for (const type of ["goto", "viewport", "endif"] as StepType[]) {
+    // goto restarts the session's navigation; endif is a block delimiter.
+    // `viewport` is deliberately NOT here — see the test below.
+    for (const type of ["goto", "endif"] as StepType[]) {
       const { container, unmount } = render(
         <StepRow index={0} step={step({ type })} onReplay={async () => ({ ok: true })} />,
       );
@@ -203,5 +297,150 @@ describe("drag affordance", () => {
     );
     fireEvent.dragStart(screen.getByLabelText(/drag to reorder/i));
     expect(onDragStart).toHaveBeenCalled();
+  });
+});
+
+describe("viewport (window resize) rows", () => {
+  // A resize step is the one recorded action with no on-page target, so it
+  // reaches none of the affordances above through a locator. Everything it
+  // does get, it gets because this type is handled explicitly.
+
+  it("offers a replay control, because a resize CAN be previewed alone", () => {
+    // The counterpart to "offers no replay control…" above. Replaying a resize
+    // resizes the training window, which is the whole thing worth checking
+    // before trusting the step.
+    const { container } = render(
+      <StepRow
+        index={0}
+        step={step({ type: "viewport", width: 390, height: 844 })}
+        onReplay={async () => ({ ok: true })}
+      />,
+    );
+    const labels = [...container.querySelectorAll("button")].map((b) =>
+      (b.getAttribute("aria-label") ?? "").toLowerCase(),
+    );
+    expect(labels.some((l) => l.includes("replay"))).toBe(true);
+  });
+
+  it("edits both dimensions from one field", () => {
+    const onEdit = vi.fn();
+    render(
+      <StepRow
+        index={0}
+        step={step({ type: "viewport", width: 1280, height: 800 })}
+        onEdit={onEdit}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText(/edit step/i));
+    const input = screen.getByLabelText(/edit size/i) as HTMLInputElement;
+    // Seeded with the current size — an empty box would make an edit read as
+    // "type a size" rather than "change this one".
+    expect(input.value).toBe("1280x800");
+    fireEvent.change(input, { target: { value: "390 × 844" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onEdit).toHaveBeenCalledWith({ width: 390, height: 844 });
+  });
+
+  it("commits nothing when the typed size can't be parsed", () => {
+    // Half a size is not a smaller edit — it's a step that generates a spec
+    // Playwright rejects. Leaving the step alone is the safe answer.
+    const onEdit = vi.fn();
+    render(
+      <StepRow
+        index={0}
+        step={step({ type: "viewport", width: 1280, height: 800 })}
+        onEdit={onEdit}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText(/edit step/i));
+    const input = screen.getByLabelText(/edit size/i);
+    fireEvent.change(input, { target: { value: "1280 wide" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+
+  it("clamps a typed size into the range a window can actually be", () => {
+    const onEdit = vi.fn();
+    render(
+      <StepRow index={0} step={step({ type: "viewport", width: 1280, height: 800 })} onEdit={onEdit} />,
+    );
+    fireEvent.click(screen.getByLabelText(/edit step/i));
+    const input = screen.getByLabelText(/edit size/i);
+    fireEvent.change(input, { target: { value: "99999x10" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onEdit).toHaveBeenCalledWith({ width: 4000, height: 200 });
+  });
+});
+
+describe("the replay pass/fail flash", () => {
+  // The ephemeral outline that says "this step just ran, and here's how it
+  // went". Its whole contract is a CSS class, so these tests can only assert
+  // that the right class lands on the row — what the class DRAWS is pinned at
+  // source level in check:step-glow, because jsdom has no animation engine and
+  // the rules could be deleted outright without failing anything here.
+
+  it("outlines a passing step in green", () => {
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} replayFlash="pass" />,
+    );
+    const row = container.firstElementChild!;
+    expect(row.className).toContain("step-replay-pass");
+    expect(row.getAttribute("data-replay-flash")).toBe("pass");
+  });
+
+  it("outlines a failing step in red", () => {
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} replayFlash="fail" />,
+    );
+    const row = container.firstElementChild!;
+    expect(row.className).toContain("step-replay-fail");
+    expect(row.getAttribute("data-replay-flash")).toBe("fail");
+  });
+
+  it("draws nothing when the step has not just been replayed", () => {
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} />,
+    );
+    const row = container.firstElementChild!;
+    expect(row.className).not.toContain("step-replay");
+    expect(row.getAttribute("data-replay-flash")).toBe(null);
+  });
+
+  it("wins over the new-step glow, and only for as long as it lasts", () => {
+    // Both draw an `outline`, so only one can be on the element — otherwise
+    // which one shows is decided by the order of two rules in a stylesheet,
+    // which is not a decision this component made. A step inserted by an AI fix
+    // and then immediately replayed is the row this actually happens to.
+    const { container, rerender } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} isNew replayFlash="fail" />,
+    );
+    const row = container.firstElementChild!;
+    expect(row.className).toContain("step-replay-fail");
+    expect(row.className).not.toContain("step-new");
+    // `isNew` is still true underneath — the row must not lose its provenance
+    // marker just because it was replayed once.
+    expect(row.getAttribute("data-new-step")).toBe("true");
+
+    // Flash expires; the glow comes back rather than the row going bare.
+    rerender(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} isNew />);
+    expect(container.firstElementChild!.className).toContain("step-new");
+  });
+
+  it("leaves the run-status highlight alone", () => {
+    // The run highlight is a `ring-*` box-shadow and the flash is an outline,
+    // which is the entire reason they are different CSS properties: a failing
+    // step that just replayed should show both, not whichever one rendered
+    // last.
+    const { container } = render(
+      <StepRow
+        index={0}
+        step={step({ type: "click", locator: LOCATOR })}
+        runStatus="failed"
+        replayFlash="fail"
+      />,
+    );
+    const row = container.firstElementChild!;
+    expect(row.className).toContain("step-replay-fail");
+    expect(row.className).toContain("ring-support-red/40");
   });
 });

@@ -215,6 +215,12 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       assertSoft: false,
       cursor: 0,
       refineMode: false,
+      // Added on main by "Never let a trainer replay record itself". The
+      // type-checker caught its absence here the moment that merged, which is
+      // exactly the job the typed handlers exist to do — a missing field would
+      // otherwise have left the trainer's controls in the wrong state in the
+      // preview with nothing to flag it.
+      replaying: false,
       pageReady: false,
       loading: false,
       loadFailed: false,

@@ -31,7 +31,7 @@ import type { Step, TestRecord } from "../recorder/types.js";
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-handlers-test-"));
 process.env.GLAZE_TEST_USERDATA = userData;
 
-function seedTest(id: string): TestRecord {
+function seedTest(id: string, extra: Partial<TestRecord> = {}): TestRecord {
   const rec: TestRecord = {
     id,
     name: `Test ${id}`,
@@ -40,6 +40,7 @@ function seedTest(id: string): TestRecord {
     updatedAt: 1,
     steps: [],
     scriptPath: path.join(userData, "recorder", "scripts", `${id}.spec.ts`),
+    ...extra,
   };
   testStore.save(rec);
   return rec;
@@ -67,8 +68,10 @@ describe("handler registration", () => {
     for (const c of [
       "tests:list",
       "tests:setTags",
+      "tests:deleteTag",
       "tests:setBrowser",
       "tests:setHeadless",
+      "tests:setTestTimeout",
       "runner:run",
       "runner:stop",
       "batch:run",
@@ -118,6 +121,65 @@ describe("tests:setTags — normalization at the boundary", () => {
     await expect(invokeHandler("tests:setTags", { id: "nope", tags: [] })).rejects.toThrow(
       /not found/i,
     );
+  });
+});
+
+describe("tests:deleteTag — library-wide removal", () => {
+  // Tag names here are deliberately unique to this block: the store is shared
+  // across the whole file, so a tag another describe seeded would be counted
+  // too and the expected numbers would drift as tests are added.
+  it("removes the tag from every test carrying it, in any casing, and leaves the rest alone", async () => {
+    seedTest("t-del-1", { tags: ["keepme", "burnme"] });
+    seedTest("t-del-2", { tags: ["BurnMe"] });
+    seedTest("t-del-3", { tags: ["keepme"] });
+
+    const res = await invokeHandler<{ tag: string; removed: number }>("tests:deleteTag", {
+      tag: "BURNME",
+    });
+
+    // Both spellings go: the UI groups them into one chip, so leaving "Smoke"
+    // behind would bring the chip straight back with a count nobody can explain.
+    expect(res.removed).toBe(2);
+    expect(testStore.get("t-del-1")?.tags).toEqual(["keepme"]);
+    expect(testStore.get("t-del-2")?.tags).toEqual([]);
+    expect(testStore.get("t-del-3")?.tags).toEqual(["keepme"]);
+  });
+
+  it("deletes the tag from HIDDEN tests too", async () => {
+    // testStore.list() filters hidden tests out, so a tag left on one is
+    // invisible until the test is unhidden — at which point a tag the user
+    // deleted reappears.
+    seedTest("t-del-hidden", { tags: ["nightly"], hidden: true });
+    seedTest("t-del-visible", { tags: ["nightly"] });
+
+    const res = await invokeHandler<{ removed: number }>("tests:deleteTag", { tag: "nightly" });
+
+    expect(res.removed).toBe(2);
+    expect(testStore.get("t-del-hidden")?.tags).toEqual([]);
+  });
+
+  it("reports the canonical tag and normalizes what it was given", async () => {
+    seedTest("t-del-canon", { tags: ["slow path"] });
+    // Same trip through normalizeTags as tests:setTags — untrimmed, inner
+    // whitespace collapsed — so the two can't disagree about what a tag is.
+    const res = await invokeHandler<{ tag: string; removed: number }>("tests:deleteTag", {
+      tag: "  slow   path  ",
+    });
+    expect(res.tag).toBe("slow path");
+    expect(res.removed).toBe(1);
+  });
+
+  it("rejects hostile input rather than touching the library", async () => {
+    seedTest("t-del-safe", { tags: ["keep"] });
+    for (const tag of [null, undefined, 42, ["smoke"], { a: 1 }, "", "   "]) {
+      await expect(invokeHandler("tests:deleteTag", { tag })).rejects.toThrow(/tag is required/i);
+    }
+    expect(testStore.get("t-del-safe")?.tags).toEqual(["keep"]);
+  });
+
+  it("reports 0 for a tag nobody uses instead of throwing", async () => {
+    const res = await invokeHandler<{ removed: number }>("tests:deleteTag", { tag: "ghost" });
+    expect(res.removed).toBe(0);
   });
 });
 
@@ -223,6 +285,50 @@ describe("recorder:setSettings — persistence and validation", () => {
     await invokeHandler("recorder:setSettings", { batchOrder: ["a", 5, null, "b"] });
     const s = await invokeHandler<{ batchOrder: string[] }>("recorder:getSettings");
     expect(s.batchOrder).toEqual(["a", "b"]);
+  });
+
+  it("defaults the per-test timeout to one minute and clamps on save", async () => {
+    const initial = await invokeHandler<{ defaultTestTimeoutMs: number }>("recorder:getSettings");
+    expect(initial.defaultTestTimeoutMs).toBe(60_000);
+
+    await invokeHandler("recorder:setSettings", { defaultTestTimeoutMs: 120_000 });
+    const raised = await invokeHandler<{ defaultTestTimeoutMs: number }>("recorder:getSettings");
+    expect(raised.defaultTestTimeoutMs).toBe(120_000);
+
+    // Below the floor — ignored, previous value kept (same as an invalid browser).
+    await invokeHandler("recorder:setSettings", { defaultTestTimeoutMs: 100 });
+    const floor = await invokeHandler<{ defaultTestTimeoutMs: number }>("recorder:getSettings");
+    expect(floor.defaultTestTimeoutMs).toBe(120_000);
+
+    // Above the ceiling — clamped rather than rejected, so a fat-fingered
+    // "999999999" still lands somewhere usable.
+    await invokeHandler("recorder:setSettings", { defaultTestTimeoutMs: 999_999_999 });
+    const ceiling = await invokeHandler<{ defaultTestTimeoutMs: number }>("recorder:getSettings");
+    expect(ceiling.defaultTestTimeoutMs).toBe(30 * 60 * 1000);
+  });
+});
+
+describe("tests:setTestTimeout — per-test override", () => {
+  it("stores a clamped override and clears it on null", async () => {
+    seedTest("t-timeout");
+    const set = await invokeHandler<TestRecord>("tests:setTestTimeout", {
+      id: "t-timeout",
+      testTimeoutMs: 180_000,
+    });
+    expect(set.testTimeoutMs).toBe(180_000);
+
+    const cleared = await invokeHandler<TestRecord>("tests:setTestTimeout", {
+      id: "t-timeout",
+      testTimeoutMs: null,
+    });
+    expect(cleared.testTimeoutMs).toBeUndefined();
+  });
+
+  it("rejects a timeout below the floor", async () => {
+    seedTest("t-timeout-bad");
+    await expect(
+      invokeHandler("tests:setTestTimeout", { id: "t-timeout-bad", testTimeoutMs: 50 }),
+    ).rejects.toThrow(/invalid test timeout/i);
   });
 });
 

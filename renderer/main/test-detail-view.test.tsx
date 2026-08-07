@@ -1,33 +1,49 @@
 // Component tests for the test detail view's run controls.
 //
-// This is where three per-test preferences (browser, headless, capture) turn
+// This is where per-test preferences (browser, headless, capture, timeout) turn
 // into an actual run. Each is stored per test with a fall-back to a global
 // default, and each is persisted on change — so the failure modes are "my
 // setting didn't stick" and, worse, "it ran with different settings than the
 // ones on screen". The second is silent, which is why the run arguments are
 // asserted rather than just the controls' appearance.
 
+import * as React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import type { RecorderSettings, RunRecord, Step, TestRecord } from "../lib/recorder-types";
-import { TestDetailView } from "./test-detail-view";
+import type { RecorderSettings, RunRecord, Step, StepType, TestRecord } from "../lib/recorder-types";
+import { TestDetailView, persistRunBrowser } from "./test-detail-view";
+import { runSessionKey, useAiDebug, type AiDebugRunContext } from "./ai-debug-store";
 import { withAiDebug } from "../__tests__/ai-debug-harness";
 
 let test_: TestRecord | null = null;
 let settings: Partial<RecorderSettings> = {};
 let runs: RunRecord[] = [];
+// The route param, mutable so a test can model the sidebar switching tests.
+// The router does NOT remount a route component when only its params change
+// (no `remountDeps` on the route), so that switch is a re-render of the SAME
+// component instance under a new id — which is where per-test state leaks.
+let routeId = "t1";
+// Records reachable by id, for those navigation tests. `test_` still answers
+// for any id the map doesn't hold, so single-test suites are unaffected.
+let library: Record<string, TestRecord> = {};
 
 const run = vi.fn();
 const setHeadless = vi.fn(async () => ({}) as TestRecord);
 const setBrowser = vi.fn(async () => ({}) as TestRecord);
 const setCaptureArtifacts = vi.fn(async () => ({}) as TestRecord);
+const setTestTimeout = vi.fn(async () => ({}) as TestRecord);
 // Typed with the real signature, unlike the setters above: these assertions
 // read the third argument, and a zero-arg mock makes indexing it a type error.
 const updateSteps = vi.fn(
   async (_id: string, _steps: Step[], _opts?: { regenerate?: boolean }) => ({}) as TestRecord,
 );
+// The real `tests:updateScript` handler re-parses the spec and returns the
+// record with a WHOLLY REBUILT step list — new ids and all. Tests that exercise
+// the AI-apply path override this to model that; everything else keeps the
+// inert default.
+const updateScript = vi.fn(async (_id: string, _source: string) => ({}) as TestRecord);
 
 vi.mock("./recorder-store", () => ({
   useRecorder: () => ({ runs: {}, run, stopRun: vi.fn(), start: vi.fn() }),
@@ -35,20 +51,21 @@ vi.mock("./recorder-store", () => ({
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => vi.fn(),
-  useParams: () => ({ id: "t1" }),
+  useParams: () => ({ id: routeId }),
 }));
 
 vi.mock("../lib/api", () => ({
   api: {
     tests: {
-      get: async () => test_,
+      get: async (id: string) => library[id] ?? test_,
       getScript: async () => "import { test } from '@playwright/test';",
       setHeadless: (...a: unknown[]) => setHeadless(...(a as [])),
       setBrowser: (...a: unknown[]) => setBrowser(...(a as [])),
       setCaptureArtifacts: (...a: unknown[]) => setCaptureArtifacts(...(a as [])),
+      setTestTimeout: (...a: unknown[]) => setTestTimeout(...(a as [])),
       remove: async () => {},
       rename: async () => ({}) as TestRecord,
-      updateScript: async () => ({}) as TestRecord,
+      updateScript: (...a: Parameters<typeof updateScript>) => updateScript(...a),
       updateSteps: (...a: Parameters<typeof updateSteps>) => updateSteps(...a),
     },
     recorder: { getSettings: async () => settings as RecorderSettings },
@@ -88,16 +105,34 @@ function record(over: Partial<TestRecord> = {}): TestRecord {
 
 function renderView() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>{withAiDebug(<TestDetailView />)}</QueryClientProvider>,
+  const tree = () => (
+    <QueryClientProvider client={qc}>{withAiDebug(<TestDetailView />)}</QueryClientProvider>
   );
+  const result = render(tree());
+  return {
+    ...result,
+    /** What clicking another test in the sidebar does: same component instance,
+     *  new route param. Deliberately NOT a fresh render — remounting would hide
+     *  exactly the state-leak this models. */
+    renavigate(id: string) {
+      routeId = id;
+      result.rerender(tree());
+    },
+  };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   test_ = record();
+  routeId = "t1";
+  library = {};
   runs = [];
-  settings = { defaultRunBrowser: "chromium", defaultRunHeadless: false, defaultCaptureArtifacts: false };
+  settings = {
+    defaultRunBrowser: "chromium",
+    defaultRunHeadless: false,
+    defaultCaptureArtifacts: false,
+    defaultTestTimeoutMs: 60_000,
+  };
 });
 
 describe("the Accessibility tab", () => {
@@ -162,6 +197,40 @@ describe("run controls", () => {
     expect(await screen.findByText("Firefox")).toBeTruthy();
   });
 
+  it("leaves the trigger's glyph to the Select, so only one icon shows", async () => {
+    // SelectValue already draws the selected item's `icon` — the SF Symbol on
+    // the SelectItem. Drawing our own lucide glyph beside it put TWO browser
+    // icons on a control whose whole job is to name one engine.
+    test_ = record({ runBrowser: "firefox" });
+    renderView();
+    await screen.findByText("Checkout");
+    const trigger = screen.getByRole("combobox", { name: /browser engine for this test/i });
+    expect(trigger.querySelectorAll("[data-browser]").length).toBe(0);
+    expect(trigger.textContent).toContain("Firefox");
+  });
+
+  it("re-seeds the controls when the route moves to another test", async () => {
+    // The bug this pins: the picker kept the engine of the test viewed BEFORE
+    // this one, so the sidebar row said Chromium while the picker said Firefox
+    // — for the same test. The route component is never remounted on an id
+    // change, so a one-shot "already initialised" latch never fires again.
+    library = {
+      t1: record({ runBrowser: "firefox", testTimeoutMs: 120_000 }),
+      t2: record({ id: "t2", name: "Search", runBrowser: "chromium" }),
+    };
+    const view = renderView();
+    await screen.findByText("Firefox");
+
+    view.renavigate("t2");
+
+    await screen.findByText("Search");
+    const trigger = screen.getByRole("combobox", { name: /browser engine for this test/i });
+    await waitFor(() => expect(trigger.textContent).toContain("Chromium"));
+    expect(trigger.textContent).not.toContain("Firefox");
+    // Every per-test control seeds from the same latch, so they all leaked.
+    expect((screen.getByLabelText(/per-test timeout/i) as HTMLInputElement).value).toBe("");
+  });
+
   it("persists a headless change", async () => {
     renderView();
     await screen.findByText("Checkout");
@@ -174,6 +243,55 @@ describe("run controls", () => {
     await screen.findByText("Checkout");
     fireEvent.click(screen.getByLabelText(/capture screenshots/i));
     await waitFor(() => expect(setCaptureArtifacts).toHaveBeenCalledWith("t1", true));
+  });
+
+  it("persists a per-test timeout override in milliseconds", async () => {
+    renderView();
+    await screen.findByText("Checkout");
+    const input = screen.getByLabelText(/per-test timeout/i) as HTMLInputElement;
+    // Empty = use Settings default; placeholder shows that default in seconds.
+    expect(input.placeholder).toBe("60");
+    fireEvent.change(input, { target: { value: "180" } });
+    await waitFor(() => expect(setTestTimeout).toHaveBeenCalledWith("t1", 180_000));
+  });
+
+  it("clears the timeout override when the field is emptied", async () => {
+    test_ = record({ testTimeoutMs: 120_000 });
+    renderView();
+    await screen.findByText("Checkout");
+    const input = screen.getByLabelText(/per-test timeout/i) as HTMLInputElement;
+    expect(input.value).toBe("120");
+    fireEvent.change(input, { target: { value: "" } });
+    await waitFor(() => expect(setTestTimeout).toHaveBeenCalledWith("t1", null));
+  });
+});
+
+describe("persisting the browser choice", () => {
+  // The Select is native-menu-backed — its options are drawn by AppKit and
+  // never enter the DOM — so the change cannot be driven through the trigger
+  // in jsdom. The handler behind it is exported and called directly instead.
+
+  it("refreshes every cached copy of the record it just changed", async () => {
+    // The ["tests"] list holds its own copy of the record and nothing else in
+    // this flow refetches it, so without this the cache keeps the engine the
+    // test USED to run on until something unrelated happens to refresh it.
+    const qc = new QueryClient();
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    await persistRunBrowser(qc, "t1", "firefox");
+    expect(setBrowser).toHaveBeenCalledWith("t1", "firefox");
+    const keys = invalidate.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+    expect(keys).toContain(JSON.stringify(["tests"]));
+    expect(keys).toContain(JSON.stringify(["test", "t1"]));
+  });
+
+  it("refreshes nothing when the write failed", async () => {
+    // Nothing on disk changed, so there is nothing to re-read — and the run
+    // still uses the on-screen choice, which is why this stays best-effort.
+    setBrowser.mockRejectedValueOnce(new Error("read-only volume"));
+    const qc = new QueryClient();
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    await persistRunBrowser(qc, "t1", "firefox");
+    expect(invalidate).not.toHaveBeenCalled();
   });
 });
 
@@ -368,5 +486,331 @@ describe("editing steps when the script isn't generated from them", () => {
     fireEvent.click(screen.getByRole("button", { name: /^save steps$/i }));
     await waitFor(() => expect(updateSteps).toHaveBeenCalledTimes(1));
     expect(updateSteps.mock.calls[0][2]).toEqual({ regenerate: false });
+  });
+});
+
+// --------------------------------------------------------------------------
+// Applying an AI-debug fix, seen from the Steps tab.
+//
+// The failure this whole block exists for is silent by construction. Applying
+// a fix goes through `tests:updateScript`, which re-parses the spec and swaps
+// the step list out underneath the view — and the parser mints a fresh id for
+// EVERY step each time it runs. So "which steps did that change?" cannot be
+// answered by id, the step rows all remount, and a view that got this wrong
+// would look completely normal: right steps, right order, no error, just no
+// indication that anything happened. The user walks away from a change they
+// asked for without seeing it.
+// --------------------------------------------------------------------------
+
+let stepSeq = 0;
+/** A step carrying a deliberately throwaway id, the way the spec parser emits
+ *  them — never reused across a re-parse. */
+function mkStep(partial: Partial<Step> & { type: StepType }): Step {
+  stepSeq += 1;
+  return { id: `s${stepSeq}`, timestamp: stepSeq, ...partial } as Step;
+}
+
+const BTN = { k: "role", role: "button", name: "Submit" } as const;
+const ALT = { k: "role", role: "button", name: "Continue" } as const;
+
+/** Re-mint ids, as the backend re-parse does. Anything comparing by id sees a
+ *  wholly different list; anything comparing by content sees no change. */
+function reparsed(steps: Step[]): Step[] {
+  return steps.map((s) => ({ ...s, id: `p${(stepSeq += 1)}` }));
+}
+
+/** Reaches the same `onApplyScript` the AI debug panel's Apply button calls.
+ *
+ *  The panel route would need a streamed model response carrying a fenced code
+ *  block to get there, which tests the LLM plumbing rather than this view. The
+ *  context object is the actual seam between the two, so the test grabs that
+ *  and leaves the panel out of it. */
+function renderWithApply() {
+  const aiKey = runSessionKey("t1");
+  let apply: ((source: string) => Promise<void>) | null = null;
+
+  function Probe() {
+    const aiDebug = useAiDebug();
+    React.useEffect(() => {
+      // A session must exist for the view to attach its context to — that is
+      // the real precondition in the app, where Apply is only reachable from
+      // an open session.
+      aiDebug.openSession({
+        key: aiKey,
+        kind: "run",
+        testId: "t1",
+        label: "Checkout",
+        testName: "Checkout",
+        runKey: null,
+        context: { kind: "run", testName: "Checkout", testUrl: "https://example.com" } as AiDebugRunContext,
+      });
+      // Once only: re-opening on every render would churn the store.
+    }, []);
+    apply = (source: string) => {
+      const ctx = aiDebug.getContext(aiKey) as AiDebugRunContext | null;
+      if (!ctx?.onApplyScript) throw new Error("the view never attached an apply handler");
+      return ctx.onApplyScript(source);
+    };
+    return null;
+  }
+
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const utils = render(
+    <QueryClientProvider client={qc}>
+      {withAiDebug(
+        <>
+          <TestDetailView />
+          <Probe />
+        </>,
+      )}
+    </QueryClientProvider>,
+  );
+  return {
+    ...utils,
+    apply: async (source: string) => {
+      if (!apply) throw new Error("probe never rendered");
+      await act(async () => {
+        await apply!(source);
+      });
+    },
+  };
+}
+
+/** Switch tabs. Radix's TabsTrigger activates on pointer-down/focus rather
+ *  than a bare click, so fireEvent.click alone leaves the tab unchanged — and
+ *  the test then asserts against the PREVIOUS tab's content. */
+function selectTab(name: RegExp) {
+  const tab = screen.getByRole("tab", { name });
+  fireEvent.mouseDown(tab);
+  fireEvent.focus(tab);
+  fireEvent.click(tab);
+  return tab;
+}
+
+/** The rows currently claiming to be newly added. */
+function glowingRows(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-new-step="true"]'));
+}
+
+/** Row text for each glowing row, so assertions name steps rather than indexes. */
+function glowingText(): string[] {
+  return glowingRows().map((r) => r.textContent ?? "");
+}
+
+/** Wire updateScript to hand back `after`, and make subsequent refetches agree. */
+function applyYields(after: Step[]) {
+  updateScript.mockImplementation(async () => {
+    test_ = record({ ...(test_ ?? {}), steps: after });
+    return test_;
+  });
+}
+
+async function stepsTab(): Promise<HTMLElement> {
+  return screen.findByRole("tab", { name: /^Steps/ });
+}
+
+describe("applying an AI-debug fix, in the Steps tab", () => {
+  beforeEach(() => {
+    stepSeq = 0;
+    updateScript.mockReset();
+    updateScript.mockImplementation(async () => ({}) as TestRecord);
+  });
+
+  it("glows a step the fix added, and only that step", async () => {
+    const goto = mkStep({ type: "goto", url: "https://example.com" });
+    const click = mkStep({ type: "click", locator: BTN });
+    test_ = record({ steps: [goto, click] });
+
+    const view = renderWithApply();
+    await screen.findByText("Checkout");
+
+    const added = mkStep({ type: "wait", waitMs: 500 });
+    applyYields([...reparsed([goto, click]), added]);
+    await view.apply("// corrected spec");
+
+    await waitFor(() => expect(glowingRows()).toHaveLength(1));
+    expect(glowingText()[0]).toMatch(/500/);
+  });
+
+  it("glows every step of a multi-step addition", async () => {
+    const goto = mkStep({ type: "goto", url: "https://example.com" });
+    test_ = record({ steps: [goto] });
+
+    const view = renderWithApply();
+    await screen.findByText("Checkout");
+
+    applyYields([
+      ...reparsed([goto]),
+      mkStep({ type: "click", locator: BTN }),
+      mkStep({ type: "assert", assert: "visible", locator: BTN }),
+    ]);
+    await view.apply("// corrected spec");
+
+    await waitFor(() => expect(glowingRows()).toHaveLength(2));
+  });
+
+  it("updates the step count when steps are added", async () => {
+    const goto = mkStep({ type: "goto", url: "https://example.com" });
+    test_ = record({ steps: [goto] });
+
+    const view = renderWithApply();
+    expect((await stepsTab()).textContent).toBe("Steps (1)");
+
+    applyYields([...reparsed([goto]), mkStep({ type: "click", locator: BTN })]);
+    await view.apply("// corrected spec");
+
+    await waitFor(async () => expect((await stepsTab()).textContent).toBe("Steps (2)"));
+  });
+
+  it("glows nothing when the fix only DELETED steps", async () => {
+    // Explicitly part of the spec: a removal has no row left to decorate, and
+    // decorating its neighbours would point at the wrong step.
+    const goto = mkStep({ type: "goto", url: "https://example.com" });
+    const click = mkStep({ type: "click", locator: BTN });
+    test_ = record({ steps: [goto, click] });
+
+    const view = renderWithApply();
+    await screen.findByText("Checkout");
+
+    applyYields(reparsed([goto]));
+    await view.apply("// corrected spec");
+
+    await waitFor(async () => expect((await stepsTab()).textContent).toBe("Steps (1)"));
+    expect(glowingRows()).toHaveLength(0);
+  });
+
+  it("glows only the replacement in a substitution, and holds the count", async () => {
+    const goto = mkStep({ type: "goto", url: "https://example.com" });
+    const click = mkStep({ type: "click", locator: BTN });
+    test_ = record({ steps: [goto, click] });
+
+    const view = renderWithApply();
+    expect((await stepsTab()).textContent).toBe("Steps (2)");
+
+    applyYields([...reparsed([goto]), mkStep({ type: "click", locator: ALT })]);
+    await view.apply("// corrected spec");
+
+    await waitFor(() => expect(glowingRows()).toHaveLength(1));
+    expect(glowingText()[0]).toMatch(/Continue/);
+    expect((await stepsTab()).textContent).toBe("Steps (2)");
+  });
+
+  it("glows nothing when the fix only reordered steps", async () => {
+    // The LCS alone reports a move as a remove plus an add. Without the move
+    // suppression this lights up a step the AI did not write.
+    const goto = mkStep({ type: "goto", url: "https://example.com" });
+    const click = mkStep({ type: "click", locator: BTN });
+    const wait = mkStep({ type: "wait", waitMs: 250 });
+    test_ = record({ steps: [goto, click, wait] });
+
+    const view = renderWithApply();
+    await screen.findByText("Checkout");
+
+    applyYields(reparsed([goto, wait, click]));
+    await view.apply("// corrected spec");
+
+    await waitFor(async () => expect((await stepsTab()).textContent).toBe("Steps (3)"));
+    expect(glowingRows()).toHaveLength(0);
+  });
+
+  it("glows nothing when the fix changed no steps at all", async () => {
+    // A whitespace- or comment-only correction re-parses to the same steps
+    // with entirely new ids. Comparing by id would glow the whole list here.
+    const goto = mkStep({ type: "goto", url: "https://example.com" });
+    const click = mkStep({ type: "click", locator: BTN });
+    test_ = record({ steps: [goto, click] });
+
+    const view = renderWithApply();
+    await screen.findByText("Checkout");
+
+    applyYields(reparsed([goto, click]));
+    await view.apply("// corrected spec");
+
+    await waitFor(() => expect(updateScript).toHaveBeenCalledTimes(1));
+    expect(glowingRows()).toHaveLength(0);
+  });
+
+  it("replaces the previous highlight when a second fix is applied", async () => {
+    // Highlights must not accumulate: the question is "what did the change I
+    // just applied do", not "what has ever been added to this test".
+    const goto = mkStep({ type: "goto", url: "https://example.com" });
+    test_ = record({ steps: [goto] });
+
+    const view = renderWithApply();
+    await screen.findByText("Checkout");
+
+    const first = mkStep({ type: "click", locator: BTN });
+    applyYields([...reparsed([goto]), first]);
+    await view.apply("// fix one");
+    await waitFor(() => expect(glowingRows()).toHaveLength(1));
+
+    const second = mkStep({ type: "wait", waitMs: 750 });
+    applyYields([...reparsed([goto, first]), second]);
+    await view.apply("// fix two");
+
+    await waitFor(() => expect(glowingText()).toEqual([expect.stringMatching(/750/)]));
+  });
+
+  it("stops glowing once the user saves their own step edits", async () => {
+    // Once the user has had their hands in the list, "the AI added these" is
+    // no longer a claim this view can make about it — and the ids it was
+    // tracking may not even be in the list any more.
+    const goto = mkStep({ type: "goto", url: "https://example.com" });
+    test_ = record({ steps: [goto] });
+
+    // Stand in for the native menu, the way the Edit Steps suite below does —
+    // the SDK's DropdownMenu items never reach the DOM.
+    (window as unknown as { glazeAPI: { Menu: { popup: unknown } } }).glazeAPI.Menu.popup = vi.fn(
+      async (opts: { items: { label?: string; commandId?: number }[] }) => {
+        const item = opts.items.find((i) => i.label === "Edit Steps");
+        return item?.commandId === undefined ? {} : { commandId: item.commandId };
+      },
+    );
+
+    const view = renderWithApply();
+    await screen.findByText("Checkout");
+
+    applyYields([...reparsed([goto]), mkStep({ type: "click", locator: BTN })]);
+    await view.apply("// corrected spec");
+    await waitFor(() => expect(glowingRows()).toHaveLength(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /edit test/i }));
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(updateSteps).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(glowingRows()).toHaveLength(0));
+  });
+
+  it("moves off the Steps tab when a fix deletes the last step", async () => {
+    // The trigger is gated on there being steps. Left uncontrolled, the tab
+    // value stayed "steps" after the trigger vanished and the user was looking
+    // at an empty pane with nothing selected in the tab bar.
+    const goto = mkStep({ type: "goto", url: "https://example.com" });
+    test_ = record({ steps: [goto] });
+
+    const view = renderWithApply();
+    expect((await stepsTab()).textContent).toBe("Steps (1)");
+
+    // The user has to have PICKED the tab for this to bite. Steps is already
+    // the default, and the default arm recomputes from the current step list,
+    // so it copes on its own — it is the explicitly-chosen value that gets
+    // stranded. Round-tripping through Script is what makes "steps" an actual
+    // choice rather than the fallback.
+    selectTab(/Script/);
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /Script/ }).getAttribute("data-state")).toBe("active"),
+    );
+    selectTab(/^Steps/);
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: /^Steps/ }).getAttribute("data-state")).toBe("active"),
+    );
+
+    applyYields([]);
+    await view.apply("// corrected spec");
+
+    await waitFor(() => expect(screen.queryByRole("tab", { name: /^Steps/ })).toBeNull());
+    const selected = screen.getAllByRole("tab").filter((t) => t.getAttribute("data-state") === "active");
+    expect(selected).toHaveLength(1);
+    expect(selected[0].textContent).toMatch(/Script/);
   });
 });

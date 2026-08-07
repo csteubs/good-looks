@@ -7,6 +7,7 @@ import * as React from "react";
 import { toast } from "@ui";
 
 import { api } from "../lib/api";
+import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import type {
   DebugCaptureSession,
   AssertKind,
@@ -24,6 +25,13 @@ import type {
 } from "../lib/recorder-types";
 
 export type RunStepStatus = "running" | "passed" | "failed";
+
+/** How long a replayed step's pass/fail outline stays on its row.
+ *
+ *  Deliberately the same 2500ms as the per-row replay tint in step-row.tsx, so
+ *  the outline and the background clear together — two ephemeral highlights on
+ *  one row expiring a beat apart reads as a rendering glitch. */
+export const REPLAY_FLASH_MS = 2500;
 
 /** One step's result within a live "Replay from current step" run. */
 export interface ReplayConsoleStep {
@@ -77,6 +85,7 @@ const EMPTY_STATE: RecorderState = {
   assertSoft: false,
   cursor: 0,
   refineMode: false,
+  replaying: false,
   pageReady: false,
   loading: false,
   loadFailed: false,
@@ -92,6 +101,10 @@ interface RecorderContextValue {
    *  Controls must stay inert until the list is actually here — acting on a step
    *  list you have not received yet edits the wrong position, or nothing. */
   stepsLoaded: boolean;
+  /** Ids of steps the AI just added to the list (Generate Steps), so the step
+   *  rows can glow. Empty for steps the user added by hand: they know what they
+   *  just typed, and highlighting it would be noise. */
+  newStepIds: Set<string>;
   runs: Record<string, RunInfo>;
   /** `viewport` is the New Recording dialog's window-size preset; omitted (or
    *  null) keeps the trainer's default window size. Ignored when `testId` names
@@ -110,6 +123,10 @@ interface RecorderContextValue {
   setAssert: (mode: AssertKind | null, soft?: boolean) => void;
   deleteStep: (id: string) => void;
   insertStep: (step: RawStep, index?: number) => void;
+  /** Insert a batch of AI-generated steps and mark what landed as new, so the
+   *  step list can glow it. Separate from `insertStep` because only this path
+   *  produces steps the user did not write themselves. */
+  insertGeneratedSteps: (steps: RawStep[]) => Promise<void>;
   reorderStep: (id: string, toIndex: number) => void;
   updateStep: (id: string, patch: Partial<Step>) => void;
   /** Apply a user-chosen Auto-Heal candidate locator to a step. */
@@ -139,6 +156,11 @@ interface RecorderContextValue {
   executing: boolean;
   /** Per-step status for an in-flight replay, keyed by step index. */
   replayStepStatus: Record<number, RunStepStatus>;
+  /** Ephemeral pass/fail outline for a step that JUST finished replaying, keyed
+   *  by step index. Distinct from `replayStepStatus`, which persists until the
+   *  next run so the finished run stays readable: this is the flash that says
+   *  "this one, just now" and clears itself a couple of seconds later. */
+  replayFlash: Record<number, "pass" | "fail">;
   /** Persisted per-step debug entries (latest attempt per step), for the debug panel. */
   debugEntries: DebugEntry[];
   /** Remove one step's debug entry (persists via backend). */
@@ -188,6 +210,13 @@ export function RecorderProvider({
   const [state, setState] = React.useState<RecorderState>(EMPTY_STATE);
   const [liveSteps, setLiveSteps] = React.useState<Step[]>([]);
   const [stepsLoaded, setStepsLoaded] = React.useState(false);
+  const [newStepIds, setNewStepIds] = React.useState<Set<string>>(() => new Set());
+  // Mirror of liveSteps for the callbacks below. They are created once (empty
+  // dep arrays, so the trainer's props don't rebuild on every captured step),
+  // which means reading `liveSteps` from their closure would read the list as
+  // it was when the provider first rendered — i.e. empty.
+  const liveStepsRef = React.useRef<Step[]>([]);
+  liveStepsRef.current = liveSteps;
   const [picked, setPicked] = React.useState<PickedElement | null>(null);
   const [refiningStepId, setRefiningStepId] = React.useState<string | null>(null);
   const [contextAction, setContextAction] = React.useState<ContextAction | null>(null);
@@ -196,6 +225,19 @@ export function RecorderProvider({
   // Per-step status for an in-flight trainer replayAll (auto-run on Edit in
   // Trainer), keyed by step index. Cleared when a new run starts.
   const [replayStepStatus, setReplayStepStatus] = React.useState<Record<number, RunStepStatus>>({});
+  // Ephemeral pass/fail outline, keyed by step index. Every entry owns a timer
+  // that removes it; the timers are held so they can be cancelled, because a
+  // step replayed twice in quick succession would otherwise have the FIRST
+  // run's timer clear the second run's flash early.
+  const [replayFlash, setReplayFlash] = React.useState<Record<number, "pass" | "fail">>({});
+  const flashTimers = React.useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  React.useEffect(() => {
+    const timers = flashTimers.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
   // Live "Replay from current step" run, streamed from the backend.
   const [replayRun, setReplayRun] = React.useState<ReplayRun | null>(null);
   // True while any replay (single step / from-current) is in flight — drives
@@ -295,6 +337,35 @@ export function RecorderProvider({
         ...prev,
         [index]: status === "begin" ? "running" : ok ? "passed" : "failed",
       }));
+      // The flash is keyed off "end" rather than the replay's start: a step can
+      // legitimately take seconds (a conditional wait runs up to its timeout),
+      // and a flash timed from the start would already be gone by the time the
+      // step it describes actually finished.
+      if (status === "begin") {
+        const pending = flashTimers.current.get(index);
+        if (pending) {
+          clearTimeout(pending);
+          flashTimers.current.delete(index);
+        }
+        setReplayFlash((prev) => {
+          if (!(index in prev)) return prev;
+          const next = { ...prev };
+          delete next[index];
+          return next;
+        });
+        return;
+      }
+      setReplayFlash((prev) => ({ ...prev, [index]: ok ? "pass" : "fail" }));
+      const timer = setTimeout(() => {
+        flashTimers.current.delete(index);
+        setReplayFlash((prev) => {
+          if (!(index in prev)) return prev;
+          const next = { ...prev };
+          delete next[index];
+          return next;
+        });
+      }, REPLAY_FLASH_MS);
+      flashTimers.current.set(index, timer);
     });
     // Live "Replay from current step" streaming: build the run model up as each
     // phase arrives so the Console tab can show output as the test runs.
@@ -400,6 +471,8 @@ export function RecorderProvider({
       viewport?: { width: number; height: number } | null,
     ) => {
       setLiveSteps([]);
+      // A new session's list has nothing to do with the last one's highlight.
+      setNewStepIds(new Set());
       await api.recorder.start(url, name, testId, viewport);
     },
     [],
@@ -412,21 +485,64 @@ export function RecorderProvider({
     (mode: AssertKind | null, soft = false) => void api.recorder.setAssert(mode, soft),
     [],
   );
+  // Any hand mutation of the list retires the "the AI added these" highlight:
+  // once the user is editing, the claim is no longer about a change made behind
+  // their back, and the tracked ids may not even be in the list any more.
+  const clearNewSteps = React.useCallback(() => {
+    setNewStepIds((prev) => (prev.size === 0 ? prev : new Set()));
+  }, []);
+
   // These mutations are echoed back via the recorder:steps broadcast, so there's
   // no optimistic local update — the backend list is the source of truth.
-  const deleteStep = React.useCallback((id: string) => void api.recorder.deleteStep(id), []);
+  const deleteStep = React.useCallback(
+    (id: string) => {
+      clearNewSteps();
+      void api.recorder.deleteStep(id);
+    },
+    [clearNewSteps],
+  );
   const insertStep = React.useCallback(
-    (step: RawStep, index?: number) => void api.recorder.insertStep(step, index),
-    [],
+    (step: RawStep, index?: number) => {
+      clearNewSteps();
+      void api.recorder.insertStep(step, index);
+    },
+    [clearNewSteps],
   );
   const reorderStep = React.useCallback(
-    (id: string, toIndex: number) => void api.recorder.reorderStep(id, toIndex),
-    [],
+    (id: string, toIndex: number) => {
+      clearNewSteps();
+      void api.recorder.reorderStep(id, toIndex);
+    },
+    [clearNewSteps],
   );
   const updateStep = React.useCallback(
-    (id: string, patch: Partial<Step>) => void api.recorder.updateStep(id, patch),
-    [],
+    (id: string, patch: Partial<Step>) => {
+      clearNewSteps();
+      void api.recorder.updateStep(id, patch);
+    },
+    [clearNewSteps],
   );
+
+  const insertGeneratedSteps = React.useCallback(async (steps: RawStep[]) => {
+    const before = liveStepsRef.current;
+    // Sequential, not `forEach`: each insert lands at the session cursor and
+    // advances it, so firing them concurrently leaves the order up to whichever
+    // IPC call the backend happens to service first.
+    for (const step of steps) {
+      await api.recorder.insertStep(step);
+    }
+    // Re-read rather than waiting for the `recorder:steps` push. The push and
+    // the invoke reply are different channels with no ordering guarantee
+    // between them, and the diff needs the settled list — if it ran a beat
+    // early it would mark only the first of the inserted steps.
+    const after = await api.recorder.getSteps().catch(() => null);
+    if (!after) return;
+    setLiveSteps(after);
+    setStepsLoaded(true);
+    // Normalization backend-side can drop a step the model produced, so this
+    // diffs what actually landed instead of assuming all of `steps` did.
+    setNewStepIds(computeNewStepIds(before, after));
+  }, []);
   const applyHeal = React.useCallback(
     (stepId: string, locator: Locator) => void api.recorder.applyHeal(stepId, locator),
     [],
@@ -516,6 +632,7 @@ export function RecorderProvider({
     state,
     liveSteps,
     stepsLoaded,
+    newStepIds,
     runs,
     start,
     pause,
@@ -524,6 +641,7 @@ export function RecorderProvider({
     setAssert,
     deleteStep,
     insertStep,
+    insertGeneratedSteps,
     reorderStep,
     updateStep,
     applyHeal,
@@ -535,6 +653,7 @@ export function RecorderProvider({
     replayRun,
     executing,
     replayStepStatus,
+    replayFlash,
     debugEntries,
     clearDebugEntry,
     picked,

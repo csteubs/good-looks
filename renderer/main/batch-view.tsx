@@ -30,8 +30,10 @@ import {
 import { Check, CircleDashed, GripVertical, Play, Square, X, SkipForward, Loader } from "lucide-react";
 
 import { api } from "../lib/api";
+import { BROWSER_SF_SYMBOLS } from "../lib/browser-icons";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
-import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts, untaggedCount } from "../lib/test-tags";
+import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts } from "../lib/test-tags";
+import { TagCluster } from "./tag-cluster";
 import {
   applyOrder,
   isCustomOrder,
@@ -104,38 +106,6 @@ function StatusBadge({ status, note }: { status: BatchTestStatus; note?: string 
   }
 }
 
-/** One filter chip in the tag row. Shows its test count so an empty group is
- *  obvious before you click it. */
-function TagChip({
-  label,
-  count,
-  active,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  count: number;
-  active: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-pressed={active}
-      className={`rounded-full border px-2.5 py-0.5 text-small transition-colors disabled:opacity-50 ${
-        active
-          ? "border-accent bg-accent/15 text-primary"
-          : "border-token-border text-secondary hover:bg-token-hover"
-      }`}
-    >
-      {label} · {count}
-    </button>
-  );
-}
-
 export function BatchView() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -191,10 +161,10 @@ export function BatchView() {
   const [overId, setOverId] = React.useState<string | null>(null);
 
     // Tag filter over the checklist. Selection is stored by test id, so
-  // switching filters never silently drops tests you already ticked.
+  // switching filters never silently drops tests you already ticked. The chips
+  // themselves live in TagCluster, which also owns deleting a tag library-wide.
   const [tagFilter, setTagFilter] = React.useState<string>(ALL_TAGS);
   const tags = React.useMemo(() => tagCounts(tests), [tests]);
-  const untagged = React.useMemo(() => untaggedCount(tests), [tests]);
   React.useEffect(() => {
     if (orderInited || !settingsQuery.data) return;
     setOrder(settingsQuery.data.batchOrder ?? []);
@@ -354,11 +324,13 @@ export function BatchView() {
               className="w-32"
               aria-label="Browser engine for this batch"
             >
+              {/* The glyph comes from the selected item's SF Symbol, drawn by
+                  SelectValue — one of ours here would be the second one. */}
               <SelectValue placeholder="Chromium" />
             </SelectTrigger>
             <SelectContent>
               {RUN_BROWSERS.map((b) => (
-                <SelectItem key={b} value={b}>
+                <SelectItem key={b} value={b} icon={BROWSER_SF_SYMBOLS[b]}>
                   {RUN_BROWSER_LABELS[b]}
                 </SelectItem>
               ))}
@@ -420,36 +392,12 @@ export function BatchView() {
             />
           ) : (
             <>
-              {tags.length > 0 ? (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <TagChip
-                    label="All"
-                    count={tests.length}
-                    active={tagFilter === ALL_TAGS}
-                    disabled={running}
-                    onClick={() => setTagFilter(ALL_TAGS)}
-                  />
-                  {tags.map((t) => (
-                    <TagChip
-                      key={t.tag.toLowerCase()}
-                      label={t.tag}
-                      count={t.count}
-                      active={tagFilter.toLowerCase() === t.tag.toLowerCase()}
-                      disabled={running}
-                      onClick={() => setTagFilter(t.tag)}
-                    />
-                  ))}
-                  {untagged > 0 ? (
-                    <TagChip
-                      label="Untagged"
-                      count={untagged}
-                      active={tagFilter === UNTAGGED}
-                      disabled={running}
-                      onClick={() => setTagFilter(UNTAGGED)}
-                    />
-                  ) : null}
-                </div>
-              ) : null}
+              <TagCluster
+                tests={tests}
+                value={tagFilter}
+                onChange={setTagFilter}
+                disabled={running}
+              />
 
               <div className="flex items-center gap-3">
                 <Button
@@ -505,7 +453,7 @@ export function BatchView() {
                 </Text>
               </div>
 
-              <div className="rounded-lg border border-token-border bg-token-surface-raised">
+              <div className="rounded-lg border border-separator bg-panel">
                 {visibleTests.map((t) => {
                   const result = resultFor.get(t.id);
                   const isCurrent = result?.status === "running";
@@ -515,7 +463,7 @@ export function BatchView() {
                       onDragEnter={running ? undefined : () => setOverId(t.id)}
                       onDragOver={running ? undefined : (e) => e.preventDefault()}
                       onDrop={running ? undefined : (e) => e.preventDefault()}
-                      className={`group/row flex items-center gap-3 border-b border-token-border px-3 py-2 last:border-b-0 ${
+                      className={`group/row flex items-center gap-3 border-b border-separator px-3 py-2 last:border-b-0 ${
                         isCurrent ? "bg-accent/10" : ""
                       } ${
                         overId === t.id && dragId !== null && dragId !== t.id
@@ -578,7 +526,7 @@ export function BatchView() {
               </div>
 
               {shown && !running && summary ? (
-                <div className="rounded-lg border border-token-border bg-token-surface-raised p-4">
+                <div className="rounded-lg border border-separator bg-panel p-4">
                   <Text variant="small" className="mb-1 block font-medium">
                     {shown.stopped
                       ? "Batch stopped"
@@ -628,15 +576,15 @@ export function BatchView() {
                       Clear history
                     </Button>
                   </div>
-                  <div className="rounded-lg border border-token-border bg-token-surface-raised">
+                  <div className="rounded-lg border border-separator bg-panel">
                     {history.map((b: BatchRecord) => (
                       <button
                         key={b.batchId}
                         type="button"
                         disabled={running}
                         onClick={() => setBatch(b)}
-                        className={`flex w-full items-center gap-3 border-b border-token-border px-3 py-2 text-left last:border-b-0 hover:bg-token-hover disabled:opacity-50 ${
-                          b.batchId === shown?.batchId ? "bg-token-hover" : ""
+                        className={`flex w-full items-center gap-3 border-b border-separator px-3 py-2 text-left last:border-b-0 hover:bg-control-subtle disabled:opacity-50 ${
+                          b.batchId === shown?.batchId ? "bg-control-subtle" : ""
                         }`}
                       >
                         <Text variant="small" color="secondary" className="w-32 shrink-0">

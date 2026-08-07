@@ -27,8 +27,20 @@ const RUN_TIMEOUT_MS = 5 * 60 * 1000;
 const MAX_RUN_RECORDS = 1000;
 const MAX_BATCH_RECORDS = 50; // mirrors main/services/batch-history-store.ts
 const RUN_BROWSERS = ["chromium", "firefox", "webkit"];
-/** Mirrors SLOW_MO_MS in main/services/playwright-runner.ts. */
-const SLOW_MO_MS = { fast: 0, medium: 400, slow: 1200 };
+/**
+ * Mirrors SLOW_MO_MS in main/services/run-pacing.ts. Pinned against it by
+ * `npm run check:crawl-speed` — a speed missing here reads as `undefined`, and
+ * the `?? 0` below turns that into a FULL-SPEED run of a test the user
+ * deliberately slowed down, with nothing in the output to say so.
+ *
+ * The step delay is all this server applies. "crawl" also waits for each page
+ * to settle, and that lives in a Playwright fixture the app injects by
+ * redirecting the spec's import — the same mechanism screenshot capture,
+ * accessibility checks and Auto-Heal use, none of which this server does
+ * either. An MCP-driven crawl run is therefore paced like a crawl run but does
+ * not settle; see `run_test`'s response note.
+ */
+const SLOW_MO_MS = { fast: 0, medium: 400, slow: 1200, crawl: 2500 };
 const OUTPUT_TAIL_CHARS = 4000;
 const LOG_TAIL_CHARS = 20000;
 
@@ -204,6 +216,10 @@ async function executeTest(test, { playwright, browser, batchId, timeoutMs }) {
       // an MCP-driven run.
       runHeadless: true,
       runBrowser: browser,
+      // Recorded so the app's run history can attribute an MCP-driven run to a
+      // speed like any other. Without it these runs show a blank speed and
+      // read as "recorded before the field existed".
+      speed: test.speed ?? "fast",
       ...(batchId ? { batchId } : {}),
     },
     output,

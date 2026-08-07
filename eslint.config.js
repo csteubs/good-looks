@@ -17,7 +17,19 @@ import globals from "globals";
 
 export default [
   {
-    ignores: ["build/**", "dist/**", "node_modules/**", "**/*.d.ts"],
+    // `.claude/**` comes from main's config, and the reason survives the port:
+    // the git worktrees under `.claude/worktrees/<branch>/` are full checkouts
+    // of other branches, so linting them lints a second copy of the whole app
+    // under the wrong config and produces thousands of bogus errors that have
+    // nothing to do with the working tree.
+    ignores: [
+      "build/**",
+      "build-preview/**",
+      "dist/**",
+      "node_modules/**",
+      ".claude/**",
+      "**/*.d.ts",
+    ],
   },
   js.configs.recommended,
   {

@@ -14,6 +14,7 @@ import {
 
 import { api } from "../lib/api";
 import type { TestSpeed } from "../lib/recorder-types";
+import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import {
   DEFAULT_VIEWPORT_PRESET_ID,
   VIEWPORT_PRESETS,
@@ -22,8 +23,6 @@ import {
 } from "../lib/viewport-presets";
 import { useRecorder } from "./recorder-store";
 
-const SPEEDS: TestSpeed[] = ["slow", "medium", "fast"];
-const SPEED_LABEL: Record<TestSpeed, string> = { slow: "Slow", medium: "Medium", fast: "Fast" };
 
 export function NewRecordingDialog({
   open,
@@ -132,9 +131,9 @@ export function NewRecordingDialog({
             variant="filled"
             size="small"
           >
-            {SPEEDS.map((s) => (
+            {TEST_SPEEDS.map((s) => (
               <SegmentedControlItem key={s} value={s}>
-                {SPEED_LABEL[s]}
+                {TEST_SPEED_LABELS[s]}
               </SegmentedControlItem>
             ))}
           </SegmentedControl>

@@ -3,13 +3,10 @@
 // steps from a shared DOM queue on a poll, and streams them to the app's main
 // window. On close it generates a Playwright spec and persists the test.
 //
-// Scripts run in an ISOLATED WORLD (executeJavaScriptInIsolatedWorld), never
-// the page's own: the page must not be able to see or tamper with the capture
-// machinery. This preserves the original design's content-world isolation,
-// where the capture script cannot rely on sharing JS globals with the page.
-// State and queued steps therefore live on <html> attributes (see
-// capture-script.ts), which both worlds can reach — that DOM handoff is the
-// deliberate, normalized trust boundary.
+// Glaze's executeJavaScript runs each call in an ephemeral content world, so the
+// capture script cannot rely on JS globals or the console bridge. Instead it
+// stores state and queued steps on <html> attributes (see capture-script.ts),
+// which this service reads/writes across calls.
 
 import { randomUUID } from "crypto";
 
@@ -27,6 +24,7 @@ import {
   PICK_AT_POINT_SCRIPT,
 } from "../recorder/capture-script.js";
 import { buildReplayScript } from "./step-replayer.js";
+import { applyViewportStep, type ResizeHost } from "./resize-service.js";
 import { healStep } from "./auto-heal.js";
 import { healJournalStore } from "./heal-journal-store.js";
 import { createTrainerWindowGate } from "./trainer-window-gate.js";
@@ -78,35 +76,6 @@ import { runHistoryStore } from "./run-history-store.js";
 import { describeStep } from "./script-generator.js";
 import { testStore } from "./test-store.js";
 
-// Pacing for the "Replay from current step" run so the user can watch it step
-// through slowly: a short settle after highlighting a row before running it,
-// and a longer pause between steps.
-const REPLAY_SETTLE_MS = 300;
-const REPLAY_STEP_DELAY_MS = 600;
-// A single step's injected script must resolve within this window. A step that
-// triggers a page navigation (or otherwise hangs) would leave executeJavaScript
-// pending forever and wedge the whole run with controls disabled; the timeout
-// turns that into a clean per-step failure instead.
-const REPLAY_STEP_TIMEOUT_MS = 8000;
-// How long after creating the recorder window to force it visible if the
-// WebView's own readiness events (`ready-to-show`/`dom-ready`) haven't fired
-// yet. On a cold start (the first recorder window in the app's lifetime) those
-// events can lag many seconds while the WebView subsystem initializes, which
-// left the window hidden behind the main window — the "first click does
-// nothing" bug. A creation-relative timer doesn't depend on those events.
-const SHOW_FALLBACK_MS = 1500;
-// Hard cap on how long we wait for the first page to finish loading before we
-// let the trainer proceed (controls enable). The window itself is shown far
-// earlier (see SHOW_FALLBACK_MS); this only bounds `pageReady`.
-const LOAD_TIMEOUT_MS = 15000;
-// Frame size of a trainer window opened with no size preset. Deliberately the
-// FRAME rather than the page: with no preset there is no size to honour, so the
-// window is sized to sit comfortably on a laptop display, and whatever page
-// area that leaves is what the user records at.
-const DEFAULT_WINDOW_WIDTH = 1200;
-const DEFAULT_WINDOW_HEIGHT = 820;
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-
 /** Isolated world the recorder's scripts run in. Any id above 0 is isolated
  *  from the page's main world (0); the exact number only has to be stable so
  *  capture state injected by one call is visible to the next. */
@@ -133,6 +102,42 @@ function pageExecutor(wc: IsolatedHost): { executeJavaScript: (script: string) =
       wc.executeJavaScriptInIsolatedWorld(RECORDER_WORLD_ID, [{ code: script }]),
   };
 }
+
+// Pacing for the "Replay from current step" run so the user can watch it step
+// through slowly: a short settle after highlighting a row before running it,
+// and a longer pause between steps.
+const REPLAY_SETTLE_MS = 300;
+const REPLAY_STEP_DELAY_MS = 600;
+// How long to wait after focusing the training window before running the first
+// step of a replay. Covers two things at once: the OS actually moving key focus
+// to that window (a `press` step types into whatever is focused, and typing
+// into the trainer panel is both wrong and invisible), and the page seeing the
+// `data-pw-paused` attribute we just wrote. Both are fast, neither is
+// synchronous, and getting either wrong is silent.
+const REPLAY_FOCUS_SETTLE_MS = 300;
+// A single step's injected script must resolve within this window. A step that
+// triggers a page navigation (or otherwise hangs) would leave executeJavaScript
+// pending forever and wedge the whole run with controls disabled; the timeout
+// turns that into a clean per-step failure instead.
+const REPLAY_STEP_TIMEOUT_MS = 8000;
+// How long after creating the recorder window to force it visible if the
+// WebView's own readiness events (`ready-to-show`/`dom-ready`) haven't fired
+// yet. On a cold start (the first recorder window in the app's lifetime) those
+// events can lag many seconds while the WebView subsystem initializes, which
+// left the window hidden behind the main window — the "first click does
+// nothing" bug. A creation-relative timer doesn't depend on those events.
+const SHOW_FALLBACK_MS = 1500;
+// Hard cap on how long we wait for the first page to finish loading before we
+// let the trainer proceed (controls enable). The window itself is shown far
+// earlier (see SHOW_FALLBACK_MS); this only bounds `pageReady`.
+const LOAD_TIMEOUT_MS = 15000;
+// Frame size of a trainer window opened with no size preset. Deliberately the
+// FRAME rather than the page: with no preset there is no size to honour, so the
+// window is sized to sit comfortably on a laptop display, and whatever page
+// area that leaves is what the user records at.
+const DEFAULT_WINDOW_WIDTH = 1200;
+const DEFAULT_WINDOW_HEIGHT = 820;
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** Race a page `executeJavaScript` against a timeout so one hanging/navigating
  *  step can't freeze a replay run. Rejects with a descriptive error on timeout. */
@@ -326,16 +331,24 @@ function currentPageUrl(): string {
 /**
  * Run one step during trainer replay.
  *
- * Single dispatch point on purpose: `cookie` steps CANNOT go through the
- * injected-script replayer, because an httpOnly cookie is invisible to
- * document.cookie by definition — they need the session API instead. Routing
- * every path through here means a new step kind can't be handled in some replay
- * paths and silently missed in others.
+ * Single dispatch point on purpose: two step kinds CANNOT go through the
+ * injected-script replayer. A `cookie` step needs the session API, because an
+ * httpOnly cookie is invisible to document.cookie by definition; a `viewport`
+ * step needs the window API, because a page cannot resize the window it is
+ * loaded in. Routing every path through here means a new step kind can't be
+ * handled in some replay paths and silently missed in others.
  */
 async function runStep(
   wc: { executeJavaScript: (script: string) => Promise<unknown> },
   step: Step,
 ): Promise<ReplayStepResult> {
+  if (step.type === "viewport") {
+    return applyViewportStep(
+      recWindow && !recWindow.isDestroyed() ? (recWindow as unknown as ResizeHost) : null,
+      step,
+      (script) => wc.executeJavaScript(script),
+    );
+  }
   if (step.type === "cookie") {
     // The trainer window can close mid-replay (the loops elsewhere guard for
     // exactly this), so don't assert it's alive — report a clean failure
@@ -396,6 +409,9 @@ interface Session {
   cursor: number;
   /** the "Refine Selector" element picker is active in the training window */
   refineMode: boolean;
+  /** a replay is running steps against the training window (see
+   *  `withCaptureSuspended`) */
+  replaying: boolean;
   /** continuing/extending an existing test rather than recording a new one */
   editing: boolean;
   /** preserved from the original record when editing, else the session start time */
@@ -427,6 +443,7 @@ function currentState(): RecorderState {
     assertSoft: session?.assertSoft ?? false,
     cursor: session?.cursor ?? 0,
     refineMode: session?.refineMode ?? false,
+    replaying: session?.replaying ?? false,
     pageReady: session?.pageReady ?? false,
     loading: !!session && !session.pageReady && !session.loadFailed,
     loadFailed: session?.loadFailed ?? false,
@@ -541,6 +558,66 @@ async function applyStateAttributes(): Promise<void> {
   );
 }
 
+/**
+ * Run a replay with capture suspended, the training window focused, and both
+ * trainers told what is happening.
+ *
+ * THE POINT. A replayed click is a real click in a live recording session. With
+ * capture on, the trainer records the step it was asked to replay — so replaying
+ * step 3 appends a fourth step identical to it, and doing it twice appends two.
+ * The steps are indistinguishable from ones the user performed, which is why
+ * this was never noticed as a crash: it just quietly grew the test.
+ *
+ * FOUR THINGS, IN THIS ORDER, and each is load-bearing:
+ *
+ *  1. `paused` + `applyStateAttributes()` — the page's capture script gates
+ *     every handler on `data-pw-paused`, and that attribute is the ONLY thing
+ *     that actually stops capture. Setting the field without pushing it is a
+ *     no-op with a reassuring name.
+ *  2. `broadcastState()` — see the note on RecorderState.replaying. Without it
+ *     the OTHER trainer window is still live and can act into the run.
+ *  3. `focus()` — the replayer dispatches synthetic events, but a `press` step
+ *     targets whatever the OS considers focused. Replaying from the panel with
+ *     the panel focused sends the keystroke to the panel.
+ *  4. A settle wait — neither the focus change nor the attribute write lands
+ *     synchronously, and the first step is the one that would run too early.
+ *
+ * RESTORE IS IN `finally` AND MUST STAY THERE. Every early return in the replay
+ * paths (a failed step stops the run, a soft assertion doesn't) has to leave
+ * capture in the state it found it in, and a throw has to as well — capture
+ * silently never coming back is a worse bug than any replay failure.
+ *
+ * `paused` is restored to what it WAS, not to false: replaying while the user
+ * had deliberately paused recording must not resume it behind their back.
+ *
+ * Guarded by check:replay-suspend, which pins that every replay path goes
+ * through here and that none of them touches `session.paused` directly.
+ */
+async function withCaptureSuspended<T>(body: () => Promise<T>): Promise<T> {
+  // Captured before the flag flips, and re-read rather than closed over in the
+  // finally: `session` can become null mid-replay when the training window is
+  // closed, which the replay loops already guard for.
+  const wasPaused = session?.paused ?? false;
+  try {
+    if (session) {
+      session.paused = true;
+      session.replaying = true;
+    }
+    await applyStateAttributes();
+    broadcastState();
+    if (recWindow && !recWindow.isDestroyed()) recWindow.focus();
+    await sleep(REPLAY_FOCUS_SETTLE_MS);
+    return await body();
+  } finally {
+    if (session) {
+      session.paused = wasPaused;
+      session.replaying = false;
+    }
+    await applyStateAttributes().catch(() => {});
+    broadcastState();
+  }
+}
+
 /** Read and clear an element picked in refine mode; forward it to the app. */
 async function drainPicked(): Promise<void> {
   if (!recWindow || recWindow.isDestroyed() || !session || !session.refineMode) return;
@@ -598,9 +675,10 @@ export interface ContextAction {
   kind: "assertion" | "wait" | "goto" | "press" | "viewport" | "find" | "refine";
   /** assert kind when kind === "assertion" */
   assert?: AssertKind;
-  /** wait mode when kind === "wait" ("element" resolves the locator, "hidden"
-   *  waits for the element to hide, "time" is a fixed duration) */
-  waitMode?: "element" | "hidden" | "time";
+  /** wait mode when kind === "wait": "element" resolves the locator, "hidden"
+   *  opens a Wait Until on the `hidden` predicate, "until" opens Wait Until
+   *  with nothing preselected, "time" is a fixed duration. */
+  waitMode?: "element" | "hidden" | "time" | "until";
   /** the element under the right-click, with its locator candidates */
   picked: PickedElement | null;
   /** the element's current text — prefills text/exactText asserts */
@@ -722,6 +800,7 @@ export const recorderService = {
       assertMode: null,
       assertSoft: false,
       refineMode: false,
+      replaying: false,
       cursor: initialCursor(editing, existingSteps),
       editing,
       createdAt,
@@ -997,6 +1076,7 @@ export const recorderService = {
           { label: "For element visible", click: () => ctxAction({ kind: "wait", waitMode: "element", picked, prefillText: "", prefillValue: "" }) },
           { label: "For element hidden", click: () => ctxAction({ kind: "wait", waitMode: "hidden", picked, prefillText: "", prefillValue: "" }) },
           { label: "For duration…", click: () => ctxAction({ kind: "wait", waitMode: "time", picked: null, prefillText: "", prefillValue: "" }) },
+          { label: "Until…", click: () => ctxAction({ kind: "wait", waitMode: "until", picked, prefillText: "", prefillValue: "" }) },
         ];
         const addStepItems: MenuItemConstructorOptions[] = [
           { label: "Go to URL", click: () => ctxAction({ kind: "goto", picked: null, prefillText: "", prefillValue: "" }) },
@@ -1049,6 +1129,31 @@ export const recorderService = {
     wc.once("dom-ready", () => gate.signal("dom-ready"));
     showFallback = setTimeout(() => gate.signal("fallback"), SHOW_FALLBACK_MS);
     recWindow.on("closed", () => void finalize());
+
+    // Log the size the training window settles at after a manual resize.
+    //
+    // The window's page area is what every step from here on is recorded
+    // against — a locator captured at 1280 wide may not exist at 390 — and
+    // dragging the window edge leaves no other trace. "This test only fails on
+    // one machine" is usually this, and the log is the only place the size at
+    // capture time can be recovered from afterwards.
+    //
+    // `resized` (end of gesture) rather than `resize` (every frame of the drag):
+    // one line per deliberate change, not hundreds per drag.
+    recWindow.on("resized", () => {
+      if (!recWindow || recWindow.isDestroyed()) return;
+      // A replayed `viewport` step resizes this window through the same host
+      // API, and macOS emits `resized` for that too. Logging it here would put
+      // a line claiming a manual resize into the log whose entire purpose is to
+      // record the manual resizes that leave no other trace — the replay writes
+      // its own, more detailed line (see resize-service.ts).
+      if (session?.replaying) return;
+      const [width, height] = recWindow.getContentSize();
+      logger.info("recorder", "The training window was resized", {
+        testId,
+        pageSize: `${width}x${height}`,
+      });
+    });
 
     // A same-origin redirect on load (e.g. adding a trailing slash) can retrigger
     // the will-navigate interceptor above. Route the initial load through
@@ -1260,6 +1365,8 @@ export const recorderService = {
           "width",
           "height",
           "waitMs",
+          "waitUntil",
+          "timeoutMs",
           "soft",
           "assert",
           "locator",
@@ -1344,9 +1451,15 @@ export const recorderService = {
    * Best-effort in-window preview of a single step: resolve its locator in the
    * live page and perform the action / evaluate the assertion via injected JS.
    * This is a synthetic-event preview, NOT Playwright's actionability engine, so
-   * results can differ from a real run. Capture is paused for the duration so a
-   * replayed interaction is not re-recorded. Returns a DebugEntry (with verbose
-   * logs) that is also persisted to the per-test debug log store.
+   * results can differ from a real run. Capture is suspended for the duration
+   * (see `withCaptureSuspended`) so a replayed interaction is not re-recorded.
+   * Returns a DebugEntry (with verbose logs) that is also persisted to the
+   * per-test debug log store.
+   *
+   * Emits the same `recorder:replayStep` begin/end pair the multi-step paths do.
+   * That is what gives a single-step replay the identical row treatment — the
+   * spinner, then the ephemeral pass/fail outline — instead of a second,
+   * near-identical feedback path that drifts from the first.
    */
   async replayStep(stepId: string): Promise<DebugEntry> {
     const empty = (error: string): DebugEntry => ({
@@ -1365,54 +1478,54 @@ export const recorderService = {
     if (!step) return empty("Step not found.");
 
     const wc = pageExecutor(recWindow.webContents);
-    const wasPaused = session.paused;
-    try {
-      // Suppress capture so the replayed interaction isn't recorded as a step.
-      session.paused = true;
-      await applyStateAttributes();
-      const result = await runStep(wc, step);
-      let ok = !!(result && typeof result.ok === "boolean" && result.ok);
-      let error = ok ? undefined : result?.error || "Replay produced no result.";
-      let logs: DebugEntry["logs"] = result?.logs ?? [];
-      // Auto-Heal: a single-step preview that failed on an unresolved locator
-      // gets the same healing pass as a full replay run.
-      if (!ok && step.locator) {
-        const healed = await healAndRetry(wc, step, idx, error);
-        if (healed.okWithHeal) {
-          ok = true;
-          error = undefined;
-          if (healed.healedLogs) logs = healed.healedLogs;
+    sendToMain("recorder:replayStep", { index: idx, status: "begin", ok: true });
+    return withCaptureSuspended(async () => {
+      try {
+        const result = await runStep(wc, step);
+        let ok = !!(result && typeof result.ok === "boolean" && result.ok);
+        let error = ok ? undefined : result?.error || "Replay produced no result.";
+        let logs: DebugEntry["logs"] = result?.logs ?? [];
+        // Auto-Heal: a single-step preview that failed on an unresolved locator
+        // gets the same healing pass as a full replay run.
+        if (!ok && step.locator) {
+          const healed = await healAndRetry(wc, step, idx, error);
+          if (healed.okWithHeal) {
+            ok = true;
+            error = undefined;
+            if (healed.healedLogs) logs = healed.healedLogs;
+          }
         }
+        const entry: DebugEntry = {
+          stepId,
+          stepIndex: idx,
+          stepLabel: describeStep(step),
+          ok,
+          error,
+          at: Date.now(),
+          logs,
+        };
+        if (!ok) logger.info("recorder", "replayStep failed", { stepId, error });
+        this.persistDebug(entry);
+        sendToMain("recorder:replayStep", { index: idx, status: "end", ok });
+        return entry;
+      } catch (err) {
+        const entry: DebugEntry = {
+          stepId,
+          stepIndex: idx,
+          stepLabel: describeStep(step),
+          ok: false,
+          error: String(err),
+          at: Date.now(),
+          logs: verboseErrorLogs(err, step),
+        };
+        logger.info("recorder", "replayStep threw", { stepId, error: String(err) });
+        this.persistDebug(entry);
+        // A throw is a failed step, not an absent one: without this the row
+        // keeps the "begin" spinner forever.
+        sendToMain("recorder:replayStep", { index: idx, status: "end", ok: false });
+        return entry;
       }
-      const entry: DebugEntry = {
-        stepId,
-        stepIndex: idx,
-        stepLabel: describeStep(step),
-        ok,
-        error,
-        at: Date.now(),
-        logs,
-      };
-      if (!ok) logger.info("recorder", "replayStep failed", { stepId, error });
-      this.persistDebug(entry);
-      return entry;
-    } catch (err) {
-      const entry: DebugEntry = {
-        stepId,
-        stepIndex: idx,
-        stepLabel: describeStep(step),
-        ok: false,
-        error: String(err),
-        at: Date.now(),
-        logs: verboseErrorLogs(err, step),
-      };
-      logger.info("recorder", "replayStep threw", { stepId, error: String(err) });
-      this.persistDebug(entry);
-      return entry;
-    } finally {
-      if (session) session.paused = wasPaused;
-      await applyStateAttributes().catch(() => {});
-    }
+    });
   },
 
   /**
@@ -1432,24 +1545,125 @@ export const recorderService = {
       return { ok: false, stoppedAtIndex: -1, error: "Recorder window is not open." };
     }
     const wc = pageExecutor(recWindow.webContents);
-    const wasPaused = session.paused;
-    try {
-      session.paused = true;
-      await applyStateAttributes();
-      for (let i = 0; i < session.steps.length; i++) {
-        const step = session.steps[i];
-        // A disabled step is skipped — log why and continue without running it.
-        if (step.disabled) {
-          logger.info("recorder", "Step skipped — disabled", { stepIndex: i });
-          continue;
+    return withCaptureSuspended(async () => {
+      try {
+        for (let i = 0; i < (session?.steps.length ?? 0); i++) {
+          // The window may close (finalize → session = null) mid-run.
+          if (!session || !recWindow || recWindow.isDestroyed()) break;
+          const step = session.steps[i];
+          // A disabled step is skipped — log why and continue without running it.
+          if (step.disabled) {
+            logger.info("recorder", "Step skipped — disabled", { stepIndex: i });
+            continue;
+          }
+          try {
+            const result = await runStep(wc, step);
+            let ok = !!(result && result.ok);
+            let error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
+            let logs: DebugEntry["logs"] = result?.logs ?? [];
+            // Auto-Heal before treating an unresolved locator as the stopping
+            // point — a healed step counts as the success this path looks for.
+            if (!ok && step.locator && step.type !== "if") {
+              const healed = await healAndRetry(wc, step, i, error);
+              if (healed.okWithHeal) {
+                ok = true;
+                error = undefined;
+                if (healed.healedLogs) logs = healed.healedLogs;
+              }
+            }
+            const entry: DebugEntry = {
+              stepId: step.id,
+              stepIndex: i,
+              stepLabel: describeStep(step),
+              ok,
+              error,
+              at: Date.now(),
+              logs,
+            };
+            this.persistDebug(entry);
+            // Structural logic steps never stop the run; a false condition skips
+            // its whole block so downstream steps aren't previewed on a page that
+            // never showed the conditional content.
+            if (step.type === "if") {
+              if (result?.met === false) {
+                const end = matchingBlockIndex(session.steps, i);
+                if (end > i) i = end;
+              }
+              continue;
+            }
+            if (step.type === "endif") continue;
+            if (ok) {
+              return { ok: true, stoppedAtIndex: i };
+            }
+            // Step failed — stop here so the user can iterate.
+            return {
+              ok: false,
+              stoppedAtIndex: i,
+              error: entry.error,
+            };
+          } catch (err) {
+            const entry: DebugEntry = {
+              stepId: step.id,
+              stepIndex: i,
+              stepLabel: describeStep(step),
+              ok: false,
+              error: String(err),
+              at: Date.now(),
+              logs: verboseErrorLogs(err, step),
+            };
+            this.persistDebug(entry);
+            return { ok: false, stoppedAtIndex: i, error: String(err) };
+          }
         }
-        try {
-          const result = await runStep(wc, step);
-          let ok = !!(result && result.ok);
-          let error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
-          let logs: DebugEntry["logs"] = result?.logs ?? [];
-          // Auto-Heal before treating an unresolved locator as the stopping
-          // point — a healed step counts as the success this path looks for.
+        // No steps to replay.
+        return { ok: true, stoppedAtIndex: -1 };
+      } catch (err) {
+        return { ok: false, stoppedAtIndex: -1, error: String(err) };
+      }
+    });
+  },
+
+  /**
+   * Replay every recorded step in order (unlike replayFromStart, which stops
+   * after the first success), emitting a `recorder:replayStep` event before and
+   * after each step so the renderer can highlight progress. Used by the
+   * "Edit in Trainer" auto-run. A soft assertion failure does not stop the run.
+   * Returns the index of the first hard failure (or -1 if all passed).
+   */
+  async replayAll(): Promise<{ ok: boolean; failedAtIndex: number; error?: string }> {
+    if (!session) return { ok: false, failedAtIndex: -1, error: "No active recording session." };
+    if (!recWindow || recWindow.isDestroyed()) {
+      return { ok: false, failedAtIndex: -1, error: "Recorder window is not open." };
+    }
+    const wc = pageExecutor(recWindow.webContents);
+    return withCaptureSuspended(async () => {
+      try {
+        for (let i = 0; i < (session?.steps.length ?? 0); i++) {
+          // The window may close (finalize → session = null) mid-run.
+          if (!session || !recWindow || recWindow.isDestroyed()) break;
+          const step = session.steps[i];
+          // A disabled step is skipped — log why and move on without running it.
+          if (step.disabled) {
+            logger.info("recorder", "Step skipped — disabled", { stepIndex: i });
+            continue;
+          }
+          sendToMain("recorder:replayStep", { index: i, status: "begin", ok: true });
+          let ok = false;
+          let error: string | undefined;
+          let met: boolean | undefined;
+          let logs: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[] = [];
+          try {
+            const result = await runStep(wc, step);
+            ok = !!(result && result.ok);
+            met = result?.met;
+            error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
+            logs = result?.logs ?? [];
+          } catch (err) {
+            error = String(err);
+            logs = verboseErrorLogs(err, step);
+          }
+          // Auto-Heal: heal an unresolved locator before the failure stops the
+          // run. Candidates are surfaced to the Console either way.
           if (!ok && step.locator && step.type !== "if") {
             const healed = await healAndRetry(wc, step, i, error);
             if (healed.okWithHeal) {
@@ -1468,132 +1682,25 @@ export const recorderService = {
             logs,
           };
           this.persistDebug(entry);
-          // Structural logic steps never stop the run; a false condition skips
-          // its whole block so downstream steps aren't previewed on a page that
-          // never showed the conditional content.
-          if (step.type === "if") {
-            if (result?.met === false) {
-              const end = matchingBlockIndex(session.steps, i);
-              if (end > i) i = end;
-            }
+          sendToMain("recorder:replayStep", { index: i, status: "end", ok });
+          // Skip the body of a conditional block whose condition didn't hold —
+          // the skipped steps are left un-highlighted (never begun), matching a
+          // real run that branches past them.
+          if (step.type === "if" && met === false) {
+            const end = matchingBlockIndex(session.steps, i);
+            if (end > i) i = end;
             continue;
           }
-          if (step.type === "endif") continue;
-          if (ok) {
-            return { ok: true, stoppedAtIndex: i };
-          }
-          // Step failed — stop here so the user can iterate.
-          return {
-            ok: false,
-            stoppedAtIndex: i,
-            error: entry.error,
-          };
-        } catch (err) {
-          const entry: DebugEntry = {
-            stepId: step.id,
-            stepIndex: i,
-            stepLabel: describeStep(step),
-            ok: false,
-            error: String(err),
-            at: Date.now(),
-            logs: verboseErrorLogs(err, step),
-          };
-          this.persistDebug(entry);
-          return { ok: false, stoppedAtIndex: i, error: String(err) };
-        }
-      }
-      // No steps to replay.
-      return { ok: true, stoppedAtIndex: -1 };
-    } catch (err) {
-      return { ok: false, stoppedAtIndex: -1, error: String(err) };
-    } finally {
-      if (session) session.paused = wasPaused;
-      await applyStateAttributes().catch(() => {});
-    }
-  },
-
-  /**
-   * Replay every recorded step in order (unlike replayFromStart, which stops
-   * after the first success), emitting a `recorder:replayStep` event before and
-   * after each step so the renderer can highlight progress. Used by the
-   * "Edit in Trainer" auto-run. A soft assertion failure does not stop the run.
-   * Returns the index of the first hard failure (or -1 if all passed).
-   */
-  async replayAll(): Promise<{ ok: boolean; failedAtIndex: number; error?: string }> {
-    if (!session) return { ok: false, failedAtIndex: -1, error: "No active recording session." };
-    if (!recWindow || recWindow.isDestroyed()) {
-      return { ok: false, failedAtIndex: -1, error: "Recorder window is not open." };
-    }
-    const wc = pageExecutor(recWindow.webContents);
-    const wasPaused = session.paused;
-    try {
-      session.paused = true;
-      await applyStateAttributes();
-      for (let i = 0; i < session.steps.length; i++) {
-        const step = session.steps[i];
-        // A disabled step is skipped — log why and move on without running it.
-        if (step.disabled) {
-          logger.info("recorder", "Step skipped — disabled", { stepIndex: i });
-          continue;
-        }
-        sendToMain("recorder:replayStep", { index: i, status: "begin", ok: true });
-        let ok = false;
-        let error: string | undefined;
-        let met: boolean | undefined;
-        let logs: { i: number; t: number; level: "info" | "warn" | "error"; m: string }[] = [];
-        try {
-          const result = await runStep(wc, step);
-          ok = !!(result && result.ok);
-          met = result?.met;
-          error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
-          logs = result?.logs ?? [];
-        } catch (err) {
-          error = String(err);
-          logs = verboseErrorLogs(err, step);
-        }
-        // Auto-Heal: heal an unresolved locator before the failure stops the
-        // run. Candidates are surfaced to the Console either way.
-        if (!ok && step.locator && step.type !== "if") {
-          const healed = await healAndRetry(wc, step, i, error);
-          if (healed.okWithHeal) {
-            ok = true;
-            error = undefined;
-            if (healed.healedLogs) logs = healed.healedLogs;
+          // A soft assertion reports failure but doesn't stop the run.
+          if (!ok && !step.soft) {
+            return { ok: false, failedAtIndex: i, error };
           }
         }
-        const entry: DebugEntry = {
-          stepId: step.id,
-          stepIndex: i,
-          stepLabel: describeStep(step),
-          ok,
-          error,
-          at: Date.now(),
-          logs,
-        };
-        this.persistDebug(entry);
-        sendToMain("recorder:replayStep", { index: i, status: "end", ok });
-        // Skip the body of a conditional block whose condition didn't hold —
-        // the skipped steps are left un-highlighted (never begun), matching a
-        // real run that branches past them.
-        if (step.type === "if" && met === false) {
-          const end = matchingBlockIndex(session.steps, i);
-          if (end > i) i = end;
-          continue;
-        }
-        // A soft assertion reports failure but doesn't stop the run.
-        if (!ok && !step.soft) {
-          return { ok: false, failedAtIndex: i, error };
-        }
+        return { ok: true, failedAtIndex: -1 };
+      } catch (err) {
+        return { ok: false, failedAtIndex: -1, error: String(err) };
       }
-      return { ok: true, failedAtIndex: -1 };
-    } catch (err) {
-      return { ok: false, failedAtIndex: -1, error: String(err) };
-    } finally {
-      // The window may have closed (finalize → session = null) while the replay
-      // loop was in flight; guard so we don't crash dereferencing a null session.
-      if (session) session.paused = wasPaused;
-      await applyStateAttributes().catch(() => {});
-    }
+    });
   },
 
   /**
@@ -1620,7 +1727,6 @@ export const recorderService = {
       return { ok: false, ranCount: 0, passedCount: 0, failedAtIndex: -1, error: "Recorder window is not open." };
     }
     const wc = pageExecutor(recWindow.webContents);
-    const wasPaused = session.paused;
     const from = Math.max(0, Math.min(startIndex, session.steps.length));
     const total = session.steps
       .slice(from)
@@ -1628,122 +1734,119 @@ export const recorderService = {
     let ran = 0;
     let passed = 0;
     sendToMain("recorder:replayLog", { phase: "start", startIndex: from, total });
-    try {
-      session.paused = true;
-      await applyStateAttributes();
-      for (let i = from; i < session.steps.length; i++) {
-        // The window may close (finalize → session = null) mid-run.
-        if (!session || !recWindow || recWindow.isDestroyed()) break;
-        const step = session.steps[i];
-        // A disabled step is skipped — log why, stream it as skipped, and move
-        // on without running it (not counted in ran/passed totals).
-        if (step.disabled) {
-          logger.info("recorder", "Step skipped — disabled", { stepIndex: i });
+    return withCaptureSuspended(async () => {
+      try {
+        for (let i = from; i < (session?.steps.length ?? 0); i++) {
+          // The window may close (finalize → session = null) mid-run.
+          if (!session || !recWindow || recWindow.isDestroyed()) break;
+          const step = session.steps[i];
+          // A disabled step is skipped — log why, stream it as skipped, and move
+          // on without running it (not counted in ran/passed totals).
+          if (step.disabled) {
+            logger.info("recorder", "Step skipped — disabled", { stepIndex: i });
+            sendToMain("recorder:replayLog", {
+              phase: "step",
+              index: i,
+              stepLabel: describeStep(step),
+              ok: true,
+              error: "Skipped — disabled",
+              logs: [{ i: 0, t: Date.now(), level: "info", m: "Step skipped — disabled" }],
+            });
+            await sleep(REPLAY_STEP_DELAY_MS);
+            continue;
+          }
+          sendToMain("recorder:replayStep", { index: i, status: "begin", ok: true });
+          await sleep(REPLAY_SETTLE_MS);
+          let ok = false;
+          let error: string | undefined;
+          let met: boolean | undefined;
+          let logs: DebugEntry["logs"] = [];
+          try {
+            const result = await runStep(wc, step);
+            ok = !!(result && result.ok);
+            met = result?.met;
+            error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
+            logs = result?.logs ?? [];
+          } catch (err) {
+            error = String(err);
+            logs = verboseErrorLogs(err, step);
+          }
+          const entry: DebugEntry = {
+            stepId: step.id,
+            stepIndex: i,
+            stepLabel: describeStep(step),
+            ok,
+            error,
+            at: Date.now(),
+            logs,
+          };
+          this.persistDebug(entry);
+          sendToMain("recorder:replayStep", { index: i, status: "end", ok });
+          // Structural steps: never counted or streamed; a false `if` skips its
+          // whole block (leaving those steps un-highlighted, like a real run).
+          if (step.type === "if") {
+            if (met === false) {
+              const end = matchingBlockIndex(session.steps, i);
+              if (end > i) i = end;
+            }
+            await sleep(REPLAY_STEP_DELAY_MS);
+            continue;
+          }
+          if (step.type === "endif") {
+            await sleep(REPLAY_STEP_DELAY_MS);
+            continue;
+          }
+          ran++;
+          if (ok) passed++;
+          let heal: HealResult | null = null;
+          // Auto-Heal: if the step failed because its locator didn't resolve, try
+          // to heal it before reporting the failure. If a candidate auto-succeeds,
+          // count the step as passed and stream the healed result.
+          if (!ok && step.locator) {
+            const healed = await healAndRetry(wc, step, i, error);
+            heal = healed.heal;
+            if (healed.okWithHeal) {
+              ok = true;
+              passed++;
+              error = undefined;
+              if (healed.healedLogs) logs = healed.healedLogs;
+              // Persist the healed outcome as the step's debug entry.
+              const healedEntry: DebugEntry = {
+                stepId: step.id,
+                stepIndex: i,
+                stepLabel: describeStep(step),
+                ok: true,
+                error: undefined,
+                at: Date.now(),
+                logs,
+              };
+              this.persistDebug(healedEntry);
+              sendToMain("recorder:replayStep", { index: i, status: "end", ok: true });
+            }
+          }
           sendToMain("recorder:replayLog", {
             phase: "step",
             index: i,
             stepLabel: describeStep(step),
-            ok: true,
-            error: "Skipped — disabled",
-            logs: [{ i: 0, t: Date.now(), level: "info", m: "Step skipped — disabled" }],
+            ok,
+            error,
+            logs,
+            heal: heal ?? undefined,
           });
-          await sleep(REPLAY_STEP_DELAY_MS);
-          continue;
-        }
-        sendToMain("recorder:replayStep", { index: i, status: "begin", ok: true });
-        await sleep(REPLAY_SETTLE_MS);
-        let ok = false;
-        let error: string | undefined;
-        let met: boolean | undefined;
-        let logs: DebugEntry["logs"] = [];
-        try {
-          const result = await runStep(wc, step);
-          ok = !!(result && result.ok);
-          met = result?.met;
-          error = ok ? undefined : result?.error || `Step ${i + 1} failed during replay.`;
-          logs = result?.logs ?? [];
-        } catch (err) {
-          error = String(err);
-          logs = verboseErrorLogs(err, step);
-        }
-        const entry: DebugEntry = {
-          stepId: step.id,
-          stepIndex: i,
-          stepLabel: describeStep(step),
-          ok,
-          error,
-          at: Date.now(),
-          logs,
-        };
-        this.persistDebug(entry);
-        sendToMain("recorder:replayStep", { index: i, status: "end", ok });
-        // Structural steps: never counted or streamed; a false `if` skips its
-        // whole block (leaving those steps un-highlighted, like a real run).
-        if (step.type === "if") {
-          if (met === false) {
-            const end = matchingBlockIndex(session.steps, i);
-            if (end > i) i = end;
+          // A soft assertion reports failure but doesn't stop the run.
+          if (!ok && !step.soft) {
+            sendToMain("recorder:replayLog", { phase: "done", ran, passed, failedAtIndex: i });
+            return { ok: false, ranCount: ran, passedCount: passed, failedAtIndex: i, error };
           }
           await sleep(REPLAY_STEP_DELAY_MS);
-          continue;
         }
-        if (step.type === "endif") {
-          await sleep(REPLAY_STEP_DELAY_MS);
-          continue;
-        }
-        ran++;
-        if (ok) passed++;
-        let heal: HealResult | null = null;
-        // Auto-Heal: if the step failed because its locator didn't resolve, try
-        // to heal it before reporting the failure. If a candidate auto-succeeds,
-        // count the step as passed and stream the healed result.
-        if (!ok && step.locator) {
-          const healed = await healAndRetry(wc, step, i, error);
-          heal = healed.heal;
-          if (healed.okWithHeal) {
-            ok = true;
-            passed++;
-            error = undefined;
-            if (healed.healedLogs) logs = healed.healedLogs;
-            // Persist the healed outcome as the step's debug entry.
-            const healedEntry: DebugEntry = {
-              stepId: step.id,
-              stepIndex: i,
-              stepLabel: describeStep(step),
-              ok: true,
-              error: undefined,
-              at: Date.now(),
-              logs,
-            };
-            this.persistDebug(healedEntry);
-            sendToMain("recorder:replayStep", { index: i, status: "end", ok: true });
-          }
-        }
-        sendToMain("recorder:replayLog", {
-          phase: "step",
-          index: i,
-          stepLabel: describeStep(step),
-          ok,
-          error,
-          logs,
-          heal: heal ?? undefined,
-        });
-        // A soft assertion reports failure but doesn't stop the run.
-        if (!ok && !step.soft) {
-          sendToMain("recorder:replayLog", { phase: "done", ran, passed, failedAtIndex: i });
-          return { ok: false, ranCount: ran, passedCount: passed, failedAtIndex: i, error };
-        }
-        await sleep(REPLAY_STEP_DELAY_MS);
+        sendToMain("recorder:replayLog", { phase: "done", ran, passed, failedAtIndex: -1 });
+        return { ok: true, ranCount: ran, passedCount: passed, failedAtIndex: -1 };
+      } catch (err) {
+        sendToMain("recorder:replayLog", { phase: "done", ran, passed, failedAtIndex: -1, error: String(err) });
+        return { ok: false, ranCount: ran, passedCount: passed, failedAtIndex: -1, error: String(err) };
       }
-      sendToMain("recorder:replayLog", { phase: "done", ran, passed, failedAtIndex: -1 });
-      return { ok: true, ranCount: ran, passedCount: passed, failedAtIndex: -1 };
-    } catch (err) {
-      sendToMain("recorder:replayLog", { phase: "done", ran, passed, failedAtIndex: -1, error: String(err) });
-      return { ok: false, ranCount: ran, passedCount: passed, failedAtIndex: -1, error: String(err) };
-    } finally {
-      if (session) session.paused = wasPaused;
-      await applyStateAttributes().catch(() => {});
-    }
+    });
   },
 
   /** Persist a debug entry for the current session's test and push to the renderer. */

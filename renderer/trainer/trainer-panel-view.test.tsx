@@ -55,6 +55,7 @@ const actions = {
   setAssert: vi.fn(),
   deleteStep: vi.fn(),
   insertStep: vi.fn(),
+  insertGeneratedSteps: vi.fn(async () => {}),
   reorderStep: vi.fn(),
   updateStep: vi.fn(),
   applyHeal: vi.fn(),
@@ -115,9 +116,11 @@ function setStore(over: Record<string, unknown> = {}) {
     state: state(),
     liveSteps: [] as Step[],
     stepsLoaded: true,
+    newStepIds: new Set<string>(),
     replayRun: null,
     executing: false,
     replayStepStatus: {},
+    replayFlash: {},
     debugEntries: [],
     picked: null,
     refiningStepId: null,
@@ -428,5 +431,57 @@ describe("refine selector belongs to the window that started it", () => {
     });
     renderPanel();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("a replay started in the OTHER trainer window", () => {
+  // The panel and the main window render one session. `executing` and
+  // `replayRun` are both set by whichever window called the store, so a replay
+  // launched from the main window is invisible here — this panel would sit on
+  // "Recording" with live controls while the browser beside it is being driven
+  // by that replay, and an Add step pressed here lands mid-run in a session
+  // whose whole premise at that moment is that capture is suspended.
+  //
+  // `state.replaying` is broadcast by the backend precisely so both windows
+  // agree. These tests drive it the way the backend does: through state alone,
+  // with the local flags left false.
+
+  beforeEach(() => setStore({ state: state({ replaying: true }) }));
+
+  it("says Replaying rather than Recording", () => {
+    renderPanel();
+    expect(screen.getByText("Replaying")).toBeTruthy();
+    expect(screen.queryByText("Recording")).toBe(null);
+  });
+
+  it("disables the controls that would act into the run", () => {
+    renderPanel();
+    for (const label of ["Add assertion", "Add step", "Generate steps with AI", "Replay from the current step"]) {
+      expect(screen.getByLabelText(label).hasAttribute("disabled")).toBe(true);
+    }
+  });
+
+  it("hides the pause/resume toggle, which would fight the replay's own suspension", () => {
+    // Capture is already suspended for the duration; a Pause press here would
+    // be restored out from under the user when the replay finishes, because the
+    // replay puts back the pause state it found.
+    renderPanel();
+    expect(screen.queryByLabelText("Pause recording")).toBe(null);
+    expect(screen.queryByLabelText("Resume recording")).toBe(null);
+  });
+
+  it("goes back to Recording when the replay ends", () => {
+    const { rerender } = renderPanel();
+    expect(screen.getByText("Replaying")).toBeTruthy();
+
+    setStore({ state: state({ replaying: false }) });
+    rerender(
+      <TooltipProvider>
+        <TrainerPanelView />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByText("Recording")).toBeTruthy();
+    expect(screen.getByLabelText("Add step").hasAttribute("disabled")).toBe(false);
   });
 });

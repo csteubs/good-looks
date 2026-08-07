@@ -28,6 +28,7 @@ import type {
   LocatorKind,
   Step,
   StepType,
+  WaitUntilKind,
 } from "../recorder/types.js";
 
 /**
@@ -129,6 +130,16 @@ function stripComments(src: string): string {
         i += 2;
         continue;
       }
+      // Preserve the `// wait until` marker script-generator.ts appends to a
+      // conditional wait. Without this the marker is stripped here and every
+      // conditional wait parses back as an ASSERTION — the same call, since
+      // Playwright's only retrying primitive for these predicates is `expect`.
+      // Kept verbatim; the scan loop reads it off the statement's line.
+      if (after.match(/^\s*wait until\s*(?:\r?\n|$)/)) {
+        out += "//";
+        i += 2;
+        continue;
+      }
       const nl = src.indexOf("\n", i);
       if (nl < 0) break;
       i = nl;
@@ -191,6 +202,45 @@ function parseValueArg(argsStr: string): string | null {
   }
   const lit = firstStringLiteral(argsStr);
   return lit === null ? null : unescapeLit(lit);
+}
+
+/**
+ * Assert kind → the wait predicate that compiles to the same `expect` call.
+ *
+ * Only the kinds script-generator.ts actually emits with a `// wait until`
+ * marker appear here. `exactText` and `attribute` are absent on purpose: they
+ * have no conditional-wait counterpart, so a marker on one of them is a
+ * hand-edit rather than something this parser produced, and it stays an
+ * assertion.
+ */
+const ASSERT_TO_WAIT_UNTIL: Partial<Record<AssertKind, WaitUntilKind>> = {
+  visible: "visible",
+  hidden: "hidden",
+  enabled: "enabled",
+  disabled: "disabled",
+  checked: "checked",
+  unchecked: "unchecked",
+  text: "text",
+  value: "value",
+  count: "count",
+  url: "urlContains",
+  title: "titleContains",
+};
+
+/** Undo script-generator.ts's `reEscape` — drop the backslash in front of a
+ *  regex metacharacter so a pattern becomes the literal substring it came
+ *  from. Only used where the generator is known to have escaped a user string
+ *  into a RegExp (the page-level conditional waits). */
+function reUnescape(s: string): string {
+  return s.replace(/\\([.*+?^${}()|[\]\\])/g, "$1");
+}
+
+/** Read `{ timeout: N }` back off a conditional wait's call. Returns null when
+ *  absent, so the step falls back to the generator's default rather than
+ *  recording a timeout the spec never stated. */
+function parseTimeoutOption(s: string): number | null {
+  const m = s.match(/\btimeout\s*:\s*(\d+)/);
+  return m ? parseInt(m[1], 10) : null;
 }
 
 /** Unescape a JS string-literal payload (\\n, \\t, \\", \\', \\`, \\\\). */
@@ -402,7 +452,12 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
           s.disabled = true;
           steps.push(...innerResult.steps);
           skipped += innerResult.skipped;
-        } else {
+        } else if (innerResult.skipped > 0) {
+          // Zero steps AND zero skips means the statement was recognized but
+          // isn't a step — a disabled `viewport` is commented out as TWO lines
+          // (the resize and its log statement), and the second has no step of
+          // its own. Only a genuinely unclassifiable statement counts here, or
+          // every test with a disabled resize would report divergence.
           skipped++;
         }
       } else {
@@ -455,6 +510,23 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
           i = braceClose + 1;
         }
       }
+      continue;
+    }
+
+    // console.log(…) / .info / .warn / .error / .debug — diagnostics, not
+    // steps. Consumed WITHOUT counting as skipped, for the same reason as the
+    // variable header below: a skip sets TestRecord.stepsDiverged, and the
+    // generator emits a log line after every `viewport` step, so counting it
+    // would leave a permanent "your steps undercount the script" warning on
+    // every test that resizes. Any console call qualifies, not just ours — a
+    // log statement a user added by hand isn't a step either.
+    const logM = rest.match(/^[\s;]*console\.(?:log|info|warn|error|debug)\s*\(/);
+    if (logM) {
+      const openIdx = i + logM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const after = src.slice(close + 1).match(/^\s*;/);
+      i = close + 1 + (after ? after[0].length : 0);
       continue;
     }
 
@@ -621,6 +693,48 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
       const inner = src.slice(openIdx + 1, close).trim();
       const after = src.slice(close + 1);
 
+      // A conditional wait compiles to the SAME expect call as the matching
+      // assertion, so the trailing marker is the only thing that tells them
+      // apart. Read off the statement's own line: the generator emits one
+      // statement per line, and a hand-written expect carries no marker and
+      // correctly stays an assertion.
+      //
+      // Anchored on `close` — the end of the `expect(…)` call — NOT on `i`.
+      // `i` is wherever the previous statement stopped, which is usually before
+      // the newline that precedes this one, so scanning from there finds the
+      // end of the PREVIOUS line and never sees the marker.
+      const nlAt = src.indexOf("\n", close);
+      const lineEnd = nlAt < 0 ? src.length : nlAt;
+      const isWait = /\/\/\s*wait until\s*$/.test(src.slice(close, lineEnd));
+
+      /** Emit the step the current expect statement means: a conditional wait
+       *  when the marker is present and the predicate has a wait counterpart,
+       *  otherwise the assertion it has always been. `exactText`/`attribute`
+       *  have no wait counterpart — the generator never marks them — so a
+       *  marked one falls back to an assertion rather than being dropped. */
+      const emit = (
+        assert: AssertKind,
+        base: Record<string, unknown>,
+        extra: Record<string, unknown> = {},
+      ): void => {
+        const waitUntil = isWait ? ASSERT_TO_WAIT_UNTIL[assert] : undefined;
+        if (waitUntil) {
+          const timeoutMs = parseTimeoutOption(src.slice(close + 1, lineEnd));
+          // `soft` is meaningless on a wait and is dropped with the base.
+          const { locator } = base as { locator?: Locator };
+          steps.push(
+            makeStep("wait", {
+              ...(locator ? { locator } : {}),
+              waitUntil,
+              ...(timeoutMs !== null ? { timeoutMs } : {}),
+              ...extra,
+            }),
+          );
+        } else {
+          steps.push(makeStep("assert", { ...base, assert, ...extra }));
+        }
+      };
+
       if (inner === "page") {
         const pageAssertM = after.match(/^\s*\.(toHaveURL|toHaveTitle)\s*\(/);
         if (pageAssertM) {
@@ -635,27 +749,26 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
               if (reM) {
                 const pattern = unescapeLit(reM[1].slice(1, -1));
                 const assert: AssertKind = pattern.startsWith("^") && pattern.endsWith("$") ? "urlIs" : pattern.endsWith("$") ? "urlEndsWith" : "url";
-                steps.push(
-                  makeStep("assert", {
-                    assert,
-                    ...(soft ? { soft: true } : {}),
-                    value: pattern.replace(/^\^/, "").replace(/\$$/, ""),
-                  }),
-                );
-                i = aClose + 1;
+                const bare = pattern.replace(/^\^/, "").replace(/\$$/, "");
+                // A conditional wait stores the user's literal substring, so
+                // the generator's reEscape has to be undone here — otherwise
+                // the round trip turns "example.com" into "example\.com" and
+                // the next regeneration escapes the backslash too.
+                emit(assert, { ...(soft ? { soft: true } : {}) }, { value: isWait ? reUnescape(bare) : bare });
+                i = isWait ? lineEnd : aClose + 1;
                 continue;
               }
             }
             const value = parseValueArg(argStr);
             const assert: AssertKind = pageAssertM[1] === "toHaveURL" ? "url" : "title";
-            steps.push(
-              makeStep("assert", {
-                assert,
-                ...(soft ? { soft: true } : {}),
-                ...(value !== null ? { value: unescapeLit(value) } : {}),
-              }),
+            emit(
+              assert,
+              { ...(soft ? { soft: true } : {}) },
+              value !== null
+                ? { value: isWait ? reUnescape(unescapeLit(value)) : unescapeLit(value) }
+                : {},
             );
-            i = aClose + 1;
+            i = isWait ? lineEnd : aClose + 1;
             continue;
           }
         }
@@ -673,8 +786,8 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
           const aOpen = close + 1 + after.indexOf("(", notM[0].length - 1);
           const aClose = matchParen(src, aOpen);
           if (aClose >= 0) {
-            steps.push(makeStep("assert", { ...base, assert: "unchecked" }));
-            i = aClose + 1;
+            emit("unchecked", base);
+            i = isWait ? lineEnd : aClose + 1;
             continue;
           }
         }
@@ -690,77 +803,51 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
             const argsStr = src.slice(aOpen + 1, aClose);
             switch (method) {
               case "toBeVisible":
-                steps.push(makeStep("assert", { ...base, assert: "visible" }));
+                emit("visible", base);
                 break;
               case "toBeHidden":
-                steps.push(makeStep("assert", { ...base, assert: "hidden" }));
+                emit("hidden", base);
                 break;
               case "toBeEnabled":
-                steps.push(makeStep("assert", { ...base, assert: "enabled" }));
+                emit("enabled", base);
                 break;
               case "toBeDisabled":
-                steps.push(makeStep("assert", { ...base, assert: "disabled" }));
+                emit("disabled", base);
                 break;
               case "toBeChecked":
-                steps.push(makeStep("assert", { ...base, assert: "checked" }));
+                emit("checked", base);
                 break;
               case "toContainText": {
                 const text = parseValueArg(argsStr);
-                steps.push(
-                  makeStep("assert", {
-                    ...base,
-                    assert: "text",
-                    ...(text !== null ? { text: unescapeLit(text) } : {}),
-                  }),
-                );
+                emit("text", base, text !== null ? { text: unescapeLit(text) } : {});
                 break;
               }
               case "toHaveText": {
                 const text = parseValueArg(argsStr);
-                steps.push(
-                  makeStep("assert", {
-                    ...base,
-                    assert: "exactText",
-                    ...(text !== null ? { text: unescapeLit(text) } : {}),
-                  }),
-                );
+                emit("exactText", base, text !== null ? { text: unescapeLit(text) } : {});
                 break;
               }
               case "toHaveValue": {
                 const value = parseValueArg(argsStr);
-                steps.push(
-                  makeStep("assert", {
-                    ...base,
-                    assert: "value",
-                    ...(value !== null ? { value: unescapeLit(value) } : {}),
-                  }),
-                );
+                emit("value", base, value !== null ? { value: unescapeLit(value) } : {});
                 break;
               }
               case "toHaveAttribute": {
                 const m2 = argsStr.match(/['"`]([^'"`\n]*)['"`]\s*,\s*['"`]([^'"`\n]*)['"`]/);
-                steps.push(
-                  makeStep("assert", {
-                    ...base,
-                    assert: "attribute",
-                    ...(m2 ? { attr: unescapeLit(m2[1]), value: unescapeLit(m2[2]) } : {}),
-                  }),
+                emit(
+                  "attribute",
+                  base,
+                  m2 ? { attr: unescapeLit(m2[1]), value: unescapeLit(m2[2]) } : {},
                 );
                 break;
               }
               case "toHaveCount": {
                 const numM = argsStr.match(/-?\d+/);
-                steps.push(
-                  makeStep("assert", {
-                    ...base,
-                    assert: "count",
-                    ...(numM ? { count: parseInt(numM[0], 10) } : {}),
-                  }),
-                );
+                emit("count", base, numM ? { count: parseInt(numM[0], 10) } : {});
                 break;
               }
             }
-            i = aClose + 1;
+            i = isWait ? lineEnd : aClose + 1;
             continue;
           }
         }
@@ -800,7 +887,43 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
               press: "press",
               waitFor: "wait",
             };
-            const value = parseValueArg(src.slice(aOpen + 1, aClose));
+            const argsStr = src.slice(aOpen + 1, aClose);
+            if (action === "waitFor") {
+              // `.waitFor({ state: … })` is a conditional wait with a native
+              // API, so it needs no marker. The state is the whole meaning of
+              // the call: parsing it as a plain wait (which is what happened
+              // before conditional waits existed) turned every wait-for-hidden
+              // back into a wait-for-VISIBLE on the next regeneration.
+              const stateM = argsStr.match(/\bstate\s*:\s*['"`](visible|hidden|attached|detached)['"`]/);
+              const timeoutMs = parseTimeoutOption(argsStr);
+              // `detached` has no counterpart in the step model. Modeling it as
+              // a plain wait would regenerate as a wait-for-VISIBLE — the very
+              // inversion this branch exists to stop — so it is reported as
+              // unclassified instead, which surfaces as stepsDiverged.
+              if (stateM?.[1] === "detached") {
+                skipped++;
+                i = aClose + 1;
+                continue;
+              }
+              const waitUntil: WaitUntilKind | undefined =
+                stateM?.[1] === "hidden"
+                  ? "hidden"
+                  : stateM?.[1] === "attached"
+                    ? "exists"
+                    : stateM?.[1] === "visible"
+                      ? "visible"
+                      : undefined;
+              steps.push(
+                makeStep("wait", {
+                  locator: parsed.locator,
+                  ...(waitUntil ? { waitUntil } : {}),
+                  ...(waitUntil && timeoutMs !== null ? { timeoutMs } : {}),
+                }),
+              );
+              i = aClose + 1;
+              continue;
+            }
+            const value = parseValueArg(argsStr);
             steps.push(
               makeStep(typeMap[action], {
                 locator: parsed.locator,

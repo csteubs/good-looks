@@ -100,6 +100,18 @@ beforeEach(() => {
   settings = { batchOrder: [], defaultRunBrowser: "chromium" };
 });
 
+describe("BatchView browser picker", () => {
+  it("shows the default engine once, glyph included", async () => {
+    // SelectValue draws the selected item's SF Symbol itself. Adding a lucide
+    // glyph beside it put two browser icons on the trigger.
+    settings = { batchOrder: [], defaultRunBrowser: "firefox" };
+    renderView();
+    const trigger = await screen.findByRole("combobox", { name: /browser engine for this batch/i });
+    await waitFor(() => expect(trigger.textContent).toContain("Firefox"));
+    expect(trigger.querySelectorAll("[data-browser]").length).toBe(0);
+  });
+});
+
 describe("BatchView ordering", () => {
   it("lists tests in library order when nothing is stored", async () => {
     renderView();

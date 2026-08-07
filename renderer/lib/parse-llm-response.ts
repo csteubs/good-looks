@@ -2,7 +2,7 @@
 // panel can render suggested code changes as distinct, copyable blocks and offer
 // to apply a corrected spec. Written to tolerate a still-streaming response.
 
-import type { AssertKind, LocatorKind, RawStep, StepType } from "./recorder-types";
+import type { AssertKind, LocatorKind, RawStep, StepType, WaitUntilKind } from "./recorder-types";
 
 export type ResponseSegment =
   | { type: "text"; content: string }
@@ -99,6 +99,20 @@ const ASSERT_KINDS = new Set<AssertKind>([
   "url",
   "title",
 ]);
+const WAIT_UNTIL_KINDS = new Set<WaitUntilKind>([
+  "visible",
+  "hidden",
+  "exists",
+  "enabled",
+  "disabled",
+  "checked",
+  "unchecked",
+  "text",
+  "value",
+  "count",
+  "urlContains",
+  "titleContains",
+]);
 const LOCATOR_KINDS = new Set<LocatorKind>([
   "testid",
   "role",
@@ -152,6 +166,9 @@ function validateStep(raw: unknown): RawStep | null {
   if (height !== undefined) step.height = height;
   const waitMs = num(o.waitMs);
   if (waitMs !== undefined) step.waitMs = waitMs;
+  if (WAIT_UNTIL_KINDS.has(o.waitUntil as WaitUntilKind)) step.waitUntil = o.waitUntil as WaitUntilKind;
+  const timeoutMs = num(o.timeoutMs);
+  if (timeoutMs !== undefined) step.timeoutMs = timeoutMs;
 
   // Steps that can't do anything without their key field are dropped.
   if (type === "assert" && !step.assert) return null;

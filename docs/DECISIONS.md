@@ -16,6 +16,281 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-07 — Two bugs in the browser picker: a doubled glyph, and a leaked one
+
+**Reported as one thing, and it was two.** The picker showed two browser icons side by side, and the sidebar row for the open test showed Chromium while the picker beside it said Firefox.
+
+**The doubled glyph: `SelectValue` already draws the item's icon.** Giving each `SelectItem` an SF Symbol so the AppKit menu could show glyphs also gave the *trigger* one — `SelectValue` renders `selectedItem.icon` before the label. The lucide `BrowserIcon` added alongside it was therefore the second icon, in all three pickers (test detail, batch, settings). Removed there; `BrowserIcon` stays for the DOM-only surfaces (Stats table, Stats tag badge). The icon that survives is the SF Symbol, which is the one the dropdown's own rows use — so the trigger and the open menu now agree, which they did not before.
+
+The test that was supposed to catch this asserted the trigger carried `data-browser="firefox"` and no `data-browser="chromium"`. Both were true with the bug present: it pinned that OUR icon was right and never that it was the only one. The replacements assert the count instead — zero `[data-browser]` nodes on the trigger, engine named once — because "an icon is correct" and "one icon" are different claims and only the second was ever in question.
+
+**The leaked glyph: the sidebar was right and the picker was wrong.** `TestDetailView` is a route component, and the router does not remount one when only its params change (no `remountDeps` on the route). Clicking another test in the sidebar re-renders the *same instance* with a new id — so the six `xInited` booleans that seeded the run controls "once" fired for the first test opened and never again. Every test after it displayed the previous test's engine, timeout, and toggles, and Run test used what was displayed. The sidebar row, reading `runBrowser` straight off the record, was the honest surface.
+
+Fixed by tracking WHICH test the controls hold (`seededFor`), not WHETHER they were seeded. All six moved into one effect rather than six id-scoped copies of the same latch: they depend on the same two queries and drifting apart is how one of them ends up with a subtly different rule. Re-seeding is still keyed on the test id and not on the record changing, so a refetch after the user picks an engine cannot undo the pick.
+
+**Same effect, second latent bug: the settings race.** Seeding ran as soon as the record arrived, whether or not `["recorder-settings"]` had. For a test that has pinned nothing, losing that race latched the hard-coded `chromium`/`false` fall-backs instead of the user's configured defaults — a coin flip per mount, invisible to anyone whose default is Chromium. The effect now waits for that query to settle.
+
+**Why the picker's persist call now invalidates two keys.** `tests:setBrowser` wrote to disk and nothing re-read it. The sidebar's glyph comes from the `["tests"]` list, so the row kept the old engine until something unrelated refetched — the same visible symptom as the leak, from the opposite direction. `persistRunBrowser` invalidates `["tests"]` and `["test", id]`, and only on a successful write: a failed save changed nothing, and re-reading would only re-assert what is already on screen.
+
+It is exported, and tested directly, because the SDK `Select` is native-menu-backed — its options never enter the DOM, so there is no way to drive a selection in jsdom and no way to reach this through the trigger. The navigation leak, by contrast, *is* reachable: `renderView().renavigate(id)` re-renders the same instance under a new route param, which is exactly what the router does. It fails with "expected Chromium, received Firefox" against the old latch.
+
+**And then the sidebar accessory came out entirely.** The entry below shipped it conditionally — only for a test that had PINNED an engine — as a narrowing of "put the engine on every row", which was already the weak surface when the feature was scoped. Removed on the same day it was reported: the pinned-only rule made it a glyph that appears on a minority of rows for a reason the row itself can't explain, and the question it answers ("what will this run on?") is one you ask in the toolbar, immediately before running, where the picker already answers it. `BrowserIcon` is now a Stats-only component.
+
+`persistRunBrowser` keeps invalidating `["tests"]` even though no row draws that field any more: the list holds its own copy of every record, and a cache that disagrees with disk about a field is a trap for whatever reads it next, not just for what read it last.
+
+### 2026-08-07 — "Crawl" test speed: a step delay plus a real page settle
+
+- **Goal:** A fourth speed, slower than Slow, that waits for the page to finish loading before handing control back to the test runner — a steadier, more deterministic run, and the foundation for page indexing during runs later.
+- **Key decisions:**
+  - **A run-time fixture, not generated code.** The obvious implementation is emitting `await page.waitForLoadState(...)` between steps in `script-generator.ts`. It is wrong here: a spec is generated ONCE and then lives on disk, while speed is changed afterwards from the sidebar slider with no regeneration. The file and the setting would silently disagree the moment anyone moved that slider, and the file is what runs. So settling lives in `glaze-settle.mjs`, written next to the specs and reached through the same import redirect capture and Auto-Heal use.
+  - **Its own module, not more code in the capture fixture.** Page indexing wants exactly this hook — post-settle is the one moment the DOM is known stable. `onSettled(fn)` is that seam. Folding settling into `capture-fixture-source.ts` would have made indexing a later untangling instead of a later addition.
+  - **Install order is the contract.** `installSettle` runs after `installHealing` and before capture's `patchOnce`, because each patch wraps the previous one. That produces the unwind `action → heal retry → settle → screenshot`. Installed the other way round, every screenshot on a crawl run is of a page that hasn't finished loading — a worse artifact and a source of visual-diff noise. Pinned by `check:crawl-speed`, which asserts the two call sites' order.
+  - **The timeout floor is not a nicety.** Crawl waits after every action on top of a 2.5s step delay; a 20-step test that took 40s on Slow can run for minutes. Against the 60s default timeout, *choosing the speed built for resilience would make tests fail* — the exact opposite of the feature. So a crawl run's timeout is floored at 5 minutes. It is a floor, not an override (a longer configured timeout is untouched), and the runner prints the raised value: a timeout that silently changed itself is worse than a slow run, because the user set 30 seconds, watched four minutes go by, and had nothing to read that explained it.
+  - **One list of speeds.** `TestSpeed` was re-declared as a literal array in four renderer components plus two backend validators. Adding a fifth speed to five of six places is invisible — the picker renders, the other speeds work, the new one just isn't there. `TEST_SPEEDS`/`TEST_SPEED_LABELS`/`isTestSpeed` are now the single source, following the existing `RUN_BROWSERS` precedent, and `check:crawl-speed` holds the renderer's mirror to main's.
+  - **Settling does not make a run an artifact run.** Adding `settling` to the spec-redirect gate would have extended `capturingRun = true` to it, so a user with auto-heal off and a test on Crawl would prune their artifact history and create an empty run dir on every run. The bookkeeping is gated on `artifactRun` separately.
+  - **`RunRecord.speed` is left undefined when unknown**, unlike `runBrowser` which defaults to chromium. Every pre-picker run really did use chromium; a run recorded before this field could have been at any speed, and writing "fast" would invent evidence for the one comparison the field exists to support — whether the slower speed actually passes more often.
+- **Rejected:** emitting waits into the spec (above); making Crawl imply screenshot capture (capture has a real cost and nobody should pay for one feature by asking for another — the same reasoning that keeps a11y, logs and healing separately gated); `networkidle` without a cap (a page with a websocket, a long-poll or an analytics beacon never goes idle, so the cap is the normal outcome there, not the exception).
+- **Corrections/Lessons Learned:**
+  - The paint-wait fallback timer was written with `.unref()`, reasoning that a wait nobody is reading shouldn't hold the process open. That is backwards: an unref'd timer doesn't keep the event loop alive, so when it is the ONLY pending work — a page whose rAF never fires, nothing else in flight — the process exits instead of the fallback firing. Found because the check script's own boundedness test silently stopped mid-run rather than failing, which is exactly the symptom.
+  - The MCP server keeps a **third** copy of the speed→delay table (`mcp/server.mjs`), missed on the first pass because it is `.mjs` and the search was scoped to `.ts`. A speed missing there reads as `undefined` and the `?? 0` turns it into a full-speed run of a test the user deliberately slowed down, reported as a normal pass or fail. Now pinned against `run-pacing.ts` by `check:crawl-speed`. MCP-driven runs get the pacing but not the settling — like capture, a11y and healing, settling needs the import redirect that server doesn't do.
+  - The ordering assertion initially passed against `function patchOnce(page)`'s *definition* rather than its call site, which would have made it vacuous. Caught by mutating the source and finding the "failure" didn't reproduce.
+
+### 2026-08-07 — Browser engines get an icon
+
+**The gap.** The run engine was a word in six places and a picture in none. "Chromium" / "Firefox" / "WebKit" all read as the same grey text at a glance, so the one question a browser picker exists to answer — *which one am I on?* — took reading rather than looking. In the Stats run history it was worse: the engine name sat inside the Tags badge next to the headed/headless icon, so one badge carried two unrelated facts and neither was scannable down a column.
+
+**Chosen: lucide `Chrome` / `Flame` / `Compass`, not brand logos.** These are already a dependency and already the app's visual language — every other icon in the UI is a 12–16px monochrome stroke. A real Chrome/Firefox/Safari mark is filled and multicolour, and at 12px inside a table cell it reads as a smudge rather than a logo. The compass is also the *more* correct choice for WebKit: WebKit is Safari's engine, not Safari, and stamping the Safari logo on it would assert something false.
+
+**Two glyph maps, because there are two renderers.** The SDK's `Select` is native-menu-backed — its options are drawn by AppKit and never enter the DOM, so a React icon passed to a `SelectItem` is silently dropped. `SelectItem` does take `icon?: NativeMenuIcon`, so the dropdown gets SF Symbols (`globe`/`flame`/`safari`) while the trigger, which *is* real DOM, gets the lucide glyph. `browser-icons.tsx` holds both maps so the two surfaces can't drift into disagreeing about which glyph means Firefox.
+
+**Rejected — `imagePath` on the native menu items.** `NativeMenuIcon` also accepts a path to an image file, which would have put the identical lucide glyph in both the trigger and the dropdown. It needs an absolute on-disk path that the native host can read, and the renderer's assets are Vite-bundled — wiring a resolved path through the main process for three static icons buys pixel-identical menus at the cost of a build-output dependency in the UI layer. SF Symbols are close enough and cost nothing.
+
+**The Stats Tags badge lost its engine name.** Once Browser is its own column, `🌐 Chromium` in Tags is the same fact twice. The badge now shows the mode icon plus the engine's glyph and no words — it keeps the glyph rather than dropping the engine entirely because the tag filter still offers Chromium/Firefox/WebKit as options, and a filter whose selection nothing in the row reflects is a dead control. The mode icons gained explicit "Headed"/"Headless" labels in the same edit: they had been relying on the adjacent engine name to be decodable at all, and removing that would have left two anonymous glyphs.
+
+**The sidebar accessory is deliberately conditional.** It renders only when a test has *pinned* an engine (`TestRecord.runBrowser` set). Showing every test's effective engine would put the same default glyph on nearly every row — noise that trains the eye to skip it, which then hides the rows that do differ. This was flagged as the weak surface when the change was scoped and included with that narrowing.
+
+**Testing note.** Unlabelled icons carry `data-browser`, because a `Select` trigger showing the *wrong* glyph is silent — the label beside it still reads correctly — and without an accessible name there is nothing else in jsdom to match on. `browser-icons.test.tsx` pins that both maps are total over `RUN_BROWSERS` and that no two engines share a glyph; a missing entry would render `undefined` as a component and throw at runtime in whichever view happened to show that engine first. All three mutations (duplicate glyph, column moved to the end, icon removed from a trigger) were reverted and confirmed to fail their own test and no others.
+
+**Environment note, cost real time.** Running `vitest` from a git worktree that has no `node_modules` symlink *creates a real `node_modules/` directory there* to hold its Vite cache. That empty directory then shadows the main checkout's install for every subsequent lookup, and both `type-check` and `vitest` fail with resolution errors ("Failed to resolve import react/jsx-dev-runtime", 181 phantom type errors) that look like the change under test broke something. `.gitignore` already documents that a worktree's `node_modules` should be a **symlink** to the main checkout's install — create it before the first command, not after.
+
+### 2026-08-07 — Per-generation model picker, and LM Studio's loaded models
+
+**The gap.** "Generate test from prompt" ran on whatever model Settings pointed at, with no way to say otherwise. Writing a whole spec is the single place where model choice matters most — a flow that a 7B model mangles is often one shot for a 27B — and the only way to switch was to leave the dialog, change the app-wide default, and come back.
+
+**Chosen: the picker is a per-generation override, not a settings edit.** It seeds from `llm:getConfig` and is passed explicitly on `llm:chat`; nothing is written back. Persisting the choice would silently retarget the AI debug panel and step generation too, so "use the big model for this one test" would quietly become "use the big model for everything", and the user would find out from a token bill or a slowdown somewhere unrelated.
+
+The dialog also drops a stale configured model rather than sending it. A model deleted or renamed in the provider since it was chosen used to fail mid-generation with a provider error naming a model the user no longer recognized; the dialog now falls back to a model that exists, preferring one already in memory.
+
+**Chosen: read LM Studio's load state from its own API, as optional enrichment.** `/v1/models` reports every downloaded model identically, so the picker couldn't distinguish the model that answers now from the one that spends a minute loading first. That distinction is not cosmetic: a cold model on LM Studio streams nothing at all while it loads, which in this dialog is indistinguishable from a hang, and the user's reasonable response is to hit Stop on a request that was working.
+
+LM Studio's own REST API (`/api/v0/models`, 0.3.6+) carries a per-model `state`. It is fetched as a **second, failure-tolerant call** rather than as a replacement for `/v1/models`, which stays the source of truth for which models exist and whether the provider is reachable — `/v1` is what chat actually posts to. An older LM Studio (404s `/api/v0`), or some other OpenAI-compatible server on port 1234, therefore costs a missing badge and never an empty model list or a false "not connected".
+
+**`loaded` is three-state, and that is load-bearing.** `true`, `false`, and `undefined` = "the provider never said". Ollama and Claude are permanently the third case. Collapsing `undefined` into `false` would tell every Ollama user their models are cold — wrong, and not fixable from the UI, since there is no such thing to fix. The same rule covers a `state` string we don't recognize (a future LM Studio growing e.g. `loading`): unknown stays unknown rather than being guessed into "not loaded". Pinned in `llm-service.test.ts` and `generate-test-dialog.test.tsx`.
+
+**Rejected — `CustomSelect` with colour dots.** The SDK's guidance points at `CustomSelect` when items need custom colours, and it would have rendered the state in the DOM. But the rest of this dialog uses the native `Select`, and the native menu already expresses the distinction better than a dot: `SelectGroup` headers ("Loaded" / "Not loaded" / "Load state unknown") sort the list by the thing being asked about, and per-item `sublabel`s explain the consequence in words instead of colour. A `Badge` next to the trigger carries the selected model's state in the DOM, so the state is visible without opening the menu — and assertable in jsdom, where a native menu's options never exist.
+
+**Scope.** Settings still shows a flat model list. It resolves the same enriched `LlmProviderStatus`, so surfacing load state there is a rendering change only, but nothing in Settings stalls on a cold model the way a generation does.
+
+### 2026-08-06 — Configurable Playwright test timeout (default 1 minute)
+
+**The bug.** Every run used Playwright's built-in 30s per-test timeout because `ensureConfig` wrote a config with only `slowMo` and never a `timeout`. Multi-step tests failed constantly once they crossed 30s. There was no Settings control and no per-test override.
+
+**Chosen: global default + optional per-test override, applied at run time.**
+- Settings stores `defaultTestTimeoutMs` (default 60_000, clamp 5s–30min).
+- Each test may store `testTimeoutMs`; absent means "use Settings".
+- The runner resolves override → default → 60s, then passes both `--timeout=` (authoritative CLI flag) and `PW_TEST_TIMEOUT_MS` (so the generated config matches if someone runs it outside the app).
+- The process hard-kill (`RUN_TIMEOUT_MS`, floor 5 min) is raised to `max(5min, testTimeout + 60s)` so a long legitimate timeout isn't murdered by the process watchdog first.
+- `ensureConfig` is always rewritten (like the step reporter) so existing scripts dirs pick up the timeout field without a manual delete.
+
+**Rejected — only bumping a hardcoded constant.** That would fix the immediate failures but leave long flows stuck again at whatever new constant we picked. The Settings + per-test shape matches headless/browser already.
+
+**Rejected — only writing timeout into `playwright.config.ts`.** Config is shared across the scripts dir; a per-test override needs a per-run value. CLI `--timeout` wins over config and is the right lever.
+
+**UI is seconds, storage is ms.** Matches how users think about the knob; matches Auto-Heal timeout's ms-at-the-boundary convention on the wire.
+
+### 2026-08-06 — A replay must not record itself
+
+**The bug.** A replayed step is a real interaction in a live recording session: the injected replayer clicks a real element, and the capture script is listening on that same element. The four replay paths did each pause capture — but each did it by hand, and the copies had drifted. What none of them did was tell the *rest of the app*, which is where the visible damage was.
+
+**Three failures, all silent.**
+- **The other trainer window stays live.** The main window and the docked panel render one session, but `executing` and `replayRun` are set only in the window that called the store. A replay started in the panel left the main window on "Recording" with every tool enabled — and an Add step pressed there lands mid-replay, in a session whose entire premise at that moment is that capture is off. Fixed by adding `replaying` to the broadcast `RecorderState`; both views fold it into their existing `running` gate.
+- **Focus was never moved.** The replayer dispatches synthetic events, so clicks worked and nobody noticed — but a `press` step targets whatever the OS considers focused. Replaying a keystroke from the docked panel typed into the panel.
+- **Nothing said whether the step passed.** The row got a check or an X in a status column that persists until the next run. For the very common "replay one step, watch the browser, look back" loop, there was no answer to "did *that* one just work".
+
+**Chosen: one `withCaptureSuspended` helper, and every replay path goes through it.** Suspend → push the attribute → broadcast → focus the training window → settle → run → restore in a `finally`. The ordering is the whole content of the helper: `session.paused` alone changes nothing (the capture script gates on the `data-pw-paused` DOM attribute), and focus and settle are worthless after the body has run. It restores the *prior* pause state rather than false, so replaying while the user had deliberately paused does not resume recording behind their back.
+
+`check:replay-suspend` pins the shape at source level, because the real failure mode is a NEW path — someone adds `replayRange` next to the four, writes it the obvious way, and it records everything it replays. It also asserts no replay method touches `session.paused` directly, which is what let three of the four hand-rolled copies drift in the first place.
+
+**Rejected — per-window React state for "a replay is running".** It is what was already there, and it is precisely why one window could act into the other's replay. The backend owns step ordering for the same reason; this belongs beside it.
+
+**Rejected — moving focus back to the trainer when the run ends.** Recording resumes with the browser focused, which is where the next interaction goes. A second focus hop would put the user one click away from the thing they were about to do.
+
+**The pass/fail flash is an outline, not a border, and only `outline-color` animates.** Both constraints are inherited wholesale from the `.step-new` highlight (2026-08-06, "Glow the steps an AI change added"): a border shifts the row 2px and collides with the drag-over border utility, and animating `box-shadow` silently erases the `ring-*` selection and run-status highlights, which are box-shadows too. The flash is a third highlight on the same row and had no business rediscovering either.
+
+It is **ephemeral where `.step-new` is not** — 2.5s, matching the per-row replay tint already in `step-row.tsx` so the outline and the background clear together. That makes it a one-shot fade rather than a pulse: a pulse that lives 2.5s reads as a flicker. Because `.step-new` also draws an outline, the two cannot compose the way the outline/box-shadow pair does — `step-row.tsx` gives precedence to the flash and lets the glow return underneath when it expires, rather than letting stylesheet order decide.
+
+**The flash is keyed off the step's END event, not the replay's start.** A conditional wait runs up to its (preview-capped, 5s) timeout, so a flash timed from the start would already be gone by the time the step it describes finished. Each entry owns a cancellable timer, because replaying one step twice in quick succession otherwise has the first run's timer clear the second run's flash about a second early — which reads as the highlight being unreliable rather than as a bug.
+
+**One thing found in passing.** The `resized` listener added the same day logs manual window drags, and a replayed `viewport` step resizes that window through the same host API — so macOS fired it and the log gained a line claiming a manual resize that never happened, in the log that exists *because* manual resizes leave no other trace. Now gated on `replaying`.
+
+### 2026-08-06 — Conditional waits ("Wait until"), and the comment that makes them survive a round trip
+
+**Goal:** the trainer could only wait for a fixed duration or for an element to appear. Add a third form — wait until a measurable condition holds, with the same vocabulary as assertions — and let the user pick more than one wait property at a time.
+
+**The load-bearing problem is not the feature, it's the round trip.** Playwright has a native waiting API for exactly three of the twelve predicates: `locator.waitFor({ state: "visible" | "hidden" | "attached" })`. For everything else — enabled, checked, contains-text, has-value, count, URL, title — the only auto-retrying primitive *is* `expect`. So "wait until the button is enabled" and "assert the button is enabled" compile to the identical call. That matters because `tests:updateScript` re-parses the whole spec back into steps on every hand edit and every applied AI fix: without something to tell the two apart, every conditional wait silently returns as an **assertion**. The step's type changes under the user, the Steps tab now describes something different from what they built, and nothing throws.
+
+**Chosen: a trailing `// wait until` marker, and `stripComments` preserves it.** The generator appends it to the `expect`-based waits only; the parser reads it off the statement's line and routes those to `wait` steps. Three things make this cheap rather than clever: the parser already had exactly this exception for `// disabled — skipped:`, so the mechanism is not new; a hand-written `expect` carries no marker and correctly stays an assertion; and the marker is inert to Playwright. `spec-parser.check.ts` pins both directions, because a marker the generator emits and the parser doesn't read is worse than no marker at all.
+
+**Rejected — plain `expect`, no marker.** Simplest generated code, and the failure mode is entirely silent: waits decay into assertions one script-edit at a time. **Rejected — restricting the feature to the three native predicates.** Perfect fidelity, no marker, but it drops enabled/checked/text/count, which are most of the reason to want a conditional wait.
+
+**Two bugs found while writing the parser side, both silent and both inverted.**
+- `.waitFor({ state: "hidden" })` parsed as a *bare* wait — the state was dropped — and a bare wait regenerates as `.waitFor()`, which waits for **visible**. Round-tripping a hidden wait through a script edit produced its exact opposite.
+- The browser's right-click **"For element hidden"** had the same inversion at the other end: `waitMode: "hidden"` was mapped into the dialog's element mode, which emits the same visible-wait. The menu said hidden, the test waited for visible, and nothing on screen disagreed. Both are now `waitUntil: "hidden"`, and `state: "detached"` — which the step model has no counterpart for — is reported as *unclassified* (surfacing as `stepsDiverged`) rather than being flattened into a wait that means something else.
+
+**The marker check had to be anchored on the statement, not on the scan cursor.** First implementation read the "current line" from the parser's position `i`, which is wherever the *previous* statement stopped — usually before the newline that precedes this one. It found the end of the previous line every time, so `isWait` was always false. Every marker-based case failed on the first run of the new check; that is the whole argument for writing the round-trip assertions before believing the feature works.
+
+**Multiple waits are separate steps, not one compound step.** The dialog's three properties became checkboxes and one submit emits one `wait` step per ticked box — element, then condition, then duration. `onAdd` already took a `RawStep[]` (the `if`/`endif` pair uses it), so this cost nothing in the data model. A single compound wait step would have needed new generator, parser and replayer branches, plus an internal ordering the UI has no way to show, and it would have made the trainer's per-step reorder/edit/delete meaningless for waits. Order is fixed and tested: the duration is a settle pad, and a pad emitted before the thing it pads is just a delay. A ticked box with no element picked refuses the **entire** submit — emitting the other two and dropping that one delivers something quietly different from what was asked for.
+
+**"An element" was kept even though "Wait until → element is visible" subsumes it.** It is the shortest path for the common case, it is what the right-click menu targets, and removing it would have migrated every wait step already recorded for no user-visible gain.
+
+**Timeouts fail the step, and `timeoutMs` is treated as an injection sink.** Default 10s (longer than Playwright's 5s `expect` default — someone reaching for an explicit wait is usually waiting on something slower than the default already covers), emitted as `{ timeout: N }`. A user who wants a non-fatal wait ticks the existing per-step "Continue on failure" rather than getting a second, overlapping control. `timeoutMs` is concatenated into source as a bare numeral — the same sink shape that made `count` an RCE — so it goes through `int()` at the boundary *and* `num()` in the generator. Both halves are pinned separately in `check:step-ingest`, because `recorder:updateStep` copies its allowlisted fields without re-normalizing, which leaves the generator as the only guard on that path.
+
+**The replay preview polls, and caps at 5s.** `runWaitUntil` re-checks every 100ms and returns a Promise. The cap is deliberate and matches the one the fixed-duration wait has always had: the trainer's UI awaits this call, so honouring a legitimate 60s timeout in the preview would be indistinguishable from a frozen app. The log line says when it capped, so a preview timeout is not mistaken for a real one.
+
+**Coverage:** `check:step-ingest` (forged `timeoutMs` and unknown `waitUntil`, at the boundary and at the generator; plus that widening the wait vocabulary did not widen what an `if` condition accepts), `check:spec-parser` sections 10–12 (every predicate round-trips **byte-identically**, an unmarked `expect` stays an assertion, `.waitFor({state})` keeps its state, a disabled conditional wait keeps its predicate through the comment-inside-a-comment case), a new `add-step-dialog.test.tsx` (emission count and order, refusal on a targetless box, the right-click hidden fix), `step-replayer.dom.test.ts` (passes on a later poll, times out with a diagnosable message, honours the cap), plus the `describeStep` parity and `stepSignature` cases. Every one was verified to fail with its fix reverted — including a deliberate re-order of the emitted steps, which is the property a reader is most likely to assume is untested.
+
+### 2026-08-06 — A window resize is a real step: the trainer resizes, and every resize logs its dimensions
+
+**The step type already existed; it just didn't do anything outside a run.** `viewport` steps have been generated, parsed and replayed-at-run-time since window-size presets landed. Three things were missing, and each was silent.
+
+**1. Trainer replay answered a resize with "applied at run time; not previewable" and returned `ok: true`.** That is the wrong shape of wrong. The step didn't merely go unpreviewed — every step AFTER it then ran at whatever size the window happened to be. A mobile-only menu button wouldn't resolve, and the failure pointed at the click rather than at the resize that never happened. `resize-service.ts` now resizes the native window, dispatched from `runStep` alongside `cookie` steps.
+
+**Why a separate service rather than the injected replayer.** A page cannot resize the window it is loaded in: `window.resizeTo` is a no-op for a window the script didn't open. The size lives on the native window, exactly like an httpOnly cookie lives on the session — so it takes the same shape as `applyCookieStep`, returns the same `{ok,error?,logs}`, and is dispatched from the same single place. Routing both through `runStep` is what stops a step kind being handled in one replay path and missed in three.
+
+**Content size, not window size.** The recorded number is the PAGE size — a spec calls `page.setViewportSize` with it, and the trainer window is created with `useContentSize` when a preset applies. Sizing the frame would preview a viewport short by the title bar's height, which is enough to sit on the wrong side of a breakpoint.
+
+**2. A resize was invisible in the run output.** It is the only recorded action with no target to name: every other step logs "click getByRole(...)", and a resize logged nothing at all. A run failing at a responsive breakpoint gave no evidence the page had been resized, or to what. The generated spec now emits a `console.log` after `setViewportSize`, and the trainer streams the same information into the Console tab.
+
+**Three sizes, not one, because they disagree and each disagreement means something.** *Requested* is what the step asked for. *Window* is what the OS granted — it clamps a window larger than the display, so a 1440-wide step on a 1280-wide laptop records one size and replays at another; unlogged, that reads as a flaky test. *Page* is what the document sees, which differs by the scrollbar's width — and the page number is the one that flips a CSS breakpoint. Logging only the requested size would assert the very thing that may not have happened.
+
+**Why a bare `console.log` in the spec and not a runtime helper.** Three constraints, and the helper fails two of them. `buildStepLineMap` (the fallback for hand-edited specs) classifies steps by counting leading-`await` lines, so an awaited log line shifts every later step's highlight by one. And `StepReporter` drops any `pw:api` step whose `location.file` isn't the spec, so routing the resize through an imported helper — the `glazeCapture` pattern — would silently cost every viewport step its run highlight. What makes the bare log possible is that `page.viewportSize()` is SYNCHRONOUS: the applied size can be read with no `await` and no Playwright step. The rejected alternative, echoing the requested numbers, would have been trivially awaitable and worthless.
+
+**The parser had to learn that a log line is not a step.** An unclassifiable statement increments `skipped`, which sets `TestRecord.stepsDiverged` — a permanent "your steps undercount the script" warning on every test that resizes. `console.*` calls are now consumed without counting, the same treatment the `const V = {…}` header gets. A disabled resize needed a second fix: it is commented out as TWO lines, and only the first carries a step, so "zero steps AND zero skips" had to stop meaning "unclassifiable".
+
+**3. The two "+ Add step" dialogs each carried their own copy of the preset list**, and custom dimensions went in as `Number(vw) || 1280` — a typed `50` became a 50-pixel step that the backend then clamped to 200 without saying so. Both now use `RESIZE_PRESETS` and `clampViewportAxis` from the one shared module, and a resize row is inline-editable as a single `WIDTHxHEIGHT` field. An unparseable draft commits **nothing**: a resize with only a width isn't a smaller edit, it's a step that generates a spec Playwright rejects.
+
+**Manual window drags are logged too** (`resized`, the end-of-gesture event, not `resize`, which fires per frame). The training window's page area is what every subsequent step is captured against, and dragging its edge otherwise leaves no trace anywhere — "this test only fails on one machine" is usually that.
+
+### 2026-08-06 — Invented Tailwind token names replaced with real design-system ones
+
+**Symptom:** 27 class names across seven renderer views (`border-token-border`, `bg-token-surface-raised`, `bg-token-surface`, `bg-token-hover`, `ring-token-border`) were never defined by the Glaze design system. Tailwind emits nothing for an unknown utility, so they had been styling nothing — cards with no fill, list rows with no hover, a screenshot with no outline. Nothing catches this: it is not a type error, not a lint error, and the views render perfectly well without the rule.
+
+**It is only visible in the build output.** The check that matters is grepping the emitted `build/assets/styles-*.css` for the rule, not reading the source — a plausible-looking class name and a real one are indistinguishable in a `.tsx`. Baseline: zero `.border-token-border` / `.bg-token-surface*` / `.bg-token-hover` rules, while every real utility used on the same lines (`border-accent`, `text-tertiary`, `bg-control-subtle`) was present. The same grep after the fix is what confirms it.
+
+**`border-separator`, not `border-secondary`.** Both resolve to `var(--fg-10)`, so the choice is about consistency, not colour: the repo already used `border-separator` 62 times and `border-secondary` zero, for card outlines *and* row dividers alike (`generate-test-dialog.tsx`, `a11y-panel.tsx`, `variables-panel.tsx`). Splitting the two by role here would have introduced a distinction the rest of the codebase does not make.
+
+**`bg-panel` for raised cards — and why the obvious measurement of it is wrong.** Rendered against a white page, `bg-panel` measures *identical* to the window background (ΔE=0), which reads as "this token does nothing". It is not an artifact of the token: `--color-surface-panel` is `--bg-secondary-40` and `--color-window-bg` is `--bg-40`, and the SDK defines `--bg-secondary` and `--bg` to the same value in both themes — so a panel is literally the window's own background token applied a second time. That only produces a visible surface because the WebView has **no opaque background of its own** and both layers composite onto the native macOS window material. Measured over a representative material the card reads at ΔE 8.7 (light) and 13.9 (dark) against the app background. Worth knowing: if this app ever sets an opaque window background, every `bg-panel` surface silently flattens.
+
+**Two sites did not take the general mapping.**
+- The floating "Apply to all steps" chip in `visual-view` was `bg-token-surface-raised/90`, over an arbitrary user screenshot. It became `bg-popover` rather than a 90%-opacity `bg-panel` — the SDK's own note on `--color-surface-popover-hover` says elevated chips need solid fills "because translucent fills would let content show through".
+- The screenshot's hairline used `ring-token-border`. There is no themed `--color-border-*`, so `ring-border-separator` would not generate either — `ring-*` resolves from the `--color-*` theme namespace, and the border roles live in `:root` instead. It uses `ring-[var(--color-border-separator)]`, which the SDK's VAR-SAFETY comment explicitly sanctions: semantic role tokens are real `:root` declarations and are safe to read through raw `var()`.
+
+**`script-view.tsx` was left alone.** Its `text-[var(--color-token-primary)]` syntax-highlighting classes match the same `-token-` grep but are a different thing entirely — arbitrary-value utilities over `--color-token-*`, which the SDK really does define (light and dark). They emit CSS and work.
+
+**Verifying both themes needs `.dark` on the root, not on a container.** A subtree `.dark` does not work with this design system: custom properties are substituted where they are *declared*, so `--color-window-bg: var(--bg-40)` resolves against `:root`'s seeds and inherits down as an already-computed value; overriding `--bg` further down cannot retroact. A first attempt at side-by-side light/dark panes silently produced two identical light renders. Each theme has to be rendered in its own pass.
+
+**Coverage:** none added. The defect is a property of the emitted stylesheet, which no unit test in either project observes; the guard that would actually work is a source-level `check:*` that validates every `bg-*`/`border-*` class in `renderer/` against the `--background-color-*` / `--border-color-*` names declared in the SDK's `components.tailwind.css`. A prototype of that check agrees exactly with the build output — it flags the two remaining dead classes (`bg-muted` in `settings-view.tsx`, `bg-fill-secondary` in `library-sidebar.tsx`) and nothing else — but it was left out of this change as out of scope. `bg-separator` is NOT dead despite emitting no bare rule: it is only ever used under a named-group variant, so it compiles to `.group-hover\/gap\:bg-separator`.
+
+### 2026-08-06 — Deleting a tag, from the Batch view's tag cluster
+
+**Goal:** Tags could be created and edited (sidebar → Edit Tags…) but never
+removed from the library. A typo or an abandoned grouping stayed in the chip row
+forever, and clearing it meant opening every test that carried it — which is
+also how you'd never be sure you got them all.
+
+**What was done:** The Batch view's chip row moved to `renderer/main/tag-cluster.tsx`
+as a bordered cluster, each real tag carrying an X behind a confirmation that
+states how many tests use it and names them. New `tests:deleteTag` handler over
+a new `testStore.removeTag`.
+
+**Key decisions:**
+
+1. **Delete lives with the tag vocabulary, create lives with the test.** Creating
+   stayed in the sidebar dialog — that's where you know which test you're
+   labelling. Deleting is library-wide, and the cluster is the only place the
+   whole vocabulary is visible at once *with counts*, which is what makes the
+   scope of the act legible.
+
+2. **The count is the point of the confirmation, not politeness.** A tag is the
+   batch's grouping key: deleting one silently re-scopes what "run smoke" means.
+   And unlike editing one test's tags, it can't be undone by re-typing — the tag
+   is gone from N tests and nothing remembers which. So the dialog leads with the
+   count and lists the affected test names (capped at 8, then "+N more").
+
+3. **One backend call, not a renderer loop over `tests:setTags`.** A loop
+   rewrites `tests.json` once per test and can strand the tag on half the library
+   if a call fails partway. `removeTag` does one `writeAll`.
+
+4. **Hidden tests are included, and that's why the toast doesn't echo the
+   preview.** `testStore.list()` filters hidden tests out, so a tag left on one is
+   invisible right up until the test is unhidden — at which point a deleted tag
+   reappears. `removeTag` therefore reads through `readAll()`. The renderer can't
+   see those tests, so its dialog count is a lower bound; the toast reports the
+   backend's real number instead of repeating what it guessed.
+
+5. **Matching is case-insensitive**, because `tagCounts` groups `smoke` and
+   `Smoke` into one chip. Deleting that chip case-sensitively would leave the
+   other spelling behind and the chip would return with a count of 1.
+
+6. **The X is a sibling button, not nested in the filter button.** A `<button>`
+   inside a `<button>` is invalid markup that swallows the inner click, so the
+   chip is a `<span>` holding both. The X is also the `AlertDialog`'s own trigger,
+   which means no open-state to keep in sync and focus returns to the chip on
+   cancel.
+
+7. **Visible at rest, not revealed on hover.** A hover-only X on a pill this
+   small is undiscoverable, and it's the entire affordance. It stays muted next
+   to the count; the red wash on its own hover is what carries "destructive".
+
+**Incidental finding:** the `border-token-border` / `bg-token-surface-raised` /
+`bg-token-hover` class names used throughout `renderer/` are **not** utilities the
+design system defines — they generate no CSS and have been silently doing nothing.
+Verified against the built stylesheet. The real names are `border-secondary`,
+`bg-well`/`bg-panel`, `bg-list-hover`, etc. `tag-cluster.tsx` uses the real ones;
+the rest of the renderer was left alone as out of scope.
+
+**Verification:** `handlers.test.ts` gained 5 tests for `tests:deleteTag`
+(case-insensitive removal, hidden tests, canonicalization, hostile input, unused
+tag) and `tag-cluster.test.tsx` 12 for the UI. Both suites were confirmed to fail
+against reverted behaviour: injecting an X that deletes without confirming, an X
+on "All", a case-sensitive count, and a toast echoing the preview each broke the
+test that guards it. Rendered against the real built stylesheet in light and dark
+to confirm the cluster and the X's states read correctly.
+
+### 2026-08-06 — Showing which steps an AI change added
+
+**Symptom:** applying an AI-debug fix rewrote the spec, and the Steps tab quietly re-rendered a different list. Right steps, right order, no error — and nothing at all saying what had changed. The apply usually happens from the AI panel while the user is looking at the Run tab, so by the time they reach Steps the change is already history. Inserting an AI-generated flow in the trainer had the same shape: the list just got longer, often past the scroll.
+
+**Why the diff has to be content-based.** `tests:updateScript` re-parses the whole spec, and `spec-parser.ts`'s `makeStep` calls `randomUUID()` for **every** step on **every** parse. After an apply that changed one line, all N ids differ — so a diff by id marks the entire list as new, which is exactly as uninformative as marking none of it. The only thing that survives an apply is what a step *says*, so `renderer/lib/diff-steps.ts` compares an explicit signature of the user-visible fields. The alternative — making the parser preserve ids — was rejected: it would put the burden of a display concern on the security-sensitive parse path, and id stability across a re-parse is a much stronger claim than this feature needs.
+
+**The signature is a field list, not "the step minus id and timestamp".** Both directions have a failure mode; they are not symmetric. Enumerating means a field added to `Step` later is invisible to the diff — a *missed* highlight, which degrades to today's behaviour. Stripping means every future field is automatically significant, so one backend field that happens to be recomputed on parse would light up every row, permanently, with no obvious cause. A quiet under-report beats a loud wrong one.
+
+**Moves are cancelled against removals, one for one.** The bare LCS reports a reordered step as a removal plus an addition, so dragging a row would have claimed the AI added it. Each addition cancels against at most one identical removal — a `Set.has` would have swallowed a genuinely new duplicate whose twin happened to move in the same pass.
+
+**A substitution glows its replacement.** The most common AI fix is a swapped selector, and the resulting step is one the user has not seen. Counting it as "the same step, edited" would hide precisely the row they need to look at.
+
+**Deletions are unstyled, deliberately.** There is no row left to decorate, and decorating the neighbours would point at the wrong step. The step count on the tab is what carries removals — for additions, deletions and substitutions alike.
+
+**Inset outline, not border, and only `outline-color` animates.** Both were bugs before they were decisions. A real border participates in layout, so rows jump by 2px when the highlight clears, and it collides with the drag-over `border-t-2` on the same element at equal specificity — decided by stylesheet order rather than intent. And an earlier version pulsed a `box-shadow` glow, which silently erased the selection and run-status highlights: those are `ring-*` box-shadows, and an animation owns the whole property. Animating something nothing else uses is what lets a step be new **and** failing at once — the single most interesting row on the screen, where neither highlight may hide the other.
+
+**Not on a timer.** The obvious design is to fade the highlight after a few seconds. That fails the actual usage: the apply happens on a different tab, so the timer would expire before the user ever looked. It clears when the claim stops being true instead — the next apply, a hand edit of the steps, a new recording session.
+
+**Generated steps get their own insert path.** `insertStep` *clears* the highlight, because a hand edit retires it; routing AI-generated steps through it would leave them unmarked however good the diff is. `insertGeneratedSteps` sends them sequentially (each insert lands at the session cursor and advances it) and then re-reads `getSteps()` rather than waiting on the `recorder:steps` push — invoke replies and pushes are different channels with no ordering guarantee, and a diff run a beat early marks only the first inserted step. It diffs what actually landed, since backend normalization can reject a step the model produced.
+
+**Found while wiring it:** the Steps tab trigger is gated on the list being non-empty, and `TabsRoot` was uncontrolled. An apply that deleted every step removed the trigger while its content stayed selected, leaving an empty pane with nothing active in the tab bar. The tabs are now controlled with a fallback to Script.
+
+Guarded by `renderer/lib/diff-steps.test.ts`, the new blocks in `step-row.test.tsx` / `test-detail-view.test.tsx` / `recorder-store.test.tsx` / `recording-view.test.tsx` / `ai-debug-icons.test.tsx`, and `check:step-glow` — which pins the stylesheet, the outline-not-border and outline-color-only choices, and the insert-path wiring, none of which jsdom can observe.
+
 ### 2026-08-06 — Window size preset in the New Recording dialog
 
 **Symptom:** the New Recording dialog asked for a URL, a test name and a run speed, and gave no way to say how big the browser window should be. Every manual recording was made in one fixed 1200×820 window, so a mobile or tablet flow could not be recorded at all.

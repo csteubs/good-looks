@@ -16,7 +16,7 @@ import * as path from "path";
 import { app, logger } from "@shell/backend";
 
 import { redactWithSnapshot } from "./secret-redaction.js";
-import type { LogSearchResult, RunBrowser, RunRecord } from "../recorder/types.js";
+import type { LogSearchResult, RunBrowser, RunRecord, TestSpeed } from "../recorder/types.js";
 
 const MAX_RECORDS = 1000; // cap the index; oldest runs (+ their logs) are pruned
 const SEARCH_RESULT_CAP = 200;
@@ -94,6 +94,8 @@ export const runHistoryStore = {
       runHeadless?: boolean;
       /** browser engine the run used */
       runBrowser?: RunBrowser;
+      /** playback speed the run used */
+      speed?: TestSpeed;
       /** batch that drove this run, when part of one */
       batchId?: string;
       /** dataset row this run used, when it was one row of a sweep */
@@ -138,6 +140,12 @@ export const runHistoryStore = {
       runHeadless: run.runHeadless ?? false,
       // Runs predating the browser picker all ran on chromium.
       runBrowser: run.runBrowser ?? "chromium",
+      // Left undefined when unknown rather than defaulted, unlike runBrowser
+      // above: every pre-picker run really did use chromium, but a run recorded
+      // before this field could have been at any speed. Writing "fast" there
+      // would be inventing evidence for the one comparison the field exists to
+      // support.
+      ...(run.speed !== undefined ? { speed: run.speed } : {}),
       // Left undefined for ordinary single runs rather than written as null.
       ...(run.batchId !== undefined ? { batchId: run.batchId } : {}),
       // Left undefined (not 0) for non-capture runs so the summarizer can tell

@@ -37,7 +37,13 @@ import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
 import { aiDebugStore } from "../services/ai-debug-store.js";
 import { anthropicKeyStore } from "../services/anthropic-key-store.js";
-import { recorderSettingsStore } from "../services/recorder-settings-store.js";
+import {
+  clampTestTimeoutMs,
+  isTestTimeoutMs,
+  MAX_TEST_TIMEOUT_MS,
+  MIN_TEST_TIMEOUT_MS,
+  recorderSettingsStore,
+} from "../services/recorder-settings-store.js";
 import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
 import { applyRetention } from "../services/retention.js";
 import { compareRuns } from "../services/run-comparison.js";
@@ -53,6 +59,7 @@ import { ANALYSIS_WINDOW, analysisWindow, gatherRunDetails } from "../services/f
 import {
   DEFAULT_VISUAL_THRESHOLD,
   isRunBrowser,
+  isTestSpeed,
   isValidVariableName,
   normalizeDatasets,
   normalizeStep,
@@ -251,12 +258,14 @@ export function registerHandlers(): void {
 
   ipcMain.handle("tests:setSpeed", async (_e, params: { id: string; speed: unknown }) => {
     const speed = params.speed;
-    if (speed !== "slow" && speed !== "medium" && speed !== "fast") {
+    // Derived from TEST_SPEEDS rather than spelled out, so a speed added to the
+    // union can never be accepted by the settings store and rejected here.
+    if (!isTestSpeed(speed)) {
       throw new Error("Invalid speed: " + String(speed));
     }
     const rec = testStore.get(params.id);
     if (!rec) throw new Error("Test not found: " + params.id);
-    rec.speed = speed as TestSpeed;
+    rec.speed = speed;
     rec.updatedAt = Date.now();
     testStore.save(rec);
     return rec;
@@ -319,6 +328,34 @@ export function registerHandlers(): void {
     return rec;
   });
 
+  // Per-test Playwright timeout override. null clears the override so the
+  // global Settings default applies again. Absent on the record means the same.
+  ipcMain.handle(
+    "tests:setTestTimeout",
+    async (_e, params: { id: string; testTimeoutMs: number | null }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      if (params.testTimeoutMs === null || params.testTimeoutMs === undefined) {
+        delete rec.testTimeoutMs;
+      } else if (isTestTimeoutMs(params.testTimeoutMs)) {
+        rec.testTimeoutMs = clampTestTimeoutMs(params.testTimeoutMs);
+      } else {
+        throw new Error(
+          "Invalid test timeout: " +
+            String(params.testTimeoutMs) +
+            " (expected ms between " +
+            MIN_TEST_TIMEOUT_MS +
+            " and " +
+            MAX_TEST_TIMEOUT_MS +
+            ")",
+        );
+      }
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return rec;
+    },
+  );
+
   // Per-test grouping labels. The backend normalizes (trim/dedupe/cap/sort) so
   // there's one source of truth — the renderer posts raw strings and renders
   // whatever comes back.
@@ -329,6 +366,19 @@ export function registerHandlers(): void {
     rec.updatedAt = Date.now();
     testStore.save(rec);
     return rec;
+  });
+
+  // Delete a tag from the whole library at once. Deliberately NOT a renderer
+  // loop over `tests:setTags`: that rewrites tests.json once per test and can
+  // strand the tag on half of them if one call fails partway through.
+  //
+  // The incoming name goes through `normalizeTags` too, so canonical form still
+  // has exactly one definition — a renderer that sent a number or an untrimmed
+  // string can't reach the store with it.
+  ipcMain.handle("tests:deleteTag", async (_e, params: { tag: unknown }) => {
+    const [tag] = normalizeTags([params?.tag]);
+    if (!tag) throw new Error("A tag is required.");
+    return { tag, removed: testStore.removeTag(tag) };
   });
 
   // ── Variables, secrets and datasets ──────────────────────────────────────

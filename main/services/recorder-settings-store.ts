@@ -6,8 +6,8 @@ import * as path from "path";
 
 import { app, logger } from "@shell/backend";
 
-import { isRunBrowser } from "../recorder/types.js";
-import type { RecorderSettings, TestSpeed } from "../recorder/types.js";
+import { isRunBrowser, isTestSpeed } from "../recorder/types.js";
+import type { RecorderSettings } from "../recorder/types.js";
 import { normalizeViewport } from "../recorder/window-size.js";
 import { DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 
@@ -25,12 +25,30 @@ const MAX_RETENTION_DAYS = 365;
  *  a corrupt file can't grow without bound across saves. */
 const MAX_BATCH_ORDER = 1000;
 
+/** Bounds for the Playwright per-test timeout. 5s is the floor so a fat-fingered
+ *  "1" can't make every run fail instantly; 30 min is high enough for long
+ *  multi-step flows without letting a wedged process sit forever. */
+export const MIN_TEST_TIMEOUT_MS = 5_000;
+export const MAX_TEST_TIMEOUT_MS = 30 * 60 * 1000;
+export const DEFAULT_TEST_TIMEOUT_MS = 60_000;
+
 function clampDays(n: number): number {
   return Math.min(MAX_RETENTION_DAYS, Math.max(0, Math.round(n)));
 }
 
 function clampRetained(n: number): number {
   return Math.min(MAX_RETAINED_RUNS, Math.max(MIN_RETAINED_RUNS, Math.round(n)));
+}
+
+/** Clamp a Playwright per-test timeout. Exported so the per-test handler and the
+ *  runner share one definition of "valid". */
+export function clampTestTimeoutMs(n: number): number {
+  return Math.min(MAX_TEST_TIMEOUT_MS, Math.max(MIN_TEST_TIMEOUT_MS, Math.round(n)));
+}
+
+/** True when `n` is a finite number in the accepted timeout range (pre-clamp). */
+export function isTestTimeoutMs(n: unknown): n is number {
+  return typeof n === "number" && Number.isFinite(n) && n >= MIN_TEST_TIMEOUT_MS;
 }
 
 const DEFAULT_SETTINGS: RecorderSettings = {
@@ -55,6 +73,8 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   debugScreenshots: false,
   defaultRunHeadless: false,
   defaultRunBrowser: "chromium",
+  // 1 minute — Playwright's built-in 30s default kills ordinary multi-step runs.
+  defaultTestTimeoutMs: DEFAULT_TEST_TIMEOUT_MS,
   alertWebhookEnabled: false,
   batchOrder: [],
   artifactRetainedRuns: DEFAULT_RETAINED_RUNS,
@@ -63,9 +83,6 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   disabledAestheticEnhancements: [],
 };
 
-function isTestSpeed(v: unknown): v is TestSpeed {
-  return v === "slow" || v === "medium" || v === "fast";
-}
 
 function settingsFile(): string {
   return path.join(app.getPath("userData"), "recorder", "recorder-settings.json");
@@ -131,6 +148,9 @@ function read(): RecorderSettings {
       defaultRunBrowser: isRunBrowser(parsed.defaultRunBrowser)
         ? parsed.defaultRunBrowser
         : DEFAULT_SETTINGS.defaultRunBrowser,
+      defaultTestTimeoutMs: isTestTimeoutMs(parsed.defaultTestTimeoutMs)
+        ? clampTestTimeoutMs(parsed.defaultTestTimeoutMs)
+        : DEFAULT_SETTINGS.defaultTestTimeoutMs,
       alertWebhookEnabled:
         typeof parsed.alertWebhookEnabled === "boolean"
           ? parsed.alertWebhookEnabled
@@ -230,6 +250,9 @@ export const recorderSettingsStore = {
       defaultRunBrowser: isRunBrowser(update.defaultRunBrowser)
         ? update.defaultRunBrowser
         : current.defaultRunBrowser,
+      defaultTestTimeoutMs: isTestTimeoutMs(update.defaultTestTimeoutMs)
+        ? clampTestTimeoutMs(update.defaultTestTimeoutMs)
+        : current.defaultTestTimeoutMs,
       alertWebhookEnabled:
         update.alertWebhookEnabled !== undefined
           ? update.alertWebhookEnabled
@@ -279,6 +302,7 @@ export const recorderSettingsStore = {
       defaultCaptureArtifacts: next.defaultCaptureArtifacts,
       defaultRunHeadless: next.defaultRunHeadless,
       defaultRunBrowser: next.defaultRunBrowser,
+      defaultTestTimeoutMs: next.defaultTestTimeoutMs,
       alertWebhookEnabled: next.alertWebhookEnabled,
       batchOrderCount: next.batchOrder.length,
       artifactRetainedRuns: next.artifactRetainedRuns,

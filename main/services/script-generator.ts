@@ -197,6 +197,109 @@ function conditionExpr(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): stri
   }
 }
 
+/** Marker appended to the `expect`-based conditional waits below.
+ *
+ *  Load-bearing, not decoration. Playwright's only auto-retrying primitive for
+ *  most predicates IS `expect`, so a "wait until enabled" and an "assert
+ *  enabled" compile to the same call. `spec-parser.ts` reads a generated spec
+ *  back into steps on every `tests:updateScript` (a hand edit, or an applied AI
+ *  fix), and without something to tell the two apart every conditional wait
+ *  would come back as an assertion — the step's TYPE changing under the user
+ *  with nothing on screen to say so. The parser keys off this exact string;
+ *  changing one side alone silently breaks the round trip, which is why
+ *  `spec-parser.check.ts` pins both. A hand-written `expect` has no marker and
+ *  correctly stays an assertion. */
+export const WAIT_UNTIL_MARKER = " // wait until";
+
+/** Default timeout for a conditional wait, in ms. Deliberately longer than
+ *  Playwright's 5s expect default — a user reaching for an explicit wait is
+ *  usually waiting on something slower than the default already covers. */
+export const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
+
+/**
+ * Emit the line for a `wait` step.
+ *
+ * Three shapes, in precedence order: a `waitUntil` predicate, a `waitMs`
+ * duration, then a bare locator wait. The last two are byte-identical to what
+ * this generator emitted before conditional waits existed, so every test
+ * already on disk regenerates unchanged.
+ *
+ * `waitUntil` is matched against known kinds and mapped to a fixed string —
+ * never concatenated. `recorder:updateStep` copies its allowlisted fields
+ * without re-normalizing, so an unrecognized value can reach here; it falls
+ * through to the duration/locator behaviour rather than into the source text.
+ */
+function waitLine(step: Step, target: string | null, vars: ReadonlySet<string>): string | null {
+  const t = ", timeout: " + num(step.timeoutMs, DEFAULT_WAIT_TIMEOUT_MS);
+  const opts = "{ timeout: " + num(step.timeoutMs, DEFAULT_WAIT_TIMEOUT_MS) + " }";
+
+  switch (step.waitUntil) {
+    // These three have a native, unambiguous waiting API, so they need no
+    // marker — `.waitFor()` is never an assertion.
+    case "visible":
+      return target ? "await " + target + ".waitFor({ state: \"visible\"" + t + " });" : null;
+    case "hidden":
+      return target ? "await " + target + ".waitFor({ state: \"hidden\"" + t + " });" : null;
+    case "exists":
+      return target ? "await " + target + ".waitFor({ state: \"attached\"" + t + " });" : null;
+
+    // Page-level predicates. Both embed the expected text in a RegExp, so they
+    // take the literal value rather than a variable expression — the same
+    // trade-off `assertLine` makes for urlEndsWith/urlIs, and for the same
+    // reason: `reEscape` can only escape a string known now.
+    case "urlContains":
+      return (
+        "await expect(page).toHaveURL(new RegExp(" +
+        q(reEscape(step.value ?? "")) +
+        "), " + opts + ");" + WAIT_UNTIL_MARKER
+      );
+    case "titleContains":
+      return (
+        "await expect(page).toHaveTitle(new RegExp(" +
+        q(reEscape(step.value ?? "")) +
+        "), " + opts + ");" + WAIT_UNTIL_MARKER
+      );
+
+    default:
+      break;
+  }
+
+  // The remaining predicates are element-scoped and all go through `expect`.
+  if (step.waitUntil && target) {
+    const x = "expect(" + target + ")";
+    switch (step.waitUntil) {
+      case "enabled":
+        return "await " + x + ".toBeEnabled(" + opts + ");" + WAIT_UNTIL_MARKER;
+      case "disabled":
+        return "await " + x + ".toBeDisabled(" + opts + ");" + WAIT_UNTIL_MARKER;
+      case "checked":
+        return "await " + x + ".toBeChecked(" + opts + ");" + WAIT_UNTIL_MARKER;
+      case "unchecked":
+        return "await " + x + ".not.toBeChecked(" + opts + ");" + WAIT_UNTIL_MARKER;
+      case "text":
+        return (
+          "await " + x + ".toContainText(" + valueExpr(step.text, vars) + ", " + opts + ");" +
+          WAIT_UNTIL_MARKER
+        );
+      case "value":
+        return (
+          "await " + x + ".toHaveValue(" + valueExpr(step.value, vars) + ", " + opts + ");" +
+          WAIT_UNTIL_MARKER
+        );
+      case "count":
+        return (
+          "await " + x + ".toHaveCount(" + num(step.count, 0) + ", " + opts + ");" +
+          WAIT_UNTIL_MARKER
+        );
+      default:
+        break;
+    }
+  }
+
+  if (typeof step.waitMs === "number") return "await page.waitForTimeout(" + num(step.waitMs, 0) + ");";
+  return target ? "await " + target + ".waitFor();" : null;
+}
+
 /** Emit the cookie object literal Playwright's addCookies expects.
  *
  *  Two renames matter and are easy to miss: Chromium's `expirationDate`
@@ -280,8 +383,7 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
         ? "await " + target + ".press(" + q(step.value ?? "") + ");"
         : "await page.keyboard.press(" + q(step.value ?? "") + ");";
     case "wait":
-      if (typeof step.waitMs === "number") return "await page.waitForTimeout(" + num(step.waitMs, 0) + ");";
-      return target ? "await " + target + ".waitFor();" : null;
+      return waitLine(step, target, vars);
     case "viewport":
       return (
         "await page.setViewportSize({ width: " +
@@ -305,6 +407,40 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
   }
 }
 
+/**
+ * An extra, non-step statement emitted directly after a step's own line.
+ *
+ * Only `viewport` uses it: a resize is the one recorded action with NO visible
+ * effect in the run output. Every other step names its target in the log
+ * ("click getByRole(...)"), but a viewport change is invisible until something
+ * downstream fails at a width nobody can see from the log, which is precisely
+ * when you need to know the page was resized and to what.
+ *
+ * Three constraints shape what may go here, and all three are why this is a
+ * bare `console.log` rather than a runtime helper:
+ *
+ *  • It must NOT start with `await`. `buildStepLineMap` (the fallback used for
+ *    hand-edited specs) classifies steps by counting leading-`await` lines, so
+ *    an awaited log line would shift every later step's highlight by one.
+ *  • It must NOT be a Playwright API call. `StepReporter` drops any `pw:api`
+ *    step whose `location.file` isn't the spec, so routing the resize through
+ *    an imported helper would silently cost viewport steps their highlight.
+ *  • `page.viewportSize()` is SYNCHRONOUS, which is what makes reporting the
+ *    APPLIED size possible under the first two rules. It's the applied size
+ *    rather than an echo of the requested one on purpose — that's the whole
+ *    point of logging it.
+ */
+function stepLogLine(step: Step): string | null {
+  if (step.type !== "viewport") return null;
+  const w = num(step.width, 1280);
+  const h = num(step.height, 800);
+  return (
+    "console.log(" +
+    q("[viewport] resized to " + w + "x" + h + " — page reports ") +
+    " + JSON.stringify(page.viewportSize()));"
+  );
+}
+
 /** Short human description of a step for the UI.
  *
  *  Deliberately renders values with no variable context, so a `${name}`
@@ -313,6 +449,7 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
+  if (step.type === "wait" && step.waitUntil) return describeWait(step);
   if (step.type === "cookie") return describeCookie(step);
   if (step.type === "capture") return describeCapture(step);
   if (step.type === "runFlow") return describeFlow(step);
@@ -391,6 +528,49 @@ export function describeCondition(step: Step): string {
     case "visible":
     default:
       return el + " is visible";
+  }
+}
+
+/**
+ * Readable phrasing of a conditional `wait` step. Kept in sync with the mirror
+ * in renderer/lib/describe-step.ts.
+ *
+ * Deliberately NOT the generated line with `await`/`;` stripped, the way the
+ * other step types are described. That line carries the `// wait until` marker
+ * and a `{ timeout: … }` options object, which would put parser plumbing in
+ * front of the user in the step list.
+ */
+export function describeWait(step: Step): string {
+  const loc = step.locator;
+  const el = loc ? "page." + locatorExpr(loc) : "element";
+  const secs = Math.round((step.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS) / 100) / 10;
+  const within = " (within " + secs + "s)";
+  switch (step.waitUntil) {
+    case "urlContains":
+      return "wait until URL contains " + q(step.value ?? "") + within;
+    case "titleContains":
+      return "wait until title contains " + q(step.value ?? "") + within;
+    case "hidden":
+      return "wait until " + el + " is hidden" + within;
+    case "exists":
+      return "wait until " + el + " exists" + within;
+    case "enabled":
+      return "wait until " + el + " is enabled" + within;
+    case "disabled":
+      return "wait until " + el + " is disabled" + within;
+    case "checked":
+      return "wait until " + el + " is checked" + within;
+    case "unchecked":
+      return "wait until " + el + " is unchecked" + within;
+    case "text":
+      return "wait until " + el + " contains text " + q(step.text ?? "") + within;
+    case "value":
+      return "wait until " + el + " has value " + q(step.value ?? "") + within;
+    case "count":
+      return "wait until " + el + " has count " + (step.count ?? 0) + within;
+    case "visible":
+    default:
+      return "wait until " + el + " is visible" + within;
   }
 }
 
@@ -597,12 +777,18 @@ export function generateSpecDetailed(
     if (line == null) continue;
     if (step.type === "endif") depth = Math.max(1, depth - 1);
     const indent = "  ".repeat(depth);
+    // A trailing log statement (viewport only) travels with its step through
+    // every arm below: a disabled resize must not log that it happened, and a
+    // continue-on-failure resize must log INSIDE the try, or a failed resize
+    // would still report a size it never applied.
+    const logLine = stepLogLine(step);
     // A disabled step is emitted as a commented-out line so the generated spec
     // stays runnable (the step is skipped) while preserving the step's place
     // in the script for round-tripping and readability. Structural `if`/
     // `endif` are never commented — disabling them would break block pairing.
     if (step.disabled && step.type !== "if" && step.type !== "endif") {
       body.push(indent + "// disabled — skipped: " + line);
+      if (logLine) body.push(indent + "// disabled — skipped: " + logLine);
     } else if (step.continueOnFailure && step.type !== "if" && step.type !== "endif") {
       // "Continue on Failure" wraps the step's statement in a try/catch so a
       // failure is swallowed and the test proceeds to the next step. Only
@@ -610,10 +796,12 @@ export function generateSpecDetailed(
       body.push(indent + "try {");
       record1(sourceIndex);
       body.push(indent + "  " + line);
+      if (logLine) body.push(indent + "  " + logLine);
       body.push(indent + "} catch { /* continue on failure */ }");
     } else {
       record1(sourceIndex);
       body.push(indent + line);
+      if (logLine) body.push(indent + logLine);
     }
     if (step.type === "if") depth += 1;
   }

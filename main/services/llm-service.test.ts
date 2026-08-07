@@ -201,6 +201,108 @@ describe("detect()", () => {
   });
 });
 
+// ── Which LM Studio models are in memory ────────────────────────────────────
+//
+// /v1/models reports every DOWNLOADED model identically, so the picker couldn't
+// say which choice answers immediately and which one stalls for however long
+// loading weights takes. LM Studio's own /api/v0/models carries a per-model
+// `state`, and it's read as a strictly optional enrichment: the load badge is
+// worth having, but never at the cost of the model list itself.
+//
+// The three-state contract is the thing to protect. `undefined` means the
+// provider never said, and rendering that as "not loaded" would tell every
+// Ollama user their models are cold — wrong, and not fixable from the UI.
+describe("LM Studio load state", () => {
+  /** Serve a different body per URL, the way two endpoints on one server do. */
+  function routeFetch(routes: Record<string, unknown>, missing: "404" | "throw" = "404") {
+    globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      const key = Object.keys(routes).find((k) => url.includes(k));
+      if (!key) {
+        if (missing === "throw") throw new Error("fetch failed");
+        return { ok: false, status: 404, statusText: "Not Found", json: async () => ({}), text: async () => "" };
+      }
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => routes[key],
+        text: async () => JSON.stringify(routes[key]),
+      };
+    }) as unknown as typeof fetch;
+  }
+
+  const V1 = { data: [{ id: "qwen3-8b" }, { id: "gemma-3-27b" }] };
+
+  it("marks a model loaded or not from LM Studio's own model API", async () => {
+    routeFetch({
+      "/v1/models": V1,
+      "/api/v0/models": {
+        data: [
+          { id: "qwen3-8b", state: "loaded" },
+          { id: "gemma-3-27b", state: "not-loaded" },
+        ],
+      },
+    });
+
+    const models = await llmService.listModels("lmstudio");
+
+    expect(models.find((m) => m.id === "qwen3-8b")?.loaded).toBe(true);
+    expect(models.find((m) => m.id === "gemma-3-27b")?.loaded).toBe(false);
+  });
+
+  it("keeps the full model list when LM Studio is too old to report load state", async () => {
+    // /api/v0 arrived in 0.3.6. An older build 404s it, and the cost of that
+    // has to be a missing badge — not a picker with nothing in it.
+    routeFetch({ "/v1/models": V1 });
+
+    const models = await llmService.listModels("lmstudio");
+
+    expect(models.map((m) => m.id)).toEqual(["qwen3-8b", "gemma-3-27b"]);
+    for (const m of models) expect(m.loaded).toBeUndefined();
+  });
+
+  it("stays reachable when the load-state probe fails outright", async () => {
+    // Some other OpenAI-compatible server on port 1234 answers /v1/models and
+    // nothing else. That must not read as "LM Studio is down".
+    routeFetch({ "/v1/models": V1 }, "throw");
+
+    const s = await llmService.status("lmstudio");
+
+    expect(s.reachable).toBe(true);
+    expect(s.models).toHaveLength(2);
+    expect(s.error).toBeUndefined();
+  });
+
+  it("leaves an unrecognized state unknown rather than guessing 'not loaded'", async () => {
+    routeFetch({
+      "/v1/models": V1,
+      "/api/v0/models": {
+        data: [
+          // A state a future LM Studio might grow. Guessing it means "cold"
+          // would be a confident lie; no badge is the honest answer.
+          { id: "qwen3-8b", state: "loading" },
+          { id: "gemma-3-27b", state: "loaded" },
+        ],
+      },
+    });
+
+    const models = await llmService.listModels("lmstudio");
+
+    expect(models.find((m) => m.id === "qwen3-8b")?.loaded).toBeUndefined();
+    expect(models.find((m) => m.id === "gemma-3-27b")?.loaded).toBe(true);
+  });
+
+  it("never claims load state for a provider that doesn't report it", async () => {
+    okFetch({ models: [{ name: "llama3.2" }] });
+
+    const models = await llmService.listModels("ollama");
+
+    expect(models).toHaveLength(1);
+    expect(models[0].loaded).toBeUndefined();
+  });
+});
+
 // ── Streaming a REASONING model ─────────────────────────────────────────────
 //
 // The regression: `bonsai-27b` (and any DeepSeek/Qwen-style reasoning model)

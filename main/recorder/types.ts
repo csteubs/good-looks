@@ -41,6 +41,32 @@ export type ConditionKind =
   | "urlContains"
   | "titleContains";
 
+/**
+ * Predicate a `wait` step blocks on until it holds (`Step.waitUntil`).
+ *
+ * A superset of ConditionKind, kept as its OWN type rather than an alias with
+ * extras: an `if` block evaluates its condition once, so widening the wait
+ * vocabulary must not silently widen what a condition accepts — the two
+ * normalizers check against separate lists for exactly that reason.
+ *
+ * Element predicates resolve `Step.locator`; `text`/`value` read `Step.text` /
+ * `Step.value`, `count` reads `Step.count`, and urlContains/titleContains match
+ * `Step.value` against the page.
+ */
+export type WaitUntilKind =
+  | "visible"
+  | "hidden"
+  | "exists"
+  | "enabled"
+  | "disabled"
+  | "checked"
+  | "unchecked"
+  | "text"
+  | "value"
+  | "count"
+  | "urlContains"
+  | "titleContains";
+
 export type LocatorKind = "testid" | "role" | "label" | "placeholder" | "text" | "css" | "xpath";
 
 export interface Locator {
@@ -98,6 +124,13 @@ export interface Step {
   height?: number;
   /** wait duration in ms when type === "wait" (omit to wait for the locator instead) */
   waitMs?: number;
+  /** predicate a `wait` step blocks on until it holds. Takes precedence over
+   *  waitMs / a bare locator wait, which stay exactly as they were so every
+   *  test already on disk regenerates byte-identically. */
+  waitUntil?: WaitUntilKind;
+  /** how long a `waitUntil` step waits before failing, in ms. Reaches the
+   *  generator as a BARE NUMERAL — see normalizeRawStep's `int` note. */
+  timeoutMs?: number;
   /** what a `cookie` step does */
   cookieAction?: CookieAction;
   /** the cookie a `cookie` step sets or deletes (absent for clearAll) */
@@ -196,6 +229,8 @@ export interface RawStep {
   width?: number;
   height?: number;
   waitMs?: number;
+  waitUntil?: WaitUntilKind;
+  timeoutMs?: number;
   /** cookie fields, so a cookie step can be inserted via insertStep */
   cookieAction?: CookieAction;
   cookie?: CookieSpec;
@@ -209,7 +244,26 @@ export interface RawStep {
   fingerprint?: ElementFingerprint;
 }
 
-export type TestSpeed = "slow" | "medium" | "fast";
+export type TestSpeed = "crawl" | "slow" | "medium" | "fast";
+
+/** Every speed, SLOWEST FIRST — the order the sidebar slider's stops are in.
+ *  Exported so the UI lists, the settings validator and the `tests:setSpeed`
+ *  handler all derive from one array: the previous arrangement re-declared the
+ *  set in six places, and a speed accepted by one entry point but rejected by
+ *  another is a bug with no error message. */
+export const TEST_SPEEDS: TestSpeed[] = ["crawl", "slow", "medium", "fast"];
+
+/** Display labels for the speed pickers. */
+export const TEST_SPEED_LABELS: Record<TestSpeed, string> = {
+  crawl: "Crawl",
+  slow: "Slow",
+  medium: "Medium",
+  fast: "Fast",
+};
+
+export function isTestSpeed(v: unknown): v is TestSpeed {
+  return typeof v === "string" && (TEST_SPEEDS as string[]).includes(v);
+}
 
 /** Playwright browser engine a test run uses. The trainer always uses the
  *  app's own WebView and is unaffected by this. */
@@ -232,7 +286,9 @@ export interface TestRecord {
   scriptPath: string;
   /** true once the script has been hand-edited, so it's no longer regenerated from steps */
   scriptEdited?: boolean;
-  /** playback speed for runs (adds a slowMo delay between actions); defaults to "fast" (no delay) */
+  /** playback speed for runs (adds a slowMo delay between actions); defaults to
+   *  "fast" (no delay). "crawl" additionally waits for the page to settle after
+   *  every action — see settle-fixture-source.ts. */
   speed?: TestSpeed;
   /** absolute path to the folder a test was imported from, so its sibling
    *  modules (e.g. `./helpers.js`) can be re-copied into the scripts dir */
@@ -296,6 +352,10 @@ export interface TestRecord {
    *  absent, the global `RecorderSettings.defaultRunBrowser` applies. Set from
    *  the test detail toolbar's browser picker. Only affects test runs. */
   runBrowser?: RunBrowser;
+  /** Per-test Playwright timeout in ms (how long one test may run before
+   *  Playwright fails it). When absent, `RecorderSettings.defaultTestTimeoutMs`
+   *  applies. Set from the test detail toolbar. Only affects test runs. */
+  testTimeoutMs?: number;
   /** Free-form labels used to group tests (e.g. "smoke", "checkout").
    *  Normalized by `normalizeTags` on write — the backend is the single source
    *  of truth, so the renderer sends raw strings and renders what comes back.
@@ -476,6 +536,13 @@ export const CONDITION_KINDS: ConditionKind[] = [
   "urlContains", "titleContains",
 ];
 
+/** Deliberately a separate list from CONDITION_KINDS even though it contains
+ *  all of them — see the WaitUntilKind doc comment. */
+export const WAIT_UNTIL_KINDS: WaitUntilKind[] = [
+  "visible", "hidden", "exists", "enabled", "disabled", "checked", "unchecked",
+  "text", "value", "count", "urlContains", "titleContains",
+];
+
 export const LOCATOR_KINDS: LocatorKind[] = [
   "testid", "role", "label", "placeholder", "text", "css", "xpath",
 ];
@@ -654,8 +721,10 @@ export function normalizeRawStep(input: unknown): RawStep | null {
 
   const assert = oneOf(s.assert, ASSERT_KINDS);
   const cond = oneOf(s.cond, CONDITION_KINDS);
+  const waitUntil = oneOf(s.waitUntil, WAIT_UNTIL_KINDS);
   if (assert) out.assert = assert;
   if (cond) out.cond = cond;
+  if (waitUntil) out.waitUntil = waitUntil;
   if (bool(s.soft)) out.soft = true;
 
   // The fields that reach the generator as bare numerals.
@@ -663,10 +732,12 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   const width = int(s.width, 1, 100_000);
   const height = int(s.height, 1, 100_000);
   const waitMs = int(s.waitMs, 0, 3_600_000);
+  const timeoutMs = int(s.timeoutMs, 0, 3_600_000);
   if (count !== undefined) out.count = count;
   if (width !== undefined) out.width = width;
   if (height !== undefined) out.height = height;
   if (waitMs !== undefined) out.waitMs = waitMs;
+  if (timeoutMs !== undefined) out.timeoutMs = timeoutMs;
 
   const cookieAction = oneOf(s.cookieAction, COOKIE_ACTIONS);
   if (cookieAction) out.cookieAction = cookieAction;
@@ -894,6 +965,14 @@ export interface RunRecord {
   /** Browser engine this run used. Absent on runs recorded before the picker
    *  existed — treated as chromium, which is what they all ran on. */
   runBrowser?: RunBrowser;
+  /** Playback speed this run executed at. Recorded because speed is a per-test
+   *  setting the user changes between runs, so without it a run history can't
+   *  say whether yesterday's failure and today's pass differ by the code or by
+   *  the pacing — which is the whole question "crawl" exists to answer.
+   *  Absent on runs recorded before this field; read as "unknown", NOT as
+   *  "fast" — a pre-existing run genuinely might have been any speed, and
+   *  defaulting would invent evidence. */
+  speed?: TestSpeed;
   /** id of the batch this run belonged to, when it was part of one. Absent for
    *  ordinary single runs — which is most of them. */
   batchId?: string;
@@ -1026,6 +1105,11 @@ export interface RecorderSettings {
   /** default browser engine for tests that haven't set their own preference
    *  (default "chromium"). Only affects test runs, not the trainer. */
   defaultRunBrowser: RunBrowser;
+  /** default Playwright per-test timeout in ms for tests that haven't set their
+   *  own preference (default 60000 = 1 minute). Playwright's built-in default is
+   *  30s; this raises it so ordinary multi-step runs don't fail mid-flow. Only
+   *  affects test runs, not the trainer. */
+  defaultTestTimeoutMs: number;
   /** POST a summary to a user-configured webhook when a run or batch has a
    *  problem (default false). The only thing in the app that sends data off the
    *  machine — inert until a URL is configured, and never includes run logs. */
@@ -1141,6 +1225,14 @@ export interface RecorderState {
   cursor: number;
   /** true while the "Refine Selector" element picker is active */
   refineMode: boolean;
+  /** true while a replay is running steps against the training window.
+   *
+   *  Broadcast rather than per-window React state because BOTH trainers (the
+   *  main window and the docked panel) render one session: without this, the
+   *  window that did not start the replay still shows "Recording" and offers
+   *  live Add-step / Replay controls, and an action taken there lands in the
+   *  middle of a run whose whole premise is that capture is suspended. */
+  replaying: boolean;
   /** true once the trainer browser window has finished loading its first page */
   pageReady: boolean;
   /** true while the training browser window is opening but hasn't shown yet.

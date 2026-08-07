@@ -32,6 +32,38 @@ export type ConditionKind =
   | "urlContains"
   | "titleContains";
 
+/** Predicate a `wait` step blocks on until it holds (mirror of main types).
+ *  A superset of ConditionKind, kept separate on purpose so widening the wait
+ *  vocabulary can't silently widen what an `if` condition accepts. */
+export type WaitUntilKind =
+  | "visible"
+  | "hidden"
+  | "exists"
+  | "enabled"
+  | "disabled"
+  | "checked"
+  | "unchecked"
+  | "text"
+  | "value"
+  | "count"
+  | "urlContains"
+  | "titleContains";
+
+/** How the Add-wait dialog is opened from outside itself (the training
+ *  browser's right-click menu). "hidden" preselects a Wait Until on the
+ *  `hidden` predicate — before conditional waits existed it collapsed into the
+ *  plain element wait, which generates `.waitFor()` and so waited for the
+ *  element to become VISIBLE: the opposite of what was picked, with nothing on
+ *  screen to say so. Mirror of the `waitMode` union in
+ *  main/services/recorder-service.ts. */
+export type WaitDialogMode = "element" | "hidden" | "time" | "until";
+
+/** Mirror of DEFAULT_WAIT_TIMEOUT_MS in main/services/script-generator.ts.
+ *  Pinned to the backend's value by describe-step-parity.test.ts, which covers
+ *  a wait-until step with no explicit timeout — if the two drift, the trainer's
+ *  step list and the run log quote different timeouts for the same step. */
+export const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
+
 export type LocatorKind = "testid" | "role" | "label" | "placeholder" | "text" | "css" | "xpath";
 
 export interface Locator {
@@ -74,6 +106,10 @@ export interface Step {
   width?: number;
   height?: number;
   waitMs?: number;
+  /** predicate a `wait` step blocks on, and how long it waits before failing
+   *  (mirror of main types). */
+  waitUntil?: WaitUntilKind;
+  timeoutMs?: number;
   /** what a `cookie` step does (mirrors main types) */
   cookieAction?: CookieAction;
   /** the cookie a `cookie` step sets or deletes (absent for clearAll) */
@@ -142,6 +178,8 @@ export interface RawStep {
   width?: number;
   height?: number;
   waitMs?: number;
+  waitUntil?: WaitUntilKind;
+  timeoutMs?: number;
   /** cookie fields, so a cookie step can be inserted via insertStep */
   cookieAction?: CookieAction;
   cookie?: CookieSpec;
@@ -153,7 +191,20 @@ export interface RawStep {
   flowArgs?: Record<string, string>;
 }
 
-export type TestSpeed = "slow" | "medium" | "fast";
+export type TestSpeed = "crawl" | "slow" | "medium" | "fast";
+
+/** Every speed, SLOWEST FIRST (mirror of main types) — the order the sidebar
+ *  slider's stops are in. Every picker derives its list from this rather than
+ *  re-declaring one, so a new speed appears in all of them at once. */
+export const TEST_SPEEDS: TestSpeed[] = ["crawl", "slow", "medium", "fast"];
+
+/** Display labels for the speed pickers. */
+export const TEST_SPEED_LABELS: Record<TestSpeed, string> = {
+  crawl: "Crawl",
+  slow: "Slow",
+  medium: "Medium",
+  fast: "Fast",
+};
 
 /** Playwright browser engine a test run uses (mirror of main types).
  *  The trainer uses the app's own WebView and is unaffected. */
@@ -193,6 +244,9 @@ export interface TestRecord {
   runHeadless?: boolean;
   /** Per-test browser-engine preference (mirrors main TestRecord). */
   runBrowser?: RunBrowser;
+  /** Per-test Playwright timeout in ms (mirrors main TestRecord). When absent,
+   *  the global default from Settings applies. */
+  testTimeoutMs?: number;
   /** Per-test accessibility-check preference (mirrors main TestRecord). */
   a11yChecks?: boolean;
   /** Violations accepted for this test, keyed by step id. */
@@ -363,6 +417,10 @@ export interface RunRecord {
   /** browser engine this run used; absent on runs predating the picker
    *  (all of which ran on chromium). */
   runBrowser?: RunBrowser;
+  /** playback speed this run executed at. Absent on runs predating the field —
+   *  which means UNKNOWN, not "fast": speed is a per-test setting the user
+   *  changes between runs, so an older run could have been any of them. */
+  speed?: TestSpeed;
   /** id of the batch this run belonged to, when it was part of one. */
   batchId?: string;
   /** how many steps run-time Auto-Heal got past by substituting a locator. */
@@ -611,6 +669,8 @@ export interface RecorderSettings {
   defaultRunHeadless: boolean;
   /** default browser engine for tests with no preference (default "chromium"). */
   defaultRunBrowser: RunBrowser;
+  /** default Playwright per-test timeout in ms (default 60000 = 1 minute). */
+  defaultTestTimeoutMs: number;
   /** send a summary to a configured webhook on run/batch problems (default false). */
   alertWebhookEnabled: boolean;
   /** user-chosen Batch run order, as test ids (mirrors main types) */
@@ -656,7 +716,7 @@ export interface HealSuggestion {
 export interface ContextAction {
   kind: "assertion" | "wait" | "goto" | "press" | "viewport" | "find" | "refine";
   assert?: AssertKind;
-  waitMode?: "element" | "hidden" | "time";
+  waitMode?: WaitDialogMode;
   picked: PickedElement | null;
   prefillText: string;
   prefillValue: string;
@@ -707,6 +767,10 @@ export interface RecorderState {
   assertSoft: boolean;
   cursor: number;
   refineMode: boolean;
+  /** true while a replay is running steps against the training window. Both
+   *  trainer windows disable their controls on it — see the note on the mirror
+   *  of this interface in main/recorder/types.ts. */
+  replaying: boolean;
   /** true once the trainer browser window has finished loading its first page */
   pageReady: boolean;
   /** true while the training browser window is opening but hasn't shown yet. */

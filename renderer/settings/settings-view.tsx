@@ -30,7 +30,13 @@ import type { NativeThemeInfo } from "../lib/host-types";
 import { api } from "../lib/api";
 import type { LlmProvider, LlmProviderStatus } from "../lib/llm-types";
 import type { ArtifactUsage, RunBrowser, TestSpeed } from "../lib/recorder-types";
-import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
+import {
+  RUN_BROWSERS,
+  RUN_BROWSER_LABELS,
+  TEST_SPEEDS,
+  TEST_SPEED_LABELS,
+} from "../lib/recorder-types";
+import { BROWSER_SF_SYMBOLS } from "../lib/browser-icons";
 import {
   DEFAULT_VIEWPORT_PRESET_ID,
   VIEWPORT_PRESETS,
@@ -38,8 +44,6 @@ import {
   viewportForPresetId,
 } from "../lib/viewport-presets";
 
-const SPEEDS: TestSpeed[] = ["slow", "medium", "fast"];
-const SPEED_LABEL: Record<TestSpeed, string> = { slow: "Slow", medium: "Medium", fast: "Fast" };
 
 /** Human-readable size for the screenshot-storage readout (KB/MB/GB, 1 decimal
  *  once past KB so "0.6 MB" reads better than "614 KB"). */
@@ -85,6 +89,8 @@ export function SettingsView() {
   const [keepRunningAiDebugJobs, setKeepRunningAiDebugJobs] = useState(false);
   const [defaultRunHeadless, setDefaultRunHeadless] = useState(false);
   const [defaultRunBrowser, setDefaultRunBrowser] = useState<RunBrowser>("chromium");
+  // Shown in seconds; stored as ms. Default 60s matches the backend.
+  const [defaultTestTimeoutSec, setDefaultTestTimeoutSec] = useState(60);
   const [artifactRetainedRuns, setArtifactRetainedRuns] = useState(10);
   const [artifactRetentionDays, setArtifactRetentionDays] = useState(0);
   const [notifyOnRunIssues, setNotifyOnRunIssues] = useState(false);
@@ -143,6 +149,9 @@ export function SettingsView() {
         setKeepRunningAiDebugJobs(settings.keepRunningAiDebugJobs ?? false);
         setDefaultRunHeadless(settings.defaultRunHeadless ?? false);
         setDefaultRunBrowser(settings.defaultRunBrowser ?? "chromium");
+        setDefaultTestTimeoutSec(
+          Math.round((settings.defaultTestTimeoutMs ?? 60_000) / 1000),
+        );
         setArtifactRetainedRuns(settings.artifactRetainedRuns ?? 10);
         setArtifactRetentionDays(settings.artifactRetentionDays ?? 0);
         setNotifyOnRunIssues(settings.notifyOnRunIssues ?? false);
@@ -302,6 +311,17 @@ export function SettingsView() {
     setDefaultRunBrowser(browser);
     try {
       await api.recorder.setSettings({ defaultRunBrowser: browser });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleDefaultTestTimeoutChange = async (value: string) => {
+    // UI is seconds; backend stores ms. 5s–30min matches the store clamp.
+    const sec = Math.max(5, Math.min(30 * 60, Math.round(Number(value) || 60)));
+    setDefaultTestTimeoutSec(sec);
+    try {
+      await api.recorder.setSettings({ defaultTestTimeoutMs: sec * 1000 });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
     }
@@ -703,8 +723,9 @@ export function SettingsView() {
                 <FieldLabel htmlFor="default-run-speed">Default run speed</FieldLabel>
                 <p className="text-sm text-muted-foreground">
                   Playback speed for new recordings. Adds a delay between actions so runs are
-                  watchable; slow by default. Each test can still be overridden from its sidebar
-                  menu.
+                  watchable; slow by default. Crawl goes further and waits for the page to
+                  finish loading after every step, which is slower but steadier on pages that
+                  load in stages. Each test can still be overridden from its sidebar menu.
                 </p>
               </FieldContent>
               <SegmentedControl
@@ -714,9 +735,9 @@ export function SettingsView() {
                 variant="filled"
                 size="small"
               >
-                {SPEEDS.map((s) => (
+                {TEST_SPEEDS.map((s) => (
                   <SegmentedControlItem key={s} value={s}>
-                    {SPEED_LABEL[s]}
+                    {TEST_SPEED_LABELS[s]}
                   </SegmentedControlItem>
                 ))}
               </SegmentedControl>
@@ -954,16 +975,42 @@ export function SettingsView() {
                 onValueChange={(v) => handleDefaultRunBrowserChange(v as RunBrowser)}
               >
                 <SelectTrigger id="default-run-browser" className="w-36">
+                  {/* SelectValue draws the selected item's SF Symbol already;
+                      a lucide glyph here would double it. */}
                   <SelectValue placeholder="Chromium" />
                 </SelectTrigger>
                 <SelectContent>
                   {RUN_BROWSERS.map((b) => (
-                    <SelectItem key={b} value={b}>
+                    <SelectItem key={b} value={b} icon={BROWSER_SF_SYMBOLS[b]}>
                       {RUN_BROWSER_LABELS[b]}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="default-test-timeout">Default test timeout</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  How long a single test may run before it fails, in seconds. Default is 60.
+                  Playwright&apos;s built-in limit is 30 — raise this for longer flows. Each test
+                  can still override this from its detail view.
+                </p>
+              </FieldContent>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="default-test-timeout"
+                  type="number"
+                  min={5}
+                  max={1800}
+                  step={5}
+                  className="w-24"
+                  value={defaultTestTimeoutSec}
+                  onChange={(e) => handleDefaultTestTimeoutChange(e.target.value)}
+                  aria-label="Default test timeout in seconds"
+                />
+                <span className="text-sm text-muted-foreground">sec</span>
+              </div>
             </Field>
           </FieldGroup>
         </FieldSet>

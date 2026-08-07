@@ -42,15 +42,17 @@ import {
   MonitorOff,
   Search,
   Stamp,
+  Timer,
   X,
   Wand2,
 } from "lucide-react";
 
 import { api } from "../lib/api";
+import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
 import { FlakePanel } from "./flake-panel";
 import { Pager } from "./pager";
 import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
-import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
+import { RUN_BROWSERS, RUN_BROWSER_LABELS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { pageSlice } from "../lib/paginate";
 import {
   NO_FILTERS,
@@ -160,7 +162,7 @@ function buildDailyBuckets(runs: RunRecord[]): DayBucket[] {
 
 function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="flex flex-col gap-1 rounded-lg border border-token-border bg-token-surface-raised px-4 py-3">
+    <div className="flex flex-col gap-1 rounded-lg border border-separator bg-panel px-4 py-3">
       <Text variant="small" color="tertiary">
         {label}
       </Text>
@@ -194,7 +196,7 @@ function CaptureOverheadPanel({ summary }: { summary: CaptureOverheadSummary }) 
       ? summary.meanCapturedDurationMs - summary.meanUncapturedDurationMs
       : null;
   return (
-    <div className="rounded-lg border border-token-border bg-token-surface-raised p-4">
+    <div className="rounded-lg border border-separator bg-panel p-4">
       <div className="mb-3 flex items-center justify-between">
         <Text variant="small" className="font-medium">
           Capture overhead
@@ -251,7 +253,7 @@ function CaptureOverheadPanel({ summary }: { summary: CaptureOverheadSummary }) 
 function PassFailChart({ buckets }: { buckets: DayBucket[] }) {
   const maxTotal = Math.max(1, ...buckets.map((b) => b.passed + b.failed));
   return (
-    <div className="rounded-lg border border-token-border bg-token-surface-raised p-4">
+    <div className="rounded-lg border border-separator bg-panel p-4">
       <div className="mb-3 flex items-center justify-between">
         <Text variant="small" className="font-medium">
           Pass / fail over time
@@ -338,7 +340,7 @@ function LogInspector({
             {copied ? "Copied" : "Copy log"}
           </Button>
         </div>
-        <ScrollArea className="h-[55vh] rounded-md border border-token-border bg-token-surface">
+        <ScrollArea className="h-[55vh] rounded-md border border-separator bg-well">
           <pre className="whitespace-pre-wrap break-words p-3 text-mono font-mono text-secondary">
             {logQuery.isLoading ? "Loading…" : text || "(empty log)"}
           </pre>
@@ -585,7 +587,7 @@ export function StatsView() {
                 </div>
 
                 {searching ? (
-                  <div className="rounded-lg border border-token-border bg-token-surface-raised">
+                  <div className="rounded-lg border border-separator bg-panel">
                     {searchQuery.isLoading ? (
                       <Text variant="small" color="tertiary" className="block p-3">
                         Searching…
@@ -602,7 +604,7 @@ export function StatsView() {
                           onClick={() =>
                             setLogRun({ id: r.runId, title: `${r.testName} — ${fmtDateTime(r.startedAt)}` })
                           }
-                          className="flex w-full flex-col gap-1 border-b border-token-border px-3 py-2 text-left last:border-b-0 hover:bg-token-hover"
+                          className="flex w-full flex-col gap-1 border-b border-separator px-3 py-2 text-left last:border-b-0 hover:bg-control-subtle"
                         >
                           <div className="flex items-center gap-2">
                             <Badge color={r.status === "passed" ? "green" : "red"}>{r.status}</Badge>
@@ -674,7 +676,7 @@ export function StatsView() {
                           <SelectItem value="headless">Headless</SelectItem>
                           <SelectItem value="captured">Screenshots</SelectItem>
                           {RUN_BROWSERS.map((b) => (
-                            <SelectItem key={b} value={b}>
+                            <SelectItem key={b} value={b} icon={BROWSER_SF_SYMBOLS[b]}>
                               {RUN_BROWSER_LABELS[b]}
                             </SelectItem>
                           ))}
@@ -716,6 +718,7 @@ export function StatsView() {
                         <TableRow>
                           <TableHead>Test</TableHead>
                           <TableHead className="w-20">Status</TableHead>
+                          <TableHead className="w-20">Browser</TableHead>
                           <TableHead className="w-28">Started</TableHead>
                           <TableHead className="w-28">Tags</TableHead>
                           <TableHead className="w-24 text-right">Duration</TableHead>
@@ -767,6 +770,19 @@ export function StatsView() {
                                   </span>
                                 )}
                               </TableCell>
+                              {/* Icon-only: the engine is a glance-level fact,
+                                  and the name would cost a third of the row's
+                                  width to repeat on every line. */}
+                              <TableCell>
+                                {isBaseline ? (
+                                  <span className="text-tertiary">—</span>
+                                ) : (
+                                  <BrowserIcon
+                                    browser={runBrowserOf(r)}
+                                    className="size-4 shrink-0 text-secondary"
+                                  />
+                                )}
+                              </TableCell>
                               <TableCell
                                 className="truncate text-secondary"
                                 title={fmtDateTime(r.startedAt)}
@@ -778,16 +794,53 @@ export function StatsView() {
                                   <span className="text-tertiary">—</span>
                                 ) : (
                                   <span className="flex items-center gap-1">
-                                    {/* One badge carries both facts: which engine
-                                        ran, and whether it was visible. */}
+                                    {/* Mode icon + engine icon, no words. The
+                                        engine has its own column now, so the
+                                        name here would be pure duplication —
+                                        but the badge keeps the glyph so the
+                                        tag filter's browser options still have
+                                        something to point at. */}
                                     <Badge color="secondary">
                                       {r.runHeadless ? (
-                                        <MonitorOff className="size-3" />
+                                        <MonitorOff
+                                          className="size-3"
+                                          role="img"
+                                          aria-label="Headless"
+                                        />
                                       ) : (
-                                        <Globe className="size-3" />
+                                        <Globe className="size-3" role="img" aria-label="Headed" />
                                       )}
-                                      {RUN_BROWSER_LABELS[runBrowserOf(r)]}
+                                      <BrowserIcon
+                                        browser={runBrowserOf(r)}
+                                        className="size-3 shrink-0"
+                                        labelled={false}
+                                      />
                                     </Badge>
+                                    {/* Speed this run executed at. Shown only when
+                                        the run RECORDED one: runs predating the field
+                                        could have been at any speed, and a badge
+                                        guessing "Fast" for them would corrupt the one
+                                        comparison this is here to support — whether a
+                                        slower speed actually passes more often.
+
+                                        This one KEEPS its word, unlike the badge
+                                        above. The engine dropped its name because it
+                                        has its own column and the word was duplication;
+                                        speed has no other column, and four speeds
+                                        cannot be told apart by one timer glyph. */}
+                                    {r.speed ? (
+                                      <Badge
+                                        color="secondary"
+                                        title={
+                                          r.speed === "crawl"
+                                            ? "Crawl: waited for the page to load and settle after every step"
+                                            : `Playback speed: ${TEST_SPEED_LABELS[r.speed]}`
+                                        }
+                                      >
+                                        <Timer className="size-3" />
+                                        {TEST_SPEED_LABELS[r.speed]}
+                                      </Badge>
+                                    ) : null}
                                     {/* Capture is a filterable tag, so it needs to be
                                         visible here — icon-only to fit the column. */}
                                     {r.captureArtifacts ? (
