@@ -24,6 +24,7 @@ import {
   PICK_AT_POINT_SCRIPT,
 } from "../recorder/capture-script.js";
 import { buildReplayScript } from "./step-replayer.js";
+import { applyViewportStep, type ResizeHost } from "./resize-service.js";
 import { healStep } from "./auto-heal.js";
 import { healJournalStore } from "./heal-journal-store.js";
 import { createTrainerWindowGate } from "./trainer-window-gate.js";
@@ -296,16 +297,24 @@ function currentPageUrl(): string {
 /**
  * Run one step during trainer replay.
  *
- * Single dispatch point on purpose: `cookie` steps CANNOT go through the
- * injected-script replayer, because an httpOnly cookie is invisible to
- * document.cookie by definition — they need the session API instead. Routing
- * every path through here means a new step kind can't be handled in some replay
- * paths and silently missed in others.
+ * Single dispatch point on purpose: two step kinds CANNOT go through the
+ * injected-script replayer. A `cookie` step needs the session API, because an
+ * httpOnly cookie is invisible to document.cookie by definition; a `viewport`
+ * step needs the window API, because a page cannot resize the window it is
+ * loaded in. Routing every path through here means a new step kind can't be
+ * handled in some replay paths and silently missed in others.
  */
 async function runStep(
   wc: { executeJavaScript: (script: string) => Promise<unknown> },
   step: Step,
 ): Promise<ReplayStepResult> {
+  if (step.type === "viewport") {
+    return applyViewportStep(
+      recWindow && !recWindow.isDestroyed() ? (recWindow as unknown as ResizeHost) : null,
+      step,
+      (script) => wc.executeJavaScript(script),
+    );
+  }
   if (step.type === "cookie") {
     // The trainer window can close mid-replay (the loops elsewhere guard for
     // exactly this), so don't assert it's alive — report a clean failure
@@ -1010,6 +1019,25 @@ export const recorderService = {
     wc.once("dom-ready", () => gate.signal("dom-ready"));
     showFallback = setTimeout(() => gate.signal("fallback"), SHOW_FALLBACK_MS);
     recWindow.on("closed", () => void finalize());
+
+    // Log the size the training window settles at after a manual resize.
+    //
+    // The window's page area is what every step from here on is recorded
+    // against — a locator captured at 1280 wide may not exist at 390 — and
+    // dragging the window edge leaves no other trace. "This test only fails on
+    // one machine" is usually this, and the log is the only place the size at
+    // capture time can be recovered from afterwards.
+    //
+    // `resized` (end of gesture) rather than `resize` (every frame of the drag):
+    // one line per deliberate change, not hundreds per drag.
+    recWindow.on("resized", () => {
+      if (!recWindow || recWindow.isDestroyed()) return;
+      const [width, height] = recWindow.getContentSize();
+      logger.info("recorder", "The training window was resized", {
+        testId,
+        pageSize: `${width}x${height}`,
+      });
+    });
 
     // A same-origin redirect on load (e.g. adding a trailing slash) can retrigger
     // the will-navigate interceptor above. Route the initial load through

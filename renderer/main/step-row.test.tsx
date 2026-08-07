@@ -211,8 +211,9 @@ describe("actions", () => {
   });
 
   it("offers no replay control for steps that can't be replayed alone", () => {
-    // goto/viewport/endif aren't meaningful to replay in isolation.
-    for (const type of ["goto", "viewport", "endif"] as StepType[]) {
+    // goto restarts the session's navigation; endif is a block delimiter.
+    // `viewport` is deliberately NOT here — see the test below.
+    for (const type of ["goto", "endif"] as StepType[]) {
       const { container, unmount } = render(
         <StepRow index={0} step={step({ type })} onReplay={async () => ({ ok: true })} />,
       );
@@ -296,5 +297,77 @@ describe("drag affordance", () => {
     );
     fireEvent.dragStart(screen.getByLabelText(/drag to reorder/i));
     expect(onDragStart).toHaveBeenCalled();
+  });
+});
+
+describe("viewport (window resize) rows", () => {
+  // A resize step is the one recorded action with no on-page target, so it
+  // reaches none of the affordances above through a locator. Everything it
+  // does get, it gets because this type is handled explicitly.
+
+  it("offers a replay control, because a resize CAN be previewed alone", () => {
+    // The counterpart to "offers no replay control…" above. Replaying a resize
+    // resizes the training window, which is the whole thing worth checking
+    // before trusting the step.
+    const { container } = render(
+      <StepRow
+        index={0}
+        step={step({ type: "viewport", width: 390, height: 844 })}
+        onReplay={async () => ({ ok: true })}
+      />,
+    );
+    const labels = [...container.querySelectorAll("button")].map((b) =>
+      (b.getAttribute("aria-label") ?? "").toLowerCase(),
+    );
+    expect(labels.some((l) => l.includes("replay"))).toBe(true);
+  });
+
+  it("edits both dimensions from one field", () => {
+    const onEdit = vi.fn();
+    render(
+      <StepRow
+        index={0}
+        step={step({ type: "viewport", width: 1280, height: 800 })}
+        onEdit={onEdit}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText(/edit step/i));
+    const input = screen.getByLabelText(/edit size/i) as HTMLInputElement;
+    // Seeded with the current size — an empty box would make an edit read as
+    // "type a size" rather than "change this one".
+    expect(input.value).toBe("1280x800");
+    fireEvent.change(input, { target: { value: "390 × 844" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onEdit).toHaveBeenCalledWith({ width: 390, height: 844 });
+  });
+
+  it("commits nothing when the typed size can't be parsed", () => {
+    // Half a size is not a smaller edit — it's a step that generates a spec
+    // Playwright rejects. Leaving the step alone is the safe answer.
+    const onEdit = vi.fn();
+    render(
+      <StepRow
+        index={0}
+        step={step({ type: "viewport", width: 1280, height: 800 })}
+        onEdit={onEdit}
+      />,
+    );
+    fireEvent.click(screen.getByLabelText(/edit step/i));
+    const input = screen.getByLabelText(/edit size/i);
+    fireEvent.change(input, { target: { value: "1280 wide" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onEdit).not.toHaveBeenCalled();
+  });
+
+  it("clamps a typed size into the range a window can actually be", () => {
+    const onEdit = vi.fn();
+    render(
+      <StepRow index={0} step={step({ type: "viewport", width: 1280, height: 800 })} onEdit={onEdit} />,
+    );
+    fireEvent.click(screen.getByLabelText(/edit step/i));
+    const input = screen.getByLabelText(/edit size/i);
+    fireEvent.change(input, { target: { value: "99999x10" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onEdit).toHaveBeenCalledWith({ width: 4000, height: 200 });
   });
 });
