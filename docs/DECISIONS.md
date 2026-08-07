@@ -16,6 +16,23 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-06 — Configurable Playwright test timeout (default 1 minute)
+
+**The bug.** Every run used Playwright's built-in 30s per-test timeout because `ensureConfig` wrote a config with only `slowMo` and never a `timeout`. Multi-step tests failed constantly once they crossed 30s. There was no Settings control and no per-test override.
+
+**Chosen: global default + optional per-test override, applied at run time.**
+- Settings stores `defaultTestTimeoutMs` (default 60_000, clamp 5s–30min).
+- Each test may store `testTimeoutMs`; absent means "use Settings".
+- The runner resolves override → default → 60s, then passes both `--timeout=` (authoritative CLI flag) and `PW_TEST_TIMEOUT_MS` (so the generated config matches if someone runs it outside the app).
+- The process hard-kill (`RUN_TIMEOUT_MS`, floor 5 min) is raised to `max(5min, testTimeout + 60s)` so a long legitimate timeout isn't murdered by the process watchdog first.
+- `ensureConfig` is always rewritten (like the step reporter) so existing scripts dirs pick up the timeout field without a manual delete.
+
+**Rejected — only bumping a hardcoded constant.** That would fix the immediate failures but leave long flows stuck again at whatever new constant we picked. The Settings + per-test shape matches headless/browser already.
+
+**Rejected — only writing timeout into `playwright.config.ts`.** Config is shared across the scripts dir; a per-test override needs a per-run value. CLI `--timeout` wins over config and is the right lever.
+
+**UI is seconds, storage is ms.** Matches how users think about the knob; matches Auto-Heal timeout's ms-at-the-boundary convention on the wire.
+
 ### 2026-08-06 — A replay must not record itself
 
 **The bug.** A replayed step is a real interaction in a live recording session: the injected replayer clicks a real element, and the capture script is listening on that same element. The four replay paths did each pause capture — but each did it by hand, and the copies had drifted. What none of them did was tell the *rest of the app*, which is where the visible damage was.

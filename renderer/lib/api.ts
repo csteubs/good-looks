@@ -167,6 +167,10 @@ export const api = {
       ipc().invoke<TestRecord>("tests:setHeadless", { id, runHeadless }),
     setBrowser: (id: string, runBrowser: RunBrowser) =>
       ipc().invoke<TestRecord>("tests:setBrowser", { id, runBrowser }),
+    /** Per-test Playwright timeout override in ms. Pass null to clear and fall
+     *  back to the global Settings default. */
+    setTestTimeout: (id: string, testTimeoutMs: number | null) =>
+      ipc().invoke<TestRecord>("tests:setTestTimeout", { id, testTimeoutMs }),
     setTags: (id: string, tags: string[]) =>
       ipc().invoke<TestRecord>("tests:setTags", { id, tags }),
     /** Remove a tag from every test that carries it (case-insensitive, hidden

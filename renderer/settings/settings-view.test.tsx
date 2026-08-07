@@ -60,6 +60,7 @@ beforeEach(() => {
     defaultRunBrowser: "chromium",
     defaultRunHeadless: false,
     defaultCaptureArtifacts: false,
+    defaultTestTimeoutMs: 60_000,
     notifyOnRunIssues: false,
     alertWebhookEnabled: false,
     autoHealEnabled: true,
@@ -107,6 +108,29 @@ describe("run defaults persist", () => {
     settings = { ...settings, defaultRunBrowser: "webkit" };
     await renderSettings();
     expect(screen.getByRole("combobox", { name: /browser/i }).textContent).toContain("WebKit");
+  });
+
+  it("saves the default test timeout in milliseconds", async () => {
+    await renderSettings();
+    const input = screen.getByRole("spinbutton", {
+      name: /default test timeout/i,
+    }) as HTMLInputElement;
+    expect(input.value).toBe("60");
+    fireEvent.change(input, { target: { value: "120" } });
+    await waitFor(() =>
+      expect(setSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ defaultTestTimeoutMs: 120_000 }),
+      ),
+    );
+  });
+
+  it("reflects a stored timeout rather than the one-minute default", async () => {
+    settings = { ...settings, defaultTestTimeoutMs: 180_000 };
+    await renderSettings();
+    const input = screen.getByRole("spinbutton", {
+      name: /default test timeout/i,
+    }) as HTMLInputElement;
+    expect(input.value).toBe("180");
   });
 });
 

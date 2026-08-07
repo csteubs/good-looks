@@ -71,6 +71,7 @@ describe("handler registration", () => {
       "tests:deleteTag",
       "tests:setBrowser",
       "tests:setHeadless",
+      "tests:setTestTimeout",
       "runner:run",
       "runner:stop",
       "batch:run",
@@ -284,6 +285,50 @@ describe("recorder:setSettings — persistence and validation", () => {
     await invokeHandler("recorder:setSettings", { batchOrder: ["a", 5, null, "b"] });
     const s = await invokeHandler<{ batchOrder: string[] }>("recorder:getSettings");
     expect(s.batchOrder).toEqual(["a", "b"]);
+  });
+
+  it("defaults the per-test timeout to one minute and clamps on save", async () => {
+    const initial = await invokeHandler<{ defaultTestTimeoutMs: number }>("recorder:getSettings");
+    expect(initial.defaultTestTimeoutMs).toBe(60_000);
+
+    await invokeHandler("recorder:setSettings", { defaultTestTimeoutMs: 120_000 });
+    const raised = await invokeHandler<{ defaultTestTimeoutMs: number }>("recorder:getSettings");
+    expect(raised.defaultTestTimeoutMs).toBe(120_000);
+
+    // Below the floor — ignored, previous value kept (same as an invalid browser).
+    await invokeHandler("recorder:setSettings", { defaultTestTimeoutMs: 100 });
+    const floor = await invokeHandler<{ defaultTestTimeoutMs: number }>("recorder:getSettings");
+    expect(floor.defaultTestTimeoutMs).toBe(120_000);
+
+    // Above the ceiling — clamped rather than rejected, so a fat-fingered
+    // "999999999" still lands somewhere usable.
+    await invokeHandler("recorder:setSettings", { defaultTestTimeoutMs: 999_999_999 });
+    const ceiling = await invokeHandler<{ defaultTestTimeoutMs: number }>("recorder:getSettings");
+    expect(ceiling.defaultTestTimeoutMs).toBe(30 * 60 * 1000);
+  });
+});
+
+describe("tests:setTestTimeout — per-test override", () => {
+  it("stores a clamped override and clears it on null", async () => {
+    seedTest("t-timeout");
+    const set = await invokeHandler<TestRecord>("tests:setTestTimeout", {
+      id: "t-timeout",
+      testTimeoutMs: 180_000,
+    });
+    expect(set.testTimeoutMs).toBe(180_000);
+
+    const cleared = await invokeHandler<TestRecord>("tests:setTestTimeout", {
+      id: "t-timeout",
+      testTimeoutMs: null,
+    });
+    expect(cleared.testTimeoutMs).toBeUndefined();
+  });
+
+  it("rejects a timeout below the floor", async () => {
+    seedTest("t-timeout-bad");
+    await expect(
+      invokeHandler("tests:setTestTimeout", { id: "t-timeout-bad", testTimeoutMs: 50 }),
+    ).rejects.toThrow(/invalid test timeout/i);
   });
 });
 

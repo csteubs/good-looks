@@ -231,6 +231,9 @@ export interface TestRecord {
   runHeadless?: boolean;
   /** Per-test browser-engine preference (mirrors main TestRecord). */
   runBrowser?: RunBrowser;
+  /** Per-test Playwright timeout in ms (mirrors main TestRecord). When absent,
+   *  the global default from Settings applies. */
+  testTimeoutMs?: number;
   /** Per-test accessibility-check preference (mirrors main TestRecord). */
   a11yChecks?: boolean;
   /** Violations accepted for this test, keyed by step id. */
@@ -649,6 +652,8 @@ export interface RecorderSettings {
   defaultRunHeadless: boolean;
   /** default browser engine for tests with no preference (default "chromium"). */
   defaultRunBrowser: RunBrowser;
+  /** default Playwright per-test timeout in ms (default 60000 = 1 minute). */
+  defaultTestTimeoutMs: number;
   /** send a summary to a configured webhook on run/batch problems (default false). */
   alertWebhookEnabled: boolean;
   /** user-chosen Batch run order, as test ids (mirrors main types) */

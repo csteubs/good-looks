@@ -16,7 +16,12 @@ import { runHistoryStore } from "./run-history-store.js";
 import { stepReporterSource } from "./step-reporter-source.js";
 import { captureFixtureSource } from "./capture-fixture-source.js";
 import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
-import { recorderSettingsStore } from "./recorder-settings-store.js";
+import {
+  clampTestTimeoutMs,
+  DEFAULT_TEST_TIMEOUT_MS,
+  isTestTimeoutMs,
+  recorderSettingsStore,
+} from "./recorder-settings-store.js";
 import { notifyRunOutcome } from "./run-notifier.js";
 import { sendAlert } from "./alert-service.js";
 import { applyRetention } from "./retention.js";
@@ -53,7 +58,13 @@ function resolveFlow(flowId: string): TestRecord | null {
   return testStore.get(flowId) ?? null;
 }
 
+/** Floor on the hard process kill. Independent of the per-test timeout so a
+ *  short test timeout never leaves a hung install/browser-download with only a
+ *  few seconds of runway. */
 const RUN_TIMEOUT_MS = 5 * 60 * 1000;
+/** Extra time past the per-test timeout before SIGKILL — covers browser launch,
+ *  reporter teardown, and Playwright's own cleanup after a test timeout. */
+const PROCESS_TIMEOUT_BUFFER_MS = 60_000;
 
 // Delay (ms) Playwright inserts between actions via launchOptions.slowMo, so a
 // "slow" run is easy to follow with the naked eye and "fast" matches today's
@@ -140,24 +151,26 @@ function ensureModuleResolution(scriptsDir: string, nodeModules: string): void {
 }
 
 // Playwright's test CLI has no --slow-mo flag; launchOptions.slowMo only comes
-// from config. Write a minimal config once, alongside the specs, that reads
-// the delay from an env var so each run can pick its own speed.
+// from config. The per-test timeout CAN be set via --timeout on the CLI (and
+// is, below), but the config also reads PW_TEST_TIMEOUT_MS so a hand-run of the
+// generated config outside the app still picks up a sensible default instead of
+// Playwright's built-in 30s. Always rewritten so older scripts dirs pick up the
+// timeout field without the user having to delete the file.
 function ensureConfig(scriptsDir: string): string {
   const configPath = path.join(scriptsDir, "playwright.config.ts");
-  if (!fs.existsSync(configPath)) {
-    fs.writeFileSync(
-      configPath,
-      'import { defineConfig } from "@playwright/test";\n\n' +
-        "export default defineConfig({\n" +
-        "  use: {\n" +
-        "    launchOptions: {\n" +
-        "      slowMo: Number(process.env.PW_SLOWMO_MS || 0),\n" +
-        "    },\n" +
-        "  },\n" +
-        "});\n",
-      "utf-8",
-    );
-  }
+  fs.writeFileSync(
+    configPath,
+    'import { defineConfig } from "@playwright/test";\n\n' +
+      "export default defineConfig({\n" +
+      "  timeout: Number(process.env.PW_TEST_TIMEOUT_MS || 60000),\n" +
+      "  use: {\n" +
+      "    launchOptions: {\n" +
+      "      slowMo: Number(process.env.PW_SLOWMO_MS || 0),\n" +
+      "    },\n" +
+      "  },\n" +
+      "});\n",
+    "utf-8",
+  );
   return configPath;
 }
 
@@ -558,6 +571,10 @@ function runCli(
   cliPath: string,
   cwd: string,
   env: NodeJS.ProcessEnv,
+  /** Hard kill for the whole Playwright process. Must be comfortably above the
+   *  per-test timeout or the process dies before Playwright can report a clean
+   *  test-timeout failure. */
+  processTimeoutMs: number = RUN_TIMEOUT_MS,
 ): Promise<number> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [cliPath, ...args], { cwd, env });
@@ -566,7 +583,7 @@ function runCli(
     const timer = setTimeout(() => {
       emitOutput(runId, "system", "\nTimed out — stopping test run.\n");
       child.kill("SIGKILL");
-    }, RUN_TIMEOUT_MS);
+    }, processTimeoutMs);
 
     child.stdout?.on("data", (d: Buffer) => {
       const visible = processStdout(runId, d.toString());
@@ -828,6 +845,22 @@ export const playwrightRunner = {
         }
 
         const slowMo = SLOW_MO_MS[rec.speed ?? "fast"];
+        // Explicit per-test override → global Settings default → 1 minute.
+        // Clamped again here so a hand-edited tests.json can't smuggle an
+        // out-of-range value past the handler into the Playwright CLI.
+        const settingsTimeout = recorderSettingsStore.get().defaultTestTimeoutMs;
+        const testTimeoutMs = isTestTimeoutMs(rec.testTimeoutMs)
+          ? clampTestTimeoutMs(rec.testTimeoutMs)
+          : isTestTimeoutMs(settingsTimeout)
+            ? clampTestTimeoutMs(settingsTimeout)
+            : DEFAULT_TEST_TIMEOUT_MS;
+        // Process kill must outlive the test timeout, otherwise a legitimate
+        // long test dies with "Timed out — stopping test run" before Playwright
+        // can report a clean per-test timeout.
+        const processTimeoutMs = Math.max(
+          RUN_TIMEOUT_MS,
+          testTimeoutMs + PROCESS_TIMEOUT_BUFFER_MS,
+        );
         emitOutput(runId, "system", "Running " + path.basename(rec.scriptPath) + "…\n");
         if (capturing) emitOutput(runId, "system", "Capturing screenshots for this run.\n");
         if (recordLogs) emitOutput(runId, "system", "Recording console and network for this run.\n");
@@ -845,27 +878,38 @@ export const playwrightRunner = {
           "--reporter",
           `${reporterPath},line`,
           "--workers=1",
+          // Authoritative: wins over whatever timeout the config (or a hand-
+          // edited one) declares. Env var still set so config-only runs match.
+          `--timeout=${testTimeoutMs}`,
         ];
         if (params.headed) args.push("--headed");
         // The generated config defines no projects, so --browser selects the
         // engine directly (with projects it would be ignored in favor of them).
         args.push(`--browser=${runBrowser}`);
-        exitCode = await runCli(runId, args, cliPath, scriptsDir, {
-          ...env,
-          ...varEnv,
-          GLAZE_HEAL: healing ? "1" : "0",
-          GLAZE_A11Y: a11y ? "1" : "0",
-          GLAZE_AXE_PATH: a11y ? axeFile : "",
-          GLAZE_HEAL_DIR: healDir,
-          GLAZE_HEAL_MAP: healMapPath,
-          PW_SLOWMO_MS: String(slowMo),
-          GLAZE_CAPTURE_ARTIFACTS: capturing ? "1" : "0",
-          GLAZE_RECORD_LOGS: recordLogs ? "1" : "0",
-          GLAZE_RECORD_ALL_HEADERS: healSettings.recordAllHeaders ? "1" : "0",
-          GLAZE_ARTIFACT_DIR: artifactDir,
-          GLAZE_TEST_ID: rec.id,
-          GLAZE_RUN_ID: recordId,
-        });
+        exitCode = await runCli(
+          runId,
+          args,
+          cliPath,
+          scriptsDir,
+          {
+            ...env,
+            ...varEnv,
+            GLAZE_HEAL: healing ? "1" : "0",
+            GLAZE_A11Y: a11y ? "1" : "0",
+            GLAZE_AXE_PATH: a11y ? axeFile : "",
+            GLAZE_HEAL_DIR: healDir,
+            GLAZE_HEAL_MAP: healMapPath,
+            PW_SLOWMO_MS: String(slowMo),
+            PW_TEST_TIMEOUT_MS: String(testTimeoutMs),
+            GLAZE_CAPTURE_ARTIFACTS: capturing ? "1" : "0",
+            GLAZE_RECORD_LOGS: recordLogs ? "1" : "0",
+            GLAZE_RECORD_ALL_HEADERS: healSettings.recordAllHeaders ? "1" : "0",
+            GLAZE_ARTIFACT_DIR: artifactDir,
+            GLAZE_TEST_ID: rec.id,
+            GLAZE_RUN_ID: recordId,
+          },
+          processTimeoutMs,
+        );
       } catch (err) {
         emitOutput(runId, "system", "\nError: " + String(err) + "\n");
       } finally {

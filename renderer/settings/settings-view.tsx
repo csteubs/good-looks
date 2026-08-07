@@ -85,6 +85,8 @@ export function SettingsView() {
   const [keepRunningAiDebugJobs, setKeepRunningAiDebugJobs] = useState(false);
   const [defaultRunHeadless, setDefaultRunHeadless] = useState(false);
   const [defaultRunBrowser, setDefaultRunBrowser] = useState<RunBrowser>("chromium");
+  // Shown in seconds; stored as ms. Default 60s matches the backend.
+  const [defaultTestTimeoutSec, setDefaultTestTimeoutSec] = useState(60);
   const [artifactRetainedRuns, setArtifactRetainedRuns] = useState(10);
   const [artifactRetentionDays, setArtifactRetentionDays] = useState(0);
   const [notifyOnRunIssues, setNotifyOnRunIssues] = useState(false);
@@ -143,6 +145,9 @@ export function SettingsView() {
         setKeepRunningAiDebugJobs(settings.keepRunningAiDebugJobs ?? false);
         setDefaultRunHeadless(settings.defaultRunHeadless ?? false);
         setDefaultRunBrowser(settings.defaultRunBrowser ?? "chromium");
+        setDefaultTestTimeoutSec(
+          Math.round((settings.defaultTestTimeoutMs ?? 60_000) / 1000),
+        );
         setArtifactRetainedRuns(settings.artifactRetainedRuns ?? 10);
         setArtifactRetentionDays(settings.artifactRetentionDays ?? 0);
         setNotifyOnRunIssues(settings.notifyOnRunIssues ?? false);
@@ -302,6 +307,17 @@ export function SettingsView() {
     setDefaultRunBrowser(browser);
     try {
       await api.recorder.setSettings({ defaultRunBrowser: browser });
+    } catch (error) {
+      toast.error(`Failed to save setting: ${error}`);
+    }
+  };
+
+  const handleDefaultTestTimeoutChange = async (value: string) => {
+    // UI is seconds; backend stores ms. 5s–30min matches the store clamp.
+    const sec = Math.max(5, Math.min(30 * 60, Math.round(Number(value) || 60)));
+    setDefaultTestTimeoutSec(sec);
+    try {
+      await api.recorder.setSettings({ defaultTestTimeoutMs: sec * 1000 });
     } catch (error) {
       toast.error(`Failed to save setting: ${error}`);
     }
@@ -964,6 +980,30 @@ export function SettingsView() {
                   ))}
                 </SelectContent>
               </Select>
+            </Field>
+            <Field orientation="horizontal">
+              <FieldContent>
+                <FieldLabel htmlFor="default-test-timeout">Default test timeout</FieldLabel>
+                <p className="text-sm text-muted-foreground">
+                  How long a single test may run before it fails, in seconds. Default is 60.
+                  Playwright&apos;s built-in limit is 30 — raise this for longer flows. Each test
+                  can still override this from its detail view.
+                </p>
+              </FieldContent>
+              <div className="flex items-center gap-2">
+                <Input
+                  id="default-test-timeout"
+                  type="number"
+                  min={5}
+                  max={1800}
+                  step={5}
+                  className="w-24"
+                  value={defaultTestTimeoutSec}
+                  onChange={(e) => handleDefaultTestTimeoutChange(e.target.value)}
+                  aria-label="Default test timeout in seconds"
+                />
+                <span className="text-sm text-muted-foreground">sec</span>
+              </div>
             </Field>
           </FieldGroup>
         </FieldSet>
