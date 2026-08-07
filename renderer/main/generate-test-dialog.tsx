@@ -45,14 +45,18 @@ import type { LlmModel } from "../lib/llm-types";
 import { buildGenerateMessages } from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
 import type { TestSpeed } from "../lib/recorder-types";
+import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { useLlmChat } from "../lib/use-llm-chat";
 // Shared with the New Recording dialog's window-size picker — both dialogs ask
 // the user the same question, so they offer the same sizes. "Default" leaves it
 // unset (the runner uses its own default; the prompt just won't mention a size).
 import { VIEWPORT_PRESETS, viewportForPresetId } from "../lib/viewport-presets";
 
-const SPEEDS: TestSpeed[] = ["fast", "medium", "slow"];
-const SPEED_LABEL: Record<TestSpeed, string> = { fast: "Fast", medium: "Medium", slow: "Slow" };
+// Fastest first here, unlike everywhere else: this dialog's default is "fast",
+// and a segmented control reads better with its default at the leading edge.
+// Reversed from the shared list rather than re-declared, so a new speed can't
+// appear in three pickers and miss this one.
+const SPEEDS: TestSpeed[] = [...TEST_SPEEDS].reverse();
 
 // How the model list is split in the picker when the provider reports which
 // models it currently holds in memory (LM Studio does; Ollama and Claude
@@ -300,7 +304,7 @@ export function GenerateTestDialog({
               >
                 {SPEEDS.map((s) => (
                   <SegmentedControlItem key={s} value={s}>
-                    {SPEED_LABEL[s]}
+                    {TEST_SPEED_LABELS[s]}
                   </SegmentedControlItem>
                 ))}
               </SegmentedControl>

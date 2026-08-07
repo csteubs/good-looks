@@ -25,14 +25,12 @@ import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListC
 import { api } from "../lib/api";
 import { BrowserIcon } from "../lib/browser-icons";
 import type { LlmProvider } from "../lib/llm-types";
-import type { TestRecord, TestSpeed } from "../lib/recorder-types";
+import type { TestRecord } from "../lib/recorder-types";
+import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { NewRecordingDialog } from "./new-recording-dialog";
 import { GenerateTestDialog } from "./generate-test-dialog";
 import { ImportGitDialog } from "./import-git-dialog";
 import { TagsDialog } from "./tags-dialog";
-
-const SPEEDS: TestSpeed[] = ["slow", "medium", "fast"];
-const SPEED_LABEL: Record<TestSpeed, string> = { slow: "Slow", medium: "Medium", fast: "Fast" };
 
 interface NativeShell {
   showItemInFolder: (fullPath: string) => void;
@@ -41,18 +39,24 @@ function nativeShell(): NativeShell {
   return (window as unknown as { glazeAPI: { shell: NativeShell } }).glazeAPI.shell;
 }
 
-/** Slider embedded in the "Adjust Test Speed" submenu — snaps to 3 named speeds
- * rather than an arbitrary ms value, since that's what a Playwright slowMo delay
- * usefully supports. Pointer/keyboard events are stopped from bubbling so Radix's
- * menu roving-focus doesn't hijack the drag. */
+/** Slider embedded in the "Adjust Test Speed" submenu — snaps to the named
+ * speeds rather than an arbitrary ms value, since that's what a Playwright
+ * slowMo delay usefully supports. Pointer/keyboard events are stopped from
+ * bubbling so Radix's menu roving-focus doesn't hijack the drag. */
 function TestSpeedSlider({ test }: { test: TestRecord }) {
   const qc = useQueryClient();
-  const initial = Math.max(0, SPEEDS.indexOf(test.speed ?? "fast"));
+  const fastIndex = TEST_SPEEDS.indexOf("fast");
+  // Fall back to the DEFAULT speed, not to index 0. Index 0 is the slowest stop
+  // — a record with an unrecognised speed would open the menu reading "Crawl"
+  // and commit that on the first nudge, silently making a fast test the
+  // slowest one there is.
+  const stored = TEST_SPEEDS.indexOf(test.speed ?? "fast");
+  const initial = stored >= 0 ? stored : fastIndex;
   const [index, setIndex] = React.useState(initial);
   const lastCommitted = React.useRef(initial);
 
   // Commit on every discrete step change rather than waiting for
-  // onValueCommit (drag-end) — with only 3 stops, a plain click never
+  // onValueCommit (drag-end) — with a handful of stops, a plain click never
   // produces a drag gesture, so onValueCommit would never fire.
   const handleChange = ([v]: number[]) => {
     setIndex(v);
@@ -60,7 +64,7 @@ function TestSpeedSlider({ test }: { test: TestRecord }) {
     lastCommitted.current = v;
     void (async () => {
       try {
-        await api.tests.setSpeed(test.id, SPEEDS[v]);
+        await api.tests.setSpeed(test.id, TEST_SPEEDS[v]);
         qc.invalidateQueries({ queryKey: ["tests"] });
         qc.invalidateQueries({ queryKey: ["test", test.id] });
       } catch (err) {
@@ -79,18 +83,20 @@ function TestSpeedSlider({ test }: { test: TestRecord }) {
         <Text variant="small" color="secondary">
           Speed
         </Text>
-        <Text variant="small">{SPEED_LABEL[SPEEDS[index]]}</Text>
+        <Text variant="small">{TEST_SPEED_LABELS[TEST_SPEEDS[index]]}</Text>
       </div>
+      {/* Bounds derived from the list, not written out: a hardcoded max is how
+          a new speed becomes an unreachable stop nobody notices is missing. */}
       <Slider
         variant="filled"
         size="small"
         min={0}
-        max={2}
+        max={TEST_SPEEDS.length - 1}
         step={1}
-        ticks={3}
+        ticks={TEST_SPEEDS.length}
         value={[index]}
-        startContent="Slow"
-        endContent="Fast"
+        startContent={TEST_SPEED_LABELS[TEST_SPEEDS[0]]}
+        endContent={TEST_SPEED_LABELS[TEST_SPEEDS[TEST_SPEEDS.length - 1]]}
         onValueChange={handleChange}
       />
     </div>
@@ -348,7 +354,7 @@ export function LibrarySidebar() {
                 </CustomContextMenuItem>
                 <CustomContextMenuSeparator />
                 <CustomContextMenuSub>
-                  <CustomContextMenuSubTrigger value={SPEED_LABEL[t.speed ?? "fast"]}>
+                  <CustomContextMenuSubTrigger value={TEST_SPEED_LABELS[t.speed ?? "fast"]}>
                     <Gauge className="size-4" />
                     Adjust Test Speed
                   </CustomContextMenuSubTrigger>

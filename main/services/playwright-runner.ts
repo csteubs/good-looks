@@ -16,12 +16,8 @@ import { runHistoryStore } from "./run-history-store.js";
 import { stepReporterSource } from "./step-reporter-source.js";
 import { captureFixtureSource } from "./capture-fixture-source.js";
 import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
-import {
-  clampTestTimeoutMs,
-  DEFAULT_TEST_TIMEOUT_MS,
-  isTestTimeoutMs,
-  recorderSettingsStore,
-} from "./recorder-settings-store.js";
+import { recorderSettingsStore } from "./recorder-settings-store.js";
+import { resolveTestTimeoutMs, SLOW_MO_MS } from "./run-pacing.js";
 import { notifyRunOutcome } from "./run-notifier.js";
 import { sendAlert } from "./alert-service.js";
 import { applyRetention } from "./retention.js";
@@ -31,6 +27,7 @@ import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import { generateSpec, generateSpecDetailed, secretEnvName } from "./script-generator.js";
 import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "./glaze-runtime-source.js";
 import { HEAL_FIXTURE_FILE, healFixtureSource } from "./heal-fixture-source.js";
+import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "./settle-fixture-source.js";
 import { buildHealProbeScript } from "./auto-heal.js";
 import { healJournalStore } from "./heal-journal-store.js";
 import { describeStep } from "./script-generator.js";
@@ -66,10 +63,6 @@ const RUN_TIMEOUT_MS = 5 * 60 * 1000;
  *  reporter teardown, and Playwright's own cleanup after a test timeout. */
 const PROCESS_TIMEOUT_BUFFER_MS = 60_000;
 
-// Delay (ms) Playwright inserts between actions via launchOptions.slowMo, so a
-// "slow" run is easy to follow with the naked eye and "fast" matches today's
-// default (no artificial delay).
-const SLOW_MO_MS: Record<TestSpeed, number> = { fast: 0, medium: 400, slow: 1200 };
 
 interface RunHandle {
   child: ChildProcess;
@@ -203,6 +196,13 @@ function ensureRuntime(scriptsDir: string): void {
 // import even on a run with healing switched off.
 function ensureHealFixture(scriptsDir: string): void {
   fs.writeFileSync(path.join(scriptsDir, HEAL_FIXTURE_FILE), healFixtureSource, "utf-8");
+}
+
+// Write the "crawl" page-settling fixture. Unconditional for the same reason as
+// the heal fixture: the capture fixture imports it at the top of the module, so
+// a run with settling OFF still has to be able to resolve the file.
+function ensureSettleFixture(scriptsDir: string): void {
+  fs.writeFileSync(path.join(scriptsDir, SETTLE_FIXTURE_FILE), settleFixtureSource, "utf-8");
 }
 
 /** The canonical key the heal fixture tags a locator with. MUST match the
@@ -667,6 +667,9 @@ export const playwrightRunner = {
     // Explicit choice → the test's saved preference → the global default.
     const runBrowser: RunBrowser =
       params.browser ?? rec.runBrowser ?? recorderSettingsStore.get().defaultRunBrowser;
+    // Resolved out here rather than inside the run body because the RunRecord
+    // is written from the `finally`, which cannot see into the `try`.
+    const speed: TestSpeed = rec.speed ?? "fast";
 
     // Re-running a past run replays THAT run's recorded steps — the test may
     // have been edited since, and the point is to reproduce what happened.
@@ -745,6 +748,20 @@ export const playwrightRunner = {
         const healing =
           healSettings.autoHealEnabled && !rec.sourceDir && runSteps.some((st) => !!st.locator);
         healApplyMode = healSettings.autoHealApply;
+        // "Crawl" speed's page-settling. App-generated tests only, like every
+        // other fixture-borne feature: the settle patch reaches the page
+        // through the redirected import, and an imported spec never gets it.
+        let settling = speed === "crawl" && !rec.sourceDir;
+        // Named rather than left implicit, because "crawl did nothing" is
+        // otherwise indistinguishable from "crawl worked": the step delay still
+        // applies, so the run just looks slow and settles nothing.
+        if (speed === "crawl" && rec.sourceDir) {
+          emitOutput(
+            runId,
+            "system",
+            "Crawl: page-settling is skipped for imported tests — only the slower step delay applies.\n",
+          );
+        }
         if (healing) {
           ensureHealFixture(scriptsDir);
           healDir = path.join(getScriptsDir(), `${recordId}.heal`);
@@ -773,11 +790,12 @@ export const playwrightRunner = {
           specToRun = replaySpecPath;
         }
         // The redirect is what puts the fixture in the spec's import path, and
-        // the fixture is where BOTH capture and healing live — so a heal-only
-        // run needs it too.
-        if ((captureArtifacts || healing || a11y || recordLogs) && !rec.sourceDir) {
+        // the fixture is where capture, healing AND crawl's page-settling live
+        // — so a heal-only or crawl-only run needs it too.
+        if ((captureArtifacts || healing || a11y || recordLogs || settling) && !rec.sourceDir) {
           ensureCaptureFixture(scriptsDir);
           ensureHealFixture(scriptsDir);
+          ensureSettleFixture(scriptsDir);
           const prepared = prepareCaptureSpec(scriptsDir, specToRun, recordId);
           if (prepared) {
             tempSpecPath = prepared;
@@ -787,23 +805,31 @@ export const playwrightRunner = {
             // single picture. `capturingRun` is the broader "this run produced
             // artifacts worth building a replay from".
             capturing = captureArtifacts;
-            capturingRun = true;
-            // Prune old runs first, then create this run's dir (newest). The
-            // retained count is user-configurable in Settings; `- 1` leaves
-            // room for the run about to be created, so the on-disk total after
-            // this run equals the configured number.
-            const settings = recorderSettingsStore.get();
-            const keep = settings.artifactRetainedRuns ?? DEFAULT_RETAINED_RUNS;
-            const days = settings.artifactRetentionDays ?? 0;
-            artifactStore.pruneRuns(
-              rec.id,
-              Math.max(0, keep - 1),
-              days > 0 ? days * 24 * 60 * 60 * 1000 : 0,
-            );
-            artifactDir = artifactStore.ensureRunDir(rec.id, recordId);
-            // Snapshot exactly what this run executes, so it can be re-run
-            // later even if the test is edited in the meantime.
-            artifactStore.writeSteps(rec.id, recordId, runSteps);
+            // Settling is the one redirect reason that produces NOTHING on
+            // disk. Without this distinction, turning auto-heal off and a test
+            // to crawl would make every run prune the artifact history and
+            // create an empty run dir — paying the storage bookkeeping for a
+            // feature that never writes an artifact.
+            const artifactRun = captureArtifacts || healing || a11y || recordLogs;
+            capturingRun = artifactRun;
+            if (artifactRun) {
+              // Prune old runs first, then create this run's dir (newest). The
+              // retained count is user-configurable in Settings; `- 1` leaves
+              // room for the run about to be created, so the on-disk total
+              // after this run equals the configured number.
+              const settings = recorderSettingsStore.get();
+              const keep = settings.artifactRetainedRuns ?? DEFAULT_RETAINED_RUNS;
+              const days = settings.artifactRetentionDays ?? 0;
+              artifactStore.pruneRuns(
+                rec.id,
+                Math.max(0, keep - 1),
+                days > 0 ? days * 24 * 60 * 60 * 1000 : 0,
+              );
+              artifactDir = artifactStore.ensureRunDir(rec.id, recordId);
+              // Snapshot exactly what this run executes, so it can be re-run
+              // later even if the test is edited in the meantime.
+              artifactStore.writeSteps(rec.id, recordId, runSteps);
+            }
           } else {
             // No direct import to redirect means the fixture never loads — so
             // neither capture NOR healing happens, whatever the settings say.
@@ -812,9 +838,14 @@ export const playwrightRunner = {
               captureArtifacts ? "Screenshot capture" : null,
               a11y ? "Accessibility checks" : null,
               healing ? "Auto-Heal" : null,
+              recordLogs ? "Console and network recording" : null,
+              settling ? "Crawl page-settling" : null,
             ]
               .filter(Boolean)
               .join(" and ");
+            // Keep the env var honest about what actually happens: the fixture
+            // that reads it was never loaded.
+            settling = false;
             emitOutput(
               runId,
               "system",
@@ -844,16 +875,16 @@ export const playwrightRunner = {
           await runCli(runId, ["install", runBrowser], cliPath, scriptsDir, env);
         }
 
-        const slowMo = SLOW_MO_MS[rec.speed ?? "fast"];
-        // Explicit per-test override → global Settings default → 1 minute.
-        // Clamped again here so a hand-edited tests.json can't smuggle an
-        // out-of-range value past the handler into the Playwright CLI.
+        const slowMo = SLOW_MO_MS[speed];
+        // Explicit per-test override → global Settings default → 1 minute, then
+        // raised to the crawl floor if this is a crawl run. See
+        // `resolveTestTimeoutMs`.
         const settingsTimeout = recorderSettingsStore.get().defaultTestTimeoutMs;
-        const testTimeoutMs = isTestTimeoutMs(rec.testTimeoutMs)
-          ? clampTestTimeoutMs(rec.testTimeoutMs)
-          : isTestTimeoutMs(settingsTimeout)
-            ? clampTestTimeoutMs(settingsTimeout)
-            : DEFAULT_TEST_TIMEOUT_MS;
+        const { timeoutMs: testTimeoutMs, raised: timeoutRaised } = resolveTestTimeoutMs(
+          rec.testTimeoutMs,
+          settingsTimeout,
+          speed,
+        );
         // Process kill must outlive the test timeout, otherwise a legitimate
         // long test dies with "Timed out — stopping test run" before Playwright
         // can report a clean per-test timeout.
@@ -868,6 +899,24 @@ export const playwrightRunner = {
         // was even armed was the run taking longer — and axe is slow enough
         // that "slower than usual" is not evidence of anything.
         if (a11y) emitOutput(runId, "system", "Checking accessibility for this run.\n");
+        if (settling) {
+          emitOutput(
+            runId,
+            "system",
+            "Crawl: waiting for the page to load, go quiet and paint after every step.\n",
+          );
+        }
+        // Said out loud, with the number. A timeout that changed itself is
+        // worse than a slow run: the user set 30 seconds, watched a run take
+        // four minutes, and had nothing to read that explained it.
+        if (timeoutRaised) {
+          emitOutput(
+            runId,
+            "system",
+            `Crawl: raised this run's test timeout to ${Math.round(testTimeoutMs / 1000)}s — ` +
+              "crawl runs take far longer than the configured limit allows.\n",
+          );
+        }
         // Use our custom StepReporter (emits per-step progress markers) plus
         // the built-in `line` reporter for the human-readable Output panel.
         const args = [
@@ -895,6 +944,7 @@ export const playwrightRunner = {
             ...env,
             ...varEnv,
             GLAZE_HEAL: healing ? "1" : "0",
+            GLAZE_SETTLE: settling ? "1" : "0",
             GLAZE_A11Y: a11y ? "1" : "0",
             GLAZE_AXE_PATH: a11y ? axeFile : "",
             GLAZE_HEAL_DIR: healDir,
@@ -1024,6 +1074,7 @@ export const playwrightRunner = {
               captureArtifacts,
               runHeadless,
               runBrowser,
+              speed,
               batchId: params.batchId,
               datasetId: params.datasetId,
               datasetName: params.datasetName,

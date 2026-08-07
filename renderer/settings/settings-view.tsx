@@ -30,7 +30,12 @@ import type { NativeThemeInfo } from "@glaze/core/ipc";
 import { api } from "../lib/api";
 import type { LlmProvider, LlmProviderStatus } from "../lib/llm-types";
 import type { ArtifactUsage, RunBrowser, TestSpeed } from "../lib/recorder-types";
-import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
+import {
+  RUN_BROWSERS,
+  RUN_BROWSER_LABELS,
+  TEST_SPEEDS,
+  TEST_SPEED_LABELS,
+} from "../lib/recorder-types";
 import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
 import {
   DEFAULT_VIEWPORT_PRESET_ID,
@@ -39,8 +44,6 @@ import {
   viewportForPresetId,
 } from "../lib/viewport-presets";
 
-const SPEEDS: TestSpeed[] = ["slow", "medium", "fast"];
-const SPEED_LABEL: Record<TestSpeed, string> = { slow: "Slow", medium: "Medium", fast: "Fast" };
 
 /** Human-readable size for the screenshot-storage readout (KB/MB/GB, 1 decimal
  *  once past KB so "0.6 MB" reads better than "614 KB"). */
@@ -720,8 +723,9 @@ export function SettingsView() {
                 <FieldLabel htmlFor="default-run-speed">Default run speed</FieldLabel>
                 <p className="text-sm text-muted-foreground">
                   Playback speed for new recordings. Adds a delay between actions so runs are
-                  watchable; slow by default. Each test can still be overridden from its sidebar
-                  menu.
+                  watchable; slow by default. Crawl goes further and waits for the page to
+                  finish loading after every step, which is slower but steadier on pages that
+                  load in stages. Each test can still be overridden from its sidebar menu.
                 </p>
               </FieldContent>
               <SegmentedControl
@@ -731,9 +735,9 @@ export function SettingsView() {
                 variant="filled"
                 size="small"
               >
-                {SPEEDS.map((s) => (
+                {TEST_SPEEDS.map((s) => (
                   <SegmentedControlItem key={s} value={s}>
-                    {SPEED_LABEL[s]}
+                    {TEST_SPEED_LABELS[s]}
                   </SegmentedControlItem>
                 ))}
               </SegmentedControl>
