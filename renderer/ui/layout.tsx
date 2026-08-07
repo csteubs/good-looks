@@ -800,18 +800,27 @@ export function SidebarListItem<T>({
       ? ctx.getKey(item) === ctx.selectedKey
       : undefined;
   const isSelected = managedSelected ?? selected ?? false;
-  const handleClick = () => {
+  const handleActivate = () => {
     if (item !== undefined && ctx.onSelect) ctx.onSelect(item);
     onClick?.();
   };
   return (
     <button
       type="button"
-      onClick={handleClick}
+      // MOUSE-DOWN, not click — the same native-macOS idiom AppKit lists use,
+      // and what the SDK's own component did. The rebuild originally used
+      // onClick; nothing in-tree noticed until the settings redesign arrived
+      // with tests that drive rows the way the real component behaves, and
+      // then reported "0 calls", which reads as a dead handler rather than as
+      // the wrong event.
+      onMouseDown={handleActivate}
       data-selected={isSelected || undefined}
       className={cn(
         "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] outline-none transition-colors hover:bg-muted/70 focus-visible:ring-2 focus-visible:ring-ring/50",
-        isSelected && "bg-selection text-foreground hover:bg-selection",
+        // `bg-list-selection`, not `bg-selection`: the latter was invented by
+        // the rebuild and is not in the theme bridge, so it compiled to
+        // NOTHING and a selected row had no highlight at all.
+        isSelected && "bg-list-selection text-foreground hover:bg-list-selection",
         className,
       )}
       {...props}

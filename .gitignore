@@ -8,7 +8,9 @@ node_modules
 #
 # `.build/` is the Glaze shell's staging dir, kept because this branch shares a
 # merge base with the Glaze tree: without it, checking out a Glaze-era commit
-# here leaves an aborted build's staging dir showing as untracked.
+# here leaves an aborted build's staging dir showing as untracked. On that side
+# a full build left ~1.4 MB of generated assets untracked-but-not-ignored, one
+# `git add -A` from being committed — which is why both spellings are listed.
 build/
 .build/
 dist/

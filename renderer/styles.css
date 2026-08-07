@@ -32,6 +32,11 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-success: var(--success);
   --color-warning: var(--warning);
+  /* Sidebar row selection. Without this entry `bg-list-selection` is not a
+     colour Tailwind knows, so it emits no rule and the selected row looks
+     identical to every other one — silent, and invisible to every test that
+     does not assert on the class itself. */
+  --color-list-selection: var(--selection);
 }
 
 /* Custom variant so `dark:` utilities key off the .dark class the entry HTML

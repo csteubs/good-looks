@@ -15,10 +15,14 @@ export async function openSettingsWindow(): Promise<void> {
 
   settingsWindow = new BrowserWindow({
     windowKey: "settings",
-    width: 560,
-    height: 480,
-    minWidth: 440,
-    minHeight: 320,
+    // Wide enough for the pane sidebar (190pt, min 170) plus a content column
+    // that still fits a label, its description and a control on one row. At the
+    // old 560×480 the same content was one flat scroll about eight screens
+    // long; the sidebar only pays for itself if the pane beside it is readable.
+    width: 760,
+    height: 560,
+    minWidth: 620,
+    minHeight: 420,
     title: "Settings",
     show: false,
     center: true,

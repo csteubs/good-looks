@@ -16,6 +16,34 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-07 — Settings: eight panes and a search box, not a longer scroll
+
+**The diagnosis was not "it's too long".** `settings-view.tsx` was 1,359 lines rendering ~30 rows into a 560×480 window — about eight screens. But length was the symptom. Three things caused it:
+
+- **There were no section headings at all.** Six `<FieldSet>` elements, none with a `title`. The only heading in the entire window was "Aesthetic Enhancements", and it was *faked* — a `Field` with a label and no control. Grouping was communicated purely by `gap-8` whitespace, so a user could see that a boundary existed but never learn what was on either side of it. The SDK's `FieldSet` has taken `title`/`description` the whole time; the file imported it and never passed them.
+- **One FieldSet was doing four unrelated jobs.** Lines 689–1016 held trainer settings, recording defaults, run defaults, artifact retention and webhook alerting in a single 327-line block. "Dock the trainer to the browser" and "Delete screenshots older than" were siblings with equal weight.
+- **Descriptions were ~2/3 of the vertical space**, permanently, for prose each user reads once.
+
+**Chosen: sidebar + panes + search, over tabs and over a fixed flat list.** Tabs at 560px would be cramped at eight sections and would hide that the other sections exist; a flat list with headings fixes legibility but not findability, and this window demonstrably grows a row at a time. Search is the highest-value part: at ~30 settings the real daily question is "where is the headless toggle", and no amount of grouping answers that as directly as typing "headless". It filters the sidebar AND the rows inside the pane, because jumping to a pane and leaving the user to scan it again only solves half of it.
+
+**The IA claim worth defending: "Test defaults" is a real category, not a bucket.** A third of the window's settings answer one question — what a NEW test should do before anyone touches its own controls — and they map one-to-one onto the six run controls in `test-detail-view.tsx`. Scattered, each row had to re-explain the relationship in its own prose ("Each test remembers its own choice", "each test has its own toggle", "Each test can still be overridden from its sidebar menu"). Collected and ordered to match that toolbar, the pane subtitle says it once and every row got shorter.
+
+**Progressive disclosure, with one hard exception.** `summary` always visible, `details` behind a disclosure. But `danger` rows **refuse** `details` at the component level rather than relying on callers: the two that carry it warn about storing `Authorization`/`Cookie` headers and about the webhook being the only thing that sends data off this Mac automatically. A warning behind a click is a warning most people never read, and the webhook copy was already corrected once (2026-08-06) for overclaiming. Enforcing it in `SettingRow` means the next dangerous row inherits the rule instead of depending on whoever adds it.
+
+**Dependent settings are unmounted, not greyed.** `recordAllHeaders` used to render as a greyed sibling of `defaultRecordLogs` with nothing on screen saying what controlled it — "greyed out" is not a state a user can act on. The Auto-Heal parameters were worse: fully editable with Auto-Heal off, writing settings nothing would read.
+
+**Rejected — one hook per pane.** Would have been tidier, but two loads have side effects that fire when the WINDOW opens: the LLM auto-probe repairs a configured model that is no longer installed, and the settings load feeds every pane's modified-count. Per-pane state means a stale model is only repaired if you happen to click AI, and a count that is blank until you visit. The controller stayed whole.
+
+**Rejected — rolling back a failed save.** `save` is optimistic and stays optimistic. A rollback lands while the user is still typing in the field that failed.
+
+**Two bugs found on the way, neither in the redesign's scope:**
+- `text-muted-foreground` — used ~20× in the old view for every description — is **not a class the design system defines**. No `muted-foreground` token exists in `components.tailwind.css` and it emits no CSS, so every description had been rendering at full-strength primary text. That is a large part of why the window read as an undifferentiated wall, and it is the same dead-class family DECISIONS flagged on 2026-08-06 (`bg-muted` in this very file). The new rows use the SDK's `FieldDescription`.
+- A **resolved** `null` from `recorder:getSettings` crashed the window. The old code read keys off it inside a `.then()` where the throw was swallowed by the chain's `.catch`; consolidating the load made it fatal. It is now coerced to `{}` — every pane already treats a missing key as its default. Caught by a test written for it, which is the whole argument for writing the pessimistic ones.
+
+**Coverage:** 241 tests across the settings tree (118 pure schema tests in the node project; the rest per-component). Each pane is tested against a hand-built controller so a case reads as "headless is already on, and the user turns it off" rather than being re-derived through six async loads. The security assertions that used to live in `settings-view.test.tsx` — the webhook and API key being write-only — moved to the panes that now hold those controls; they did not go away. Verified failing-when-broken for the danger-row rule, the row filter, the reset patch's scope, the search auto-switch, the load helper's synchronous-throw guard, and the schema's one-pane-per-key invariant.
+
+**Also fixed:** `SidebarListItem` activates on **mouse-down**, not click — the same native-macOS idiom as Radix's `TabsTrigger`, and the same silent failure (`fireEvent.click` leaves the row untouched and the assertion reports "0 calls", which reads as a broken handler). Added to CLAUDE.md's environment gotchas. The sidebar also now sets `aria-current="page"` itself, since the SDK's `selected` only applies a background class and announced nothing.
+
 ### 2026-08-07 — The testing bottleneck was never the test suite
 
 **Measured before changing anything.** The full local gate is ~36 seconds: lint 3.6s, type-check 4.0s, 28 checks 7.6s, 1105 Vitest tests 15.8s, build 4.9s. Making the suite faster would have bought nothing. (`CLAUDE.md` still said 1029 tests and 27 checks — stale, and worth correcting.)
