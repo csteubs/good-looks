@@ -13,13 +13,21 @@ import { act, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { RecorderSettings, RunRecord, Step, StepType, TestRecord } from "../lib/recorder-types";
-import { TestDetailView } from "./test-detail-view";
+import { TestDetailView, persistRunBrowser } from "./test-detail-view";
 import { runSessionKey, useAiDebug, type AiDebugRunContext } from "./ai-debug-store";
 import { withAiDebug } from "../__tests__/ai-debug-harness";
 
 let test_: TestRecord | null = null;
 let settings: Partial<RecorderSettings> = {};
 let runs: RunRecord[] = [];
+// The route param, mutable so a test can model the sidebar switching tests.
+// The router does NOT remount a route component when only its params change
+// (no `remountDeps` on the route), so that switch is a re-render of the SAME
+// component instance under a new id — which is where per-test state leaks.
+let routeId = "t1";
+// Records reachable by id, for those navigation tests. `test_` still answers
+// for any id the map doesn't hold, so single-test suites are unaffected.
+let library: Record<string, TestRecord> = {};
 
 const run = vi.fn();
 const setHeadless = vi.fn(async () => ({}) as TestRecord);
@@ -43,13 +51,13 @@ vi.mock("./recorder-store", () => ({
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => vi.fn(),
-  useParams: () => ({ id: "t1" }),
+  useParams: () => ({ id: routeId }),
 }));
 
 vi.mock("../lib/api", () => ({
   api: {
     tests: {
-      get: async () => test_,
+      get: async (id: string) => library[id] ?? test_,
       getScript: async () => "import { test } from '@playwright/test';",
       setHeadless: (...a: unknown[]) => setHeadless(...(a as [])),
       setBrowser: (...a: unknown[]) => setBrowser(...(a as [])),
@@ -97,14 +105,27 @@ function record(over: Partial<TestRecord> = {}): TestRecord {
 
 function renderView() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={qc}>{withAiDebug(<TestDetailView />)}</QueryClientProvider>,
+  const tree = () => (
+    <QueryClientProvider client={qc}>{withAiDebug(<TestDetailView />)}</QueryClientProvider>
   );
+  const result = render(tree());
+  return {
+    ...result,
+    /** What clicking another test in the sidebar does: same component instance,
+     *  new route param. Deliberately NOT a fresh render — remounting would hide
+     *  exactly the state-leak this models. */
+    renavigate(id: string) {
+      routeId = id;
+      result.rerender(tree());
+    },
+  };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   test_ = record();
+  routeId = "t1";
+  library = {};
   runs = [];
   settings = {
     defaultRunBrowser: "chromium",
@@ -176,16 +197,38 @@ describe("run controls", () => {
     expect(await screen.findByText("Firefox")).toBeTruthy();
   });
 
-  it("marks the browser trigger with that engine's icon", async () => {
-    // The dropdown's own options are drawn by AppKit and never enter the DOM,
-    // so the trigger is the only place the icon is observable at all — and a
-    // trigger showing the wrong glyph is silent: the label still reads right.
+  it("leaves the trigger's glyph to the Select, so only one icon shows", async () => {
+    // SelectValue already draws the selected item's `icon` — the SF Symbol on
+    // the SelectItem. Drawing our own lucide glyph beside it put TWO browser
+    // icons on a control whose whole job is to name one engine.
     test_ = record({ runBrowser: "firefox" });
     renderView();
     await screen.findByText("Checkout");
     const trigger = screen.getByRole("combobox", { name: /browser engine for this test/i });
-    expect(trigger.querySelector('[data-browser="firefox"]')).toBeTruthy();
-    expect(trigger.querySelector('[data-browser="chromium"]')).toBeNull();
+    expect(trigger.querySelectorAll("[data-browser]").length).toBe(0);
+    expect(trigger.textContent).toContain("Firefox");
+  });
+
+  it("re-seeds the controls when the route moves to another test", async () => {
+    // The bug this pins: the picker kept the engine of the test viewed BEFORE
+    // this one, so the sidebar row said Chromium while the picker said Firefox
+    // — for the same test. The route component is never remounted on an id
+    // change, so a one-shot "already initialised" latch never fires again.
+    library = {
+      t1: record({ runBrowser: "firefox", testTimeoutMs: 120_000 }),
+      t2: record({ id: "t2", name: "Search", runBrowser: "chromium" }),
+    };
+    const view = renderView();
+    await screen.findByText("Firefox");
+
+    view.renavigate("t2");
+
+    await screen.findByText("Search");
+    const trigger = screen.getByRole("combobox", { name: /browser engine for this test/i });
+    await waitFor(() => expect(trigger.textContent).toContain("Chromium"));
+    expect(trigger.textContent).not.toContain("Firefox");
+    // Every per-test control seeds from the same latch, so they all leaked.
+    expect((screen.getByLabelText(/per-test timeout/i) as HTMLInputElement).value).toBe("");
   });
 
   it("persists a headless change", async () => {
@@ -220,6 +263,35 @@ describe("run controls", () => {
     expect(input.value).toBe("120");
     fireEvent.change(input, { target: { value: "" } });
     await waitFor(() => expect(setTestTimeout).toHaveBeenCalledWith("t1", null));
+  });
+});
+
+describe("persisting the browser choice", () => {
+  // The Select is native-menu-backed — its options are drawn by AppKit and
+  // never enter the DOM — so the change cannot be driven through the trigger
+  // in jsdom. The handler behind it is exported and called directly instead.
+
+  it("refreshes every cached copy of the record it just changed", async () => {
+    // The ["tests"] list holds its own copy of the record and nothing else in
+    // this flow refetches it, so without this the cache keeps the engine the
+    // test USED to run on until something unrelated happens to refresh it.
+    const qc = new QueryClient();
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    await persistRunBrowser(qc, "t1", "firefox");
+    expect(setBrowser).toHaveBeenCalledWith("t1", "firefox");
+    const keys = invalidate.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+    expect(keys).toContain(JSON.stringify(["tests"]));
+    expect(keys).toContain(JSON.stringify(["test", "t1"]));
+  });
+
+  it("refreshes nothing when the write failed", async () => {
+    // Nothing on disk changed, so there is nothing to re-read — and the run
+    // still uses the on-screen choice, which is why this stays best-effort.
+    setBrowser.mockRejectedValueOnce(new Error("read-only volume"));
+    const qc = new QueryClient();
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    await persistRunBrowser(qc, "t1", "firefox");
+    expect(invalidate).not.toHaveBeenCalled();
   });
 });
 

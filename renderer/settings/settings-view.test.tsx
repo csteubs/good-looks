@@ -110,12 +110,14 @@ describe("run defaults persist", () => {
     expect(screen.getByRole("combobox", { name: /browser/i }).textContent).toContain("WebKit");
   });
 
-  it("shows that engine's icon on the trigger, not just its name", async () => {
+  it("draws no glyph of its own beside the Select's", async () => {
+    // The trigger's icon is the selected item's SF Symbol, rendered by
+    // SelectValue. A lucide one alongside it showed the engine twice.
     settings = { ...settings, defaultRunBrowser: "webkit" };
     await renderSettings();
     const trigger = screen.getByRole("combobox", { name: /browser/i });
-    expect(trigger.querySelector('[data-browser="webkit"]')).toBeTruthy();
-    expect(trigger.querySelector('[data-browser="chromium"]')).toBeNull();
+    expect(trigger.querySelectorAll("[data-browser]").length).toBe(0);
+    expect(trigger.textContent).toContain("WebKit");
   });
 
   it("saves the default test timeout in milliseconds", async () => {

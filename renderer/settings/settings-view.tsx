@@ -31,7 +31,7 @@ import { api } from "../lib/api";
 import type { LlmProvider, LlmProviderStatus } from "../lib/llm-types";
 import type { ArtifactUsage, RunBrowser, TestSpeed } from "../lib/recorder-types";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
-import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
+import { BROWSER_SF_SYMBOLS } from "../lib/browser-icons";
 import {
   DEFAULT_VIEWPORT_PRESET_ID,
   VIEWPORT_PRESETS,
@@ -971,7 +971,8 @@ export function SettingsView() {
                 onValueChange={(v) => handleDefaultRunBrowserChange(v as RunBrowser)}
               >
                 <SelectTrigger id="default-run-browser" className="w-36">
-                  <BrowserIcon browser={defaultRunBrowser} labelled={false} />
+                  {/* SelectValue draws the selected item's SF Symbol already;
+                      a lucide glyph here would double it. */}
                   <SelectValue placeholder="Chromium" />
                 </SelectTrigger>
                 <SelectContent>

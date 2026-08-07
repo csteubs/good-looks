@@ -41,9 +41,9 @@ describe("BrowserIcon", () => {
     expect(container.querySelector("title")?.textContent).toBe("WebKit");
   });
 
-  it("goes silent when text alongside it already says the engine", () => {
-    // Used in Select triggers, where SelectValue renders the name — a labelled
-    // icon there would have a screen reader announce "Firefox Firefox".
+  it("goes silent when the row alongside it already says the engine", () => {
+    // Used in the Stats tag badge, whose row has a Browser column naming the
+    // engine — a labelled icon there announces "Firefox Firefox".
     render(<BrowserIcon browser="firefox" labelled={false} />);
     expect(screen.queryByRole("img", { name: "Firefox" })).toBeNull();
   });
