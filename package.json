@@ -8,6 +8,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "bootstrap": "node scripts/bootstrap-worktree.mjs",
     "build": "node glaze.ts build",
     "dev": "node glaze.ts dev",
     "dev:renderer": "node glaze.ts dev:renderer",
@@ -66,6 +67,7 @@
     "radix-ui": "^1.4.3",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.1",
     "zod": "^3.25.76"
   },
@@ -109,6 +111,6 @@
     "host": {
       "minVersion": "0.13.0.0"
     },
-    "updatedAt": 1786084244063
+    "updatedAt": 1786129493999
   }
 }

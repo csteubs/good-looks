@@ -16,6 +16,34 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-07 — The testing bottleneck was never the test suite
+
+**Measured before changing anything.** The full local gate is ~36 seconds: lint 3.6s, type-check 4.0s, 28 checks 7.6s, 1105 Vitest tests 15.8s, build 4.9s. Making the suite faster would have bought nothing. (`CLAUDE.md` still said 1029 tests and 27 checks — stale, and worth correcting.)
+
+**The real cost is that `npm run build` publishes to one global slot.** It ends with `Publishing staged build: .build -> ../.glaze/build` — outside the repo, one directory up, shared by `main`, every branch and every worktree. Only one branch can be "the app" at a time. The evidence was already in the history: `014c226` ("Build this branch: claude/browser-icon-display-bugs-987f45") and `ff2efa0` ("…Build the latest version of the app") exist to claim that slot. **Git history was being used as a build-slot mutex.** Two agents on two branches could not both have a testable app, and every other symptom — no preview environments, serialized review, a native rebuild per UI change — descends from it.
+
+Two more, both confirmed rather than assumed: a fresh worktree has **no `node_modules`**, so the branches most likely to need the gate are the ones least able to run it; and CI runs only repo hygiene, because `@glaze/core` resolves into Glaze.app — so the merge gate was a checkbox on the honour system.
+
+**The Electron port is the way out, and it is closer than it looks.** Comparing the two trees file by file: 206 shared paths, 101 byte-identical, 47 differing only by import specifier (`@glaze/core/backend`→`@shell/backend`, `@glaze/core/components`→`@ui`). **148 of 206 — 72% — are already identical or a one-line rename.** The port is mostly an import swap plus a `main/shell/` directory, which is what makes converging on one tree with two shell adapters a merge rather than a rewrite.
+
+**It went in as a branch, not a directory.** The Electron tree existed only as untracked loose files on one machine — undiffable, unreviewable, one `rm -rf` from gone. As `shell/electron` branched from the port's real merge base, `git diff main..shell/electron` *is* the port and the missing features arrive by cherry-pick. As a subdirectory it would have been a second copy to hand-maintain, which is the problem rather than the fix.
+
+Finding that base mattered more than expected. A first pass guessed `e6e59cc` from file timestamps and the DECISIONS entry; replaying every candidate and comparing all 199 shared source files put it at **`a61598c`** — 181/199 matching, against 160 at `e6e59cc` and 135 at `main`. Two hours of work off, and branching from the wrong base would have made the diff show the port plus everything in between. The drift is **12 commits**, not the 7 the file listing suggested: the two whose messages read as build publishes carry real source changes.
+
+**A clean checkout did not produce a runnable app**, and all three causes would have hit CI on its first green-looking run. Electron 43 has no postinstall — the binary download moved to an `install-electron` bin, so `npm install` left no `dist/` and no `path.txt`. npm 12 blocks dependency install scripts by default, silently skipping esbuild and fsevents. And `build/` was not ignored: the port moved the output there but kept the Glaze-era ignore rules.
+
+**The browser preview works because the renderer has exactly one funnel.** `renderer/lib/api.ts` → `window.glazeAPI.glaze.ipc.invoke(channel, …)`, plus a handful of direct clipboard/Menu/shell/nativeTheme uses — 15 files, 36 references. Standing in for that surface runs the entire UI in an ordinary browser tab, which is the fastest review loop available and the one an agent can drive with ordinary browser tooling.
+
+A fake backend fails *silently* by construction, so it got three guards, each catching what the others cannot. Unhandled channels are recorded on `window.__preview.misses` rather than quietly resolved — this named all four of its own initial gaps within a minute of first load. A test reads the channel list straight out of `api.ts` and fails both directions (a handler naming a channel that does not exist; a must-handle channel with no handler). And the handlers are annotated with the app's own return types, because only the type-checker catches a fixture that answers the *right* channel with the *wrong shape* — three of the initial fixtures were wrong that way and each crashed the Stats view with no recorded miss.
+
+Resolving an unknown channel to a shaped empty value rather than throwing is deliberate: a preview that white-screens on one unknown channel is useless exactly when you most want to look at it. The banner saying it is fixture data is not decoration — a fake that looks real invites bug reports against behaviour that was never wired up.
+
+**Rejected: making the preview the only answer.** It is a UI preview with no backend, so it cannot catch a broken IPC handler, a window that fails to open, or a renderer blocked by CORS. That is why the Electron branch also drives the *real* app through Playwright's `_electron` support — already a dependency — with each test on a throwaway `--user-data-dir`. The flag rather than `app.setPath` because `main/index.ts` sweeps retention at module scope, before `whenReady`: anything redirecting the path from inside the app is already too late, and the default would run retention against the developer's own recorded tests.
+
+**Worktrees get a symlinked `node_modules`, but only when the lockfiles match.** Sharing a tree across branches with different dependencies means an install on one silently rewrites the other's — a failure that surfaces days later as an inexplicable version error on a branch nobody touched. `scripts/bootstrap-worktree.mjs` refuses and says to install instead. (`.gitignore` already spelled `node_modules` without a trailing slash for this; the convention predates the script.)
+
+**`sonner` was a genuinely missing dependency.** The SDK's `components.js` imports it, and it resolved from nowhere — so `npm run dev:renderer` returned 500 for the design system and the renderer never mounted. With it added, the Glaze renderer boots in a plain browser and reaches its error boundary on the absent preload, which is the expected failure and no longer a module-resolution one.
+
 ### 2026-08-07 — Two bugs in the browser picker: a doubled glyph, and a leaked one
 
 **Reported as one thing, and it was two.** The picker showed two browser icons side by side, and the sidebar row for the open test showed Chromium while the picker beside it said Firefox.
