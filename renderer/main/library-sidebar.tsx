@@ -23,6 +23,7 @@ import {
 import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Tag, Wand2 } from "lucide-react";
 
 import { api } from "../lib/api";
+import { BrowserIcon } from "../lib/browser-icons";
 import type { LlmProvider } from "../lib/llm-types";
 import type { TestRecord } from "../lib/recorder-types";
 import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
@@ -310,6 +311,18 @@ export function LibrarySidebar() {
                   icon={<Favicon url={t.url} />}
                   title={t.name}
                   subtitle={hostOf(t.url)}
+                  /* Only when the test has PINNED an engine. Every test
+                     without one runs on the app-wide default, so showing an
+                     icon there would put the same glyph on most rows and say
+                     nothing — the accessory is here to mark the exceptions. */
+                  accessory={
+                    t.runBrowser ? (
+                      <BrowserIcon
+                        browser={t.runBrowser}
+                        className="size-3.5 shrink-0 text-tertiary"
+                      />
+                    ) : undefined
+                  }
                   selected={t.id === selectedId}
                   onClick={() => navigate({ to: "/test/$id", params: { id: t.id } })}
                 />

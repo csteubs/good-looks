@@ -100,6 +100,16 @@ beforeEach(() => {
   settings = { batchOrder: [], defaultRunBrowser: "chromium" };
 });
 
+describe("BatchView browser picker", () => {
+  it("shows the default engine's icon on the trigger", async () => {
+    settings = { batchOrder: [], defaultRunBrowser: "firefox" };
+    renderView();
+    const trigger = await screen.findByRole("combobox", { name: /browser engine for this batch/i });
+    await waitFor(() => expect(trigger.querySelector('[data-browser="firefox"]')).toBeTruthy());
+    expect(trigger.querySelector('[data-browser="chromium"]')).toBeNull();
+  });
+});
+
 describe("BatchView ordering", () => {
   it("lists tests in library order when nothing is stored", async () => {
     renderView();

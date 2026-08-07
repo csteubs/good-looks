@@ -50,6 +50,7 @@ import { A11yPanel } from "./a11y-panel";
 import { computeStepDepths } from "../lib/describe-step";
 import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import { latestA11yRun } from "../lib/a11y-format";
+import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
 import {
   RUN_BROWSERS,
   RUN_BROWSER_LABELS,
@@ -507,11 +508,14 @@ export function TestDetailView() {
               className="w-32"
               aria-label="Browser engine for this test's runs"
             >
+              {/* The trigger is real DOM, so it gets the lucide glyph; the
+                  options below are drawn by AppKit and take an SF Symbol. */}
+              <BrowserIcon browser={runBrowser} labelled={false} />
               <SelectValue placeholder="Chromium" />
             </SelectTrigger>
             <SelectContent>
               {RUN_BROWSERS.map((b) => (
-                <SelectItem key={b} value={b}>
+                <SelectItem key={b} value={b} icon={BROWSER_SF_SYMBOLS[b]}>
                   {RUN_BROWSER_LABELS[b]}
                 </SelectItem>
               ))}

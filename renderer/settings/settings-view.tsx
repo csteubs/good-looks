@@ -36,6 +36,7 @@ import {
   TEST_SPEEDS,
   TEST_SPEED_LABELS,
 } from "../lib/recorder-types";
+import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
 import {
   DEFAULT_VIEWPORT_PRESET_ID,
   VIEWPORT_PRESETS,
@@ -974,11 +975,12 @@ export function SettingsView() {
                 onValueChange={(v) => handleDefaultRunBrowserChange(v as RunBrowser)}
               >
                 <SelectTrigger id="default-run-browser" className="w-36">
+                  <BrowserIcon browser={defaultRunBrowser} labelled={false} />
                   <SelectValue placeholder="Chromium" />
                 </SelectTrigger>
                 <SelectContent>
                   {RUN_BROWSERS.map((b) => (
-                    <SelectItem key={b} value={b}>
+                    <SelectItem key={b} value={b} icon={BROWSER_SF_SYMBOLS[b]}>
                       {RUN_BROWSER_LABELS[b]}
                     </SelectItem>
                   ))}
