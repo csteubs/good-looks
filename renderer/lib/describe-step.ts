@@ -2,6 +2,7 @@
 // leading `await`/trailing `;`), for display in the UI. Mirrors the backend
 // script generator so what the user sees matches the generated script.
 
+import { DEFAULT_WAIT_TIMEOUT_MS } from "./recorder-types";
 import type { Locator, Step, StepType } from "./recorder-types";
 
 function q(s: string): string {
@@ -159,9 +160,49 @@ export function describeFlow(step: Step): string {
   return args.length > 0 ? `run flow ${name} (${args.join(", ")})` : `run flow ${name}`;
 }
 
+/** Mirror of describeWait in main/services/script-generator.ts — keep in sync.
+ *
+ *  Phrased rather than rendered as the generated call, because that call
+ *  carries the `// wait until` parser marker and a `{ timeout: … }` options
+ *  object that mean nothing to the user reading the step list. */
+export function describeWait(step: Step): string {
+  const loc = step.locator;
+  const el = loc ? "page." + locatorExpr(loc) : "element";
+  const secs = Math.round((step.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS) / 100) / 10;
+  const within = " (within " + secs + "s)";
+  switch (step.waitUntil) {
+    case "urlContains":
+      return "wait until URL contains " + q(step.value ?? "") + within;
+    case "titleContains":
+      return "wait until title contains " + q(step.value ?? "") + within;
+    case "hidden":
+      return "wait until " + el + " is hidden" + within;
+    case "exists":
+      return "wait until " + el + " exists" + within;
+    case "enabled":
+      return "wait until " + el + " is enabled" + within;
+    case "disabled":
+      return "wait until " + el + " is disabled" + within;
+    case "checked":
+      return "wait until " + el + " is checked" + within;
+    case "unchecked":
+      return "wait until " + el + " is unchecked" + within;
+    case "text":
+      return "wait until " + el + " contains text " + q(step.text ?? "") + within;
+    case "value":
+      return "wait until " + el + " has value " + q(step.value ?? "") + within;
+    case "count":
+      return "wait until " + el + " has count " + (step.count ?? 0) + within;
+    case "visible":
+    default:
+      return "wait until " + el + " is visible" + within;
+  }
+}
+
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
+  if (step.type === "wait" && step.waitUntil) return describeWait(step);
   if (step.type === "cookie") return describeCookie(step);
   if (step.type === "capture") return describeCapture(step);
   if (step.type === "runFlow") return describeFlow(step);

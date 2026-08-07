@@ -197,6 +197,109 @@ function conditionExpr(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): stri
   }
 }
 
+/** Marker appended to the `expect`-based conditional waits below.
+ *
+ *  Load-bearing, not decoration. Playwright's only auto-retrying primitive for
+ *  most predicates IS `expect`, so a "wait until enabled" and an "assert
+ *  enabled" compile to the same call. `spec-parser.ts` reads a generated spec
+ *  back into steps on every `tests:updateScript` (a hand edit, or an applied AI
+ *  fix), and without something to tell the two apart every conditional wait
+ *  would come back as an assertion — the step's TYPE changing under the user
+ *  with nothing on screen to say so. The parser keys off this exact string;
+ *  changing one side alone silently breaks the round trip, which is why
+ *  `spec-parser.check.ts` pins both. A hand-written `expect` has no marker and
+ *  correctly stays an assertion. */
+export const WAIT_UNTIL_MARKER = " // wait until";
+
+/** Default timeout for a conditional wait, in ms. Deliberately longer than
+ *  Playwright's 5s expect default — a user reaching for an explicit wait is
+ *  usually waiting on something slower than the default already covers. */
+export const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
+
+/**
+ * Emit the line for a `wait` step.
+ *
+ * Three shapes, in precedence order: a `waitUntil` predicate, a `waitMs`
+ * duration, then a bare locator wait. The last two are byte-identical to what
+ * this generator emitted before conditional waits existed, so every test
+ * already on disk regenerates unchanged.
+ *
+ * `waitUntil` is matched against known kinds and mapped to a fixed string —
+ * never concatenated. `recorder:updateStep` copies its allowlisted fields
+ * without re-normalizing, so an unrecognized value can reach here; it falls
+ * through to the duration/locator behaviour rather than into the source text.
+ */
+function waitLine(step: Step, target: string | null, vars: ReadonlySet<string>): string | null {
+  const t = ", timeout: " + num(step.timeoutMs, DEFAULT_WAIT_TIMEOUT_MS);
+  const opts = "{ timeout: " + num(step.timeoutMs, DEFAULT_WAIT_TIMEOUT_MS) + " }";
+
+  switch (step.waitUntil) {
+    // These three have a native, unambiguous waiting API, so they need no
+    // marker — `.waitFor()` is never an assertion.
+    case "visible":
+      return target ? "await " + target + ".waitFor({ state: \"visible\"" + t + " });" : null;
+    case "hidden":
+      return target ? "await " + target + ".waitFor({ state: \"hidden\"" + t + " });" : null;
+    case "exists":
+      return target ? "await " + target + ".waitFor({ state: \"attached\"" + t + " });" : null;
+
+    // Page-level predicates. Both embed the expected text in a RegExp, so they
+    // take the literal value rather than a variable expression — the same
+    // trade-off `assertLine` makes for urlEndsWith/urlIs, and for the same
+    // reason: `reEscape` can only escape a string known now.
+    case "urlContains":
+      return (
+        "await expect(page).toHaveURL(new RegExp(" +
+        q(reEscape(step.value ?? "")) +
+        "), " + opts + ");" + WAIT_UNTIL_MARKER
+      );
+    case "titleContains":
+      return (
+        "await expect(page).toHaveTitle(new RegExp(" +
+        q(reEscape(step.value ?? "")) +
+        "), " + opts + ");" + WAIT_UNTIL_MARKER
+      );
+
+    default:
+      break;
+  }
+
+  // The remaining predicates are element-scoped and all go through `expect`.
+  if (step.waitUntil && target) {
+    const x = "expect(" + target + ")";
+    switch (step.waitUntil) {
+      case "enabled":
+        return "await " + x + ".toBeEnabled(" + opts + ");" + WAIT_UNTIL_MARKER;
+      case "disabled":
+        return "await " + x + ".toBeDisabled(" + opts + ");" + WAIT_UNTIL_MARKER;
+      case "checked":
+        return "await " + x + ".toBeChecked(" + opts + ");" + WAIT_UNTIL_MARKER;
+      case "unchecked":
+        return "await " + x + ".not.toBeChecked(" + opts + ");" + WAIT_UNTIL_MARKER;
+      case "text":
+        return (
+          "await " + x + ".toContainText(" + valueExpr(step.text, vars) + ", " + opts + ");" +
+          WAIT_UNTIL_MARKER
+        );
+      case "value":
+        return (
+          "await " + x + ".toHaveValue(" + valueExpr(step.value, vars) + ", " + opts + ");" +
+          WAIT_UNTIL_MARKER
+        );
+      case "count":
+        return (
+          "await " + x + ".toHaveCount(" + num(step.count, 0) + ", " + opts + ");" +
+          WAIT_UNTIL_MARKER
+        );
+      default:
+        break;
+    }
+  }
+
+  if (typeof step.waitMs === "number") return "await page.waitForTimeout(" + num(step.waitMs, 0) + ");";
+  return target ? "await " + target + ".waitFor();" : null;
+}
+
 /** Emit the cookie object literal Playwright's addCookies expects.
  *
  *  Two renames matter and are easy to miss: Chromium's `expirationDate`
@@ -280,8 +383,7 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
         ? "await " + target + ".press(" + q(step.value ?? "") + ");"
         : "await page.keyboard.press(" + q(step.value ?? "") + ");";
     case "wait":
-      if (typeof step.waitMs === "number") return "await page.waitForTimeout(" + num(step.waitMs, 0) + ");";
-      return target ? "await " + target + ".waitFor();" : null;
+      return waitLine(step, target, vars);
     case "viewport":
       return (
         "await page.setViewportSize({ width: " +
@@ -347,6 +449,7 @@ function stepLogLine(step: Step): string | null {
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
+  if (step.type === "wait" && step.waitUntil) return describeWait(step);
   if (step.type === "cookie") return describeCookie(step);
   if (step.type === "capture") return describeCapture(step);
   if (step.type === "runFlow") return describeFlow(step);
@@ -425,6 +528,49 @@ export function describeCondition(step: Step): string {
     case "visible":
     default:
       return el + " is visible";
+  }
+}
+
+/**
+ * Readable phrasing of a conditional `wait` step. Kept in sync with the mirror
+ * in renderer/lib/describe-step.ts.
+ *
+ * Deliberately NOT the generated line with `await`/`;` stripped, the way the
+ * other step types are described. That line carries the `// wait until` marker
+ * and a `{ timeout: … }` options object, which would put parser plumbing in
+ * front of the user in the step list.
+ */
+export function describeWait(step: Step): string {
+  const loc = step.locator;
+  const el = loc ? "page." + locatorExpr(loc) : "element";
+  const secs = Math.round((step.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS) / 100) / 10;
+  const within = " (within " + secs + "s)";
+  switch (step.waitUntil) {
+    case "urlContains":
+      return "wait until URL contains " + q(step.value ?? "") + within;
+    case "titleContains":
+      return "wait until title contains " + q(step.value ?? "") + within;
+    case "hidden":
+      return "wait until " + el + " is hidden" + within;
+    case "exists":
+      return "wait until " + el + " exists" + within;
+    case "enabled":
+      return "wait until " + el + " is enabled" + within;
+    case "disabled":
+      return "wait until " + el + " is disabled" + within;
+    case "checked":
+      return "wait until " + el + " is checked" + within;
+    case "unchecked":
+      return "wait until " + el + " is unchecked" + within;
+    case "text":
+      return "wait until " + el + " contains text " + q(step.text ?? "") + within;
+    case "value":
+      return "wait until " + el + " has value " + q(step.value ?? "") + within;
+    case "count":
+      return "wait until " + el + " has count " + (step.count ?? 0) + within;
+    case "visible":
+    default:
+      return "wait until " + el + " is visible" + within;
   }
 }
 

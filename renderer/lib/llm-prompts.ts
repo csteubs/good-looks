@@ -233,6 +233,7 @@ Output format:
   - assert: { "type": "assert", "assert": <kind>, "locator": {...}, "text": "...", "value": "...", "attr": "...", "count": 1, "soft": false }
     assert kinds: "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked", "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs", "title". "url"/"urlEndsWith"/"urlIs"/"title" are page-level and need no locator; use "value" for the expected string ("url" = contains, "urlEndsWith" = ends with, "urlIs" = exact match). "text"/"exactText" use "text". "value" uses "value". "attribute" uses "attr"+"value". "count" uses "count".
   - wait: { "type": "wait", "waitMs": 1000 }  (or omit waitMs and give a "locator" to wait for it)
+    A wait can also block on a condition instead: { "type": "wait", "waitUntil": <kind>, "locator": {...}, "timeoutMs": 10000 }. waitUntil kinds: "visible", "hidden", "exists", "enabled", "disabled", "checked", "unchecked", "text", "value", "count", "urlContains", "titleContains". "text" uses "text"; "value"/"urlContains"/"titleContains" use "value"; "count" uses "count". "urlContains"/"titleContains" are page-level and need no locator. Prefer a conditional wait over a fixed waitMs — a duration that is too short is flaky and one that is too long is slow.
   - viewport: { "type": "viewport", "width": <width>, "height": <height> } — ALWAYS emit a viewport step FIRST (before any action), using the exact width and height from the "Browser viewport" line in the user message. If no viewport is specified, use 1280x800.
 
 Rules:

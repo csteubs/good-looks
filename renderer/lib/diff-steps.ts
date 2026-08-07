@@ -41,6 +41,8 @@ export function stepSignature(step: Step): string {
     step.width,
     step.height,
     step.waitMs,
+    step.waitUntil,
+    step.timeoutMs,
     step.cookieAction,
     step.cookie
       ? [

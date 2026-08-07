@@ -20,6 +20,7 @@ import { Check, GripVertical, Loader2, MoreHorizontal, Pencil, Play, X } from "l
 import type { RunStepStatus } from "./recorder-store";
 
 import { describeStep } from "../lib/describe-step";
+import { DEFAULT_WAIT_TIMEOUT_MS } from "../lib/recorder-types";
 import { clampViewportAxis } from "../lib/viewport-presets";
 import type { Step, StepType } from "../lib/recorder-types";
 
@@ -57,7 +58,7 @@ export function parseSizeDraft(draft: string): { width: number; height: number }
 /** The single field a step exposes for quick inline editing, if any. */
 function editableField(
   step: Step,
-): { key: "value" | "text" | "url" | "waitMs" | "size"; label: string; value: string } | null {
+): { key: "value" | "text" | "url" | "waitMs" | "timeoutMs" | "size"; label: string; value: string } | null {
   switch (step.type) {
     case "goto":
       return { key: "url", label: "URL", value: step.url ?? "" };
@@ -75,6 +76,15 @@ function editableField(
     case "press":
       return { key: "value", label: "Value", value: step.value ?? "" };
     case "wait":
+      // A conditional wait's editable number is its TIMEOUT, not a duration —
+      // it has no waitMs at all. Without this the one number the user can see
+      // on the row would be the only one they couldn't change inline.
+      if (step.waitUntil)
+        return {
+          key: "timeoutMs",
+          label: "Timeout (ms)",
+          value: String(step.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
+        };
       return typeof step.waitMs === "number"
         ? { key: "waitMs", label: "Wait (ms)", value: String(step.waitMs) }
         : null;
@@ -195,8 +205,15 @@ export function StepRow({
       if (size) onEdit(size);
       return setEditing(false);
     }
+    // The remaining numeric fields are parsed here rather than stored as the
+    // typed string: they are emitted into the spec as bare numerals, and a
+    // string reaching the generator is the shape of the original injection bug.
     const patch: Partial<Step> =
-      field.key === "waitMs" ? { waitMs: Number(draft) || 0 } : { [field.key]: draft };
+      field.key === "waitMs"
+        ? { waitMs: Number(draft) || 0 }
+        : field.key === "timeoutMs"
+          ? { timeoutMs: Number(draft) || DEFAULT_WAIT_TIMEOUT_MS }
+          : { [field.key]: draft };
     onEdit(patch);
     setEditing(false);
   }

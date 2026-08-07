@@ -20,7 +20,7 @@ import {
 } from "@glaze/core/components";
 import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, RotateCcw, Sparkles, Wand2, X } from "lucide-react";
 
-import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step } from "../lib/recorder-types";
+import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step, WaitDialogMode } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
 import { locatorToPrompt } from "../lib/llm-prompts";
 import { useRecorder, type ReplayRun } from "./recorder-store";
@@ -544,7 +544,7 @@ export function RecordingView() {
   const [contextPick, setContextPick] = React.useState<{
     picked: PickedElement | null;
     assert?: AssertKind;
-    waitMode?: "element" | "hidden" | "time";
+    waitMode?: WaitDialogMode;
     prefillText?: string;
     prefillValue?: string;
   } | null>(null);

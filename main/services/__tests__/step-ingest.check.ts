@@ -163,6 +163,52 @@ function main(): void {
       undefined,
       "an unknown condition kind is dropped",
     );
+    assertEqual(
+      normalizeRawStep({ type: "wait", waitUntil: "evil" })?.waitUntil,
+      undefined,
+      "an unknown waitUntil kind is dropped",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "wait", waitUntil: "enabled" })?.waitUntil,
+      "enabled",
+      "…while a real one survives",
+    );
+    // The wait vocabulary is a SUPERSET of the condition vocabulary, and the two
+    // are checked against separate lists on purpose. If `cond` were ever widened
+    // to the wait list, an `if` step would accept predicates conditionExpr has
+    // no branch for and silently fall through to its `visible` default.
+    assertEqual(
+      normalizeRawStep({ type: "if", cond: "count" })?.cond,
+      undefined,
+      "a wait-only predicate is NOT accepted as an if-condition",
+    );
+  }
+
+  // ── 4b. timeoutMs is a numeral field, so it gets the count treatment ──────
+  //
+  // It reaches the generator concatenated into `{ timeout: … }`, which is the
+  // same sink shape that made `count` an RCE.
+  {
+    assertEqual(
+      normalizeRawStep({ type: "wait", waitUntil: "visible", timeoutMs: NODE_CODE })?.timeoutMs,
+      undefined,
+      "a forged timeoutMs is dropped at the boundary",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "wait", waitUntil: "visible", timeoutMs: NaN })?.timeoutMs,
+      undefined,
+      "NaN is not a timeout",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "wait", waitUntil: "visible", timeoutMs: -1 })?.timeoutMs,
+      undefined,
+      "a negative timeout is dropped",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "wait", waitUntil: "visible", timeoutMs: 2500 })?.timeoutMs,
+      2500,
+      "…while a real timeout survives",
+    );
   }
 
   // ── 5. The drain is bounded ──────────────────────────────────────────────
@@ -232,6 +278,40 @@ function main(): void {
     ] as unknown as Step[];
     const spec = specFor(poisoned);
     assert(!spec.includes("evil("), "a poisoned waitMs cannot reach the spec either");
+  }
+  // A conditional wait's timeout is the newest numeral field on this path, and
+  // `recorder:updateStep` copies its allowlisted fields WITHOUT re-normalizing
+  // them — so the generator, not the boundary, is what stands between a forged
+  // timeout and the spec.
+  {
+    const poisoned = [
+      { id: "s1", timestamp: 0, type: "wait", waitUntil: "enabled", locator: { k: "testid", v: "x" }, timeoutMs: NODE_CODE },
+    ] as unknown as Step[];
+    const line = lineWith(specFor(poisoned), "toBeEnabled");
+    assertEqual(
+      line,
+      'await expect(page.getByTestId("x")).toBeEnabled({ timeout: 10000 }); // wait until',
+      "a poisoned timeout emits the fallback numeral, not code",
+    );
+    assert(!line.includes("require("), "…and no injected call survives into the spec");
+  }
+  {
+    const poisoned = [
+      { id: "s1", timestamp: 0, type: "wait", waitUntil: "hidden", locator: { k: "testid", v: "x" }, timeoutMs: "0 }); evil(); ({" },
+    ] as unknown as Step[];
+    const spec = specFor(poisoned);
+    assert(!spec.includes("evil("), "a poisoned timeout on the native waitFor form is inert too");
+  }
+  // The predicate itself selects a fixed string rather than being concatenated,
+  // so an unrecognized one must degrade to the legacy wait rather than reaching
+  // the source text.
+  {
+    const poisoned = [
+      { id: "s1", timestamp: 0, type: "wait", waitUntil: "evil(); //", locator: { k: "testid", v: "x" }, waitMs: 250 },
+    ] as unknown as Step[];
+    const spec = specFor(poisoned);
+    assert(!spec.includes("evil("), "an unrecognized waitUntil never reaches the spec");
+    assert(spec.includes("waitForTimeout(250)"), "…and the step falls back to its duration");
   }
 
   // Legitimate values still render exactly as before — the fix must not have
