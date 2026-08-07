@@ -331,6 +331,19 @@ export function registerHandlers(): void {
     return rec;
   });
 
+  // Delete a tag from the whole library at once. Deliberately NOT a renderer
+  // loop over `tests:setTags`: that rewrites tests.json once per test and can
+  // strand the tag on half of them if one call fails partway through.
+  //
+  // The incoming name goes through `normalizeTags` too, so canonical form still
+  // has exactly one definition — a renderer that sent a number or an untrimmed
+  // string can't reach the store with it.
+  ipcMain.handle("tests:deleteTag", async (_e, params: { tag: unknown }) => {
+    const [tag] = normalizeTags([params?.tag]);
+    if (!tag) throw new Error("A tag is required.");
+    return { tag, removed: testStore.removeTag(tag) };
+  });
+
   // ── Variables, secrets and datasets ──────────────────────────────────────
   //
   // Normalization is backend-only, matching tests:setTags: the renderer posts

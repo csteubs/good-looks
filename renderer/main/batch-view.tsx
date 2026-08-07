@@ -31,7 +31,8 @@ import { Check, CircleDashed, GripVertical, Play, Square, X, SkipForward, Loader
 
 import { api } from "../lib/api";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
-import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts, untaggedCount } from "../lib/test-tags";
+import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts } from "../lib/test-tags";
+import { TagCluster } from "./tag-cluster";
 import {
   applyOrder,
   isCustomOrder,
@@ -104,38 +105,6 @@ function StatusBadge({ status, note }: { status: BatchTestStatus; note?: string 
   }
 }
 
-/** One filter chip in the tag row. Shows its test count so an empty group is
- *  obvious before you click it. */
-function TagChip({
-  label,
-  count,
-  active,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  count: number;
-  active: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      aria-pressed={active}
-      className={`rounded-full border px-2.5 py-0.5 text-small transition-colors disabled:opacity-50 ${
-        active
-          ? "border-accent bg-accent/15 text-primary"
-          : "border-token-border text-secondary hover:bg-token-hover"
-      }`}
-    >
-      {label} · {count}
-    </button>
-  );
-}
-
 export function BatchView() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -191,10 +160,10 @@ export function BatchView() {
   const [overId, setOverId] = React.useState<string | null>(null);
 
     // Tag filter over the checklist. Selection is stored by test id, so
-  // switching filters never silently drops tests you already ticked.
+  // switching filters never silently drops tests you already ticked. The chips
+  // themselves live in TagCluster, which also owns deleting a tag library-wide.
   const [tagFilter, setTagFilter] = React.useState<string>(ALL_TAGS);
   const tags = React.useMemo(() => tagCounts(tests), [tests]);
-  const untagged = React.useMemo(() => untaggedCount(tests), [tests]);
   React.useEffect(() => {
     if (orderInited || !settingsQuery.data) return;
     setOrder(settingsQuery.data.batchOrder ?? []);
@@ -420,36 +389,12 @@ export function BatchView() {
             />
           ) : (
             <>
-              {tags.length > 0 ? (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <TagChip
-                    label="All"
-                    count={tests.length}
-                    active={tagFilter === ALL_TAGS}
-                    disabled={running}
-                    onClick={() => setTagFilter(ALL_TAGS)}
-                  />
-                  {tags.map((t) => (
-                    <TagChip
-                      key={t.tag.toLowerCase()}
-                      label={t.tag}
-                      count={t.count}
-                      active={tagFilter.toLowerCase() === t.tag.toLowerCase()}
-                      disabled={running}
-                      onClick={() => setTagFilter(t.tag)}
-                    />
-                  ))}
-                  {untagged > 0 ? (
-                    <TagChip
-                      label="Untagged"
-                      count={untagged}
-                      active={tagFilter === UNTAGGED}
-                      disabled={running}
-                      onClick={() => setTagFilter(UNTAGGED)}
-                    />
-                  ) : null}
-                </div>
-              ) : null}
+              <TagCluster
+                tests={tests}
+                value={tagFilter}
+                onChange={setTagFilter}
+                disabled={running}
+              />
 
               <div className="flex items-center gap-3">
                 <Button
