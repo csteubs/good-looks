@@ -7,6 +7,7 @@
   "type": "module",
   "main": "build/main/index.js",
   "scripts": {
+    "bootstrap": "node scripts/bootstrap-worktree.mjs",
     "postinstall": "install-electron",
     "build": "npm run build:renderer && npm run build:main",
     "build:renderer": "vite build",
