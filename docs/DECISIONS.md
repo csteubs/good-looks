@@ -16,6 +16,24 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-07 — Per-generation model picker, and LM Studio's loaded models
+
+**The gap.** "Generate test from prompt" ran on whatever model Settings pointed at, with no way to say otherwise. Writing a whole spec is the single place where model choice matters most — a flow that a 7B model mangles is often one shot for a 27B — and the only way to switch was to leave the dialog, change the app-wide default, and come back.
+
+**Chosen: the picker is a per-generation override, not a settings edit.** It seeds from `llm:getConfig` and is passed explicitly on `llm:chat`; nothing is written back. Persisting the choice would silently retarget the AI debug panel and step generation too, so "use the big model for this one test" would quietly become "use the big model for everything", and the user would find out from a token bill or a slowdown somewhere unrelated.
+
+The dialog also drops a stale configured model rather than sending it. A model deleted or renamed in the provider since it was chosen used to fail mid-generation with a provider error naming a model the user no longer recognized; the dialog now falls back to a model that exists, preferring one already in memory.
+
+**Chosen: read LM Studio's load state from its own API, as optional enrichment.** `/v1/models` reports every downloaded model identically, so the picker couldn't distinguish the model that answers now from the one that spends a minute loading first. That distinction is not cosmetic: a cold model on LM Studio streams nothing at all while it loads, which in this dialog is indistinguishable from a hang, and the user's reasonable response is to hit Stop on a request that was working.
+
+LM Studio's own REST API (`/api/v0/models`, 0.3.6+) carries a per-model `state`. It is fetched as a **second, failure-tolerant call** rather than as a replacement for `/v1/models`, which stays the source of truth for which models exist and whether the provider is reachable — `/v1` is what chat actually posts to. An older LM Studio (404s `/api/v0`), or some other OpenAI-compatible server on port 1234, therefore costs a missing badge and never an empty model list or a false "not connected".
+
+**`loaded` is three-state, and that is load-bearing.** `true`, `false`, and `undefined` = "the provider never said". Ollama and Claude are permanently the third case. Collapsing `undefined` into `false` would tell every Ollama user their models are cold — wrong, and not fixable from the UI, since there is no such thing to fix. The same rule covers a `state` string we don't recognize (a future LM Studio growing e.g. `loading`): unknown stays unknown rather than being guessed into "not loaded". Pinned in `llm-service.test.ts` and `generate-test-dialog.test.tsx`.
+
+**Rejected — `CustomSelect` with colour dots.** The SDK's guidance points at `CustomSelect` when items need custom colours, and it would have rendered the state in the DOM. But the rest of this dialog uses the native `Select`, and the native menu already expresses the distinction better than a dot: `SelectGroup` headers ("Loaded" / "Not loaded" / "Load state unknown") sort the list by the thing being asked about, and per-item `sublabel`s explain the consequence in words instead of colour. A `Badge` next to the trigger carries the selected model's state in the DOM, so the state is visible without opening the menu — and assertable in jsdom, where a native menu's options never exist.
+
+**Scope.** Settings still shows a flat model list. It resolves the same enriched `LlmProviderStatus`, so surfacing load state there is a rendering change only, but nothing in Settings stalls on a cold model the way a generation does.
+
 ### 2026-08-06 — Configurable Playwright test timeout (default 1 minute)
 
 **The bug.** Every run used Playwright's built-in 30s per-test timeout because `ensureConfig` wrote a config with only `slowMo` and never a `timeout`. Multi-step tests failed constantly once they crossed 30s. There was no Settings control and no per-test override.
