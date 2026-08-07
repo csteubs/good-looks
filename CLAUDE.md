@@ -55,7 +55,7 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1029 Vitest tests and 27 checks as of 2026-08-06.
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1453 Vitest tests and 29 checks as of 2026-08-07.
 
 - **Vitest** (`vitest.config.ts`) has two projects. **`node`**: `main/**/*.test.ts`, `mcp/**/*.test.ts`, `renderer/lib/**/*.test.ts`. **`dom`** (jsdom): `renderer/**/*.test.tsx` plus `main/**/*.dom.test.ts` — that suffix is for BACKEND code needing a document (the injected replayer and Auto-Heal probe are evaluated for real). The node project explicitly excludes `*.dom.test.ts`; without that they match both globs and run again with no DOM, failing for unrelated reasons.
 - **`check:*` scripts** predate Vitest and are kept, not migrated — they catch real bugs and a rewrite would risk that for tooling neatness. Plain assertions + a non-zero exit; no runner. Two are deliberately *source-level* (`check:ai-debug-scroll`, `check:scroll-layout`) because they guard layout contracts that jsdom cannot observe.
@@ -75,6 +75,8 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 - **jsdom has no layout engine.** `getBoundingClientRect()` returns zeros, so anything gated on element size behaves as if hidden — this silently turns "assert hidden" tests into tests that prove nothing. `step-replayer.dom.test.ts` installs a nominal box.
 - `renderer/__tests__/setup.ts` stubs what jsdom lacks: `matchMedia`, `IntersectionObserver`, `ResizeObserver`, `scrollTo`/`scrollIntoView`. A missing one surfaces as a bare `ReferenceError` from inside the SDK bundle and reads like a component bug.
 - **Radix `TabsTrigger` activates on pointer-down/focus, not a bare `click`** — `fireEvent.click` leaves the tab unchanged and assertions silently run against the previous tab.
+- **`SidebarListItem` activates on `mouseDown`**, same idiom, same silent failure: `fireEvent.click` doesn't fire its `onClick`, and the assertion then reports "0 calls", which reads as a broken handler rather than the wrong event. Use `fireEvent.mouseDown`.
+- **A fresh worktree needs `npm run bootstrap` before anything else.** Without it there is no `node_modules`, and the first `vitest` run CREATES an empty one for its own cache (`node_modules/.vite`) — which then makes `bootstrap` report "already present — nothing to do" and leaves you permanently broken. `vitest.config.ts` then points every React alias into a tree with no React, and every component test fails at import reading like a missing dependency; `type-check` degrades separately, reporting `Property 'children' does not exist` on SDK components across files you never touched. Fix: `rm -rf node_modules && npm run bootstrap`.
 - **The SDK's `Select` is native-menu-backed**: its options never enter the DOM, so a selection cannot be driven in jsdom. Assert the displayed value and cover persistence at the IPC layer instead.
 - An ambiguous `findBy*` (matching 2+ elements) retries until timeout, which reports as "never rendered" rather than "your query was ambiguous".
 - This project targets **ES2020**: no `Array.prototype.at`.

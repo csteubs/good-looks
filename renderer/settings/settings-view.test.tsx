@@ -1,30 +1,27 @@
-// Component tests for the Settings window.
+// Integration tests for the Settings window shell.
 //
-// 1,015 lines and previously 0% covered. Almost every control here writes to
-// persisted state, and the two that matter most are security-relevant: the
-// Anthropic API key and the alert webhook URL. Both are write-only by design —
-// the renderer can save or clear them but must never be able to read one back —
-// so these tests assert on what CROSSES the boundary, not just on what renders.
+// The panes are covered individually against a hand-built controller (see
+// panes/*.test.tsx). What is left for this file is everything that only exists
+// when the real thing is assembled: navigation, the search wiring that spans
+// the sidebar AND the rows, the reset footer, Escape-to-close, and the fact
+// that a control in a pane still reaches `recorder:setSettings` through the
+// real provider rather than through a spy.
 //
-// The rest is a wide surface of small persistence handlers, where the failure
-// mode is silent: a toggle that looks right and saves nothing.
+// The webhook and API-key write-only assertions that used to live here moved to
+// panes/alerts-pane.test.tsx and panes/ai-pane.test.tsx, where the controls now
+// are. They did not go away.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 import type { RecorderSettings } from "../lib/recorder-types";
+import { SETTINGS_DEFAULTS } from "../lib/settings-schema";
 import { SettingsView } from "./settings-view";
 
 const setSettings = vi.fn(async (_u: Partial<RecorderSettings>) => ({}) as RecorderSettings);
-const setWebhookUrl = vi.fn(async (_url: string) => ({ hasUrl: true, host: "hooks.example.com" }));
-const clearWebhookUrl = vi.fn(async () => ({ hasUrl: false, host: null }));
-const testAlert = vi.fn(async () => ({ ok: true }));
-const setApiKey = vi.fn(async (_k: string) => ({ hasKey: true }));
-const clearApiKey = vi.fn(async () => ({ hasKey: false }));
-const setLlmConfig = vi.fn(async () => ({ provider: "ollama", model: "", baseUrls: {} }));
+const closeSettings = vi.fn(async () => {});
 
 let settings: Partial<RecorderSettings> = {};
-let webhookStatus = { hasUrl: false, host: null as string | null };
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -33,44 +30,37 @@ vi.mock("../lib/api", () => ({
       setSettings: (u: Partial<RecorderSettings>) => setSettings(u),
     },
     alerts: {
-      status: async () => webhookStatus,
-      setWebhookUrl: (url: string) => setWebhookUrl(url),
-      clearWebhookUrl: () => clearWebhookUrl(),
-      test: () => testAlert(),
+      status: async () => ({ hasUrl: false, host: null }),
+      setWebhookUrl: async () => ({ hasUrl: true, host: "hooks.example.com" }),
+      clearWebhookUrl: async () => ({ hasUrl: false, host: null }),
+      test: async () => ({ ok: true }),
     },
     llm: {
       getConfig: async () => ({ provider: "ollama", model: "", baseUrls: {} }),
-      setConfig: () => setLlmConfig(),
+      setConfig: async () => ({ provider: "ollama", model: "", baseUrls: {} }),
       status: async () => ({ provider: "ollama", reachable: true, models: [], baseUrl: "http://x" }),
       detect: async () => [],
-      setApiKey: (k: string) => setApiKey(k),
-      clearApiKey: () => clearApiKey(),
+      setApiKey: async () => ({ hasKey: true }),
+      clearApiKey: async () => ({ hasKey: false }),
       hasApiKey: async () => ({ hasKey: false }),
     },
     artifacts: {
       usage: async () => ({ bytes: 0, runs: 0, tests: 0 }),
       pruneNow: async () => ({ removedRuns: 0, freedBytes: 0 }),
     },
+    debug: {
+      shortcut: async () => "⌘⌥⇧S",
+      capture: async () => ({ shots: [], error: null }),
+      dir: async () => "/tmp",
+    },
   },
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
-  settings = {
-    defaultRunBrowser: "chromium",
-    defaultRunHeadless: false,
-    defaultCaptureArtifacts: false,
-    defaultTestTimeoutMs: 60_000,
-    notifyOnRunIssues: false,
-    alertWebhookEnabled: false,
-    autoHealEnabled: true,
-    artifactRetainedRuns: 10,
-    artifactRetentionDays: 0,
-    batchOrder: [],
-  };
-  webhookStatus = { hasUrl: false, host: null };
+  settings = { ...SETTINGS_DEFAULTS, batchOrder: [] };
   (window as unknown as { glazeAPI: Record<string, unknown> }).glazeAPI = {
-    glaze: { ipc: { invoke: vi.fn(async () => {}) } },
+    glaze: { ipc: { invoke: closeSettings } },
     nativeTheme: {
       getInfo: vi.fn(async () => ({ themeSource: "system", shouldUseDarkColors: false })),
       setThemeSource: vi.fn(async () => {}),
@@ -78,161 +68,273 @@ beforeEach(() => {
   };
 });
 
-/** Settings loads several async queries; wait for the form to be live.
- *  Anchored on a UNIQUE control: /browser/i matches the Browser label AND the
- *  headless description ("without opening a visible browser window"), and a
- *  multi-match findBy retries until it times out — which reads as "the
- *  component never rendered" rather than "the query was ambiguous". */
+/** Settings runs six async loads on mount. Anchor on the sidebar, which is
+ *  rendered before any of them resolve, then let the pane settle. */
 async function renderSettings() {
   render(<SettingsView />);
-  await screen.findByRole("combobox", { name: /browser/i });
+  await screen.findByText("Test defaults");
+  // The default pane is Appearance; wait for a control it owns.
+  await screen.findByRole("switch", { name: /ai thinking gif/i });
 }
 
-describe("run defaults persist", () => {
-  // NOT TESTED HERE: choosing a different browser. The SDK's Select is backed
-  // by a NATIVE menu, so its options never enter the DOM — clicking the trigger
-  // in jsdom opens nothing to click. Faking a selection would test the fake.
-  // The value the control DISPLAYS is asserted below, and the persistence path
-  // (recorder:setSettings validating the engine) is covered in
-  // main/handlers/handlers.test.ts.
+/** `SidebarListItem` activates on MOUSE-DOWN, not a bare click — see
+ *  settings-nav.test.tsx. */
+async function goToPane(title: string) {
+  fireEvent.mouseDown(screen.getByRole("button", { name: new RegExp(title, "i") }));
+  await screen.findByRole("heading", { name: new RegExp(title, "i") });
+}
 
-  it("saves the headless default", async () => {
+function search(value: string) {
+  fireEvent.change(screen.getByPlaceholderText(/search settings/i), { target: { value } });
+}
+
+describe("navigation", () => {
+  it("opens on Appearance", async () => {
     await renderSettings();
+    expect(screen.getByRole("heading", { name: /appearance/i })).toBeTruthy();
+  });
+
+  it("shows only the selected pane's controls", async () => {
+    await renderSettings();
+    // Headless lives in Test defaults, not Appearance.
+    expect(screen.queryByRole("switch", { name: /headless/i })).toBeNull();
+    await goToPane("Test defaults");
+    expect(screen.getByRole("switch", { name: /headless/i })).toBeTruthy();
+    expect(screen.queryByRole("switch", { name: /ai thinking gif/i })).toBeNull();
+  });
+
+  it("puts the pane's name in the window toolbar", async () => {
+    await renderSettings();
+    await goToPane("Storage");
+    expect(screen.getByRole("heading", { name: /storage/i })).toBeTruthy();
+  });
+
+  it("shows the pane subtitle", async () => {
+    await renderSettings();
+    await goToPane("Test defaults");
+    // The fact that used to be repeated in half the row descriptions.
+    expect(screen.getByText(/Every one can be overridden per test/i)).toBeTruthy();
+  });
+
+  it("reaches every pane", async () => {
+    await renderSettings();
+    for (const title of [
+      "Recording",
+      "Test defaults",
+      "Auto-Heal",
+      "Storage",
+      "AI",
+      "Alerts",
+      "Advanced",
+      "Appearance",
+    ]) {
+      await goToPane(title);
+    }
+  });
+});
+
+describe("a control still reaches the backend", () => {
+  it("persists through the real provider, not a spy", async () => {
+    await renderSettings();
+    await goToPane("Test defaults");
     fireEvent.click(screen.getByRole("switch", { name: /headless/i }));
     await waitFor(() =>
-      expect(setSettings).toHaveBeenCalledWith(expect.objectContaining({ defaultRunHeadless: true })),
-    );
-  });
-
-  it("reflects a stored setting rather than a hardcoded default", async () => {
-    settings = { ...settings, defaultRunBrowser: "webkit" };
-    await renderSettings();
-    expect(screen.getByRole("combobox", { name: /browser/i }).textContent).toContain("WebKit");
-  });
-
-  it("draws no glyph of its own beside the Select's", async () => {
-    // The trigger's icon is the selected item's SF Symbol, rendered by
-    // SelectValue. A lucide one alongside it showed the engine twice.
-    settings = { ...settings, defaultRunBrowser: "webkit" };
-    await renderSettings();
-    const trigger = screen.getByRole("combobox", { name: /browser/i });
-    expect(trigger.querySelectorAll("[data-browser]").length).toBe(0);
-    expect(trigger.textContent).toContain("WebKit");
-  });
-
-  it("saves the default test timeout in milliseconds", async () => {
-    await renderSettings();
-    const input = screen.getByRole("spinbutton", {
-      name: /default test timeout/i,
-    }) as HTMLInputElement;
-    expect(input.value).toBe("60");
-    fireEvent.change(input, { target: { value: "120" } });
-    await waitFor(() =>
       expect(setSettings).toHaveBeenCalledWith(
-        expect.objectContaining({ defaultTestTimeoutMs: 120_000 }),
+        expect.objectContaining({ defaultRunHeadless: true }),
       ),
     );
   });
 
-  it("reflects a stored timeout rather than the one-minute default", async () => {
+  it("sends one key per call, so the backend merge is unambiguous", async () => {
+    // Every feature writes settings independently; a patch carrying unrelated
+    // keys would let one pane's stale copy overwrite another's write.
+    await renderSettings();
+    await goToPane("Test defaults");
+    fireEvent.click(screen.getByRole("switch", { name: /headless/i }));
+    await waitFor(() => expect(setSettings).toHaveBeenCalled());
+    expect(Object.keys(setSettings.mock.calls[0][0])).toEqual(["defaultRunHeadless"]);
+  });
+
+  it("reflects a stored value rather than a hardcoded default", async () => {
     settings = { ...settings, defaultTestTimeoutMs: 180_000 };
     await renderSettings();
+    await goToPane("Test defaults");
     const input = screen.getByRole("spinbutton", {
       name: /default test timeout/i,
     }) as HTMLInputElement;
-    expect(input.value).toBe("180");
-  });
-});
-
-describe("the alert webhook is write-only", () => {
-  it("keeps the enable switch disabled until a URL is configured", async () => {
-    // Enabling alerts with no destination would silently do nothing.
-    await renderSettings();
-    const sw = screen.getByRole("switch", { name: /send alerts to a webhook/i });
-    expect(sw.getAttribute("data-disabled") ?? sw.getAttribute("disabled")).not.toBeNull();
+    await waitFor(() => expect(input.value).toBe("180"));
   });
 
-  it("enables the switch once a URL exists", async () => {
-    webhookStatus = { hasUrl: true, host: "hooks.example.com" };
-    await renderSettings();
-    const sw = await screen.findByRole("switch", { name: /send alerts to a webhook/i });
-    await waitFor(() =>
-      expect(sw.getAttribute("data-disabled") ?? sw.getAttribute("disabled")).toBeNull(),
-    );
-  });
-
-  it("saves a pasted URL and then clears the field", async () => {
-    await renderSettings();
-    const field = screen.getByLabelText(/webhook url/i);
-    fireEvent.change(field, { target: { value: "https://hooks.example.com/services/SECRET" } });
-    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
-
-    await waitFor(() => expect(setWebhookUrl).toHaveBeenCalledTimes(1));
-    // Cleared after saving: the URL is a bearer credential and must not linger
-    // on screen.
-    await waitFor(() => expect((field as HTMLInputElement).value).toBe(""));
-  });
-
-  it("never renders the stored URL — only its host", async () => {
-    webhookStatus = { hasUrl: true, host: "hooks.example.com" };
-    await renderSettings();
-    await screen.findByText(/hooks\.example\.com/);
-    // The backend never returns the URL; assert nothing resembling a token is
-    // on screen either.
-    expect(document.body.textContent).not.toMatch(/services\/SECRET/);
-  });
-
-  it("masks the input so a pasted credential isn't shoulder-readable", async () => {
-    await renderSettings();
-    expect(screen.getByLabelText(/webhook url/i).getAttribute("type")).toBe("password");
-  });
-
-  it("offers Send test and Remove only once configured", async () => {
-    await renderSettings();
-    expect(screen.queryByRole("button", { name: /send test/i })).toBeNull();
-
-    webhookStatus = { hasUrl: true, host: "hooks.example.com" };
+  it("survives a settings load that resolves to nothing", async () => {
+    // A RESOLVED null does not reach the catch. It used to go straight into
+    // state, and the first pane to read a key off it crashed the window — the
+    // sidebar still rendered, so the failure looked like a blank content area
+    // rather than an error.
+    settings = null as unknown as Partial<RecorderSettings>;
     render(<SettingsView />);
-    expect(await screen.findAllByRole("button", { name: /send test/i })).not.toHaveLength(0);
-  });
-
-  it("clears the stored URL", async () => {
-    webhookStatus = { hasUrl: true, host: "hooks.example.com" };
-    await renderSettings();
-    fireEvent.click((await screen.findAllByRole("button", { name: /remove/i }))[0]);
-    await waitFor(() => expect(clearWebhookUrl).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText("Test defaults")).toBeTruthy();
+    // The PANE, not just the sidebar.
+    expect(await screen.findByRole("switch", { name: /ai thinking gif/i })).toBeTruthy();
   });
 });
 
-describe("retention settings", () => {
-  it("saves a change to how many runs are kept", async () => {
+describe("search", () => {
+  it("narrows the sidebar to panes that hold a match", async () => {
     await renderSettings();
-    const field = screen.getByLabelText(/screenshot history per test/i);
-    fireEvent.change(field, { target: { value: "25" } });
-    await waitFor(() =>
-      expect(setSettings).toHaveBeenCalledWith(expect.objectContaining({ artifactRetainedRuns: 25 })),
-    );
+    search("headers");
+    await waitFor(() => expect(screen.queryByText("Storage")).toBeNull());
+    // By role, not by text: the search also moves the selection to this pane,
+    // so its title is on screen twice — sidebar row and window toolbar. A bare
+    // getByText would fail as ambiguous and read as "the row vanished".
+    expect(screen.getByRole("button", { name: /test defaults/i })).toBeTruthy();
   });
 
-  it("clamps an absurd value rather than persisting it", async () => {
+  it("narrows the pane to the matching rows", async () => {
+    settings = { ...settings, defaultRecordLogs: true };
     await renderSettings();
-    const field = screen.getByLabelText(/screenshot history per test/i);
-    fireEvent.change(field, { target: { value: "9999" } });
+    search("headers");
+    expect(
+      await screen.findByRole("switch", { name: /include all request headers/i }),
+    ).toBeTruthy();
+    expect(screen.queryByRole("switch", { name: /headless/i })).toBeNull();
+  });
+
+  it("moves off a pane the search emptied", async () => {
+    // Staying put would show an empty pane beside a sidebar advertising
+    // matches elsewhere.
+    await renderSettings();
+    expect(screen.getByRole("heading", { name: /appearance/i })).toBeTruthy();
+    search("webkit");
+    await waitFor(() => expect(screen.getByRole("heading", { name: /test defaults/i })).toBeTruthy());
+  });
+
+  it("shows an empty state when nothing matches", async () => {
+    await renderSettings();
+    search("zzzznotasetting");
+    expect(await screen.findByText(/No settings match/i)).toBeTruthy();
+  });
+
+  it("names the query in the empty state", async () => {
+    await renderSettings();
+    search("zzzznotasetting");
+    expect(await screen.findByText(/zzzznotasetting/)).toBeTruthy();
+  });
+
+  it("restores the whole window when the search is cleared", async () => {
+    await renderSettings();
+    search("headers");
+    await waitFor(() => expect(screen.queryByText("Storage")).toBeNull());
+    search("");
+    await waitFor(() => expect(screen.getByText("Storage")).toBeTruthy());
+    expect(screen.getByRole("switch", { name: /ai thinking gif/i })).toBeTruthy();
+  });
+
+  it("treats a whitespace-only query as no search", async () => {
+    await renderSettings();
+    search("   ");
+    await waitFor(() => expect(screen.getByText("Storage")).toBeTruthy());
+    expect(screen.queryByText(/No settings match/i)).toBeNull();
+  });
+});
+
+describe("the reset footer", () => {
+  it("is absent when the pane is at its defaults", async () => {
+    await renderSettings();
+    await goToPane("Auto-Heal");
+    expect(screen.queryByRole("button", { name: /reset section/i })).toBeNull();
+  });
+
+  it("appears once something differs", async () => {
+    settings = { ...settings, autoHealRetries: 9 };
+    await renderSettings();
+    await goToPane("Auto-Heal");
+    expect(await screen.findByText(/1 setting differs from the default/i)).toBeTruthy();
+  });
+
+  it("counts more than one", async () => {
+    settings = { ...settings, autoHealRetries: 9, autoHealEnabled: false };
+    await renderSettings();
+    await goToPane("Auto-Heal");
+    expect(await screen.findByText(/2 settings differ from the default/i)).toBeTruthy();
+  });
+
+  it("writes every one of the pane's keys back to its default", async () => {
+    settings = { ...settings, autoHealRetries: 9 };
+    await renderSettings();
+    await goToPane("Auto-Heal");
+    fireEvent.click(await screen.findByRole("button", { name: /reset section/i }));
     await waitFor(() => expect(setSettings).toHaveBeenCalled());
-    // Not .at(-1): this project targets ES2020, where Array.prototype.at
-    // doesn't exist in the type lib.
-    const calls = setSettings.mock.calls;
-    const saved = calls[calls.length - 1][0] as { artifactRetainedRuns: number };
-    expect(saved.artifactRetainedRuns).toBeLessThanOrEqual(50);
+    expect(setSettings).toHaveBeenCalledWith({
+      autoHealEnabled: true,
+      autoHealApply: "suggest",
+      autoHealRetries: 3,
+      autoHealAttemptTimeoutMs: 4000,
+    });
+  });
+
+  it("never touches a credential", async () => {
+    // safeStorage holds the webhook URL and the API key; this window cannot
+    // read one back, so it must not be able to delete one either.
+    settings = { ...settings, notifyOnRunIssues: true };
+    await renderSettings();
+    await goToPane("Alerts");
+    fireEvent.click(await screen.findByRole("button", { name: /reset section/i }));
+    await waitFor(() => expect(setSettings).toHaveBeenCalled());
+    const patch = setSettings.mock.calls[0][0];
+    expect(Object.keys(patch).slice().sort()).toEqual(["alertWebhookEnabled", "notifyOnRunIssues"]);
+  });
+
+  it("is hidden while a search is running", async () => {
+    // The footer describes a whole pane; with the pane filtered to two rows it
+    // would be counting settings that aren't on screen.
+    settings = { ...settings, autoHealRetries: 9 };
+    await renderSettings();
+    await goToPane("Auto-Heal");
+    await screen.findByRole("button", { name: /reset section/i });
+    search("heal");
+    await waitFor(() => expect(screen.queryByRole("button", { name: /reset section/i })).toBeNull());
   });
 });
 
-describe("notifications", () => {
-  it("saves the local-notification toggle", async () => {
+describe("escape closes the window", () => {
+  it("closes on Escape", async () => {
     await renderSettings();
-    fireEvent.click(screen.getByRole("switch", { name: /notify when a run has problems/i }));
-    await waitFor(() =>
-      expect(setSettings).toHaveBeenCalledWith(expect.objectContaining({ notifyOnRunIssues: true })),
-    );
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(closeSettings).toHaveBeenCalledWith("window:closeSettings");
+  });
+
+  it("does not close while a text field has focus", async () => {
+    // Escape in a field is the field's own — clearing it, or dismissing its
+    // completion — and must not take the window with it.
+    await renderSettings();
+    await goToPane("Storage");
+    const input = screen.getByLabelText(/screenshot history per test/i);
+    input.focus();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(closeSettings).not.toHaveBeenCalled();
+  });
+
+  it("does not close when a popover is open", async () => {
+    await renderSettings();
+    const popper = document.createElement("div");
+    popper.setAttribute("data-radix-popper-content-wrapper", "");
+    document.body.appendChild(popper);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(closeSettings).not.toHaveBeenCalled();
+    popper.remove();
+  });
+
+  it("ignores an Escape another handler already dealt with", async () => {
+    await renderSettings();
+    const event = new KeyboardEvent("keydown", { key: "Escape", cancelable: true });
+    event.preventDefault();
+    window.dispatchEvent(event);
+    expect(closeSettings).not.toHaveBeenCalled();
+  });
+
+  it("ignores other keys", async () => {
+    await renderSettings();
+    fireEvent.keyDown(window, { key: "Enter" });
+    expect(closeSettings).not.toHaveBeenCalled();
   });
 });

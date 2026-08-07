@@ -1,0 +1,205 @@
+// Tests for the Settings sidebar.
+//
+// The accessory does double duty — match count while searching, modified count
+// otherwise — so most of the risk is in showing the wrong one, or showing a
+// modified count before the settings have loaded (which flashes a badge on
+// every pane each time the window opens).
+//
+// The other half is the search behaviour that makes the redesign worth having:
+// a pane with no match must LEAVE the list, not sit there greyed. Greying keeps
+// the list the same length, which hides the fact that search narrowed anything.
+
+import { describe, it, expect, vi } from "vitest";
+import { render, screen, fireEvent, within } from "@testing-library/react";
+
+import { PANES, SETTINGS_DEFAULTS, matchCountByPane, searchSettings } from "../lib/settings-schema";
+import { SettingsNav } from "./settings-nav";
+import type { SettingsNavProps } from "./settings-nav";
+
+function renderNav(overrides: Partial<SettingsNavProps> = {}) {
+  const props: SettingsNavProps = {
+    selected: "appearance",
+    onSelect: vi.fn(),
+    search: "",
+    onSearchChange: vi.fn(),
+    matchCounts: null,
+    settings: { ...SETTINGS_DEFAULTS },
+    loaded: true,
+    ...overrides,
+  };
+  return { ...render(<SettingsNav {...props} />), props };
+}
+
+/** The sidebar row for a pane, by its visible title. */
+function row(title: string): HTMLElement {
+  return screen.getByRole("button", { name: new RegExp(title, "i") });
+}
+
+/** `SidebarListItem` activates on MOUSE-DOWN, not on a bare click — the same
+ *  native-macOS idiom as Radix's `TabsTrigger` (see CLAUDE.md). `fireEvent.click`
+ *  leaves the row untouched and the assertion then reports "0 calls", which
+ *  reads as a broken handler rather than as the wrong event. */
+function selectRow(title: string) {
+  fireEvent.mouseDown(row(title));
+}
+
+describe("the pane list", () => {
+  it("lists every pane", () => {
+    renderNav();
+    for (const pane of PANES) {
+      expect(screen.getByText(pane.title), pane.id).toBeTruthy();
+    }
+  });
+
+  it("renders the group headings", () => {
+    renderNav();
+    expect(screen.getByText("Testing")).toBeTruthy();
+    expect(screen.getByText("Connections")).toBeTruthy();
+  });
+
+  it("puts Appearance first and Advanced last", () => {
+    // The segments model exists for exactly this. Bucketing by group value
+    // would render Advanced directly under Appearance, at the top.
+    const { container } = renderNav();
+    const titles = Array.from(container.querySelectorAll("button"))
+      .map((b) => b.textContent?.trim() ?? "")
+      .filter((t) => PANES.some((p) => t.startsWith(p.title)));
+    expect(titles[0]).toContain("Appearance");
+    expect(titles[titles.length - 1]).toContain("Advanced");
+  });
+
+  it("selects a pane when its row is clicked", () => {
+    const { props } = renderNav();
+    selectRow("Storage");
+    expect(props.onSelect).toHaveBeenCalledWith("storage");
+  });
+
+  it("marks the selected pane for assistive tech", () => {
+    // The SDK's `selected` only applies a background class, so without this the
+    // window announces nothing about which pane is showing.
+    renderNav({ selected: "storage" });
+    expect(row("Storage").getAttribute("aria-current")).toBe("page");
+  });
+
+  it("marks only the selected pane", () => {
+    renderNav({ selected: "storage" });
+    expect(row("Appearance").getAttribute("aria-current")).toBeNull();
+  });
+
+  it("styles the selected row", () => {
+    // Belt and braces: aria-current is for screen readers, the class is what a
+    // sighted user sees. Losing either one is a real regression.
+    renderNav({ selected: "storage" });
+    expect(row("Storage").className).toContain("bg-list-selection");
+  });
+});
+
+describe("the modified-count badge", () => {
+  it("is absent when everything is at its default", () => {
+    const { container } = renderNav();
+    expect(container.querySelectorAll("[aria-label*='changed from default']")).toHaveLength(0);
+  });
+
+  it("counts a pane's changed settings", () => {
+    renderNav({
+      settings: { ...SETTINGS_DEFAULTS, autoHealRetries: 9, autoHealEnabled: false },
+    });
+    expect(within(row("Auto-Heal")).getByLabelText(/2 changed from default/i)).toBeTruthy();
+  });
+
+  it("counts only the owning pane's settings", () => {
+    renderNav({ settings: { ...SETTINGS_DEFAULTS, autoHealRetries: 9 } });
+    expect(within(row("Auto-Heal")).getByLabelText(/1 changed from default/i)).toBeTruthy();
+    expect(within(row("Storage")).queryByLabelText(/changed from default/i)).toBeNull();
+  });
+
+  it("shows nothing until the settings have loaded", () => {
+    // Mid-load `settings` is `{}`. A count drawn then would flash on open.
+    const { container } = renderNav({ loaded: false, settings: {} });
+    expect(container.querySelectorAll("[aria-label*='changed from default']")).toHaveLength(0);
+  });
+
+  it("does not count a setting that merely arrived from JSON", () => {
+    // `disabledAestheticEnhancements` is a fresh array on every load; reference
+    // equality would permanently badge Appearance.
+    renderNav({ settings: { ...SETTINGS_DEFAULTS, disabledAestheticEnhancements: [] } });
+    expect(within(row("Appearance")).queryByLabelText(/changed from default/i)).toBeNull();
+  });
+});
+
+describe("search", () => {
+  it("passes typing up to the shell", () => {
+    const { props } = renderNav();
+    fireEvent.change(screen.getByPlaceholderText(/search settings/i), {
+      target: { value: "headless" },
+    });
+    expect(props.onSearchChange).toHaveBeenCalledWith("headless");
+  });
+
+  it("drops panes with no match from the list entirely", () => {
+    const counts = matchCountByPane(searchSettings("headers"));
+    renderNav({ search: "headers", matchCounts: counts });
+    expect(screen.getByText("Test defaults")).toBeTruthy();
+    expect(screen.queryByText("Storage")).toBeNull();
+    expect(screen.queryByText("Auto-Heal")).toBeNull();
+  });
+
+  it("shows the match count instead of the modified count", () => {
+    const counts = matchCountByPane(searchSettings("heal"));
+    renderNav({
+      search: "heal",
+      matchCounts: counts,
+      // Auto-Heal also has a modified setting; the search count must win.
+      settings: { ...SETTINGS_DEFAULTS, autoHealRetries: 9 },
+    });
+    const autoHeal = row("Auto-Heal");
+    expect(autoHeal.textContent).toContain("4");
+    expect(within(autoHeal).queryByLabelText(/changed from default/i)).toBeNull();
+  });
+
+  it("hides a group heading whose panes all filtered away", () => {
+    const counts = matchCountByPane(searchSettings("slack"));
+    renderNav({ search: "slack", matchCounts: counts });
+    expect(screen.getByText("Alerts")).toBeTruthy();
+    expect(screen.queryByText("Testing")).toBeNull();
+  });
+
+  it("renders an empty list rather than everything when nothing matches", () => {
+    // `{}` means "searched, found nothing". Falling back to the full list here
+    // would make an unmatched search look like a cleared one.
+    renderNav({ search: "zzzz", matchCounts: {} });
+    for (const pane of PANES) {
+      expect(screen.queryByText(pane.title), pane.id).toBeNull();
+    }
+  });
+
+  it("restores the full list when the search is cleared", () => {
+    const { rerender } = renderNav({ search: "slack", matchCounts: matchCountByPane(searchSettings("slack")) });
+    expect(screen.queryByText("Storage")).toBeNull();
+    rerender(
+      <SettingsNav
+        selected="appearance"
+        onSelect={vi.fn()}
+        search=""
+        onSearchChange={vi.fn()}
+        matchCounts={null}
+        settings={{ ...SETTINGS_DEFAULTS }}
+        loaded
+      />,
+    );
+    expect(screen.getByText("Storage")).toBeTruthy();
+  });
+});
+
+describe("icons", () => {
+  it("gives every pane one", () => {
+    // A missing entry in PANE_ICONS renders as a crash, not a blank — the map
+    // is keyed by PaneId, so this also pins that the map stays exhaustive.
+    const { container } = renderNav();
+    for (const pane of PANES) {
+      const el = screen.getByText(pane.title).closest("button");
+      expect(el?.querySelector("svg"), pane.id).toBeTruthy();
+    }
+    expect(container.querySelectorAll("svg").length).toBeGreaterThanOrEqual(PANES.length);
+  });
+});

@@ -1,0 +1,225 @@
+// Tests for the AI pane.
+//
+// The Anthropic API key is the window's other write-only credential. It is
+// never read back from the backend, so the only place one can linger is this
+// component's own input state — which is why "clears the field after saving"
+// is a security assertion here and not a tidiness one.
+//
+// The provider radio drives which half of the pane exists at all, so most of
+// the rest is about not showing a local-server control to someone on Claude,
+// or vice versa.
+
+import { describe, it, expect } from "vitest";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
+
+import { makeController, renderPane, savedPatch } from "../__tests__/harness";
+import { AiPane } from "./ai-pane";
+
+const REACHABLE = {
+  provider: "ollama" as const,
+  reachable: true,
+  models: [
+    { id: "qwen2.5:7b", label: "Qwen 2.5 7B" },
+    { id: "llama3.1:8b", label: "Llama 3.1 8B" },
+  ],
+  baseUrl: "http://127.0.0.1:11434",
+};
+
+describe("provider selection", () => {
+  it("offers all three providers", () => {
+    renderPane(<AiPane />);
+    for (const name of ["Ollama", "LM Studio", "Claude"]) {
+      expect(screen.getByRole("radio", { name }), name).toBeTruthy();
+    }
+  });
+
+  it("switches provider", async () => {
+    const { controller } = renderPane(<AiPane />);
+    fireEvent.click(screen.getByRole("radio", { name: "Claude" }));
+    await waitFor(() => expect(controller.changeProvider).toHaveBeenCalledWith("anthropic"));
+  });
+
+  it("promises no data leaves the machine on a local provider", () => {
+    renderPane(<AiPane />);
+    expect(screen.getByText(/No data leaves your computer/i)).toBeTruthy();
+  });
+
+  it("says where prompts go on Claude", () => {
+    // The counterpart claim. Getting these two swapped would be a privacy
+    // statement that is exactly backwards.
+    const controller = makeController({ provider: "anthropic" });
+    renderPane(<AiPane />, { controller });
+    expect(screen.getByText(/api\.anthropic\.com/i)).toBeTruthy();
+    expect(screen.queryByText(/No data leaves your computer/i)).toBeNull();
+  });
+});
+
+describe("local server controls", () => {
+  it("shows the server URL for a local provider", () => {
+    renderPane(<AiPane />);
+    expect(screen.getByLabelText(/server url/i)).toBeTruthy();
+  });
+
+  it("hides the server URL on Claude", () => {
+    const controller = makeController({ provider: "anthropic" });
+    renderPane(<AiPane />, { controller });
+    expect(screen.queryByLabelText(/server url/i)).toBeNull();
+  });
+
+  it("edits locally and commits on blur", () => {
+    // Committing per keystroke would write a config for every partial URL and
+    // re-probe the server on each one.
+    const { controller } = renderPane(<AiPane />);
+    const field = screen.getByLabelText(/server url/i);
+    fireEvent.change(field, { target: { value: "http://127.0.0.1:9999" } });
+    expect(controller.setBaseUrl).toHaveBeenCalledWith("http://127.0.0.1:9999");
+    expect(controller.commitBaseUrl).not.toHaveBeenCalled();
+
+    fireEvent.blur(field, { target: { value: "http://127.0.0.1:9999" } });
+    expect(controller.commitBaseUrl).toHaveBeenCalledWith("http://127.0.0.1:9999");
+  });
+
+  it("tests the connection", async () => {
+    const { controller } = renderPane(<AiPane />);
+    fireEvent.click(screen.getByRole("button", { name: /test connection/i }));
+    await waitFor(() => expect(controller.testConnection).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows online when reachable", () => {
+    const controller = makeController({ llmStatus: REACHABLE });
+    renderPane(<AiPane />, { controller });
+    expect(screen.getByText(/online/i)).toBeTruthy();
+  });
+
+  it("shows the reason it is offline rather than a bare status", () => {
+    const controller = makeController({
+      llmStatus: { ...REACHABLE, reachable: false, models: [], error: "Could not reach Ollama." },
+    });
+    renderPane(<AiPane />, { controller });
+    expect(screen.getByText(/offline/i)).toBeTruthy();
+    expect(screen.getByText(/Could not reach Ollama\./)).toBeTruthy();
+  });
+
+  it("shows the default URL as a hint when nothing is wrong", () => {
+    renderPane(<AiPane />);
+    expect(screen.getByText(/Default: http:\/\/127\.0\.0\.1:11434/)).toBeTruthy();
+  });
+});
+
+describe("the API key is write-only", () => {
+  it("is masked", () => {
+    const controller = makeController({ provider: "anthropic" });
+    renderPane(<AiPane />, { controller });
+    expect(screen.getByLabelText(/api key/i).getAttribute("type")).toBe("password");
+  });
+
+  it("hands the key over and clears the field", async () => {
+    // The only copy of the key in the renderer is this input's value; the
+    // backend never hands one back. Leaving it there keeps a credential in
+    // component state for the rest of the session.
+    const controller = makeController({ provider: "anthropic" });
+    renderPane(<AiPane />, { controller });
+    const field = screen.getByLabelText(/api key/i) as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "sk-ant-SECRET" } });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(controller.saveApiKey).toHaveBeenCalledWith("sk-ant-SECRET"));
+    await waitFor(() => expect(field.value).toBe(""));
+  });
+
+  it("refuses to save an empty or whitespace key", () => {
+    const controller = makeController({ provider: "anthropic" });
+    renderPane(<AiPane />, { controller });
+    const save = screen.getByRole("button", { name: /^save$/i }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText(/api key/i), { target: { value: "   " } });
+    expect(save.disabled).toBe(true);
+  });
+
+  it("never renders a stored key", () => {
+    // `hasApiKey` is a boolean; there is no way to get the key itself back.
+    const controller = makeController({ provider: "anthropic", hasApiKey: true });
+    renderPane(<AiPane />, { controller });
+    expect((screen.getByLabelText(/api key/i) as HTMLInputElement).value).toBe("");
+    expect(document.body.textContent).not.toMatch(/sk-ant-/);
+  });
+
+  it("offers Clear only once a key is stored", () => {
+    const { unmount } = renderPane(<AiPane />, {
+      controller: makeController({ provider: "anthropic" }),
+    });
+    expect(screen.queryByRole("button", { name: /clear/i })).toBeNull();
+    unmount();
+
+    const controller = makeController({ provider: "anthropic", hasApiKey: true });
+    renderPane(<AiPane />, { controller });
+    expect(screen.getByRole("button", { name: /clear/i })).toBeTruthy();
+  });
+
+  it("clears the stored key", async () => {
+    const controller = makeController({ provider: "anthropic", hasApiKey: true });
+    renderPane(<AiPane />, { controller });
+    fireEvent.click(screen.getByRole("button", { name: /clear/i }));
+    await waitFor(() => expect(controller.clearApiKey).toHaveBeenCalledTimes(1));
+  });
+
+  it("reports not connected when a stored key fails to reach Claude", () => {
+    const controller = makeController({
+      provider: "anthropic",
+      hasApiKey: true,
+      llmStatus: { ...REACHABLE, provider: "anthropic", reachable: false, models: [] },
+    });
+    renderPane(<AiPane />, { controller });
+    expect(screen.getByText(/not connected/i)).toBeTruthy();
+  });
+});
+
+describe("model picker", () => {
+  it("is absent until a provider is reachable", () => {
+    renderPane(<AiPane />);
+    expect(screen.queryByRole("combobox", { name: /model/i })).toBeNull();
+  });
+
+  it("is absent when reachable but no models are loaded", () => {
+    // "Connected, but no models are loaded" — an empty picker would read as a
+    // broken control rather than an empty Ollama.
+    const controller = makeController({ llmStatus: { ...REACHABLE, models: [] } });
+    renderPane(<AiPane />, { controller });
+    expect(screen.queryByRole("combobox", { name: /model/i })).toBeNull();
+  });
+
+  it("shows the selected model", () => {
+    const controller = makeController({ llmStatus: REACHABLE, model: "llama3.1:8b" });
+    renderPane(<AiPane />, { controller });
+    expect(screen.getByRole("combobox", { name: /model/i }).textContent).toContain("Llama 3.1 8B");
+  });
+});
+
+describe("the experimental section", () => {
+  it("saves the keep-running toggle", () => {
+    const { controller } = renderPane(<AiPane />);
+    fireEvent.click(screen.getByRole("switch", { name: /keep a running AI debug job/i }));
+    expect(savedPatch(controller)).toEqual({ keepRunningAiDebugJobs: true });
+  });
+
+  it("is labelled as experimental rather than burying that in the row name", () => {
+    // It used to be the whole row label: "Experimental: keep a running AI debug
+    // job when a test is re-run".
+    renderPane(<AiPane />);
+    expect(screen.getByText("Experimental")).toBeTruthy();
+  });
+});
+
+describe("search filtering", () => {
+  it("shows only the matched row", () => {
+    renderPane(<AiPane />, { matchedIds: ["keep-running-ai-debug-jobs"] });
+    expect(screen.getByRole("switch", { name: /keep a running AI debug job/i })).toBeTruthy();
+    expect(screen.queryByRole("radio", { name: "Ollama" })).toBeNull();
+  });
+
+  it("drops the experimental section when nothing in it matched", () => {
+    renderPane(<AiPane />, { matchedIds: ["llm-provider"] });
+    expect(screen.queryByText("Experimental")).toBeNull();
+  });
+});
