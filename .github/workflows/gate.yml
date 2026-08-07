@@ -86,9 +86,17 @@ jobs:
 
       - run: npm run build:preview
 
+      # Artifact names cannot contain a forward slash, and every ref that
+      # matters here has one: `shell/electron`, `claude/…`, and a pull
+      # request's own `17/merge`. GitHub's expression syntax has no replace(),
+      # so the substitution happens in the shell.
+      - name: Slug for this ref
+        id: slug
+        run: echo "value=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: ui-preview-${{ github.event.pull_request.number || github.ref_name }}
+          name: ui-preview-${{ steps.slug.outputs.value }}
           path: build-preview/
           retention-days: 7
           if-no-files-found: error
@@ -178,9 +186,14 @@ jobs:
       - name: Archive the bundle
         run: ditto -c -k --keepParent "dist/mac-arm64/Good Looks!.app" good-looks-mac-arm64.zip
 
+      # Same slash problem as the preview job — see the comment there.
+      - name: Slug for this ref
+        id: slug
+        run: echo "value=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: good-looks-${{ github.event.pull_request.number || github.ref_name }}-mac-arm64
+          name: good-looks-${{ steps.slug.outputs.value }}-mac-arm64
           path: good-looks-mac-arm64.zip
           # A preview build is interesting while its pull request is open and
           # noise afterwards.
