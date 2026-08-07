@@ -27,7 +27,7 @@ export function Pager({
   const safe = clampPage(page, total);
   const range = pageRange(safe, total);
   return (
-    <div className="flex items-center justify-between gap-2 border-t border-token-border px-3 py-2">
+    <div className="flex items-center justify-between gap-2 border-t border-separator px-3 py-2">
       <Text variant="small" color="tertiary">
         {range ? `${range.from}–${range.to} of ${total} ${label}` : `0 ${label}`}
       </Text>

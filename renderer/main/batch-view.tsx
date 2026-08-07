@@ -128,7 +128,7 @@ function TagChip({
       className={`rounded-full border px-2.5 py-0.5 text-small transition-colors disabled:opacity-50 ${
         active
           ? "border-accent bg-accent/15 text-primary"
-          : "border-token-border text-secondary hover:bg-token-hover"
+          : "border-separator text-secondary hover:bg-control-subtle"
       }`}
     >
       {label} · {count}
@@ -505,7 +505,7 @@ export function BatchView() {
                 </Text>
               </div>
 
-              <div className="rounded-lg border border-token-border bg-token-surface-raised">
+              <div className="rounded-lg border border-separator bg-panel">
                 {visibleTests.map((t) => {
                   const result = resultFor.get(t.id);
                   const isCurrent = result?.status === "running";
@@ -515,7 +515,7 @@ export function BatchView() {
                       onDragEnter={running ? undefined : () => setOverId(t.id)}
                       onDragOver={running ? undefined : (e) => e.preventDefault()}
                       onDrop={running ? undefined : (e) => e.preventDefault()}
-                      className={`group/row flex items-center gap-3 border-b border-token-border px-3 py-2 last:border-b-0 ${
+                      className={`group/row flex items-center gap-3 border-b border-separator px-3 py-2 last:border-b-0 ${
                         isCurrent ? "bg-accent/10" : ""
                       } ${
                         overId === t.id && dragId !== null && dragId !== t.id
@@ -578,7 +578,7 @@ export function BatchView() {
               </div>
 
               {shown && !running && summary ? (
-                <div className="rounded-lg border border-token-border bg-token-surface-raised p-4">
+                <div className="rounded-lg border border-separator bg-panel p-4">
                   <Text variant="small" className="mb-1 block font-medium">
                     {shown.stopped
                       ? "Batch stopped"
@@ -628,15 +628,15 @@ export function BatchView() {
                       Clear history
                     </Button>
                   </div>
-                  <div className="rounded-lg border border-token-border bg-token-surface-raised">
+                  <div className="rounded-lg border border-separator bg-panel">
                     {history.map((b: BatchRecord) => (
                       <button
                         key={b.batchId}
                         type="button"
                         disabled={running}
                         onClick={() => setBatch(b)}
-                        className={`flex w-full items-center gap-3 border-b border-token-border px-3 py-2 text-left last:border-b-0 hover:bg-token-hover disabled:opacity-50 ${
-                          b.batchId === shown?.batchId ? "bg-token-hover" : ""
+                        className={`flex w-full items-center gap-3 border-b border-separator px-3 py-2 text-left last:border-b-0 hover:bg-control-subtle disabled:opacity-50 ${
+                          b.batchId === shown?.batchId ? "bg-control-subtle" : ""
                         }`}
                       >
                         <Text variant="small" color="secondary" className="w-32 shrink-0">

@@ -16,6 +16,26 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-06 — Invented Tailwind token names replaced with real design-system ones
+
+**Symptom:** 27 class names across seven renderer views (`border-token-border`, `bg-token-surface-raised`, `bg-token-surface`, `bg-token-hover`, `ring-token-border`) were never defined by the Glaze design system. Tailwind emits nothing for an unknown utility, so they had been styling nothing — cards with no fill, list rows with no hover, a screenshot with no outline. Nothing catches this: it is not a type error, not a lint error, and the views render perfectly well without the rule.
+
+**It is only visible in the build output.** The check that matters is grepping the emitted `build/assets/styles-*.css` for the rule, not reading the source — a plausible-looking class name and a real one are indistinguishable in a `.tsx`. Baseline: zero `.border-token-border` / `.bg-token-surface*` / `.bg-token-hover` rules, while every real utility used on the same lines (`border-accent`, `text-tertiary`, `bg-control-subtle`) was present. The same grep after the fix is what confirms it.
+
+**`border-separator`, not `border-secondary`.** Both resolve to `var(--fg-10)`, so the choice is about consistency, not colour: the repo already used `border-separator` 62 times and `border-secondary` zero, for card outlines *and* row dividers alike (`generate-test-dialog.tsx`, `a11y-panel.tsx`, `variables-panel.tsx`). Splitting the two by role here would have introduced a distinction the rest of the codebase does not make.
+
+**`bg-panel` for raised cards — and why the obvious measurement of it is wrong.** Rendered against a white page, `bg-panel` measures *identical* to the window background (ΔE=0), which reads as "this token does nothing". It is not an artifact of the token: `--color-surface-panel` is `--bg-secondary-40` and `--color-window-bg` is `--bg-40`, and the SDK defines `--bg-secondary` and `--bg` to the same value in both themes — so a panel is literally the window's own background token applied a second time. That only produces a visible surface because the WebView has **no opaque background of its own** and both layers composite onto the native macOS window material. Measured over a representative material the card reads at ΔE 8.7 (light) and 13.9 (dark) against the app background. Worth knowing: if this app ever sets an opaque window background, every `bg-panel` surface silently flattens.
+
+**Two sites did not take the general mapping.**
+- The floating "Apply to all steps" chip in `visual-view` was `bg-token-surface-raised/90`, over an arbitrary user screenshot. It became `bg-popover` rather than a 90%-opacity `bg-panel` — the SDK's own note on `--color-surface-popover-hover` says elevated chips need solid fills "because translucent fills would let content show through".
+- The screenshot's hairline used `ring-token-border`. There is no themed `--color-border-*`, so `ring-border-separator` would not generate either — `ring-*` resolves from the `--color-*` theme namespace, and the border roles live in `:root` instead. It uses `ring-[var(--color-border-separator)]`, which the SDK's VAR-SAFETY comment explicitly sanctions: semantic role tokens are real `:root` declarations and are safe to read through raw `var()`.
+
+**`script-view.tsx` was left alone.** Its `text-[var(--color-token-primary)]` syntax-highlighting classes match the same `-token-` grep but are a different thing entirely — arbitrary-value utilities over `--color-token-*`, which the SDK really does define (light and dark). They emit CSS and work.
+
+**Verifying both themes needs `.dark` on the root, not on a container.** A subtree `.dark` does not work with this design system: custom properties are substituted where they are *declared*, so `--color-window-bg: var(--bg-40)` resolves against `:root`'s seeds and inherits down as an already-computed value; overriding `--bg` further down cannot retroact. A first attempt at side-by-side light/dark panes silently produced two identical light renders. Each theme has to be rendered in its own pass.
+
+**Coverage:** none added. The defect is a property of the emitted stylesheet, which no unit test in either project observes; the guard that would actually work is a source-level `check:*` that validates every `bg-*`/`border-*` class in `renderer/` against the `--background-color-*` / `--border-color-*` names declared in the SDK's `components.tailwind.css`. A prototype of that check agrees exactly with the build output — it flags the two remaining dead classes (`bg-muted` in `settings-view.tsx`, `bg-fill-secondary` in `library-sidebar.tsx`) and nothing else — but it was left out of this change as out of scope. `bg-separator` is NOT dead despite emitting no bare rule: it is only ever used under a named-group variant, so it compiles to `.group-hover\/gap\:bg-separator`.
+
 ### 2026-08-06 — Window size preset in the New Recording dialog
 
 **Symptom:** the New Recording dialog asked for a URL, a test name and a run speed, and gave no way to say how big the browser window should be. Every manual recording was made in one fixed 1200×820 window, so a mobile or tablet flow could not be recorded at all.

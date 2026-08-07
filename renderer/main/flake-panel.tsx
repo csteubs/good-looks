@@ -61,7 +61,7 @@ function TestRow({ test }: { test: TestFlake }) {
   // case — a test that just alternates. That explanation is the most useful
   // thing here, so there is always something behind the row.
   return (
-    <div className="rounded-md border border-token-border">
+    <div className="rounded-md border border-separator">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -153,7 +153,7 @@ function TestRow({ test }: { test: TestFlake }) {
 
 function ClusterRow({ cluster }: { cluster: FailureCluster }) {
   return (
-    <div className="flex flex-col gap-1 rounded-md border border-token-border px-3 py-2">
+    <div className="flex flex-col gap-1 rounded-md border border-separator px-3 py-2">
       <div className="flex items-center gap-2">
         <Badge color={cluster.count > 1 ? "orange" : "secondary"}>
           {cluster.count} {cluster.count === 1 ? "run" : "runs"}
@@ -199,7 +199,7 @@ export function FlakePanel({
   const shown = showAll ? report.tests : interesting;
 
   return (
-    <div className="rounded-lg border border-token-border bg-token-surface-raised p-4">
+    <div className="rounded-lg border border-separator bg-panel p-4">
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Activity className="size-4 text-secondary" />

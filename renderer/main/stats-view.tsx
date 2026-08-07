@@ -160,7 +160,7 @@ function buildDailyBuckets(runs: RunRecord[]): DayBucket[] {
 
 function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="flex flex-col gap-1 rounded-lg border border-token-border bg-token-surface-raised px-4 py-3">
+    <div className="flex flex-col gap-1 rounded-lg border border-separator bg-panel px-4 py-3">
       <Text variant="small" color="tertiary">
         {label}
       </Text>
@@ -194,7 +194,7 @@ function CaptureOverheadPanel({ summary }: { summary: CaptureOverheadSummary }) 
       ? summary.meanCapturedDurationMs - summary.meanUncapturedDurationMs
       : null;
   return (
-    <div className="rounded-lg border border-token-border bg-token-surface-raised p-4">
+    <div className="rounded-lg border border-separator bg-panel p-4">
       <div className="mb-3 flex items-center justify-between">
         <Text variant="small" className="font-medium">
           Capture overhead
@@ -251,7 +251,7 @@ function CaptureOverheadPanel({ summary }: { summary: CaptureOverheadSummary }) 
 function PassFailChart({ buckets }: { buckets: DayBucket[] }) {
   const maxTotal = Math.max(1, ...buckets.map((b) => b.passed + b.failed));
   return (
-    <div className="rounded-lg border border-token-border bg-token-surface-raised p-4">
+    <div className="rounded-lg border border-separator bg-panel p-4">
       <div className="mb-3 flex items-center justify-between">
         <Text variant="small" className="font-medium">
           Pass / fail over time
@@ -338,7 +338,7 @@ function LogInspector({
             {copied ? "Copied" : "Copy log"}
           </Button>
         </div>
-        <ScrollArea className="h-[55vh] rounded-md border border-token-border bg-token-surface">
+        <ScrollArea className="h-[55vh] rounded-md border border-separator bg-well">
           <pre className="whitespace-pre-wrap break-words p-3 text-mono font-mono text-secondary">
             {logQuery.isLoading ? "Loading…" : text || "(empty log)"}
           </pre>
@@ -585,7 +585,7 @@ export function StatsView() {
                 </div>
 
                 {searching ? (
-                  <div className="rounded-lg border border-token-border bg-token-surface-raised">
+                  <div className="rounded-lg border border-separator bg-panel">
                     {searchQuery.isLoading ? (
                       <Text variant="small" color="tertiary" className="block p-3">
                         Searching…
@@ -602,7 +602,7 @@ export function StatsView() {
                           onClick={() =>
                             setLogRun({ id: r.runId, title: `${r.testName} — ${fmtDateTime(r.startedAt)}` })
                           }
-                          className="flex w-full flex-col gap-1 border-b border-token-border px-3 py-2 text-left last:border-b-0 hover:bg-token-hover"
+                          className="flex w-full flex-col gap-1 border-b border-separator px-3 py-2 text-left last:border-b-0 hover:bg-control-subtle"
                         >
                           <div className="flex items-center gap-2">
                             <Badge color={r.status === "passed" ? "green" : "red"}>{r.status}</Badge>
