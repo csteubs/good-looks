@@ -48,7 +48,7 @@ import {
 } from "lucide-react";
 
 import { api } from "../lib/api";
-import type { AssertKind, PickedElement, RawStep } from "../lib/recorder-types";
+import type { AssertKind, PickedElement, RawStep, WaitDialogMode } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
 import { useRecorder } from "../main/recorder-store";
 import { CursorGap, StepRow } from "../main/step-row";
@@ -170,7 +170,7 @@ export function TrainerPanelView() {
   const [contextPick, setContextPick] = React.useState<{
     picked: PickedElement | null;
     assert?: AssertKind;
-    waitMode?: "element" | "hidden" | "time";
+    waitMode?: WaitDialogMode;
     prefillText?: string;
     prefillValue?: string;
   } | null>(null);

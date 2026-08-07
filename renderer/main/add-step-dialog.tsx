@@ -6,6 +6,7 @@ import * as React from "react";
 import {
   Badge,
   Button,
+  Checkbox,
   Dialog,
   Field,
   Input,
@@ -20,6 +21,7 @@ import {
 } from "@glaze/core/components";
 import { Crosshair, X } from "lucide-react";
 
+import { DEFAULT_WAIT_TIMEOUT_MS } from "../lib/recorder-types";
 import type {
   AssertKind,
   CaptureSource,
@@ -27,6 +29,8 @@ import type {
   Locator,
   PickedElement,
   RawStep,
+  WaitDialogMode,
+  WaitUntilKind,
 } from "../lib/recorder-types";
 import { api } from "../lib/api";
 import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
@@ -76,6 +80,30 @@ const CONDITION_OPTIONS: { value: ConditionKind; label: string; page?: boolean }
   { value: "unchecked", label: "Element is unchecked" },
   { value: "urlContains", label: "Page URL contains", page: true },
   { value: "titleContains", label: "Page title contains", page: true },
+];
+
+// "Wait until" predicates. Element predicates resolve the picked locator; the
+// two page predicates match a substring of the live URL / title. Mirrors the
+// assertion list deliberately — a user who knows the assertion vocabulary
+// already knows this one.
+const WAIT_UNTIL_OPTIONS: {
+  value: WaitUntilKind;
+  label: string;
+  need: "none" | "text" | "value" | "count";
+  page?: boolean;
+}[] = [
+  { value: "visible", label: "Element is visible", need: "none" },
+  { value: "hidden", label: "Element is hidden", need: "none" },
+  { value: "exists", label: "Element exists", need: "none" },
+  { value: "enabled", label: "Element is enabled", need: "none" },
+  { value: "disabled", label: "Element is disabled", need: "none" },
+  { value: "checked", label: "Element is checked", need: "none" },
+  { value: "unchecked", label: "Element is unchecked", need: "none" },
+  { value: "text", label: "Element contains text", need: "text" },
+  { value: "value", label: "Element has value", need: "value" },
+  { value: "count", label: "Element count is", need: "count" },
+  { value: "urlContains", label: "Page URL contains", need: "value", page: true },
+  { value: "titleContains", label: "Page title contains", need: "value", page: true },
 ];
 
 // assert kind → what operands it needs.
@@ -202,6 +230,42 @@ function TargetElementPicker({
   );
 }
 
+/** One tickable wait property: checkbox + clickable label + a line of hint.
+ *  The label is a real `<label htmlFor>` so the hit target covers the text and
+ *  the control is reachable by its accessible name. */
+function CheckOption({
+  id,
+  checked,
+  onChange,
+  label,
+  hint,
+}: {
+  id: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  label: string;
+  hint: string;
+}) {
+  return (
+    <div className="flex items-start gap-2">
+      <Checkbox
+        id={id}
+        checked={checked}
+        onCheckedChange={(v: boolean | "indeterminate") => onChange(v === true)}
+        className="mt-0.5"
+      />
+      <label htmlFor={id} className="flex min-w-0 flex-col gap-0.5 cursor-pointer">
+        <Text size="small" className="text-primary">
+          {label}
+        </Text>
+        <Text size="small" className="text-tertiary">
+          {hint}
+        </Text>
+      </label>
+    </div>
+  );
+}
+
 export function AddStepDialog({
   open,
   kind,
@@ -230,9 +294,8 @@ export function AddStepDialog({
   onClearPick: () => void;
   /** When opened from the right-click menu: the assert kind to preselect. */
   initialAssert?: AssertKind;
-  /** When opened from the right-click menu: the wait mode to preselect
-   *  ("element" / "hidden" both target the picked element; "time" is a duration). */
-  initialWaitMode?: "element" | "hidden" | "time";
+  /** When opened from the right-click menu: the wait mode to preselect. */
+  initialWaitMode?: WaitDialogMode;
   /** When opened from the right-click menu: prefilled text (the element's
    *  current text) for text/exactText asserts. */
   prefillText?: string;
@@ -250,7 +313,16 @@ export function AddStepDialog({
   const [soft, setSoft] = React.useState(false);
   const [url, setUrl] = React.useState("");
   const [key, setKey] = React.useState("Enter");
-  const [waitMode, setWaitMode] = React.useState<"time" | "element">("time");
+  // The three wait properties are independent checkboxes, not one mode: a
+  // submit emits one `wait` step per ticked box, in the order they read down
+  // the dialog (element, then condition, then duration as a settle pad). Each
+  // lands as an ordinary step the user can reorder, edit or delete on its own,
+  // which a single compound wait step could not offer.
+  const [waitElement, setWaitElement] = React.useState(false);
+  const [waitUntilOn, setWaitUntilOn] = React.useState(false);
+  const [waitTime, setWaitTime] = React.useState(true);
+  const [waitUntil, setWaitUntil] = React.useState<WaitUntilKind>("visible");
+  const [waitTimeout, setWaitTimeout] = React.useState(String(DEFAULT_WAIT_TIMEOUT_MS));
   const [waitMs, setWaitMs] = React.useState("1000");
   const [pressTarget, setPressTarget] = React.useState<"page" | "element">("page");
   const [viewport, setViewport] = React.useState("desktop");
@@ -277,9 +349,14 @@ export function AddStepDialog({
       setSoft(false);
       setUrl("");
       setKey("Enter");
-      // "hidden" wait mode targets the element like "element"; the dialog's
-      // internal SegmentedControl only has "time"/"element", so map both.
-      setWaitMode(initialWaitMode && initialWaitMode !== "time" ? "element" : "time");
+      // Preselect the box the caller asked for; with no caller preference the
+      // dialog opens on a duration, as it always has. "hidden" is a Wait Until
+      // rather than a plain element wait — see WaitDialogMode.
+      setWaitElement(initialWaitMode === "element");
+      setWaitUntilOn(initialWaitMode === "hidden" || initialWaitMode === "until");
+      setWaitTime(!initialWaitMode || initialWaitMode === "time");
+      setWaitUntil(initialWaitMode === "hidden" ? "hidden" : "visible");
+      setWaitTimeout(String(DEFAULT_WAIT_TIMEOUT_MS));
       setWaitMs("1000");
       setPressTarget("page");
       setViewport("desktop");
@@ -314,6 +391,11 @@ export function AddStepDialog({
 
   const opt = ASSERT_OPTIONS.find((o) => o.value === assert)!;
   const condOpt = CONDITION_OPTIONS.find((c) => c.value === cond)!;
+  const waitUntilOpt = WAIT_UNTIL_OPTIONS.find((w) => w.value === waitUntil)!;
+  // Both element-scoped wait boxes resolve the SAME picked element — the dialog
+  // holds one pick — so the picker is rendered once and shared rather than
+  // duplicated into two controls that would silently overwrite each other.
+  const waitNeedsElement = waitElement || (waitUntilOn && !waitUntilOpt.page);
 
   function build(): RawStep[] | null {
     switch (kind) {
@@ -327,12 +409,33 @@ export function AddStepDialog({
             ...(pressTarget === "element" && locator ? { locator } : {}),
           },
         ];
-      case "wait":
-        return waitMode === "time"
-          ? [{ type: "wait", waitMs: Number(waitMs) || 0 }]
-          : locator
-            ? [{ type: "wait", locator }]
-            : null;
+      case "wait": {
+        const steps: RawStep[] = [];
+        // A ticked box with nothing to act on would emit a step that waits for
+        // nothing, so the whole submit is refused rather than silently adding
+        // the other two.
+        if (waitElement) {
+          if (!locator) return null;
+          steps.push({ type: "wait", locator });
+        }
+        if (waitUntilOn) {
+          const step: RawStep = {
+            type: "wait",
+            waitUntil,
+            timeoutMs: Number(waitTimeout) || DEFAULT_WAIT_TIMEOUT_MS,
+          };
+          if (!waitUntilOpt.page) {
+            if (!locator) return null;
+            step.locator = locator;
+          }
+          if (waitUntilOpt.need === "text") step.text = text;
+          if (waitUntilOpt.need === "value") step.value = value;
+          if (waitUntilOpt.need === "count") step.count = Number(count) || 0;
+          steps.push(step);
+        }
+        if (waitTime) steps.push({ type: "wait", waitMs: Number(waitMs) || 0 });
+        return steps.length > 0 ? steps : null;
+      }
       case "viewport": {
         if (viewport === "custom") {
           return [{ type: "viewport", width: Number(vw) || 1280, height: Number(vh) || 800 }];
@@ -462,32 +565,120 @@ export function AddStepDialog({
         {kind === "wait" ? (
           <>
             <Field label="Wait for" orientation="vertical">
-              <SegmentedControl
-                size="small"
-                value={waitMode}
-                onValueChange={(v) => setWaitMode(v as "time" | "element")}
-              >
-                <SegmentedControlItem value="time">A duration</SegmentedControlItem>
-                <SegmentedControlItem value="element">An element</SegmentedControlItem>
-              </SegmentedControl>
+              <div className="flex flex-col gap-2">
+                <CheckOption
+                  id="wait-for-element"
+                  checked={waitElement}
+                  onChange={setWaitElement}
+                  label="An element"
+                  hint="Waits for the picked element to appear."
+                />
+                <CheckOption
+                  id="wait-until"
+                  checked={waitUntilOn}
+                  onChange={setWaitUntilOn}
+                  label="Wait until"
+                  hint="Waits for a measurable condition to become true."
+                />
+                <CheckOption
+                  id="wait-for-duration"
+                  checked={waitTime}
+                  onChange={setWaitTime}
+                  label="A duration"
+                  hint="A fixed pause, added last."
+                />
+              </div>
             </Field>
-            {waitMode === "time" ? (
+            <Text size="small" className="text-tertiary">
+              Tick more than one to add several waits at once — they’re inserted as separate
+              steps, in the order listed above.
+            </Text>
+
+            {waitUntilOn ? (
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Condition" orientation="vertical">
+                  <Select
+                    value={waitUntil}
+                    onValueChange={(v) => setWaitUntil(v as WaitUntilKind)}
+                  >
+                    <SelectTrigger size="small">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {WAIT_UNTIL_OPTIONS.map((w) => (
+                        <SelectItem key={w.value} value={w.value}>
+                          {w.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field label="Timeout (ms)" orientation="vertical">
+                  {/* `Field label` renders a label with no `for`, so the input
+                      needs its own accessible name — without one it is an
+                      unnamed number box to a screen reader. */}
+                  <Input
+                    size="small"
+                    type="number"
+                    aria-label="Timeout (ms)"
+                    value={waitTimeout}
+                    onChange={(e) => setWaitTimeout(e.target.value)}
+                  />
+                </Field>
+              </div>
+            ) : null}
+
+            {waitUntilOn && waitUntilOpt.need === "text" ? (
+              <Field label="Text" orientation="vertical">
+                <Input size="small" value={text} onChange={(e) => setText(e.target.value)} />
+              </Field>
+            ) : null}
+            {waitUntilOn && waitUntilOpt.need === "value" ? (
+              <Field
+                label={waitUntilOpt.page ? "Substring" : "Expected value"}
+                orientation="vertical"
+              >
+                <Input size="small" value={value} onChange={(e) => setValue(e.target.value)} />
+              </Field>
+            ) : null}
+            {waitUntilOn && waitUntilOpt.need === "count" ? (
+              <Field label="Expected count" orientation="vertical">
+                <Input
+                  size="small"
+                  type="number"
+                  value={count}
+                  onChange={(e) => setCount(e.target.value)}
+                />
+              </Field>
+            ) : null}
+
+            {waitNeedsElement ? (
+              <>
+                <TargetElementPicker
+                  picked={picked}
+                  onChange={setLocator}
+                  onStartPick={onStartPick}
+                  onClearPick={onClearPick}
+                />
+                {waitElement && waitUntilOn && !waitUntilOpt.page ? (
+                  <Text size="small" className="text-tertiary">
+                    Both waits target this element.
+                  </Text>
+                ) : null}
+              </>
+            ) : null}
+
+            {waitTime ? (
               <Field label="Duration (ms)" orientation="vertical">
                 <Input
                   size="small"
                   type="number"
+                  aria-label="Duration (ms)"
                   value={waitMs}
                   onChange={(e) => setWaitMs(e.target.value)}
                 />
               </Field>
-            ) : (
-              <TargetElementPicker
-                picked={picked}
-                onChange={setLocator}
-                onStartPick={onStartPick}
-                onClearPick={onClearPick}
-              />
-            )}
+            ) : null}
           </>
         ) : null}
 

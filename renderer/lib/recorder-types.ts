@@ -32,6 +32,38 @@ export type ConditionKind =
   | "urlContains"
   | "titleContains";
 
+/** Predicate a `wait` step blocks on until it holds (mirror of main types).
+ *  A superset of ConditionKind, kept separate on purpose so widening the wait
+ *  vocabulary can't silently widen what an `if` condition accepts. */
+export type WaitUntilKind =
+  | "visible"
+  | "hidden"
+  | "exists"
+  | "enabled"
+  | "disabled"
+  | "checked"
+  | "unchecked"
+  | "text"
+  | "value"
+  | "count"
+  | "urlContains"
+  | "titleContains";
+
+/** How the Add-wait dialog is opened from outside itself (the training
+ *  browser's right-click menu). "hidden" preselects a Wait Until on the
+ *  `hidden` predicate — before conditional waits existed it collapsed into the
+ *  plain element wait, which generates `.waitFor()` and so waited for the
+ *  element to become VISIBLE: the opposite of what was picked, with nothing on
+ *  screen to say so. Mirror of the `waitMode` union in
+ *  main/services/recorder-service.ts. */
+export type WaitDialogMode = "element" | "hidden" | "time" | "until";
+
+/** Mirror of DEFAULT_WAIT_TIMEOUT_MS in main/services/script-generator.ts.
+ *  Pinned to the backend's value by describe-step-parity.test.ts, which covers
+ *  a wait-until step with no explicit timeout — if the two drift, the trainer's
+ *  step list and the run log quote different timeouts for the same step. */
+export const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
+
 export type LocatorKind = "testid" | "role" | "label" | "placeholder" | "text" | "css" | "xpath";
 
 export interface Locator {
@@ -74,6 +106,10 @@ export interface Step {
   width?: number;
   height?: number;
   waitMs?: number;
+  /** predicate a `wait` step blocks on, and how long it waits before failing
+   *  (mirror of main types). */
+  waitUntil?: WaitUntilKind;
+  timeoutMs?: number;
   /** what a `cookie` step does (mirrors main types) */
   cookieAction?: CookieAction;
   /** the cookie a `cookie` step sets or deletes (absent for clearAll) */
@@ -142,6 +178,8 @@ export interface RawStep {
   width?: number;
   height?: number;
   waitMs?: number;
+  waitUntil?: WaitUntilKind;
+  timeoutMs?: number;
   /** cookie fields, so a cookie step can be inserted via insertStep */
   cookieAction?: CookieAction;
   cookie?: CookieSpec;
@@ -656,7 +694,7 @@ export interface HealSuggestion {
 export interface ContextAction {
   kind: "assertion" | "wait" | "goto" | "press" | "viewport" | "find" | "refine";
   assert?: AssertKind;
-  waitMode?: "element" | "hidden" | "time";
+  waitMode?: WaitDialogMode;
   picked: PickedElement | null;
   prefillText: string;
   prefillValue: string;

@@ -568,9 +568,10 @@ export interface ContextAction {
   kind: "assertion" | "wait" | "goto" | "press" | "viewport" | "find" | "refine";
   /** assert kind when kind === "assertion" */
   assert?: AssertKind;
-  /** wait mode when kind === "wait" ("element" resolves the locator, "hidden"
-   *  waits for the element to hide, "time" is a fixed duration) */
-  waitMode?: "element" | "hidden" | "time";
+  /** wait mode when kind === "wait": "element" resolves the locator, "hidden"
+   *  opens a Wait Until on the `hidden` predicate, "until" opens Wait Until
+   *  with nothing preselected, "time" is a fixed duration. */
+  waitMode?: "element" | "hidden" | "time" | "until";
   /** the element under the right-click, with its locator candidates */
   picked: PickedElement | null;
   /** the element's current text — prefills text/exactText asserts */
@@ -958,6 +959,7 @@ export const recorderService = {
           { label: "For element visible", click: () => ctxAction({ kind: "wait", waitMode: "element", picked, prefillText: "", prefillValue: "" }) },
           { label: "For element hidden", click: () => ctxAction({ kind: "wait", waitMode: "hidden", picked, prefillText: "", prefillValue: "" }) },
           { label: "For duration…", click: () => ctxAction({ kind: "wait", waitMode: "time", picked: null, prefillText: "", prefillValue: "" }) },
+          { label: "Until…", click: () => ctxAction({ kind: "wait", waitMode: "until", picked, prefillText: "", prefillValue: "" }) },
         ];
         const addStepItems: MenuItemConstructorOptions[] = [
           { label: "Go to URL", click: () => ctxAction({ kind: "goto", picked: null, prefillText: "", prefillValue: "" }) },
@@ -1221,6 +1223,8 @@ export const recorderService = {
           "width",
           "height",
           "waitMs",
+          "waitUntil",
+          "timeoutMs",
           "soft",
           "assert",
           "locator",

@@ -41,6 +41,32 @@ export type ConditionKind =
   | "urlContains"
   | "titleContains";
 
+/**
+ * Predicate a `wait` step blocks on until it holds (`Step.waitUntil`).
+ *
+ * A superset of ConditionKind, kept as its OWN type rather than an alias with
+ * extras: an `if` block evaluates its condition once, so widening the wait
+ * vocabulary must not silently widen what a condition accepts — the two
+ * normalizers check against separate lists for exactly that reason.
+ *
+ * Element predicates resolve `Step.locator`; `text`/`value` read `Step.text` /
+ * `Step.value`, `count` reads `Step.count`, and urlContains/titleContains match
+ * `Step.value` against the page.
+ */
+export type WaitUntilKind =
+  | "visible"
+  | "hidden"
+  | "exists"
+  | "enabled"
+  | "disabled"
+  | "checked"
+  | "unchecked"
+  | "text"
+  | "value"
+  | "count"
+  | "urlContains"
+  | "titleContains";
+
 export type LocatorKind = "testid" | "role" | "label" | "placeholder" | "text" | "css" | "xpath";
 
 export interface Locator {
@@ -98,6 +124,13 @@ export interface Step {
   height?: number;
   /** wait duration in ms when type === "wait" (omit to wait for the locator instead) */
   waitMs?: number;
+  /** predicate a `wait` step blocks on until it holds. Takes precedence over
+   *  waitMs / a bare locator wait, which stay exactly as they were so every
+   *  test already on disk regenerates byte-identically. */
+  waitUntil?: WaitUntilKind;
+  /** how long a `waitUntil` step waits before failing, in ms. Reaches the
+   *  generator as a BARE NUMERAL — see normalizeRawStep's `int` note. */
+  timeoutMs?: number;
   /** what a `cookie` step does */
   cookieAction?: CookieAction;
   /** the cookie a `cookie` step sets or deletes (absent for clearAll) */
@@ -196,6 +229,8 @@ export interface RawStep {
   width?: number;
   height?: number;
   waitMs?: number;
+  waitUntil?: WaitUntilKind;
+  timeoutMs?: number;
   /** cookie fields, so a cookie step can be inserted via insertStep */
   cookieAction?: CookieAction;
   cookie?: CookieSpec;
@@ -476,6 +511,13 @@ export const CONDITION_KINDS: ConditionKind[] = [
   "urlContains", "titleContains",
 ];
 
+/** Deliberately a separate list from CONDITION_KINDS even though it contains
+ *  all of them — see the WaitUntilKind doc comment. */
+export const WAIT_UNTIL_KINDS: WaitUntilKind[] = [
+  "visible", "hidden", "exists", "enabled", "disabled", "checked", "unchecked",
+  "text", "value", "count", "urlContains", "titleContains",
+];
+
 export const LOCATOR_KINDS: LocatorKind[] = [
   "testid", "role", "label", "placeholder", "text", "css", "xpath",
 ];
@@ -654,8 +696,10 @@ export function normalizeRawStep(input: unknown): RawStep | null {
 
   const assert = oneOf(s.assert, ASSERT_KINDS);
   const cond = oneOf(s.cond, CONDITION_KINDS);
+  const waitUntil = oneOf(s.waitUntil, WAIT_UNTIL_KINDS);
   if (assert) out.assert = assert;
   if (cond) out.cond = cond;
+  if (waitUntil) out.waitUntil = waitUntil;
   if (bool(s.soft)) out.soft = true;
 
   // The fields that reach the generator as bare numerals.
@@ -663,10 +707,12 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   const width = int(s.width, 1, 100_000);
   const height = int(s.height, 1, 100_000);
   const waitMs = int(s.waitMs, 0, 3_600_000);
+  const timeoutMs = int(s.timeoutMs, 0, 3_600_000);
   if (count !== undefined) out.count = count;
   if (width !== undefined) out.width = width;
   if (height !== undefined) out.height = height;
   if (waitMs !== undefined) out.waitMs = waitMs;
+  if (timeoutMs !== undefined) out.timeoutMs = timeoutMs;
 
   const cookieAction = oneOf(s.cookieAction, COOKIE_ACTIONS);
   if (cookieAction) out.cookieAction = cookieAction;

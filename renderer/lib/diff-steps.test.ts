@@ -246,6 +246,26 @@ describe("signature covers the fields a user can see", () => {
       step({ type: "runFlow", flowId: "a", flowArgs: { x: "1" } }),
       step({ type: "runFlow", flowId: "a", flowArgs: { x: "2" } }),
     ],
+    // The two conditional-wait fields. A field missing from the signature is a
+    // MISSED highlight, not a wrong one: the step changes, the list stays quiet,
+    // and an AI-applied edit lands with nothing marking it.
+    [
+      "waitUntil",
+      step({ type: "wait", waitUntil: "visible", locator: CLICK }),
+      step({ type: "wait", waitUntil: "hidden", locator: CLICK }),
+    ],
+    [
+      "timeoutMs",
+      step({ type: "wait", waitUntil: "visible", locator: CLICK, timeoutMs: 5000 }),
+      step({ type: "wait", waitUntil: "visible", locator: CLICK, timeoutMs: 30000 }),
+    ],
+    // A conditional wait and the plain element wait it replaced compile to
+    // different calls, so they must not read as the same step either.
+    [
+      "a conditional wait from a plain one",
+      step({ type: "wait", locator: CLICK }),
+      step({ type: "wait", waitUntil: "hidden", locator: CLICK }),
+    ],
   ];
 
   for (const [field, a, b] of cases) {

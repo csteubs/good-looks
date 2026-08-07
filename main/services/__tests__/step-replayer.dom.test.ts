@@ -13,7 +13,7 @@
    which the shared lint config treats as Node-only — so the browser globals it
    legitimately uses have to be declared. Flat config doesn't support
    `eslint-env`, hence `global`. */
-/* global document, Element, DOMRect, HTMLInputElement, HTMLSelectElement */
+/* global document, Element, DOMRect, HTMLButtonElement, HTMLInputElement, HTMLSelectElement */
 
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -228,6 +228,130 @@ describe("conditions (if steps)", () => {
     const res = run(step({ type: "if", cond: "urlContains", value: "localhost" }));
     expect(res.ok).toBe(true);
     expect(typeof res.met).toBe("boolean");
+  });
+});
+
+describe("conditional waits (wait until)", () => {
+  /** The polling path returns a Promise; the already-met path returns the
+   *  result directly. Callers in the app await either, so tests do too. */
+  async function runWait(s: Step): Promise<ReplayResult> {
+    return await (eval(buildReplayScript(s)) as ReplayResult | Promise<ReplayResult>);
+  }
+
+  it("passes immediately when the condition already holds", async () => {
+    document.body.innerHTML = `<button data-testid="go">Go</button>`;
+    const res = await runWait(
+      step({ type: "wait", waitUntil: "visible", locator: { k: "testid", v: "go" }, timeoutMs: 300 }),
+    );
+    expect(res.ok).toBe(true);
+    expect(res.logs.some((l) => l.m.includes("already met"))).toBe(true);
+  });
+
+  it("keeps waiting and passes once the condition becomes true", async () => {
+    document.body.innerHTML = `<button data-testid="go" disabled>Go</button>`;
+    const btn = document.querySelector("button") as HTMLButtonElement;
+    setTimeout(() => {
+      btn.disabled = false;
+    }, 150);
+
+    const res = await runWait(
+      step({ type: "wait", waitUntil: "enabled", locator: { k: "testid", v: "go" }, timeoutMs: 2000 }),
+    );
+
+    // The whole point of a conditional wait: it did NOT pass on the first look.
+    expect(res.ok).toBe(true);
+    expect(res.logs.some((l) => l.m.includes("condition met after"))).toBe(true);
+    expect(res.logs.some((l) => l.m.includes("already met"))).toBe(false);
+  });
+
+  it("fails with a diagnosable error when the condition never holds", async () => {
+    document.body.innerHTML = `<button data-testid="go" disabled>Go</button>`;
+    const res = await runWait(
+      step({ type: "wait", waitUntil: "enabled", locator: { k: "testid", v: "go" }, timeoutMs: 200 }),
+    );
+    expect(res.ok).toBe(false);
+    // The error has to say what was actually observed — "timed out" alone
+    // leaves the user with no idea which half was wrong.
+    expect(res.error).toContain("Timed out");
+    expect(res.error).toContain("enabled");
+    expect(res.error).toContain("element is disabled");
+  });
+
+  it("reports a missing element rather than claiming the condition failed", async () => {
+    const res = await runWait(
+      step({ type: "wait", waitUntil: "enabled", locator: { k: "testid", v: "nope" }, timeoutMs: 150 }),
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("element not found");
+  });
+
+  it("waits for an element to disappear", async () => {
+    document.body.innerHTML = `<div data-testid="spinner">loading</div>`;
+    setTimeout(() => {
+      document.querySelector("[data-testid=spinner]")?.remove();
+    }, 120);
+    const res = await runWait(
+      step({ type: "wait", waitUntil: "hidden", locator: { k: "testid", v: "spinner" }, timeoutMs: 2000 }),
+    );
+    expect(res.ok).toBe(true);
+  });
+
+  it("evaluates the predicates an if-condition has no counterpart for", async () => {
+    document.body.innerHTML = `
+      <div data-testid="msg">All done</div>
+      <input data-testid="qty" value="7" />
+      <ul><li class="row">a</li><li class="row">b</li></ul>`;
+
+    const text = await runWait(
+      step({ type: "wait", waitUntil: "text", locator: { k: "testid", v: "msg" }, text: "done", timeoutMs: 200 }),
+    );
+    expect(text.ok).toBe(true);
+
+    const value = await runWait(
+      step({ type: "wait", waitUntil: "value", locator: { k: "testid", v: "qty" }, value: "7", timeoutMs: 200 }),
+    );
+    expect(value.ok).toBe(true);
+
+    const count = await runWait(
+      step({ type: "wait", waitUntil: "count", locator: { k: "css", v: ".row" }, count: 2, timeoutMs: 200 }),
+    );
+    expect(count.ok).toBe(true);
+
+    const wrongCount = await runWait(
+      step({ type: "wait", waitUntil: "count", locator: { k: "css", v: ".row" }, count: 5, timeoutMs: 150 }),
+    );
+    expect(wrongCount.ok).toBe(false);
+    expect(wrongCount.error).toContain("count is 2");
+  });
+
+  it("evaluates a page-level predicate with no element", async () => {
+    const res = await runWait(
+      step({ type: "wait", waitUntil: "urlContains", value: "localhost", timeoutMs: 200 }),
+    );
+    expect(typeof res.ok).toBe("boolean");
+  });
+
+  it("caps the preview wait and says so, rather than freezing the trainer", async () => {
+    document.body.innerHTML = `<button data-testid="go">Go</button>`;
+    // A ten-minute timeout is legitimate in a real run. The preview must not
+    // honour it — the trainer's UI is waiting on this call.
+    const res = await runWait(
+      step({ type: "wait", waitUntil: "visible", locator: { k: "testid", v: "go" }, timeoutMs: 600_000 }),
+    );
+    const opening = res.logs.find((l) => l.m.includes("waiting until"));
+    expect(opening?.m).toContain("up to 5000ms");
+    expect(opening?.m).toContain("capped for preview");
+  });
+
+  it("leaves a plain duration wait and a bare element wait alone", async () => {
+    document.body.innerHTML = `<div data-testid="x">hi</div>`;
+    const bare = await runWait(step({ type: "wait", locator: { k: "testid", v: "x" } }));
+    expect(bare.ok).toBe(true);
+    expect(bare.logs.some((l) => l.m.includes("wait-for-element resolved"))).toBe(true);
+
+    const timed = await runWait(step({ type: "wait", waitMs: 1 }));
+    expect(timed.ok).toBe(true);
+    expect(timed.logs.some((l) => l.m.includes("waiting 1ms"))).toBe(true);
   });
 });
 

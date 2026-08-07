@@ -10,7 +10,16 @@
 // diagnostics for the trainer's step debug panel.
 
 import { DOM_HELPERS } from "../recorder/capture-script.js";
+import { DEFAULT_WAIT_TIMEOUT_MS } from "./script-generator.js";
 import type { DebugLogLine, Step } from "../recorder/types.js";
+
+/** Ceiling on how long a conditional wait blocks the PREVIEW, whatever the
+ *  step's own timeout says. The fixed-duration wait has had the same 5s cap
+ *  since it was written: the trainer's UI is waiting on this, and a step that
+ *  legitimately waits 60s in a real run would read as a hung app here. */
+const PREVIEW_WAIT_CAP_MS = 5000;
+/** How often the preview re-checks the predicate. */
+const PREVIEW_WAIT_POLL_MS = 100;
 
 export interface ReplayResult {
   ok: boolean;
@@ -21,8 +30,9 @@ export interface ReplayResult {
 }
 
 export function buildReplayScript(step: Step): string {
-  // NOTE: no backticks or ${...} inside the JS body below except the two
-  // interpolations here. `\\s` produces a literal \s in the emitted script.
+  // NOTE: no backticks inside the JS body below; the only ${...} are the
+  // deliberate interpolations (DOM_HELPERS, the step JSON, and the three wait
+  // constants). `\\s` produces a literal \s in the emitted script.
   return `(function () {
   ${DOM_HELPERS}
 
@@ -192,6 +202,80 @@ export function buildReplayScript(step: Step): string {
     }
   }
 
+  /** Evaluate a wait's predicate ONCE. Same predicates as evalCondition plus
+   *  the three an \`if\` block has no counterpart for (text/value/count), and it
+   *  reports WHY rather than logging — the poller below would otherwise write a
+   *  line per attempt and bury the result. */
+  function evalWaitUntil() {
+    var w = step.waitUntil || "visible";
+    if (w === "urlContains") {
+      return { met: ci(location.href).indexOf(ci(step.value || "")) >= 0, detail: "URL is \\"" + location.href + "\\"" };
+    }
+    if (w === "titleContains") {
+      return { met: ci(document.title).indexOf(ci(step.value || "")) >= 0, detail: "title is \\"" + document.title + "\\"" };
+    }
+    if (w === "exists") {
+      var n0 = resolveAll(step.locator).length;
+      return { met: n0 > 0, detail: n0 + " match(es)" };
+    }
+    if (w === "count") {
+      var n = resolveAll(step.locator).length;
+      return { met: n === (step.count || 0), detail: "count is " + n + ", expected " + (step.count || 0) };
+    }
+    var el = resolve(step.locator);
+    if (w === "hidden") {
+      return { met: !el || !visible(el), detail: el ? "element is visible" : "no element" };
+    }
+    if (!el) return { met: false, detail: "element not found" };
+    switch (w) {
+      case "enabled": return { met: !el.disabled, detail: el.disabled ? "element is disabled" : "element is enabled" };
+      case "disabled": return { met: !!el.disabled, detail: el.disabled ? "element is disabled" : "element is enabled" };
+      case "checked": return { met: !!el.checked, detail: el.checked ? "checked" : "not checked" };
+      case "unchecked": return { met: !el.checked, detail: el.checked ? "checked" : "not checked" };
+      case "text": return { met: ci(txt(el)).indexOf(ci(step.text || "")) >= 0, detail: "text is \\"" + txt(el).slice(0, 80) + "\\"" };
+      case "value": return { met: (el.value || "") === (step.value || ""), detail: "value is \\"" + (el.value || "") + "\\"" };
+      case "visible":
+      default: return { met: visible(el), detail: visible(el) ? "element is visible" : "element is not visible" };
+    }
+  }
+
+  /** Poll the predicate until it holds or the budget runs out.
+   *
+   *  Capped at PREVIEW_WAIT_CAP_MS regardless of the step's own timeout, for
+   *  the same reason the fixed-duration wait is capped: this runs inside the
+   *  trainer, and a step configured to wait five minutes would look like the
+   *  app had frozen. A real run honours the full timeout — the preview says so
+   *  in its log when it gives up early. */
+  function runWaitUntil() {
+    var budget = Math.min(step.timeoutMs == null ? ${DEFAULT_WAIT_TIMEOUT_MS} : step.timeoutMs, ${PREVIEW_WAIT_CAP_MS});
+    var capped = (step.timeoutMs == null ? ${DEFAULT_WAIT_TIMEOUT_MS} : step.timeoutMs) > ${PREVIEW_WAIT_CAP_MS};
+    var started = Date.now();
+    log("info", "waiting until " + (step.waitUntil || "visible") + " (up to " + budget + "ms" + (capped ? ", capped for preview" : "") + ")");
+    var first = evalWaitUntil();
+    if (first.met) {
+      log("info", "condition already met (" + first.detail + ")");
+      return { ok: true };
+    }
+    return new Promise(function (res) {
+      var timer = setInterval(function () {
+        var r = evalWaitUntil();
+        var waited = Date.now() - started;
+        if (r.met) {
+          clearInterval(timer);
+          log("info", "condition met after " + waited + "ms (" + r.detail + ")");
+          res({ ok: true });
+          return;
+        }
+        if (waited >= budget) {
+          clearInterval(timer);
+          var msg = "Timed out after " + waited + "ms waiting until " + (step.waitUntil || "visible") + " — " + r.detail;
+          log("error", msg + (capped ? " (preview cap; a real run would wait longer)" : ""));
+          res({ ok: false, error: msg });
+        }
+      }, ${PREVIEW_WAIT_POLL_MS});
+    });
+  }
+
   function evalCondition() {
     var c = step.cond || "visible";
     if (c === "urlContains") {
@@ -239,6 +323,7 @@ export function buildReplayScript(step: Step): string {
     if (t === "goto") { log("info", "goto runs at test start; skipped in preview"); return { ok: true, error: "goto runs at test start; skipped in preview" }; }
     if (t === "viewport") { log("info", "viewport is applied at run time; not previewable"); return { ok: true, error: "viewport is applied at run time; not previewable" }; }
     if (t === "wait") {
+      if (step.waitUntil) return runWaitUntil();
       if (typeof step.waitMs === "number") {
         log("info", "waiting " + step.waitMs + "ms (capped at 5000)");
         return new Promise(function (res) {

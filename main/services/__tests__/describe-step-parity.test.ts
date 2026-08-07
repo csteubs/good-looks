@@ -131,6 +131,48 @@ for (const c of CONDITIONS) {
   });
 }
 
+// Every wait-until predicate. Conditional waits are described by a PHRASE
+// rather than by the generated call (which carries the `// wait until` parser
+// marker and a `{ timeout: … }` object), so the two copies can drift in wording
+// with nothing else to catch it.
+const WAIT_UNTILS = [
+  "visible",
+  "hidden",
+  "exists",
+  "enabled",
+  "disabled",
+  "checked",
+  "unchecked",
+  "text",
+  "value",
+  "count",
+  "urlContains",
+  "titleContains",
+] as const;
+
+for (const w of WAIT_UNTILS) {
+  cases.push({
+    label: `wait until ${w}`,
+    step: step({
+      type: "wait",
+      waitUntil: w,
+      locator: LOCATOR,
+      text: "some text",
+      value: "expected",
+      count: 2,
+      timeoutMs: 4500,
+    }),
+  });
+  // With no explicit timeout each side falls back to its OWN copy of the
+  // default (the backend's constant, the renderer's mirror of it). This case is
+  // what pins those two numbers together — the phrasing quotes the timeout, so
+  // a drift shows up as a mismatched string rather than as nothing at all.
+  cases.push({
+    label: `wait until ${w} (default timeout)`,
+    step: step({ type: "wait", waitUntil: w, locator: LOCATOR, text: "t", value: "v", count: 1 }),
+  });
+}
+
 describe("describeStep parity (backend ↔ renderer)", () => {
   for (const c of cases) {
     it(`agrees on: ${c.label}`, () => {

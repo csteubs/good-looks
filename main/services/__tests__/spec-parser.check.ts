@@ -360,6 +360,180 @@ assertEqual(
   "a missing flow is reported in the spec, not silently dropped",
 );
 
+// ── 7. Conditional waits ("Wait until") round-trip as WAITS, not asserts ───
+//
+// This is the section the whole `// wait until` marker exists for. Playwright's
+// only auto-retrying primitive for most of these predicates IS `expect`, so a
+// conditional wait and the matching assertion compile to the same call. Without
+// the marker every wait comes back from a script edit as an assertion — the
+// step's type changing under the user, with nothing on screen to say so.
+const WAIT_UNTIL_CASES: { label: string; step: Step }[] = [
+  { label: "visible", step: step({ type: "wait", waitUntil: "visible", locator: { k: "css", v: "#a" }, timeoutMs: 10000 }) },
+  { label: "hidden", step: step({ type: "wait", waitUntil: "hidden", locator: { k: "css", v: "#b" }, timeoutMs: 10000 }) },
+  { label: "exists", step: step({ type: "wait", waitUntil: "exists", locator: { k: "css", v: "#c" }, timeoutMs: 10000 }) },
+  { label: "enabled", step: step({ type: "wait", waitUntil: "enabled", locator: { k: "css", v: "#d" }, timeoutMs: 10000 }) },
+  { label: "disabled", step: step({ type: "wait", waitUntil: "disabled", locator: { k: "css", v: "#e" }, timeoutMs: 10000 }) },
+  { label: "checked", step: step({ type: "wait", waitUntil: "checked", locator: { k: "css", v: "#f" }, timeoutMs: 10000 }) },
+  { label: "unchecked", step: step({ type: "wait", waitUntil: "unchecked", locator: { k: "css", v: "#g" }, timeoutMs: 10000 }) },
+  { label: "text", step: step({ type: "wait", waitUntil: "text", locator: { k: "css", v: "#h" }, text: "Ready", timeoutMs: 10000 }) },
+  { label: "value", step: step({ type: "wait", waitUntil: "value", locator: { k: "css", v: "#i" }, value: "42", timeoutMs: 10000 }) },
+  { label: "count", step: step({ type: "wait", waitUntil: "count", locator: { k: "css", v: "#j" }, count: 3, timeoutMs: 10000 }) },
+  // The two page predicates embed their expected text in a RegExp, so they also
+  // pin that the generator's reEscape is undone on the way back — otherwise
+  // "example.com" round-trips as "example\.com" and the escaping compounds on
+  // every regeneration.
+  { label: "urlContains", step: step({ type: "wait", waitUntil: "urlContains", value: "example.com/checkout", timeoutMs: 10000 }) },
+  { label: "titleContains", step: step({ type: "wait", waitUntil: "titleContains", value: "Order (1)", timeoutMs: 10000 }) },
+];
+
+for (const c of WAIT_UNTIL_CASES) {
+  const src = generateSpec({ name: "w", url: "https://example.com", steps: [c.step] });
+  const parsed = parseSpecDetailed(src);
+  assertEqual(parsed.skipped, 0, `wait until ${c.label}: no skips`);
+  assertEqual(parsed.steps.length, 1, `wait until ${c.label}: one step`);
+  assertEqual(parsed.steps[0]?.type, "wait", `wait until ${c.label}: stays a WAIT, not an assert`);
+  assertEqual(parsed.steps[0]?.waitUntil, c.step.waitUntil, `wait until ${c.label}: predicate round-trips`);
+  assertEqual(parsed.steps[0]?.timeoutMs, 10000, `wait until ${c.label}: timeout round-trips`);
+  // Regenerating from the parsed step must produce the same source. This is the
+  // property that actually matters: `tests:updateScript` re-parses and then the
+  // next edit regenerates, so any loss compounds silently across saves.
+  const reparsed = generateSpec({
+    name: "w",
+    url: "https://example.com",
+    steps: [{ ...parsed.steps[0] } as Step],
+  });
+  assertEqual(reparsed, src, `wait until ${c.label}: regenerates byte-identically`);
+}
+
+// The operands survive, not just the predicate.
+{
+  const withText = generateSpec({
+    name: "w",
+    url: "https://example.com",
+    steps: [step({ type: "wait", waitUntil: "text", locator: { k: "css", v: "#h" }, text: "Ready" })],
+  });
+  assertEqual(parseSpec(withText)[0]?.text, "Ready", "a text operand round-trips onto the wait");
+  const withCount = generateSpec({
+    name: "w",
+    url: "https://example.com",
+    steps: [step({ type: "wait", waitUntil: "count", locator: { k: "css", v: "#j" }, count: 7 })],
+  });
+  assertEqual(parseSpec(withCount)[0]?.count, 7, "a count operand round-trips onto the wait");
+  const urlWait = generateSpec({
+    name: "w",
+    url: "https://example.com",
+    steps: [step({ type: "wait", waitUntil: "urlContains", value: "example.com/checkout" })],
+  });
+  assertEqual(
+    parseSpec(urlWait)[0]?.value,
+    "example.com/checkout",
+    "a page-level substring is un-escaped back to what the user typed",
+  );
+}
+
+// The other half of the contract: an expect with NO marker is still an
+// assertion. If this ever flips, every hand-written assertion in an imported
+// spec silently becomes a wait.
+{
+  const asserted = generateSpec({
+    name: "a",
+    url: "https://example.com",
+    steps: [step({ type: "assert", locator: { k: "css", v: "#a" }, assert: "enabled" })],
+  });
+  assertEqual(asserted.includes("// wait until"), false, "a plain assertion carries no marker");
+  const parsed = parseSpec(asserted);
+  assertEqual(parsed[0]?.type, "assert", "an unmarked expect stays an assertion");
+  assertEqual(parsed[0]?.waitUntil, undefined, "…with no wait predicate attached");
+}
+
+// A hand-written marker on a predicate that has no wait counterpart must not
+// invent one — `exactText`/`attribute` are assertions only.
+{
+  const handWritten = [
+    'import { test, expect } from "@playwright/test";',
+    'test("t", async ({ page }) => {',
+    '  await page.goto("https://example.com");',
+    '  await expect(page.locator("#a")).toHaveText("Done"); // wait until',
+    "});",
+  ].join("\n");
+  const parsed = parseSpec(handWritten);
+  const nonGoto = parsed.filter((s) => s.type !== "goto");
+  assertEqual(nonGoto[0]?.type, "assert", "a marker on exactText stays an assertion");
+}
+
+// ── 8. `.waitFor({ state })` carries its state back ────────────────────────
+//
+// The regression this fixes was silent and inverted: a wait-for-HIDDEN parsed
+// as a bare wait, which regenerates as `.waitFor()` — wait for VISIBLE.
+{
+  const hiddenSrc = generateSpec({
+    name: "h",
+    url: "https://example.com",
+    steps: [step({ type: "wait", waitUntil: "hidden", locator: { k: "testid", v: "spinner" } })],
+  });
+  assertEqual(
+    hiddenSrc.includes('state: "hidden"'),
+    true,
+    "a hidden wait generates the native waitFor state",
+  );
+  const back = parseSpec(hiddenSrc).filter((s) => s.type === "wait");
+  assertEqual(back[0]?.waitUntil, "hidden", "…and parses back as hidden, not as a plain wait");
+  assertEqual(
+    generateSpec({ name: "h", url: "https://example.com", steps: [back[0]] }).includes('state: "hidden"'),
+    true,
+    "…so regenerating does not invert it to a visible wait",
+  );
+}
+
+// A bare `.waitFor()` (what the app emitted before conditional waits, and what
+// sits in every test recorded until now) still parses as a plain wait.
+{
+  const plain = generateSpec({
+    name: "p",
+    url: "https://example.com",
+    steps: [step({ type: "wait", locator: { k: "testid", v: "x" } })],
+  });
+  assertEqual(plain.includes(".waitFor();"), true, "a legacy element wait is unchanged");
+  const back = parseSpec(plain).filter((s) => s.type === "wait");
+  assertEqual(back[0]?.waitUntil, undefined, "…and carries no invented predicate");
+}
+
+// `detached` has no counterpart in the step model. Modeling it as a plain wait
+// would regenerate as a wait-for-VISIBLE, so it is reported unclassified
+// instead — which surfaces to the user as stepsDiverged.
+{
+  const detached = [
+    'import { test, expect } from "@playwright/test";',
+    'test("t", async ({ page }) => {',
+    '  await page.goto("https://example.com");',
+    '  await page.locator("#a").waitFor({ state: "detached" });',
+    "});",
+  ].join("\n");
+  const parsed = parseSpecDetailed(detached);
+  assertEqual(parsed.skipped, 1, "a detached wait is reported as unclassified");
+  assertEqual(
+    parsed.steps.some((s) => s.type === "wait"),
+    false,
+    "…rather than becoming a wait that means the opposite",
+  );
+}
+
+// ── 9. A disabled conditional wait keeps its predicate ─────────────────────
+//
+// A disabled step is emitted as a commented-out line, and the marker rides
+// along inside that comment. Both comment rules have to hold at once.
+{
+  const src = generateSpec({
+    name: "d",
+    url: "https://example.com",
+    steps: [step({ type: "wait", waitUntil: "enabled", locator: { k: "css", v: "#a" }, timeoutMs: 3000, disabled: true })],
+  });
+  const parsed = parseSpec(src).filter((s) => s.type === "wait");
+  assertEqual(parsed[0]?.waitUntil, "enabled", "a disabled conditional wait keeps its predicate");
+  assertEqual(parsed[0]?.disabled, true, "…and stays disabled");
+  assertEqual(parsed[0]?.timeoutMs, 3000, "…and keeps its timeout");
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);
