@@ -1187,6 +1187,14 @@ export interface RecorderState {
   cursor: number;
   /** true while the "Refine Selector" element picker is active */
   refineMode: boolean;
+  /** true while a replay is running steps against the training window.
+   *
+   *  Broadcast rather than per-window React state because BOTH trainers (the
+   *  main window and the docked panel) render one session: without this, the
+   *  window that did not start the replay still shows "Recording" and offers
+   *  live Add-step / Replay controls, and an action taken there lands in the
+   *  middle of a run whose whole premise is that capture is suspended. */
+  replaying: boolean;
   /** true once the trainer browser window has finished loading its first page */
   pageReady: boolean;
   /** true while the training browser window is opening but hasn't shown yet.

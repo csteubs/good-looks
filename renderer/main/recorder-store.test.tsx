@@ -17,7 +17,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { RecorderState, Step } from "../lib/recorder-types";
 // Safe above the vi.mock below: Vitest hoists vi.mock above imports.
-import { RecorderProvider, useRecorder } from "./recorder-store";
+import { RecorderProvider, REPLAY_FLASH_MS, useRecorder } from "./recorder-store";
 
 // ── A controllable push-event bus standing in for the IPC bridge ─────
 type Handler = (payload: unknown) => void;
@@ -105,8 +105,18 @@ let actionsUnderTest: {
 
 /** Renders the store's state as text so tests can assert on it. */
 function Probe() {
-  const { state, liveSteps, stepsLoaded, newStepIds, runs, replayRun, insertGeneratedSteps, deleteStep } =
-    useRecorder();
+  const {
+    state,
+    liveSteps,
+    stepsLoaded,
+    newStepIds,
+    runs,
+    replayRun,
+    replayFlash,
+    replayStepStatus,
+    insertGeneratedSteps,
+    deleteStep,
+  } = useRecorder();
   // Stashed for the tests that need to invoke an action rather than observe
   // state; a button per action would drown the markup the other suites read.
   actionsUnderTest = { insertGeneratedSteps, deleteStep };
@@ -122,6 +132,18 @@ function Probe() {
       <span data-testid="replay-ran">{String(replayRun?.ran ?? "none")}</span>
       <span data-testid="replay-steps">
         {(replayRun?.steps ?? []).map((s) => `${s.stepLabel}:${s.ok}`).join("|")}
+      </span>
+      <span data-testid="replay-flash">
+        {Object.entries(replayFlash)
+          .map(([i, v]) => `${i}:${v}`)
+          .sort()
+          .join("|")}
+      </span>
+      <span data-testid="replay-status">
+        {Object.entries(replayStepStatus)
+          .map(([i, v]) => `${i}:${v}`)
+          .sort()
+          .join("|")}
       </span>
     </div>
   );
@@ -451,5 +473,96 @@ describe("marking AI-generated steps as new", () => {
 
     expect(text("steps")).toBe("old,new1");
     expect(text("new-steps")).toBe("");
+  });
+});
+
+describe("the ephemeral replay flash", () => {
+  // The flash is the row-level answer to "did the step I just replayed pass?".
+  // It is deliberately SEPARATE from `replayStepStatus`, which persists so a
+  // finished run stays readable — and that separation is the thing to get
+  // wrong: fold them together and either the flash never fades or the finished
+  // run's check marks vanish two seconds after it ends.
+
+  it("marks a step that passed, and one that failed", () => {
+    renderStore();
+
+    emit("recorder:replayStep", { index: 0, status: "end", ok: true });
+    emit("recorder:replayStep", { index: 1, status: "end", ok: false });
+
+    expect(text("replay-flash")).toBe("0:pass|1:fail");
+  });
+
+  it("clears the flash after REPLAY_FLASH_MS, leaving the run status behind", () => {
+    vi.useFakeTimers();
+    try {
+      renderStore();
+      emit("recorder:replayStep", { index: 0, status: "end", ok: true });
+      expect(text("replay-flash")).toBe("0:pass");
+
+      // One tick short: still showing. Pinned so a change to the duration has
+      // to be deliberate rather than absorbed by a generous assertion.
+      act(() => {
+        vi.advanceTimersByTime(REPLAY_FLASH_MS - 1);
+      });
+      expect(text("replay-flash")).toBe("0:pass");
+
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(text("replay-flash")).toBe("");
+      // The persistent status is untouched — the check mark on the row outlives
+      // the outline, which is the whole reason these are two pieces of state.
+      expect(text("replay-status")).toBe("0:passed");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let a first replay's timer cut a second one short", () => {
+    // Replay a step, watch it pass, immediately replay it again. The first
+    // run's expiry timer is still pending and fires mid-way through the second
+    // flash; without cancelling it the outline vanishes about a second early,
+    // which reads as the highlight being unreliable rather than as a bug.
+    vi.useFakeTimers();
+    try {
+      renderStore();
+      emit("recorder:replayStep", { index: 0, status: "end", ok: true });
+
+      act(() => {
+        vi.advanceTimersByTime(REPLAY_FLASH_MS - 500);
+      });
+      emit("recorder:replayStep", { index: 0, status: "begin", ok: true });
+      emit("recorder:replayStep", { index: 0, status: "end", ok: false });
+      expect(text("replay-flash")).toBe("0:fail");
+
+      // The moment the FIRST timer would have fired.
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+      expect(text("replay-flash")).toBe("0:fail");
+
+      act(() => {
+        vi.advanceTimersByTime(REPLAY_FLASH_MS - 500);
+      });
+      expect(text("replay-flash")).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a stale flash the moment the same step starts running again", () => {
+    // A row cannot be both "running" and "passed a moment ago" — the green
+    // outline under a spinner says the result is in when it isn't.
+    vi.useFakeTimers();
+    try {
+      renderStore();
+      emit("recorder:replayStep", { index: 0, status: "end", ok: true });
+      emit("recorder:replayStep", { index: 0, status: "begin", ok: true });
+
+      expect(text("replay-flash")).toBe("");
+      expect(text("replay-status")).toBe("0:running");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

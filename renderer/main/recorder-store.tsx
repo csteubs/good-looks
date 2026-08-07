@@ -26,6 +26,13 @@ import type {
 
 export type RunStepStatus = "running" | "passed" | "failed";
 
+/** How long a replayed step's pass/fail outline stays on its row.
+ *
+ *  Deliberately the same 2500ms as the per-row replay tint in step-row.tsx, so
+ *  the outline and the background clear together — two ephemeral highlights on
+ *  one row expiring a beat apart reads as a rendering glitch. */
+export const REPLAY_FLASH_MS = 2500;
+
 /** One step's result within a live "Replay from current step" run. */
 export interface ReplayConsoleStep {
   index: number;
@@ -78,6 +85,7 @@ const EMPTY_STATE: RecorderState = {
   assertSoft: false,
   cursor: 0,
   refineMode: false,
+  replaying: false,
   pageReady: false,
   loading: false,
   loadFailed: false,
@@ -148,6 +156,11 @@ interface RecorderContextValue {
   executing: boolean;
   /** Per-step status for an in-flight replay, keyed by step index. */
   replayStepStatus: Record<number, RunStepStatus>;
+  /** Ephemeral pass/fail outline for a step that JUST finished replaying, keyed
+   *  by step index. Distinct from `replayStepStatus`, which persists until the
+   *  next run so the finished run stays readable: this is the flash that says
+   *  "this one, just now" and clears itself a couple of seconds later. */
+  replayFlash: Record<number, "pass" | "fail">;
   /** Persisted per-step debug entries (latest attempt per step), for the debug panel. */
   debugEntries: DebugEntry[];
   /** Remove one step's debug entry (persists via backend). */
@@ -212,6 +225,19 @@ export function RecorderProvider({
   // Per-step status for an in-flight trainer replayAll (auto-run on Edit in
   // Trainer), keyed by step index. Cleared when a new run starts.
   const [replayStepStatus, setReplayStepStatus] = React.useState<Record<number, RunStepStatus>>({});
+  // Ephemeral pass/fail outline, keyed by step index. Every entry owns a timer
+  // that removes it; the timers are held so they can be cancelled, because a
+  // step replayed twice in quick succession would otherwise have the FIRST
+  // run's timer clear the second run's flash early.
+  const [replayFlash, setReplayFlash] = React.useState<Record<number, "pass" | "fail">>({});
+  const flashTimers = React.useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
+  React.useEffect(() => {
+    const timers = flashTimers.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
   // Live "Replay from current step" run, streamed from the backend.
   const [replayRun, setReplayRun] = React.useState<ReplayRun | null>(null);
   // True while any replay (single step / from-current) is in flight — drives
@@ -311,6 +337,35 @@ export function RecorderProvider({
         ...prev,
         [index]: status === "begin" ? "running" : ok ? "passed" : "failed",
       }));
+      // The flash is keyed off "end" rather than the replay's start: a step can
+      // legitimately take seconds (a conditional wait runs up to its timeout),
+      // and a flash timed from the start would already be gone by the time the
+      // step it describes actually finished.
+      if (status === "begin") {
+        const pending = flashTimers.current.get(index);
+        if (pending) {
+          clearTimeout(pending);
+          flashTimers.current.delete(index);
+        }
+        setReplayFlash((prev) => {
+          if (!(index in prev)) return prev;
+          const next = { ...prev };
+          delete next[index];
+          return next;
+        });
+        return;
+      }
+      setReplayFlash((prev) => ({ ...prev, [index]: ok ? "pass" : "fail" }));
+      const timer = setTimeout(() => {
+        flashTimers.current.delete(index);
+        setReplayFlash((prev) => {
+          if (!(index in prev)) return prev;
+          const next = { ...prev };
+          delete next[index];
+          return next;
+        });
+      }, REPLAY_FLASH_MS);
+      flashTimers.current.set(index, timer);
     });
     // Live "Replay from current step" streaming: build the run model up as each
     // phase arrives so the Console tab can show output as the test runs.
@@ -598,6 +653,7 @@ export function RecorderProvider({
     replayRun,
     executing,
     replayStepStatus,
+    replayFlash,
     debugEntries,
     clearDebugEntry,
     picked,

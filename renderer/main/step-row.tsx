@@ -160,6 +160,7 @@ export function StepRow({
   drag,
   runStatus,
   isNew,
+  replayFlash,
   indent = 0,
 }: {
   index: number;
@@ -178,6 +179,10 @@ export function StepRow({
    *  gets a pulsing green border until the list changes again. Only ADDED
    *  steps are marked; removals are deliberately unstyled. */
   isNew?: boolean;
+  /** This step just finished replaying, and whether it passed. Ephemeral — the
+   *  store clears it after REPLAY_FLASH_MS. Drawn as an outline, which is why
+   *  it and `isNew` are mutually exclusive below rather than additive. */
+  replayFlash?: "pass" | "fail";
   /** Nesting depth inside conditional blocks, for left indentation. */
   indent?: number;
 }) {
@@ -254,12 +259,26 @@ export function StepRow({
   // interesting row on the screen, so neither highlight may hide the other.
   // `.step-new` animates only `outline-color`, which nothing else here touches
   // (see renderer/styles.css), so the two compose instead of fighting.
-  const newBorder = isNew ? "step-new" : "";
+  //
+  // The replay flash and `.step-new` both draw an OUTLINE, so unlike the pair
+  // above these cannot compose — two outline rules on one element resolve by
+  // stylesheet order, which is not a decision either component made. The flash
+  // wins while it lasts: it is the newer fact and the one the user is waiting
+  // on, and it expires on its own, so `.step-new` comes back underneath rather
+  // than being lost.
+  const outlineClass = replayFlash
+    ? replayFlash === "pass"
+      ? "step-replay-pass"
+      : "step-replay-fail"
+    : isNew
+      ? "step-new"
+      : "";
 
   return (
     <div
       data-new-step={isNew ? "true" : undefined}
-      className={`group flex items-center gap-2 rounded-md px-2 py-1 ${flash} ${newBorder} ${
+      data-replay-flash={replayFlash}
+      className={`group flex items-center gap-2 rounded-md px-2 py-1 ${flash} ${outlineClass} ${
         selected && !runStatus ? "ring-1 ring-inset ring-accent" : ""
       } ${drag?.isOver ? "border-t-2 border-accent" : ""} ${
         drag?.isDragging ? "opacity-50" : ""
