@@ -30,6 +30,7 @@ import {
 import { Check, CircleDashed, GripVertical, Play, Square, X, SkipForward, Loader } from "lucide-react";
 
 import { api } from "../lib/api";
+import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts } from "../lib/test-tags";
 import { TagCluster } from "./tag-cluster";
@@ -323,11 +324,12 @@ export function BatchView() {
               className="w-32"
               aria-label="Browser engine for this batch"
             >
+              <BrowserIcon browser={browser} labelled={false} />
               <SelectValue placeholder="Chromium" />
             </SelectTrigger>
             <SelectContent>
               {RUN_BROWSERS.map((b) => (
-                <SelectItem key={b} value={b}>
+                <SelectItem key={b} value={b} icon={BROWSER_SF_SYMBOLS[b]}>
                   {RUN_BROWSER_LABELS[b]}
                 </SelectItem>
               ))}
