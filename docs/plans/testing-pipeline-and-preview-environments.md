@@ -375,14 +375,66 @@ single point of failure, and it is an hour of work.
 
 ## 10. Sequenced summary
 
-| Phase | Effort | Unlocks |
+| Phase | Status | Unlocks |
 |---|---|---|
-| 0 — Electron into git, worktree deps, `sonner` | 0.5d | Nothing is lost; worktrees work |
-| 1 — Real CI on Electron | 1–2d | A green tick that means something |
-| 2 — Playwright-driven Electron E2E | 2–3d | Agents exercise the real app pre-merge |
-| 3 — Browser preview + per-PR URLs | 2–3d | Seconds-long loop, shareable previews |
-| 4 — Converge on `@shell/backend` | 3–5d | One tree; drift stops existing |
-| 5 — Drift guard | 0.5d | It stays converged |
+| 0 — Electron into git, worktree deps, `sonner` | **built** | Nothing is lost; worktrees work |
+| 1 — Real CI on Electron | **built** | A green tick that means something |
+| 2 — Playwright-driven Electron E2E | **built** | Agents exercise the real app pre-merge |
+| 3 — Browser preview + per-PR artifacts | **built** | Seconds-long loop, shareable previews |
+| 4 — Converge on `@shell/backend` | not started (3–5d) | One tree; drift stops existing |
+| 5 — Drift guard | not started (0.5d) | It stays converged |
 
-Phases 1–3 are independent of each other and can run in parallel once Phase 0
-lands.
+---
+
+## 11. What was built, and what is verified
+
+Phases 0–3 landed. Phase 0's Glaze-side work is on `claude/testing-pipeline-optimization-0dfc4b`;
+everything else is on **`shell/electron`**, branched from `a61598c`:
+
+| Commit | What |
+|---|---|
+| `3c72c05` | The port itself, imported from the untracked tree |
+| `c49e9c2` | Install fixes — `install-electron` postinstall, `allowScripts`, `build/` ignored |
+| `928b467` | `.github/workflows/gate.yml` + `e2e/` driving the real app |
+| `f11a42d` | `renderer/dev/` — the whole UI in a browser tab, on fixtures |
+| `b86c61f` | Preview published from CI |
+
+**Verified by running it, not by reading it:**
+
+- Full gate on a clean checkout of `shell/electron`: lint 4.5s, type-check 5.0s,
+  `test:all` 897 tests + 26 checks in 26.3s, build 3.8s,
+  `package` → `dist/mac-arm64/Good Looks!.app`.
+- 6/6 end-to-end tests pass in 7.0s against the built app. This also closes
+  `PORTING.md`'s open item that the packaged app's UI had never been looked at —
+  it was launched, screenshotted, and driven.
+- The browser preview renders all six views with zero unhandled channels,
+  including the test detail view with steps, tabs, browser picker and the
+  capture-overhead estimate.
+- The drift guard fails on a simulated channel rename, in both directions.
+- The Glaze worktree this plan was written in now runs the full gate
+  (1105 tests + 28 checks) via `npm run bootstrap`.
+
+**Three bugs the work surfaced**, each of which would have reached CI:
+
+1. Electron 43 has no postinstall — a clean `npm install` produced no runnable
+   binary at all.
+2. npm 12 blocks dependency install scripts by default; esbuild and fsevents
+   were silently skipped.
+3. `build/` was not gitignored — every build left the bundle one `git add -A`
+   from being committed, which `check-repo-hygiene` bans.
+
+**Not done, and deliberately so:**
+
+- **Phase 4, the convergence.** It should land as one merge rather than
+  incrementally — a half-done state leaves two trees *plus* a shell
+  abstraction, which is worse than either. The 12 cherry-picks come first.
+- **`npm run build` on the Glaze branch was not run as verification.** It
+  publishes into `../.glaze/build` and would replace whatever build is
+  currently installed in the Glaze app — the exact behaviour this plan exists
+  to remove. Nothing in that change touches build inputs.
+- **Neither branch has been pushed.** Both are committed locally.
+- **A per-pull-request preview URL** needs a `gh-pages` branch with a
+  `pr-<number>/` prefix; the official Pages actions deploy one site per
+  repository. The artifact ships today and the Pages job is behind an
+  `ENABLE_PAGES` variable so turning Pages on is never discovered through a red
+  pipeline.
