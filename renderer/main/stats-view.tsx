@@ -47,6 +47,7 @@ import {
 } from "lucide-react";
 
 import { api } from "../lib/api";
+import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
 import { FlakePanel } from "./flake-panel";
 import { Pager } from "./pager";
 import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
@@ -674,7 +675,7 @@ export function StatsView() {
                           <SelectItem value="headless">Headless</SelectItem>
                           <SelectItem value="captured">Screenshots</SelectItem>
                           {RUN_BROWSERS.map((b) => (
-                            <SelectItem key={b} value={b}>
+                            <SelectItem key={b} value={b} icon={BROWSER_SF_SYMBOLS[b]}>
                               {RUN_BROWSER_LABELS[b]}
                             </SelectItem>
                           ))}
@@ -716,6 +717,7 @@ export function StatsView() {
                         <TableRow>
                           <TableHead>Test</TableHead>
                           <TableHead className="w-20">Status</TableHead>
+                          <TableHead className="w-20">Browser</TableHead>
                           <TableHead className="w-28">Started</TableHead>
                           <TableHead className="w-28">Tags</TableHead>
                           <TableHead className="w-24 text-right">Duration</TableHead>
@@ -767,6 +769,19 @@ export function StatsView() {
                                   </span>
                                 )}
                               </TableCell>
+                              {/* Icon-only: the engine is a glance-level fact,
+                                  and the name would cost a third of the row's
+                                  width to repeat on every line. */}
+                              <TableCell>
+                                {isBaseline ? (
+                                  <span className="text-tertiary">—</span>
+                                ) : (
+                                  <BrowserIcon
+                                    browser={runBrowserOf(r)}
+                                    className="size-4 shrink-0 text-secondary"
+                                  />
+                                )}
+                              </TableCell>
                               <TableCell
                                 className="truncate text-secondary"
                                 title={fmtDateTime(r.startedAt)}
@@ -778,15 +793,27 @@ export function StatsView() {
                                   <span className="text-tertiary">—</span>
                                 ) : (
                                   <span className="flex items-center gap-1">
-                                    {/* One badge carries both facts: which engine
-                                        ran, and whether it was visible. */}
+                                    {/* Mode icon + engine icon, no words. The
+                                        engine has its own column now, so the
+                                        name here would be pure duplication —
+                                        but the badge keeps the glyph so the
+                                        tag filter's browser options still have
+                                        something to point at. */}
                                     <Badge color="secondary">
                                       {r.runHeadless ? (
-                                        <MonitorOff className="size-3" />
+                                        <MonitorOff
+                                          className="size-3"
+                                          role="img"
+                                          aria-label="Headless"
+                                        />
                                       ) : (
-                                        <Globe className="size-3" />
+                                        <Globe className="size-3" role="img" aria-label="Headed" />
                                       )}
-                                      {RUN_BROWSER_LABELS[runBrowserOf(r)]}
+                                      <BrowserIcon
+                                        browser={runBrowserOf(r)}
+                                        className="size-3 shrink-0"
+                                        labelled={false}
+                                      />
                                     </Badge>
                                     {/* Capture is a filterable tag, so it needs to be
                                         visible here — icon-only to fit the column. */}

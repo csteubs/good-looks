@@ -91,18 +91,54 @@ describe("run history table", () => {
     expect(screen.getByText("Beta")).toBeTruthy();
   });
 
-  it("names the browser engine in the Tags column", async () => {
-    runs = [run({ id: "r1", runBrowser: "firefox" })];
+  it("puts the Browser column between Status and Started", async () => {
+    // Column ORDER is the requirement, not just presence — asserting only that
+    // a "Browser" header exists would pass with it appended at the far right.
+    runs = [run({ id: "r1" })];
     renderView();
     await bodyRows();
-    expect(screen.getByText("Firefox")).toBeTruthy();
+    const headers = within(screen.getByRole("table"))
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent?.trim());
+    expect(headers.indexOf("Browser")).toBe(headers.indexOf("Status") + 1);
+    expect(headers.indexOf("Started")).toBe(headers.indexOf("Browser") + 1);
+  });
+
+  it("shows the browser as an icon with no engine name anywhere in the row", async () => {
+    runs = [run({ id: "r1", runBrowser: "firefox" })];
+    renderView();
+    const [row] = await bodyRows();
+    // The icon carries the name for assistive tech and hover…
+    expect(within(row).getByRole("img", { name: "Firefox" })).toBeTruthy();
+    // …but the row must not SAY it: that duplication is what the column
+    // replaced, and it would silently creep back via the Tags badge.
+    // (`ignore` skips the icon's own <title>, which is a hover tooltip rather
+    // than text in the row.)
+    expect(within(row).queryByText("Firefox", { ignore: "title,script,style" })).toBeNull();
   });
 
   it("reports a run predating the browser picker as Chromium", async () => {
     runs = [run({ id: "r1" })]; // no runBrowser
     renderView();
-    await bodyRows();
-    expect(screen.getByText("Chromium")).toBeTruthy();
+    const [row] = await bodyRows();
+    expect(within(row).getByRole("img", { name: "Chromium" })).toBeTruthy();
+  });
+
+  it("leaves the Browser cell blank for a baseline update, which ran no browser", async () => {
+    runs = [run({ id: "r1", kind: "baseline-update", note: "approved" })];
+    renderView();
+    const [row] = await bodyRows();
+    expect(within(row).queryByRole("img", { name: /chromium|firefox|webkit/i })).toBeNull();
+  });
+
+  it("still distinguishes headed from headless once the engine name is gone", async () => {
+    // The Tags badge lost its text; if the mode icon lost its label with it,
+    // the column would be two anonymous glyphs.
+    runs = [run({ id: "r1", runHeadless: true }), run({ id: "r2", runHeadless: false })];
+    renderView();
+    const rows = await bodyRows(2);
+    expect(within(rows[0]).getByRole("img", { name: "Headless" })).toBeTruthy();
+    expect(within(rows[1]).getByRole("img", { name: "Headed" })).toBeTruthy();
   });
 });
 

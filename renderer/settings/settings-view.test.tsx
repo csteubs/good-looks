@@ -110,6 +110,14 @@ describe("run defaults persist", () => {
     expect(screen.getByRole("combobox", { name: /browser/i }).textContent).toContain("WebKit");
   });
 
+  it("shows that engine's icon on the trigger, not just its name", async () => {
+    settings = { ...settings, defaultRunBrowser: "webkit" };
+    await renderSettings();
+    const trigger = screen.getByRole("combobox", { name: /browser/i });
+    expect(trigger.querySelector('[data-browser="webkit"]')).toBeTruthy();
+    expect(trigger.querySelector('[data-browser="chromium"]')).toBeNull();
+  });
+
   it("saves the default test timeout in milliseconds", async () => {
     await renderSettings();
     const input = screen.getByRole("spinbutton", {

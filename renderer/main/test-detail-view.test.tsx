@@ -176,6 +176,18 @@ describe("run controls", () => {
     expect(await screen.findByText("Firefox")).toBeTruthy();
   });
 
+  it("marks the browser trigger with that engine's icon", async () => {
+    // The dropdown's own options are drawn by AppKit and never enter the DOM,
+    // so the trigger is the only place the icon is observable at all — and a
+    // trigger showing the wrong glyph is silent: the label still reads right.
+    test_ = record({ runBrowser: "firefox" });
+    renderView();
+    await screen.findByText("Checkout");
+    const trigger = screen.getByRole("combobox", { name: /browser engine for this test/i });
+    expect(trigger.querySelector('[data-browser="firefox"]')).toBeTruthy();
+    expect(trigger.querySelector('[data-browser="chromium"]')).toBeNull();
+  });
+
   it("persists a headless change", async () => {
     renderView();
     await screen.findByText("Checkout");
