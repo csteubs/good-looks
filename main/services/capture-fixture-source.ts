@@ -23,11 +23,14 @@ import {
   MAX_NETWORK_HEAD,
   MAX_NETWORK_TAIL,
 } from "./log-capture-source.js";
+import { actionsLiteral, LOCATOR_ACTIONS, PAGE_ACTIONS } from "./page-actions.js";
+import { SETTLE_FIXTURE_FILE } from "./settle-fixture-source.js";
 
 export const captureFixtureSource = `import { test as base, expect } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
 import { installHealing } from "./glaze-heal.mjs";
+import { installSettle } from "./${SETTLE_FIXTURE_FILE}";
 
 export { expect };
 
@@ -41,6 +44,11 @@ const HEAL_ON = process.env.GLAZE_HEAL === "1";
 // without them, and it costs far more, so nobody should pay for one by asking
 // for the other.
 const A11Y_ON = process.env.GLAZE_A11Y === "1";
+// "Crawl" speed's page-settling, gated independently again and installed from
+// here for the same reason healing is: a spec imports exactly ONE module for
+// \`test\`, so every run-time patch has to be installed through this fixture or
+// it does not run at all.
+const SETTLE_ON = process.env.GLAZE_SETTLE === "1";
 // Console + network recording, gated independently again: it is far cheaper
 // than either screenshots or axe, but it writes page-controlled text and
 // request URLs to disk, so nobody should get it by asking for something else.
@@ -65,11 +73,10 @@ const SHOT_TIMEOUT_MS = 5000;
 
 // page/locator methods that mutate or navigate the page — the meaningful set for
 // visual diffing. Pure queries and assertions are intentionally NOT captured.
-const PAGE_ACTIONS = ["goto", "goBack", "goForward", "reload", "setViewportSize", "setContent"];
-const LOCATOR_ACTIONS = [
-  "click", "dblclick", "fill", "press", "type", "check", "uncheck", "setChecked",
-  "selectOption", "tap", "hover", "focus", "clear", "setInputFiles", "dragTo",
-];
+// Interpolated from page-actions.ts, which the settle fixture reads too: the
+// two must patch the same set, and two copies would drift.
+const PAGE_ACTIONS = ${actionsLiteral(PAGE_ACTIONS)};
+const LOCATOR_ACTIONS = ${actionsLiteral(LOCATOR_ACTIONS)};
 
 // Module-level context for the active test. workers=1 + one spec per run means a
 // single test owns this at a time, so the locator-prototype patch (which is
@@ -310,7 +317,7 @@ function patchOnce(page) {
   }
 }
 
-export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON) ? base.extend({
+export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON) ? base.extend({
   page: async ({ page }, use, testInfo) => {
     // Healing is installed FIRST so its retry sits inside the capture wrapper:
     // a healed action should produce one screenshot of the successful result,
@@ -318,6 +325,15 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON) ? base.exte
     if (HEAL_ON) {
       try { installHealing(page); } catch (e) {
         process.stderr.write("[glaze-heal] install failed: " + String(e) + "\\n");
+      }
+    }
+    // Settling goes on NEXT — outside healing, inside capture. Each patch wraps
+    // the previous one, so this install order is what produces the unwind
+    // "action → heal retry → settle → screenshot". Move it after patchOnce and
+    // every screenshot is taken of a page that hasn't finished loading yet.
+    if (SETTLE_ON) {
+      try { installSettle(page); } catch (e) {
+        process.stderr.write("[glaze-settle] install failed: " + String(e) + "\\n");
       }
     }
     // Inject axe into every document, once, rather than evaluating its ~570KB

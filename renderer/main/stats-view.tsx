@@ -42,6 +42,7 @@ import {
   MonitorOff,
   Search,
   Stamp,
+  Timer,
   X,
   Wand2,
 } from "lucide-react";
@@ -50,7 +51,7 @@ import { api } from "../lib/api";
 import { FlakePanel } from "./flake-panel";
 import { Pager } from "./pager";
 import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
-import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
+import { RUN_BROWSERS, RUN_BROWSER_LABELS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { pageSlice } from "../lib/paginate";
 import {
   NO_FILTERS,
@@ -788,6 +789,25 @@ export function StatsView() {
                                       )}
                                       {RUN_BROWSER_LABELS[runBrowserOf(r)]}
                                     </Badge>
+                                    {/* Speed this run executed at. Shown only when
+                                        the run RECORDED one: runs predating the field
+                                        could have been at any speed, and a badge
+                                        guessing "Fast" for them would corrupt the one
+                                        comparison this is here to support — whether a
+                                        slower speed actually passes more often. */}
+                                    {r.speed ? (
+                                      <Badge
+                                        color="secondary"
+                                        title={
+                                          r.speed === "crawl"
+                                            ? "Crawl: waited for the page to load and settle after every step"
+                                            : `Playback speed: ${TEST_SPEED_LABELS[r.speed]}`
+                                        }
+                                      >
+                                        <Timer className="size-3" />
+                                        {TEST_SPEED_LABELS[r.speed]}
+                                      </Badge>
+                                    ) : null}
                                     {/* Capture is a filterable tag, so it needs to be
                                         visible here — icon-only to fit the column. */}
                                     {r.captureArtifacts ? (

@@ -244,7 +244,26 @@ export interface RawStep {
   fingerprint?: ElementFingerprint;
 }
 
-export type TestSpeed = "slow" | "medium" | "fast";
+export type TestSpeed = "crawl" | "slow" | "medium" | "fast";
+
+/** Every speed, SLOWEST FIRST — the order the sidebar slider's stops are in.
+ *  Exported so the UI lists, the settings validator and the `tests:setSpeed`
+ *  handler all derive from one array: the previous arrangement re-declared the
+ *  set in six places, and a speed accepted by one entry point but rejected by
+ *  another is a bug with no error message. */
+export const TEST_SPEEDS: TestSpeed[] = ["crawl", "slow", "medium", "fast"];
+
+/** Display labels for the speed pickers. */
+export const TEST_SPEED_LABELS: Record<TestSpeed, string> = {
+  crawl: "Crawl",
+  slow: "Slow",
+  medium: "Medium",
+  fast: "Fast",
+};
+
+export function isTestSpeed(v: unknown): v is TestSpeed {
+  return typeof v === "string" && (TEST_SPEEDS as string[]).includes(v);
+}
 
 /** Playwright browser engine a test run uses. The trainer always uses the
  *  app's own WebView and is unaffected by this. */
@@ -267,7 +286,9 @@ export interface TestRecord {
   scriptPath: string;
   /** true once the script has been hand-edited, so it's no longer regenerated from steps */
   scriptEdited?: boolean;
-  /** playback speed for runs (adds a slowMo delay between actions); defaults to "fast" (no delay) */
+  /** playback speed for runs (adds a slowMo delay between actions); defaults to
+   *  "fast" (no delay). "crawl" additionally waits for the page to settle after
+   *  every action — see settle-fixture-source.ts. */
   speed?: TestSpeed;
   /** absolute path to the folder a test was imported from, so its sibling
    *  modules (e.g. `./helpers.js`) can be re-copied into the scripts dir */
@@ -944,6 +965,14 @@ export interface RunRecord {
   /** Browser engine this run used. Absent on runs recorded before the picker
    *  existed — treated as chromium, which is what they all ran on. */
   runBrowser?: RunBrowser;
+  /** Playback speed this run executed at. Recorded because speed is a per-test
+   *  setting the user changes between runs, so without it a run history can't
+   *  say whether yesterday's failure and today's pass differ by the code or by
+   *  the pacing — which is the whole question "crawl" exists to answer.
+   *  Absent on runs recorded before this field; read as "unknown", NOT as
+   *  "fast" — a pre-existing run genuinely might have been any speed, and
+   *  defaulting would invent evidence. */
+  speed?: TestSpeed;
   /** id of the batch this run belonged to, when it was part of one. Absent for
    *  ordinary single runs — which is most of them. */
   batchId?: string;
