@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      No Content-Security-Policy meta, unlike main-window.html.
+
+      That policy exists because the real window runs alongside a preload and
+      loads arbitrary untrusted sites in sibling windows. This page is a static
+      bundle on a static host with no backend, no preload and no page loading —
+      and its `connect-src 'self'` would block nothing that happens here while
+      making the file read as though it carried the app's real protections.
+    -->
+    <title>Good Looks! — UI preview</title>
+    <script>
+      if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
+        document.documentElement.classList.add("dark");
+      }
+    </script>
+    <style>
+      :root {
+        --background: hsl(0 0% 100%);
+      }
+      .dark {
+        --background: hsl(0 0% 7%);
+      }
+      body {
+        background: var(--background);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./renderer/dev/preview-boot.ts"></script>
+  </body>
+</html>

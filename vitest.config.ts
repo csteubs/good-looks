@@ -84,7 +84,13 @@ export default defineConfig({
           // *.dom.test.ts covers BACKEND code that produces DOM-executing
           // scripts (the injected replayer / capture helpers) — not React, but
           // it genuinely needs a document to run against.
-          include: ["renderer/**/*.test.tsx", "main/**/*.dom.test.ts"],
+          //
+          // renderer/dev/ is explicit because the node project only takes
+          // renderer/lib/**, and .tsx is the only renderer suffix matched
+          // here. A test file under renderer/dev/ named *.test.ts otherwise
+          // matches NEITHER project and never runs — passing by never
+          // executing, which is the worst way for a guard to fail.
+          include: ["renderer/**/*.test.tsx", "renderer/dev/**/*.test.ts", "main/**/*.dom.test.ts"],
           setupFiles: [path.resolve(here, "renderer/__tests__/setup.ts")],
           css: false,
         },

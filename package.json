@@ -15,6 +15,8 @@
     "start": "electron .",
     "lint": "eslint main renderer mcp e2e",
     "test:e2e": "npm run build && playwright test --config e2e/playwright.config.ts",
+    "dev:web": "vite --open /preview.html",
+    "build:preview": "vite build --mode preview",
     "type-check": "tsc --noEmit -p tsconfig.json",
     "package": "npm run build && electron-builder --mac --dir",
     "check:spec-parser": "tsx main/services/__tests__/spec-parser.check.ts",
