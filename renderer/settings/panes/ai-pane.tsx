@@ -1,0 +1,198 @@
+// The model behind Debug with AI and Generate from prompt.
+//
+// The API key input keeps its value in THIS component rather than in the
+// controller, and clears it the moment the save succeeds. The key is
+// write-only by design — the backend stores it encrypted and never hands it
+// back — so the renderer holding one in shared state for the rest of the
+// session would be the only place it lingers.
+
+import { useState } from "react";
+import {
+  Button,
+  Input,
+  Label,
+  RadioGroup,
+  RadioGroupItem,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+  Status,
+  Switch,
+} from "@glaze/core/components";
+
+import { useSettingsController } from "../settings-controller";
+import { SettingRow } from "../setting-row";
+import { PaneSection } from "../pane-section";
+
+export function AiPane() {
+  const {
+    settings,
+    save,
+    provider,
+    model,
+    llmStatus,
+    baseUrl,
+    hasApiKey,
+    testing,
+    savingKey,
+    defaultUrlFor,
+    setBaseUrl,
+    commitBaseUrl,
+    changeProvider,
+    saveApiKey,
+    clearApiKey,
+    testConnection,
+    changeModel,
+  } = useSettingsController();
+
+  const [apiKeyInput, setApiKeyInput] = useState("");
+
+  const onSaveKey = async () => {
+    await saveApiKey(apiKeyInput);
+    // Don't hold the key in renderer state once it's been handed over.
+    setApiKeyInput("");
+  };
+
+  return (
+    <>
+      <PaneSection>
+        <SettingRow
+          id="llm-provider"
+          label="AI provider"
+          summary={
+            provider === "anthropic"
+              ? "Use Claude via your Anthropic account. Prompts are sent to api.anthropic.com over HTTPS."
+              : "Use a local LLM running on your machine. No data leaves your computer."
+          }
+        >
+          <RadioGroup
+            id="llm-provider"
+            value={provider}
+            onValueChange={(v) => void changeProvider(v)}
+            orientation="horizontal"
+          >
+            <Label>
+              <RadioGroupItem value="ollama" />
+              Ollama
+            </Label>
+            <Label>
+              <RadioGroupItem value="lmstudio" />
+              LM Studio
+            </Label>
+            <Label>
+              <RadioGroupItem value="anthropic" />
+              Claude
+            </Label>
+          </RadioGroup>
+        </SettingRow>
+
+        {provider !== "anthropic" ? (
+          <SettingRow
+            id="llm-server-url"
+            label="Server URL"
+            summary={
+              llmStatus && !llmStatus.reachable
+                ? (llmStatus.error ?? "Not reachable")
+                : `Default: ${defaultUrlFor(provider)}`
+            }
+          >
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {llmStatus ? (
+                <Status variant={llmStatus.reachable ? "success" : "error"}>
+                  {llmStatus.reachable ? "Online" : "Offline"}
+                </Status>
+              ) : null}
+              <Input
+                id="llm-server-url"
+                className="w-64"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                placeholder={defaultUrlFor(provider)}
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                onBlur={(e) => void commitBaseUrl(e.target.value)}
+              />
+              <Button variant="muted" onClick={() => void testConnection()} disabled={testing}>
+                {testing ? "Testing…" : "Test connection"}
+              </Button>
+            </div>
+          </SettingRow>
+        ) : null}
+
+        {provider === "anthropic" ? (
+          <SettingRow
+            id="anthropic-key"
+            label="API key"
+            summary={
+              hasApiKey
+                ? "Stored encrypted on this Mac. Enter a new key to replace it."
+                : "Paste a key from console.anthropic.com. Stored encrypted on this Mac."
+            }
+          >
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {hasApiKey ? (
+                <Status variant={llmStatus?.reachable === false ? "error" : "success"}>
+                  {llmStatus?.reachable === false ? "Not connected" : "Connected"}
+                </Status>
+              ) : null}
+              <Input
+                id="anthropic-key"
+                type="password"
+                className="w-56"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                placeholder="sk-ant-…"
+                value={apiKeyInput}
+                onChange={(e) => setApiKeyInput(e.target.value)}
+              />
+              <Button onClick={() => void onSaveKey()} disabled={savingKey || !apiKeyInput.trim()}>
+                {savingKey ? "Saving…" : "Save"}
+              </Button>
+              {hasApiKey ? (
+                <Button variant="muted" onClick={() => void clearApiKey()}>
+                  Clear
+                </Button>
+              ) : null}
+            </div>
+          </SettingRow>
+        ) : null}
+
+        {llmStatus?.reachable && llmStatus.models.length > 0 ? (
+          <SettingRow id="llm-model" label="Model">
+            <Select value={model ?? ""} onValueChange={(v) => void changeModel(v)}>
+              <SelectTrigger id="llm-model" className="w-56">
+                <SelectValue placeholder="Select a model…" />
+              </SelectTrigger>
+              <SelectContent>
+                {llmStatus.models.map((m) => (
+                  <SelectItem key={m.id} value={m.id}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </SettingRow>
+        ) : null}
+      </PaneSection>
+
+      <PaneSection title="Experimental">
+        <SettingRow
+          id="keep-running-ai-debug-jobs"
+          label="Keep a running AI debug job when a test is re-run"
+          summary="A job that is still working survives the re-run instead of being cancelled."
+          details="Re-running a test normally clears its AI debug session, so each run starts from a blank slate. With this on, a surviving job is reachable from the AI debug chip and marked as belonging to the previous run. Finished answers are still cleared either way. Useful with a slow local model, at the cost of a session on screen that describes output you can no longer see."
+        >
+          <Switch
+            id="keep-running-ai-debug-jobs"
+            checked={settings.keepRunningAiDebugJobs ?? false}
+            onCheckedChange={(checked) => void save({ keepRunningAiDebugJobs: checked })}
+          />
+        </SettingRow>
+      </PaneSection>
+    </>
+  );
+}

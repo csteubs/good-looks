@@ -5,7 +5,11 @@ node_modules
 
 # Build output. `npm run build` publishes to ../.glaze/build, outside this repo,
 # and clears its staging dir afterwards — but an aborted build leaves it behind.
+# `build/` (no dot) is where the CURRENT SDK stages the renderer bundle; only
+# `.build/` was listed here, so a full build left ~1.4 MB of generated assets
+# untracked-but-not-ignored, one `git add -A` away from being committed.
 .build/
+build/
 dist/
 
 # Test and coverage output.
