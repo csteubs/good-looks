@@ -8,3 +8,61 @@
 @source "./**/*.{ts,tsx}";
 @source not "./preload.ts";
 @source not "./dev/**/*";
+
+/*
+ * Newly-added step highlight.
+ *
+ * A step list that changed under the user (an applied AI-debug fix, an inserted
+ * AI-generated flow) reads as unchanged unless the new rows announce
+ * themselves — the list just silently has more entries in it. The pulse is what
+ * makes the change findable after the fact, since the apply usually happens on
+ * a different tab from the one showing the steps.
+ *
+ * Drawn with an INSET OUTLINE rather than a real border, for two reasons that
+ * both bit during development:
+ *  - `border` participates in layout, so a 1px border on some rows and not
+ *    others makes the whole list jump by 2px per new step the moment the
+ *    highlight clears. `outline` is drawn outside the box model.
+ *  - the row already carries Tailwind `border-*` utilities for the drag-over
+ *    drop indicator, and two rules setting `border` at equal specificity are
+ *    decided by stylesheet order, not by which one the component "meant".
+ * `outline-offset: -1px` keeps it flush inside the rounded corners, so it reads
+ * as a border to the user.
+ *
+ * It also deliberately does NOT use the `ring-*` (box-shadow) treatment the
+ * rest of step-row.tsx uses for run status and selection. Those are transient
+ * states of an existing row; this is a claim about where the row came from, and
+ * a row can be new AND failing at once. Different property, no collision.
+ *
+ * Deliberately no matching style for REMOVED steps: they aren't there to style,
+ * and the count is what tells that story.
+ */
+/* Only `outline-color` moves. An earlier version pulsed a `box-shadow` glow
+   too, which silently erased the `ring-1` selection and run-status highlights —
+   those are box-shadows as well, and the animation's declaration wins for the
+   whole property. Animating one property nothing else uses is what keeps the
+   two highlights composable. */
+@keyframes step-new-pulse {
+  0%,
+  100% {
+    outline-color: var(--color-support-green);
+  }
+  50% {
+    outline-color: var(--color-support-green-40);
+  }
+}
+
+.step-new {
+  outline: 1px solid var(--color-support-green);
+  outline-offset: -1px;
+  animation: step-new-pulse 2s ease-in-out infinite;
+}
+
+/* Respect the OS setting: keep the green outline so the row is still findable,
+   drop the motion. A pulsing row is exactly the kind of thing this setting is
+   for, and the highlight is not time-limited — it can pulse for minutes. */
+@media (prefers-reduced-motion: reduce) {
+  .step-new {
+    animation: none;
+  }
+}

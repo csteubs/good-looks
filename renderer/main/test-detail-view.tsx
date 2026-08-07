@@ -48,6 +48,7 @@ import { VariablesPanel } from "./variables-panel";
 import { HealsPanel } from "./heals-panel";
 import { A11yPanel } from "./a11y-panel";
 import { computeStepDepths } from "../lib/describe-step";
+import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import { latestA11yRun } from "../lib/a11y-format";
 import {
   RUN_BROWSERS,
@@ -117,6 +118,20 @@ export function TestDetailView() {
   // Per-test browser engine — same fall-back chain as the toggles above.
   const [runBrowser, setRunBrowser] = React.useState<RunBrowser>("chromium");
   const [browserInited, setBrowserInited] = React.useState(false);
+
+  // Ids of steps an applied AI-debug fix just ADDED, so the Steps tab can glow
+  // them. Held here rather than on the step records because it is a fact about
+  // this view's session, not about the test: reopening the test later should
+  // show a settled list, not a stale "look what changed".
+  //
+  // Not on a timer, deliberately. Applying happens from the AI debug panel,
+  // which is usually open over the Run tab — a timeout would expire before the
+  // user ever switched to Steps to look. It clears when the list changes again
+  // for some other reason instead (see the two callers of setNewStepIds below).
+  const [newStepIds, setNewStepIds] = React.useState<Set<string>>(() => new Set());
+  // Controlled so the active tab can be forced off "steps" when an apply
+  // deletes the last step and the trigger disappears out from under it.
+  const [tab, setTab] = React.useState<string | null>(null);
 
   const testQuery = useQuery({ queryKey: ["test", id], queryFn: () => api.tests.get(id) });
   const scriptQuery = useQuery({ queryKey: ["script", id], queryFn: () => api.tests.getScript(id) });
@@ -257,6 +272,10 @@ export function TestDetailView() {
   const commitSteps = React.useCallback(
     async (steps: Step[], regenerate: boolean) => {
       await api.tests.updateSteps(id, steps, { regenerate });
+      // The user has now edited the list themselves, so "these are the steps
+      // the AI added" is no longer a claim this view can make about it — the
+      // indexes and ids it was tracking may not even exist any more.
+      setNewStepIds(new Set());
       qc.invalidateQueries({ queryKey: ["test", id] });
       qc.invalidateQueries({ queryKey: ["script", id] });
       qc.invalidateQueries({ queryKey: ["tests"] });
@@ -268,7 +287,16 @@ export function TestDetailView() {
 
   const applyScript = React.useCallback(
     async (source: string) => {
-      await api.tests.updateScript(id, source);
+      // Snapshot the steps BEFORE the write. Applying a fix goes through
+      // `tests:updateScript`, which re-parses the whole spec and replaces the
+      // step list wholesale — so this is the only moment the previous list
+      // still exists anywhere.
+      const before = qc.getQueryData<TestRecord | null>(["test", id])?.steps ?? [];
+      const updated = await api.tests.updateScript(id, source);
+      // Diff off the handler's return value rather than a refetch: the refetch
+      // is async and the highlight would race it, and the record it returns is
+      // the same one the invalidation is about to put in the cache anyway.
+      setNewStepIds(computeNewStepIds(before, updated?.steps ?? []));
       qc.invalidateQueries({ queryKey: ["script", id] });
       qc.invalidateQueries({ queryKey: ["test", id] });
     },
@@ -597,9 +625,12 @@ export function TestDetailView() {
       ) : (() => {
         const imported = Boolean(test.sourceDir);
         const showSteps = !imported && test.steps.length > 0;
-        const defaultValue = showSteps ? "steps" : "script";
+        // An apply can delete the last step, which removes the Steps trigger.
+        // With an uncontrolled TabsRoot the value stayed "steps" and the user
+        // was left staring at an empty pane with no tab selected in the bar.
+        const value = tab === "steps" && !showSteps ? "script" : (tab ?? (showSteps ? "steps" : "script"));
         return (
-          <TabsRoot defaultValue={defaultValue} className="flex min-h-0 flex-1 flex-col">
+          <TabsRoot value={value} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
             <div className="px-4 pt-2">
               <Tabs variant="filled" size="large">
                 {showSteps ? <TabsTrigger value="steps">Steps ({test.steps.length})</TabsTrigger> : null}
@@ -641,6 +672,7 @@ export function TestDetailView() {
                       step={test.steps[i]}
                       indent={depth}
                       runStatus={runInfo?.stepStatus[i]}
+                      isNew={newStepIds.has(test.steps[i].id)}
                     />
                   ))}
                 </div>

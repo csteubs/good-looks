@@ -134,6 +134,7 @@ export function TrainerPanelView() {
     state,
     stepsLoaded,
     liveSteps,
+    newStepIds,
     pause,
     resume,
     stop,
@@ -141,6 +142,7 @@ export function TrainerPanelView() {
     setAssert,
     deleteStep,
     insertStep,
+    insertGeneratedSteps,
     reorderStep,
     updateStep,
     setCursor,
@@ -403,6 +405,7 @@ export function TrainerPanelView() {
                     onRefine={controlsDisabled ? undefined : () => startRefine(s.id)}
                     onEdit={controlsDisabled ? undefined : (patch) => updateStep(s.id, patch)}
                     runStatus={replayStepStatus[i]}
+                    isNew={newStepIds.has(s.id)}
                     indent={stepDepths[i]}
                     drag={
                       controlsDisabled
@@ -544,7 +547,7 @@ export function TrainerPanelView() {
         open={aiOpen}
         url={state.url}
         onOpenChange={setAiOpen}
-        onInsert={(steps) => steps.forEach((s) => insertStep(s))}
+        onInsert={(steps) => void insertGeneratedSteps(steps)}
       />
 
       {/* `refiningStepId` is per-WINDOW state in the store, which is exactly why

@@ -87,6 +87,99 @@ describe("run status", () => {
   });
 });
 
+describe("newly-added highlight", () => {
+  // jsdom has no layout or animation engine, so the pulse itself cannot be
+  // observed here — `check:step-glow-css` pins the stylesheet side. What these
+  // tests own is the decision: WHICH rows claim to be new, and whether that
+  // claim quietly cancels one of the other highlights the row already carries.
+
+  /** The row element itself — the highlight lives on the row, not a child. */
+  function row(container: HTMLElement): HTMLElement {
+    const el = container.firstElementChild;
+    if (!(el instanceof HTMLElement)) throw new Error("StepRow rendered no element");
+    return el;
+  }
+
+  it("marks a new step", () => {
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} isNew />,
+    );
+    expect(row(container).getAttribute("data-new-step")).toBe("true");
+    expect(row(container).className).toContain("step-new");
+  });
+
+  it("does NOT mark an ordinary step", () => {
+    // The default matters more than it looks: every other caller of StepRow —
+    // the trainer, the step editor, the detail view — renders without this
+    // prop, and a truthy default would light up every row in the app.
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} />,
+    );
+    expect(row(container).hasAttribute("data-new-step")).toBe(false);
+    expect(row(container).className).not.toContain("step-new");
+  });
+
+  it("does NOT mark a step passed isNew={false}", () => {
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} isNew={false} />,
+    );
+    expect(row(container).hasAttribute("data-new-step")).toBe(false);
+  });
+
+  it("keeps the failed run highlight on a step that is also new", () => {
+    // A step the AI just added AND that just failed is the most important row
+    // on the screen. Earlier drafts put the new-step style in the same
+    // precedence chain as run status, which silently dropped one or the other.
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} runStatus="failed" isNew />,
+    );
+    expect(row(container).getAttribute("data-new-step")).toBe("true");
+    expect(row(container).className).toContain("step-new");
+    expect(container.innerHTML).toMatch(/support-red|red/);
+  });
+
+  it("keeps the passed run highlight on a step that is also new", () => {
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} runStatus="passed" isNew />,
+    );
+    expect(row(container).className).toContain("step-new");
+    expect(container.innerHTML).toMatch(/support-green|green/);
+  });
+
+  it("keeps the selection ring on a step that is also new", () => {
+    const plain = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} selected onSelect={() => {}} />,
+    );
+    const selectedClasses = row(plain.container).className;
+    expect(selectedClasses).toContain("ring-accent");
+
+    const { container } = render(
+      <StepRow index={1} step={step({ type: "click", locator: LOCATOR })} selected onSelect={() => {}} isNew />,
+    );
+    expect(row(container).className).toContain("ring-accent");
+    expect(row(container).className).toContain("step-new");
+  });
+
+  it("leaves the drag-over drop indicator intact", () => {
+    const { container } = render(
+      <StepRow
+        index={0}
+        step={step({ type: "click", locator: LOCATOR })}
+        isNew
+        drag={{
+          onDragStart: () => {},
+          onDragEnter: () => {},
+          onDragEnd: () => {},
+          isDragging: false,
+          isOver: true,
+        }}
+      />,
+    );
+    expect(row(container).className).toContain("border-accent");
+    expect(row(container).className).toContain("step-new");
+  });
+});
+
 describe("actions", () => {
   it("calls onSelect when the row is clicked", () => {
     const onSelect = vi.fn();

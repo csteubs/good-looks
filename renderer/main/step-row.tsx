@@ -122,6 +122,7 @@ export function StepRow({
   onEdit,
   drag,
   runStatus,
+  isNew,
   indent = 0,
 }: {
   index: number;
@@ -135,6 +136,11 @@ export function StepRow({
   drag?: StepDragProps;
   /** Live run status of this step during a test run, for highlight. */
   runStatus?: RunStepStatus;
+  /** This step was just added to the list by something other than the user
+   *  typing it — an applied AI-debug fix, an inserted AI-generated flow — and
+   *  gets a pulsing green border until the list changes again. Only ADDED
+   *  steps are marked; removals are deliberately unstyled. */
+  isNew?: boolean;
   /** Nesting depth inside conditional blocks, for left indentation. */
   indent?: number;
 }) {
@@ -191,9 +197,18 @@ export function StepRow({
         ? "bg-support-red-10"
         : "hover:bg-control-subtle";
 
+  // Additive rather than another arm of the `flash` chain above: run status and
+  // selection are transient states of a row, this is a claim about where the
+  // row came from, and a step can be new AND failing — which is the single most
+  // interesting row on the screen, so neither highlight may hide the other.
+  // `.step-new` animates only `outline-color`, which nothing else here touches
+  // (see renderer/styles.css), so the two compose instead of fighting.
+  const newBorder = isNew ? "step-new" : "";
+
   return (
     <div
-      className={`group flex items-center gap-2 rounded-md px-2 py-1 ${flash} ${
+      data-new-step={isNew ? "true" : undefined}
+      className={`group flex items-center gap-2 rounded-md px-2 py-1 ${flash} ${newBorder} ${
         selected && !runStatus ? "ring-1 ring-inset ring-accent" : ""
       } ${drag?.isOver ? "border-t-2 border-accent" : ""} ${
         drag?.isDragging ? "opacity-50" : ""
