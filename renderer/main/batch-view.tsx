@@ -30,7 +30,7 @@ import {
 import { Check, CircleDashed, GripVertical, Play, Square, X, SkipForward, Loader } from "lucide-react";
 
 import { api } from "../lib/api";
-import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
+import { BROWSER_SF_SYMBOLS } from "../lib/browser-icons";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts } from "../lib/test-tags";
 import { TagCluster } from "./tag-cluster";
@@ -324,7 +324,8 @@ export function BatchView() {
               className="w-32"
               aria-label="Browser engine for this batch"
             >
-              <BrowserIcon browser={browser} labelled={false} />
+              {/* The glyph comes from the selected item's SF Symbol, drawn by
+                  SelectValue — one of ours here would be the second one. */}
               <SelectValue placeholder="Chromium" />
             </SelectTrigger>
             <SelectContent>
