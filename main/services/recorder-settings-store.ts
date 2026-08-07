@@ -6,8 +6,8 @@ import * as path from "path";
 
 import { app, logger } from "@glaze/core/backend";
 
-import { isRunBrowser } from "../recorder/types.js";
-import type { RecorderSettings, TestSpeed } from "../recorder/types.js";
+import { isRunBrowser, isTestSpeed } from "../recorder/types.js";
+import type { RecorderSettings } from "../recorder/types.js";
 import { normalizeViewport } from "../recorder/window-size.js";
 import { DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 
@@ -83,9 +83,6 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   disabledAestheticEnhancements: [],
 };
 
-function isTestSpeed(v: unknown): v is TestSpeed {
-  return v === "slow" || v === "medium" || v === "fast";
-}
 
 function settingsFile(): string {
   return path.join(app.getPath("userData"), "recorder", "recorder-settings.json");

@@ -42,6 +42,7 @@ import {
   MonitorOff,
   Search,
   Stamp,
+  Timer,
   X,
   Wand2,
 } from "lucide-react";
@@ -51,7 +52,7 @@ import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
 import { FlakePanel } from "./flake-panel";
 import { Pager } from "./pager";
 import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
-import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
+import { RUN_BROWSERS, RUN_BROWSER_LABELS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { pageSlice } from "../lib/paginate";
 import {
   NO_FILTERS,
@@ -815,6 +816,31 @@ export function StatsView() {
                                         labelled={false}
                                       />
                                     </Badge>
+                                    {/* Speed this run executed at. Shown only when
+                                        the run RECORDED one: runs predating the field
+                                        could have been at any speed, and a badge
+                                        guessing "Fast" for them would corrupt the one
+                                        comparison this is here to support — whether a
+                                        slower speed actually passes more often.
+
+                                        This one KEEPS its word, unlike the badge
+                                        above. The engine dropped its name because it
+                                        has its own column and the word was duplication;
+                                        speed has no other column, and four speeds
+                                        cannot be told apart by one timer glyph. */}
+                                    {r.speed ? (
+                                      <Badge
+                                        color="secondary"
+                                        title={
+                                          r.speed === "crawl"
+                                            ? "Crawl: waited for the page to load and settle after every step"
+                                            : `Playback speed: ${TEST_SPEED_LABELS[r.speed]}`
+                                        }
+                                      >
+                                        <Timer className="size-3" />
+                                        {TEST_SPEED_LABELS[r.speed]}
+                                      </Badge>
+                                    ) : null}
                                     {/* Capture is a filterable tag, so it needs to be
                                         visible here — icon-only to fit the column. */}
                                     {r.captureArtifacts ? (

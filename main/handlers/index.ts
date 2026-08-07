@@ -59,6 +59,7 @@ import { ANALYSIS_WINDOW, analysisWindow, gatherRunDetails } from "../services/f
 import {
   DEFAULT_VISUAL_THRESHOLD,
   isRunBrowser,
+  isTestSpeed,
   isValidVariableName,
   normalizeDatasets,
   normalizeStep,
@@ -257,12 +258,14 @@ export function registerHandlers(): void {
 
   ipcMain.handle("tests:setSpeed", async (_e, params: { id: string; speed: unknown }) => {
     const speed = params.speed;
-    if (speed !== "slow" && speed !== "medium" && speed !== "fast") {
+    // Derived from TEST_SPEEDS rather than spelled out, so a speed added to the
+    // union can never be accepted by the settings store and rejected here.
+    if (!isTestSpeed(speed)) {
       throw new Error("Invalid speed: " + String(speed));
     }
     const rec = testStore.get(params.id);
     if (!rec) throw new Error("Test not found: " + params.id);
-    rec.speed = speed as TestSpeed;
+    rec.speed = speed;
     rec.updatedAt = Date.now();
     testStore.save(rec);
     return rec;
