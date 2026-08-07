@@ -65,6 +65,63 @@ jobs:
       - run: npm run test:all
       - run: npm run build
 
+  # The cheap preview: the whole UI as a static bundle, on fixtures. Under a
+  # second to build and it needs no Electron at all, so it runs on every pull
+  # request regardless of what the rest of the pipeline is doing.
+  preview:
+    name: Browser preview
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # --ignore-scripts skips the Electron binary download. Nothing in the
+      # preview build touches Electron, and fetching ~100 MB to run `vite
+      # build` for 400ms is most of this job's wall-clock.
+      - run: npm ci --ignore-scripts
+
+      - run: npm run build:preview
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-preview-${{ github.event.pull_request.number || github.ref_name }}
+          path: build-preview/
+          retention-days: 7
+          if-no-files-found: error
+
+      # Publishing to a URL needs Pages turned on for the repository, which is
+      # a settings change nobody should discover through a red pipeline — so
+      # it is opt-in via a repository variable. Until then the artifact above
+      # is the deliverable: download, unzip, open preview.html.
+      #
+      # For a URL per pull request rather than one for main, publish into a
+      # gh-pages branch under pr-<number>/ instead; the official Pages actions
+      # deploy a single site per repository, so they cannot express that.
+      - name: Upload Pages artifact
+        if: vars.ENABLE_PAGES == 'true' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build-preview/
+
+  deploy-preview:
+    name: Publish preview
+    runs-on: ubuntu-latest
+    needs: preview
+    if: vars.ENABLE_PAGES == 'true' && github.ref == 'refs/heads/main'
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
   # macOS because the app is a macOS app: electron-builder targets it, and the
   # end-to-end suite launches a real Electron process with real windows. This
   # job is also where `npm run build` gets exercised on macOS, which is why the
