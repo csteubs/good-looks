@@ -116,10 +116,47 @@ async function fetchModels(provider: LlmProvider, base: string): Promise<LlmMode
   });
   if (!res.ok) throw new Error(`LM Studio returned HTTP ${res.status}`);
   const data = (await res.json()) as { data?: Array<{ id?: string }> };
-  return (data.data ?? [])
-    .map((m) => (m.id ?? "").trim())
-    .filter(Boolean)
-    .map((id) => ({ id, label: id }));
+  const ids = (data.data ?? []).map((m) => (m.id ?? "").trim()).filter(Boolean);
+  const loaded = await fetchLmStudioLoadState(base);
+  return ids.map((id) => (loaded.has(id) ? { id, label: id, loaded: loaded.get(id) } : { id, label: id }));
+}
+
+/**
+ * Which LM Studio models are currently held in memory, keyed by model id.
+ *
+ * The OpenAI-compatible /v1/models list can't answer this — it reports every
+ * downloaded model identically, so the picker had no way to say which one
+ * answers immediately and which one costs a multi-second load first. LM
+ * Studio's own REST API (/api/v0, 0.3.6+) carries a per-model `state`.
+ *
+ * Deliberately a SEPARATE, failure-tolerant call rather than a replacement for
+ * /v1/models: /v1 is the endpoint chat actually posts to, so it stays the
+ * source of truth for which models exist and for whether the provider is
+ * reachable. An older LM Studio (404), or some other OpenAI-compatible server
+ * sitting on the port, then costs a missing badge — never an empty model list
+ * or a false "not connected".
+ */
+async function fetchLmStudioLoadState(base: string): Promise<Map<string, boolean>> {
+  const states = new Map<string, boolean>();
+  try {
+    const res = await fetch(`${base}/api/v0/models`, {
+      signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
+    });
+    if (!res.ok) return states;
+    const data = (await res.json()) as { data?: Array<{ id?: unknown; state?: unknown }> };
+    if (!Array.isArray(data?.data)) return states;
+    for (const m of data.data) {
+      const id = typeof m?.id === "string" ? m.id.trim() : "";
+      // Only a state we recognize counts. An unknown string means a newer
+      // LM Studio grew a third state, and guessing "not loaded" for it would
+      // be a confident lie; leaving it unset shows no badge instead.
+      if (!id || (m?.state !== "loaded" && m?.state !== "not-loaded")) continue;
+      states.set(id, m.state === "loaded");
+    }
+  } catch {
+    // Unreachable, timed out, or not JSON — unknown load state, no badge.
+  }
+  return states;
 }
 
 // In-flight chat requests keyed by requestId, so llm:cancel can abort them.

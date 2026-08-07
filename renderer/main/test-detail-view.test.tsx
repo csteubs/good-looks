@@ -1,6 +1,6 @@
 // Component tests for the test detail view's run controls.
 //
-// This is where three per-test preferences (browser, headless, capture) turn
+// This is where per-test preferences (browser, headless, capture, timeout) turn
 // into an actual run. Each is stored per test with a fall-back to a global
 // default, and each is persisted on change — so the failure modes are "my
 // setting didn't stick" and, worse, "it ran with different settings than the
@@ -25,6 +25,7 @@ const run = vi.fn();
 const setHeadless = vi.fn(async () => ({}) as TestRecord);
 const setBrowser = vi.fn(async () => ({}) as TestRecord);
 const setCaptureArtifacts = vi.fn(async () => ({}) as TestRecord);
+const setTestTimeout = vi.fn(async () => ({}) as TestRecord);
 // Typed with the real signature, unlike the setters above: these assertions
 // read the third argument, and a zero-arg mock makes indexing it a type error.
 const updateSteps = vi.fn(
@@ -53,6 +54,7 @@ vi.mock("../lib/api", () => ({
       setHeadless: (...a: unknown[]) => setHeadless(...(a as [])),
       setBrowser: (...a: unknown[]) => setBrowser(...(a as [])),
       setCaptureArtifacts: (...a: unknown[]) => setCaptureArtifacts(...(a as [])),
+      setTestTimeout: (...a: unknown[]) => setTestTimeout(...(a as [])),
       remove: async () => {},
       rename: async () => ({}) as TestRecord,
       updateScript: (...a: Parameters<typeof updateScript>) => updateScript(...a),
@@ -104,7 +106,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   test_ = record();
   runs = [];
-  settings = { defaultRunBrowser: "chromium", defaultRunHeadless: false, defaultCaptureArtifacts: false };
+  settings = {
+    defaultRunBrowser: "chromium",
+    defaultRunHeadless: false,
+    defaultCaptureArtifacts: false,
+    defaultTestTimeoutMs: 60_000,
+  };
 });
 
 describe("the Accessibility tab", () => {
@@ -181,6 +188,26 @@ describe("run controls", () => {
     await screen.findByText("Checkout");
     fireEvent.click(screen.getByLabelText(/capture screenshots/i));
     await waitFor(() => expect(setCaptureArtifacts).toHaveBeenCalledWith("t1", true));
+  });
+
+  it("persists a per-test timeout override in milliseconds", async () => {
+    renderView();
+    await screen.findByText("Checkout");
+    const input = screen.getByLabelText(/per-test timeout/i) as HTMLInputElement;
+    // Empty = use Settings default; placeholder shows that default in seconds.
+    expect(input.placeholder).toBe("60");
+    fireEvent.change(input, { target: { value: "180" } });
+    await waitFor(() => expect(setTestTimeout).toHaveBeenCalledWith("t1", 180_000));
+  });
+
+  it("clears the timeout override when the field is emptied", async () => {
+    test_ = record({ testTimeoutMs: 120_000 });
+    renderView();
+    await screen.findByText("Checkout");
+    const input = screen.getByLabelText(/per-test timeout/i) as HTMLInputElement;
+    expect(input.value).toBe("120");
+    fireEvent.change(input, { target: { value: "" } });
+    await waitFor(() => expect(setTestTimeout).toHaveBeenCalledWith("t1", null));
   });
 });
 

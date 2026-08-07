@@ -102,12 +102,12 @@
   "packageManager": "npm@11.11.0+sha512-82gRxKrh/eY5UnNorkTFcdBQAGpgjWehkfGVqAGlJjejEtJZGGJUqjo3mbBTNbc5BTnPKGVtGPBZGhElujX5cw==",
   "glaze": {
     "capabilities": {},
-    "sdkVersion": "0.12.0.0",
+    "sdkVersion": "0.13.0.0",
     "createdAt": "2026-07-24T18:37:40.516Z",
     "lastMigration": "ai-tsconfig-paths",
     "host": {
-      "minVersion": "0.12.0.0"
+      "minVersion": "0.13.0.0"
     },
-    "updatedAt": 1786068249428
+    "updatedAt": 1786084244063
   }
 }

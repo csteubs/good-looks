@@ -5,6 +5,9 @@ export type LlmProvider = "ollama" | "lmstudio" | "anthropic";
 export interface LlmModel {
   id: string;
   label: string;
+  /** Loaded in the provider's memory. `undefined` = the provider doesn't say —
+   *  see main/services/llm/types.ts for why that isn't the same as `false`. */
+  loaded?: boolean;
 }
 
 export interface LlmMessage {

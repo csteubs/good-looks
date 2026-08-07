@@ -118,6 +118,10 @@ export function TestDetailView() {
   // Per-test browser engine — same fall-back chain as the toggles above.
   const [runBrowser, setRunBrowser] = React.useState<RunBrowser>("chromium");
   const [browserInited, setBrowserInited] = React.useState(false);
+  // Per-test Playwright timeout override, in seconds for the input. null means
+  // "use the global Settings default" (no override stored on the record).
+  const [testTimeoutSec, setTestTimeoutSec] = React.useState<number | null>(null);
+  const [timeoutInited, setTimeoutInited] = React.useState(false);
 
   // Ids of steps an applied AI-debug fix just ADDED, so the Steps tab can glow
   // them. Held here rather than on the step records because it is a fact about
@@ -195,6 +199,15 @@ export function TestDetailView() {
     setRunBrowser(test.runBrowser ?? fallback);
     setBrowserInited(true);
   }, [browserInited, test, settingsQuery.data]);
+  // Timeout override: only seed from a stored per-test value. An absent field
+  // leaves the input empty so the placeholder can show the global default.
+  React.useEffect(() => {
+    if (timeoutInited || !test) return;
+    setTestTimeoutSec(
+      typeof test.testTimeoutMs === "number" ? Math.round(test.testTimeoutMs / 1000) : null,
+    );
+    setTimeoutInited(true);
+  }, [timeoutInited, test]);
   // Earliest step the run reported as failed, if any — lets the AI debug
   // prompt skip steps after it, since Playwright never ran them.
   const failedStepIndex = React.useMemo(() => {
@@ -504,6 +517,38 @@ export function TestDetailView() {
               ))}
             </SelectContent>
           </Select>
+          <label className="flex select-none items-center gap-1.5 pr-1 text-small text-secondary">
+            <span className="whitespace-nowrap">Timeout</span>
+            <Input
+              type="number"
+              min={5}
+              max={1800}
+              step={5}
+              className="h-7 w-16 px-1.5 text-small"
+              value={testTimeoutSec ?? ""}
+              placeholder={String(
+                Math.round((settingsQuery.data?.defaultTestTimeoutMs ?? 60_000) / 1000),
+              )}
+              disabled={runInfo?.running}
+              aria-label="Per-test timeout in seconds; leave empty to use the Settings default"
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                if (raw === "") {
+                  setTestTimeoutSec(null);
+                  api.tests.setTestTimeout(id, null).catch(() => {
+                    /* best-effort persist */
+                  });
+                  return;
+                }
+                const sec = Math.max(5, Math.min(1800, Math.round(Number(raw) || 60)));
+                setTestTimeoutSec(sec);
+                api.tests.setTestTimeout(id, sec * 1000).catch(() => {
+                  /* best-effort persist */
+                });
+              }}
+            />
+            <span className="text-tertiary">s</span>
+          </label>
           <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
             <Checkbox
               checked={runHeadless}

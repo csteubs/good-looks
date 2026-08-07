@@ -331,6 +331,10 @@ export interface TestRecord {
    *  absent, the global `RecorderSettings.defaultRunBrowser` applies. Set from
    *  the test detail toolbar's browser picker. Only affects test runs. */
   runBrowser?: RunBrowser;
+  /** Per-test Playwright timeout in ms (how long one test may run before
+   *  Playwright fails it). When absent, `RecorderSettings.defaultTestTimeoutMs`
+   *  applies. Set from the test detail toolbar. Only affects test runs. */
+  testTimeoutMs?: number;
   /** Free-form labels used to group tests (e.g. "smoke", "checkout").
    *  Normalized by `normalizeTags` on write — the backend is the single source
    *  of truth, so the renderer sends raw strings and renders what comes back.
@@ -1072,6 +1076,11 @@ export interface RecorderSettings {
   /** default browser engine for tests that haven't set their own preference
    *  (default "chromium"). Only affects test runs, not the trainer. */
   defaultRunBrowser: RunBrowser;
+  /** default Playwright per-test timeout in ms for tests that haven't set their
+   *  own preference (default 60000 = 1 minute). Playwright's built-in default is
+   *  30s; this raises it so ordinary multi-step runs don't fail mid-flow. Only
+   *  affects test runs, not the trainer. */
+  defaultTestTimeoutMs: number;
   /** POST a summary to a user-configured webhook when a run or batch has a
    *  problem (default false). The only thing in the app that sends data off the
    *  machine — inert until a URL is configured, and never includes run logs. */
