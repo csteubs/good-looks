@@ -33,6 +33,7 @@ import type {
   WaitUntilKind,
 } from "../lib/recorder-types";
 import { api } from "../lib/api";
+import { clampViewportAxis, RESIZE_PRESETS } from "../lib/viewport-presets";
 import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 
 export type AddStepKind =
@@ -438,9 +439,15 @@ export function AddStepDialog({
       }
       case "viewport": {
         if (viewport === "custom") {
-          return [{ type: "viewport", width: Number(vw) || 1280, height: Number(vh) || 800 }];
+          return [
+            {
+              type: "viewport",
+              width: clampViewportAxis(vw, 1280),
+              height: clampViewportAxis(vh, 800),
+            },
+          ];
         }
-        const p = VIEWPORTS.find((v) => v.id === viewport);
+        const p = RESIZE_PRESETS.find((v) => v.id === viewport);
         return [{ type: "viewport", width: p?.w ?? 1280, height: p?.h ?? 800 }];
       }
       case "find":
@@ -699,13 +706,17 @@ export function AddStepDialog({
 
         {kind === "viewport" ? (
           <>
+            <Text variant="small" color="secondary">
+              Resize the browser window mid-test (Playwright <code>setViewportSize</code>). Runs as a
+              step wherever it sits in the list, and the new size applies to every step after it.
+            </Text>
             <Field label="Viewport" orientation="vertical">
               <Select value={viewport} onValueChange={setViewport}>
                 <SelectTrigger size="small">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {VIEWPORTS.map((v) => (
+                  {RESIZE_PRESETS.map((v) => (
                     <SelectItem key={v.id} value={v.id}>
                       {v.label}
                     </SelectItem>
@@ -906,9 +917,3 @@ export function AddStepDialog({
   );
 }
 
-const VIEWPORTS = [
-  { id: "desktop", label: "Desktop 1280×800", w: 1280, h: 800 },
-  { id: "laptop", label: "Laptop 1440×900", w: 1440, h: 900 },
-  { id: "tablet", label: "Tablet 768×1024", w: 768, h: 1024 },
-  { id: "mobile", label: "Mobile 390×844", w: 390, h: 844 },
-] as const;

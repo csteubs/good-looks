@@ -21,6 +21,7 @@ import type { RunStepStatus } from "./recorder-store";
 
 import { describeStep } from "../lib/describe-step";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "../lib/recorder-types";
+import { clampViewportAxis } from "../lib/viewport-presets";
 import type { Step, StepType } from "../lib/recorder-types";
 
 function badgeColor(type: StepType): "green" | "blue" | "secondary" | "purple" {
@@ -37,13 +38,39 @@ function badgeLabel(type: StepType): string {
   return type;
 }
 
+/**
+ * Parse a hand-typed `WIDTHxHEIGHT` into a viewport patch, or null.
+ *
+ * Accepts `x`, `×` and `,` as the separator because all three are what people
+ * actually type for a size, and rejects anything that doesn't yield two usable
+ * numbers — an unparseable draft leaves the step alone rather than resizing to
+ * something nobody asked for. The backend clamps the result again on write.
+ */
+export function parseSizeDraft(draft: string): { width: number; height: number } | null {
+  const m = draft.trim().match(/^(\d+)\s*[x×,]\s*(\d+)$/i);
+  if (!m) return null;
+  const width = clampViewportAxis(m[1], 0);
+  const height = clampViewportAxis(m[2], 0);
+  if (!width || !height) return null;
+  return { width, height };
+}
+
 /** The single field a step exposes for quick inline editing, if any. */
 function editableField(
   step: Step,
-): { key: "value" | "text" | "url" | "waitMs" | "timeoutMs"; label: string; value: string } | null {
+): { key: "value" | "text" | "url" | "waitMs" | "timeoutMs" | "size"; label: string; value: string } | null {
   switch (step.type) {
     case "goto":
       return { key: "url", label: "URL", value: step.url ?? "" };
+    case "viewport":
+      // One field for both axes: a resize is a single decision ("make it
+      // mobile"), and two inputs in a row this narrow would each be about
+      // four characters wide.
+      return {
+        key: "size",
+        label: "Size (width×height)",
+        value: `${step.width ?? 1280}x${step.height ?? 800}`,
+      };
     case "fill":
     case "select":
     case "press":
@@ -171,9 +198,16 @@ export function StepRow({
 
   function commitEdit() {
     if (!field || !onEdit) return setEditing(false);
-    // The numeric fields are parsed here rather than stored as the typed
-    // string: they are emitted into the spec as bare numerals, and a string
-    // reaching the generator is the shape of the original injection bug.
+    if (field.key === "size") {
+      // An unparseable size commits NOTHING rather than a partial patch: a
+      // resize with only a width is not a smaller edit, it's a broken step.
+      const size = parseSizeDraft(draft);
+      if (size) onEdit(size);
+      return setEditing(false);
+    }
+    // The remaining numeric fields are parsed here rather than stored as the
+    // typed string: they are emitted into the spec as bare numerals, and a
+    // string reaching the generator is the shape of the original injection bug.
     const patch: Partial<Step> =
       field.key === "waitMs"
         ? { waitMs: Number(draft) || 0 }
@@ -314,7 +348,11 @@ export function StepRow({
               )}
             </span>
           ) : null}
-          {onReplay && step.type !== "goto" && step.type !== "viewport" && step.type !== "endif" ? (
+          {/* `viewport` IS replayable on its own — it resizes the training
+              window, which is exactly the thing worth previewing before
+              trusting the step. `goto`/`endif` still aren't: one restarts the
+              session's navigation, the other is a block delimiter. */}
+          {onReplay && step.type !== "goto" && step.type !== "endif" ? (
             <Button
               iconOnly
               variant="transparent"

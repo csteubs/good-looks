@@ -360,7 +360,7 @@ assertEqual(
   "a missing flow is reported in the spec, not silently dropped",
 );
 
-// ── 7. Conditional waits ("Wait until") round-trip as WAITS, not asserts ───
+// ── 10. Conditional waits ("Wait until") round-trip as WAITS, not asserts ──
 //
 // This is the section the whole `// wait until` marker exists for. Playwright's
 // only auto-retrying primitive for most of these predicates IS `expect`, so a
@@ -461,7 +461,7 @@ for (const c of WAIT_UNTIL_CASES) {
   assertEqual(nonGoto[0]?.type, "assert", "a marker on exactText stays an assertion");
 }
 
-// ── 8. `.waitFor({ state })` carries its state back ────────────────────────
+// ── 11. `.waitFor({ state })` carries its state back ───────────────────────
 //
 // The regression this fixes was silent and inverted: a wait-for-HIDDEN parsed
 // as a bare wait, which regenerates as `.waitFor()` — wait for VISIBLE.
@@ -518,7 +518,7 @@ for (const c of WAIT_UNTIL_CASES) {
   );
 }
 
-// ── 9. A disabled conditional wait keeps its predicate ─────────────────────
+// ── 12. A disabled conditional wait keeps its predicate ────────────────────
 //
 // A disabled step is emitted as a commented-out line, and the marker rides
 // along inside that comment. Both comment rules have to hold at once.
@@ -532,6 +532,97 @@ for (const c of WAIT_UNTIL_CASES) {
   assertEqual(parsed[0]?.waitUntil, "enabled", "a disabled conditional wait keeps its predicate");
   assertEqual(parsed[0]?.disabled, true, "…and stays disabled");
   assertEqual(parsed[0]?.timeoutMs, 3000, "…and keeps its timeout");
+}
+
+// ── 13. A resize step's log line is not mistaken for a step ───────────────
+//
+// script-generator emits `console.log(...)` after every `viewport` step. If the
+// parser counted that as an unclassifiable statement, `skipped` would be
+// non-zero and TestRecord.stepsDiverged would warn — permanently, on every test
+// that resizes — that the steps undercount the script.
+{
+  const resizeSteps: Step[] = [
+    step({ type: "viewport", width: 390, height: 844 }),
+    step({ type: "goto", url: "https://example.com" }),
+    step({ type: "click", locator: { k: "testid", v: "menu" } }),
+    step({ type: "viewport", width: 1280, height: 800 }),
+  ];
+  const src = generateSpec({ name: "resize", url: "https://example.com", steps: resizeSteps });
+  assertEqual(src.includes("console.log("), true, "the generator logs each resize");
+  const parsed = parseSpecDetailed(src);
+  assertEqual(parsed.skipped, 0, "a resize log line is not counted as a skipped statement");
+  assertEqual(parsed.steps.length, 4, "a logged resize round-trips without extra steps");
+  assertEqual(
+    parsed.steps.map((s) => s.type),
+    ["viewport", "goto", "click", "viewport"],
+    "resize steps round-trip in order",
+  );
+  assertEqual(
+    parsed.steps.filter((s) => s.type === "viewport").map((s) => [s.width, s.height]),
+    [[390, 844], [1280, 800]],
+    "both resize sizes round-trip",
+  );
+}
+
+// A DISABLED resize is commented out as TWO lines (the resize and its log), and
+// only the first carries a step. Counting the second as unclassifiable is the
+// same false divergence warning by another route.
+{
+  const src = generateSpec({
+    name: "disabled resize",
+    url: "https://example.com",
+    steps: [
+      step({ type: "goto", url: "https://example.com" }),
+      step({ type: "viewport", width: 390, height: 844, disabled: true }),
+    ],
+  });
+  const parsed = parseSpecDetailed(src);
+  assertEqual(parsed.skipped, 0, "a disabled resize's commented log line is not counted as skipped");
+  assertEqual(parsed.steps.length, 2, "a disabled resize round-trips as one step");
+  assertEqual(parsed.steps[1]?.disabled, true, "…and keeps its disabled flag");
+}
+
+// Continue-on-failure wraps BOTH lines in the try block.
+{
+  const src = generateSpec({
+    name: "continue resize",
+    url: "https://example.com",
+    steps: [step({ type: "viewport", width: 390, height: 844, continueOnFailure: true })],
+  });
+  const parsed = parseSpecDetailed(src);
+  assertEqual(parsed.skipped, 0, "a continue-on-failure resize produces no skips");
+  assertEqual(parsed.steps.length, 1, "…and round-trips as exactly one step");
+  assertEqual(parsed.steps[0]?.continueOnFailure, true, "…keeping its continue-on-failure flag");
+}
+
+// ── 14. Resize logging and conditional waits, in one spec ─────────────────
+//
+// Neither feature's own section can catch this: they landed on separate
+// branches and only meet here. A resize now emits TWO lines (the call and its
+// `console.log`), and a conditional wait is recognized by a trailing comment on
+// its own line — so an off-by-one in either walk would show up as a wait parsed
+// as an assertion, or as a phantom `skipped` that flags every test doing both
+// as diverged.
+{
+  const mixed: Step[] = [
+    step({ type: "viewport", width: 390, height: 844 }),
+    step({ type: "wait", waitUntil: "enabled", locator: { k: "css", v: "#pay" }, timeoutMs: 15000 }),
+    step({ type: "viewport", width: 1280, height: 800 }),
+    step({ type: "wait", waitUntil: "urlContains", value: "example.com/done", timeoutMs: 10000 }),
+  ];
+  const src = generateSpec({ name: "mix", url: "https://example.com", steps: mixed });
+  const parsed = parseSpecDetailed(src);
+  assertEqual(parsed.skipped, 0, "a resize next to a conditional wait produces no skips");
+  assertEqual(
+    parsed.steps.map((s) => s.type),
+    ["viewport", "wait", "viewport", "wait"],
+    "…and both step types survive interleaved",
+  );
+  assertEqual(
+    parsed.steps.map((s) => s.waitUntil ?? null),
+    [null, "enabled", null, "urlContains"],
+    "…with each wait keeping its predicate across the resize log lines",
+  );
 }
 
 if (failures > 0) {

@@ -321,7 +321,12 @@ export function buildReplayScript(step: Step): string {
     }
     if (t === "endif") { log("info", "end of conditional block"); return { ok: true }; }
     if (t === "goto") { log("info", "goto runs at test start; skipped in preview"); return { ok: true, error: "goto runs at test start; skipped in preview" }; }
-    if (t === "viewport") { log("info", "viewport is applied at run time; not previewable"); return { ok: true, error: "viewport is applied at run time; not previewable" }; }
+    // Unreachable in the trainer: runStep dispatches viewport steps to
+    // resize-service, which resizes the native window (a page cannot resize the
+    // window it is loaded in). Kept as a truthful fallback rather than deleted,
+    // so a future caller that bypasses that dispatch gets a clear reason
+    // instead of "Element not found" from the resolver below.
+    if (t === "viewport") { log("info", "a resize is applied to the window, not from the page"); return { ok: true, error: "a resize is applied to the window, not from the page" }; }
     if (t === "wait") {
       if (step.waitUntil) return runWaitUntil();
       if (typeof step.waitMs === "number") {

@@ -452,7 +452,12 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
           s.disabled = true;
           steps.push(...innerResult.steps);
           skipped += innerResult.skipped;
-        } else {
+        } else if (innerResult.skipped > 0) {
+          // Zero steps AND zero skips means the statement was recognized but
+          // isn't a step — a disabled `viewport` is commented out as TWO lines
+          // (the resize and its log statement), and the second has no step of
+          // its own. Only a genuinely unclassifiable statement counts here, or
+          // every test with a disabled resize would report divergence.
           skipped++;
         }
       } else {
@@ -505,6 +510,23 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
           i = braceClose + 1;
         }
       }
+      continue;
+    }
+
+    // console.log(…) / .info / .warn / .error / .debug — diagnostics, not
+    // steps. Consumed WITHOUT counting as skipped, for the same reason as the
+    // variable header below: a skip sets TestRecord.stepsDiverged, and the
+    // generator emits a log line after every `viewport` step, so counting it
+    // would leave a permanent "your steps undercount the script" warning on
+    // every test that resizes. Any console call qualifies, not just ours — a
+    // log statement a user added by hand isn't a step either.
+    const logM = rest.match(/^[\s;]*console\.(?:log|info|warn|error|debug)\s*\(/);
+    if (logM) {
+      const openIdx = i + logM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const after = src.slice(close + 1).match(/^\s*;/);
+      i = close + 1 + (after ? after[0].length : 0);
       continue;
     }
 

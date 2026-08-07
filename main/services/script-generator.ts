@@ -407,6 +407,40 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
   }
 }
 
+/**
+ * An extra, non-step statement emitted directly after a step's own line.
+ *
+ * Only `viewport` uses it: a resize is the one recorded action with NO visible
+ * effect in the run output. Every other step names its target in the log
+ * ("click getByRole(...)"), but a viewport change is invisible until something
+ * downstream fails at a width nobody can see from the log, which is precisely
+ * when you need to know the page was resized and to what.
+ *
+ * Three constraints shape what may go here, and all three are why this is a
+ * bare `console.log` rather than a runtime helper:
+ *
+ *  • It must NOT start with `await`. `buildStepLineMap` (the fallback used for
+ *    hand-edited specs) classifies steps by counting leading-`await` lines, so
+ *    an awaited log line would shift every later step's highlight by one.
+ *  • It must NOT be a Playwright API call. `StepReporter` drops any `pw:api`
+ *    step whose `location.file` isn't the spec, so routing the resize through
+ *    an imported helper would silently cost viewport steps their highlight.
+ *  • `page.viewportSize()` is SYNCHRONOUS, which is what makes reporting the
+ *    APPLIED size possible under the first two rules. It's the applied size
+ *    rather than an echo of the requested one on purpose — that's the whole
+ *    point of logging it.
+ */
+function stepLogLine(step: Step): string | null {
+  if (step.type !== "viewport") return null;
+  const w = num(step.width, 1280);
+  const h = num(step.height, 800);
+  return (
+    "console.log(" +
+    q("[viewport] resized to " + w + "x" + h + " — page reports ") +
+    " + JSON.stringify(page.viewportSize()));"
+  );
+}
+
 /** Short human description of a step for the UI.
  *
  *  Deliberately renders values with no variable context, so a `${name}`
@@ -743,12 +777,18 @@ export function generateSpecDetailed(
     if (line == null) continue;
     if (step.type === "endif") depth = Math.max(1, depth - 1);
     const indent = "  ".repeat(depth);
+    // A trailing log statement (viewport only) travels with its step through
+    // every arm below: a disabled resize must not log that it happened, and a
+    // continue-on-failure resize must log INSIDE the try, or a failed resize
+    // would still report a size it never applied.
+    const logLine = stepLogLine(step);
     // A disabled step is emitted as a commented-out line so the generated spec
     // stays runnable (the step is skipped) while preserving the step's place
     // in the script for round-tripping and readability. Structural `if`/
     // `endif` are never commented — disabling them would break block pairing.
     if (step.disabled && step.type !== "if" && step.type !== "endif") {
       body.push(indent + "// disabled — skipped: " + line);
+      if (logLine) body.push(indent + "// disabled — skipped: " + logLine);
     } else if (step.continueOnFailure && step.type !== "if" && step.type !== "endif") {
       // "Continue on Failure" wraps the step's statement in a try/catch so a
       // failure is swallowed and the test proceeds to the next step. Only
@@ -756,10 +796,12 @@ export function generateSpecDetailed(
       body.push(indent + "try {");
       record1(sourceIndex);
       body.push(indent + "  " + line);
+      if (logLine) body.push(indent + "  " + logLine);
       body.push(indent + "} catch { /* continue on failure */ }");
     } else {
       record1(sourceIndex);
       body.push(indent + line);
+      if (logLine) body.push(indent + logLine);
     }
     if (step.type === "if") depth += 1;
   }
