@@ -1,6 +1,6 @@
 import * as React from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   AlertDialog,
   Button,
@@ -50,7 +50,7 @@ import { A11yPanel } from "./a11y-panel";
 import { computeStepDepths } from "../lib/describe-step";
 import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import { latestA11yRun } from "../lib/a11y-format";
-import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
+import { BROWSER_SF_SYMBOLS } from "../lib/browser-icons";
 import {
   RUN_BROWSERS,
   RUN_BROWSER_LABELS,
@@ -79,6 +79,29 @@ function divergedMessage(test: TestRecord): string {
   return "These steps aren't in the script — they were saved without regenerating it, so runs still use the script as it was. Edit Steps, save, then choose “Regenerate script” to apply them.";
 }
 
+/**
+ * Persist a per-test engine change, then refresh every cached copy of the
+ * record it just changed.
+ *
+ * Both keys, not just ["test", id]: the ["tests"] list holds its own copy of
+ * every record and nothing in this flow refetches it, so leaving it alone
+ * leaves a cache that disagrees with disk about which engine this test runs on.
+ *
+ * Exported because the Select is native-menu-backed: its menu is drawn by
+ * AppKit and never enters the DOM, so this is the only handle a test has.
+ */
+export async function persistRunBrowser(qc: QueryClient, id: string, browser: RunBrowser) {
+  try {
+    await api.tests.setBrowser(id, browser);
+  } catch {
+    // Best-effort persist — the choice still applies to this run, and nothing
+    // on disk changed, so there is nothing to re-read.
+    return;
+  }
+  qc.invalidateQueries({ queryKey: ["tests"] });
+  qc.invalidateQueries({ queryKey: ["test", id] });
+}
+
 export function TestDetailView() {
   const { id } = useParams({ from: "/test/$id" });
   const navigate = useNavigate();
@@ -100,29 +123,33 @@ export function TestDetailView() {
   // choice between sessions. Falls back to the global Settings default when the
   // test has no saved preference yet.
   const [captureArtifacts, setCaptureArtifacts] = React.useState(false);
-  const [captureInited, setCaptureInited] = React.useState(false);
   // Per-test accessibility gate. Independent of screenshots: axe usually costs
   // more per step than the rest of the step does, so asking for pictures must
   // not silently buy an a11y audit as well.
   const [a11yChecks, setA11yChecks] = React.useState(false);
-  const [a11yInited, setA11yInited] = React.useState(false);
   // Per-test console+network recording. Independent of screenshots again: this
   // one persists page-controlled text and request URLs, which is a different
   // decision from persisting pictures.
   const [recordLogs, setRecordLogs] = React.useState(false);
-  const [recordLogsInited, setRecordLogsInited] = React.useState(false);
   // Per-test "Run headless" choice — remembers whether this test's runs open a
   // visible browser. Falls back to the global Settings default. Runs only; the
   // trainer/"Edit in Trainer" flow is always headed.
   const [runHeadless, setRunHeadless] = React.useState(false);
-  const [headlessInited, setHeadlessInited] = React.useState(false);
   // Per-test browser engine — same fall-back chain as the toggles above.
   const [runBrowser, setRunBrowser] = React.useState<RunBrowser>("chromium");
-  const [browserInited, setBrowserInited] = React.useState(false);
   // Per-test Playwright timeout override, in seconds for the input. null means
   // "use the global Settings default" (no override stored on the record).
   const [testTimeoutSec, setTestTimeoutSec] = React.useState<number | null>(null);
-  const [timeoutInited, setTimeoutInited] = React.useState(false);
+  // Which test the six controls above currently hold the settings OF.
+  //
+  // Not a boolean. This view is a route component, and the router does not
+  // remount one when only its params change — clicking another test in the
+  // sidebar re-renders THIS instance with a new id. A "have I initialised yet"
+  // latch therefore fires once for the first test opened and never again, so
+  // every test after it showed the previous test's engine, timeout and
+  // toggles: the sidebar said Chromium while the picker said Firefox, and the
+  // run used whatever the picker said.
+  const [seededFor, setSeededFor] = React.useState<string | null>(null);
 
   // Ids of steps an applied AI-debug fix just ADDED, so the Steps tab can glow
   // them. Held here rather than on the step records because it is a fact about
@@ -165,50 +192,28 @@ export function TestDetailView() {
   const a11yNewSteps = latestA11yRun(runsQuery.data ?? [], id)?.a11yNewSteps ?? 0;
   const runInfo = runs[id];
 
-  // Initialize the toggle from the test record (or the global default) once.
+  // Seed the run controls from the record, falling back to the global defaults.
+  // Once per TEST rather than once per mount (see `seededFor`), and never again
+  // for the same test — a refetch after the user changes one must not undo it.
   React.useEffect(() => {
-    if (captureInited || !test) return;
-    const fallback = settingsQuery.data?.defaultCaptureArtifacts ?? false;
-    setCaptureArtifacts(test.captureArtifacts ?? fallback);
-    setCaptureInited(true);
-  }, [captureInited, test, settingsQuery.data]);
-  // Same one-shot init for the accessibility toggle.
-  React.useEffect(() => {
-    if (a11yInited || !test) return;
-    const fallback = settingsQuery.data?.defaultA11yChecks ?? false;
-    setA11yChecks(test.a11yChecks ?? fallback);
-    setA11yInited(true);
-  }, [a11yInited, test, settingsQuery.data]);
-  // Same one-shot init for the console+network toggle.
-  React.useEffect(() => {
-    if (recordLogsInited || !test) return;
-    const fallback = settingsQuery.data?.defaultRecordLogs ?? false;
-    setRecordLogs(test.recordLogs ?? fallback);
-    setRecordLogsInited(true);
-  }, [recordLogsInited, test, settingsQuery.data]);
-  // Initialize the headless toggle from the test record (or the global default) once.
-  React.useEffect(() => {
-    if (headlessInited || !test) return;
-    const fallback = settingsQuery.data?.defaultRunHeadless ?? false;
-    setRunHeadless(test.runHeadless ?? fallback);
-    setHeadlessInited(true);
-  }, [headlessInited, test, settingsQuery.data]);
-  // Initialize the browser picker from the test record (or the global default) once.
-  React.useEffect(() => {
-    if (browserInited || !test) return;
-    const fallback = settingsQuery.data?.defaultRunBrowser ?? "chromium";
-    setRunBrowser(test.runBrowser ?? fallback);
-    setBrowserInited(true);
-  }, [browserInited, test, settingsQuery.data]);
-  // Timeout override: only seed from a stored per-test value. An absent field
-  // leaves the input empty so the placeholder can show the global default.
-  React.useEffect(() => {
-    if (timeoutInited || !test) return;
+    // Waiting on the settings query matters for a test that has pinned
+    // nothing: seeding before the defaults arrive latches the hard-coded
+    // fall-backs, and which query wins that race is a coin flip per mount.
+    if (!test || settingsQuery.isPending || seededFor === test.id) return;
+    const defaults = settingsQuery.data;
+    setCaptureArtifacts(test.captureArtifacts ?? defaults?.defaultCaptureArtifacts ?? false);
+    setA11yChecks(test.a11yChecks ?? defaults?.defaultA11yChecks ?? false);
+    setRecordLogs(test.recordLogs ?? defaults?.defaultRecordLogs ?? false);
+    setRunHeadless(test.runHeadless ?? defaults?.defaultRunHeadless ?? false);
+    setRunBrowser(test.runBrowser ?? defaults?.defaultRunBrowser ?? "chromium");
+    // Timeout is the exception: only a stored per-test value seeds it. An
+    // absent field leaves the input empty so the placeholder can show the
+    // global default rather than hard-coding it into an override.
     setTestTimeoutSec(
       typeof test.testTimeoutMs === "number" ? Math.round(test.testTimeoutMs / 1000) : null,
     );
-    setTimeoutInited(true);
-  }, [timeoutInited, test]);
+    setSeededFor(test.id);
+  }, [seededFor, test, settingsQuery.data, settingsQuery.isPending]);
   // Earliest step the run reported as failed, if any — lets the AI debug
   // prompt skip steps after it, since Playwright never ran them.
   const failedStepIndex = React.useMemo(() => {
@@ -496,9 +501,7 @@ export function TestDetailView() {
             onValueChange={(v) => {
               const next = v as RunBrowser;
               setRunBrowser(next);
-              api.tests.setBrowser(id, next).catch(() => {
-                /* best-effort persist; the choice still applies to this run */
-              });
+              void persistRunBrowser(qc, id, next);
             }}
             disabled={runInfo?.running}
           >
@@ -508,9 +511,9 @@ export function TestDetailView() {
               className="w-32"
               aria-label="Browser engine for this test's runs"
             >
-              {/* The trigger is real DOM, so it gets the lucide glyph; the
-                  options below are drawn by AppKit and take an SF Symbol. */}
-              <BrowserIcon browser={runBrowser} labelled={false} />
+              {/* No icon of ours here: SelectValue already draws the selected
+                  item's SF Symbol, so a lucide glyph beside it is the same
+                  engine twice. */}
               <SelectValue placeholder="Chromium" />
             </SelectTrigger>
             <SelectContent>

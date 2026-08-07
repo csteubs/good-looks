@@ -16,6 +16,28 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-07 — Two bugs in the browser picker: a doubled glyph, and a leaked one
+
+**Reported as one thing, and it was two.** The picker showed two browser icons side by side, and the sidebar row for the open test showed Chromium while the picker beside it said Firefox.
+
+**The doubled glyph: `SelectValue` already draws the item's icon.** Giving each `SelectItem` an SF Symbol so the AppKit menu could show glyphs also gave the *trigger* one — `SelectValue` renders `selectedItem.icon` before the label. The lucide `BrowserIcon` added alongside it was therefore the second icon, in all three pickers (test detail, batch, settings). Removed there; `BrowserIcon` stays for the DOM-only surfaces (Stats table, Stats tag badge). The icon that survives is the SF Symbol, which is the one the dropdown's own rows use — so the trigger and the open menu now agree, which they did not before.
+
+The test that was supposed to catch this asserted the trigger carried `data-browser="firefox"` and no `data-browser="chromium"`. Both were true with the bug present: it pinned that OUR icon was right and never that it was the only one. The replacements assert the count instead — zero `[data-browser]` nodes on the trigger, engine named once — because "an icon is correct" and "one icon" are different claims and only the second was ever in question.
+
+**The leaked glyph: the sidebar was right and the picker was wrong.** `TestDetailView` is a route component, and the router does not remount one when only its params change (no `remountDeps` on the route). Clicking another test in the sidebar re-renders the *same instance* with a new id — so the six `xInited` booleans that seeded the run controls "once" fired for the first test opened and never again. Every test after it displayed the previous test's engine, timeout, and toggles, and Run test used what was displayed. The sidebar row, reading `runBrowser` straight off the record, was the honest surface.
+
+Fixed by tracking WHICH test the controls hold (`seededFor`), not WHETHER they were seeded. All six moved into one effect rather than six id-scoped copies of the same latch: they depend on the same two queries and drifting apart is how one of them ends up with a subtly different rule. Re-seeding is still keyed on the test id and not on the record changing, so a refetch after the user picks an engine cannot undo the pick.
+
+**Same effect, second latent bug: the settings race.** Seeding ran as soon as the record arrived, whether or not `["recorder-settings"]` had. For a test that has pinned nothing, losing that race latched the hard-coded `chromium`/`false` fall-backs instead of the user's configured defaults — a coin flip per mount, invisible to anyone whose default is Chromium. The effect now waits for that query to settle.
+
+**Why the picker's persist call now invalidates two keys.** `tests:setBrowser` wrote to disk and nothing re-read it. The sidebar's glyph comes from the `["tests"]` list, so the row kept the old engine until something unrelated refetched — the same visible symptom as the leak, from the opposite direction. `persistRunBrowser` invalidates `["tests"]` and `["test", id]`, and only on a successful write: a failed save changed nothing, and re-reading would only re-assert what is already on screen.
+
+It is exported, and tested directly, because the SDK `Select` is native-menu-backed — its options never enter the DOM, so there is no way to drive a selection in jsdom and no way to reach this through the trigger. The navigation leak, by contrast, *is* reachable: `renderView().renavigate(id)` re-renders the same instance under a new route param, which is exactly what the router does. It fails with "expected Chromium, received Firefox" against the old latch.
+
+**And then the sidebar accessory came out entirely.** The entry below shipped it conditionally — only for a test that had PINNED an engine — as a narrowing of "put the engine on every row", which was already the weak surface when the feature was scoped. Removed on the same day it was reported: the pinned-only rule made it a glyph that appears on a minority of rows for a reason the row itself can't explain, and the question it answers ("what will this run on?") is one you ask in the toolbar, immediately before running, where the picker already answers it. `BrowserIcon` is now a Stats-only component.
+
+`persistRunBrowser` keeps invalidating `["tests"]` even though no row draws that field any more: the list holds its own copy of every record, and a cache that disagrees with disk about a field is a trap for whatever reads it next, not just for what read it last.
+
 ### 2026-08-07 — "Crawl" test speed: a step delay plus a real page settle
 
 - **Goal:** A fourth speed, slower than Slow, that waits for the page to finish loading before handing control back to the test runner — a steadier, more deterministic run, and the foundation for page indexing during runs later.
