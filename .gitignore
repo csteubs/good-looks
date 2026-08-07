@@ -3,8 +3,13 @@
 # directories — so the trailing-slash form left it showing up as untracked.
 node_modules
 
-# Build output. `npm run build` publishes to ../.glaze/build, outside this repo,
-# and clears its staging dir afterwards — but an aborted build leaves it behind.
+# Build output. Vite's outDir and esbuild's bundles both land in build/, and
+# electron-builder packages from there into dist/. Neither is ever committed.
+#
+# `.build/` is the Glaze shell's staging dir, kept because this branch shares a
+# merge base with the Glaze tree: without it, checking out a Glaze-era commit
+# here leaves an aborted build's staging dir showing as untracked.
+build/
 .build/
 dist/
 

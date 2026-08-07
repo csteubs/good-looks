@@ -7,6 +7,7 @@
   "type": "module",
   "main": "build/main/index.js",
   "scripts": {
+    "postinstall": "install-electron",
     "build": "npm run build:renderer && npm run build:main",
     "build:renderer": "vite build",
     "build:main": "node scripts/build-main.mjs",
@@ -121,5 +122,12 @@
         }
       ]
     }
+  },
+  "allowScripts": {
+    "electron-winstaller@5.4.0": true,
+    "esbuild@0.27.7": true,
+    "esbuild@0.28.1": true,
+    "fsevents@2.3.2": true,
+    "fsevents@2.3.3": true
   }
 }
