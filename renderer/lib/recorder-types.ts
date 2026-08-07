@@ -191,7 +191,20 @@ export interface RawStep {
   flowArgs?: Record<string, string>;
 }
 
-export type TestSpeed = "slow" | "medium" | "fast";
+export type TestSpeed = "crawl" | "slow" | "medium" | "fast";
+
+/** Every speed, SLOWEST FIRST (mirror of main types) — the order the sidebar
+ *  slider's stops are in. Every picker derives its list from this rather than
+ *  re-declaring one, so a new speed appears in all of them at once. */
+export const TEST_SPEEDS: TestSpeed[] = ["crawl", "slow", "medium", "fast"];
+
+/** Display labels for the speed pickers. */
+export const TEST_SPEED_LABELS: Record<TestSpeed, string> = {
+  crawl: "Crawl",
+  slow: "Slow",
+  medium: "Medium",
+  fast: "Fast",
+};
 
 /** Playwright browser engine a test run uses (mirror of main types).
  *  The trainer uses the app's own WebView and is unaffected. */
@@ -404,6 +417,10 @@ export interface RunRecord {
   /** browser engine this run used; absent on runs predating the picker
    *  (all of which ran on chromium). */
   runBrowser?: RunBrowser;
+  /** playback speed this run executed at. Absent on runs predating the field —
+   *  which means UNKNOWN, not "fast": speed is a per-test setting the user
+   *  changes between runs, so an older run could have been any of them. */
+  speed?: TestSpeed;
   /** id of the batch this run belonged to, when it was part of one. */
   batchId?: string;
   /** how many steps run-time Auto-Heal got past by substituting a locator. */
