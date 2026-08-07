@@ -381,7 +381,8 @@ single point of failure, and it is an hour of work.
 | 1 — Real CI on Electron | **built** | A green tick that means something |
 | 2 — Playwright-driven Electron E2E | **built** | Agents exercise the real app pre-merge |
 | 3 — Browser preview + per-PR artifacts | **built** | Seconds-long loop, shareable previews |
-| 4 — Converge on `@shell/backend` | not started (3–5d) | One tree; drift stops existing |
+| 4a — Close the drift | **built** | `shell/electron` is level with `main` |
+| 4b — Converge on `@shell/backend` | blocked on a decision | One tree; drift stops existing |
 | 5 — Drift guard | not started (0.5d) | It stays converged |
 
 ---
@@ -423,11 +424,39 @@ everything else is on **`shell/electron`**, branched from `a61598c`:
 3. `build/` was not gitignored — every build left the bundle one `git add -A`
    from being committed, which `check-repo-hygiene` bans.
 
+**Phase 4a — the drift is closed.** `shell/electron` is now **0 commits behind
+`main`**, done as one `git merge` rather than 13 cherry-picks: both trees
+descend from `a61598c`, so git's three-way handles the mechanical part — a file
+where `main` changed logic and the port changed only its import line
+auto-merges, because those are different lines. **4 conflicts out of 164
+changed files.** Establishing the real merge base is what made that possible.
+
+The suite on `shell/electron` went from 897 tests / 51 files / 26 checks to
+**1115 / 59 / 29**. `test:checks` is now generated from the defined `check:*`
+scripts rather than hand-listed — `main` and the branch had already drifted on
+ordering alone, and a hand-maintained chain that silently omits a check is a
+test that passes by never running.
+
+Two of the merge's type errors were the guards working. `RecorderState` gained
+a `replaying` field on `main`; the preview bridge did not have it, and the
+type-checker said so — which is exactly why the handlers carry the app's own
+return types.
+
 **Not done, and deliberately so:**
 
-- **Phase 4, the convergence.** It should land as one merge rather than
-  incrementally — a half-done state leaves two trees *plus* a shell
-  abstraction, which is worse than either. The 12 cherry-picks come first.
+- **Phase 4b, the convergence itself.** `main` and `shell/electron` are still
+  two trees. Finishing means adding `main/shell/glaze/` beside
+  `main/shell/electron/`, switching `main`'s 47 import-only files to
+  `@shell/backend`, and merging.
+
+  **This is blocked on a product decision, not on effort.** Merging makes the
+  Electron shell the thing `main` builds, and `PORTING.md` is explicit that
+  `renderer/ui/` is *an approximation of the original design system, not a
+  pixel match*. So the question — does the Glaze shell keep
+  `@glaze/core/components` behind the `@ui` alias, or does everything move to
+  the rebuilt library and accept its look? — changes what the app looks like,
+  and it is not one to answer by inference. It also cannot be verified from a
+  terminal: only the Glaze app can build the native shell and show the UI.
 - **`npm run build` on the Glaze branch was not run as verification.** It
   publishes into `../.glaze/build` and would replace whatever build is
   currently installed in the Glaze app — the exact behaviour this plan exists
