@@ -360,6 +360,67 @@ assertEqual(
   "a missing flow is reported in the spec, not silently dropped",
 );
 
+// ── 10. A resize step's log line is not mistaken for a step ───────────────
+//
+// script-generator emits `console.log(...)` after every `viewport` step. If the
+// parser counted that as an unclassifiable statement, `skipped` would be
+// non-zero and TestRecord.stepsDiverged would warn — permanently, on every test
+// that resizes — that the steps undercount the script.
+{
+  const resizeSteps: Step[] = [
+    step({ type: "viewport", width: 390, height: 844 }),
+    step({ type: "goto", url: "https://example.com" }),
+    step({ type: "click", locator: { k: "testid", v: "menu" } }),
+    step({ type: "viewport", width: 1280, height: 800 }),
+  ];
+  const src = generateSpec({ name: "resize", url: "https://example.com", steps: resizeSteps });
+  assertEqual(src.includes("console.log("), true, "the generator logs each resize");
+  const parsed = parseSpecDetailed(src);
+  assertEqual(parsed.skipped, 0, "a resize log line is not counted as a skipped statement");
+  assertEqual(parsed.steps.length, 4, "a logged resize round-trips without extra steps");
+  assertEqual(
+    parsed.steps.map((s) => s.type),
+    ["viewport", "goto", "click", "viewport"],
+    "resize steps round-trip in order",
+  );
+  assertEqual(
+    parsed.steps.filter((s) => s.type === "viewport").map((s) => [s.width, s.height]),
+    [[390, 844], [1280, 800]],
+    "both resize sizes round-trip",
+  );
+}
+
+// A DISABLED resize is commented out as TWO lines (the resize and its log), and
+// only the first carries a step. Counting the second as unclassifiable is the
+// same false divergence warning by another route.
+{
+  const src = generateSpec({
+    name: "disabled resize",
+    url: "https://example.com",
+    steps: [
+      step({ type: "goto", url: "https://example.com" }),
+      step({ type: "viewport", width: 390, height: 844, disabled: true }),
+    ],
+  });
+  const parsed = parseSpecDetailed(src);
+  assertEqual(parsed.skipped, 0, "a disabled resize's commented log line is not counted as skipped");
+  assertEqual(parsed.steps.length, 2, "a disabled resize round-trips as one step");
+  assertEqual(parsed.steps[1]?.disabled, true, "…and keeps its disabled flag");
+}
+
+// Continue-on-failure wraps BOTH lines in the try block.
+{
+  const src = generateSpec({
+    name: "continue resize",
+    url: "https://example.com",
+    steps: [step({ type: "viewport", width: 390, height: 844, continueOnFailure: true })],
+  });
+  const parsed = parseSpecDetailed(src);
+  assertEqual(parsed.skipped, 0, "a continue-on-failure resize produces no skips");
+  assertEqual(parsed.steps.length, 1, "…and round-trips as exactly one step");
+  assertEqual(parsed.steps[0]?.continueOnFailure, true, "…keeping its continue-on-failure flag");
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);
