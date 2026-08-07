@@ -20,7 +20,7 @@ import {
   invokeHandler,
   registeredChannels,
   setEncryptionAvailable,
-} from "../services/__tests__/glaze-backend-stub.js";
+} from "../services/__tests__/shell-backend-stub.js";
 import { registerHandlers } from "./index.js";
 import { testStore } from "../services/test-store.js";
 import type { Step, TestRecord } from "../recorder/types.js";

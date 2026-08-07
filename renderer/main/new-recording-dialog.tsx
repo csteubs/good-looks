@@ -10,7 +10,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@glaze/core/components";
+} from "@ui";
 
 import { api } from "../lib/api";
 import type { TestSpeed } from "../lib/recorder-types";

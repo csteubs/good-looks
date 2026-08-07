@@ -14,7 +14,7 @@
 //   • Generic JSON with a top-level `text`, which is what Slack and Discord
 //     incoming webhooks render, while remaining readable to any other endpoint.
 
-import { logger } from "@glaze/core/backend";
+import { logger } from "@shell/backend";
 
 import { webhookUrlStore } from "./webhook-url-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";

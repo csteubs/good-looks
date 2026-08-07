@@ -1260,3 +1260,68 @@ So there is now an **"Accessibility" tab** on the test detail view
 - **Backend elements:** recording BrowserWindow management, executeJavaScript injection + poll-drain, local_storage (JSON + spec files), child_process (Playwright CLI), ipc_handlers, backend→renderer event push.
 - **Corrections/Lessons Learned:** `executeJavaScript` ephemeral-world + no backend `console-message` forced the DOM-attribute approach. Runner initially failed with "Cannot find module '@playwright/test'" because the built backend runs from `.glaze/build`; fixed by scanning candidate node_modules roots. `LiveAppEvaluate` runs in an isolated world where `window.glazeAPI` is undefined — drive the UI via clicks + native input-setter, not by calling `invoke` from evaluate.
 - **User Frustrations & Important Remarks:** None yet. First run of a test downloads ~80–150MB of browser; subsequent runs are fast.
+
+---
+
+## 2026-08-07 — Ported off the Glaze SDK onto stock Electron
+
+**Goal:** remove every Glaze dependency, simplify the build, and produce a
+distributable app. Full detail in [../PORTING.md](../PORTING.md); this entry
+records the decisions.
+
+- **Electron over Tauri.** The SDK mirrored Electron's API, so the backend port
+  was 15 symbols across 32 files, nearly all 1:1. Tauri would have meant
+  rewriting every Node service (runner, import, LLM, all stores) in Rust or
+  behind a sidecar — a rewrite, not a port. Cost: ~386 MB unpacked vs a few MB.
+
+- **One seam, lint-enforced.** App code imports `@shell/backend`, never
+  `electron`. Without the rule the adapter stops being a seam — the
+  `windowKey` strip, the logger and the navigation types get bypassed one
+  import at a time, and the backend stops being stubbable, which is what makes
+  it testable at all. Rejected: letting each file import Electron directly.
+
+- **`app://` scheme, not `file://`.** Vite emits `<script type="module"
+  crossorigin>`; from `file://` that has a null origin and is blocked by CORS.
+  The window opens, renders nothing, and the main process log is completely
+  clean — it cost real time to diagnose, which is also why renderer console
+  errors are now forwarded to the main log. Rejected: `webSecurity: false` —
+  unacceptable in a process that loads arbitrary untrusted sites.
+
+- **Select and DropdownMenu stayed native.** Electron's `Menu.popup` takes the
+  same plain-data template the SDK's did, so these keep rendering items to
+  `null` and driving a real macOS menu. That preserved the native behaviour AND
+  the existing tests, which stub `glazeAPI.Menu.popup`. Converting them to
+  Radix DOM menus would have invalidated those tests and put a DOM menu inside
+  a 560×480 settings window. The documented caveat is unchanged: options are
+  not in the DOM, so assert the displayed value.
+
+- **The date picker did change**, to a DOM `<input type="date">` — Electron has
+  no equivalent of `dialog.showDatePicker`. It is now keyboard-accessible and
+  testable, which the native one was not. One call site (`stats-view.tsx`).
+
+- **Rebuilt the design system rather than vendoring it.** 73 symbols on
+  `radix-ui` + `cva` + `tailwind-merge` — the SDK's own peer dependencies, all
+  already direct dependencies here. Same symbol names and prop contracts, so
+  the 36 consuming views only changed their import specifier. Vendoring
+  `@glaze/core` was rejected on licensing: it ships no LICENSE file and carries
+  Raycast copyright.
+
+- **App Store ruled out, Developer ID chosen.** `playwright install` downloads
+  and executes browser binaries at runtime — App Review 2.5.2 prohibits it
+  outright, and the App Sandbox separately blocks spawning executables signed
+  by someone else. A MAS build would mean shipping the recorder without the
+  runner. Developer ID + notarization has neither constraint.
+
+- **Corrections / lessons learned:** esbuild's ESM output needs a
+  `createRequire` banner or bundled CJS deps (pngjs) die on `Dynamic require of
+  "util"`; the banner must define only `require`, since adding
+  `__filename`/`__dirname` collides with `main/index.ts` and is a SyntaxError.
+  `asar` must stay off or the Playwright spawn gets a path that isn't real.
+  Spawns need `ELECTRON_RUN_AS_NODE=1` or `process.execPath` relaunches the app.
+  Electron types `webContents.on` as literal-keyed overloads, so iterating a
+  union of event names needs a cast at the dispatch.
+
+- **Not verified:** no end-to-end recording session was driven against a live
+  site in the ported build, and the packaged app's UI was not visually
+  inspected (only the dev build was). Visual fidelity of the rebuilt component
+  library against the original is an approximation, not a pixel match.

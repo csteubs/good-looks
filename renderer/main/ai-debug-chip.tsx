@@ -8,7 +8,7 @@
 
 import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { Button, Text } from "@glaze/core/components";
+import { Button, Text } from "@ui";
 import { Sparkles } from "lucide-react";
 
 import { aggregateStatus } from "../lib/ai-debug-sessions";

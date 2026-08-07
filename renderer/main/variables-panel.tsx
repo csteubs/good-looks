@@ -30,7 +30,7 @@ import {
   SelectValue,
   Text,
   toast,
-} from "@glaze/core/components";
+} from "@ui";
 import { KeyRound, Play, Plus, Trash2, Variable } from "lucide-react";
 
 import { api } from "../lib/api";

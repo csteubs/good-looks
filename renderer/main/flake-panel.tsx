@@ -7,7 +7,7 @@
 // job is to say WHICH, in words, before it shows any number.
 
 import * as React from "react";
-import { Badge, Button, Text } from "@glaze/core/components";
+import { Badge, Button, Text } from "@ui";
 import { Activity, ChevronDown, ChevronRight, Wand2 } from "lucide-react";
 
 import type { FailureCluster, StabilityVerdict, TestFlake } from "../lib/recorder-types";

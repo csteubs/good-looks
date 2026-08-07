@@ -29,7 +29,7 @@ import {
   ToolbarContent,
   ToolbarDescription,
   ToolbarTitle,
-} from "@glaze/core/components";
+} from "@ui";
 import { ChevronDown, Pencil, TriangleAlert, Trash2 } from "lucide-react";
 
 import { api } from "../lib/api";

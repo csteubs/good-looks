@@ -25,7 +25,7 @@ import {
   Text,
   Textarea,
   toast,
-} from "@glaze/core/components";
+} from "@ui";
 import { Check, Copy, Square, Wand2 } from "lucide-react";
 
 import { api } from "../lib/api";

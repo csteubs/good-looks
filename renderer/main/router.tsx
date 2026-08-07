@@ -12,7 +12,7 @@ import { StatsView } from "./stats-view";
 import { TestDetailView } from "./test-detail-view";
 import { VisualView } from "./visual-view";
 import { QueryClient } from "@tanstack/react-query";
-import { ErrorBoundaryView } from "@glaze/core/components";
+import { ErrorBoundaryView } from "@ui";
 
 const rootRoute = createRootRouteWithContext<{
   queryClient: QueryClient;

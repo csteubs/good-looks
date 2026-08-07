@@ -31,7 +31,7 @@ import {
   ToolbarDescription,
   ToolbarTitle,
   toast,
-} from "@glaze/core/components";
+} from "@ui";
 import {
   Calendar,
   Camera,

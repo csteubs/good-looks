@@ -236,3 +236,63 @@ should update the relevant entry in the same commit.
 - **`Slider`'s `onValueCommit` is unreliable for a plain click (no drag) — commit on `onValueChange` instead.** `TestSpeedSlider` in `library-sidebar.tsx` originally persisted on `onValueCommit`; the thumb's local value visibly updated on click but the backend write never happened (no `tests:setSpeed` call, no `testStore.save` log line) because a single click never produces the drag gesture Radix's slide-end/pointerup handling expects. Fixed by calling the commit logic directly from `onValueChange`, guarded by a `useRef` so repeated same-value events don't re-fire — fine for a low-cardinality (3-stop) slider; a continuous-value slider would need a debounce instead.
 - App logs (`~/Library/Logs/app.glaze.macos.<appId>/glaze-*.log`, tail the most-recently-modified one) are the fastest way to confirm an IPC handler actually ran — `testStore.save()` logs `"Saved test record"` (not the channel name), so grep the log message text, not the IPC channel/handler name.
 
+
+---
+
+## The Electron shell (`main/shell/`) — added by the port off Glaze
+
+The only directory permitted to import `electron`. Everything else in `main/`
+goes through `@shell/backend`; `eslint.config.js` enforces it. See
+[../PORTING.md](../PORTING.md) for the migration record.
+
+### `main/shell/backend.ts`
+The adapter that replaced `@glaze/core/backend`. Re-exports Electron's `app`,
+`BrowserWindow`, `Menu`, `Notification`, `dialog`, `ipcMain`, `safeStorage`,
+`screen`, `globalShortcut`, and supplies the four things Electron has no direct
+equivalent for: the `logger`, a `BrowserWindow` wrapper that strips Glaze's
+`windowKey` option (so window-creation code was not rewritten), a no-op
+`initDevToolsButtonState`, and the `WebContentsNavigationEvent` type the
+recorder's navigation guards are written against. The wrapper is a function
+returning an instance rather than a subclass — Electron's `BrowserWindow` is
+native-backed and cannot be `extend`ed.
+
+### `main/shell/logger.ts`
+`logger.info(scope, message, meta?)`, matching the SDK's shape so ~40 call
+sites were untouched. Console plus an append-only file under
+`userData/logs/main.log`, because a packaged app has no terminal attached.
+File writes are best-effort and never throw.
+
+### `main/shell/host-handlers.ts`
+The IPC handlers the Glaze runtime used to register automatically, backing
+`window.glazeAPI.{dialog,shell,clipboard,nativeTheme,Menu}`. Under Electron
+nobody registers them unless we do, and a missing one surfaces as "No handler
+registered" the first time a menu or copy button is used — so the set is the
+full surface the renderer actually calls, enumerated by grep rather than guessed.
+`Menu:popup` is the important one: it converts the renderer's plain-data menu
+template into a real macOS menu and answers with the picked `commandId`, which
+is what keeps `Select` and `DropdownMenu` native. Also exports
+`forwardRendererConsole`, which pipes renderer errors into the main log — the
+port's first failure was a blank window with a completely clean log.
+
+### `main/shell/app-protocol.ts`
+Serves the built renderer over a custom `app://` scheme. Vite emits module
+scripts, which under `file://` get a null origin and are blocked by CORS; the
+symptom is a blank window. Registering a real scheme also gives the pages'
+CSP a meaningful `'self'`. Path containment is judged on the **real** path
+against the **real** build root, the same rule the import sandbox applies, so
+neither `..` in a URL nor a symlink inside the bundle can read the rest of
+the disk.
+
+## `renderer/ui/` — the app's component library
+
+Replaced `@glaze/core/components` (73 symbols across 36 files). Same symbol
+names and prop contracts, read off the SDK's `.d.ts` files, so consuming views
+only changed their import specifier to `@ui`.
+
+- `primitives.tsx` — Button, Badge, Input, Textarea, Label, Status, Text, Table family
+- `controls.tsx` — Radix form controls: Checkbox, Switch, RadioGroup, Slider, Tabs, SegmentedControl, Tooltip
+- `layout.tsx` — Toolbar family, the composite ScrollArea (auto-follow-bottom), Field family, Callout, EmptyState, Sidebar family, SplitView, ErrorBoundaryView
+- `overlays.tsx` — Dialog, AlertDialog, the Radix DOM context menu, Toaster/`toast`, and the DOM date picker
+- `native-menu.tsx` — **Select and DropdownMenu, still backed by real macOS menus.** Items render to `null`; the tree is walked into a plain-data template and handed to `Menu.popup`, which answers with a `commandId`. Options never enter the DOM, so assert the displayed value and cover persistence at the IPC layer — unchanged from the original.
+- `tokens.css` — design tokens (light/dark), bridged to Tailwind in `renderer/styles.css`
+- `use-theme.ts` — keeps `.dark` on `<html>` in sync with `nativeTheme`

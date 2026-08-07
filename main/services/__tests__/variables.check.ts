@@ -10,7 +10,7 @@
 // IPC boundary and its output becomes a JS identifier in a generated spec, so a
 // name it lets through wrong produces a spec that doesn't parse.
 //
-// Bundled with esbuild + the @glaze/core/backend stub (safeStorage, app.getPath)
+// Bundled with esbuild + the @shell/backend stub (safeStorage, app.getPath)
 // — see package.json. Run with:
 //   npm run check:variables
 
@@ -18,7 +18,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-import { setEncryptionAvailable } from "./glaze-backend-stub.js";
+import { setEncryptionAvailable } from "./shell-backend-stub.js";
 import { redact, REDACTED, setSecretSnapshotForTesting } from "../secret-redaction.js";
 import { testSecretsStore } from "../test-secrets-store.js";
 import { runHistoryStore } from "../run-history-store.js";

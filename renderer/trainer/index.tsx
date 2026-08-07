@@ -11,8 +11,8 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { TooltipProvider, Toaster } from "@glaze/core/components";
-import { initLogging } from "@glaze/core/utils";
+import { TooltipProvider, Toaster } from "@ui";
+import { initLogging } from "../lib/logging";
 
 import { RecorderProvider } from "../main/recorder-store";
 import { TrainerPanelView } from "./trainer-panel-view";

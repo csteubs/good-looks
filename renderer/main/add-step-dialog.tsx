@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
   Text,
-} from "@glaze/core/components";
+} from "@ui";
 import { Crosshair, X } from "lucide-react";
 
 import type {

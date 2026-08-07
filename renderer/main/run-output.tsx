@@ -1,4 +1,4 @@
-import { Button, ScrollArea, Status, Text } from "@glaze/core/components";
+import { Button, ScrollArea, Status, Text } from "@ui";
 import { Check, Copy, Sparkles } from "lucide-react";
 import { useState } from "react";
 

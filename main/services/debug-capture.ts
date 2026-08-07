@@ -22,7 +22,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
-import { app, BrowserWindow, logger } from "@glaze/core/backend";
+import { app, BrowserWindow, logger } from "@shell/backend";
 
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 

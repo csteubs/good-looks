@@ -4,7 +4,7 @@
 // either way resumes the paused training session.
 
 import * as React from "react";
-import { Badge, Dialog, Text } from "@glaze/core/components";
+import { Badge, Dialog, Text } from "@ui";
 
 import type { Locator, PickedElement } from "../lib/recorder-types";
 

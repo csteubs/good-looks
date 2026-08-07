@@ -3,15 +3,18 @@
 // steps from a shared DOM queue on a poll, and streams them to the app's main
 // window. On close it generates a Playwright spec and persists the test.
 //
-// Glaze's executeJavaScript runs each call in an ephemeral content world, so the
-// capture script cannot rely on JS globals or the console bridge. Instead it
-// stores state and queued steps on <html> attributes (see capture-script.ts),
-// which this service reads/writes across calls.
+// Scripts run in an ISOLATED WORLD (executeJavaScriptInIsolatedWorld), never
+// the page's own: the page must not be able to see or tamper with the capture
+// machinery. This preserves the original design's content-world isolation,
+// where the capture script cannot rely on sharing JS globals with the page.
+// State and queued steps therefore live on <html> attributes (see
+// capture-script.ts), which both worlds can reach — that DOM handoff is the
+// deliberate, normalized trust boundary.
 
 import { randomUUID } from "crypto";
 
-import { BrowserWindow, logger, Menu } from "@glaze/core/backend";
-import type { MenuItemConstructorOptions, WebContentsNavigationEvent } from "@glaze/core/backend";
+import { BrowserWindow, logger, Menu } from "@shell/backend";
+import type { MenuItemConstructorOptions, WebContentsNavigationEvent } from "@shell/backend";
 
 import {
   ATTR_ASSERT,
@@ -103,6 +106,33 @@ const LOAD_TIMEOUT_MS = 15000;
 const DEFAULT_WINDOW_WIDTH = 1200;
 const DEFAULT_WINDOW_HEIGHT = 820;
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Isolated world the recorder's scripts run in. Any id above 0 is isolated
+ *  from the page's main world (0); the exact number only has to be stable so
+ *  capture state injected by one call is visible to the next. */
+const RECORDER_WORLD_ID = 1999;
+
+/** The raw webContents surface the executor adapter needs. */
+interface IsolatedHost {
+  executeJavaScriptInIsolatedWorld(
+    worldId: number,
+    scripts: { code: string }[],
+  ): Promise<unknown>;
+}
+
+/**
+ * Adapt a webContents to the `{ executeJavaScript }` shape every helper and
+ * test in this codebase types against, routing execution into the recorder's
+ * isolated world. The adapter is the ONE place the world id appears; everything
+ * downstream stays byte-compatible with the original service (and with the
+ * tests' fake webContents, which implement plain executeJavaScript).
+ */
+function pageExecutor(wc: IsolatedHost): { executeJavaScript: (script: string) => Promise<unknown> } {
+  return {
+    executeJavaScript: (script: string) =>
+      wc.executeJavaScriptInIsolatedWorld(RECORDER_WORLD_ID, [{ code: script }]),
+  };
+}
 
 /** Race a page `executeJavaScript` against a timeout so one hanging/navigating
  *  step can't freeze a replay run. Rejects with a descriptive error on timeout. */
@@ -474,7 +504,7 @@ function normalizeUrl(input: string): string {
 
 async function injectCapture(): Promise<void> {
   if (!recWindow || recWindow.isDestroyed() || !session) return;
-  const wc = recWindow.webContents;
+  const wc = pageExecutor(recWindow.webContents);
   try {
     await wc.executeJavaScript(CAPTURE_SCRIPT);
     await applyStateAttributes();
@@ -485,7 +515,7 @@ async function injectCapture(): Promise<void> {
 
 async function applyStateAttributes(): Promise<void> {
   if (!recWindow || recWindow.isDestroyed() || !session) return;
-  const wc = recWindow.webContents;
+  const wc = pageExecutor(recWindow.webContents);
   const paused = session.paused ? "1" : "0";
   const assert = session.assertMode ?? "";
   const soft = session.assertSoft ? "1" : "0";
@@ -515,7 +545,7 @@ async function applyStateAttributes(): Promise<void> {
 async function drainPicked(): Promise<void> {
   if (!recWindow || recWindow.isDestroyed() || !session || !session.refineMode) return;
   try {
-    const json = (await recWindow.webContents.executeJavaScript(DRAIN_PICKED_SCRIPT)) as string;
+    const json = (await pageExecutor(recWindow.webContents).executeJavaScript(DRAIN_PICKED_SCRIPT)) as string;
     if (typeof json !== "string" || !json) return;
     if (json.length > MAX_DRAIN_BYTES) {
       logger.warn("recorder", "Discarded an oversized picked element", { bytes: json.length });
@@ -544,7 +574,7 @@ async function drainPicked(): Promise<void> {
 async function drain(): Promise<void> {
   if (!recWindow || recWindow.isDestroyed() || !session) return;
   try {
-    const json = (await recWindow.webContents.executeJavaScript(DRAIN_SCRIPT)) as string;
+    const json = (await pageExecutor(recWindow.webContents).executeJavaScript(DRAIN_SCRIPT)) as string;
     if (typeof json !== "string") return;
     if (json.length > MAX_DRAIN_BYTES) {
       logger.warn("recorder", "Discarded an oversized capture queue", { bytes: json.length });
@@ -890,7 +920,16 @@ export const recorderService = {
     };
 
     for (const event of GUARDED_NAVIGATION_EVENTS) {
-      wc.on(event, guardNavigation(event));
+      // Electron types `on` as an overload set keyed by literal event name, so
+      // iterating a union of names doesn't resolve to a single overload. The
+      // handler shape is identical for all three (they share
+      // WebContentsNavigationEvent), so the cast is on the dispatch, not the
+      // contract — and the list stays the single source of truth for which
+      // events are guarded.
+      (wc.on as (e: string, fn: (details: WebContentsNavigationEvent) => void) => void)(
+        event,
+        guardNavigation(event),
+      );
     }
 
     wc.on("did-navigate", () => {
@@ -917,7 +956,7 @@ export const recorderService = {
         let prefillText = "";
         let prefillValue = "";
         try {
-          const json = (await wc.executeJavaScript(`(${PICK_AT_POINT_SCRIPT})(${px}, ${py})`)) as string;
+          const json = (await pageExecutor(wc).executeJavaScript(`(${PICK_AT_POINT_SCRIPT})(${px}, ${py})`)) as string;
           // The third route out of the page, and normalized like the other two.
           // Nothing here reaches a raw sink today — the locators are quoted by
           // the generator and the label only renders in a native menu — but the
@@ -1325,7 +1364,7 @@ export const recorderService = {
     const step = session.steps[idx];
     if (!step) return empty("Step not found.");
 
-    const wc = recWindow.webContents;
+    const wc = pageExecutor(recWindow.webContents);
     const wasPaused = session.paused;
     try {
       // Suppress capture so the replayed interaction isn't recorded as a step.
@@ -1392,7 +1431,7 @@ export const recorderService = {
     if (!recWindow || recWindow.isDestroyed()) {
       return { ok: false, stoppedAtIndex: -1, error: "Recorder window is not open." };
     }
-    const wc = recWindow.webContents;
+    const wc = pageExecutor(recWindow.webContents);
     const wasPaused = session.paused;
     try {
       session.paused = true;
@@ -1485,7 +1524,7 @@ export const recorderService = {
     if (!recWindow || recWindow.isDestroyed()) {
       return { ok: false, failedAtIndex: -1, error: "Recorder window is not open." };
     }
-    const wc = recWindow.webContents;
+    const wc = pageExecutor(recWindow.webContents);
     const wasPaused = session.paused;
     try {
       session.paused = true;
@@ -1580,7 +1619,7 @@ export const recorderService = {
     if (!recWindow || recWindow.isDestroyed()) {
       return { ok: false, ranCount: 0, passedCount: 0, failedAtIndex: -1, error: "Recorder window is not open." };
     }
-    const wc = recWindow.webContents;
+    const wc = pageExecutor(recWindow.webContents);
     const wasPaused = session.paused;
     const from = Math.max(0, Math.min(startIndex, session.steps.length));
     const total = session.steps

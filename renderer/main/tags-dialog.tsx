@@ -11,7 +11,7 @@
 
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Badge, Dialog, Field, Input, Text, toast } from "@glaze/core/components";
+import { Badge, Dialog, Field, Input, Text, toast } from "@ui";
 
 import { api } from "../lib/api";
 import { parseTagInput, tagCounts } from "../lib/test-tags";

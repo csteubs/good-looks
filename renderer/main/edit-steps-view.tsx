@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
   Text,
-} from "@glaze/core/components";
+} from "@ui";
 import { Plus, ListPlus, TriangleAlert } from "lucide-react";
 
 import type { AssertKind, RawStep, Step } from "../lib/recorder-types";

@@ -1,7 +1,7 @@
-// Test-only stand-in for `@glaze/core/backend`, used by the standalone
-// end-to-end check. `@glaze/core/backend` only resolves through Glaze's
+// Test-only stand-in for `@shell/backend`, used by the standalone
+// end-to-end check. `@shell/backend` only resolves through Glaze's
 // runtime ESM hooks (not plain node/esbuild), so the check bundles with
-// `--alias:@glaze/core/backend=<this file>`. It provides just the two symbols
+// `--alias:@shell/backend=<this file>`. It provides just the two symbols
 // the visual-pipeline stores touch: `app.getPath` (points at a throwaway temp
 // dir chosen by the check via GLAZE_TEST_USERDATA) and a no-op `logger`.
 //

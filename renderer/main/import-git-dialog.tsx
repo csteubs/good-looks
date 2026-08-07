@@ -1,7 +1,7 @@
 import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
-import { Dialog, Field, Input, Text, toast } from "@glaze/core/components";
+import { Dialog, Field, Input, Text, toast } from "@ui";
 
 import { api } from "../lib/api";
 

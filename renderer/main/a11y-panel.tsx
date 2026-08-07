@@ -23,7 +23,7 @@ import {
   ScrollArea,
   Text,
   toast,
-} from "@glaze/core/components";
+} from "@ui";
 import { Accessibility, RotateCcw, Stamp, TriangleAlert } from "lucide-react";
 
 import { api } from "../lib/api";

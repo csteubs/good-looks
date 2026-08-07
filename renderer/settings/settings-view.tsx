@@ -24,8 +24,8 @@ import {
   FieldLabel,
   FieldSet,
   toast,
-} from "@glaze/core/components";
-import type { NativeThemeInfo } from "@glaze/core/ipc";
+} from "@ui";
+import type { NativeThemeInfo } from "../lib/host-types";
 
 import { api } from "../lib/api";
 import type { LlmProvider, LlmProviderStatus } from "../lib/llm-types";

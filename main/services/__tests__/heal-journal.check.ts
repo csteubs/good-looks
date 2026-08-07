@@ -14,7 +14,7 @@
 //   • the two apply modes differ in exactly one way (does the test change?).
 //
 // Driven against the real store writing to a temp userData dir. Bundled with
-// esbuild + the @glaze/core/backend stub — see package.json. Run with:
+// esbuild + the @shell/backend stub — see package.json. Run with:
 //   npm run check:heal-journal
 
 import * as fs from "fs";

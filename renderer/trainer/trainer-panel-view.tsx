@@ -33,7 +33,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from "@glaze/core/components";
+} from "@ui";
 import {
   CheckSquare,
   ChevronDown,

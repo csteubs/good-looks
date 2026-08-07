@@ -1,8 +1,9 @@
-// Main process entry point - Node.js backend for Glaze app
+// Main process entry point — Electron main.
 //
-// The glaze CLI runtime automatically handles all framework wiring (IPC server,
-// native bridge, lifecycle, signal handlers) before this file runs.
-// This entry point uses only APIs.
+// Electron provides the framework wiring (IPC, lifecycle, signal handlers)
+// natively; the only piece the Glaze runtime used to add that we must register
+// ourselves is the host handler set backing window.glazeAPI (dialogs, shell,
+// clipboard, theme, native menus) — see shell/host-handlers.ts.
 
 import * as fs from "fs";
 import * as path from "path";
@@ -15,8 +16,10 @@ import {
   globalShortcut,
   logger,
   initDevToolsButtonState,
-} from "@glaze/core/backend";
+} from "@shell/backend";
 
+import { installAppProtocol, registerAppScheme } from "./shell/app-protocol.js";
+import { forwardRendererConsole, registerHostHandlers } from "./shell/host-handlers.js";
 import { registerHandlers } from "./handlers/index.js";
 import { getPreloadPath, getWindowUrl } from "./windows/window-paths.js";
 import { openSettingsWindow } from "./windows/settings-window.js";
@@ -35,8 +38,15 @@ import { aiDebugStore } from "./services/ai-debug-store.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// ── Custom scheme ─────────────────────────────────────────────────────
+// Must run at module scope, before app.whenReady(): Electron reads the
+// privileged-scheme list once during startup. The handler itself is installed
+// after ready (see whenReady below).
+registerAppScheme();
+
 // ── IPC Handlers ──────────────────────────────────────────────────────
-// ipcMain is already wired to the IPC server by the runtime bootstrap.
+// Host surface first (dialogs/shell/clipboard/theme/menus), then the app's own.
+registerHostHandlers();
 registerHandlers();
 
 // ── Artifact retention ────────────────────────────────────────────────
@@ -71,29 +81,6 @@ registerHandlers();
   if (reconciled > 0) {
     logger.info("ai-debug", "Reconciled interrupted AI debug sessions at startup", { reconciled });
   }
-}
-
-// ── Dev-only parity harness ───────────────────────────────────────────
-// The parity autotest lives in main/dev/, which is excluded from scaffolded
-// apps. The build (build-backend) defines GLAZE_DEV_HARNESS="1" only when that
-// directory is present, so esbuild dead-code-eliminates this block — and never
-// resolves the missing module — for user apps. A no-op unless a scenario env var
-// is set even in the template.
-type DevHarness = {
-  applyParityScenarioStartup(): void;
-  runParityAutotestIfRequested(): Promise<void>;
-};
-type AppAiDevHarness = {
-  runAppAiAutotest(): Promise<void>;
-};
-let devHarness: DevHarness | null = null;
-let appAiDevHarness: AppAiDevHarness | null = null;
-if (process.env.GLAZE_DEV_HARNESS === "1") {
-  // @ts-ignore dev-only harness; present only in the template, excluded from scaffolded apps
-  devHarness = (await import("./dev/parity-autotest.js")) as DevHarness;
-  devHarness.applyParityScenarioStartup();
-  // @ts-ignore dev-only harness; present only in the template, excluded from scaffolded apps
-  appAiDevHarness = (await import("./dev/app-ai-autotest.js")) as AppAiDevHarness;
 }
 
 // ── State ─────────────────────────────────────────────────────────────
@@ -150,6 +137,8 @@ async function createMainWindow() {
     duration_ms: browserWindowEndTime - browserWindowStartTime,
   });
 
+  forwardRendererConsole(mainWindow, "main");
+
   // Share the main window with backend services so they can push events.
   setMainWindow(mainWindow);
   mainWindow.on("closed", () => setMainWindow(null));
@@ -201,7 +190,6 @@ async function setupApplicationMenu() {
         { type: "separator" },
         {
           label: "Settings…",
-          icon: "gearshape",
           accelerator: "Command+,",
           click: async () => await openSettingsWindow(),
         },
@@ -268,7 +256,7 @@ app.on("window-all-closed", () => {
   // app.quit();
 });
 
-app.on("activate", (hasVisibleWindows) => {
+app.on("activate", (_event, hasVisibleWindows) => {
   logger.info("main", "App activate event received", {
     hasVisibleWindows,
     mainWindowExists: !!mainWindow,
@@ -306,8 +294,8 @@ app.whenReady().then(async () => {
     wait_duration_ms: windowCreateStartTime - startTime,
   });
 
-  await devHarness?.runParityAutotestIfRequested();
-  await appAiDevHarness?.runAppAiAutotest();
+  // Before any window loads: the renderer is served over app://.
+  installAppProtocol();
 
   await setupApplicationMenu();
   await setupDebugScreenshots();

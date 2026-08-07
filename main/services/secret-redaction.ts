@@ -14,7 +14,7 @@
 // The snapshot exists because two of those three call sites are synchronous,
 // and reading the encrypted store is not.
 
-import { logger } from "@glaze/core/backend";
+import { logger } from "@shell/backend";
 
 import { testSecretsStore } from "./test-secrets-store.js";
 

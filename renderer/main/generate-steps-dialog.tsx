@@ -21,7 +21,7 @@ import {
   Text,
   Textarea,
   toast,
-} from "@glaze/core/components";
+} from "@ui";
 import { Crosshair, Square, Wand2, X } from "lucide-react";
 
 import { api } from "../lib/api";

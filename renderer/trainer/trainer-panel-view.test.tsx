@@ -20,7 +20,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { TooltipProvider } from "@glaze/core/components";
+import { TooltipProvider } from "@ui";
 
 import type { ContextAction, RecorderState, Step, StepType } from "../lib/recorder-types";
 import { TrainerPanelView } from "./trainer-panel-view";

@@ -13,7 +13,7 @@ import { randomUUID } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 
-import { app, logger } from "@glaze/core/backend";
+import { app, logger } from "@shell/backend";
 
 import { redactWithSnapshot } from "./secret-redaction.js";
 import type { LogSearchResult, RunBrowser, RunRecord } from "../recorder/types.js";

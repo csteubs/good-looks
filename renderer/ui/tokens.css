@@ -1,0 +1,56 @@
+/*
+ * Design tokens for the local component library — the port's replacement for
+ * the SDK-injected theme. macOS-flavored neutrals, one accent, semantic status
+ * colors; `.dark` (set on <html> by the entry HTML + useTheme) flips the set.
+ *
+ * Consumed via Tailwind 4 `@theme inline` in styles.css, so components use
+ * `bg-background`, `text-muted-foreground`, `border-border`, etc.
+ */
+
+:root {
+  --background: hsl(0 0% 100%);
+  --foreground: hsl(240 6% 10%);
+  --muted: hsl(240 5% 96%);
+  --muted-foreground: hsl(240 4% 44%);
+  --card: hsl(0 0% 100%);
+  --card-foreground: hsl(240 6% 10%);
+  --popover: hsl(0 0% 100%);
+  --popover-foreground: hsl(240 6% 10%);
+  --border: hsl(240 6% 88%);
+  --input: hsl(240 6% 86%);
+  --ring: hsl(211 100% 50%);
+  --accent: hsl(211 100% 50%);
+  --accent-foreground: hsl(0 0% 100%);
+  --secondary: hsl(240 5% 94%);
+  --secondary-foreground: hsl(240 6% 20%);
+  --destructive: hsl(0 72% 51%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --success: hsl(142 71% 40%);
+  --warning: hsl(38 92% 46%);
+  --selection: hsl(211 100% 50% / 0.14);
+  --overlay: hsl(240 6% 10% / 0.32);
+}
+
+.dark {
+  --background: hsl(240 6% 12%);
+  --foreground: hsl(0 0% 96%);
+  --muted: hsl(240 5% 18%);
+  --muted-foreground: hsl(240 5% 62%);
+  --card: hsl(240 6% 14%);
+  --card-foreground: hsl(0 0% 96%);
+  --popover: hsl(240 6% 15%);
+  --popover-foreground: hsl(0 0% 96%);
+  --border: hsl(240 5% 26%);
+  --input: hsl(240 5% 28%);
+  --ring: hsl(211 100% 55%);
+  --accent: hsl(211 100% 55%);
+  --accent-foreground: hsl(0 0% 100%);
+  --secondary: hsl(240 5% 22%);
+  --secondary-foreground: hsl(0 0% 90%);
+  --destructive: hsl(0 66% 56%);
+  --destructive-foreground: hsl(0 0% 100%);
+  --success: hsl(142 60% 46%);
+  --warning: hsl(38 92% 54%);
+  --selection: hsl(211 100% 55% / 0.22);
+  --overlay: hsl(240 8% 4% / 0.5);
+}

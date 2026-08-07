@@ -17,7 +17,7 @@
 import * as fs from "fs/promises";
 import * as path from "path";
 
-import { app, safeStorage, logger } from "@glaze/core/backend";
+import { app, safeStorage, logger } from "@shell/backend";
 
 /** testId → variable name → plaintext value. */
 type SecretBlob = Record<string, Record<string, string>>;

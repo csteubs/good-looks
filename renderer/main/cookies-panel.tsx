@@ -25,7 +25,7 @@ import {
   SelectValue,
   Text,
   toast,
-} from "@glaze/core/components";
+} from "@ui";
 import { Cookie as CookieIcon, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
 import { api } from "../lib/api";

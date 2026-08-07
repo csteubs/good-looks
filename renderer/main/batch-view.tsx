@@ -26,7 +26,7 @@ import {
   ToolbarDescription,
   ToolbarTitle,
   toast,
-} from "@glaze/core/components";
+} from "@ui";
 import { Check, CircleDashed, GripVertical, Play, Square, X, SkipForward, Loader } from "lucide-react";
 
 import { api } from "../lib/api";
