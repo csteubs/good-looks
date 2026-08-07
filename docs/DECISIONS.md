@@ -36,6 +36,96 @@ Glaze app's agent, which no longer works on this codebase.
 
 **Coverage:** none added. The defect is a property of the emitted stylesheet, which no unit test in either project observes; the guard that would actually work is a source-level `check:*` that validates every `bg-*`/`border-*` class in `renderer/` against the `--background-color-*` / `--border-color-*` names declared in the SDK's `components.tailwind.css`. A prototype of that check agrees exactly with the build output — it flags the two remaining dead classes (`bg-muted` in `settings-view.tsx`, `bg-fill-secondary` in `library-sidebar.tsx`) and nothing else — but it was left out of this change as out of scope. `bg-separator` is NOT dead despite emitting no bare rule: it is only ever used under a named-group variant, so it compiles to `.group-hover\/gap\:bg-separator`.
 
+### 2026-08-06 — Deleting a tag, from the Batch view's tag cluster
+
+**Goal:** Tags could be created and edited (sidebar → Edit Tags…) but never
+removed from the library. A typo or an abandoned grouping stayed in the chip row
+forever, and clearing it meant opening every test that carried it — which is
+also how you'd never be sure you got them all.
+
+**What was done:** The Batch view's chip row moved to `renderer/main/tag-cluster.tsx`
+as a bordered cluster, each real tag carrying an X behind a confirmation that
+states how many tests use it and names them. New `tests:deleteTag` handler over
+a new `testStore.removeTag`.
+
+**Key decisions:**
+
+1. **Delete lives with the tag vocabulary, create lives with the test.** Creating
+   stayed in the sidebar dialog — that's where you know which test you're
+   labelling. Deleting is library-wide, and the cluster is the only place the
+   whole vocabulary is visible at once *with counts*, which is what makes the
+   scope of the act legible.
+
+2. **The count is the point of the confirmation, not politeness.** A tag is the
+   batch's grouping key: deleting one silently re-scopes what "run smoke" means.
+   And unlike editing one test's tags, it can't be undone by re-typing — the tag
+   is gone from N tests and nothing remembers which. So the dialog leads with the
+   count and lists the affected test names (capped at 8, then "+N more").
+
+3. **One backend call, not a renderer loop over `tests:setTags`.** A loop
+   rewrites `tests.json` once per test and can strand the tag on half the library
+   if a call fails partway. `removeTag` does one `writeAll`.
+
+4. **Hidden tests are included, and that's why the toast doesn't echo the
+   preview.** `testStore.list()` filters hidden tests out, so a tag left on one is
+   invisible right up until the test is unhidden — at which point a deleted tag
+   reappears. `removeTag` therefore reads through `readAll()`. The renderer can't
+   see those tests, so its dialog count is a lower bound; the toast reports the
+   backend's real number instead of repeating what it guessed.
+
+5. **Matching is case-insensitive**, because `tagCounts` groups `smoke` and
+   `Smoke` into one chip. Deleting that chip case-sensitively would leave the
+   other spelling behind and the chip would return with a count of 1.
+
+6. **The X is a sibling button, not nested in the filter button.** A `<button>`
+   inside a `<button>` is invalid markup that swallows the inner click, so the
+   chip is a `<span>` holding both. The X is also the `AlertDialog`'s own trigger,
+   which means no open-state to keep in sync and focus returns to the chip on
+   cancel.
+
+7. **Visible at rest, not revealed on hover.** A hover-only X on a pill this
+   small is undiscoverable, and it's the entire affordance. It stays muted next
+   to the count; the red wash on its own hover is what carries "destructive".
+
+**Incidental finding:** the `border-token-border` / `bg-token-surface-raised` /
+`bg-token-hover` class names used throughout `renderer/` are **not** utilities the
+design system defines — they generate no CSS and have been silently doing nothing.
+Verified against the built stylesheet. The real names are `border-secondary`,
+`bg-well`/`bg-panel`, `bg-list-hover`, etc. `tag-cluster.tsx` uses the real ones;
+the rest of the renderer was left alone as out of scope.
+
+**Verification:** `handlers.test.ts` gained 5 tests for `tests:deleteTag`
+(case-insensitive removal, hidden tests, canonicalization, hostile input, unused
+tag) and `tag-cluster.test.tsx` 12 for the UI. Both suites were confirmed to fail
+against reverted behaviour: injecting an X that deletes without confirming, an X
+on "All", a case-sensitive count, and a toast echoing the preview each broke the
+test that guards it. Rendered against the real built stylesheet in light and dark
+to confirm the cluster and the X's states read correctly.
+
+### 2026-08-06 — Showing which steps an AI change added
+
+**Symptom:** applying an AI-debug fix rewrote the spec, and the Steps tab quietly re-rendered a different list. Right steps, right order, no error — and nothing at all saying what had changed. The apply usually happens from the AI panel while the user is looking at the Run tab, so by the time they reach Steps the change is already history. Inserting an AI-generated flow in the trainer had the same shape: the list just got longer, often past the scroll.
+
+**Why the diff has to be content-based.** `tests:updateScript` re-parses the whole spec, and `spec-parser.ts`'s `makeStep` calls `randomUUID()` for **every** step on **every** parse. After an apply that changed one line, all N ids differ — so a diff by id marks the entire list as new, which is exactly as uninformative as marking none of it. The only thing that survives an apply is what a step *says*, so `renderer/lib/diff-steps.ts` compares an explicit signature of the user-visible fields. The alternative — making the parser preserve ids — was rejected: it would put the burden of a display concern on the security-sensitive parse path, and id stability across a re-parse is a much stronger claim than this feature needs.
+
+**The signature is a field list, not "the step minus id and timestamp".** Both directions have a failure mode; they are not symmetric. Enumerating means a field added to `Step` later is invisible to the diff — a *missed* highlight, which degrades to today's behaviour. Stripping means every future field is automatically significant, so one backend field that happens to be recomputed on parse would light up every row, permanently, with no obvious cause. A quiet under-report beats a loud wrong one.
+
+**Moves are cancelled against removals, one for one.** The bare LCS reports a reordered step as a removal plus an addition, so dragging a row would have claimed the AI added it. Each addition cancels against at most one identical removal — a `Set.has` would have swallowed a genuinely new duplicate whose twin happened to move in the same pass.
+
+**A substitution glows its replacement.** The most common AI fix is a swapped selector, and the resulting step is one the user has not seen. Counting it as "the same step, edited" would hide precisely the row they need to look at.
+
+**Deletions are unstyled, deliberately.** There is no row left to decorate, and decorating the neighbours would point at the wrong step. The step count on the tab is what carries removals — for additions, deletions and substitutions alike.
+
+**Inset outline, not border, and only `outline-color` animates.** Both were bugs before they were decisions. A real border participates in layout, so rows jump by 2px when the highlight clears, and it collides with the drag-over `border-t-2` on the same element at equal specificity — decided by stylesheet order rather than intent. And an earlier version pulsed a `box-shadow` glow, which silently erased the selection and run-status highlights: those are `ring-*` box-shadows, and an animation owns the whole property. Animating something nothing else uses is what lets a step be new **and** failing at once — the single most interesting row on the screen, where neither highlight may hide the other.
+
+**Not on a timer.** The obvious design is to fade the highlight after a few seconds. That fails the actual usage: the apply happens on a different tab, so the timer would expire before the user ever looked. It clears when the claim stops being true instead — the next apply, a hand edit of the steps, a new recording session.
+
+**Generated steps get their own insert path.** `insertStep` *clears* the highlight, because a hand edit retires it; routing AI-generated steps through it would leave them unmarked however good the diff is. `insertGeneratedSteps` sends them sequentially (each insert lands at the session cursor and advances it) and then re-reads `getSteps()` rather than waiting on the `recorder:steps` push — invoke replies and pushes are different channels with no ordering guarantee, and a diff run a beat early marks only the first inserted step. It diffs what actually landed, since backend normalization can reject a step the model produced.
+
+**Found while wiring it:** the Steps tab trigger is gated on the list being non-empty, and `TabsRoot` was uncontrolled. An apply that deleted every step removed the trigger while its content stayed selected, leaving an empty pane with nothing active in the tab bar. The tabs are now controlled with a fallback to Script.
+
+Guarded by `renderer/lib/diff-steps.test.ts`, the new blocks in `step-row.test.tsx` / `test-detail-view.test.tsx` / `recorder-store.test.tsx` / `recording-view.test.tsx` / `ai-debug-icons.test.tsx`, and `check:step-glow` — which pins the stylesheet, the outline-not-border and outline-color-only choices, and the insert-path wiring, none of which jsdom can observe.
+
 ### 2026-08-06 — Window size preset in the New Recording dialog
 
 **Symptom:** the New Recording dialog asked for a URL, a test name and a run speed, and gave no way to say how big the browser window should be. Every manual recording was made in one fixed 1200×820 window, so a mobile or tablet flow could not be recorded at all.

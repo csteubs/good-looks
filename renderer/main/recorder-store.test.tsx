@@ -53,7 +53,17 @@ vi.mock("../lib/api", () => ({
       stop: async () => {},
       setAssert: async () => baseState(),
       deleteStep: async () => baseState(),
-      insertStep: async () => baseState(),
+      insertStep: (step: unknown) => {
+        inserted.push(step);
+        // Deliberately NOT auto-resolving when `holdInserts` is set: proving
+        // that the store inserts one at a time means observing that it has not
+        // sent the second call while the first is still in flight, which is
+        // invisible if every call settles immediately.
+        if (!holdInserts) return Promise.resolve(baseState());
+        return new Promise((resolve) => {
+          releaseInsert.push(() => resolve(baseState()));
+        });
+      },
       reorderStep: async () => baseState(),
       updateStep: async () => baseState(),
       applyHeal: async () => baseState(),
@@ -88,14 +98,24 @@ function baseState(): RecorderState {
   } as RecorderState;
 }
 
+let actionsUnderTest: {
+  insertGeneratedSteps: (steps: never[]) => Promise<void>;
+  deleteStep: (id: string) => void;
+} | null = null;
+
 /** Renders the store's state as text so tests can assert on it. */
 function Probe() {
-  const { state, liveSteps, stepsLoaded, runs, replayRun } = useRecorder();
+  const { state, liveSteps, stepsLoaded, newStepIds, runs, replayRun, insertGeneratedSteps, deleteStep } =
+    useRecorder();
+  // Stashed for the tests that need to invoke an action rather than observe
+  // state; a button per action would drown the markup the other suites read.
+  actionsUnderTest = { insertGeneratedSteps, deleteStep };
   return (
     <div>
       <span data-testid="recording">{String(state.recording)}</span>
       <span data-testid="steps">{liveSteps.map((s) => s.id).join(",")}</span>
       <span data-testid="steps-loaded">{String(stepsLoaded)}</span>
+      <span data-testid="new-steps">{[...newStepIds].sort().join(",")}</span>
       <span data-testid="run-lines">{(runs["t1"]?.lines ?? []).join("|")}</span>
       <span data-testid="run-running">{String(runs["t1"]?.running ?? "none")}</span>
       <span data-testid="run-code">{String(runs["t1"]?.code ?? "none")}</span>
@@ -122,9 +142,19 @@ function renderStore() {
 
 const text = (id: string) => screen.getByTestId(id).textContent;
 
+/** Every `recorder:insertStep` the store sent, in the order it sent them. */
+let inserted: unknown[] = [];
+/** When true, inserts hang until the test releases them one by one. */
+let holdInserts = false;
+let releaseInsert: Array<() => void> = [];
+
 beforeEach(() => {
   handlers.clear();
   fetchedSteps = [];
+  inserted = [];
+  holdInserts = false;
+  releaseInsert = [];
+  actionsUnderTest = null;
 });
 
 describe("catching up on a session already under way", () => {
@@ -295,5 +325,131 @@ describe("replay console assembly", () => {
       heal: { candidates: [{ locator: { k: "testid", v: "b" } }], attempts: 1, ok: false },
     });
     expect(text("replay-steps")).toContain("click Submit:false");
+  });
+});
+
+describe("marking AI-generated steps as new", () => {
+  // The Generate Steps dialog inserts a whole flow into a list the user is
+  // already looking at. The store is what decides which of the resulting rows
+  // the trainer glows, and every way of getting it wrong is silent: mark
+  // nothing and the insertion is invisible, mark everything and the highlight
+  // means nothing, mark them and never clear and the list stays lit forever.
+
+  const RAW = [
+    { type: "click", locator: { k: "text", v: "Sign in" } },
+    { type: "fill", locator: { k: "label", v: "Email" }, value: "a@b.test" },
+  ] as never[];
+
+  /** What the backend's list looks like once the two RAW steps have landed —
+   *  backend-minted ids, exactly as `insertStep` produces them. */
+  const AFTER: Step[] = [
+    { id: "old", type: "goto", url: "https://example.com", timestamp: 0 } as Step,
+    { id: "new1", type: "click", locator: { k: "text", v: "Sign in" }, timestamp: 1 } as Step,
+    { id: "new2", type: "fill", locator: { k: "label", v: "Email" }, value: "a@b.test", timestamp: 2 } as Step,
+  ];
+
+  async function withExistingStep() {
+    fetchedSteps = [AFTER[0]];
+    renderStore();
+    await act(async () => {});
+    expect(text("steps")).toBe("old");
+  }
+
+  it("marks what landed, and not the step that was already there", async () => {
+    await withExistingStep();
+    fetchedSteps = AFTER;
+
+    await act(async () => {
+      await actionsUnderTest!.insertGeneratedSteps(RAW);
+    });
+
+    expect(text("steps")).toBe("old,new1,new2");
+    expect(text("new-steps")).toBe("new1,new2");
+  });
+
+  it("does not send the next insert until the previous one has landed", async () => {
+    // Each insert lands at the session cursor and moves it on by one. Fired
+    // concurrently, where each step ends up is decided by whichever IPC call
+    // the backend services first — a generated flow whose steps run in the
+    // wrong order, with nothing on screen saying so.
+    await withExistingStep();
+    fetchedSteps = AFTER;
+    holdInserts = true;
+
+    let done = false;
+    await act(async () => {
+      void actionsUnderTest!.insertGeneratedSteps(RAW).then(() => {
+        done = true;
+      });
+    });
+
+    // First one sent, second one held back behind it.
+    expect(inserted).toEqual([RAW[0]]);
+    expect(done).toBe(false);
+
+    await act(async () => {
+      releaseInsert[0]();
+    });
+    expect(inserted).toEqual([RAW[0], RAW[1]]);
+
+    await act(async () => {
+      releaseInsert[1]();
+    });
+    await act(async () => {});
+    expect(done).toBe(true);
+  });
+
+  it("marks only what the backend actually kept", async () => {
+    // Backend normalization can reject a step the model produced. Marking all
+    // of `steps` on the strength of having SENT them would leave the highlight
+    // pointing at rows that don't exist.
+    await withExistingStep();
+    fetchedSteps = [AFTER[0], AFTER[1]];
+
+    await act(async () => {
+      await actionsUnderTest!.insertGeneratedSteps(RAW);
+    });
+
+    expect(text("new-steps")).toBe("new1");
+  });
+
+  it("marks nothing when the backend kept nothing", async () => {
+    await withExistingStep();
+    fetchedSteps = [AFTER[0]];
+
+    await act(async () => {
+      await actionsUnderTest!.insertGeneratedSteps(RAW);
+    });
+
+    expect(text("new-steps")).toBe("");
+  });
+
+  it("clears the marks as soon as the user edits the list by hand", async () => {
+    // A highlight that outlives the moment stops being information. Once the
+    // user is editing, the rows are theirs.
+    await withExistingStep();
+    fetchedSteps = AFTER;
+    await act(async () => {
+      await actionsUnderTest!.insertGeneratedSteps(RAW);
+    });
+    expect(text("new-steps")).toBe("new1,new2");
+
+    await act(async () => {
+      actionsUnderTest!.deleteStep("new1");
+    });
+
+    expect(text("new-steps")).toBe("");
+  });
+
+  it("marks nothing for steps the user recorded on the page", async () => {
+    // The common case by far. A captured step arrives on the same
+    // `recorder:steps` push as a generated one, so nothing about the push
+    // itself distinguishes them — only the deliberate call does.
+    await withExistingStep();
+
+    emit("recorder:steps", [...fetchedSteps, AFTER[1]]);
+
+    expect(text("steps")).toBe("old,new1");
+    expect(text("new-steps")).toBe("");
   });
 });
