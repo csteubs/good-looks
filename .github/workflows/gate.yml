@@ -65,6 +65,34 @@ jobs:
       - run: npm run test:all
       - run: npm run build
 
+  # Are the two shells still the same application?
+  #
+  # No dependencies and no build — it reads two git trees and compares text, so
+  # it is the cheapest job here by a wide margin and worth running on every
+  # push. Drift between the branches is otherwise invisible: both are green,
+  # both apps run, and the only symptom is a feature that exists in one build
+  # and not the other.
+  drift:
+    name: Shell drift
+    runs-on: ubuntu-latest
+    steps:
+      # Full history, and both branches: the check compares trees, so a shallow
+      # clone of one ref has nothing to compare against.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the counterpart branch
+        run: git fetch origin main shell/electron --quiet || true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # No `npm ci` — the script uses only node builtins and git, for the same
+      # reason the repo-hygiene workflow skips it.
+      - run: node .github/scripts/check-shell-drift.mjs
+
   # The cheap preview: the whole UI as a static bundle, on fixtures. Under a
   # second to build and it needs no Electron at all, so it runs on every pull
   # request regardless of what the rest of the pipeline is doing.

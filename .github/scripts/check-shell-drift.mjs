@@ -38,6 +38,11 @@ const SEAM = [
   [/@glaze\/core\/components/g, "@ui"],
   [/@glaze\/core\/hooks/g, "@ui"],
   [/glaze-backend-stub/g, "shell-backend-stub"],
+  // The IPC types are the one seam whose replacement is a RELATIVE path, so it
+  // is spelled differently depending on the importing file's depth. Both sides
+  // collapse to one marker rather than one rewriting into the other.
+  [/@glaze\/core\/ipc/g, "<host-types>"],
+  [/(?:\.\.\/)+lib\/host-types/g, "<host-types>"],
 ];
 
 /**
@@ -53,14 +58,12 @@ const SHELL_BOUNDARY = new Map([
   ["main/index.ts", "main-process entry: custom scheme registration and host-handler wiring"],
   ["main/services/playwright-runner.ts", "spawns need ELECTRON_RUN_AS_NODE=1 or process.execPath relaunches the app"],
   ["main/services/recorder-service.ts", "executeJavaScriptInIsolatedWorld via the pageExecutor adapter"],
-  ["main/windows/settings-window.ts", "BrowserWindow options differ between the shells"],
   ["main/windows/trainer-panel-window.ts", "BrowserWindow options differ between the shells"],
   ["main/windows/window-paths.ts", "app:// URLs and the preload path"],
   ["renderer/main/index.tsx", "window entry point"],
   ["renderer/settings/index.tsx", "window entry point"],
   ["renderer/trainer/index.tsx", "window entry point"],
   ["renderer/preload.ts", "the preload IS the shell boundary"],
-  ["renderer/settings/settings-view.tsx", "nativeTheme access and the DOM date picker replacing dialog.showDatePicker"],
   ["renderer/styles.css", "the Glaze framework injected its theme; the port declares Tailwind and the token bridge explicitly"],
 ]);
 

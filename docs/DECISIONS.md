@@ -44,6 +44,22 @@ Glaze app's agent, which no longer works on this codebase.
 
 **Also fixed:** `SidebarListItem` activates on **mouse-down**, not click — the same native-macOS idiom as Radix's `TabsTrigger`, and the same silent failure (`fireEvent.click` leaves the row untouched and the assertion reports "0 calls", which reads as a broken handler). Added to CLAUDE.md's environment gotchas. The sidebar also now sets `aria-current="page"` itself, since the SDK's `selected` only applies a background class and announced nothing.
 
+### 2026-08-07 — Guarding the two shells against silent drift
+
+**The problem is that drift is invisible.** `main` builds on the Glaze SDK, `shell/electron` on stock Electron; they are the same application. When a feature lands on one and not the other, both branches stay green, both apps run, and the only symptom is a feature that exists in one build and not the other — found whenever someone happens to use the other one. The trees reached 13 commits apart without anyone noticing, and **within an hour of being brought level a settings redesign put them apart again.** No process fixes that; a check does.
+
+**`check:shell-drift` compares the two trees modulo a declared seam.** Four rewrites are the entire sanctioned difference between their imports (`@glaze/core/backend`→`@shell/backend`, `components`/`hooks`→`@ui`, the two stub names), plus one more that has to collapse to a marker rather than rewrite: `@glaze/core/ipc`'s replacement is a *relative* path, so it is spelled differently depending on the importing file's depth. Any shared file differing after that is drift.
+
+Two lists carry the exceptions, and both are deliberately explicit. `SHELL_BOUNDARY` names the 10 files the shells genuinely cannot share — entry points, window creation, the preload, the token bridge — **each with a reason**, because "these differ legitimately" and "a feature landed on one side" look identical without one. `ONE_SIDED` names the paths expected on exactly one side: `main/shell/`, `renderer/ui/`, `renderer/dev/`.
+
+**It also reports exceptions that are no longer needed.** A boundary entry for a file that has stopped differing is not a failure, but it would hide real drift in that file from then on. That fired immediately: PR #19's rewrite made `settings-view.tsx` and `settings-window.ts` converge, and both were removed.
+
+**Rejected: failing when the counterpart branch is absent.** If the trees ever converge, the check exits 0 with a note. A guard that goes red because the problem it guards against was *solved* teaches people to ignore it.
+
+**The second guard is smaller and catches something worse.** `test:checks` is a hand-maintained `&&` chain of ~29 script names, and it is what `test:all` — the thing the pull-request template asks people to run — actually executes. A check defined but left out of that chain is **a test that passes by never running**, and nothing else notices: the suite is green, the script exists, its file is still in the tree being reviewed. The two branches had already drifted on the chain's contents. It now lives in `check-repo-hygiene`, which needs no SDK and so runs on both branches' CI today.
+
+It caught its own author within a minute: adding `check:shell-drift` to `package.json` failed it, because that check must *not* be in the chain — it needs both branches fetched, which only CI reliably has. The fix was to name it in an `OUTSIDE_CHAIN` map with that reason, which is the behaviour wanted: "I meant to leave that one out" has to be written down rather than assumed.
+
 ### 2026-08-07 — The testing bottleneck was never the test suite
 
 **Measured before changing anything.** The full local gate is ~36 seconds: lint 3.6s, type-check 4.0s, 28 checks 7.6s, 1105 Vitest tests 15.8s, build 4.9s. Making the suite faster would have bought nothing. (`CLAUDE.md` still said 1029 tests and 27 checks — stale, and worth correcting.)
