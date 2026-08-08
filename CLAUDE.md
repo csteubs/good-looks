@@ -15,6 +15,7 @@ Records interactions on any website (clicks, typing, navigation, assertions) and
 
 - **Frontend** (React 19 + Vite, `renderer/`) renders in a macOS WebView.
 - **Backend** (Node.js, `main/`) calls native Swift host APIs through the Glaze SDK.
+- **`shared/`** holds logic the app AND the standalone MCP server both need. They can't share a `.ts` module — the app is compiled against `@glaze/core`, the MCP is plain `.mjs` with no build step — so these are `.mjs` with a hand-written `.d.mts` beside them, which keeps `type-check` a real gate over every TypeScript caller. **Pure only** (no `fs`, no `@glaze/core`, no IPC, no `process`); anything needing the filesystem stays on its own side and hands data in. Reach for this before transcribing a constant into `mcp/` — a copy is right the day it's written and silent forever after.
 - They talk over a JSON-RPC 2.0 IPC bridge (handlers registered in `main/handlers/`, called from the renderer via `window.glazeAPI.*` exposed in a preload script).
 - The SDK, `@glaze/core`, mirrors much of Electron's API surface. Treat Electron knowledge as a starting point only — verify each API/option is actually implemented here (see SDK reference below) rather than assuming parity.
 
@@ -30,9 +31,12 @@ renderer/main/       primary views (home, recording/trainer, script view, ai-deb
 renderer/settings/   settings window UI
 renderer/components/ reusable UI wrapping the @glaze/core design system
 renderer/lib/        shared frontend utilities (llm-prompts, etc.)
+shared/              the ONE pure core both the app and the MCP import (.mjs + hand-written
+                     .d.mts). Pure only: no fs, no @glaze/core, no IPC, no process
 mcp/                 standalone MCP server exposing the test library to external MCP clients
                      (list_tests, get_test, list_runs, get_run_log, run_test, run_batch,
-                      capture_app, get_screenshot)
+                      get_visual_report, get_a11y_report, get_run_logs, list_heals,
+                      list_batches, compare_runs, capture_app, get_screenshot)
                      — see mcp/README.md
 docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated rationale)
 .github/             PR template, hygiene workflow, and the script it runs

@@ -74,7 +74,14 @@ list_tests
 
 ### `get_test`
 
-Return one test's full step list and its generated Playwright spec source.
+Return one test's full step list and its generated Playwright spec source, plus
+the variables it declares, the dataset rows it can be swept over, its tags, and
+its per-test timeout.
+
+Secret variables are listed **by name and kind only** — their values live
+encrypted in the app's secure storage and are not readable from here (see
+[Secrets](#secrets)). Checking this before calling `run_test` is how you find
+out a test can't be run from MCP without waiting for it to fail.
 
 | Arg | Type | Required |
 |---|---|---|
@@ -122,16 +129,24 @@ the Stats view too.
 |---|---|---|
 | `testId` | string | yes |
 | `browser` | `chromium` \| `firefox` \| `webkit` | no — defaults to the test's saved browser, else Chromium |
+| `datasetId` | string | no — run one dataset row's values instead of the declared defaults (`get_test` lists them) |
 
 ```
 run_test testId="3f2a1c9e-..."
 run_test testId="3f2a1c9e-..." browser="firefox"
+run_test testId="3f2a1c9e-..." datasetId="row-2"
 ```
 
 Requires the chosen browser to already be installed under the app's data
 directory. If it isn't yet, open the test once in the app and run it from the
-UI on that browser — that installs it on first run — then retry from MCP. Runs
-are capped at 5 minutes and get force-killed past that.
+UI on that browser — that installs it on first run — then retry from MCP.
+
+The run uses the test's own per-test timeout (raised to the crawl floor for a
+crawl test), and the process is killed a minute past that.
+
+**Every response carries a `fixtures` field** — read it before drawing
+conclusions from a failure. See [What an MCP run does not
+do](#what-an-mcp-run-does-not-do).
 
 ### `run_batch`
 
@@ -143,6 +158,8 @@ Tests run **one at a time**, headless. A failing test does not stop the batch.
 | `testIds` | string[] | no — explicit selection, run in the order given |
 | `tag` | string | no — every test carrying that tag |
 | `browser` | `chromium` \| `firefox` \| `webkit` | no — defaults to Chromium |
+| `allDatasets` | boolean | no — run each selected test once per dataset row it declares |
+| `datasetIds` | string[] | no — sweep only these rows |
 
 Selection rules: `testIds` wins if given; otherwise `tag`; otherwise every
 visible test. Tags match case-insensitively. Pass `tag="__untagged__"` for
@@ -150,18 +167,105 @@ tests with no tags. Hidden tests are skipped by tag/all selections but still
 run when named explicitly by id. A requested id that doesn't exist is reported
 back in `missingTestIds` rather than silently dropped.
 
+With `allDatasets` or `datasetIds`, each selected test runs once per matching
+row, in the order the rows are declared. A selected test with no matching rows
+still runs once with its declared defaults — otherwise "sweep my suite" would
+quietly skip every test that isn't parameterized yet.
+
+A test declaring a secret variable is **skipped with a note**, not failed — a
+suite that reports red because one of its tests happens to log in is a suite
+nobody runs.
+
 ```
 run_batch tag="smoke"
 run_batch tag="smoke" browser="webkit"
 run_batch testIds=["3f2a1c9e-...", "8b7d2f10-..."]
+run_batch tag="checkout" allDatasets=true
 run_batch
 ```
 
-Each test is recorded in the app's run history (tagged with the batch id), and
-the batch itself is written to the app's batch history — so a batch run from
-MCP shows up in the app's **Batch** view alongside ones started from the UI.
-The response is flagged as an error when any test failed, so an agent can't
-read a red suite as success.
+Each test is recorded in the app's run history (tagged with the batch id, and
+with the dataset row when it was a sweep), and the batch itself is written to
+the app's batch history — so a batch run from MCP shows up in the app's
+**Batch** view alongside ones started from the UI. The response is flagged as
+an error when any test failed, so an agent can't read a red suite as success.
+
+### `get_visual_report`
+
+Per-step visual-diff outcome for one captured run: which steps changed against
+the pinned baseline, by how much (as both a raw ratio and a percentage), at what
+threshold, and whether the comparison was page-wide or scoped to an element.
+
+| Arg | Type | Required |
+|---|---|---|
+| `runId` | string | yes |
+
+Reports `comparedSteps` alongside `changedSteps`, because "nothing changed" and
+"nothing was compared" otherwise look identical.
+
+### `get_a11y_report`
+
+Accessibility violations found during one captured run, per step, split into
+ones already accepted for this test and ones that are **new**. The split is the
+point: against any real site the first run reports dozens of pre-existing
+problems. Reported only — a run's pass/fail is decided by its assertions.
+
+| Arg | Type | Required |
+|---|---|---|
+| `runId` | string | yes |
+
+### `get_run_logs`
+
+Browser console messages and network requests recorded during one captured run,
+keyed to the step that was running. Network entries carry status and latency, so
+this is what answers *"did the server error, or did we look for the wrong
+thing?"*
+
+| Arg | Type | Required |
+|---|---|---|
+| `runId` | string | yes |
+| `failuresOnly` | boolean | no — page errors and non-2xx/failed requests only |
+
+Withheld — with an explanation — when **any** test in the library declares a
+secret variable. See [Secrets](#secrets).
+
+### `list_heals`
+
+Every locator Auto-Heal has changed, newest first: which step, what the locator
+was and became, whether it was actually applied or only suggested, and which run
+proposed it. Also reports `chronicSteps` — steps that have healed three or more
+times, which is the finding a chronological list hides.
+
+| Arg | Type | Required |
+|---|---|---|
+| `testId` | string | no — filter to one test |
+| `limit` | number (1–200) | no — defaults to 50 |
+
+### `list_batches`
+
+Past batch runs, newest first: the aggregate summary and each failing test,
+including which dataset row it was when the batch was a sweep.
+
+| Arg | Type | Required |
+|---|---|---|
+| `limit` | number (1–50) | no — defaults to 20 |
+| `batchId` | string | no — return just this batch, with every result |
+
+### `compare_runs`
+
+Then-vs-now for two captured runs of the same test, per step: `stable`, `fixed`,
+`changed-since`, or `still-failing`, with each step's visual outcome in the later
+run.
+
+| Arg | Type | Required |
+|---|---|---|
+| `baseRunId` | string | yes — the earlier run |
+| `runId` | string | yes — the later run |
+
+A step that passed before and fails now is reported as **`changed-since`**, never
+as a regression: the run alone cannot tell a real regression from environment
+drift (the site changed, auth expired, the data is gone), and saying so is the
+point. `stepsDiverged` flags a test that was edited between the two runs.
 
 ### `capture_app`
 
@@ -189,6 +293,55 @@ isn't listening for requests, or after asking someone to press the shortcut.
 The reply says how old the capture is. A stale screenshot presented as current
 is how you end up debugging a UI state that stopped existing ten minutes ago.
 
+## What an MCP run does not do
+
+A run started here is **not** the same as a run started in the app, and the
+difference is invisible in Playwright's own output — the test executes, passes
+or fails on its own merits, and says nothing about what it skipped. So every
+`run_test` response carries a `fixtures` field that names it.
+
+Everything in this list reaches a run through a Playwright *fixture*, which the
+app injects by redirecting the spec's `@playwright/test` import to a module it
+writes beside the spec. This server runs the spec as it sits on disk, so none of
+them load:
+
+| Not done here | Consequence |
+|---|---|
+| Screenshot capture | The run does not appear in the **Visual** tab, seeds no baseline and diffs against none |
+| Accessibility checks | axe is never injected |
+| Console + network recording | No `console.json` or `network.json` is written |
+| Run-time Auto-Heal | A step whose locator has gone stale **fails here but would pass in the app** |
+| Crawl page-settling | The slower step delay applies, but nothing waits for load, network quiet and paint |
+
+The report is measured against what the *test* asks for, so a test that never
+wanted screenshots is not told it didn't get any.
+
+What an MCP run **does** now match: the test's speed, its per-test timeout
+(crawl floor included), its variables and dataset rows, and a log with terminal
+escape sequences stripped.
+
+## Secrets
+
+Secret variable values live in `test-secrets.bin`, encrypted through the
+operating system's secure storage. Only the app process can decrypt them — this
+server has no route to that API — so:
+
+- **`run_test` refuses** a test declaring a secret variable, and says why. It
+  does not run it: the generated spec resolves an unset secret to `""`, so the
+  test would type empty strings into the login form and fail several steps later
+  with nothing connecting the two.
+- **`run_batch` skips** such a test with a note and carries on.
+- **`get_test`** lists secret variables by name so this is knowable up front.
+- **`get_run_logs` withholds** every run's console and network whenever *any*
+  test in the library declares a secret. Those files are stored raw and the app
+  redacts secret values when it reads them; this server cannot, and a recorded
+  request header or URL can carry one. The rule is library-wide for the same
+  reason the app's redaction covers every secret it knows: any run's log can
+  contain any test's secret.
+
+Run these tests from the app. Everything else about them — steps, spec source,
+past runs and their logs — stays readable from here.
+
 ## Example prompts
 
 - "List my recorded tests."
@@ -197,16 +350,33 @@ is how you end up debugging a UI state that stopped existing ten minutes ago.
 - "Get the full log for that failed run and tell me what broke."
 - "Run the signup test and tell me if it passes."
 - "Run all my smoke tests and tell me which ones failed."
-- "Run the checkout tests on WebKit and compare against the last Chromium run."
+- "Sweep the checkout test over every dataset row and tell me which rows fail."
+- "That run failed — check the network log and tell me whether the server errored or we looked for the wrong element."
+- "Which steps changed visually in the last run of the homepage test, and by how much?"
+- "Compare the last two captured runs of the checkout test and tell me what moved."
+- "Which locators has Auto-Heal been changing repeatedly? Those are the ones worth rewriting."
 - "Screenshot the app and tell me if the Variables tab looks right."
 - "I just pressed the capture shortcut — grab the screenshot and tell me what's wrong with this dialog."
 
 ## Notes
 
 - Read-only tools (`list_tests`, `get_test`, `list_runs`, `get_run_log`,
-  `get_screenshot`) never modify app data. `run_test` and `run_batch` execute Playwright and append run
+  `get_visual_report`, `get_a11y_report`, `get_run_logs`, `list_heals`,
+  `list_batches`, `compare_runs`, `get_screenshot`) never modify app data.
+  `run_test` and `run_batch` execute Playwright and append run
   records; `run_batch` also writes a batch record and persists progress after
   every test, so an interrupted batch keeps the results it already collected.
+- There is **no mutation surface**: nothing here edits a test, accepts a
+  baseline, or changes a setting. Retention and pruning stay the app's business,
+  so two processes can't disagree about what they mean.
+- The reports read artifacts only a **captured** run produces, and the app
+  prunes older run directories per its retention setting — so "no artifacts" is
+  an ordinary answer, and the tools say which of the two it is.
+- Everything shared with the app (pacing, timeouts, dataset expansion, ANSI
+  stripping, the generated `playwright.config.ts`, run comparison) lives in
+  `shared/*.mjs` and is imported by both sides rather than transcribed. `npm run
+  check:mcp-parity` pins that the environment this server builds satisfies what
+  the generated spec actually reads.
 - `capture_app` and `get_screenshot` talk to the app through plain files in
   `userData/recorder/debug-shots` — a request/response pair, no socket and no
   port. Both halves of that protocol are duplicated (TypeScript in the app,
