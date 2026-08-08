@@ -23,6 +23,15 @@ import {
 } from "../services/__tests__/glaze-backend-stub.js";
 import { registerHandlers } from "./index.js";
 import { testStore } from "../services/test-store.js";
+import { runHistoryStore } from "../services/run-history-store.js";
+import { batchHistoryStore } from "../services/batch-history-store.js";
+import { aiDebugStore } from "../services/ai-debug-store.js";
+import { recorderDebugStore } from "../services/recorder-debug-store.js";
+import { recorderSettingsStore } from "../services/recorder-settings-store.js";
+import { annotationStore } from "../services/annotation-store.js";
+import { healJournalStore } from "../services/heal-journal-store.js";
+import { artifactStore } from "../services/artifact-store.js";
+import { DELETED_TEST_NAME } from "../recorder/types.js";
 import type { Step, TestRecord } from "../recorder/types.js";
 
 // Safe to set after the imports: the stub resolves app.getPath() lazily on
@@ -736,5 +745,295 @@ describe("tests:duplicate — the copy, its secrets, and its history", () => {
     await expect(invokeHandler("tests:duplicate", { id: "not-a-test" })).rejects.toThrow(
       /not found/i,
     );
+  });
+});
+
+// ── tests:delete — everything a test leaves behind ───────────────────
+//
+// This handler had NO coverage, and it is the one place in the app where
+// forgetting a store is completely silent: nothing errors, the test disappears
+// from the library, and its leftovers surface weeks later under a name nobody
+// recognises.
+//
+// Every store is asserted SEPARATELY rather than through one "it's clean"
+// check. A single combined assertion passes vacuously the day a new per-test
+// store is added and left out of the handler — which is exactly the failure
+// mode these tests exist for.
+//
+// The dividing line being pinned: anything that NAMES the test or holds its
+// CONTENT goes; the arithmetic stays. Run records survive as tombstones so the
+// pass rate and the daily chart don't lurch when a test is deleted.
+describe("tests:delete — what a deleted test leaves behind", () => {
+  /** Seed a test plus one of everything that keys off its id. */
+  function seedFullTest(id: string): { runId: string; scriptPath: string } {
+    const rec = seedTest(id);
+    fs.mkdirSync(path.dirname(rec.scriptPath), { recursive: true });
+    fs.writeFileSync(rec.scriptPath, "// spec", "utf-8");
+
+    const run = runHistoryStore.append(
+      {
+        testId: id,
+        testName: rec.name,
+        url: "https://example.com",
+        status: "failed",
+        exitCode: 1,
+        startedAt: 1_000,
+        finishedAt: 2_000,
+      },
+      "console output that quotes the page",
+    );
+
+    // A run's artifact directory, as the capture fixture would leave it.
+    const runDir = artifactStore.runDir(id, run.id);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, "0.png"), "png bytes", "utf-8");
+
+    annotationStore.upsert(id, run.id, "s1", "a note about this step");
+    healJournalStore.record({
+      testId: id,
+      stepId: "s1",
+      stepIndex: 0,
+      stepLabel: 'getByTestId("pay").click()',
+      source: "run",
+      appliedLocator: { k: "testid", v: "pay-v2" },
+      candidates: [],
+      applied: true,
+    });
+    aiDebugStore.save({
+      key: `run:${id}`,
+      kind: "run",
+      testId: id,
+      label: rec.name,
+      testName: rec.name,
+      status: "done",
+      content: "the model quoting the script and the run output",
+      reasoning: "",
+      error: null,
+      requestId: null,
+      scriptHash: null,
+      startedAt: 1,
+      updatedAt: 1,
+    });
+    recorderDebugStore.append(id, {
+      stepId: "s1",
+      stepIndex: 1,
+      stepLabel: "click",
+      ok: false,
+      at: 1,
+      logs: [],
+    });
+    batchHistoryStore.save({
+      batchId: `b-${id}`,
+      running: false,
+      startedAt: 1,
+      finishedAt: 2,
+      currentIndex: -1,
+      stopped: false,
+      results: [{ testId: id, testName: rec.name, status: "failed" }],
+      summary: { total: 1, passed: 0, failed: 1, skipped: 0, ok: false, durationMs: 1 },
+    });
+    recorderSettingsStore.set({
+      batchOrder: [id, "someone-else"],
+      batchTestOptions: {
+        [id]: { selected: true, browsers: ["webkit"], headless: true },
+        "someone-else": { selected: false, browsers: ["chromium"], headless: false },
+      },
+    });
+
+    return { runId: run.id, scriptPath: rec.scriptPath };
+  }
+
+  it("removes the record and its generated spec", async () => {
+    const id = "t-del-record";
+    const { scriptPath } = seedFullTest(id);
+
+    await invokeHandler("tests:delete", { id });
+
+    expect(testStore.get(id)).toBeNull();
+    expect(fs.existsSync(scriptPath)).toBe(false);
+  });
+
+  it("removes the run's screenshots", async () => {
+    const id = "t-del-shots";
+    const { runId } = seedFullTest(id);
+    const runDir = artifactStore.runDir(id, runId);
+    expect(fs.existsSync(path.join(runDir, "0.png"))).toBe(true);
+
+    await invokeHandler("tests:delete", { id });
+
+    expect(fs.existsSync(runDir)).toBe(false);
+  });
+
+  it("removes the raw run log from disk", async () => {
+    // The log is the one artifact here that quotes the site — page content,
+    // URLs, values typed during recording.
+    const id = "t-del-log";
+    const { runId } = seedFullTest(id);
+    const logFile = runHistoryStore.list().find((r) => r.id === runId)!.logFile;
+    expect(fs.existsSync(logFile)).toBe(true);
+
+    await invokeHandler("tests:delete", { id });
+
+    expect(fs.existsSync(logFile)).toBe(false);
+  });
+
+  it("removes step annotations", async () => {
+    const id = "t-del-notes";
+    const { runId } = seedFullTest(id);
+
+    await invokeHandler("tests:delete", { id });
+
+    expect(annotationStore.list(id, runId)).toEqual([]);
+  });
+
+  it("removes the heal journal entries", async () => {
+    const id = "t-del-heals";
+    seedFullTest(id);
+
+    await invokeHandler("tests:delete", { id });
+
+    expect(healJournalStore.list(id)).toEqual([]);
+  });
+
+  it("removes the AI debug sessions", async () => {
+    // Their content is the model quoting the script and the run output, and
+    // with the test gone there is no route left in the UI to reach or remove
+    // them.
+    const id = "t-del-ai";
+    seedFullTest(id);
+    expect(aiDebugStore.get(`run:${id}`)).not.toBeNull();
+
+    await invokeHandler("tests:delete", { id });
+
+    expect(aiDebugStore.get(`run:${id}`)).toBeNull();
+    expect(aiDebugStore.list().filter((s) => s.testId === id)).toEqual([]);
+  });
+
+  it("removes the recorder debug logs", async () => {
+    const id = "t-del-debug";
+    seedFullTest(id);
+    expect(recorderDebugStore.get(id).length).toBe(1);
+
+    await invokeHandler("tests:delete", { id });
+
+    expect(recorderDebugStore.get(id)).toEqual([]);
+  });
+
+  it("drops the test from the Batch view's stored order and row options", async () => {
+    const id = "t-del-batchopts";
+    seedFullTest(id);
+
+    await invokeHandler("tests:delete", { id });
+
+    const settings = recorderSettingsStore.get();
+    expect(settings.batchOrder).not.toContain(id);
+    expect(id in settings.batchTestOptions).toBe(false);
+    // And leaves everyone else's entries alone.
+    expect(settings.batchOrder).toContain("someone-else");
+    expect(settings.batchTestOptions["someone-else"]).toBeTruthy();
+  });
+
+  it("strips the test's NAME from the run history it leaves behind", async () => {
+    // The records survive for the aggregates, but the name is the identifying
+    // leftover — the only thing in run-history.json a person would recognise.
+    const id = "t-del-name";
+    seedFullTest(id);
+
+    await invokeHandler("tests:delete", { id });
+
+    const orphans = runHistoryStore.list().filter((r) => r.testId === id);
+    expect(orphans.length).toBeGreaterThan(0);
+    for (const r of orphans) {
+      expect(r.testDeleted).toBe(true);
+      expect(r.testName).toBe(DELETED_TEST_NAME);
+    }
+  });
+
+  it("strips the test's name from stored batch history too", async () => {
+    const id = "t-del-batchname";
+    seedFullTest(id);
+
+    await invokeHandler("tests:delete", { id });
+
+    const batch = batchHistoryStore.get(`b-${id}`)!;
+    // The row stays, so the batch's own summary still adds up to its rows.
+    expect(batch.results).toHaveLength(1);
+    expect(batch.summary.total).toBe(1);
+    expect(batch.results[0].testDeleted).toBe(true);
+    expect(batch.results[0].testName).toBe(DELETED_TEST_NAME);
+  });
+
+  it("KEEPS the run records, so the pass rate does not move", async () => {
+    // The whole trade-off, in one assertion. Pass rate, the daily chart and the
+    // capture-overhead figures answer "what has this machine done" — having
+    // them rewrite history on a delete is what makes people stop trusting them.
+    const id = "t-del-passrate";
+    seedFullTest(id);
+    const before = runHistoryStore.list();
+    const rate = (rs: typeof before) =>
+      rs.filter((r) => r.status === "passed").length / Math.max(1, rs.length);
+    const rateBefore = rate(before);
+
+    await invokeHandler("tests:delete", { id });
+
+    const after = runHistoryStore.list();
+    expect(after.length).toBe(before.length);
+    expect(rate(after)).toBe(rateBefore);
+  });
+
+  it("hides those runs from everything that names a test", async () => {
+    const id = "t-del-hidden";
+    seedFullTest(id);
+
+    await invokeHandler("tests:delete", { id });
+
+    // listLive is what the run table, the test filter and Stability read.
+    expect(runHistoryStore.listLive().some((r) => r.testId === id)).toBe(false);
+    // And the log search, which searches by content and reports by name.
+    expect(runHistoryStore.searchLogs("quotes the page").some((r) => r.runId === id)).toBe(false);
+  });
+
+  it("keeps another test's runs, artifacts and options untouched", async () => {
+    // The scariest failure mode of a delete-everything change is over-reach.
+    const victim = "t-del-victim";
+    const bystander = "t-del-bystander";
+    seedFullTest(victim);
+    const { runId: keptRun } = seedFullTest(bystander);
+
+    await invokeHandler("tests:delete", { id: victim });
+
+    expect(testStore.get(bystander)).not.toBeNull();
+    expect(runHistoryStore.listLive().some((r) => r.testId === bystander)).toBe(true);
+    expect(fs.existsSync(artifactStore.runDir(bystander, keptRun))).toBe(true);
+    expect(aiDebugStore.get(`run:${bystander}`)).not.toBeNull();
+    expect(healJournalStore.list(bystander).length).toBe(1);
+  });
+
+  it("gives a re-imported test a clean slate rather than the old one's ghost", async () => {
+    // Ids are not reused in practice, but the tombstones must not resurrect if
+    // one ever is — an inherited verdict nobody remembers making is worse than
+    // no history at all.
+    const id = "t-del-reimport";
+    seedFullTest(id);
+    await invokeHandler("tests:delete", { id });
+
+    seedTest(id);
+
+    expect(healJournalStore.list(id)).toEqual([]);
+    expect(recorderDebugStore.get(id)).toEqual([]);
+    expect(aiDebugStore.list().filter((s) => s.testId === id)).toEqual([]);
+    expect(runHistoryStore.listLive().some((r) => r.testId === id)).toBe(false);
+  });
+
+  it("is idempotent — deleting twice is not an error", async () => {
+    const id = "t-del-twice";
+    seedFullTest(id);
+
+    await invokeHandler("tests:delete", { id });
+    await expect(invokeHandler("tests:delete", { id })).resolves.toBeUndefined();
+  });
+
+  it("does not throw for an id that never existed", async () => {
+    await expect(invokeHandler("tests:delete", { id: "never-was" })).resolves.toBeUndefined();
   });
 });

@@ -37,6 +37,7 @@ import { parseSpecDetailed } from "../services/spec-parser.js";
 import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
 import { aiDebugStore } from "../services/ai-debug-store.js";
+import { recorderDebugStore } from "../services/recorder-debug-store.js";
 import { anthropicKeyStore } from "../services/anthropic-key-store.js";
 import {
   clampTestTimeoutMs,
@@ -234,6 +235,18 @@ export function registerHandlers(): void {
   ipcMain.handle("tests:getScript", async (_e, params: { id: string }) =>
     testStore.readScript(params.id),
   );
+  // Delete a test and everything it left behind.
+  //
+  // The line this draws: anything that NAMES the test goes, and anything that
+  // holds its CONTENT goes. What stays is the arithmetic — run records survive
+  // as tombstones (`RunRecord.testDeleted`) so the pass rate, the daily chart
+  // and the capture-overhead figures don't lurch when a test is removed. Those
+  // numbers answer "what has this machine done", and having them rewrite
+  // history on a delete is what makes people stop trusting them.
+  //
+  // Adding a per-test store? It belongs in this list. A store that isn't here
+  // fails silently: nothing errors, the test is gone from the library, and its
+  // leftovers surface weeks later under a name nobody recognises.
   ipcMain.handle("tests:delete", async (_e, params: { id: string }) => {
     testStore.remove(params.id);
     // Drop any captured visual-testing artifacts + pinned baselines for this test.
@@ -245,6 +258,26 @@ export function registerHandlers(): void {
     await testSecretsStore.clearTest(params.id);
     await refreshSecretSnapshot();
     healJournalStore.deleteTest(params.id);
+    // Tombstone the history: records kept for the aggregates, raw logs deleted.
+    runHistoryStore.markTestDeleted(params.id);
+    batchHistoryStore.markTestDeleted(params.id);
+    // Really deleted — the model's answers quote the script and the run output,
+    // and with the test gone there is no route left to reach or remove them.
+    aiDebugStore.deleteTest(params.id);
+    recorderDebugStore.clear(params.id);
+    // Stale ids in the Batch view's stored order and per-row options. Both
+    // tolerate an unknown id, so this is housekeeping rather than a fix — but
+    // without it a re-imported test could inherit a choice nobody remembers.
+    const settings = recorderSettingsStore.get();
+    const batchOrder = settings.batchOrder.filter((id) => id !== params.id);
+    const batchTestOptions = { ...settings.batchTestOptions };
+    delete batchTestOptions[params.id];
+    if (batchOrder.length !== settings.batchOrder.length || params.id in settings.batchTestOptions) {
+      recorderSettingsStore.set({ batchOrder, batchTestOptions });
+    }
+    // Stats and Stability read run history, not the library, so without this
+    // they keep showing the deleted test until something else invalidates them.
+    sendToMain("runs:changed", {});
   });
   // Copy a test: everything that describes it, nothing it has recorded.
   //

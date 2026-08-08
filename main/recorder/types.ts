@@ -1122,6 +1122,20 @@ export interface RunRecord {
   kind?: RunRecordKind;
   /** Human-readable summary for non-run events (e.g. baseline-update notes). */
   note?: string;
+  /**
+   * The test this run belonged to has been deleted.
+   *
+   * A TOMBSTONE, not a delete. The record stays so the aggregate numbers hold
+   * still — pass rate, the daily chart and capture overhead are answers about
+   * what this machine has done, and having them lurch when a test is removed
+   * makes them untrustworthy for the thing they are for. What goes away is
+   * every surface that NAMES the test: the run table, the test filter, log
+   * search, and the Stability panel. See `markTestDeleted`.
+   *
+   * The run's screenshots and its raw .log are really deleted — nothing can
+   * display them once the rows are hidden, and they are the bulk of the bytes.
+   */
+  testDeleted?: boolean;
 }
 
 /** A hit from searching the raw run logs. */
@@ -1173,6 +1187,13 @@ export interface BatchRowOptions {
 /** Ceiling on the persisted per-row batch options, mirroring MAX_BATCH_ORDER:
  *  far above any real library, so a corrupt file can't grow without bound. */
 export const MAX_BATCH_TEST_OPTIONS = 1000;
+
+/** What a deleted test's denormalized name is replaced with in run and batch
+ *  history. The records survive so the aggregate counts hold still, but the
+ *  NAME is the identifying leftover the delete is supposed to take with it —
+ *  and it is the one thing in those files a person would recognise. Matches the
+ *  fallback wording the Heals view already uses for an unknown test. */
+export const DELETED_TEST_NAME = "(deleted test)";
 
 /** Global trainer preferences, independent of any recording session. */
 export interface RecorderSettings {
@@ -1460,6 +1481,10 @@ export interface BatchTestResult {
    *  for one test are indistinguishable. Optional, so batch-history.json
    *  records written before per-row browsers load unchanged. */
   browser?: RunBrowser;
+  /** The test has since been deleted. The row is kept so the batch's own
+   *  summary still adds up, and hidden by the view. See `RunRecord.testDeleted`
+   *  for the reasoning. */
+  testDeleted?: boolean;
 }
 
 export interface BatchSummary {

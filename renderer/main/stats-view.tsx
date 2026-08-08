@@ -403,16 +403,24 @@ export function StatsView() {
     queryFn: () => api.runs.captureOverhead(),
   });
 
+  // Runs whose test still exists. Everything that NAMES a test works from this
+  // — the table, the test filter, log search — while the summary cards, the
+  // chart and the capture-overhead panel keep working from `runs`. A deleted
+  // test's runs really happened, and rewriting the totals to pretend otherwise
+  // is what makes the numbers stop being worth reading.
+  const liveRuns = React.useMemo(() => runs.filter((r) => !r.testDeleted), [runs]);
+  const hiddenRuns = runs.length - liveRuns.length;
+
   // Filters apply to the run-history table only — the summary cards and chart
   // keep describing the whole history, so narrowing the table doesn't silently
   // redefine "pass rate".
   const filteredRuns = React.useMemo(
-    () => runs.filter((r) => runMatchesFilters(r, filters)),
-    [runs, filters],
+    () => liveRuns.filter((r) => runMatchesFilters(r, filters)),
+    [liveRuns, filters],
   );
 
   // Distinct tests present in the history, for the test filter's options.
-  const testOptions = React.useMemo(() => testFilterOptions(runs), [runs]);
+  const testOptions = React.useMemo(() => testFilterOptions(liveRuns), [liveRuns]);
 
   React.useEffect(() => {
     setRunsPage(1);
@@ -645,9 +653,19 @@ export function StatsView() {
                     </Text>
                     <Text variant="small" color="tertiary">
                       {filtersActive(filters)
-                        ? `${filteredRuns.length} of ${runs.length}`
-                        : `${runs.length} run${runs.length === 1 ? "" : "s"}`}
+                        ? `${filteredRuns.length} of ${liveRuns.length}`
+                        : `${liveRuns.length} run${liveRuns.length === 1 ? "" : "s"}`}
                     </Text>
+                    {/* Says out loud why "Total runs" above is bigger than the
+                        list below. Without it the two numbers just disagree,
+                        and a disagreement with no explanation reads as a bug in
+                        whichever one the reader trusts less. */}
+                    {hiddenRuns > 0 ? (
+                      <Text variant="small" color="tertiary">
+                        · {hiddenRuns} from deleted test{hiddenRuns === 1 ? "" : "s"} counted above,
+                        not listed
+                      </Text>
+                    ) : null}
 
                     <div className="ml-auto flex flex-wrap items-center gap-2">
                       <SegmentedControl

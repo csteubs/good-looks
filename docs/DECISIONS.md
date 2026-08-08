@@ -16,6 +16,20 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-07 — Deleting a test: the name goes, the arithmetic stays
+
+Deleting a test removed its record, spec, screenshots, baselines, annotations, secrets and heal journal — and left its run history, its raw logs, its AI-debug sessions and its recorder debug logs behind. The test vanished from the library and kept appearing in Stats under its last-known name.
+
+**Run records are tombstoned, not deleted, and that was the whole decision.** Purging them is the tidier mental model and it was the obvious first design. It also means the pass rate, the last-week chart and the capture-overhead figures all change retroactively every time somebody removes a test. Those numbers answer "what has this machine done", and a number that rewrites its own history on an unrelated action is one people stop reading. So the records stay and `testDeleted: true` hides them from every surface that NAMES a test — the run table, the test filter, log search, Stability, and the MCP's `list_runs`.
+
+**What actually gets destroyed is the identity and the content**: the raw `.log` (the one artifact here that quotes the site — page text, URLs, values typed while recording), the screenshots, and `testName`, which is denormalized into both `run-history.json` and `batch-history.json` precisely so they render without the library, and therefore outlives the test. Marking a row without clearing its name would have been bookkeeping for a row nothing renders; replacing the name with `DELETED_TEST_NAME` is what makes the tombstone do the job the user asked for.
+
+**The visible cost is named rather than hidden.** "Total runs" now legitimately exceeds the rows listed beneath it. Two numbers disagreeing with no explanation reads as a bug in whichever one the reader trusts less, so the table says "N from deleted tests counted above, not listed" whenever they differ.
+
+**AI-debug sessions and recorder debug logs are really deleted**, unlike run records: a session's content is the model quoting the script and the run output, neither contributes to any aggregate, and with the test gone there is no route left in the UI to reach or remove them. `aiDebugStore.deleteTest` filters on `testId` rather than parsing the `run:<id>` / `step:<id>:<n>` key — the key format is a renderer convention that would silently stop matching if it ever gained a third form.
+
+**Every store is asserted separately in the regression suite, on purpose.** One combined "nothing is left" check passes vacuously the day someone adds a per-test store and forgets this handler — which is the exact failure this feature exists to prevent, and a completely silent one. Each cleanup call was reverted individually and confirmed to turn exactly one test red, including the inverse: making the tombstone a hard delete must fail "the pass rate does not move", or the trade-off above isn't actually pinned.
+
 ### 2026-08-07 — Batch options move into the rows, and one test can run on three engines
 
 A batch had one browser and one headed/headless choice for the whole suite. "Run the checkout flow on all three engines, headless, but leave the login test headed on Chromium" was not expressible — and neither was running one test on more than one engine at all.

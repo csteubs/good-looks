@@ -515,6 +515,10 @@ export interface RunRecord {
   replayOfRunId?: string;
   kind?: RunRecordKind;
   note?: string;
+  /** The test this run belonged to has been deleted (mirrors main types). The
+   *  record is kept so the aggregate counters hold still; every surface that
+   *  NAMES a test filters these out. Its screenshots and raw log are gone. */
+  testDeleted?: boolean;
 }
 
 /** One accessibility violation, compacted by the capture fixture
@@ -905,6 +909,9 @@ export interface BatchTestResult {
   /** engine this entry ran on, when the batch fanned the test out across more
    *  than one (mirrors main types; absent on pre-fan-out history records) */
   browser?: RunBrowser;
+  /** the test has since been deleted — the row is kept so the batch's summary
+   *  still adds up, and hidden by the view (mirrors main types) */
+  testDeleted?: boolean;
 }
 
 export interface BatchSummary {

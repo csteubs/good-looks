@@ -16,6 +16,7 @@ import * as path from "path";
 import { app, logger } from "@glaze/core/backend";
 
 import { redactWithSnapshot } from "./secret-redaction.js";
+import { DELETED_TEST_NAME } from "../recorder/types.js";
 import type { LogSearchResult, RunBrowser, RunRecord, TestSpeed } from "../recorder/types.js";
 
 const MAX_RECORDS = 1000; // cap the index; oldest runs (+ their logs) are pruned
@@ -73,6 +74,43 @@ export const runHistoryStore = {
   /** All run records, newest first. */
   list(): RunRecord[] {
     return readAll().sort((a, b) => b.startedAt - a.startedAt);
+  },
+
+  /** Runs whose test still exists — everything the UI may NAME. Every caller
+   *  that renders or filters by test name wants this; the aggregate counters
+   *  want `list()`. Keeping both spellings visible at the call site is the
+   *  point: which one you meant should be readable from the line. */
+  listLive(): RunRecord[] {
+    return this.list().filter((r) => !r.testDeleted);
+  },
+
+  /**
+   * Tombstone every run belonging to a deleted test, drop its denormalized
+   * name, and delete its raw log.
+   *
+   * Marking rather than removing is what keeps the aggregate stats still across
+   * a delete (see `RunRecord.testDeleted`). What actually GOES is everything
+   * identifying: the log (page content, URLs, typed values — the one artifact
+   * here that quotes the site) and `testName`, which is the only thing left in
+   * this file a person would recognise. What stays is arithmetic.
+   *
+   * `logBytes` is deliberately left on the record so retention accounting still
+   * reflects what this run once cost.
+   */
+  markTestDeleted(testId: string): { marked: number } {
+    const all = readAll();
+    let marked = 0;
+    for (const rec of all) {
+      if (rec.testId !== testId || rec.testDeleted) continue;
+      rec.testDeleted = true;
+      rec.testName = DELETED_TEST_NAME;
+      safeUnlink(rec.logFile);
+      rec.logFile = "";
+      marked++;
+    }
+    if (marked > 0) writeAll(all);
+    logger.info("recorder", "Tombstoned runs for a deleted test", { testId, marked });
+    return { marked };
   },
 
   /** Record a completed run: write its raw output to a .log file and append the
@@ -241,7 +279,11 @@ export const runHistoryStore = {
     const q = query.trim().toLowerCase();
     if (!q) return [];
     const results: LogSearchResult[] = [];
-    for (const rec of this.list()) {
+    // listLive: a deleted test's logs are unlinked, so these would be skipped
+    // anyway — but only by accident. Searching by name is exactly the surface a
+    // deleted test must vanish from, and relying on the unlink means the day a
+    // log survives, the test's name comes back with page content attached.
+    for (const rec of this.listLive()) {
       let text: string;
       try {
         text = fs.readFileSync(rec.logFile, "utf-8");
