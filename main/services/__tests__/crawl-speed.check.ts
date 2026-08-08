@@ -239,6 +239,39 @@ assert(
   );
 }
 
+// ── 3b. A capturing run settles too, whatever its speed ───────────────
+//
+// Source-level, and about the RUNNER rather than the fixture: the gate is one
+// boolean in playwright-runner.ts and nothing observable distinguishes "the
+// screenshot waited for the page" from "it didn't" except flakiness weeks
+// later. Settling used to be crawl-only, so at every other speed a screenshot
+// was taken the instant the action resolved — before webfonts swapped, before
+// lazy images decoded, before layout settled. Those are visual changes nobody
+// made, and no threshold separates them from real ones
+// (see docs/VISUAL-TUNING.md).
+{
+  const runnerSource = readFileSync(
+    resolve(process.cwd(), "main/services/playwright-runner.ts"),
+    "utf8",
+  );
+  const gate = /let settling = \(([^)]*)\) && !rec\.sourceDir;/.exec(runnerSource)?.[1] ?? "";
+  assert(gate.length > 0, "runner: the settling gate is still one expression");
+  assert(
+    /speed === "crawl"/.test(gate),
+    "runner: crawl still settles — that is the speed's whole point",
+  );
+  assert(
+    /captureArtifacts/.test(gate),
+    "runner: a capturing run settles too, so a screenshot is taken of a quiet page",
+  );
+  // `capturing` is assigned ~50 lines BELOW this gate, so reading it here would
+  // silently evaluate to false and settle nothing on a capture run.
+  assert(
+    !/\bcapturing\b/.test(gate),
+    "runner: the gate reads captureArtifacts, not the not-yet-assigned `capturing`",
+  );
+}
+
 // ── 4. Drift: both fixtures patch the same actions ────────────────────
 //
 // The failure this pins is silent by construction. Add an action to capture

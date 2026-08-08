@@ -882,10 +882,24 @@ export const playwrightRunner = {
         const healing =
           healSettings.autoHealEnabled && !rec.sourceDir && runSteps.some((st) => !!st.locator);
         healApplyMode = healSettings.autoHealApply;
-        // "Crawl" speed's page-settling. App-generated tests only, like every
-        // other fixture-borne feature: the settle patch reaches the page
-        // through the redirected import, and an imported spec never gets it.
-        let settling = speed === "crawl" && !rec.sourceDir;
+        // Page-settling. App-generated tests only, like every other
+        // fixture-borne feature: the settle patch reaches the page through the
+        // redirected import, and an imported spec never gets it.
+        //
+        // Two reasons to turn it on, and the second was added on 2026-08-08:
+        //   • "Crawl" speed asks for it outright — that IS the feature.
+        //   • A CAPTURING run needs it whatever the speed. Without it the
+        //     screenshot is taken the instant the action's promise resolves,
+        //     which can be before a webfont swaps (every glyph shifts), before
+        //     a lazy image decodes, or before layout settles after an insert.
+        //     All three read as a visual change nobody made, and no threshold
+        //     can tell them apart from a real one. The settle fixture's own
+        //     install order already anticipated this: it patches first so
+        //     capture wraps OUTSIDE it, precisely so the shot is taken after
+        //     the page is quiet. See docs/VISUAL-TUNING.md.
+        // `captureArtifacts`, not `capturing`: the latter is only assigned once
+        // the spec redirect succeeds, ~50 lines below this.
+        let settling = (speed === "crawl" || captureArtifacts) && !rec.sourceDir;
         // Named rather than left implicit, because "crawl did nothing" is
         // otherwise indistinguishable from "crawl worked": the step delay still
         // applies, so the run just looks slow and settles nothing.
@@ -973,7 +987,7 @@ export const playwrightRunner = {
               a11y ? "Accessibility checks" : null,
               healing ? "Auto-Heal" : null,
               recordLogs ? "Console and network recording" : null,
-              settling ? "Crawl page-settling" : null,
+              settling ? (speed === "crawl" ? "Crawl page-settling" : "Page-settling") : null,
             ]
               .filter(Boolean)
               .join(" and ");
@@ -1030,10 +1044,17 @@ export const playwrightRunner = {
         // that "slower than usual" is not evidence of anything.
         if (a11y) emitOutput(runId, "system", "Checking accessibility for this run.\n");
         if (settling) {
+          // Names the REASON, because settling now has two of them and they
+          // cost the user different things. Saying "Crawl:" on a Fast run that
+          // settles only because it is capturing would be a message about a
+          // speed the user did not choose.
           emitOutput(
             runId,
             "system",
-            "Crawl: waiting for the page to load, go quiet and paint after every step.\n",
+            speed === "crawl"
+              ? "Crawl: waiting for the page to load, go quiet and paint after every step.\n"
+              : "Capture: waiting for the page to go quiet and paint before each screenshot, " +
+                "so fonts and late layout don't read as visual changes.\n",
           );
         }
         // Said out loud, with the number. A timeout that changed itself is

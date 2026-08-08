@@ -1042,6 +1042,22 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   // Test-wide masks (stepId null) plus any pinned to this step.
   const stepMasks = allMasks.filter((m) => m.stepId === null || m.stepId === step.stepId);
   const changedCount = steps.filter((s) => s.diff?.state === "changed").length;
+  // Steps that STOPPED COMPARING — a size mismatch, a missing element rect, an
+  // unreadable shot. Counted separately and surfaced, because "0 visual
+  // changes" is what this run reports either way: a step that never compared
+  // looks exactly like a step that passed, which is the worse of the two
+  // failure directions (see docs/VISUAL-TUNING.md).
+  const unableSteps = steps.filter((s) => s.diff?.state === "unable");
+  const unableCount = unableSteps.length;
+  // The distinct reasons, so the callout can say WHY rather than only how many.
+  // Plain code, not useMemo: this sits BELOW the loading/empty early returns,
+  // and a hook after a conditional return changes the hook order between
+  // renders. The list is at most a handful of strings.
+  const unableReasons: string[] = [];
+  for (const s of unableSteps) {
+    const r = s.diff?.reason;
+    if (r && unableReasons.indexOf(r) === -1) unableReasons.push(r);
+  }
   const a11yCount = countA11ySteps(steps);
   const canDiff = Boolean(step.diff?.diffFile);
   const hasBaselineView =
@@ -1076,6 +1092,11 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
             {changedCount > 0 ? (
               <Badge color="orange" className="shrink-0">
                 {changedCount} visual {changedCount === 1 ? "change" : "changes"}
+              </Badge>
+            ) : null}
+            {unableCount > 0 ? (
+              <Badge color="yellow" className="shrink-0">
+                {unableCount} not compared
               </Badge>
             ) : null}
           </div>
@@ -1176,6 +1197,22 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
             Visual change detected in {changedCount} {changedCount === 1 ? "step" : "steps"} (over{" "}
             {fmtPct((replay.visualThreshold ?? 0) / 100)} threshold). Use the per-step "Accept New
             Baseline" button to re-pin a step.
+          </Callout>
+        </div>
+      ) : null}
+
+      {/* Steps that never compared. Its own callout, and deliberately not
+          folded into the orange one: "changed" is a finding, "couldn't
+          compare" is a GAP — the step is neither passing nor failing its
+          visual check, and without this the run reports zero changes and reads
+          as clean. */}
+      {unableCount > 0 ? (
+        <div className="px-4 pt-3">
+          <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+            {unableCount === 1 ? "1 step" : `${unableCount} steps`} could not be compared to a
+            baseline, so {unableCount === 1 ? "it was" : "they were"} not checked for visual
+            changes.
+            {unableReasons.length > 0 ? ` ${unableReasons.join(" · ")}` : ""}
           </Callout>
         </div>
       ) : null}
@@ -1359,6 +1396,16 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           </Text>
         )}
       </div>
+
+      {/* WHY a step couldn't compare, in the row rather than only in the
+          badge's tooltip. A hover is invisible to anyone not already
+          suspicious, and this is the one diff state whose reason is the entire
+          content of the result. */}
+      {step.diff?.state === "unable" && step.diff.reason ? (
+        <Text variant="small" color="tertiary" className="block pt-1">
+          Not compared: {step.diff.reason}
+        </Text>
+      ) : null}
 
       {/* Accessibility, under the step row: reported, never fatal — the run's
           pass/fail is decided purely by its assertions. */}
