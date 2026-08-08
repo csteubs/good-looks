@@ -322,6 +322,13 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "experimental cancel session survive rerun",
     key: "keepRunningAiDebugJobs",
   },
+  {
+    id: "auto-accept-ai-debug-fixes",
+    pane: "ai",
+    label: "Apply AI debug fixes automatically",
+    keywords: "experimental auto accept apply suggestion corrected script",
+    key: "autoAcceptAiDebugFixes",
+  },
 
   // Alerts
   {
@@ -337,6 +344,13 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     label: "Notify when a batch finishes",
     keywords: "notification macos banner batch suite finished local",
     key: "notifyOnBatchDone",
+  },
+  {
+    id: "notify-ai-debug-done",
+    pane: "alerts",
+    label: "Notify when an AI debug job finishes",
+    keywords: "notification macos banner ai debug llm answer ready local",
+    key: "notifyOnAiDebugDone",
   },
   {
     id: "alert-webhook-enabled",
@@ -433,6 +447,8 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   artifactRetentionDays: 0,
   notifyOnRunIssues: false,
   notifyOnBatchDone: true,
+  notifyOnAiDebugDone: false,
+  autoAcceptAiDebugFixes: false,
   alertWebhookEnabled: false,
   autoHealEnabled: true,
   autoHealRetries: 3,

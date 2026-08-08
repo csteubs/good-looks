@@ -62,6 +62,7 @@ function VariableRow({
   variable,
   hasSecret,
   usedBy,
+  duplicate,
   onChange,
   onRemove,
   onSetSecret,
@@ -72,6 +73,9 @@ function VariableRow({
   /** how many steps reference this variable — deleting one that's in use is
    *  the mistake worth warning about */
   usedBy: number;
+  /** an earlier row already claims this name; the backend would keep only the
+   *  first, so this row is held locally until it's renamed */
+  duplicate: boolean;
   onChange: (next: TestVariable) => void;
   onRemove: () => void;
   onSetSecret: (value: string) => void;
@@ -125,6 +129,12 @@ function VariableRow({
         <Text size="small" className="text-danger">
           Use letters, numbers and underscores, starting with a letter — the name becomes a
           property in the generated spec.
+        </Text>
+      ) : null}
+
+      {nameOk && duplicate ? (
+        <Text size="small" className="text-danger">
+          Already declared above — rename this one, or it won&apos;t be saved.
         </Text>
       ) : null}
 
@@ -183,8 +193,32 @@ function VariableRow({
 
 export function VariablesPanel({ test }: { test: TestRecord }) {
   const qc = useQueryClient();
-  const variables = React.useMemo(() => test.variables ?? [], [test.variables]);
+  // Local-first working copy, seeded once per test id (the same latch idiom the
+  // run controls use). The backend's normalizeVariables silently DROPS entries
+  // whose names aren't valid identifiers — so when the record was the render
+  // source, saving a half-typed row ("", "1x") and re-reading deleted the row
+  // out from under the user. "Add variable" could never survive at all: it
+  // persisted an empty name, the normalizer dropped it, and the invalidation
+  // wiped the fresh row before it could be named.
+  const [vars, setVars] = React.useState<TestVariable[]>(() => test.variables ?? []);
+  const [seededFor, setSeededFor] = React.useState(test.id);
+  if (seededFor !== test.id) {
+    setSeededFor(test.id);
+    setVars(test.variables ?? []);
+  }
+  const variables = vars;
   const datasets = React.useMemo(() => test.datasets ?? [], [test.datasets]);
+
+  // Names an EARLIER row already claims. The normalizer keeps the first of a
+  // duplicate pair, so a list containing one wouldn't round-trip losslessly.
+  const duplicateAt = React.useMemo(() => {
+    const seen = new Set<string>();
+    return variables.map((v) => {
+      const dup = seen.has(v.name);
+      seen.add(v.name);
+      return dup;
+    });
+  }, [variables]);
 
   const secrets = useQuery({
     queryKey: ["secretStatus", test.id],
@@ -217,6 +251,18 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
     onSuccess: invalidate,
     onError: (err: unknown) => toast.error(String(err)),
   });
+
+  /** Every edit lands here: the screen always updates, the backend only hears
+   *  about lists it will store verbatim. A list with an invalid or duplicate
+   *  name stays local — the row keeps rendering with its warning — instead of
+   *  being normalized away on write and erased by the refetch. */
+  const applyVariables = (next: TestVariable[]) => {
+    setVars(next);
+    const names = next.map((v) => v.name);
+    const lossless =
+      names.every((n) => isValidName(n)) && new Set(names).size === names.length;
+    if (lossless) saveVariables.mutate(next);
+  };
 
   const saveDatasets = useMutation({
     mutationFn: (next: Dataset[]) => api.tests.setDatasets(test.id, next),
@@ -264,7 +310,7 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
               size="small"
               variant="secondary"
               onClick={() =>
-                saveVariables.mutate([...variables, { name: "", kind: "plain", value: "" }])
+                applyVariables([...variables, { name: "", kind: "plain", value: "" }])
               }
             >
               <Plus className="size-4" />
@@ -289,12 +335,13 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
                   variable={v}
                   hasSecret={storedSecrets.has(v.name)}
                   usedBy={usage.get(v.name) ?? 0}
+                  duplicate={duplicateAt[i]}
                   onChange={(next) => {
                     const copy = [...variables];
                     copy[i] = next;
-                    saveVariables.mutate(copy);
+                    applyVariables(copy);
                   }}
-                  onRemove={() => saveVariables.mutate(variables.filter((_, j) => j !== i))}
+                  onRemove={() => applyVariables(variables.filter((_, j) => j !== i))}
                   onSetSecret={(value) => setSecret.mutate({ name: v.name, value })}
                   onClearSecret={() => clearSecret.mutate(v.name)}
                 />

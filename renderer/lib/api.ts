@@ -382,6 +382,9 @@ export const api = {
       ipc().invoke<AiDebugSession | null>("aiDebug:save", { session }),
     remove: (key: string) => ipc().invoke<{ removed: number }>("aiDebug:remove", { key }),
     clear: () => ipc().invoke<{ removed: number }>("aiDebug:clear"),
+    /** Fire-and-forget: the backend gates on notifyOnAiDebugDone itself. */
+    notifyDone: (p: { testName: string; status: "done" | "error" }) =>
+      ipc().invoke<{ ok: boolean }>("aiDebug:notifyDone", p),
   },
   /** Subscribe to a backend push event. Returns an unsubscribe function. */
   on<T>(channel: string, cb: (payload: T) => void): () => void {

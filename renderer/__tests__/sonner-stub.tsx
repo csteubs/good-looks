@@ -18,6 +18,9 @@ import * as React from "react";
 export interface ToastCall {
   kind: "success" | "error" | "info" | "warning" | "message" | "loading" | "dismiss" | "custom";
   message: unknown;
+  /** sonner's ExternalToast options, when the caller passed any — this is where
+   *  an `action: { label, onClick }` lives, so a test can press the button. */
+  options?: unknown;
 }
 
 export const toastCalls: ToastCall[] = [];
@@ -28,8 +31,8 @@ export function clearToastCalls(): void {
 }
 
 function record(kind: ToastCall["kind"]) {
-  return (message?: unknown) => {
-    toastCalls.push({ kind, message });
+  return (message?: unknown, options?: unknown) => {
+    toastCalls.push({ kind, message, options });
     return `toast-${toastCalls.length}`;
   };
 }

@@ -17,11 +17,13 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { toastTexts, clearToastCalls } from "../__tests__/sonner-stub";
 
-import type { SecretStatus, Step, TestRecord } from "../lib/recorder-types";
+import type { RunRecord, SecretStatus, Step, TestRecord } from "../lib/recorder-types";
 import { LibrarySidebar } from "./library-sidebar";
+import { withAiDebug } from "../__tests__/ai-debug-harness";
 
 let tests: TestRecord[] = [];
 let secretStatus: SecretStatus[] = [];
+let runRecords: RunRecord[] = [];
 
 const navigate = vi.fn();
 const duplicate = vi.fn(
@@ -55,6 +57,17 @@ vi.mock("../lib/api", () => ({
       getConfig: async () => ({ provider: "ollama" }),
       status: async () => ({ reachable: true, models: [] }),
     },
+    runs: { list: async () => runRecords },
+    // The AI debug provider (now above the sidebar for the row sparkles)
+    // hydrates persisted sessions on mount and subscribes to pushes.
+    aiDebug: {
+      list: async () => [],
+      save: async (session: unknown) => session,
+      remove: async () => ({ removed: 0 }),
+      clear: async () => ({ removed: 0 }),
+      notifyDone: async () => ({ ok: true }),
+    },
+    on: () => () => {},
   },
 }));
 
@@ -78,9 +91,7 @@ function record(over: Partial<TestRecord> = {}): TestRecord {
 function renderSidebar() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
-    <QueryClientProvider client={client}>
-      <LibrarySidebar />
-    </QueryClientProvider>,
+    <QueryClientProvider client={client}>{withAiDebug(<LibrarySidebar />)}</QueryClientProvider>,
   );
 }
 
@@ -95,9 +106,54 @@ async function chooseDuplicate() {
 beforeEach(() => {
   tests = [record()];
   secretStatus = [];
+  runRecords = [];
   navigate.mockClear();
   duplicate.mockClear();
   clearToastCalls();
+});
+
+/** The bits of a RunRecord the verdict dot reads. */
+function run(over: Partial<RunRecord>): RunRecord {
+  return {
+    id: "r1",
+    testId: "t1",
+    testName: "Login",
+    url: "https://example.test/login",
+    status: "passed",
+    exitCode: 0,
+    startedAt: 1,
+    finishedAt: 2,
+    durationMs: 1,
+    logFile: "/tmp/r1.log",
+    logBytes: 1,
+    ...over,
+  } as RunRecord;
+}
+
+describe("LibrarySidebar — run verdict dots", () => {
+  it("dots a test with its LATEST run's verdict, not an older one's", async () => {
+    // Two runs, newer one failed. A dot driven by list order instead of
+    // startedAt would happily show green over a broken test.
+    runRecords = [
+      run({ id: "r-new", status: "failed", startedAt: 200 }),
+      run({ id: "r-old", status: "passed", startedAt: 100 }),
+    ];
+    renderSidebar();
+    await screen.findByText("Login");
+    expect(await screen.findByLabelText("Last run failed")).toBeTruthy();
+    expect(screen.queryByLabelText("Last run passed")).toBeNull();
+  });
+
+  it("shows no dot for a test that has never run", async () => {
+    runRecords = [run({ id: "r-x", testId: "someone-else", startedAt: 50 })];
+    renderSidebar();
+    await screen.findByText("Login");
+    // Flush the runs query before asserting absence — "no dot" only means
+    // something once the data that could have drawn one has arrived.
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByLabelText(/Last run/)).toBeNull();
+  });
 });
 
 describe("LibrarySidebar — Duplicate Test", () => {

@@ -16,6 +16,105 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-08 — Two variables bugs with one root: the record was the draft
+
+"Cannot create a new standalone variable" turned out to be the visible half of a
+structural mistake. The Variables panel rendered straight from `TestRecord`, and
+every keystroke round-tripped through `tests:setVariables` → `normalizeVariables`,
+which **drops** entries whose names aren't valid JS identifiers. So "Add variable"
+persisted `{name: ""}`, the normalizer discarded it, the query invalidation
+re-rendered from the record, and the row the user had just created vanished
+before it could be named. The same mechanism deleted an EXISTING variable the
+moment a rename passed through an invalid intermediate state — clear the field to
+retype it and the variable was gone from disk.
+
+The fix is not "validate harder before saving". It is that a text field being
+edited is renderer state, not backend state. The panel now holds a local working
+copy (seeded per test id, the same latch idiom `test-detail-view` uses for its
+run controls) and only writes lists the backend will store **verbatim** — every
+name a valid identifier, no duplicates. A held row keeps rendering with a visible
+reason, so "not saved yet" is a state the user can see rather than a row that
+disappears. Duplicates are held for the same reason: `normalizeVariables` keeps
+the first of a pair, so a list containing one would not round-trip losslessly and
+the second row would evaporate on the next refetch.
+
+Rejected: mirroring the normalizer's rules into the renderer as a gate BEFORE the
+mutation and keeping the record as the render source. That still loses the
+in-progress text — the record has nothing to render for a half-typed name — so
+the row would flicker or reset while typing. The duplicated regex that already
+existed in the panel (as a warning) is exactly that idea half-applied, and it is
+why the bug read as cosmetic for so long.
+
+**The second bug came out of the first while reading the generator.**
+`variableHeader()` returned nothing for a test with zero declared variables, but
+`captureLine()` always emits `await glazeCapture(V, …)`. A test whose only
+variable usage was a capture step therefore generated a spec that threw
+`ReferenceError: V is not defined` on its first line. The header is now emitted
+whenever a capture step exists. Worth noting: `script-generator.test.ts` already
+asserted the broken output — it was pinning line alignment and happened to encode
+the missing header as correct — which is a reminder that a test asserting on a
+whole generated artifact can lock in a defect it wasn't looking at.
+
+### 2026-08-08 — The AI-debug glow ends at the next run, not on a timer
+
+The "these steps were just added by the AI" outline had no exit except the step
+list changing for some other reason. Deliberate at the time (a timer would expire
+while the user was still in the AI panel, before they ever switched to the Steps
+tab), but it meant the green outline sat over steps a subsequent run had just
+failed — the highlight vouching for work the run had already disproved.
+
+The run is the right terminator because it is the moment the question changes
+from "what did the AI change?" to "did it work?". Implemented as a `runEpoch`
+counter on the recorder store rather than by lifting `newStepIds` out of
+`test-detail-view`: there are two independent owners of a new-step set (the store,
+for trainer insertions; the detail view, for applied script fixes) and a shared
+counter lets both retire on the same event without moving state across a boundary
+`check:step-glow` deliberately pins.
+
+### 2026-08-08 — AI-debug completion: renderer decides WHEN, backend decides WHETHER
+
+A finished AI debug job announced itself only by turning an icon green, which is
+invisible if you minimized it and walked away — the exact case minimizing exists
+for. Three additions, all gated on the dialog NOT being expanded (a job you are
+watching needs no banner).
+
+**The macOS notification is renderer-triggered, which is a compromise.** Run and
+batch notifications fire from the backend because the backend owns run state. AI
+debug completion has no backend event at all: the LLM stream terminates in the
+renderer's session store, and `llm-service` knows only that a request ended, not
+which session it belonged to or whether that session was minimized. So the
+renderer calls a new `aiDebug:notifyDone` IPC. The consequence is honest and
+accepted: no notification if the renderer is gone — acceptable, because the job
+itself dies with the renderer too (see the 2026-08-06 session-persistence entry).
+The **setting gate stays backend-side**, so a renderer bug can post at most a
+no-op rather than banners the user switched off.
+
+**Auto-accept is guarded by the send-time script hash, not by a confirmation.**
+`scriptHash` already existed for the stale-script warning, stamped at SEND time
+precisely because opening a session must not refresh it. Reusing it as the
+auto-apply gate means the dangerous case — the user edited the script while the
+model was thinking, and the model's answer describes a file that no longer exists
+— can't happen: the hash differs, nothing is applied, and the toast says why. A
+confirmation dialog was rejected because it defeats the point (the user isn't
+there), and applying-then-offering-undo was rejected because the apply path
+re-parses the spec and re-mints every step id, so "undo" would not be a restore.
+
+### 2026-08-08 — The batch row already knew which run it was
+
+`BatchTestResult.runRecordId` has been written since batches gained history, with
+a comment saying it exists to link a persisted batch to its run log. Nothing in
+the renderer ever read it, so the only route from "Beta failed" to the reason was
+to remember the test name, go to Stats, and find the run by hand.
+
+Making the status badge open `LogInspector` needed no new data and no new IPC —
+only extracting that dialog out of `stats-view.tsx` so two views can mount it. The
+badge is a button ONLY for a settled row that actually carries a run id: rows
+still running have no finished log, and rows recorded before the field existed
+would otherwise be dead buttons. The fuller idea from the notes — a step view with
+console output pre-populated — is deliberately not this: `ReplayViewer` has no
+console pane, and merging the two is a bigger piece of work than the drill-through
+that unblocks the common question.
+
 ### 2026-08-07 — Routines is specified, not built, and the spec is the deliverable
 
 Batch v2 — renamed "Routines", with scheduled runs and a Shopify-Flow-style builder — is substantially larger than everything else shipped this day put together, and most of its risk is in decisions made before any code. Writing [ROUTINES.md](ROUTINES.md) now, alongside the per-row Batch work, is what stops that work foreclosing it.

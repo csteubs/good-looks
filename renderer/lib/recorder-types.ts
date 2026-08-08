@@ -780,6 +780,13 @@ export interface RecorderSettings {
   /** post a macOS notification when a batch finishes, pass or fail (default
    *  true). Suppresses the per-run notification for tests inside a batch. */
   notifyOnBatchDone: boolean;
+  /** post a macOS notification when an AI debug job finishes or fails
+   *  (default false). */
+  notifyOnAiDebugDone: boolean;
+  /** EXPERIMENTAL. Auto-apply a finished AI debug job's script fix while its
+   *  dialog is minimized, only when the script hasn't changed since the prompt
+   *  was sent (default false). */
+  autoAcceptAiDebugFixes: boolean;
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];

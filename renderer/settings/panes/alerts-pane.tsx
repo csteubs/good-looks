@@ -70,6 +70,19 @@ export function AlertsPane() {
       </SettingRow>
 
       <SettingRow
+        id="notify-ai-debug-done"
+        label="Notify when an AI debug job finishes"
+        summary="Shows a macOS notification when a minimized AI debug job finishes or fails."
+        details="Fires on success too — a minimized job is one you walked away from, and 'the answer is ready' is the message you were waiting for. Jobs you're watching in their open dialog stay quiet. Local to this Mac."
+      >
+        <Switch
+          id="notify-ai-debug-done"
+          checked={settings.notifyOnAiDebugDone ?? false}
+          onCheckedChange={(checked) => void save({ notifyOnAiDebugDone: checked })}
+        />
+      </SettingRow>
+
+      <SettingRow
         id="alert-webhook-enabled"
         label="Send alerts to a webhook"
         danger="leaves this Mac"

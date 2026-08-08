@@ -47,6 +47,20 @@ describe("local notifications", () => {
     fireEvent.click(moreFor("notify-batch-done"));
     expect(screen.getByText(/one for the suite/i)).toBeTruthy();
   });
+
+  it("offers an AI-debug notification, off by default, that saves", () => {
+    // A minimized AI job is walked away from exactly like a batch, but the
+    // default is off: not everyone uses the AI feature at all.
+    renderPane(<AlertsPane />);
+    const toggle = screen.getByRole("switch", { name: /notify when an AI debug job finishes/i });
+    expect(toggle.getAttribute("data-state")).toBe("unchecked");
+  });
+
+  it("saves the AI-debug toggle", () => {
+    const { controller } = renderPane(<AlertsPane />);
+    fireEvent.click(screen.getByRole("switch", { name: /notify when an AI debug job finishes/i }));
+    expect(savedPatch(controller)).toEqual({ notifyOnAiDebugDone: true });
+  });
 });
 
 describe("the alert webhook is write-only", () => {

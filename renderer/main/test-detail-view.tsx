@@ -59,11 +59,6 @@ import {
   type TestRecord,
 } from "../lib/recorder-types";
 
-/** Compact ms for the inline capture-cost hint next to the toggle. */
-function fmtCaptureMs(ms: number): string {
-  return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
-}
-
 /** What to say when a record admits its steps and its script disagree. Three
  *  cases, not one: a warning that prescribes a fix the test can't perform is
  *  its own bug, and an imported spec is never regenerated from steps. The
@@ -106,7 +101,7 @@ export function TestDetailView() {
   const { id } = useParams({ from: "/test/$id" });
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { runs, run, stopRun, start } = useRecorder();
+  const { runs, run, stopRun, start, runEpoch } = useRecorder();
   const [renameOpen, setRenameOpen] = React.useState(false);
   const [renameValue, setRenameValue] = React.useState("");
   const [editingName, setEditingName] = React.useState(false);
@@ -159,8 +154,13 @@ export function TestDetailView() {
   // Not on a timer, deliberately. Applying happens from the AI debug panel,
   // which is usually open over the Run tab — a timeout would expire before the
   // user ever switched to Steps to look. It clears when the list changes again
-  // for some other reason instead (see the two callers of setNewStepIds below).
+  // for some other reason (see the two callers of setNewStepIds below), or the
+  // moment a run starts: from then on the run's verdict is the story, not the
+  // glow (the runEpoch effect below).
   const [newStepIds, setNewStepIds] = React.useState<Set<string>>(() => new Set());
+  React.useEffect(() => {
+    if (runEpoch > 0) setNewStepIds((prev) => (prev.size === 0 ? prev : new Set()));
+  }, [runEpoch]);
   // Controlled so the active tab can be forced off "steps" when an apply
   // deletes the last step and the trigger disappears out from under it.
   const [tab, setTab] = React.useState<string | null>(null);
@@ -176,13 +176,6 @@ export function TestDetailView() {
   // user has to open a tab to discover is one they won't discover. Shares the
   // ["runs"] key with Stats and the panel itself, so this is usually free.
   const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
-  // What capture costs FOR THIS TEST — the fair comparison, since different
-  // tests do different amounts of work. Absent until this test has an
-  // instrumented capture run to measure.
-  const overheadQuery = useQuery({
-    queryKey: ["captureOverhead", id],
-    queryFn: () => api.runs.captureOverhead(id),
-  });
   const settingsQuery = useQuery({
     queryKey: ["recorder-settings"],
     queryFn: () => api.recorder.getSettings(),
@@ -530,7 +523,7 @@ export function TestDetailView() {
               type="number"
               min={5}
               max={1800}
-              step={5}
+              step={1}
               className="h-7 w-16 px-1.5 text-small"
               value={testTimeoutSec ?? ""}
               placeholder={String(
@@ -556,84 +549,79 @@ export function TestDetailView() {
             />
             <span className="text-tertiary">s</span>
           </label>
-          <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
-            <Checkbox
-              checked={runHeadless}
-              onCheckedChange={(v) => {
-                const next = v === true;
-                setRunHeadless(next);
-                api.tests.setHeadless(id, next).catch(() => {
-                  /* best-effort persist; the toggle still applies to this run */
-                });
-              }}
-              disabled={runInfo?.running}
-              aria-label="Run this test headless (no visible browser)"
-            />
-            Run headless
-          </label>
-          <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
-            {/* Independent of "Run headless". Headless Chromium renders to an
-                offscreen surface, so page.screenshot() works exactly the same —
-                it's how visual regression testing is normally done. Headless is
-                arguably the BETTER mode for it, since a headed run drags in
-                window chrome, focus rings and whatever display it landed on,
-                all of which read as visual changes nobody made. */}
-            <Checkbox
-              checked={captureArtifacts}
-              onCheckedChange={(v) => {
-                const next = v === true;
-                setCaptureArtifacts(next);
-                api.tests.setCaptureArtifacts(id, next).catch(() => {
-                  /* best-effort persist; the toggle still applies to this run */
-                });
-              }}
-              disabled={runInfo?.running}
-              aria-label="Capture screenshots on this run"
-            />
-            Capture screenshots
-            {overheadQuery.data && overheadQuery.data.capturedRuns > 0 ? (
-              <Text variant="small" color="tertiary">
-                (adds ~{fmtCaptureMs(overheadQuery.data.meanCaptureMs)}
-                {overheadQuery.data.captureShareOfRun > 0
-                  ? `, ${Math.round(overheadQuery.data.captureShareOfRun * 100)}%`
-                  : ""}
-                )
-              </Text>
-            ) : null}
-          </label>
-          <label className="flex items-center gap-1.5 text-small text-secondary">
-            {/* Separate from screenshots on purpose: this writes page console
-                output and request URLs to disk. Off by default, and the model
-                can only ASK for the result — it is never attached automatically. */}
-            <Checkbox
-              checked={recordLogs}
-              onCheckedChange={(v) => {
-                const next = v === true;
-                setRecordLogs(next);
-                api.tests.setRecordLogs(id, next).catch(() => {
-                  /* best-effort persist; the toggle still applies to this run */
-                });
-              }}
-              disabled={runInfo?.running}
-              aria-label="Record console and network on this run"
-            />
-            Record console &amp; network
-          </label>
-          <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
-            <Checkbox
-              checked={a11yChecks}
-              onCheckedChange={(v) => {
-                const next = v === true;
-                setA11yChecks(next);
-                api.tests.setA11yChecks(id, next).catch(() => {
-                  /* best-effort persist; the toggle still applies to this run */
-                });
-              }}
-              disabled={runInfo?.running}
-              aria-label="Check accessibility on this run"
-            />
-            Check accessibility
-          </label>
+          {/* The gang of four: a compact 2×2 block until the run-options row
+              gets its real design pass. */}
+          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+            <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+              <Checkbox
+                checked={runHeadless}
+                onCheckedChange={(v) => {
+                  const next = v === true;
+                  setRunHeadless(next);
+                  api.tests.setHeadless(id, next).catch(() => {
+                    /* best-effort persist; the toggle still applies to this run */
+                  });
+                }}
+                disabled={runInfo?.running}
+                aria-label="Run this test headless (no visible browser)"
+              />
+              Run headless
+            </label>
+            <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+              {/* Independent of "Run headless". Headless Chromium renders to an
+                  offscreen surface, so page.screenshot() works exactly the same —
+                  it's how visual regression testing is normally done. Headless is
+                  arguably the BETTER mode for it, since a headed run drags in
+                  window chrome, focus rings and whatever display it landed on,
+                  all of which read as visual changes nobody made. */}
+              <Checkbox
+                checked={captureArtifacts}
+                onCheckedChange={(v) => {
+                  const next = v === true;
+                  setCaptureArtifacts(next);
+                  api.tests.setCaptureArtifacts(id, next).catch(() => {
+                    /* best-effort persist; the toggle still applies to this run */
+                  });
+                }}
+                disabled={runInfo?.running}
+                aria-label="Capture screenshots on this run"
+              />
+              Capture screenshots
+            </label>
+            <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+              {/* Separate from screenshots on purpose: this writes page console
+                  output and request URLs to disk. Off by default, and the model
+                  can only ASK for the result — it is never attached automatically. */}
+              <Checkbox
+                checked={recordLogs}
+                onCheckedChange={(v) => {
+                  const next = v === true;
+                  setRecordLogs(next);
+                  api.tests.setRecordLogs(id, next).catch(() => {
+                    /* best-effort persist; the toggle still applies to this run */
+                  });
+                }}
+                disabled={runInfo?.running}
+                aria-label="Record console and network on this run"
+              />
+              Record console &amp; network
+            </label>
+            <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+              <Checkbox
+                checked={a11yChecks}
+                onCheckedChange={(v) => {
+                  const next = v === true;
+                  setA11yChecks(next);
+                  api.tests.setA11yChecks(id, next).catch(() => {
+                    /* best-effort persist; the toggle still applies to this run */
+                  });
+                }}
+                disabled={runInfo?.running}
+                aria-label="Check accessibility on this run"
+              />
+              Check accessibility
+            </label>
+          </div>
           {runInfo?.running ? (
             <Button variant="destructive" onClick={() => stopRun(id)}>
               Stop

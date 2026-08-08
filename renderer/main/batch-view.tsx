@@ -46,6 +46,7 @@ import { api } from "../lib/api";
 import { BrowserIcon } from "../lib/browser-icons";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts } from "../lib/test-tags";
+import { LogInspector } from "./log-inspector";
 import { TagCluster } from "./tag-cluster";
 import {
   applyOrder,
@@ -159,6 +160,9 @@ export function BatchView() {
   // without being asked.
   const [rowOptions, setRowOptions] = React.useState<RowOptionsMap>({});
   const [rowsInited, setRowsInited] = React.useState(false);
+  // A finished row's badge opens that run's console output — the row that made
+  // you curious shouldn't need a detour through Stats to answer "why".
+  const [logRun, setLogRun] = React.useState<{ id: string; title: string } | null>(null);
   React.useEffect(() => {
     if (rowsInited || !settingsQuery.data) return;
     setRowOptions(settingsQuery.data.batchTestOptions ?? {});
@@ -597,7 +601,15 @@ export function BatchView() {
                     : undefined;
                   // The note only makes sense attached to the outcome it
                   // explains, so take it from the result the badge is showing.
-                  const note = results.find((r) => r.status === status)?.note;
+                  const badgeResult = results.find((r) => r.status === status);
+                  const note = badgeResult?.note;
+                  // A settled result that produced a RunRecord can open that
+                  // run's console output right here — same log the Stats table
+                  // links to, reached from the row that made you curious.
+                  const logRunId =
+                    status === "passed" || status === "failed"
+                      ? badgeResult?.runRecordId
+                      : undefined;
                   return (
                     <div
                       key={t.id}
@@ -736,7 +748,23 @@ export function BatchView() {
                           {fmtDuration(durationMs)}
                         </Text>
                       ) : null}
-                      {status ? <StatusBadge status={status} note={note} /> : null}
+                      {status ? (
+                        logRunId ? (
+                          <button
+                            type="button"
+                            aria-label={`Open console output for ${t.name}`}
+                            title="Open this run's console output"
+                            className="shrink-0 cursor-pointer"
+                            onClick={() =>
+                              setLogRun({ id: logRunId, title: `${t.name} — console output` })
+                            }
+                          >
+                            <StatusBadge status={status} note={note} />
+                          </button>
+                        ) : (
+                          <StatusBadge status={status} note={note} />
+                        )
+                      ) : null}
                     </div>
                   );
                 })}
@@ -850,6 +878,10 @@ export function BatchView() {
           void startBatch();
         }}
       />
+
+      {logRun ? (
+        <LogInspector runId={logRun.id} title={logRun.title} onClose={() => setLogRun(null)} />
+      ) : null}
     </div>
   );
 }

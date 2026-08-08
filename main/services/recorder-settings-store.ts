@@ -149,6 +149,8 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   // ON by default, unlike the per-run notification. A batch is a job you walk
   // away from, and the whole point is to be told it ended.
   notifyOnBatchDone: true,
+  notifyOnAiDebugDone: false,
+  autoAcceptAiDebugFixes: false,
   disabledAestheticEnhancements: [],
 };
 
@@ -250,6 +252,14 @@ function read(): RecorderSettings {
         typeof parsed.notifyOnBatchDone === "boolean"
           ? parsed.notifyOnBatchDone
           : DEFAULT_SETTINGS.notifyOnBatchDone,
+      notifyOnAiDebugDone:
+        typeof parsed.notifyOnAiDebugDone === "boolean"
+          ? parsed.notifyOnAiDebugDone
+          : DEFAULT_SETTINGS.notifyOnAiDebugDone,
+      autoAcceptAiDebugFixes:
+        typeof parsed.autoAcceptAiDebugFixes === "boolean"
+          ? parsed.autoAcceptAiDebugFixes
+          : DEFAULT_SETTINGS.autoAcceptAiDebugFixes,
       disabledAestheticEnhancements:
         Array.isArray(parsed.disabledAestheticEnhancements) &&
         parsed.disabledAestheticEnhancements.every((v) => typeof v === "string")
@@ -368,6 +378,14 @@ export const recorderSettingsStore = {
         update.notifyOnBatchDone !== undefined
           ? update.notifyOnBatchDone
           : current.notifyOnBatchDone,
+      notifyOnAiDebugDone:
+        update.notifyOnAiDebugDone !== undefined
+          ? update.notifyOnAiDebugDone
+          : current.notifyOnAiDebugDone,
+      autoAcceptAiDebugFixes:
+        update.autoAcceptAiDebugFixes !== undefined
+          ? update.autoAcceptAiDebugFixes
+          : current.autoAcceptAiDebugFixes,
       disabledAestheticEnhancements:
         update.disabledAestheticEnhancements !== undefined &&
         Array.isArray(update.disabledAestheticEnhancements) &&
@@ -404,6 +422,8 @@ export const recorderSettingsStore = {
       artifactRetentionDays: next.artifactRetentionDays,
       notifyOnRunIssues: next.notifyOnRunIssues,
       notifyOnBatchDone: next.notifyOnBatchDone,
+      notifyOnAiDebugDone: next.notifyOnAiDebugDone,
+      autoAcceptAiDebugFixes: next.autoAcceptAiDebugFixes,
       disabledAestheticEnhancements: next.disabledAestheticEnhancements,
     });
     return next;

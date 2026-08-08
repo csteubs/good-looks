@@ -192,6 +192,18 @@ export function AiPane() {
             onCheckedChange={(checked) => void save({ keepRunningAiDebugJobs: checked })}
           />
         </SettingRow>
+        <SettingRow
+          id="auto-accept-ai-debug-fixes"
+          label="Apply AI debug fixes automatically"
+          summary="A run-debug job that finishes while minimized applies its corrected script on its own."
+          details="Guarded three ways: only while the job's dialog is minimized, only when the model produced a complete corrected script, and only when the script is byte-identical to the one the prompt was built from — an edit made while the AI was thinking always wins, and the suggestion falls back to a review toast instead of applying over it. Applied fixes are highlighted in the step list, exactly as a manual Apply would be."
+        >
+          <Switch
+            id="auto-accept-ai-debug-fixes"
+            checked={settings.autoAcceptAiDebugFixes ?? false}
+            onCheckedChange={(checked) => void save({ autoAcceptAiDebugFixes: checked })}
+          />
+        </SettingRow>
       </PaneSection>
     </>
   );

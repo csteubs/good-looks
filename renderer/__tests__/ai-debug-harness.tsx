@@ -23,6 +23,7 @@ export function aiDebugApiMock() {
       save: async (session: unknown) => session,
       remove: async () => ({ removed: 0 }),
       clear: async () => ({ removed: 0 }),
+      notifyDone: async () => ({ ok: true }),
     },
     llm: {
       getConfig: async () => ({ provider: "ollama", model: null, baseUrls: {} }),

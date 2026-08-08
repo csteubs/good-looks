@@ -35,8 +35,6 @@ import {
 import {
   Calendar,
   Camera,
-  Check,
-  Copy,
   Globe,
   MoreHorizontal,
   MonitorOff,
@@ -50,6 +48,7 @@ import {
 import { api } from "../lib/api";
 import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
 import { FlakePanel } from "./flake-panel";
+import { LogInspector } from "./log-inspector";
 import { Pager } from "./pager";
 import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS, TEST_SPEED_LABELS } from "../lib/recorder-types";
@@ -88,11 +87,6 @@ function nativeShell(): { showItemInFolder: (p: string) => void } {
   return (window as unknown as { glazeAPI: { shell: { showItemInFolder: (p: string) => void } } })
     .glazeAPI.shell;
 }
-function clipboard(): { writeText: (t: string) => void } {
-  return (window as unknown as { glazeAPI: { clipboard: { writeText: (t: string) => void } } })
-    .glazeAPI.clipboard;
-}
-
 // ── Formatting helpers ─────────────────────────────────────────────────
 function fmtDateTime(ms: number): string {
   return new Date(ms).toLocaleString(undefined, {
@@ -298,55 +292,6 @@ function PassFailChart({ buckets }: { buckets: DayBucket[] }) {
         })}
       </div>
     </div>
-  );
-}
-
-function LogInspector({
-  runId,
-  title,
-  onClose,
-}: {
-  runId: string;
-  title: string;
-  onClose: () => void;
-}) {
-  const [copied, setCopied] = React.useState(false);
-  const logQuery = useQuery({
-    queryKey: ["run-log", runId],
-    queryFn: () => api.runs.getLog(runId),
-  });
-  const text = logQuery.data ?? "";
-
-  const copy = () => {
-    clipboard().writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-
-  return (
-    <Dialog
-      open
-      onOpenChange={(o) => {
-        if (!o) onClose();
-      }}
-      size="2xl"
-      title={title}
-      description="Raw console output for this run."
-    >
-      <div className="flex flex-col gap-2">
-        <div className="flex justify-end">
-          <Button variant="glass" size="small" onClick={copy}>
-            {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
-            {copied ? "Copied" : "Copy log"}
-          </Button>
-        </div>
-        <ScrollArea className="h-[55vh] rounded-md border border-separator bg-well">
-          <pre className="whitespace-pre-wrap break-words p-3 text-mono font-mono text-secondary">
-            {logQuery.isLoading ? "Loading…" : text || "(empty log)"}
-          </pre>
-        </ScrollArea>
-      </div>
-    </Dialog>
   );
 }
 

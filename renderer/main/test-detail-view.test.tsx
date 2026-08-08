@@ -46,7 +46,21 @@ const updateSteps = vi.fn(
 const updateScript = vi.fn(async (_id: string, _source: string) => ({}) as TestRecord);
 
 vi.mock("./recorder-store", () => ({
-  useRecorder: () => ({ runs: {}, run, stopRun: vi.fn(), start: vi.fn() }),
+  // Mirrors the real store's contract: calling run() bumps runEpoch, which the
+  // view watches to retire the new-step glow the moment a run starts.
+  useRecorder: () => {
+    const [epoch, setEpoch] = React.useState(0);
+    return {
+      runs: {},
+      run: (...a: unknown[]) => {
+        run(...(a as []));
+        setEpoch((e) => e + 1);
+      },
+      stopRun: vi.fn(),
+      start: vi.fn(),
+      runEpoch: epoch,
+    };
+  },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -69,7 +83,20 @@ vi.mock("../lib/api", () => ({
       updateSteps: (...a: Parameters<typeof updateSteps>) => updateSteps(...a),
     },
     recorder: { getSettings: async () => settings as RecorderSettings },
-    runs: { captureOverhead: async () => null, list: async () => runs },
+    runs: {
+      // Returns a REAL summary on purpose: the toolbar must not render the old
+      // "(adds ~…)" hint even when overhead data exists to show. With a null
+      // here, the absence assertion below would pass vacuously.
+      captureOverhead: async () => ({
+        capturedRuns: 3,
+        meanCaptureMs: 1400,
+        meanMsPerShot: 200,
+        meanCapturedDurationMs: 9000,
+        meanUncapturedDurationMs: 7600,
+        captureShareOfRun: 0.18,
+      }),
+      list: async () => runs,
+    },
     heals: { list: async () => [] },
     artifacts: { getReplay: async () => null },
     aiDebug: {
@@ -77,6 +104,7 @@ vi.mock("../lib/api", () => ({
       save: async (s: unknown) => s,
       remove: async () => ({ removed: 0 }),
       clear: async () => ({ removed: 0 }),
+      notifyDone: async () => ({ ok: true }),
     },
     llm: {
       getConfig: async () => ({ provider: "ollama", model: null, baseUrls: {} }),
@@ -263,6 +291,62 @@ describe("run controls", () => {
     expect(input.value).toBe("120");
     fireEvent.change(input, { target: { value: "" } });
     await waitFor(() => expect(setTestTimeout).toHaveBeenCalledWith("t1", null));
+  });
+
+  it("steps the timeout in single seconds", async () => {
+    // A 5-second stepper made "47s" unreachable from the arrows; the input
+    // now moves one second at a time.
+    renderView();
+    await screen.findByText("Checkout");
+    const input = screen.getByLabelText(/per-test timeout/i) as HTMLInputElement;
+    expect(input.step).toBe("1");
+  });
+
+  it("persists a timeout that is not a multiple of five", async () => {
+    // Pins that loosening the stepper wasn't undone by re-rounding in the
+    // change handler: 7 must persist as 7000, not snap to 5 or 10.
+    renderView();
+    await screen.findByText("Checkout");
+    const input = screen.getByLabelText(/per-test timeout/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "7" } });
+    await waitFor(() => expect(setTestTimeout).toHaveBeenCalledWith("t1", 7_000));
+  });
+
+  it("still clamps a sub-floor timeout up to 5 seconds", async () => {
+    // The finer stepper must not have loosened the floor from run-pacing.
+    renderView();
+    await screen.findByText("Checkout");
+    const input = screen.getByLabelText(/per-test timeout/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "3" } });
+    await waitFor(() => expect(setTestTimeout).toHaveBeenCalledWith("t1", 5_000));
+  });
+
+  it("never shows the capture-overhead hint, even when overhead data exists", async () => {
+    // The api mock above returns a real overhead summary, so this fails
+    // against any code that renders the old "(adds ~1.4 s, 18%)" label.
+    renderView();
+    await screen.findByText("Checkout");
+    await screen.findByLabelText(/capture screenshots/i);
+    expect(screen.queryByText(/adds ~/)).toBeNull();
+  });
+
+  it("stacks the four run toggles as one two-column block", async () => {
+    renderView();
+    await screen.findByText("Checkout");
+    const block = screen
+      .getByLabelText(/run this test headless/i)
+      .closest("div.grid") as HTMLElement | null;
+    expect(block).not.toBeNull();
+    expect(block!.className).toContain("grid-cols-2");
+    // All four toggles live in the same block — a checkbox that escapes the
+    // grid silently breaks the gang-of-four layout without failing anything.
+    for (const label of [
+      /capture screenshots on this run/i,
+      /record console and network/i,
+      /check accessibility/i,
+    ]) {
+      expect(block!.contains(screen.getByLabelText(label))).toBe(true);
+    }
   });
 });
 
@@ -630,6 +714,25 @@ describe("applying an AI-debug fix, in the Steps tab", () => {
 
     await waitFor(() => expect(glowingRows()).toHaveLength(1));
     expect(glowingText()[0]).toMatch(/500/);
+  });
+
+  it("retires the glow the moment Run test is clicked", async () => {
+    // The glow means "look what the AI changed". Once a run starts, the run's
+    // verdict is the story — stale green outlines over failing steps would
+    // read as the AI's work being fine.
+    const goto = mkStep({ type: "goto", url: "https://example.com" });
+    test_ = record({ steps: [goto] });
+
+    const view = renderWithApply();
+    await screen.findByText("Checkout");
+
+    applyYields([...reparsed([goto]), mkStep({ type: "wait", waitMs: 500 })]);
+    await view.apply("// corrected spec");
+    await waitFor(() => expect(glowingRows()).toHaveLength(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /run test/i }));
+    await waitFor(() => expect(glowingRows()).toHaveLength(0));
+    expect(run).toHaveBeenCalled();
   });
 
   it("glows every step of a multi-step addition", async () => {
