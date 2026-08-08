@@ -100,6 +100,9 @@ vi.mock("../lib/api", () => ({
       ],
     },
     runs: { list: async () => [] },
+    // The sidebar lists groups above the tests; none here, so the rows under
+    // test are the only thing on screen.
+    groups: { list: async () => [] },
   },
 }));
 

@@ -17,13 +17,17 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { toastTexts, clearToastCalls } from "../__tests__/sonner-stub";
 
-import type { RunRecord, SecretStatus, Step, TestRecord } from "../lib/recorder-types";
+import type { RunRecord, SecretStatus, Step, TestGroup, TestRecord } from "../lib/recorder-types";
 import { LibrarySidebar } from "./library-sidebar";
 import { withAiDebug } from "../__tests__/ai-debug-harness";
 
 let tests: TestRecord[] = [];
 let secretStatus: SecretStatus[] = [];
 let runRecords: RunRecord[] = [];
+let groups: TestGroup[] = [];
+
+const runGroup = vi.fn(async (_id: string) => ({ batchId: "b1", alreadyRunning: false }));
+const removeGroup = vi.fn(async (_id: string) => ({ removed: 1 }));
 
 const navigate = vi.fn();
 const duplicate = vi.fn(
@@ -58,6 +62,14 @@ vi.mock("../lib/api", () => ({
       status: async () => ({ reachable: true, models: [] }),
     },
     runs: { list: async () => runRecords },
+    groups: {
+      list: async () => groups,
+      create: async (p: unknown) => p,
+      update: async (p: unknown) => p,
+      remove: (id: string) => removeGroup(id),
+      resolve: async () => [],
+      run: (id: string) => runGroup(id),
+    },
     // The AI debug provider (now above the sidebar for the row sparkles)
     // hydrates persisted sessions on mount and subscribes to pushes.
     aiDebug: {
@@ -107,7 +119,10 @@ beforeEach(() => {
   tests = [record()];
   secretStatus = [];
   runRecords = [];
+  groups = [];
   navigate.mockClear();
+  runGroup.mockClear();
+  removeGroup.mockClear();
   duplicate.mockClear();
   clearToastCalls();
 });
@@ -265,5 +280,81 @@ describe("LibrarySidebar — Duplicate Test", () => {
 
     await waitFor(() => expect(duplicate).toHaveBeenCalledWith("t1"));
     spy.mockRestore();
+  });
+});
+
+describe("LibrarySidebar — groups", () => {
+  function group(over: Partial<TestGroup> = {}): TestGroup {
+    return {
+      id: "g1",
+      name: "Smoke suite",
+      testIds: ["t1"],
+      createdAt: 1,
+      updatedAt: 1,
+      ...over,
+    };
+  }
+
+  it("shows nothing about groups until one exists", async () => {
+    renderSidebar();
+    await screen.findByText("Login");
+    expect(screen.queryByText("Groups")).toBeNull();
+  });
+
+  it("lists a group with the number of tests it currently means", async () => {
+    // Resolved in the renderer with the SAME function the backend runs, so the
+    // count beside a group is the count that will actually run.
+    groups = [group()];
+    renderSidebar();
+    expect(await screen.findByText("Smoke suite")).toBeTruthy();
+    expect(await screen.findByText("1 test")).toBeTruthy();
+  });
+
+  it("counts a tag rule against the live library", async () => {
+    tests = [record({ id: "t1", tags: ["smoke"] }), record({ id: "t2", name: "Cart", tags: ["Smoke"] })];
+    groups = [group({ testIds: [], tags: ["smoke"] })];
+    renderSidebar();
+    // Both tests match, case-insensitively — a group that missed one would be
+    // quietly running less than the user thinks.
+    expect(await screen.findByText("2 tests")).toBeTruthy();
+  });
+
+  it("does not count a test whose id is stale", async () => {
+    groups = [group({ testIds: ["t1", "deleted-long-ago"] })];
+    renderSidebar();
+    expect(await screen.findByText("1 test")).toBeTruthy();
+  });
+
+  it("runs a group and goes to the Batch view to watch it", async () => {
+    groups = [group()];
+    renderSidebar();
+    fireEvent.click(await screen.findByLabelText("Run Smoke suite"));
+    await waitFor(() => expect(runGroup).toHaveBeenCalledWith("g1"));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/batch" }));
+  });
+
+  it("will not offer to run a group that resolves to nothing", async () => {
+    // A batch with no tests reports "passed", which is the most misleading
+    // possible answer to "did my suite pass?".
+    groups = [group({ testIds: [], tags: [] })];
+    renderSidebar();
+    expect(await screen.findByText("0 tests")).toBeTruthy();
+    const run = (await screen.findByLabelText("Run Smoke suite")) as HTMLButtonElement;
+    expect(run.disabled).toBe(true);
+    fireEvent.click(run);
+    expect(runGroup).not.toHaveBeenCalled();
+  });
+
+  it("says a deleted group's tests are untouched", async () => {
+    // "Delete" beside a list of test names reads like it takes the tests too.
+    groups = [group()];
+    renderSidebar();
+    const row = await screen.findByText("Smoke suite");
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByText("Delete Group"));
+    await waitFor(() => expect(removeGroup).toHaveBeenCalledWith("g1"));
+    await waitFor(() =>
+      expect(toastTexts().some((t) => /tests are untouched/i.test(t.title))).toBe(true),
+    );
   });
 });

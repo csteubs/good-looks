@@ -942,6 +942,23 @@ export interface BatchState {
   /** the user stopped the batch partway */
   stopped: boolean;
   summary: BatchSummary;
+  /** the group this batch was started from, when it was started from one.
+   *  The seam group health-over-time will join on — see main's BatchState. */
+  groupId?: string;
+  /** the group's name at run time, denormalized so renaming the group later
+   *  cannot rewrite what the history says was run. */
+  groupName?: string;
+}
+
+/** A named, runnable set of tests. Membership is resolved at read time from
+ *  `testIds` ∪ `tags` — see main/recorder/types.ts for why it isn't stored. */
+export interface TestGroup {
+  id: string;
+  name: string;
+  testIds: string[];
+  tags?: string[];
+  createdAt: number;
+  updatedAt: number;
 }
 
 /** A batch as persisted to batch-history.json — same shape as the live state,

@@ -91,6 +91,12 @@ export interface BatchRunParams {
    *  any caller that never had rows) falls back to the batch-wide `browser` and
    *  `runHeadless` above, so those two must keep working unchanged. */
   perTest?: PerTestRunOption[];
+  /** The group this batch was started from, when it was started from one.
+   *  Stamped onto the state and so onto batch-history.json — see
+   *  `BatchState.groupId` for why it lands now rather than with the panel that
+   *  will read it. The name is captured here, at run time, so renaming the
+   *  group later cannot rewrite what the history says was run. */
+  group?: { id: string; name: string };
 }
 
 // Expanding a selection into the queue actually executed lives in
@@ -239,6 +245,7 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
         startedAt: deps.now(),
         currentIndex: -1,
         stopped: false,
+        ...(params.group ? { groupId: params.group.id, groupName: params.group.name } : {}),
         results: queue.map((entry) => ({
           testId: entry.testId,
           testName: deps.getTestName(entry.testId) ?? entry.testId,

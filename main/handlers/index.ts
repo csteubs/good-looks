@@ -28,6 +28,8 @@ import { acceptRunA11y, acceptStepA11y, resetA11yBaseline } from "../services/a1
 import { sendToMain } from "../services/app-window.js";
 import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
+import { groupStore } from "../services/group-store.js";
+import { resolveGroupTests } from "../../shared/group-select.mjs";
 import { duplicateTest } from "../services/duplicate-test.js";
 import { importService } from "../services/import-service.js";
 import { testSecretsStore } from "../services/test-secrets-store.js";
@@ -66,6 +68,7 @@ import {
   isTestSpeed,
   isValidVariableName,
   MAX_BATCH_TEST_OPTIONS,
+  MAX_GROUPS,
   normalizeDatasets,
   normalizeStep,
   normalizeTags,
@@ -996,6 +999,81 @@ export function registerHandlers(): void {
     batchHistoryStore.remove(params.batchId),
   );
   ipcMain.handle("batch:clearHistory", async () => batchHistoryStore.clear());
+
+  // ── Test groups ─────────────────────────────────────────────────────
+  // A group is membership RULES, not a stored test list; `groups:resolve` and
+  // `groups:run` both answer from the live library so a group can never name a
+  // test that no longer exists.
+  ipcMain.handle("groups:list", async () => groupStore.list());
+  ipcMain.handle("groups:create", async (_e, params: { name?: unknown; testIds?: unknown; tags?: unknown }) => {
+    const name = typeof params?.name === "string" ? params.name.trim() : "";
+    if (!name) throw new Error("A group needs a name.");
+    const created = groupStore.create({
+      name,
+      testIds: Array.isArray(params?.testIds)
+        ? (params.testIds as unknown[]).filter((t): t is string => typeof t === "string")
+        : [],
+      tags: Array.isArray(params?.tags)
+        ? (params.tags as unknown[]).filter((t): t is string => typeof t === "string")
+        : [],
+    });
+    if (!created) throw new Error(`You can have at most ${MAX_GROUPS} groups.`);
+    return created;
+  });
+  ipcMain.handle(
+    "groups:update",
+    async (_e, params: { id?: unknown; name?: unknown; testIds?: unknown; tags?: unknown }) => {
+      const id = typeof params?.id === "string" ? params.id : "";
+      if (!id) throw new Error("Unknown group.");
+      const patch: { name?: string; testIds?: string[]; tags?: string[] } = {};
+      // `undefined` means "leave alone" — only fields actually sent are
+      // patched, so a rename cannot blank the membership.
+      if (typeof params.name === "string") patch.name = params.name.trim();
+      if (Array.isArray(params.testIds)) {
+        patch.testIds = (params.testIds as unknown[]).filter((t): t is string => typeof t === "string");
+      }
+      if (Array.isArray(params.tags)) {
+        patch.tags = (params.tags as unknown[]).filter((t): t is string => typeof t === "string");
+      }
+      const next = groupStore.update(id, patch);
+      if (!next) throw new Error("That group could not be updated — it may have been deleted.");
+      return next;
+    },
+  );
+  ipcMain.handle("groups:remove", async (_e, params: { id?: unknown }) =>
+    groupStore.remove(typeof params?.id === "string" ? params.id : ""),
+  );
+  /** The tests a group currently means — for the sidebar's count and the
+   *  confirm before running. */
+  ipcMain.handle("groups:resolve", async (_e, params: { id?: unknown }) => {
+    const group = groupStore.get(typeof params?.id === "string" ? params.id : "");
+    if (!group) return [];
+    return resolveGroupTests(group, testStore.list());
+  });
+  ipcMain.handle(
+    "groups:run",
+    async (_e, params: { id?: unknown; captureArtifacts?: boolean; runHeadless?: boolean }) => {
+      const group = groupStore.get(typeof params?.id === "string" ? params.id : "");
+      if (!group) throw new Error("That group no longer exists.");
+      const tests = resolveGroupTests(group, testStore.list());
+      // An empty group is refused rather than started: a batch with no tests
+      // reports "passed" (nothing failed), which is the most misleading
+      // possible answer to "did my suite pass?".
+      if (tests.length === 0) {
+        throw new Error(`“${group.name}” has no tests in it right now.`);
+      }
+      return batchRunner.start({
+        testIds: tests.map((t) => t.id),
+        captureArtifacts: params.captureArtifacts === true,
+        runHeadless: params.runHeadless === true,
+        group: { id: group.id, name: group.name },
+        concurrency: clampBatchConcurrency(
+          recorderSettingsStore.get().defaultBatchConcurrency,
+          tests.length,
+        ),
+      });
+    },
+  );
 
   ipcMain.handle("runner:stop", async (_e, params: { runId: string }) => {
     playwrightRunner.stop(params.runId);

@@ -1262,6 +1262,44 @@ async function main(): Promise<void> {
     assert(seen.join(",") === "1,2", `MCP pool survives a throwing item (got ${seen.join(",")})`);
   }
 
+  // ── A group-started batch carries the group it came from ───────────
+  {
+    // This stamp is the ENTIRE seam for group health over time: a group's
+    // history is its batches, and a batch's runs already carry
+    // RunRecord.batchId. Dropping it here would sever that join silently —
+    // everything still runs, nothing reports, and nobody finds out until the
+    // panel that reads it is built and comes back empty.
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a"], group: { id: "g1", name: "Smoke suite" } });
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+
+    const done = fake.doneEvent();
+    assert(done?.groupId === "g1", `a group-started batch records its group id (got ${done?.groupId})`);
+    assert(
+      done?.groupName === "Smoke suite",
+      // Denormalized on purpose: renaming or deleting the group later must not
+      // rewrite what the history says was run.
+      `a group-started batch records the group's name AT RUN TIME (got ${done?.groupName})`,
+    );
+  }
+
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a"] });
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+    const done = fake.doneEvent();
+    assert(
+      done?.groupId === undefined && done?.groupName === undefined,
+      "a batch started from the Batch view carries no group",
+    );
+  }
+
   if (failures > 0) {
     console.error(`\n${failures} check(s) failed`);
     process.exit(1);

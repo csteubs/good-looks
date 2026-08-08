@@ -25,6 +25,7 @@ import type {
   CaptureOverheadSummary,
   RetentionResult,
   BatchRecord,
+  TestGroup,
   BatchState,
   CookieSpec,
   LiveCookie,
@@ -267,6 +268,24 @@ export const api = {
     get: (batchId: string) => ipc().invoke<BatchRecord | null>("batch:get", { batchId }),
     remove: (batchId: string) => ipc().invoke<{ removed: number }>("batch:delete", { batchId }),
     clearHistory: () => ipc().invoke<{ removed: number }>("batch:clearHistory"),
+  },
+  groups: {
+    list: () => ipc().invoke<TestGroup[]>("groups:list"),
+    create: (p: { name: string; testIds?: string[]; tags?: string[] }) =>
+      ipc().invoke<TestGroup>("groups:create", p),
+    /** Only the fields sent are patched — omit `testIds` to rename without
+     *  touching membership. */
+    update: (p: { id: string; name?: string; testIds?: string[]; tags?: string[] }) =>
+      ipc().invoke<TestGroup>("groups:update", p),
+    remove: (id: string) => ipc().invoke<{ removed: number }>("groups:remove", { id }),
+    /** The tests the group means RIGHT NOW — resolved from the live library. */
+    resolve: (id: string) => ipc().invoke<TestRecord[]>("groups:resolve", { id }),
+    run: (id: string, opts?: { captureArtifacts?: boolean; runHeadless?: boolean }) =>
+      ipc().invoke<{ batchId: string; alreadyRunning: boolean }>("groups:run", {
+        id,
+        captureArtifacts: opts?.captureArtifacts,
+        runHeadless: opts?.runHeadless,
+      }),
   },
   alerts: {
     setWebhookUrl: (url: string) =>

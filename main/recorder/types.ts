@@ -1539,6 +1539,112 @@ export interface BatchState {
   results: BatchTestResult[];
   /** the user stopped the batch partway */
   stopped: boolean;
+  /** the group this batch was started from, when it was started from one.
+   *
+   *  This stamp is the whole seam for group health over time: a group's history
+   *  is its batches, and a batch's runs already carry `RunRecord.batchId`. So
+   *  "how has Checkout Suite done this month" is a join that needs no new store
+   *  and no metrics migration — which is why the stamp lands NOW, in the phase
+   *  that only runs groups, rather than with the panel that will read it. */
+  groupId?: string;
+  /** the group's name AT RUN TIME. Denormalized deliberately: a batch is a
+   *  historical record, and renaming or deleting a group later must not rewrite
+   *  what the history says was run. */
+  groupName?: string;
+}
+
+// ── Test groups ───────────────────────────────────────────────────────
+// Mirror kept in renderer/lib/recorder-types.ts.
+
+/**
+ * A named, runnable set of tests.
+ *
+ * Membership is resolved at READ time from two sources unioned together —
+ * explicit `testIds` and `tags` — rather than being a stored list. Three things
+ * fall out of that and each is load-bearing:
+ *
+ *   • A test belongs to as many groups as name it, or none. There is no field
+ *     on `TestRecord` to keep in sync, so a group can never disagree with the
+ *     library about what exists.
+ *   • Deleting a test cannot corrupt a group. A stale id resolves to nothing;
+ *     no cleanup pass has to run, and one that failed to run could not leave a
+ *     group pointing at a test the runner would then fail to start.
+ *   • A tag-based group picks up a newly tagged test with no edit, which is the
+ *     behaviour people expect from tags and would have to be re-implemented if
+ *     membership were frozen at add time.
+ *
+ * The cost is that a group's contents are not stable over time. That is the
+ * right trade for a thing whose purpose is "run what currently matches".
+ */
+export interface TestGroup {
+  id: string;
+  name: string;
+  /** tests named outright. Ids of deleted tests are ignored at resolve time. */
+  testIds: string[];
+  /** tags whose tests join the group. Matched case-insensitively, like the
+   *  Batch view's tag filter. Absent/empty = no tag-based members. */
+  tags?: string[];
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** Bounds, in the spirit of the variable/dataset caps: generous in practice,
+ *  tight enough that a paste accident can't write a megabyte into groups.json. */
+export const MAX_GROUP_NAME_LENGTH = 60;
+export const MAX_GROUPS = 100;
+
+/**
+ * Canonicalize a group off disk or off IPC.
+ *
+ * Rebuilds rather than filters — the same rule as `normalizeRawStep`, for the
+ * same reason: spreading the input and overwriting known keys carries every
+ * unknown key through, so the next field wired into a consumer would silently
+ * become a hole. Returns null when there is no usable id or name, because a
+ * group with neither is not a thing the UI can show or the runner can run.
+ */
+export function normalizeGroup(input: unknown): TestGroup | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const g = input as Record<string, unknown>;
+  const id = typeof g.id === "string" ? g.id.trim() : "";
+  if (!id) return null;
+  const rawName = typeof g.name === "string" ? g.name.trim() : "";
+  if (!rawName) return null;
+
+  const testIds: string[] = [];
+  if (Array.isArray(g.testIds)) {
+    for (const t of g.testIds) {
+      if (typeof t !== "string" || !t) continue;
+      if (testIds.indexOf(t) === -1) testIds.push(t);
+    }
+  }
+  const tags = normalizeTags(g.tags);
+  const createdAt = typeof g.createdAt === "number" && Number.isFinite(g.createdAt) ? g.createdAt : Date.now();
+  const updatedAt = typeof g.updatedAt === "number" && Number.isFinite(g.updatedAt) ? g.updatedAt : createdAt;
+
+  const out: TestGroup = {
+    id,
+    name: rawName.slice(0, MAX_GROUP_NAME_LENGTH),
+    testIds,
+    createdAt,
+    updatedAt,
+  };
+  if (tags.length > 0) out.tags = tags;
+  return out;
+}
+
+/** Canonicalize a list of groups, dropping unusable entries and duplicate ids. */
+export function normalizeGroups(input: unknown): TestGroup[] {
+  if (!Array.isArray(input)) return [];
+  const seen = new Set<string>();
+  const out: TestGroup[] = [];
+  for (const raw of input) {
+    const g = normalizeGroup(raw);
+    if (!g || seen.has(g.id)) continue;
+    seen.add(g.id);
+    out.push(g);
+    if (out.length >= MAX_GROUPS) break;
+  }
+  return out;
 }
 
 /** A batch as persisted to batch-history.json. Same shape as the live state

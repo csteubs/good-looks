@@ -103,10 +103,11 @@ export default defineConfig({
       reporter: ["text", "json-summary"],
       // App code only. Test files, generated sources (the reporter/fixture are
       // strings shipped to a subprocess) and config aren't meaningful targets.
-      include: ["main/**/*.ts", "renderer/**/*.ts", "renderer/**/*.tsx", "mcp/*.mjs"],
+      include: ["main/**/*.ts", "renderer/**/*.ts", "renderer/**/*.tsx", "mcp/*.mjs", "shared/*.mjs"],
       exclude: [
         "**/*.test.ts",
         "**/*.test.tsx",
+        "**/*.test.mjs",
         "**/*.check.ts",
         "**/*.check.mjs",
         "**/__tests__/**",
@@ -124,7 +125,16 @@ export default defineConfig({
         test: {
           name: "node",
           environment: "node",
-          include: ["main/**/*.test.ts", "mcp/**/*.test.ts", "renderer/lib/**/*.test.ts"],
+          // `shared/**/*.test.mjs` — the pure core both the app and the MCP
+          // import. It was only ever covered INDIRECTLY, through whichever
+          // check happened to exercise it, so a rule that both sides depend on
+          // had no test naming it. These are plain .mjs, like the modules.
+          include: [
+            "main/**/*.test.ts",
+            "mcp/**/*.test.ts",
+            "renderer/lib/**/*.test.ts",
+            "shared/**/*.test.mjs",
+          ],
           // *.dom.test.ts belongs to the jsdom project. Without this it matches
           // BOTH globs and every DOM test runs a second time with no document,
           // failing for a reason that has nothing to do with the code.

@@ -20,13 +20,15 @@ import {
   Text,
   toast,
 } from "@glaze/core/components";
-import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
+import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, Layers, ListChecks, Play, Sparkles, Tag, Wand2, Copy } from "lucide-react";
 
 import { api } from "../lib/api";
 import { aggregateStatus, type SessionLike } from "../lib/ai-debug-sessions";
 import { toneFor } from "../lib/ai-debug-status";
 import type { LlmProvider } from "../lib/llm-types";
-import type { RunRecord, TestRecord } from "../lib/recorder-types";
+import type { RunRecord, TestGroup, TestRecord } from "../lib/recorder-types";
+import { countGroupTests } from "../../shared/group-select.mjs";
+import { GroupDialog } from "./group-dialog";
 import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/duplicate-warnings";
 import { useAiDebug } from "./ai-debug-store";
@@ -312,6 +314,29 @@ export function LibrarySidebar() {
     }
     return m;
   }, [runsQuery.data]);
+  const { data: groups = [] } = useQuery({ queryKey: ["groups"], queryFn: api.groups.list });
+  const [groupDialog, setGroupDialog] = React.useState<{ open: boolean; group: TestGroup | null }>({
+    open: false,
+    group: null,
+  });
+
+  /** Start a group's batch and go watch it. The resolve happens backend-side
+   *  against the live library, so what runs is what the group means NOW — the
+   *  count in the row is only a preview of that. */
+  const runGroup = async (group: TestGroup) => {
+    try {
+      const res = await api.groups.run(group.id);
+      if (res.alreadyRunning) {
+        toast.error("A batch is already running.");
+        return;
+      }
+      navigate({ to: "/batch" });
+      toast.success(`Running “${group.name}”.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to run the group.");
+    }
+  };
+
   // AI-debug sessions grouped per test, for the row sparkle.
   const { sessions } = useAiDebug();
   const sessionsByTest = React.useMemo(() => {
@@ -386,12 +411,15 @@ export function LibrarySidebar() {
         { type: "separator" },
         { label: "Select from files", commandId: 2 },
         { label: "From URL", commandId: 3 },
+        { type: "separator" },
+        { label: "New group", commandId: 5 },
       ],
     });
     if (res.commandId === 1) setDialogOpen(true);
     else if (res.commandId === 4) setGenerateOpen(true);
     else if (res.commandId === 2) void importFromFiles();
     else if (res.commandId === 3) setGitDialogOpen(true);
+    else if (res.commandId === 5) setGroupDialog({ open: true, group: null });
   };
 
   return (
@@ -409,6 +437,96 @@ export function LibrarySidebar() {
         </Button>
       }
     >
+      {groups.length > 0 ? (
+        <div className="pb-2">
+          <div className="flex items-center gap-1 px-2 pb-1 pt-1">
+            <Text variant="small" color="secondary" className="font-medium">
+              Groups
+            </Text>
+            <div className="flex-1" />
+            <Button
+              iconOnly
+              variant="transparent"
+              size="small"
+              aria-label="New group"
+              title="New group"
+              onClick={() => setGroupDialog({ open: true, group: null })}
+            >
+              <Plus className="size-3.5" />
+            </Button>
+          </div>
+          <SidebarList>
+            {groups.map((g) => {
+              // Resolved in the renderer with the same function the backend
+              // runs, so the count beside a group is the count that will run.
+              const count = countGroupTests(g, tests);
+              return (
+                <CustomContextMenu key={g.id}>
+                  <CustomContextMenuTrigger asChild>
+                    <SidebarListItem
+                      icon={<Layers className="size-4" />}
+                      title={g.name}
+                      subtitle={count === 1 ? "1 test" : `${count} tests`}
+                      accessory={
+                        <Button
+                          iconOnly
+                          variant="transparent"
+                          size="small"
+                          aria-label={`Run ${g.name}`}
+                          title={count === 0 ? "Nothing to run" : `Run ${count} tests`}
+                          disabled={count === 0}
+                          onClick={(e) => {
+                            // The row itself opens the group for editing; the
+                            // button must not do both.
+                            e.stopPropagation();
+                            void runGroup(g);
+                          }}
+                        >
+                          <Play className="size-3.5" />
+                        </Button>
+                      }
+                      onClick={() => setGroupDialog({ open: true, group: g })}
+                    />
+                  </CustomContextMenuTrigger>
+                  <CustomContextMenuContent>
+                    <CustomContextMenuItem onSelect={() => void runGroup(g)}>
+                      <Play className="size-4" />
+                      Run Group
+                    </CustomContextMenuItem>
+                    <CustomContextMenuItem
+                      onSelect={() => setGroupDialog({ open: true, group: g })}
+                    >
+                      <Tag className="size-4" />
+                      Edit Group…
+                    </CustomContextMenuItem>
+                    <CustomContextMenuSeparator />
+                    <CustomContextMenuItem
+                      onSelect={async () => {
+                        try {
+                          await api.groups.remove(g.id);
+                          qc.invalidateQueries({ queryKey: ["groups"] });
+                          // Deliberately says what was NOT deleted: a group is
+                          // a view over tests, and "Delete" next to a list of
+                          // test names reads like it takes the tests with it.
+                          toast.success(`Deleted “${g.name}”. Its tests are untouched.`);
+                        } catch (err) {
+                          toast.error(
+                            err instanceof Error ? err.message : "Failed to delete the group.",
+                          );
+                        }
+                      }}
+                    >
+                      <EyeOff className="size-4" />
+                      Delete Group
+                    </CustomContextMenuItem>
+                  </CustomContextMenuContent>
+                </CustomContextMenu>
+              );
+            })}
+          </SidebarList>
+        </div>
+      ) : null}
+
       {tests.length === 0 ? (
         <div className="px-3 py-2">
           <Text variant="small" color="secondary">
@@ -536,6 +654,11 @@ export function LibrarySidebar() {
         onOpenChange={(o) => {
           if (!o) setTagsFor(null);
         }}
+      />
+      <GroupDialog
+        group={groupDialog.group}
+        open={groupDialog.open}
+        onClose={() => setGroupDialog({ open: false, group: null })}
       />
     </Sidebar>
   );
