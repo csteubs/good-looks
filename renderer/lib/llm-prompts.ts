@@ -236,7 +236,7 @@ const GENERATE_STEPS_SYSTEM_PROMPT = `You are an expert QA automation engineer e
 
 Output format:
 - Output ONLY a single fenced code block tagged "json" containing a JSON array of step objects. No prose before or after.
-- Each step is an object. Allowed "type" values: "click", "fill", "press", "select", "check", "uncheck", "assert", "wait", "viewport".
+- Each step is an object. Allowed "type" values: "click", "fill", "press", "select", "check", "uncheck", "assert", "wait", "viewport", "if", "endif", "cookie", "capture", "runFlow", "state".
 - Locators use a "locator" object: { "k": <kind>, "v": <value>, "role": <ariaRole>, "name": <accessibleName> }. Locator kinds ("k"): "testid", "role", "label", "placeholder", "text", "css", "xpath". Prefer "role" (with "name"), "label", "placeholder", "text", or "testid" over "css"/"xpath".
 - Step fields by type:
   - click/check/uncheck: { "type": "click", "locator": {...} }
@@ -247,6 +247,11 @@ Output format:
   - wait: { "type": "wait", "waitMs": 1000 }  (or omit waitMs and give a "locator" to wait for it)
     A wait can also block on a condition instead: { "type": "wait", "waitUntil": <kind>, "locator": {...}, "timeoutMs": 10000 }. waitUntil kinds: "visible", "hidden", "exists", "enabled", "disabled", "checked", "unchecked", "text", "value", "count", "urlContains", "titleContains". "text" uses "text"; "value"/"urlContains"/"titleContains" use "value"; "count" uses "count". "urlContains"/"titleContains" are page-level and need no locator. Prefer a conditional wait over a fixed waitMs — a duration that is too short is flaky and one that is too long is slow.
   - viewport: { "type": "viewport", "width": <width>, "height": <height> } — ALWAYS emit a viewport step FIRST (before any action), using the exact width and height from the "Browser viewport" line in the user message. If no viewport is specified, use 1280x800.
+  - if/endif: { "type": "if", "cond": <kind>, "locator": {...} } … { "type": "endif" } — steps between them run only when the condition holds, and the test continues gracefully when it does not. cond kinds: "visible", "hidden", "exists", "enabled", "disabled", "checked", "unchecked", "urlContains", "titleContains". The last two are page-level: they take no locator and read "value" as the substring. EVERY "if" must have a matching "endif".
+  - capture: { "type": "capture", "captureVar": "orderId", "captureFrom": "text", "locator": {...} } — reads a value off the page into a variable later steps can use as \${orderId}. captureFrom: "text", "value", "attribute" (with "captureAttr"), "url", "title".
+  - cookie: { "type": "cookie", "cookieAction": "set", "cookie": { "name": "...", "value": "...", "domain": "...", "path": "/" } }. cookieAction: "set", "delete", "clearAll" ("clearAll" takes no "cookie").
+  - state: { "type": "state", "elementState": "hover", "locator": {...} } — puts an element into a pseudo-state so the assertion AFTER it measures the styled state. elementState: "hover", "focus", "press", "release".
+  - runFlow: { "type": "runFlow", "flowId": "<id>", "flowArgs": { "<param>": "<value>" } } — only when the user names an existing flow to reuse. Do not invent a flowId.
 
 Rules:
 - Do NOT output a "goto" step. The test already starts by navigating to its URL (that is a test-level setting the user controls separately); you are only generating the steps that come AFTER navigation. Assume the page is already loaded at the starting URL.
