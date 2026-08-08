@@ -1228,6 +1228,11 @@ export interface RecorderSettings {
    *  this list (newly added) run after it, in library order; ids for deleted
    *  tests are ignored. Empty = plain library order. */
   batchOrder: string[];
+  /** How many tests a batch starts at once by default (default 1 = one at a
+   *  time, clamped 1–MAX_BATCH_CONCURRENCY). Seeds the Batch view's picker; the
+   *  view never writes it back, so choosing "4 at once" for one suite run
+   *  doesn't silently become everyone's default. */
+  defaultBatchConcurrency: number;
   /** how many runs' screenshot artifacts to keep per test before the oldest
    *  are pruned (default 10, clamped 1–50). The pinned visual baseline is
    *  never pruned regardless of this number. */
@@ -1355,12 +1360,43 @@ export interface RecorderState {
 }
 
 // ── Batch (suite) runs ────────────────────────────────────────────────
-// A batch drives ordinary runs sequentially. Each test still writes its own
-// RunRecord (joined back by `RunRecord.batchId`), so a batch is a grouping over
-// runs rather than a separate kind of history. Mirror kept in
+// A batch drives ordinary runs, one at a time by default and up to
+// `concurrency` at a time when asked. Each test still writes its own RunRecord
+// (joined back by `RunRecord.batchId`), so a batch is a grouping over runs
+// rather than a separate kind of history. Mirror kept in
 // renderer/lib/recorder-types.ts.
 
 export type BatchTestStatus = "pending" | "running" | "passed" | "failed" | "skipped";
+
+/** Hard ceiling on how many tests a batch may run at once.
+ *
+ *  Every concurrent test is a full Node process plus its own browser, so this
+ *  is a machine limit, not a preference: past it the runs contend for CPU and
+ *  each one gets slower, which looks like flakiness rather than saturation.
+ *  Enforced on the BACKEND (see the batch:run handler) so a hostile or buggy
+ *  caller — IPC, MCP — can't ask for 500 browsers. */
+export const MAX_BATCH_CONCURRENCY = 16;
+
+/** Above this many VISIBLE browsers at once, the Batch view asks first.
+ *
+ *  Headless runs are invisible and cost only CPU, but every headed run opens a
+ *  real window that takes focus when it launches — so a big headed batch makes
+ *  the machine unusable for as long as it runs. Ten is where "I can still see
+ *  what's happening" stops being true. */
+export const HEADED_PARALLEL_WARN = 10;
+
+/** Clamp a requested batch concurrency to something runnable.
+ *
+ *  `lanes` is how many tests could possibly run at once (see the batch runner:
+ *  entries for the SAME test are serialized, so the real ceiling is the number
+ *  of DISTINCT tests queued, not the queue length). Shared by the backend
+ *  handler and — via the renderer mirror — the warning threshold, so the number
+ *  the user is warned about is the number that actually runs. */
+export function clampBatchConcurrency(requested: unknown, lanes: number): number {
+  const max = Math.max(1, Math.min(MAX_BATCH_CONCURRENCY, Math.floor(lanes) || 1));
+  if (typeof requested !== "number" || !Number.isFinite(requested)) return 1;
+  return Math.max(1, Math.min(max, Math.floor(requested)));
+}
 
 export interface BatchTestResult {
   testId: string;

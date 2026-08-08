@@ -744,6 +744,8 @@ export interface RecorderSettings {
   alertWebhookEnabled: boolean;
   /** user-chosen Batch run order, as test ids (mirrors main types) */
   batchOrder: string[];
+  /** how many tests a batch starts at once by default (default 1, 1–16). */
+  defaultBatchConcurrency: number;
   /** how many runs' screenshot artifacts to keep per test (default 10, 1–50). */
   artifactRetainedRuns: number;
   /** also delete captured runs older than N days (0 = off, max 365). */
@@ -851,11 +853,18 @@ export interface RecorderState {
 }
 
 // ── Batch (suite) runs ────────────────────────────────────────────────
-// Mirrors main/services/batch-runner.ts. A batch drives ordinary runs
-// sequentially; each test still writes its own RunRecord, so a batch shows up
-// in Stats as normal runs rather than a separate kind of history.
+// Mirrors main/services/batch-runner.ts. A batch drives ordinary runs — one at
+// a time by default, up to `concurrency` at a time when asked; each test still
+// writes its own RunRecord, so a batch shows up in Stats as normal runs rather
+// than a separate kind of history.
 
 export type BatchTestStatus = "pending" | "running" | "passed" | "failed" | "skipped";
+
+/** Mirror of main/recorder/types.ts. Both halves must agree: the renderer warns
+ *  about a number the BACKEND is going to clamp, so if these drift the dialog
+ *  names a count that never happens. */
+export const MAX_BATCH_CONCURRENCY = 16;
+export const HEADED_PARALLEL_WARN = 10;
 
 export interface BatchTestResult {
   testId: string;

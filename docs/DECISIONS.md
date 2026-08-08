@@ -50,6 +50,29 @@ So `ElementState` has four members that each compile to one call — `hover`, `f
 
 **Known limits, stated rather than discovered.** `page.mouse.*` is on a nested object that no fixture patches, so `press`/`release` produce no capture screenshot and no crawl settle; `hover`/`focus` behave normally. `:focus-visible` depends on the browser's keyboard-modality heuristic and is the least robust of the four — the dialog says so, and a failure there is at least loud.
 
+### 2026-08-07 — Parallel batch runs: lanes, not a worker pool over the queue
+
+Batches ran strictly one test at a time, which on a ten-core machine made a suite take the sum of its parts. Adding a "how many at once" picker is the easy half; the design is all in what makes concurrency *safe here*.
+
+**`runId === testId` is the constraint everything follows from.** `playwrightRunner.start` keys a live run by test id, and so does every per-run map it owns plus the `runner:output` / `runner:step` / `runner:done` stream. Two *different* tests in flight were therefore already unambiguous — the renderer's run store is a map keyed by `runId`, so it needed no change at all. The *same* test twice is the problem: `start()` declines the second with `alreadyRunning`, and the batch marks that entry **skipped**. A dataset sweep queues exactly that — one entry per row — so a naive pool would turn "run all 3 rows" into "run 1 row and skip 2", silently, with the batch still reporting green.
+
+So the queue is partitioned into **lanes keyed by test id**: lanes run concurrently, entries within a lane stay sequential. Rejected: making `runId` unique per execution. It is the correct long-term shape, but it reaches the run store, the output panel, `stop`, `isRunning`, the AI-debug wiring and the artifact joins — a much larger change to buy the same behaviour a lane already gives.
+
+**The sequential path had to stay the *same* path, not a parallel one with the dial at 1.** Lanes are flattened in first-appearance order, so one worker walks the queue in queue order — but only if each test's entries are contiguous. `["a", "b", "a"]` breaks that, and a check caught it: with a repeated id, lane grouping reordered the queue. `buildQueue` now dedupes the selection. The Batch view's selection is a `Set` and can't produce a repeat; IPC and the MCP can, and running one test twice in a batch with identical options has no meaning anyway.
+
+**The warning is about windows, not tests.** "Warn above 10 headed in parallel" could mean the selection size or the concurrency. It has to be the concurrency: 40 tests at "4 at once" never shows more than four windows, while "all at once" with 14 shows fourteen. Warning on the selection would nag about the safe case and stay silent on the loud one — and a dialog people learn to click through protects nothing. Headless skips it entirely: nothing appears on screen, so there is nothing to warn about however wide the batch is.
+
+**Three latent races that only concurrency makes real**, all in `playwright-runner.ts` and all fixed here rather than left to surface as flakiness:
+
+- Every `ensure*` helper truncates-and-rewrites a file *shared by all runs*, on *every* run, while other runs' Playwright processes may be reading it. `writeIfChanged` compares first and renames into place when it must write — and since the content is fixed per app build, it writes nothing at all after the first run of a session.
+- N runs discovering the same missing engine at once meant N `playwright install` processes unpacking into one directory. Now the first caller installs and the rest await it. The waiters are *told* they're waiting, because the install's output streams to a different run's Output panel and silence there looks like a hang.
+- Playwright derives its output directory from the spec's path, so two runs of one spec would share and clean the same folder. Each run now passes its own `PW_OUTPUT_DIR`. Lanes already prevent that case in the app, but the MCP has no lanes — and it is cheap insurance either way.
+
+That last one put the generated `playwright.config.ts` in two hands: the app writes it on every run, the MCP server writes its own copy, and they share the directory — so whichever ran last wins. A field present in one copy and not the other doesn't fail, it works *intermittently*, which is close to the worst way for a bug to present. Both now read from a dedicated source module and `check:runner-config` pins them byte-identical.
+
+**`currentIndex` is derived rather than deleted.** With several tests in flight there is no single current one, but the field is persisted and pre-parallel `BatchRecord`s are still loaded back. It is now the lowest-index running entry (-1 when idle), which degrades to exactly the old meaning when one test runs. The Batch view stopped reading it and counts the results instead.
+
+**`stop()` killed `results[currentIndex]`.** With several in flight that left the other browsers open while the UI reported the batch as stopped — windows the user then closes by hand. It now kills every running entry; a check pins it, and reverting the fix fails that check specifically.
 ### 2026-08-07 — Settings: three fixes the redesign's own layout caused, and one confirmation
 
 Three problems visible in the first build of the new window. Two are the same bug wearing different clothes, and the third is a deliberate speed bump.
