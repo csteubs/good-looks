@@ -72,6 +72,7 @@ describe("handler registration", () => {
       "tests:setBrowser",
       "tests:setHeadless",
       "tests:setTestTimeout",
+      "tests:duplicate",
       "runner:run",
       "runner:stop",
       "batch:run",
@@ -640,5 +641,100 @@ describe("tests:updateSteps — steps, script, and whether they agree", () => {
     expect(fs.readFileSync(updated.scriptPath, "utf-8")).toBe(HAND_EDITED);
     expect(updated.scriptEdited).toBe(true);
     expect(updated.stepsDiverged).toBe(true);
+  });
+});
+
+// The handler does one thing the service deliberately does not: carry the
+// encrypted secret values across, and tell redaction about the new test id.
+// Both are invisible when wrong. A copy missing its secrets fails on its first
+// run naming an env var the user has never seen; a copy whose secrets never
+// reached the redaction snapshot writes that password into a run log in
+// plaintext, which is the failure the secret store exists to prevent.
+describe("tests:duplicate — the copy, its secrets, and its history", () => {
+  it("returns a separate record with a numbered name", async () => {
+    seedTest("t-dup");
+
+    const copy = await invokeHandler<TestRecord>("tests:duplicate", { id: "t-dup" });
+
+    expect(copy.id).not.toBe("t-dup");
+    expect(copy.name).toBe("Test t-dup [2]");
+    expect(testStore.get("t-dup")).not.toBeNull();
+    expect(testStore.get(copy.id)).not.toBeNull();
+  });
+
+  it("writes the copy its own script file", async () => {
+    const src = seedTest("t-dup-script", { url: "https://example.com/one" });
+    fs.mkdirSync(path.dirname(src.scriptPath), { recursive: true });
+    fs.writeFileSync(src.scriptPath, 'test("Test t-dup-script", async () => {});', "utf-8");
+
+    const copy = await invokeHandler<TestRecord>("tests:duplicate", { id: "t-dup-script" });
+
+    expect(copy.scriptPath).not.toBe(src.scriptPath);
+    expect(fs.existsSync(copy.scriptPath)).toBe(true);
+    expect(fs.existsSync(src.scriptPath)).toBe(true);
+  });
+
+  it("copies stored secret values so the copy can actually run", async () => {
+    const id = "t-dup-secrets";
+    seedTest(id, { variables: [{ name: "password", kind: "secret" }] });
+    fs.mkdirSync(path.dirname(testStore.get(id)!.scriptPath), { recursive: true });
+    fs.writeFileSync(testStore.get(id)!.scriptPath, "// spec", "utf-8");
+    await invokeHandler("tests:setSecret", { id, name: "password", value: "hunter2" });
+
+    const copy = await invokeHandler<TestRecord>("tests:duplicate", { id });
+
+    // Asserted through the names-only status handler, which is the only way the
+    // renderer can ever ask — there is no handler that reads a value back out.
+    const status = await invokeHandler<{ name: string; hasValue: boolean }[]>(
+      "tests:secretStatus",
+      { id: copy.id },
+    );
+    expect(status).toEqual([{ name: "password", hasValue: true }]);
+  });
+
+  it("leaves the original's secrets in place", async () => {
+    const id = "t-dup-secrets-src";
+    seedTest(id, { variables: [{ name: "token", kind: "secret" }] });
+    fs.mkdirSync(path.dirname(testStore.get(id)!.scriptPath), { recursive: true });
+    fs.writeFileSync(testStore.get(id)!.scriptPath, "// spec", "utf-8");
+    await invokeHandler("tests:setSecret", { id, name: "token", value: "abc123" });
+
+    await invokeHandler<TestRecord>("tests:duplicate", { id });
+
+    const status = await invokeHandler<{ name: string; hasValue: boolean }[]>(
+      "tests:secretStatus",
+      { id },
+    );
+    expect(status).toEqual([{ name: "token", hasValue: true }]);
+  });
+
+  it("copies no secrets for a test that has none", async () => {
+    const id = "t-dup-nosecrets";
+    seedTest(id);
+    fs.mkdirSync(path.dirname(testStore.get(id)!.scriptPath), { recursive: true });
+    fs.writeFileSync(testStore.get(id)!.scriptPath, "// spec", "utf-8");
+
+    const copy = await invokeHandler<TestRecord>("tests:duplicate", { id });
+
+    expect(
+      await invokeHandler<unknown[]>("tests:secretStatus", { id: copy.id }),
+    ).toEqual([]);
+  });
+
+  it("does not carry the accepted accessibility baseline", async () => {
+    const id = "t-dup-a11y";
+    seedTest(id, { a11yBaseline: { s1: ["color-contrast|button"] } });
+    fs.mkdirSync(path.dirname(testStore.get(id)!.scriptPath), { recursive: true });
+    fs.writeFileSync(testStore.get(id)!.scriptPath, "// spec", "utf-8");
+
+    const copy = await invokeHandler<TestRecord>("tests:duplicate", { id });
+
+    expect(copy.a11yBaseline).toBeUndefined();
+  });
+
+  it("rejects an unknown id rather than creating an empty test", async () => {
+    await expect(invokeHandler("tests:duplicate", { id: "not-a-test" })).rejects.toThrow(
+      /not found/i,
+    );
   });
 });

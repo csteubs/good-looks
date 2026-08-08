@@ -46,6 +46,45 @@ base.promise = (p: unknown) => p;
 
 export const toast = base;
 
+/** One toast as the user would read it. */
+export interface ToastText {
+  /** "success" | "error" | "info" | … — the design system's own type. */
+  type: string;
+  title: string;
+  description?: string;
+}
+
+/**
+ * The recorded toasts as type + text.
+ *
+ * `toastCalls` alone is not enough for anything raised through
+ * `@glaze/core/components`' `toast`. That helper does NOT call sonner's
+ * `success`/`error`; it calls `toast.custom(render)` with a render function
+ * closing over the type and title — so every SDK toast lands here as
+ * `{kind: "custom", message: <function>}` and asserting on the message finds a
+ * closure, not the sentence on screen. Calling the render function is the only
+ * route back to what was shown, and doing it in one place keeps every test from
+ * reaching into the SDK's element shape for itself.
+ *
+ * Toasts raised by calling sonner directly still work: they carry their message
+ * as-is and are reported under their own kind.
+ */
+export function toastTexts(): ToastText[] {
+  return toastCalls.map((call) => {
+    if (typeof call.message !== "function") {
+      return { type: call.kind, title: String(call.message ?? "") };
+    }
+    const rendered = (call.message as (id: string) => unknown)("test-toast");
+    const props = (rendered as { props?: Record<string, unknown> } | null)?.props;
+    if (!props) return { type: call.kind, title: "" };
+    return {
+      type: String(props.type ?? call.kind),
+      title: String(props.title ?? ""),
+      description: props.description === undefined ? undefined : String(props.description),
+    };
+  });
+}
+
 export function Toaster(): React.ReactElement | null {
   return null;
 }
