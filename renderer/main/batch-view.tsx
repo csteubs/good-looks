@@ -29,10 +29,21 @@ import {
   ToolbarTitle,
   toast,
 } from "@glaze/core/components";
-import { Check, CircleDashed, GripVertical, Play, Square, X, SkipForward, Loader } from "lucide-react";
+import {
+  Check,
+  CircleDashed,
+  Eye,
+  EyeOff,
+  GripVertical,
+  Play,
+  Square,
+  X,
+  SkipForward,
+  Loader,
+} from "lucide-react";
 
 import { api } from "../lib/api";
-import { BROWSER_SF_SYMBOLS } from "../lib/browser-icons";
+import { BrowserIcon } from "../lib/browser-icons";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts } from "../lib/test-tags";
 import { TagCluster } from "./tag-cluster";
@@ -51,6 +62,19 @@ import {
   resolveConcurrency,
   type BatchConcurrencyChoice,
 } from "../lib/batch-parallel";
+import {
+  applyHeadlessToAll,
+  buildRunPlan,
+  pruneRowOptions,
+  resolveRow,
+  resultKeyOf,
+  rowOptionsAreStale,
+  rowStatus,
+  setRow,
+  setSelection,
+  toggleRowBrowser,
+  type RowOptionsMap,
+} from "../lib/batch-run-plan";
 import type {
   BatchRecord,
   BatchState,
@@ -125,42 +149,33 @@ export function BatchView() {
     queryFn: () => api.recorder.getSettings(),
   });
 
-  // Selection. Every test the view has never seen before starts ticked —
-  // including one recorded while this view was open, or one that arrived in a
-  // refetch after the first (cached, one-behind) list seeded the selection.
-  // Seeding only once meant a freshly recorded test showed up unticked and was
-  // then silently left out of "Run all", which reads as it not being there.
+  // Selection, engines and headedness — one persisted map keyed by test id, so
+  // all three survive a restart. A test with NO entry resolves from its own
+  // record and the global defaults (see batch-run-plan), which is why this
+  // needed no migration and why a newly recorded test arrives UNTICKED.
   //
-  // Tests already seen keep whatever the user chose, so an in-progress
-  // selection is never disturbed by a background refresh.
-  const [selected, setSelected] = React.useState<Set<string>>(new Set());
-  const seenIds = React.useRef<Set<string>>(new Set());
+  // Unticked is the deliberate reversal of the old behaviour: a fresh test used
+  // to be added to the selection automatically and joined the next "Run all"
+  // without being asked.
+  const [rowOptions, setRowOptions] = React.useState<RowOptionsMap>({});
+  const [rowsInited, setRowsInited] = React.useState(false);
   React.useEffect(() => {
-    const fresh = tests.filter((t) => !seenIds.current.has(t.id)).map((t) => t.id);
-    // Drop ids that no longer exist: a deleted test that comes back (re-import)
-    // is new again, rather than inheriting a deselection nobody remembers.
-    seenIds.current = new Set(tests.map((t) => t.id));
-    if (fresh.length === 0) return;
-    setSelected((prev) => {
-      const next = new Set(prev);
-      for (const id of fresh) next.add(id);
-      return next;
-    });
-  }, [tests]);
+    if (rowsInited || !settingsQuery.data) return;
+    setRowOptions(settingsQuery.data.batchTestOptions ?? {});
+    setRowsInited(true);
+  }, [rowsInited, settingsQuery.data]);
 
-  // Batch-level run options. Deliberately NOT persisted to each test: a suite
-  // run is a one-off choice ("run everything headless on WebKit"), and writing
-  // it back would silently rewrite every test's saved preference.
+  // Batch-level run options. `captureArtifacts` and `concurrency` are one-off
+  // choices for this run; `runHeadless` is the MASTER for the per-row toggles
+  // (see the Headless checkbox below). The browser picker moved into the rows.
   const [runHeadless, setRunHeadless] = React.useState(false);
   const [captureArtifacts, setCaptureArtifacts] = React.useState(false);
-  const [browser, setBrowser] = React.useState<RunBrowser>("chromium");
   const [concurrency, setConcurrency] = React.useState<BatchConcurrencyChoice>(1);
   const [optionsInited, setOptionsInited] = React.useState(false);
   React.useEffect(() => {
     if (optionsInited || !settingsQuery.data) return;
     setRunHeadless(settingsQuery.data.defaultRunHeadless ?? false);
     setCaptureArtifacts(settingsQuery.data.defaultCaptureArtifacts ?? false);
-    setBrowser(settingsQuery.data.defaultRunBrowser ?? "chromium");
     setConcurrency(choiceFromSetting(settingsQuery.data.defaultBatchConcurrency));
     setOptionsInited(true);
   }, [optionsInited, settingsQuery.data]);
@@ -274,23 +289,51 @@ export function BatchView() {
   // present a blank view as though the batch never happened.
   const shown: BatchState | null = batch ?? history[0] ?? null;
   const running = batch?.running ?? false;
-  // Derived from the ORDERED list, not the library: this is what the batch
-  // actually runs, so it has to match the order shown on screen.
-  const selectedIds = orderedTests.filter((t) => selected.has(t.id)).map((t) => t.id);
 
-  const toggle = (id: string) => {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
+  // The globals a row falls back to when the user has never touched it.
+  const rowDefaults = React.useMemo(
+    () => ({
+      defaultRunBrowser: settingsQuery.data?.defaultRunBrowser,
+      defaultRunHeadless: settingsQuery.data?.defaultRunHeadless,
+    }),
+    [settingsQuery.data],
+  );
+
+  // Every write goes through here so state and disk never disagree. Persist is
+  // best-effort, matching the stored order: the choice still applies to this
+  // session if the write fails.
+  const commitRows = React.useCallback((next: RowOptionsMap) => {
+    setRowOptions(next);
+    api.recorder.setSettings({ batchTestOptions: next }).catch(() => {});
+  }, []);
+
+  // Drop rows for tests that no longer exist, once on drift rather than every
+  // render — the same shape as the stored-order rewrite above.
+  React.useEffect(() => {
+    if (!rowsInited || tests.length === 0) return;
+    const ids = tests.map((t) => t.id);
+    if (!rowOptionsAreStale(rowOptions, ids)) return;
+    commitRows(pruneRowOptions(rowOptions, ids));
+  }, [rowsInited, tests, rowOptions, commitRows]);
+
+  // What Run will actually do. Derived from the ORDERED list, not the library:
+  // a batch runs in the order the checklist shows, and one place computes the
+  // payload, the run count and whether the headed warning applies.
+  const plan = React.useMemo(
+    () => buildRunPlan(orderedTests, rowOptions, rowDefaults),
+    [orderedTests, rowOptions, rowDefaults],
+  );
+  const selectedIds = plan.testIds;
+
+  const toggle = (test: { id: string; runBrowser?: RunBrowser }) => {
+    const row = resolveRow(test, rowOptions, rowDefaults);
+    commitRows(setRow(rowOptions, test, rowDefaults, { selected: !row.selected }));
   };
 
-  // How many tests will actually be in flight. Derived, not the raw picker
-  // value: "all at once" means "as many as there are tests" and every choice is
-  // capped, so this is the number of browsers that really open — which is what
-  // the warning has to be about.
+  // How many tests will actually be in flight. DISTINCT tests, not planned
+  // runs: the runner puts every entry for one test in a single lane and runs
+  // them one after another, so a three-engine row still opens one window at a
+  // time. Counting runs here would warn about windows that never exist.
   const effectiveConcurrency = resolveConcurrency(concurrency, selectedIds.length);
 
   const startBatch = async () => {
@@ -298,9 +341,10 @@ export function BatchView() {
     try {
       const res = await api.batch.run(selectedIds, {
         captureArtifacts,
+        // Still sent as the fallback for any test the backend finds no row for.
         runHeadless,
-        browser,
         concurrency: effectiveConcurrency,
+        perTest: plan.perTest,
       });
       if (res.alreadyRunning) toast.info("A batch is already running.");
     } catch (err) {
@@ -308,22 +352,41 @@ export function BatchView() {
     }
   };
 
-  // Ask before opening more than a screenful of real browser windows. Headless
-  // runs skip this entirely — nothing appears, so there's nothing to warn about.
+  // Ask before opening more than a screenful of real browser windows. Only a
+  // batch where EVERY row is headless skips this — one headed row in fifty
+  // still opens a window.
   const requestBatch = () => {
     if (selectedIds.length === 0) return;
-    if (needsHeadedParallelWarning({ concurrency: effectiveConcurrency, runHeadless })) {
+    if (
+      needsHeadedParallelWarning({
+        concurrency: effectiveConcurrency,
+        runHeadless: plan.allHeadless,
+      })
+    ) {
       setPendingHeadedRun(effectiveConcurrency);
       return;
     }
     void startBatch();
   };
 
-  // Live results are keyed by testId so each row can show its own outcome
-  // while the batch is mid-flight.
-  const resultFor = React.useMemo(() => {
+  // Results grouped by test, because one test can now produce several — three
+  // engines, or a dataset sweep. Keying a flat map by testId would collapse
+  // them to whichever arrived last, and the row would report one engine's
+  // outcome as if it were all of them.
+  const resultsFor = React.useMemo(() => {
+    const map = new Map<string, BatchTestResult[]>();
+    for (const r of shown?.results ?? []) {
+      const list = map.get(r.testId);
+      if (list) list.push(r);
+      else map.set(r.testId, [r]);
+    }
+    return map;
+  }, [shown]);
+
+  // One result per (test, engine), for tinting a row's browser icons.
+  const resultByKey = React.useMemo(() => {
     const map = new Map<string, BatchTestResult>();
-    for (const r of shown?.results ?? []) map.set(r.testId, r);
+    for (const r of shown?.results ?? []) map.set(resultKeyOf(r), r);
     return map;
   }, [shown]);
 
@@ -363,34 +426,19 @@ export function BatchView() {
                     summary.skipped > 0 ? ` · ${summary.skipped} skipped` : ""
                   } · ${fmtDuration(summary.durationMs)}`
                 : `${selectedIds.length} of ${tests.length} selected${
-                    tagFilter !== ALL_TAGS ? ` · showing ${visibleTests.length}` : ""
-                  }`}
+                    // Runs and tests differ as soon as one row has two engines,
+                    // and the run count is what the batch actually does — a
+                    // silent 3× is exactly the surprise worth naming.
+                    plan.plannedRuns !== selectedIds.length ? ` · ${plan.plannedRuns} runs` : ""
+                  }${tagFilter !== ALL_TAGS ? ` · showing ${visibleTests.length}` : ""}`}
           </ToolbarDescription>
         </ToolbarContent>
         <ToolbarActions>
-          <Select
-            value={browser}
-            onValueChange={(v) => setBrowser(v as RunBrowser)}
-            disabled={running}
-          >
-            <SelectTrigger
-              variant="filled"
-              size="small"
-              className="w-32"
-              aria-label="Browser engine for this batch"
-            >
-              {/* The glyph comes from the selected item's SF Symbol, drawn by
-                  SelectValue — one of ours here would be the second one. */}
-              <SelectValue placeholder="Chromium" />
-            </SelectTrigger>
-            <SelectContent>
-              {RUN_BROWSERS.map((b) => (
-                <SelectItem key={b} value={b} icon={BROWSER_SF_SYMBOLS[b]}>
-                  {RUN_BROWSER_LABELS[b]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {/* The batch-wide browser picker used to live here. It moved into the
+              rows: a suite that has to run one test on WebKit and the rest on
+              Chromium was not expressible with a single choice, and every row
+              now always resolves to at least one engine, so a global one would
+              have nothing left to decide. */}
           {/* Parallelism, next to the option it most interacts with. Off is the
               default and is byte-for-byte the old sequential behaviour. */}
           <Select
@@ -415,11 +463,21 @@ export function BatchView() {
             </SelectContent>
           </Select>
           <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+            {/* MASTER for the per-row toggles: flipping it overwrites every row.
+                The overwrite lives HERE, in the event handler, and must never
+                move into an effect keyed on `runHeadless` — the init effect
+                above sets this from defaultRunHeadless on every mount, so an
+                effect would silently wipe every saved row choice each time the
+                user visited this view, with the UI looking correct throughout. */}
             <Checkbox
               checked={runHeadless}
-              onCheckedChange={(v) => setRunHeadless(v === true)}
+              onCheckedChange={(v) => {
+                const next = v === true;
+                setRunHeadless(next);
+                commitRows(applyHeadlessToAll(rowOptions, tests, rowDefaults, next));
+              }}
               disabled={running}
-              aria-label="Run this batch headless"
+              aria-label="Run every test in this batch headless"
             />
             Headless
           </label>
@@ -483,14 +541,10 @@ export function BatchView() {
                   size="small"
                   disabled={running}
                   onClick={() =>
-                    // Adds the visible tests to the selection rather than
-                    // replacing it, so "select all" under a filter doesn't
-                    // silently deselect everything hidden.
-                    setSelected((prev) => {
-                      const next = new Set(prev);
-                      for (const t of visibleTests) next.add(t.id);
-                      return next;
-                    })
+                    // Ticks the visible tests rather than replacing the whole
+                    // selection, so "select all" under a filter doesn't
+                    // silently untick everything hidden.
+                    commitRows(setSelection(rowOptions, visibleTests, rowDefaults, true))
                   }
                 >
                   {tagFilter === ALL_TAGS ? "Select all" : "Select these"}
@@ -500,11 +554,7 @@ export function BatchView() {
                   size="small"
                   disabled={running}
                   onClick={() =>
-                    setSelected((prev) => {
-                      const next = new Set(prev);
-                      for (const t of visibleTests) next.delete(t.id);
-                      return next;
-                    })
+                    commitRows(setSelection(rowOptions, visibleTests, rowDefaults, false))
                   }
                 >
                   {tagFilter === ALL_TAGS ? "Select none" : "Deselect these"}
@@ -535,8 +585,19 @@ export function BatchView() {
 
               <div className="rounded-lg border border-separator bg-panel">
                 {visibleTests.map((t) => {
-                  const result = resultFor.get(t.id);
-                  const isCurrent = result?.status === "running";
+                  const results = resultsFor.get(t.id) ?? [];
+                  const status = rowStatus(results);
+                  const isCurrent = status === "running";
+                  const row = resolveRow(t, rowOptions, rowDefaults);
+                  // Only meaningful once every entry for this test has settled;
+                  // a partial sum would tick upward as engines finished and
+                  // read as the run getting slower.
+                  const durationMs = results.every((r) => r.durationMs !== undefined)
+                    ? results.reduce((sum, r) => sum + (r.durationMs ?? 0), 0)
+                    : undefined;
+                  // The note only makes sense attached to the outcome it
+                  // explains, so take it from the result the badge is showing.
+                  const note = results.find((r) => r.status === status)?.note;
                   return (
                     <div
                       key={t.id}
@@ -567,8 +628,8 @@ export function BatchView() {
                         <GripVertical className="size-4" />
                       </span>
                       <Checkbox
-                        checked={selected.has(t.id)}
-                        onCheckedChange={() => toggle(t.id)}
+                        checked={row.selected}
+                        onCheckedChange={() => toggle(t)}
                         disabled={running}
                         aria-label={`Include ${t.name} in the batch`}
                       />
@@ -594,12 +655,88 @@ export function BatchView() {
                           ) : null}
                         </span>
                       ) : null}
-                      {result?.durationMs !== undefined ? (
+                      {/* Engines, icon-only. Deselected stays VISIBLE at low
+                          opacity rather than hidden — an engine you can't see
+                          is one you can't add back. aria-pressed is the real
+                          contract here: it's what a screen reader announces and
+                          the only thing worth asserting, since a class name
+                          just pins today's styling. */}
+                      <span className="flex shrink-0 items-center gap-0.5">
+                        {RUN_BROWSERS.map((b) => {
+                          const on = row.browsers.includes(b);
+                          const engineResult = resultByKey.get(
+                            resultKeyOf({ testId: t.id, browser: b }),
+                          );
+                          return (
+                            <button
+                              key={b}
+                              type="button"
+                              aria-pressed={on}
+                              disabled={running}
+                              aria-label={`Run ${t.name} on ${RUN_BROWSER_LABELS[b]}`}
+                              title={RUN_BROWSER_LABELS[b]}
+                              onClick={() =>
+                                commitRows(
+                                  setRow(rowOptions, t, rowDefaults, {
+                                    browsers: toggleRowBrowser(row.browsers, b),
+                                  }),
+                                )
+                              }
+                              className={`rounded border p-1 transition-opacity ${
+                                on
+                                  ? "border-accent bg-control-subtle opacity-100"
+                                  : "border-transparent opacity-40 hover:opacity-70"
+                              } ${running ? "cursor-default" : ""}`}
+                            >
+                              {/* Tinted by this engine's own outcome, so a row
+                                  running three engines can show "chromium
+                                  passed, webkit failed" without three rows. */}
+                              <BrowserIcon
+                                browser={b}
+                                labelled={false}
+                                className={`size-3.5 shrink-0 ${
+                                  engineResult?.status === "failed"
+                                    ? "text-support-red"
+                                    : engineResult?.status === "passed"
+                                      ? "text-support-green"
+                                      : ""
+                                }`}
+                              />
+                            </button>
+                          );
+                        })}
+                      </span>
+                      {/* Per-row headed/headless. The toolbar checkbox is the
+                          master that overwrites all of these at once. */}
+                      <button
+                        type="button"
+                        aria-pressed={row.headless}
+                        disabled={running}
+                        aria-label={`Run ${t.name} headless`}
+                        title={row.headless ? "Headless" : "Headed"}
+                        onClick={() =>
+                          commitRows(
+                            setRow(rowOptions, t, rowDefaults, { headless: !row.headless }),
+                          )
+                        }
+                        className={`shrink-0 rounded border p-1 transition-opacity ${
+                          row.headless
+                            ? "border-accent bg-control-subtle opacity-100"
+                            : "border-transparent opacity-40 hover:opacity-70"
+                        } ${running ? "cursor-default" : ""}`}
+                      >
+                        {row.headless ? (
+                          <EyeOff className="size-3.5 shrink-0" />
+                        ) : (
+                          <Eye className="size-3.5 shrink-0" />
+                        )}
+                      </button>
+                      {durationMs !== undefined ? (
                         <Text variant="small" color="tertiary">
-                          {fmtDuration(result.durationMs)}
+                          {fmtDuration(durationMs)}
                         </Text>
                       ) : null}
-                      {result ? <StatusBadge status={result.status} note={result.note} /> : null}
+                      {status ? <StatusBadge status={status} note={note} /> : null}
                     </div>
                   );
                 })}

@@ -707,6 +707,17 @@ export interface PickedElement {
   attributes: Record<string, string>;
 }
 
+/** One test's row in the Batch view (mirrors main types). An ABSENT entry is
+ *  the default — unticked, the test's own runBrowser, defaultRunHeadless.
+ *  `browsers` is never empty: a zero-engine row silently doesn't run. */
+export interface BatchRowOptions {
+  selected: boolean;
+  browsers: RunBrowser[];
+  headless: boolean;
+}
+
+export const MAX_BATCH_TEST_OPTIONS = 1000;
+
 export interface RecorderSettings {
   showUrlBar: boolean;
   /** Open the trainer panel docked beside the training browser (default false). */
@@ -744,6 +755,9 @@ export interface RecorderSettings {
   alertWebhookEnabled: boolean;
   /** user-chosen Batch run order, as test ids (mirrors main types) */
   batchOrder: string[];
+  /** per-row Batch-view options by test id (mirrors main types). An absent
+   *  entry is the default — see BatchRowOptions. */
+  batchTestOptions: Record<string, BatchRowOptions>;
   /** how many tests a batch starts at once by default (default 1, 1–16). */
   defaultBatchConcurrency: number;
   /** how many runs' screenshot artifacts to keep per test (default 10, 1–50). */
@@ -878,6 +892,9 @@ export interface BatchTestResult {
   note?: string;
   /** id of the RunRecord this test produced, for linking to its log */
   runRecordId?: string;
+  /** engine this entry ran on, when the batch fanned the test out across more
+   *  than one (mirrors main types; absent on pre-fan-out history records) */
+  browser?: RunBrowser;
 }
 
 export interface BatchSummary {

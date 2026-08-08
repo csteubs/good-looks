@@ -9,11 +9,18 @@
 // in flight are therefore already unambiguous. The SAME test twice is not:
 // start() declines with `alreadyRunning`, and the entry would be skipped.
 //
-// A dataset sweep queues exactly that — the same test once per row — so the
-// queue is partitioned into LANES keyed by testId. Lanes run concurrently up to
-// the limit; entries within a lane stay sequential. That keeps runId === testId
-// true without touching the runner, and it means the real ceiling is the number
-// of DISTINCT tests queued, not the queue length.
+// Two things queue the same test more than once — a dataset sweep (one entry
+// per row) and a multi-engine row in the Batch view (one entry per browser) —
+// so the queue is partitioned into LANES keyed by testId. Lanes run
+// concurrently up to the limit; entries within a lane stay sequential. That
+// keeps runId === testId true without touching the runner, and it means the
+// real ceiling is the number of DISTINCT tests queued, not the queue length.
+//
+// The cost is that one test on three engines runs them one after another rather
+// than three-up. Lifting that would mean re-keying every per-run map in
+// playwright-runner AND the runner:* event key the renderer's run store
+// consumes — a large change for parallelism inside a single test, which is not
+// the case anyone hit. See docs/DECISIONS.md.
 //
 // Because buildQueue emits a test's rows contiguously, lane order at limit 1 is
 // exactly queue order — the sequential path is the same code, not a parallel
@@ -75,14 +82,31 @@ export interface BatchRunParams {
    *  MAX_BATCH_CONCURRENCY — asking for more than either is not an error, it
    *  just runs what it can. */
   concurrency?: number;
+  /** Per-test engines and headedness from the Batch view's rows. A test named
+   *  here runs once per engine listed; a test NOT named here (the MCP path, or
+   *  any caller that never had rows) falls back to the batch-wide `browser` and
+   *  `runHeadless` above, so those two must keep working unchanged. */
+  perTest?: PerTestRunOption[];
 }
 
-/** One queued execution: a test, optionally bound to a dataset row. */
+/** One test's engines and headedness, as sent by the Batch view. */
+export interface PerTestRunOption {
+  testId: string;
+  /** validated, deduped and RUN_BROWSERS-ordered by the IPC handler; never empty */
+  browsers: RunBrowser[];
+  headless: boolean;
+}
+
+/** One queued execution: a test, optionally bound to a dataset row and/or a
+ *  specific engine. `browser`/`headless` absent means "use the batch-wide
+ *  option", which is what every pre-per-row caller produces. */
 export interface BatchEntry {
   testId: string;
   datasetId?: string;
   datasetName?: string;
   vars?: Record<string, string>;
+  browser?: RunBrowser;
+  headless?: boolean;
 }
 
 /**
@@ -107,19 +131,36 @@ export function buildQueue(
 ): BatchEntry[] {
   const testIds = [...new Set(params.testIds)];
   const wantsSweep = params.allDatasets === true || (params.datasetIds?.length ?? 0) > 0;
-  if (!wantsSweep) return testIds.map((testId) => ({ testId }));
   const wanted = new Set(params.datasetIds ?? []);
+  const byTest = new Map<string, PerTestRunOption>();
+  for (const p of params.perTest ?? []) byTest.set(p.testId, p);
+
   const out: BatchEntry[] = [];
   for (const testId of testIds) {
-    const rows = getDatasets(testId).filter(
-      (d) => params.allDatasets === true || wanted.has(d.id),
-    );
-    if (rows.length === 0) {
-      out.push({ testId });
-      continue;
-    }
-    for (const row of rows) {
-      out.push({ testId, datasetId: row.id, datasetName: row.name, vars: row.values });
+    // A test with no per-row entry contributes one undefined "engine", so it
+    // takes the batch-wide browser exactly as it did before per-row options
+    // existed. That is the MCP path and every stored batch replayed from it.
+    const engines: (RunBrowser | undefined)[] = byTest.get(testId)?.browsers ?? [undefined];
+    const headless = byTest.get(testId)?.headless;
+    const rows = wantsSweep
+      ? getDatasets(testId).filter((d) => params.allDatasets === true || wanted.has(d.id))
+      : [];
+    // Engine-major INSIDE the test, never across tests: every entry for one
+    // test must stay contiguous or buildLanes reorders the queue, and the
+    // sequential path stops being byte-identical to the old loop.
+    for (const browser of engines) {
+      const base: BatchEntry = {
+        testId,
+        ...(browser ? { browser } : {}),
+        ...(headless !== undefined ? { headless } : {}),
+      };
+      if (rows.length === 0) {
+        out.push(base);
+        continue;
+      }
+      for (const row of rows) {
+        out.push({ ...base, datasetId: row.id, datasetName: row.name, vars: row.values });
+      }
     }
   }
   return out;
@@ -259,6 +300,9 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
           status: "pending" as BatchTestStatus,
           ...(entry.datasetId ? { datasetId: entry.datasetId } : {}),
           ...(entry.datasetName ? { datasetName: entry.datasetName } : {}),
+          // Same reasoning as datasetId: without it, three results for one test
+          // are indistinguishable in the view and in batch-history.json.
+          ...(entry.browser ? { browser: entry.browser } : {}),
         })),
       };
       const lanes = buildLanes(queue);
@@ -304,12 +348,17 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
 
           let exitCode = -1;
           try {
+            // Per-entry when the Batch view sent rows, batch-wide otherwise.
+            // `headed` and `runHeadless` are derived from the SAME value — they
+            // are two spellings of one choice, and letting them disagree opens a
+            // window for a run the user asked to be headless.
+            const entryHeadless = queue[i]?.headless ?? params.runHeadless;
             const { runId, recordId, alreadyRunning } = deps.startRun({
               testId: entry.testId,
-              headed: !params.runHeadless,
+              headed: !entryHeadless,
               captureArtifacts: params.captureArtifacts,
-              runHeadless: params.runHeadless,
-              browser: params.browser,
+              runHeadless: entryHeadless,
+              browser: queue[i]?.browser ?? params.browser,
               batchId,
               // Read from the queue, not from `entry`: BatchState is persisted
               // to disk on every transition, and a dataset row's values have no

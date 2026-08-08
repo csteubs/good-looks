@@ -6,8 +6,14 @@ import * as path from "path";
 
 import { app, logger } from "@glaze/core/backend";
 
-import { isRunBrowser, isTestSpeed, MAX_BATCH_CONCURRENCY } from "../recorder/types.js";
-import type { RecorderSettings } from "../recorder/types.js";
+import {
+  isRunBrowser,
+  isTestSpeed,
+  MAX_BATCH_CONCURRENCY,
+  MAX_BATCH_TEST_OPTIONS,
+  RUN_BROWSERS,
+} from "../recorder/types.js";
+import type { BatchRowOptions, RecorderSettings } from "../recorder/types.js";
 import { normalizeViewport } from "../recorder/window-size.js";
 import { DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 
@@ -61,6 +67,48 @@ export function isTestTimeoutMs(n: unknown): n is number {
   return typeof n === "number" && Number.isFinite(n) && n >= MIN_TEST_TIMEOUT_MS;
 }
 
+/**
+ * Rebuild the per-row Batch options from whatever was on disk (or arrived over
+ * IPC). REBUILDS rather than filters, per the capture-boundary rule: spreading
+ * the input would carry every unknown key straight back out to the file, and
+ * into whatever reads it next.
+ *
+ * Three things this must get right, each of which is silent when wrong:
+ *  - The output is seeded from a null-prototype object, so a hand-edited
+ *    `__proto__` key in the JSON is an ordinary entry rather than a prototype
+ *    write.
+ *  - `browsers` is filtered THROUGH RUN_BROWSERS, which validates, dedupes and
+ *    normalises order in one pass — so `["webkit","webkit","nope"]` becomes
+ *    `["webkit"]` and can't run a test twice on one engine.
+ *  - An entry whose browsers validated to empty is DROPPED, not kept: a stored
+ *    zero-engine row is a ticked test that never runs, and falling back to the
+ *    defaults is the recoverable outcome.
+ */
+function normalizeBatchTestOptions(raw: unknown): Record<string, BatchRowOptions> {
+  const out: Record<string, BatchRowOptions> = Object.create(null) as Record<
+    string,
+    BatchRowOptions
+  >;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  let kept = 0;
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (kept >= MAX_BATCH_TEST_OPTIONS) break;
+    if (typeof id !== "string" || id === "") continue;
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    const row = value as Record<string, unknown>;
+    const wanted = Array.isArray(row.browsers) ? (row.browsers as unknown[]) : [];
+    const browsers = RUN_BROWSERS.filter((b) => wanted.includes(b));
+    if (browsers.length === 0) continue;
+    out[id] = {
+      selected: row.selected === true,
+      browsers,
+      headless: row.headless === true,
+    };
+    kept++;
+  }
+  return out;
+}
+
 const DEFAULT_SETTINGS: RecorderSettings = {
   showUrlBar: true,
   // Opt-in: the panel moves and resizes real windows, so it stays off until
@@ -87,6 +135,10 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   defaultTestTimeoutMs: DEFAULT_TEST_TIMEOUT_MS,
   alertWebhookEnabled: false,
   batchOrder: [],
+  // Empty is the correct default and needs no migration: every test resolves
+  // its row from its own record and the defaults above until the user touches
+  // a control. See BatchRowOptions.
+  batchTestOptions: {},
   // One at a time. Parallel batches are opt-in: they multiply CPU load and, run
   // headed, open a browser window per test — neither is something to hand
   // someone who never asked for it.
@@ -174,6 +226,7 @@ function read(): RecorderSettings {
       batchOrder: Array.isArray(parsed.batchOrder)
         ? parsed.batchOrder.filter((v: unknown) => typeof v === "string").slice(0, MAX_BATCH_ORDER)
         : DEFAULT_SETTINGS.batchOrder,
+      batchTestOptions: normalizeBatchTestOptions(parsed.batchTestOptions),
       defaultBatchConcurrency: clampBatchDefault(
         parsed.defaultBatchConcurrency,
         DEFAULT_SETTINGS.defaultBatchConcurrency,
@@ -278,6 +331,12 @@ export const recorderSettingsStore = {
       batchOrder: Array.isArray(update.batchOrder)
         ? update.batchOrder.filter((v) => typeof v === "string").slice(0, MAX_BATCH_ORDER)
         : current.batchOrder,
+      // Whole-map replace, not a merge: the Batch view always sends the
+      // complete map, and a merge would make deleting a row impossible.
+      batchTestOptions:
+        update.batchTestOptions !== undefined
+          ? normalizeBatchTestOptions(update.batchTestOptions)
+          : current.batchTestOptions,
       defaultBatchConcurrency:
         update.defaultBatchConcurrency !== undefined
           ? clampBatchDefault(update.defaultBatchConcurrency, current.defaultBatchConcurrency)
@@ -327,6 +386,8 @@ export const recorderSettingsStore = {
       defaultTestTimeoutMs: next.defaultTestTimeoutMs,
       alertWebhookEnabled: next.alertWebhookEnabled,
       batchOrderCount: next.batchOrder.length,
+      // The count, never the map: it names every test id in the library.
+      batchTestOptionsCount: Object.keys(next.batchTestOptions).length,
       defaultBatchConcurrency: next.defaultBatchConcurrency,
       artifactRetainedRuns: next.artifactRetainedRuns,
       artifactRetentionDays: next.artifactRetentionDays,

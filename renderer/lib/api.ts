@@ -245,6 +245,10 @@ export const api = {
         allDatasets?: boolean;
         /** How many tests to run at once. Omitted or 1 = one at a time. */
         concurrency?: number;
+        /** Per-test engines and headedness from the Batch view's rows. A test
+         *  listed here runs once per engine; one omitted falls back to the
+         *  batch-wide `browser`/`runHeadless` above. */
+        perTest?: { testId: string; browsers: RunBrowser[]; headless: boolean }[];
       },
     ) =>
       ipc().invoke<{ batchId: string; alreadyRunning: boolean }>("batch:run", {
@@ -255,6 +259,7 @@ export const api = {
         datasetIds: opts?.datasetIds,
         allDatasets: opts?.allDatasets,
         concurrency: opts?.concurrency,
+        perTest: opts?.perTest,
       }),
     stop: () => ipc().invoke<void>("batch:stop"),
     status: () => ipc().invoke<BatchState | null>("batch:status"),
