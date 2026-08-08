@@ -141,6 +141,14 @@ export const runHistoryStore = {
       datasetName?: string;
       /** steps run-time Auto-Heal got past by substituting a locator */
       healedSteps?: number;
+      /** steps Auto-Heal tried to rescue and could not — the opposite evidence,
+       *  and the more informative half: the element is gone, not renamed */
+      healFailedSteps?: number;
+      /** the per-test Playwright timeout THIS run executed under. Stored per
+       *  run because the TestRecord's value is the CURRENT one, and a timeout
+       *  raised since would silently make every older run's step-vs-budget
+       *  comparison wrong while still looking plausible. */
+      testTimeoutMs?: number;
       /** accessibility-check cost, and steps with unaccepted violations */
       a11yMs?: number;
       a11yChecks?: number;
@@ -192,6 +200,10 @@ export const runHistoryStore = {
       ...(run.shotCount !== undefined ? { shotCount: run.shotCount } : {}),
       ...(run.replayOfRunId ? { replayOfRunId: run.replayOfRunId } : {}),
       ...(run.healedSteps ? { healedSteps: run.healedSteps } : {}),
+      ...(run.healFailedSteps ? { healFailedSteps: run.healFailedSteps } : {}),
+      // Written whenever it is known, including on a passing run: "this step
+      // took 58s of its 60s budget" is a finding on a pass, not only on a fail.
+      ...(run.testTimeoutMs ? { testTimeoutMs: run.testTimeoutMs } : {}),
       // Left undefined (not 0) for runs that didn't check, so "no a11y check"
       // is distinguishable from "checked and found nothing".
       ...(run.a11yMs !== undefined ? { a11yMs: run.a11yMs } : {}),

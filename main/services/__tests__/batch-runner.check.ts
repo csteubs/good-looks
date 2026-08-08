@@ -559,6 +559,20 @@ async function main(): Promise<void> {
       plain.length === 2 && plain.every((e) => e.datasetId === undefined),
       "no dataset options → the queue is exactly the selection",
     );
+    // And the entries are BARE — `{testId}` and nothing else. This used to be
+    // guaranteed by an early return that the per-engine fan-out replaced with a
+    // loop; the MCP calls this function with no options at all, so an entry
+    // carrying `browser: undefined` would spread into the BatchTestResult that
+    // gets written to batch-history.json.
+    //
+    // Object.keys, NOT JSON.stringify: stringify DROPS undefined-valued keys,
+    // so it reports `{testId:"a", browser:undefined}` as `{"testId":"a"}` and
+    // this assertion would pass against exactly the regression it names.
+    const keys = plain.map((e) => Object.keys(e).sort().join(","));
+    assert(
+      keys.every((k) => k === "testId"),
+      `a no-options queue carries no extra keys (got ${keys.join(" | ")})`,
+    );
 
     const swept = buildQueue({ testIds: ["a", "b"], allDatasets: true }, getDatasets);
     assert(
@@ -876,18 +890,22 @@ async function main(): Promise<void> {
   }
 
   // A test with no perTest entry is the MCP path and every batch recorded
-  // before per-row options existed — it must still take the batch-wide browser.
+  // before per-row options existed. It contributes ONE entry carrying no engine
+  // of its own — which is what lets runEntry fall back to the batch-wide
+  // `browser`. The queue has no opinion about that fallback (the shared module
+  // never sees `params.browser`); the runner applies it, and the fan-out block
+  // above asserts that end of it.
   {
     const queue = buildQueue(
       {
         testIds: ["a", "b"],
-        browser: "firefox",
         perTest: [{ testId: "a", browsers: ["webkit"], headless: false }],
       },
       () => [],
     );
     assert(queue.length === 2, `an unlisted test contributes exactly one entry (${queue.length})`);
     assert(queue[1].browser === undefined, "an unlisted test carries no engine of its own");
+    assert(queue[1].headless === undefined, "and no headedness of its own");
   }
 
   // Engines multiply dataset rows rather than replacing them.

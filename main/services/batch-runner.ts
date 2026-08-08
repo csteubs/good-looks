@@ -45,6 +45,8 @@ import { batchHistoryStore } from "./batch-history-store.js";
 import { sendAlert, type BatchAlert } from "./alert-service.js";
 import { notifyBatchOutcome, type BatchOutcomeNotice } from "./run-notifier.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
+import { buildQueue } from "../../shared/batch-queue.mjs";
+import type { BatchEntry, PerTestRunOption } from "../../shared/batch-queue.mjs";
 import { clampBatchConcurrency } from "../recorder/types.js";
 import type {
   BatchState,
@@ -91,82 +93,15 @@ export interface BatchRunParams {
   perTest?: PerTestRunOption[];
 }
 
-/** One test's engines and headedness, as sent by the Batch view. */
-export interface PerTestRunOption {
-  testId: string;
-  /** validated, deduped and RUN_BROWSERS-ordered by the IPC handler; never empty */
-  browsers: RunBrowser[];
-  headless: boolean;
-}
-
-/** One queued execution: a test, optionally bound to a dataset row and/or a
- *  specific engine. `browser`/`headless` absent means "use the batch-wide
- *  option", which is what every pre-per-row caller produces. */
-export interface BatchEntry {
-  testId: string;
-  datasetId?: string;
-  datasetName?: string;
-  vars?: Record<string, string>;
-  browser?: RunBrowser;
-  headless?: boolean;
-}
-
-/**
- * Expand a selection into the queue actually executed.
- *
- * Pure, and separated from the runner, because this is where a sweep gets its
- * meaning: without dataset options the queue is exactly the selection (so
- * nothing about existing batches changes), and with them the same test appears
- * once per matching row, in the order the rows are declared.
- *
- * The selection is DEDUPED first. The Batch view's selection is a Set so it
- * can't produce a repeat, but IPC and the MCP can, and a repeated id is what
- * breaks the queue's one structural guarantee: that all of a test's entries sit
- * together. `["a", "b", "a"]` would otherwise interleave, and grouping it into
- * lanes (which the runner must do — see buildLanes) would reorder the queue.
- * Running one test twice in a single batch with identical options has no
- * meaning anyway; running it once per dataset row does, and that still works.
- */
-export function buildQueue(
-  params: BatchRunParams,
-  getDatasets: (testId: string) => Dataset[],
-): BatchEntry[] {
-  const testIds = [...new Set(params.testIds)];
-  const wantsSweep = params.allDatasets === true || (params.datasetIds?.length ?? 0) > 0;
-  const wanted = new Set(params.datasetIds ?? []);
-  const byTest = new Map<string, PerTestRunOption>();
-  for (const p of params.perTest ?? []) byTest.set(p.testId, p);
-
-  const out: BatchEntry[] = [];
-  for (const testId of testIds) {
-    // A test with no per-row entry contributes one undefined "engine", so it
-    // takes the batch-wide browser exactly as it did before per-row options
-    // existed. That is the MCP path and every stored batch replayed from it.
-    const engines: (RunBrowser | undefined)[] = byTest.get(testId)?.browsers ?? [undefined];
-    const headless = byTest.get(testId)?.headless;
-    const rows = wantsSweep
-      ? getDatasets(testId).filter((d) => params.allDatasets === true || wanted.has(d.id))
-      : [];
-    // Engine-major INSIDE the test, never across tests: every entry for one
-    // test must stay contiguous or buildLanes reorders the queue, and the
-    // sequential path stops being byte-identical to the old loop.
-    for (const browser of engines) {
-      const base: BatchEntry = {
-        testId,
-        ...(browser ? { browser } : {}),
-        ...(headless !== undefined ? { headless } : {}),
-      };
-      if (rows.length === 0) {
-        out.push(base);
-        continue;
-      }
-      for (const row of rows) {
-        out.push({ ...base, datasetId: row.id, datasetName: row.name, vars: row.values });
-      }
-    }
-  }
-  return out;
-}
+// Expanding a selection into the queue actually executed lives in
+// shared/batch-queue.mjs, so the MCP's run_batch sweeps datasets with the same
+// semantics rather than a second implementation of them. The per-engine fan-out
+// lives there too, for the same reason and with the same constraint: a test's
+// entries must stay contiguous or buildLanes below reorders the queue.
+// Re-exported because this module is where the app and check:batch-runner
+// already import them from.
+export type { BatchEntry, PerTestRunOption } from "../../shared/batch-queue.mjs";
+export { buildQueue } from "../../shared/batch-queue.mjs";
 
 /**
  * Partition a queue into lanes of entry indices, one lane per distinct testId.

@@ -2,6 +2,23 @@
 
 Written 2026-08-07, against `main` at `46a5a63`.
 
+> **Status, updated 2026-08-07.** **Phase 1** is implemented except **1c
+> (capture parity)**, which is deferred — see §5. **Phase 2 is implemented.**
+> Phases 3–5 are unstarted.
+>
+> Two assumptions did not survive contact and are corrected in place below:
+> **secrets cannot be injected from the MCP at all** (§1.4), because
+> `safeStorage` is a native app-only API; and **`step_metrics.ms` as specified
+> would have measured the screenshot, not the step** (§3.2), which would have
+> made §6.2 a chart of PNG write times. Five columns in §3.2 changed as a
+> result; the schema in this document is annotated rather than rewritten, so the
+> reasoning stays visible. All of it is recorded in `docs/DECISIONS.md` under
+> 2026-08-07.
+>
+> The §1.3 risk is closed positively: `node:sqlite` works, and the packaged
+> backend runs on the host's **pinned** runtime rather than the user's `PATH`
+> node — so the NDJSON fallback is not needed.
+
 Goal: turn the signals the app already collects and throws away into a durable,
 queryable body of evidence — and make the MCP server a trustworthy way for an
 agent to reach it.
@@ -99,6 +116,20 @@ four fail silently.
    test with a secret variable runs with **empty strings** and fails at the
    login form with nothing in the output explaining why. Dataset sweeps are
    likewise unreachable from MCP.
+
+   > **Corrected 2026-08-07 during implementation.** Variables and datasets are
+   > fixable and were fixed. **Secrets are not.** `variableEnv` reads
+   > `testSecretsStore`, which decrypts `test-secrets.bin` through `safeStorage`
+   > — a *native* API reached over the Glaze host bridge. A standalone
+   > `node mcp/server.mjs` has no bridge, so no amount of work in this file
+   > makes secret injection possible. The alternatives (broker the values from
+   > the running app over a file protocol; delegate the whole run to the app's
+   > runner) were weighed and rejected — see `docs/DECISIONS.md`. What shipped:
+   > `run_test` refuses a secret-declaring test with an explanation, `run_batch`
+   > skips it with a note, and `get_test` reports which variables are secret so
+   > it is knowable before the call. That is a strict improvement on failing at
+   > the login form, but it is not parity, and §0's "Secrets in MCP runs:
+   > **Inject** — reach app parity" is not achievable as written.
 2. **`testTimeoutMs` is ignored.** The per-test timeout added 2026-08-06 is not
    passed, so MCP runs silently use Playwright's default.
 3. **No capture fixture.** No screenshots, no a11y, no console/network, no
@@ -196,6 +227,33 @@ diff two hand-maintained copies. One instance of that is a workaround; five
 is an architecture.
 
 ### 3.2 Schema
+
+> **Amended during implementation, 2026-08-07.** The schema below is the
+> ORIGINAL. Five things changed, and the reasoning is worth keeping visible:
+>
+> 1. **`ms` is not `ArtifactStepEntry.ms`.** That field times the *screenshot*
+>    (`Date.now() - tShot` around `page.screenshot()`, summed into `captureMs`).
+>    Reading it as step duration would make §6.2 a chart of how long PNGs take to
+>    write. The capture fixture now records `stepMs` separately, around the
+>    action itself, and the column reads that.
+> 2. **`triage` / `triage_confidence` are gone.** A stored verdict is frozen at
+>    the classifier version that wrote it, so improving the classifier leaves old
+>    rows stale and a trend silently mixes generations. Triage is computed on
+>    read.
+> 3. **Three columns split**, because the halves carry opposite evidence:
+>    `console_page_errors` from `console_errors`, `net_worst_api_status` from
+>    `net_worst_status`, and `heal_failed` alongside `healed`. §4.1 asks for the
+>    strong half of each; merged, each pair destroys its own signal.
+> 4. **Added `test_timeout_ms` and `heal_failed_steps`** to `runs`, and
+>    `action_index` to `step_metrics`. The first two are the only unrecoverable
+>    fields in the whole design and shipped ahead of the DB; the third is the
+>    join between the app's two step-index spaces, which was previously hiding in
+>    a screenshot filename that is null on every a11y-only run.
+> 5. **Added `has_artifacts`, `console_dropped`, `network_dropped`.** All three
+>    exist so silence can be read correctly. The capture fixture caps logs
+>    head/tail OVERALL rather than per step — one real run dropped 1861 of 2361
+>    network entries — so "no failing request on that step" and "that step's
+>    requests were discarded" would otherwise be the same answer.
 
 ```sql
 CREATE TABLE runs (
@@ -357,31 +415,71 @@ MCP `triage_run` · a line in the run Output panel · a column in Step Health
 
 Nothing else is worth building on a channel that lies.
 
-- **1a. Secrets + variables + datasets, with redaction, as one change.**
-  Inject `GLAZE_VARS` and `GLAZE_SECRET_*` exactly as `variableEnv` does; add
-  `datasetId` to `run_test` and dataset expansion to `run_batch` (reusing
-  `buildQueue`'s semantics). *In the same commit*, apply `stripAnsi` and
-  `redactWithSnapshot` at the MCP's own single write point. §1.4 explains why
-  these cannot be separated.
-- **1b. Honour `testTimeoutMs`.**
+- **1a. Secrets + variables + datasets, with redaction, as one change.** ✅ *(as
+  amended)* Injects `GLAZE_VARS` exactly as `variableEnv` does; `datasetId` on
+  `run_test` and dataset expansion on `run_batch` through the shared
+  `buildQueue`; `stripAnsi` at the MCP's own single write point, and on read.
+  **Secrets are refused, not injected** — see the correction in §1.4. That also
+  settles the redaction pairing from the other side: nothing is injected, so
+  there is nothing to redact.
+- **1b. Honour `testTimeoutMs`.** ✅ Through the shared `resolveTestTimeoutMs`,
+  crawl floor included, passed as an authoritative `--timeout`.
 - **1c. Capture parity**, opt-in per call (`capture: true`) and defaulting to
   the test's own `captureArtifacts` — so an MCP run lands in the Visual tab and
   produces the artifacts everything downstream reads.
-- **1d. Say what a run did *not* do.** Every `run_test` response reports which
-  fixtures were active. The current note covers crawl-settle only.
-- **1e. Read tools for data already on disk:** `get_visual_report`,
-  `get_a11y_report`, `get_run_logs` (console/network, **redacted**),
-  `list_heals`, `list_batches`, `compare_runs`.
+  **⏸ Deferred.** Landing in the Visual tab means producing `replay.json`, which
+  is built by `replay-builder.ts` → `visual-diff.ts` (pixelmatch + pngjs) →
+  `a11y-diff.ts` → `script-generator.ts`. Moving that chain into `shared/*.mjs`
+  is a large refactor that would strip the types off the spec generator — the
+  module CLAUDE.md names as a security boundary. Half-doing it is worse than
+  not: a run that writes screenshots but no replay model still doesn't appear in
+  the Visual tab, so it would look finished and not be. **The likely right shape
+  when it is picked up:** have the MCP produce the raw artifacts (the fixtures
+  write manifest/console/network/screenshots themselves) and have the APP build
+  `replay.json` lazily when a run with artifacts and no replay is opened — a
+  small app-side change instead of a large port. 1d is the honest stand-in
+  meanwhile.
+- **1d. Say what a run did *not* do.** ✅ Every `run_test` response carries a
+  `fixtures` field, measured against what the test itself asks for rather than
+  as a flat feature list. `run_batch` reports it once for the suite. Pinned by
+  `check:mcp-parity`, so closing 1c has to change those messages rather than
+  leave them lying.
+- **1e. Read tools for data already on disk:** ✅ `get_visual_report`,
+  `get_a11y_report`, `get_run_logs`, `list_heals`, `list_batches`,
+  `compare_runs`. **`get_run_logs` withholds rather than redacts** — redaction
+  needs the secret values, which this process cannot read, so console/network
+  are served only when no test in the library declares a secret at all.
 
-Ends with: an MCP run is indistinguishable from an app run, and an agent can
-see everything a person can.
+Ends with: an MCP run matches an app run in pacing, timeout, variables and log
+hygiene; an agent can see the visual, a11y, console/network, heal and batch
+evidence a person can; and where a run still differs, it says so.
 
-### Phase 2 — The metrics DB
+### Phase 2 — The metrics DB ✅
 
 Schema, `rollup.mjs`, the three ingest points, the prune hook, backfill,
 `metrics:rebuild`. Verify `node:sqlite` in the packaged app first (§1.3).
 
 Nothing user-visible ships here. Everything after it becomes cheap.
+
+**Done 2026-08-07.** `shared/metrics-schema.mjs` + `rollup.mjs` +
+`metrics-query.mjs` (pure), `main/services/metrics-store.ts` and
+`mcp/metrics.mjs` (the two writers), the prune preflight, backfill on first
+open, and `rebuild()`. `errorSignature` moved to `shared/` here rather than in
+Phase 4, since `runs.error_signature` has to be computed at ingest — the log it
+comes from is capped and pruned. Guarded by `check:metrics-db` (55 assertions
+against a real database).
+
+Measured on the development machine: 425 runs and 1024 steps in ~600ms,
+byte-identical on a second pass, **540 KB on disk against 253 MB of artifacts**
+— about half the plan's ~60 bytes/row estimate in row count but the same
+conclusion by three orders of magnitude, so the rollup has no storage tension to
+negotiate.
+
+Two things about the DATA that only running it could show, both of which limit
+what triage can conclude and are now recorded per run rather than left implicit:
+logs are capped head/tail overall rather than per step (so a busy site loses
+whole steps' worth of network), and only 98 of 207 failing runs yield a usable
+error signature at all.
 
 ### Phase 3 — Triage
 
@@ -470,16 +568,26 @@ fail when the fix is reverted.
 
 New `check:*` scripts:
 
-- `check:metrics-db` — DDL applies, rollup is idempotent (the same run ingested
-  twice yields one row set), rebuild reproduces a byte-equal result.
+- `check:metrics-db` — ✅ DDL applies, rollup is idempotent (the same run
+  ingested twice yields one row set), rebuild reproduces a byte-equal result.
+  Also pins the step-index translation (a step that captured nothing must be
+  attributed nothing), the three column splits, the `stepMs`-not-`ms` duration,
+  the `Error Context:` exclusion, and that every read tolerates an absent
+  database — metrics are unavailable on a runtime without `node:sqlite`, and a
+  view that crashes when the cache is missing is worse than one showing no data.
 - `check:triage` — every row of §4.1, in both directions, plus the "no
   artifacts → unknown" case and a source-level assertion that the classifier
   cannot reach `runStatus`.
 - `check:emit-formats` — emitted JUnit and OTLP parse as valid; every emitter
   redacts.
-- `check:mcp-parity` — the MCP's run env carries the same keys `variableEnv`
-  produces. This is the check that would have caught all four bugs in §1.4, and
-  it is the one to write first.
+- `check:mcp-parity` — ✅ *written first, as planned.* Landed in a stronger form
+  than described: rather than comparing the MCP's env against `variableEnv`'s
+  keys, it RUNS the generator, pulls every `process.env.X` out of the spec that
+  comes back, and checks the env against that set. A key-list comparison is
+  still a comparison of two hand-maintained lists; the generator is the actual
+  demand side. It also pins the §1d messages, the `get_run_logs` withholding
+  rule, and the comparison verdicts. Each of the four §1.4 bugs was reverted in
+  turn and confirmed to fail it.
 
 Vitest covers the pure cores. `.d.mts` files beside every `shared/*.mjs` keep
 `npm run type-check` as the real gate, since bundled checks do not type-check.

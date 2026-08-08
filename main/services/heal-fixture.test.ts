@@ -273,6 +273,89 @@ describe("installHealing", () => {
     await expect(page.getByTestId("submit").click()).rejects.toThrow("Timeout 30000ms");
   });
 
+  // ── Recording what heals could NOT do ──────────────────────────────
+  //
+  // Until 2026-08-07 the fixture wrote an event only on success, so "Auto-Heal
+  // tried and could not rescue this step" existed nowhere. It is the more
+  // informative half: a step that healed says the locator went stale, a step
+  // that could NOT be healed says the element is gone under every locator —
+  // which points at the site rather than the test. Both cases below still fail
+  // the run exactly as they did before; only the recording is new.
+
+  it("records an EXHAUSTED attempt when every candidate also fails", async () => {
+    fs.rmSync(healDir, { recursive: true, force: true });
+    const mod = await loadFixture({ "testid|submit": entry() });
+    const page = makePage();
+    page.failures.set("testid=submit", "Timeout 30000ms exceeded waiting for locator");
+    page.failures.set("testid=bad", "Timeout 30000ms exceeded waiting for locator");
+    page.probeResult = [{ locator: { k: "testid", v: "bad" } }];
+    mod.installHealing(page);
+
+    await expect(page.getByTestId("submit").click()).rejects.toThrow("Timeout 30000ms");
+
+    const written = JSON.parse(fs.readFileSync(path.join(healDir, "heals.json"), "utf-8"));
+    expect(written).toHaveLength(1);
+    expect(written[0].outcome).toBe("exhausted");
+    expect(written[0].stepId).toBe("s1");
+    // No applied locator: nothing was applied. A review row built from this
+    // would have nothing to revert to, which is why the runner keeps these out
+    // of the heal journal.
+    expect(written[0].appliedLocator).toBeUndefined();
+    // What WAS tried is kept — it's the evidence that the element could be
+    // ranked but not acted on.
+    expect(written[0].candidates).toEqual([{ locator: { k: "testid", v: "bad" } }]);
+  });
+
+  it("records a NO-CANDIDATES attempt when the probe ranks nothing", async () => {
+    // The strongest single signal that the failure is the site's: a stale
+    // locator still has something to rank, and this had nothing at all.
+    fs.rmSync(healDir, { recursive: true, force: true });
+    const mod = await loadFixture({ "testid|submit": entry() });
+    const page = makePage();
+    page.failures.set("testid=submit", "Timeout 30000ms exceeded waiting for locator");
+    page.probeResult = [];
+    mod.installHealing(page);
+
+    await expect(page.getByTestId("submit").click()).rejects.toThrow("Timeout 30000ms");
+
+    const written = JSON.parse(fs.readFileSync(path.join(healDir, "heals.json"), "utf-8"));
+    expect(written).toHaveLength(1);
+    expect(written[0].outcome).toBe("no-candidates");
+    expect(written[0].candidates).toEqual([]);
+  });
+
+  it("does not record an attempt for a failure healing never engaged", async () => {
+    // An assertion that resolved its element and found the wrong value is an
+    // app bug, not a heal that failed. Recording it would put a "the element is
+    // gone" signal against a step whose element was right there.
+    fs.rmSync(healDir, { recursive: true, force: true });
+    const mod = await loadFixture({ "testid|submit": entry() });
+    const page = makePage();
+    page.failures.set("testid=submit", "Element is not a checkbox");
+    mod.installHealing(page);
+
+    await expect(page.getByTestId("submit").click()).rejects.toThrow("Element is not a checkbox");
+    expect(fs.existsSync(path.join(healDir, "heals.json"))).toBe(false);
+  });
+
+  it("tags a successful heal with its outcome too", async () => {
+    // Both kinds share one file, so the reader needs the discriminator on both.
+    // An event with NO outcome predates the field and is read as a heal — that
+    // was the only kind ever written — so this is what keeps new heals from
+    // relying on that backwards-compatibility path.
+    fs.rmSync(healDir, { recursive: true, force: true });
+    const mod = await loadFixture({ "testid|submit": entry() });
+    const page = makePage();
+    page.failures.set("testid=submit", "Timeout 30000ms exceeded waiting for locator");
+    page.probeResult = [{ locator: { k: "testid", v: "submit-v2" } }];
+    mod.installHealing(page);
+
+    await page.getByTestId("submit").click();
+
+    const written = JSON.parse(fs.readFileSync(path.join(healDir, "heals.json"), "utf-8"));
+    expect(written[0].outcome).toBe("healed");
+  });
+
   it("leaves a passing action completely alone", async () => {
     const mod = await loadFixture({ "testid|submit": entry() });
     const page = makePage();
