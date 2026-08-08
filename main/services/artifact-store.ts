@@ -217,6 +217,27 @@ export interface NetworkEntry {
   responseHeaders?: Record<string, string>;
 }
 
+/** One step run-time Auto-Heal tried to rescue and could not.
+ *
+ *  `"no-candidates"` is the stronger of the two: the probe found nothing on the
+ *  page resembling the element, so there was not even anything to try.
+ *  `"exhausted"` means candidates were ranked and acting on every one of them
+ *  failed too. Both say the element is GONE rather than merely renamed, which
+ *  is evidence about the SITE — the opposite conclusion to a successful heal,
+ *  where the element existed and only the locator was stale. */
+export interface HealFailure {
+  outcome: "exhausted" | "no-candidates";
+  stepId: string;
+  stepIndex: number;
+  stepLabel: string;
+  /** the Locator action that failed (`click`, `fill`, …) */
+  method?: string;
+  originalLocator?: unknown;
+  /** what the probe managed to rank, when it ranked anything */
+  candidates?: unknown[];
+  at: number;
+}
+
 export interface RunLogs {
   console: ConsoleEntry[];
   network: NetworkEntry[];
@@ -464,6 +485,39 @@ export const artifactStore = {
       return JSON.parse(raw) as ArtifactManifest;
     } catch {
       return null;
+    }
+  },
+
+  /** Persist the steps run-time Auto-Heal tried to rescue and could not.
+   *
+   *  Its own file, beside console.json and network.json rather than inside
+   *  manifest.json, for the same reason those are: it is unbounded in a way a
+   *  per-step manifest entry is not, and every existing manifest reader would
+   *  have to parse past it.
+   *
+   *  Deliberately NOT the heal journal. That is a review surface — every row is
+   *  a locator change to accept or revert — and an attempt that healed nothing
+   *  offers no such action. This is evidence about one run, keyed by step. */
+  writeHealFailures(testId: string, runId: string, failures: HealFailure[]): void {
+    if (failures.length === 0) return;
+    const dir = this.ensureRunDir(testId, runId);
+    fs.writeFileSync(
+      path.join(dir, "heal-failures.json"),
+      JSON.stringify({ testId, runId, entries: failures }, null, 2),
+    );
+  },
+
+  /** Read a run's failed heal attempts, or an empty list. */
+  readHealFailures(testId: string, runId: string): HealFailure[] {
+    try {
+      const raw = fs.readFileSync(
+        path.join(this.runDir(testId, runId), "heal-failures.json"),
+        "utf-8",
+      );
+      const parsed = JSON.parse(raw) as { entries?: HealFailure[] };
+      return Array.isArray(parsed.entries) ? parsed.entries : [];
+    } catch {
+      return [];
     }
   },
 

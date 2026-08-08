@@ -261,6 +261,11 @@ async function executeTest(test, { playwright, browser, batchId, vars, datasetId
       // speed like any other. Without it these runs show a blank speed and
       // read as "recorded before the field existed".
       speed,
+      // The budget this run actually got. Stored per run rather than read back
+      // from the test later: the test's value is the CURRENT one, so a timeout
+      // raised since would make every older run's step-vs-budget comparison
+      // wrong while still looking like a plausible number.
+      testTimeoutMs,
       ...(batchId ? { batchId } : {}),
       // Both stored, like the app: the id joins back to the row, and the name
       // survives the row being renamed or deleted. A sweep whose history can't

@@ -16,6 +16,7 @@ import { runHistoryStore } from "./run-history-store.js";
 import { stepReporterSource } from "./step-reporter-source.js";
 import { captureFixtureSource } from "./capture-fixture-source.js";
 import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
+import type { HealFailure } from "./artifact-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { resolveTestTimeoutMs, SLOW_MO_MS } from "./run-pacing.js";
 import { notifyRunOutcome } from "./run-notifier.js";
@@ -389,38 +390,107 @@ function baseEnv(nodeModules: string): NodeJS.ProcessEnv {
   };
 }
 
+/** One line of the fixture's heals.json. Every field beyond the identity is
+ *  outcome-dependent, which is what the two guards below exist to sort out. */
+interface HealEvent {
+  outcome?: "healed" | "exhausted" | "no-candidates";
+  stepId: string;
+  stepIndex: number;
+  stepLabel: string;
+  method?: string;
+  originalLocator?: Locator;
+  /** Present only on a heal — a failed attempt applied nothing. */
+  appliedLocator?: Locator;
+  candidates?: HealCandidate[];
+  at: number;
+}
+
+/** A heal, narrowed so the journal can rely on `appliedLocator` being there.
+ *
+ *  An event with NO `outcome` predates the field (2026-08-07) and is therefore
+ *  a heal — that was the only kind the fixture wrote. Defaulting the other way
+ *  would reclassify every historical heal as a failure. The `appliedLocator`
+ *  test is not belt-and-braces: journalling one without a locator would write a
+ *  review row whose "revert" button has nothing to revert to. */
+function isHeal(e: HealEvent): e is HealEvent & { appliedLocator: Locator } {
+  return (e.outcome ?? "healed") === "healed" && !!e.appliedLocator;
+}
+
+/** A failed attempt. Keyed on the outcomes that EXIST rather than on
+ *  "not a heal", so a value this build doesn't recognise is dropped from both
+ *  counts instead of silently inflating the failure one. */
+function isHealFailure(e: HealEvent): e is HealEvent & HealFailure {
+  return e.outcome === "exhausted" || e.outcome === "no-candidates";
+}
+
 /**
- * Read the heals a finished run performed, write them to the journal, and
- * return how many there were.
+ * Read what run-time Auto-Heal did, journal the heals, persist the failures,
+ * and return a count of each.
  *
  * Under "suggest" (the default) nothing is written back to the test: the run
  * used the healed locator in memory to get past the step, and the journal entry
  * is the user's record of that plus the means to apply or dismiss it. Under
  * "apply" the step's locator is updated here, on the backend, because the child
  * process has no business writing to tests.json.
+ *
+ * FAILED attempts are deliberately NOT journalled. The journal is a review
+ * surface — every row is a locator change to accept or revert — and an attempt
+ * that healed nothing offers no such action; putting it there would fill the
+ * review list with rows nobody can act on. They go to the run's artifacts
+ * instead, beside console.json and network.json, because that is what they are:
+ * evidence about one run, keyed by step. See `recordFailure` in
+ * heal-fixture-source.ts for why they are worth keeping at all.
  */
 function collectRunHeals(
   testId: string,
   runId: string,
   healDir: string,
   mode: HealApplyMode,
-): number {
-  if (!healDir) return 0;
+): { healed: number; failed: number } {
+  const none = { healed: 0, failed: 0 };
+  if (!healDir) return none;
+  // The fixture's scratch dir, removed on EVERY path out of here. It used to be
+  // cleaned only on the heals path; once failures became recordable, a run that
+  // failed to heal and healed nothing would have left it behind for good.
+  const discardScratch = (): void => {
+    try {
+      fs.rmSync(healDir, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
+  };
   const file = path.join(healDir, "heals.json");
-  let events: {
-    stepId: string;
-    stepIndex: number;
-    stepLabel: string;
-    originalLocator?: Locator;
-    appliedLocator: Locator;
-    candidates?: HealCandidate[];
-  }[] = [];
+  let all: HealEvent[] = [];
   try {
-    events = JSON.parse(fs.readFileSync(file, "utf-8"));
+    all = JSON.parse(fs.readFileSync(file, "utf-8"));
   } catch {
-    return 0; // no heals (the common case) — the fixture only writes on a heal
+    // Nothing happened (the common case) — the fixture only writes on an event.
+    discardScratch();
+    return none;
   }
-  if (!Array.isArray(events) || events.length === 0) return 0;
+  if (!Array.isArray(all) || all.length === 0) {
+    discardScratch();
+    return none;
+  }
+
+  const events = all.filter(isHeal);
+  const failures = all.filter(isHealFailure);
+  if (failures.length > 0) {
+    try {
+      artifactStore.writeHealFailures(testId, runId, failures);
+    } catch (err) {
+      logger.warn("runner", "Could not persist heal failures", { err: String(err) });
+    }
+  }
+  if (events.length === 0) {
+    discardScratch();
+    logger.info("runner", "Run could not heal steps", {
+      testId,
+      runId,
+      failed: failures.length,
+    });
+    return { healed: 0, failed: failures.length };
+  }
 
   const apply = mode === "apply";
   const rec = apply ? testStore.get(testId) : null;
@@ -459,13 +529,15 @@ function collectRunHeals(
       logger.warn("runner", "Could not persist applied heals", { err: String(err) });
     }
   }
-  try {
-    fs.rmSync(healDir, { recursive: true, force: true });
-  } catch {
-    /* ignore */
-  }
-  logger.info("runner", "Run healed steps", { testId, runId, count: events.length, apply });
-  return events.length;
+  discardScratch();
+  logger.info("runner", "Run healed steps", {
+    testId,
+    runId,
+    count: events.length,
+    failed: failures.length,
+    apply,
+  });
+  return { healed: events.length, failed: failures.length };
 }
 
 /** CSI escape sequences are stripped at the same choke point as redaction, for
@@ -683,6 +755,11 @@ export const playwrightRunner = {
       let healDir = "";
       let healMapPath = "";
       let healApplyMode: HealApplyMode = "suggest";
+      // The budget this run actually got. Hoisted so the RunRecord can carry
+      // it: read back from the TestRecord later it would be the CURRENT value,
+      // and a timeout raised since would make every older run's "how close was
+      // this step to its budget?" read wrong while still looking plausible.
+      let runTestTimeoutMs: number | undefined;
       try {
         const { cliPath, nodeModules } = resolvePlaywright();
         const scriptsDir = getScriptsDir();
@@ -865,6 +942,7 @@ export const playwrightRunner = {
           settingsTimeout,
           speed,
         );
+        runTestTimeoutMs = testTimeoutMs;
         // Process kill must outlive the test timeout, otherwise a legitimate
         // long test dies with "Timed out — stopping test run" before Playwright
         // can report a clean per-test timeout.
@@ -957,7 +1035,12 @@ export const playwrightRunner = {
 
         // Collect anything run-time Auto-Heal did, and journal it. Read before
         // the temp files are cleaned up below.
-        const healedSteps = collectRunHeals(rec.id, recordId, healDir, healApplyMode);
+        const { healed: healedSteps, failed: healFailedSteps } = collectRunHeals(
+          rec.id,
+          recordId,
+          healDir,
+          healApplyMode,
+        );
         if (healMapPath) {
           try {
             fs.rmSync(healMapPath, { force: true });
@@ -1059,6 +1142,8 @@ export const playwrightRunner = {
               datasetId: params.datasetId,
               datasetName: params.datasetName,
               healedSteps,
+              healFailedSteps,
+              testTimeoutMs: runTestTimeoutMs,
               captureOverheadMs,
               shotCount,
               a11yMs,
