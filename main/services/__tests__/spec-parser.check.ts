@@ -93,6 +93,10 @@ assertEqual(richParsed.steps[13]?.value, "Done", "title assertion captures expec
 assertEqual(richParsed.steps[14]?.soft, true, "soft assertion flag round-trips");
 
 // ── 4. A genuinely unmappable statement is flagged, not silently dropped ──
+//
+// `.hover()` used to sit in this list. It is now a real `state` step, so this
+// section pins the OTHER half of that change: `reload()` still counts as a
+// skip, and the hover is parsed rather than merely stopping being counted.
 const unmappable = [
   'import { test, expect } from "@playwright/test";',
   "",
@@ -104,8 +108,28 @@ const unmappable = [
   "",
 ].join("\n");
 const unmappableParsed = parseSpecDetailed(unmappable);
-assertEqual(unmappableParsed.steps.length, 1, "only the recognized goto is kept");
-assertEqual(unmappableParsed.skipped, 2, "reload() and hover() are both counted as skipped");
+assertEqual(unmappableParsed.steps.length, 2, "the goto and the hover are both kept");
+assertEqual(unmappableParsed.skipped, 1, "only reload() is counted as skipped");
+assertEqual(unmappableParsed.steps[1]?.type, "state", "hover() parses as a state step");
+assertEqual(unmappableParsed.steps[1]?.elementState, "hover", "hover() keeps its state");
+
+// A NESTED page call nobody round-trips must still be COUNTED. Before the
+// fallback learned about dotted paths, `page.mouse.move(...)` matched no branch
+// and no fallback: the scan walked it character by character and it produced
+// neither a step nor a skip, so it vanished on the next resync with nothing
+// saying so. A miscount is visible; a disappearance is not.
+const nestedUnmappable = [
+  'import { test, expect } from "@playwright/test";',
+  "",
+  'test("nested", async ({ page }) => {',
+  '  await page.goto("https://example.com");',
+  "  await page.mouse.move(10, 20);",
+  "});",
+  "",
+].join("\n");
+const nestedCallParsed = parseSpecDetailed(nestedUnmappable);
+assertEqual(nestedCallParsed.steps.length, 1, "only the recognized goto is kept (nested call)");
+assertEqual(nestedCallParsed.skipped, 1, "an unrecognized nested page call is counted as skipped");
 
 // ── 5. Conditional (if/endif) logic blocks round-trip ─────────────────────
 const condSteps: Step[] = [
@@ -623,6 +647,157 @@ for (const c of WAIT_UNTIL_CASES) {
     [null, "enabled", null, "urlContains"],
     "…with each wait keeping its predicate across the resize log lines",
   );
+}
+
+// ── 15. CSS assertions and pseudo-state steps ─────────────────────────────
+//
+// The round trip is the whole risk here. A `css` assert and a `state` step both
+// compile to calls that LOOK like several existing ones, and a resync
+// (`tests:updateScript`, an applied AI fix) re-parses the whole spec — so a
+// missed branch doesn't error, it changes the step under the user.
+{
+  const cssSteps: Step[] = [
+    step({ type: "goto", url: "https://example.com" }),
+    step({ type: "state", elementState: "hover", locator: { k: "role", role: "button", name: "Buy" } }),
+    step({
+      type: "assert",
+      locator: { k: "role", role: "button", name: "Buy" },
+      assert: "css",
+      cssProp: "background-color",
+      cssMatch: "is",
+      value: "rgb(0, 82, 204)",
+    }),
+    step({ type: "state", elementState: "focus", locator: { k: "label", v: "Email" } }),
+    step({
+      type: "assert",
+      locator: { k: "label", v: "Email" },
+      assert: "css",
+      // A value full of regex metacharacters, which is the normal case for CSS
+      // — `rgb(…)`, `translate(-50%, 0)`, a quoted font stack. Unescaped, the
+      // parens become capture groups and the pattern matches something else.
+      cssProp: "box-shadow",
+      cssMatch: "contains",
+      value: "rgb(0, 0, 0) 0px 0px 0px 2px",
+    }),
+    step({ type: "state", elementState: "press" }),
+    step({
+      type: "assert",
+      locator: { k: "css", v: "#buy" },
+      assert: "css",
+      cssProp: "transform",
+      cssMatch: "is",
+      value: "matrix(0.98, 0, 0, 0.98, 0, 0)",
+      soft: true,
+    }),
+    step({ type: "state", elementState: "release" }),
+  ];
+  const src = generateSpec({ name: "css", url: "https://example.com", steps: cssSteps });
+  const parsed = parseSpecDetailed(src);
+  assertEqual(parsed.skipped, 0, "css asserts and state steps produce zero skips");
+  assertEqual(
+    parsed.steps.map((s) => s.type),
+    ["goto", "state", "assert", "state", "assert", "state", "assert", "state"],
+    "css/state vocabulary round-trips step types",
+  );
+  assertEqual(
+    parsed.steps.map((s) => s.elementState ?? null),
+    [null, "hover", null, "focus", null, "press", null, "release"],
+    "…and every pseudo-state survives, including the locator-less pair",
+  );
+  assertEqual(
+    parsed.steps.map((s) => s.cssProp ?? null),
+    [null, null, "background-color", null, "box-shadow", null, "transform", null],
+    "…and each css assert keeps its property",
+  );
+  assertEqual(
+    parsed.steps.map((s) => s.cssMatch ?? null),
+    [null, null, "is", null, "contains", null, "is", null],
+    "…and its match mode",
+  );
+  assertEqual(parsed.steps[2]?.value, "rgb(0, 82, 204)", "an `is` css assert keeps its value");
+  assertEqual(
+    parsed.steps[4]?.value,
+    "rgb(0, 0, 0) 0px 0px 0px 2px",
+    "a `contains` css assert un-escapes back to the value the user typed",
+  );
+  assertEqual(parsed.steps[6]?.soft, true, "a soft css assert stays soft");
+
+  // BYTE-identical regeneration is the property that actually matters: a value
+  // that survives parsing but re-escapes on the way out drifts one backslash
+  // per round trip, and every intermediate spec still looks plausible.
+  const regenerated = generateSpec({
+    name: "css",
+    url: "https://example.com",
+    steps: parsed.steps,
+  });
+  assertEqual(regenerated, src, "css/state spec regenerates byte-identically");
+}
+
+// ── 16. A disabled / continue-on-failure css assert and state step ────────
+//
+// Both wrappers rewrite the statement — one comments it out, the other nests it
+// in a try/catch — and each is a separate chance for a new branch to stop
+// matching.
+{
+  const wrapped: Step[] = [
+    step({ type: "goto", url: "https://example.com" }),
+    step({
+      type: "state",
+      elementState: "hover",
+      locator: { k: "css", v: "#a" },
+      disabled: true,
+    }),
+    step({
+      type: "assert",
+      locator: { k: "css", v: "#a" },
+      assert: "css",
+      cssProp: "color",
+      cssMatch: "is",
+      value: "rgb(255, 0, 0)",
+      continueOnFailure: true,
+    }),
+  ];
+  const src = generateSpec({ name: "wrapped", url: "https://example.com", steps: wrapped });
+  const parsed = parseSpecDetailed(src);
+  assertEqual(parsed.skipped, 0, "a disabled state step and a guarded css assert produce no skips");
+  assertEqual(
+    parsed.steps.map((s) => s.type),
+    ["goto", "state", "assert"],
+    "…and both survive their wrappers",
+  );
+  assertEqual(parsed.steps[1]?.disabled, true, "the disabled state step stays disabled");
+  assertEqual(parsed.steps[1]?.elementState, "hover", "…and keeps its state through the comment");
+  assertEqual(
+    parsed.steps[2]?.continueOnFailure,
+    true,
+    "the css assert keeps continue-on-failure",
+  );
+  assertEqual(parsed.steps[2]?.cssProp, "color", "…and its property through the try/catch");
+}
+
+// ── 17. `// wait until` does not turn a css assert into a wait ────────────
+//
+// Every other element assert has a wait counterpart, so a marked one becomes a
+// `wait`. `toHaveCSS` has none — ASSERT_TO_WAIT_UNTIL has no `css` entry — and
+// the fallback must therefore keep it an ASSERTION rather than dropping it.
+{
+  const marked = [
+    'import { test, expect } from "@playwright/test";',
+    "",
+    'test("marked", async ({ page }) => {',
+    '  await page.goto("https://example.com");',
+    '  await expect(page.locator("#a")).toHaveCSS("color", "rgb(1, 2, 3)"); // wait until',
+    "});",
+    "",
+  ].join("\n");
+  const parsed = parseSpecDetailed(marked);
+  assertEqual(parsed.skipped, 0, "a marked css assert is not unclassified");
+  assertEqual(
+    parsed.steps.map((s) => s.type),
+    ["goto", "assert"],
+    "a css assert carrying the wait marker stays an assertion",
+  );
+  assertEqual(parsed.steps[1]?.assert, "css", "…and keeps its assert kind");
 }
 
 if (failures > 0) {

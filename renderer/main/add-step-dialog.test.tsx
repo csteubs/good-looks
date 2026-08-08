@@ -225,3 +225,64 @@ describe("opening from the browser right-click menu", () => {
     expect(steps[0]).toMatchObject({ waitUntil: "visible" });
   });
 });
+
+// ── Element state, the OTHER kind where one submit emits several steps ─────
+//
+// Same class of silent failure as the wait form, for the same reason: what the
+// user picks and what lands in the list are not one-to-one. Two of the four
+// picks expand — `:active` into three rows, `:focus-visible` into two — and the
+// ORDER is the whole meaning. A `press` emitted before the `hover` that
+// positions the cursor presses at wherever the pointer happened to be; a `Tab`
+// emitted after the `focus` it was meant to precede sets keyboard modality on
+// the wrong element and then moves focus off the one being tested. Both look
+// completely correct in the step list.
+
+function renderState(opts: { picked?: PickedElement | null; initialState?: "hover" | "focus" } = {}) {
+  const onAdd = vi.fn((_steps: RawStep[]) => {});
+  render(
+    <AddStepDialog
+      open
+      kind="elementState"
+      onOpenChange={() => {}}
+      onAdd={onAdd}
+      picked={opts.picked === undefined ? PICKED : opts.picked}
+      onStartPick={() => {}}
+      onClearPick={() => {}}
+      initialState={opts.initialState}
+    />,
+  );
+  return { onAdd };
+}
+
+const LOCATOR = { k: "role", role: "button", name: "Submit" };
+
+describe("element state steps", () => {
+  it("hover emits exactly one state step targeting the picked element", () => {
+    const { onAdd } = renderState();
+    submit();
+    expect(emitted(onAdd)).toEqual([
+      { type: "state", elementState: "hover", locator: LOCATOR },
+    ]);
+  });
+
+  it("focus, preselected from the right-click menu, emits a focus step", () => {
+    const { onAdd } = renderState({ initialState: "focus" });
+    submit();
+    expect(emitted(onAdd)).toEqual([
+      { type: "state", elementState: "focus", locator: LOCATOR },
+    ]);
+  });
+
+  it("refuses the whole submit when no element has been picked", () => {
+    // Every state needs a target. Emitting a locator-less hover would generate
+    // no line at all — a step that looks added and does nothing.
+    const { onAdd } = renderState({ picked: null });
+    submit();
+    expect(onAdd).not.toHaveBeenCalled();
+  });
+
+  it("states the row count before the user commits", () => {
+    renderState();
+    expect(screen.getByText(/Adds 1 step/)).toBeTruthy();
+  });
+});

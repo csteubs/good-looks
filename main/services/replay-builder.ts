@@ -40,6 +40,17 @@ export function captureMethod(step: Step): string | null {
     case "press":
       // Only locator.press() is captured; page.keyboard.press() is not.
       return step.locator ? "press" : null;
+    case "state":
+      // `hover` and `focus` are in LOCATOR_ACTIONS, so the capture fixture DOES
+      // write a manifest entry for them. Returning null here would leave that
+      // entry unconsumed, and `shotPtr` never advances past an unconsumed entry
+      // — so every step after the first hover in a capture run would silently
+      // lose its screenshot, its rect, its a11y results and its visual diff.
+      // `press`/`release` are `page.mouse.*`, which no fixture patches, so they
+      // genuinely produce no entry and must stay null.
+      return step.locator && (step.elementState === "hover" || step.elementState === "focus")
+        ? step.elementState
+        : null;
     default:
       return null;
   }
