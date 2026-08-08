@@ -160,6 +160,23 @@ describe("timeout", () => {
       (screen.getByRole("spinbutton", { name: /default test timeout/i }) as HTMLInputElement).value,
     ).toBe("60");
   });
+
+  it("steps in single seconds", () => {
+    renderPane(<TestDefaultsPane />);
+    const input = screen.getByRole("spinbutton", {
+      name: /default test timeout/i,
+    }) as HTMLInputElement;
+    expect(input.step).toBe("1");
+  });
+
+  it("saves a default that is not a multiple of five", () => {
+    // Pins that the finer stepper isn't undone by re-rounding in clamp/save.
+    const { controller } = renderPane(<TestDefaultsPane />);
+    fireEvent.change(screen.getByRole("spinbutton", { name: /default test timeout/i }), {
+      target: { value: "47" },
+    });
+    expect(savedPatch(controller)).toEqual({ defaultTestTimeoutMs: 47_000 });
+  });
 });
 
 describe("capture and accessibility", () => {

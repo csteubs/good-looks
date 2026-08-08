@@ -151,7 +151,7 @@ export function TestDefaultsPane() {
               type="number"
               min={5}
               max={1800}
-              step={5}
+              step={1}
               className="w-24"
               value={Math.round((settings.defaultTestTimeoutMs ?? 60_000) / 1000)}
               onChange={(e) =>
