@@ -36,6 +36,8 @@ import { playwrightRunner } from "./playwright-runner.js";
 import { testStore } from "./test-store.js";
 import { batchHistoryStore } from "./batch-history-store.js";
 import { sendAlert, type BatchAlert } from "./alert-service.js";
+import { buildQueue } from "../../shared/batch-queue.mjs";
+import type { BatchEntry } from "../../shared/batch-queue.mjs";
 import { clampBatchConcurrency } from "../recorder/types.js";
 import type {
   BatchState,
@@ -77,53 +79,12 @@ export interface BatchRunParams {
   concurrency?: number;
 }
 
-/** One queued execution: a test, optionally bound to a dataset row. */
-export interface BatchEntry {
-  testId: string;
-  datasetId?: string;
-  datasetName?: string;
-  vars?: Record<string, string>;
-}
-
-/**
- * Expand a selection into the queue actually executed.
- *
- * Pure, and separated from the runner, because this is where a sweep gets its
- * meaning: without dataset options the queue is exactly the selection (so
- * nothing about existing batches changes), and with them the same test appears
- * once per matching row, in the order the rows are declared.
- *
- * The selection is DEDUPED first. The Batch view's selection is a Set so it
- * can't produce a repeat, but IPC and the MCP can, and a repeated id is what
- * breaks the queue's one structural guarantee: that all of a test's entries sit
- * together. `["a", "b", "a"]` would otherwise interleave, and grouping it into
- * lanes (which the runner must do — see buildLanes) would reorder the queue.
- * Running one test twice in a single batch with identical options has no
- * meaning anyway; running it once per dataset row does, and that still works.
- */
-export function buildQueue(
-  params: BatchRunParams,
-  getDatasets: (testId: string) => Dataset[],
-): BatchEntry[] {
-  const testIds = [...new Set(params.testIds)];
-  const wantsSweep = params.allDatasets === true || (params.datasetIds?.length ?? 0) > 0;
-  if (!wantsSweep) return testIds.map((testId) => ({ testId }));
-  const wanted = new Set(params.datasetIds ?? []);
-  const out: BatchEntry[] = [];
-  for (const testId of testIds) {
-    const rows = getDatasets(testId).filter(
-      (d) => params.allDatasets === true || wanted.has(d.id),
-    );
-    if (rows.length === 0) {
-      out.push({ testId });
-      continue;
-    }
-    for (const row of rows) {
-      out.push({ testId, datasetId: row.id, datasetName: row.name, vars: row.values });
-    }
-  }
-  return out;
-}
+// Expanding a selection into the queue actually executed lives in
+// shared/batch-queue.mjs, so the MCP's run_batch sweeps datasets with the same
+// semantics rather than a second implementation of them. Re-exported because
+// this module is where the app and check:batch-runner already import it from.
+export type { BatchEntry } from "../../shared/batch-queue.mjs";
+export { buildQueue } from "../../shared/batch-queue.mjs";
 
 /**
  * Partition a queue into lanes of entry indices, one lane per distinct testId.

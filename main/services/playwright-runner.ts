@@ -16,6 +16,8 @@ import { runHistoryStore } from "./run-history-store.js";
 import { stepReporterSource } from "./step-reporter-source.js";
 import { captureFixtureSource } from "./capture-fixture-source.js";
 import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
+import type { HealFailure } from "./artifact-store.js";
+import { metricsStore } from "./metrics-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { resolveTestTimeoutMs, SLOW_MO_MS } from "./run-pacing.js";
 import { notifyRunOutcome } from "./run-notifier.js";
@@ -26,7 +28,6 @@ import { describeA11yOutcome } from "./a11y-diff.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import { generateSpec, generateSpecDetailed, secretEnvName } from "./script-generator.js";
 import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "./glaze-runtime-source.js";
-import { PLAYWRIGHT_CONFIG_SOURCE } from "./playwright-config-source.js";
 import { HEAL_FIXTURE_FILE, healFixtureSource } from "./heal-fixture-source.js";
 import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "./settle-fixture-source.js";
 import { buildHealProbeScript } from "./auto-heal.js";
@@ -34,6 +35,11 @@ import { healJournalStore } from "./heal-journal-store.js";
 import { describeStep } from "./script-generator.js";
 import { testSecretsStore } from "./test-secrets-store.js";
 import { refreshSecretSnapshot, redactWithSnapshot } from "./secret-redaction.js";
+import { stripAnsi } from "../../shared/strip-ansi.mjs";
+import {
+  PLAYWRIGHT_CONFIG_FILE,
+  playwrightConfigSource,
+} from "../../shared/playwright-config-source.mjs";
 import type {
   HealApplyMode,
   HealCandidate,
@@ -178,11 +184,12 @@ function ensureModuleResolution(scriptsDir: string, nodeModules: string): void {
   }
 }
 
-// Contents live in playwright-config-source.ts — see there for why, and for
-// what each env-driven field is for.
+// Contents live in shared/playwright-config-source.mjs — see there for why ONE
+// definition serves both this and the MCP server, and for what each env-driven
+// field is for. The write is `writeIfChanged`, like every other fixture here.
 function ensureConfig(scriptsDir: string): string {
-  const configPath = path.join(scriptsDir, "playwright.config.ts");
-  writeIfChanged(configPath, PLAYWRIGHT_CONFIG_SOURCE);
+  const configPath = path.join(scriptsDir, PLAYWRIGHT_CONFIG_FILE);
+  writeIfChanged(configPath, playwrightConfigSource);
   return configPath;
 }
 
@@ -452,38 +459,107 @@ function baseEnv(nodeModules: string): NodeJS.ProcessEnv {
   };
 }
 
+/** One line of the fixture's heals.json. Every field beyond the identity is
+ *  outcome-dependent, which is what the two guards below exist to sort out. */
+interface HealEvent {
+  outcome?: "healed" | "exhausted" | "no-candidates";
+  stepId: string;
+  stepIndex: number;
+  stepLabel: string;
+  method?: string;
+  originalLocator?: Locator;
+  /** Present only on a heal — a failed attempt applied nothing. */
+  appliedLocator?: Locator;
+  candidates?: HealCandidate[];
+  at: number;
+}
+
+/** A heal, narrowed so the journal can rely on `appliedLocator` being there.
+ *
+ *  An event with NO `outcome` predates the field (2026-08-07) and is therefore
+ *  a heal — that was the only kind the fixture wrote. Defaulting the other way
+ *  would reclassify every historical heal as a failure. The `appliedLocator`
+ *  test is not belt-and-braces: journalling one without a locator would write a
+ *  review row whose "revert" button has nothing to revert to. */
+function isHeal(e: HealEvent): e is HealEvent & { appliedLocator: Locator } {
+  return (e.outcome ?? "healed") === "healed" && !!e.appliedLocator;
+}
+
+/** A failed attempt. Keyed on the outcomes that EXIST rather than on
+ *  "not a heal", so a value this build doesn't recognise is dropped from both
+ *  counts instead of silently inflating the failure one. */
+function isHealFailure(e: HealEvent): e is HealEvent & HealFailure {
+  return e.outcome === "exhausted" || e.outcome === "no-candidates";
+}
+
 /**
- * Read the heals a finished run performed, write them to the journal, and
- * return how many there were.
+ * Read what run-time Auto-Heal did, journal the heals, persist the failures,
+ * and return a count of each.
  *
  * Under "suggest" (the default) nothing is written back to the test: the run
  * used the healed locator in memory to get past the step, and the journal entry
  * is the user's record of that plus the means to apply or dismiss it. Under
  * "apply" the step's locator is updated here, on the backend, because the child
  * process has no business writing to tests.json.
+ *
+ * FAILED attempts are deliberately NOT journalled. The journal is a review
+ * surface — every row is a locator change to accept or revert — and an attempt
+ * that healed nothing offers no such action; putting it there would fill the
+ * review list with rows nobody can act on. They go to the run's artifacts
+ * instead, beside console.json and network.json, because that is what they are:
+ * evidence about one run, keyed by step. See `recordFailure` in
+ * heal-fixture-source.ts for why they are worth keeping at all.
  */
 function collectRunHeals(
   testId: string,
   runId: string,
   healDir: string,
   mode: HealApplyMode,
-): number {
-  if (!healDir) return 0;
+): { healed: number; failed: number } {
+  const none = { healed: 0, failed: 0 };
+  if (!healDir) return none;
+  // The fixture's scratch dir, removed on EVERY path out of here. It used to be
+  // cleaned only on the heals path; once failures became recordable, a run that
+  // failed to heal and healed nothing would have left it behind for good.
+  const discardScratch = (): void => {
+    try {
+      fs.rmSync(healDir, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
+  };
   const file = path.join(healDir, "heals.json");
-  let events: {
-    stepId: string;
-    stepIndex: number;
-    stepLabel: string;
-    originalLocator?: Locator;
-    appliedLocator: Locator;
-    candidates?: HealCandidate[];
-  }[] = [];
+  let all: HealEvent[] = [];
   try {
-    events = JSON.parse(fs.readFileSync(file, "utf-8"));
+    all = JSON.parse(fs.readFileSync(file, "utf-8"));
   } catch {
-    return 0; // no heals (the common case) — the fixture only writes on a heal
+    // Nothing happened (the common case) — the fixture only writes on an event.
+    discardScratch();
+    return none;
   }
-  if (!Array.isArray(events) || events.length === 0) return 0;
+  if (!Array.isArray(all) || all.length === 0) {
+    discardScratch();
+    return none;
+  }
+
+  const events = all.filter(isHeal);
+  const failures = all.filter(isHealFailure);
+  if (failures.length > 0) {
+    try {
+      artifactStore.writeHealFailures(testId, runId, failures);
+    } catch (err) {
+      logger.warn("runner", "Could not persist heal failures", { err: String(err) });
+    }
+  }
+  if (events.length === 0) {
+    discardScratch();
+    logger.info("runner", "Run could not heal steps", {
+      testId,
+      runId,
+      failed: failures.length,
+    });
+    return { healed: 0, failed: failures.length };
+  }
 
   const apply = mode === "apply";
   const rec = apply ? testStore.get(testId) : null;
@@ -522,32 +598,23 @@ function collectRunHeals(
       logger.warn("runner", "Could not persist applied heals", { err: String(err) });
     }
   }
-  try {
-    fs.rmSync(healDir, { recursive: true, force: true });
-  } catch {
-    /* ignore */
-  }
-  logger.info("runner", "Run healed steps", { testId, runId, count: events.length, apply });
-  return events.length;
+  discardScratch();
+  logger.info("runner", "Run healed steps", {
+    testId,
+    runId,
+    count: events.length,
+    failed: failures.length,
+    apply,
+  });
+  return { healed: events.length, failed: failures.length };
 }
 
-/** CSI escape sequences — Playwright's `line` reporter redraws its progress
- *  line with cursor-up + erase-line, and colours failures.
- *
- *  Stripped at the same choke point as redaction, for the same reason: these
- *  bytes are meaningless outside a terminal, and all three consumers suffer
- *  from them. The Output panel renders them as visible mojibake (`⌧[1A⌧[2K`),
- *  the log file keeps them forever, and — worst — they are sent verbatim to
- *  the model in the Debug-with-AI prompt, where they spend context on cursor
- *  movements and give the model garbage to reason about. */
-// Built from a char code rather than a regex literal: ESC is a control
-// character, and `no-control-regex` rejects it inline. Disabling that rule
-// here would also disable it for anything added to this file later.
-const ANSI_ESCAPE = new RegExp(String.fromCharCode(27) + "\\[[0-9;?]*[A-Za-z]", "g");
-
-export function stripAnsi(text: string): string {
-  return text.replace(ANSI_ESCAPE, "");
-}
+/** CSI escape sequences are stripped at the same choke point as redaction, for
+ *  the same reason: these bytes are meaningless outside a terminal, and all
+ *  three consumers suffer from them. Defined in shared/strip-ansi.mjs so the
+ *  MCP server's own single write point can apply it too; re-exported because
+ *  strip-ansi.test.ts and the rest of the app import it from here. */
+export { stripAnsi } from "../../shared/strip-ansi.mjs";
 
 function emitOutput(runId: string, stream: "stdout" | "stderr" | "system", chunk: string): void {
   // Redact HERE, at the single point every byte of run output passes through,
@@ -764,6 +831,11 @@ export const playwrightRunner = {
       let healDir = "";
       let healMapPath = "";
       let healApplyMode: HealApplyMode = "suggest";
+      // The budget this run actually got. Hoisted so the RunRecord can carry
+      // it: read back from the TestRecord later it would be the CURRENT value,
+      // and a timeout raised since would make every older run's "how close was
+      // this step to its budget?" read wrong while still looking plausible.
+      let runTestTimeoutMs: number | undefined;
       try {
         const { cliPath, nodeModules } = resolvePlaywright();
         const scriptsDir = getScriptsDir();
@@ -942,6 +1014,7 @@ export const playwrightRunner = {
           settingsTimeout,
           speed,
         );
+        runTestTimeoutMs = testTimeoutMs;
         // Process kill must outlive the test timeout, otherwise a legitimate
         // long test dies with "Timed out — stopping test run" before Playwright
         // can report a clean per-test timeout.
@@ -1043,7 +1116,12 @@ export const playwrightRunner = {
 
         // Collect anything run-time Auto-Heal did, and journal it. Read before
         // the temp files are cleaned up below.
-        const healedSteps = collectRunHeals(rec.id, recordId, healDir, healApplyMode);
+        const { healed: healedSteps, failed: healFailedSteps } = collectRunHeals(
+          rec.id,
+          recordId,
+          healDir,
+          healApplyMode,
+        );
         if (healMapPath) {
           try {
             fs.rmSync(healMapPath, { force: true });
@@ -1145,6 +1223,8 @@ export const playwrightRunner = {
               datasetId: params.datasetId,
               datasetName: params.datasetName,
               healedSteps,
+              healFailedSteps,
+              testTimeoutMs: runTestTimeoutMs,
               captureOverheadMs,
               shotCount,
               a11yMs,
@@ -1155,6 +1235,11 @@ export const playwrightRunner = {
             logText,
           );
           sendToMain("runs:changed", {});
+          // Distil this run into metric rows while every artifact it produced
+          // is still on disk. Best-effort and non-throwing by contract — a
+          // bookkeeping failure must not become a failed run — and idempotent,
+          // so the prune preflight rewriting the same run later is harmless.
+          metricsStore.ingest(recordId, "app");
         } catch (err) {
           logger.warn("runner", "Failed to persist run history", { err: String(err) });
         }

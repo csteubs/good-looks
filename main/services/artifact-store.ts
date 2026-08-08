@@ -34,6 +34,24 @@ export const DEFAULT_RETAINED_RUNS = 10;
  *  deleting it during retention would silently destroy the comparison anchor. */
 const RESERVED_DIRS = new Set(["baseline"]);
 
+/**
+ * Called for every run directory about to be deleted, before it is deleted.
+ *
+ * The seam the metrics rollup hangs off: retention is where per-step evidence
+ * dies, so it is the last moment anything can distil a run into the ~60 bytes
+ * of rows that outlive it.
+ *
+ * REGISTERED rather than imported. metrics-store reads through this module, so
+ * importing it here would be a cycle — and this way the store stays free of any
+ * knowledge that metrics exist, which is what keeps a metrics failure from
+ * being able to break pruning.
+ */
+let prunePreflight: ((testId: string, runId: string) => void) | null = null;
+
+export function setPrunePreflight(fn: (testId: string, runId: string) => void): void {
+  prunePreflight = fn;
+}
+
 export interface ArtifactStepEntry {
   index: number;
   action: string;
@@ -41,8 +59,19 @@ export interface ArtifactStepEntry {
   value?: string;
   ok: boolean;
   ts: number;
-  /** wall-clock ms this one screenshot took (absent on pre-instrumentation runs) */
+  /** wall-clock ms this one SCREENSHOT took (absent on pre-instrumentation
+   *  runs). Summed into `captureMs` — this is what capture costs, not what the
+   *  step costs. For the latter see `stepMs`. */
   ms?: number;
+  /** wall-clock ms the ACTION itself took, from call to resolve — excluding the
+   *  screenshot and the axe run, including crawl's settling waits (those are
+   *  time the step really took).
+   *
+   *  Recorded from 2026-08-07. The two durations were conflated before that,
+   *  with only the screenshot's measured: reading `ms` as step duration would
+   *  make "this step went from 1.2s to 4.8s" a statement about how long a PNG
+   *  took to write. Absent on older runs, and not reconstructible from them. */
+  stepMs?: number;
   /** the acted-on element's viewport rect, NORMALIZED 0–1, measured at capture
    *  time. Present only for locator actions; the anchor for component-level
    *  diffing (no selector is re-resolved later). */
@@ -121,6 +150,19 @@ export interface ReplayStep {
   type: string;
   status: ReplayStepStatus;
   screenshot: string | null;
+  /** This step's index in ACTION order — the manifest entry it matched.
+   *
+   *  The join between the app's two index spaces: `index` above counts Step[]
+   *  positions, while the capture fixture numbers screenshots, and tags every
+   *  console.json / network.json entry, by action order. Absent for a step that
+   *  captures nothing (assertions, waits, if/endif).
+   *
+   *  Recorded explicitly since 2026-08-07. It was previously only recoverable
+   *  by parsing it back out of `screenshot`'s filename, which is null whenever
+   *  the shot failed and on every a11y-only or logs-only run — so a join keyed
+   *  on it silently matched nothing exactly when there were no screenshots to
+   *  notice were missing. */
+  actionIndex?: number;
   /** the acted-on element's normalized rect at capture time, when recorded. */
   rect?: NormalizedRect;
   /** visual-diff result for this step's screenshot, when captured (Phase 3). */
@@ -215,6 +257,27 @@ export interface NetworkEntry {
   failure?: string;
   requestHeaders?: Record<string, string>;
   responseHeaders?: Record<string, string>;
+}
+
+/** One step run-time Auto-Heal tried to rescue and could not.
+ *
+ *  `"no-candidates"` is the stronger of the two: the probe found nothing on the
+ *  page resembling the element, so there was not even anything to try.
+ *  `"exhausted"` means candidates were ranked and acting on every one of them
+ *  failed too. Both say the element is GONE rather than merely renamed, which
+ *  is evidence about the SITE — the opposite conclusion to a successful heal,
+ *  where the element existed and only the locator was stale. */
+export interface HealFailure {
+  outcome: "exhausted" | "no-candidates";
+  stepId: string;
+  stepIndex: number;
+  stepLabel: string;
+  /** the Locator action that failed (`click`, `fill`, …) */
+  method?: string;
+  originalLocator?: unknown;
+  /** what the probe managed to rank, when it ranked anything */
+  candidates?: unknown[];
+  at: number;
 }
 
 export interface RunLogs {
@@ -326,6 +389,19 @@ export const artifactStore = {
     );
 
     for (const r of doomed) {
+      // Roll the run up BEFORE the evidence goes. Wrapped separately from the
+      // delete so a preflight that throws cannot stop retention from running —
+      // the disk filling up is a worse failure than a gap in the metrics.
+      if (prunePreflight) {
+        try {
+          prunePreflight(testId, path.basename(r.full));
+        } catch (err) {
+          logger.warn("artifacts", "Prune preflight failed", {
+            dir: r.full,
+            err: String(err),
+          });
+        }
+      }
       try {
         fs.rmSync(r.full, { recursive: true, force: true });
       } catch (err) {
@@ -464,6 +540,39 @@ export const artifactStore = {
       return JSON.parse(raw) as ArtifactManifest;
     } catch {
       return null;
+    }
+  },
+
+  /** Persist the steps run-time Auto-Heal tried to rescue and could not.
+   *
+   *  Its own file, beside console.json and network.json rather than inside
+   *  manifest.json, for the same reason those are: it is unbounded in a way a
+   *  per-step manifest entry is not, and every existing manifest reader would
+   *  have to parse past it.
+   *
+   *  Deliberately NOT the heal journal. That is a review surface — every row is
+   *  a locator change to accept or revert — and an attempt that healed nothing
+   *  offers no such action. This is evidence about one run, keyed by step. */
+  writeHealFailures(testId: string, runId: string, failures: HealFailure[]): void {
+    if (failures.length === 0) return;
+    const dir = this.ensureRunDir(testId, runId);
+    fs.writeFileSync(
+      path.join(dir, "heal-failures.json"),
+      JSON.stringify({ testId, runId, entries: failures }, null, 2),
+    );
+  },
+
+  /** Read a run's failed heal attempts, or an empty list. */
+  readHealFailures(testId: string, runId: string): HealFailure[] {
+    try {
+      const raw = fs.readFileSync(
+        path.join(this.runDir(testId, runId), "heal-failures.json"),
+        "utf-8",
+      );
+      const parsed = JSON.parse(raw) as { entries?: HealFailure[] };
+      return Array.isArray(parsed.entries) ? parsed.entries : [];
+    } catch {
+      return [];
     }
   },
 

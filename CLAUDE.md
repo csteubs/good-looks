@@ -15,6 +15,8 @@ Records interactions on any website (clicks, typing, navigation, assertions) and
 
 - **Frontend** (React 19 + Vite, `renderer/`) renders in a macOS WebView.
 - **Backend** (Node.js, `main/`) calls native Swift host APIs through the Glaze SDK.
+- **The metrics DB** (`userData/recorder/metrics.db`, `node:sqlite`) is a **derived shadow** of the JSON stores and run artifacts — never a store of record. Three consequences, all load-bearing: it is rolled up **before** retention prunes (that is the whole point — after it, retention costs you pictures, not history); a failure to open, migrate or write it must **never** reach a run, so every method swallows its own errors and degrades to "no metrics"; and a schema change needs no migration, because dropping and replaying from disk gives the same answer. `node:sqlite` is imported **dynamically** — a static import would throw at module load on a runtime without it and take the backend down.
+- **`shared/`** holds logic the app AND the standalone MCP server both need. They can't share a `.ts` module — the app is compiled against `@glaze/core`, the MCP is plain `.mjs` with no build step — so these are `.mjs` with a hand-written `.d.mts` beside them, which keeps `type-check` a real gate over every TypeScript caller. **Pure only** (no `fs`, no `@glaze/core`, no IPC, no `process`); anything needing the filesystem stays on its own side and hands data in. Reach for this before transcribing a constant into `mcp/` — a copy is right the day it's written and silent forever after.
 - They talk over a JSON-RPC 2.0 IPC bridge (handlers registered in `main/handlers/`, called from the renderer via `window.glazeAPI.*` exposed in a preload script).
 - The SDK, `@glaze/core`, mirrors much of Electron's API surface. Treat Electron knowledge as a starting point only — verify each API/option is actually implemented here (see SDK reference below) rather than assuming parity.
 
@@ -22,7 +24,8 @@ Records interactions on any website (clicks, typing, navigation, assertions) and
 
 ```
 main/handlers/      IPC handler registration
-main/services/      business logic (recorder, playwright-runner, llm, spec-parser, visual-pipeline)
+main/services/      business logic (recorder, playwright-runner, llm, spec-parser, visual-pipeline,
+                    metrics-store — the derived metrics DB, rolled up before retention prunes)
 main/services/llm/  local + hosted LLM chat integration (Ollama, LM Studio, Claude)
 main/recorder/       recording-session logic (script injection, step capture)
 main/windows/        BrowserWindow creation/config
@@ -30,9 +33,12 @@ renderer/main/       primary views (home, recording/trainer, script view, ai-deb
 renderer/settings/   settings window UI
 renderer/components/ reusable UI wrapping the @glaze/core design system
 renderer/lib/        shared frontend utilities (llm-prompts, etc.)
+shared/              the ONE pure core both the app and the MCP import (.mjs + hand-written
+                     .d.mts). Pure only: no fs, no @glaze/core, no IPC, no process
 mcp/                 standalone MCP server exposing the test library to external MCP clients
                      (list_tests, get_test, list_runs, get_run_log, run_test, run_batch,
-                      capture_app, get_screenshot)
+                      get_visual_report, get_a11y_report, get_run_logs, list_heals,
+                      list_batches, compare_runs, capture_app, get_screenshot)
                      — see mcp/README.md
 docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated rationale)
 .github/             PR template, hygiene workflow, and the script it runs
@@ -55,7 +61,7 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1453 Vitest tests and 29 checks as of 2026-08-07.
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1467 Vitest tests and 31 checks as of 2026-08-07.
 
 - **Vitest** (`vitest.config.ts`) has two projects. **`node`**: `main/**/*.test.ts`, `mcp/**/*.test.ts`, `renderer/lib/**/*.test.ts`. **`dom`** (jsdom): `renderer/**/*.test.tsx` plus `main/**/*.dom.test.ts` — that suffix is for BACKEND code needing a document (the injected replayer and Auto-Heal probe are evaluated for real). The node project explicitly excludes `*.dom.test.ts`; without that they match both globs and run again with no DOM, failing for unrelated reasons.
 - **`check:*` scripts** predate Vitest and are kept, not migrated — they catch real bugs and a rewrite would risk that for tooling neatness. Plain assertions + a non-zero exit; no runner. Two are deliberately *source-level* (`check:ai-debug-scroll`, `check:scroll-layout`) because they guard layout contracts that jsdom cannot observe.

@@ -23,6 +23,7 @@
 // regression-checkable without a browser or a run history on disk.
 
 import type { RunRecord } from "../recorder/types.js";
+import { errorSignature } from "../../shared/error-signature.mjs";
 
 /** Reuses run-comparison.ts's vocabulary rather than inventing a second one for
  *  the same idea — two words for "it worked and now it doesn't" is how a
@@ -104,37 +105,11 @@ export interface RunDetail {
   healedStepIds?: string[];
 }
 
-/**
- * Reduce a raw error to something groupable.
- *
- * Two runs failing the same way rarely produce byte-identical text: timeouts
- * carry durations, selectors carry generated ids, paths carry a run id. Without
- * normalization every failure is its own cluster and the clustering does
- * nothing. Over-normalizing is the opposite risk — collapsing two genuinely
- * different failures into one — so this only removes things that are known to
- * vary run-to-run while the failure stays the same.
- */
-export function errorSignature(raw: string | undefined): string {
-  if (!raw) return "";
-  return (
-    raw
-      .replace(/\r/g, "")
-      .split("\n")[0]
-      .trim()
-      // Absolute paths differ per machine and per run directory.
-      .replace(/(\/[\w.@-]+)+\/([\w.-]+)/g, "<path>")
-      // Timeouts: "Timeout 30000ms exceeded" is the same failure at any duration.
-      .replace(/\b\d+\s*ms\b/gi, "<ms>")
-      .replace(/\b\d+(\.\d+)?\s*s\b/gi, "<s>")
-      // Generated ids, hashes and uuids.
-      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, "<uuid>")
-      .replace(/\b[0-9a-f]{16,}\b/gi, "<hash>")
-      // Bare numbers last, so the more specific rules above get first refusal.
-      .replace(/\b\d+\b/g, "<n>")
-      .replace(/\s+/g, " ")
-      .slice(0, 200)
-  );
-}
+// The signature itself lives in shared/error-signature.mjs: the metrics rollup
+// has to compute it at ingest (the run log it reads is capped and pruned), and
+// the MCP will need the same clustering the app shows. Re-exported because this
+// module is where the app already imports it from.
+export { errorSignature } from "../../shared/error-signature.mjs";
 
 /** Count consecutive-run disagreements. Runs must be oldest-first. */
 export function countTransitions(statuses: readonly ("passed" | "failed")[]): number {

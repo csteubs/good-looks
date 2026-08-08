@@ -1092,6 +1092,25 @@ export interface RunRecord {
    *  something was silently substituted is not the same evidence as one that
    *  passed outright. */
   healedSteps?: number;
+  /** How many steps Auto-Heal TRIED to rescue and could not — it looked for
+   *  the element under every candidate locator it could rank, and none of them
+   *  worked (or nothing on the page resembled it at all).
+   *
+   *  The opposite evidence to `healedSteps`, and the more informative half. A
+   *  step that healed says the locator was stale; a step that could not be
+   *  healed says the element is *gone*, which points at the site rather than at
+   *  the test. Nothing recorded this before 2026-08-07 — the fixture only ever
+   *  wrote an event on success — so it is absent on older runs and, unlike
+   *  everything else in this record, could never have been reconstructed. */
+  healFailedSteps?: number;
+  /** The per-test Playwright timeout THIS run actually executed under, in ms.
+   *
+   *  Stored on the run rather than read back from the TestRecord, because the
+   *  TestRecord holds the CURRENT value: raise a test's timeout today and every
+   *  older run's "how close was this step to its budget?" comparison silently
+   *  becomes wrong, while still looking like a plausible number. Absent on runs
+   *  recorded before this field; read as unknown, never as the default. */
+  testTimeoutMs?: number;
   /** The dataset row this run used, when it was one row of a sweep. Both are
    *  stored: the id joins back to the record, and the name survives the row
    *  being renamed or deleted — a run history that can't say WHICH row failed
