@@ -426,6 +426,13 @@ export interface TestFlake {
   healedRuns: number;
 }
 
+/** Mirror of MIN_RUNS_FOR_VERDICT in main/services/flake-analysis.ts — the
+ *  number of runs below which no verdict is offered. Duplicated because the
+ *  Stability tooltips quote it, and a tooltip that says "fewer than 4" while
+ *  the analysis uses 5 is worse than no tooltip: it teaches a rule that isn't
+ *  the rule. Pinned to the backend by check:flake-analysis. */
+export const MIN_RUNS_FOR_VERDICT = 4;
+
 export interface FlakeReport {
   tests: TestFlake[];
   clusters: FailureCluster[];

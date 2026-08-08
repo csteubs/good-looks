@@ -296,6 +296,22 @@ describe("layout keeps the page's last controls reachable", () => {
     expect(content.lastElementChild?.contains(pagerBlock)).toBe(true);
   });
 
+  it("puts the chart above the summary cards", async () => {
+    // The shape of the last week is the thing you can read without reading — a
+    // rising red band answers "is something wrong?" before any number does. It
+    // used to sit below three panels of text. Asserted by DOM order, since
+    // jsdom can't see which is higher on screen.
+    renderView();
+    await bodyRows(1);
+    const content = scrollContent();
+    const chart = screen.getByText(/pass \/ fail/i).closest("div")!;
+    const cards = screen.getByText("Pass rate").closest("div")!;
+    const kids = Array.from(content.children);
+    const idx = (el: Element) => kids.findIndex((k) => k.contains(el));
+    expect(idx(chart)).toBeGreaterThanOrEqual(0);
+    expect(idx(chart)).toBeLessThan(idx(cards));
+  });
+
   it("shows the filters, the table and the pager at the same time", async () => {
     // All three must coexist: a layout that hides any one of them is the bug.
     renderView();

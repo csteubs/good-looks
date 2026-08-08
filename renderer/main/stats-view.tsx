@@ -555,6 +555,12 @@ export function StatsView() {
             />
           ) : (
             <>
+              {/* Chart FIRST. The shape of the last week is the thing you can
+                  read without reading — a rising red band answers "is something
+                  wrong?" before any number does, and it was previously below
+                  three panels of text. The numbers it summarises follow it. */}
+              {buckets.length > 0 ? <PassFailChart buckets={buckets} /> : null}
+
               {/* Summary cards */}
               <div className="grid grid-cols-4 gap-3">
                 <StatCard label="Total runs" value={String(realRuns.length)} />
@@ -566,12 +572,10 @@ export function StatsView() {
               {/* Capture overhead — only once a capture run has been measured */}
               {overheadQuery.data ? <CaptureOverheadPanel summary={overheadQuery.data} /> : null}
 
-              {/* Stability — above the chart, because "is this test trustworthy"
-                  is the question the pass rate below can't answer. */}
+              {/* Stability — "is this test trustworthy", which neither the chart
+                  nor the pass rate above can answer: both count outcomes, and
+                  what makes a test flaky is how often it CHANGES its mind. */}
               {flakeQuery.data ? <FlakePanel report={flakeQuery.data} /> : null}
-
-              {/* Chart */}
-              {buckets.length > 0 ? <PassFailChart buckets={buckets} /> : null}
 
               {/* Search */}
               <div className="flex flex-col gap-2">

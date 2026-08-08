@@ -28,6 +28,9 @@ import {
 } from "../flake-analysis.js";
 import { extractError } from "../flake-source.js";
 import type { RunRecord } from "../../recorder/types.js";
+// The renderer keeps its own copy so the Stability tooltips can quote the
+// threshold without an IPC round trip. Pinned here — see the check below.
+import { MIN_RUNS_FOR_VERDICT as RENDERER_MIN_RUNS_FOR_VERDICT } from "../../../renderer/lib/recorder-types.js";
 
 let failures = 0;
 
@@ -328,6 +331,18 @@ function main(): void {
     assertEqual(empty.tests.length, 0, "no runs means no tests");
     assertEqual(empty.clusters.length, 0, "no runs means no clusters");
     assertEqual(empty.analysedTests, 0, "no runs means nothing analysed");
+  }
+
+  // ── The renderer's copy of the threshold ───────────────────────────
+  // The Stability tooltips quote this number. A tooltip saying "fewer than 4"
+  // while the analysis uses 5 is worse than no tooltip — it teaches a rule that
+  // isn't the rule, and nothing on screen would look wrong.
+  {
+    assertEqual(
+      RENDERER_MIN_RUNS_FOR_VERDICT,
+      MIN_RUNS_FOR_VERDICT,
+      "the renderer's MIN_RUNS_FOR_VERDICT matches the analysis",
+    );
   }
 
   if (failures > 0) {
