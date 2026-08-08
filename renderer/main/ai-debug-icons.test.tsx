@@ -15,9 +15,11 @@
 //   • the run Output panel's sparkle (per test)
 //   • the trainer Console's per-step sparkles (per step)
 //   • the global chip (aggregate across sessions)
+//   • the library sidebar's per-row sparkle (aggregate per test)
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, act, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { AiDebugSession, AiDebugStatus } from "../lib/recorder-types";
 import { toneFor } from "../lib/ai-debug-status";
@@ -29,6 +31,7 @@ import {
   useAiDebugStatus,
   type AiDebugContextValue,
 } from "./ai-debug-store";
+import { LibrarySidebar } from "./library-sidebar";
 import { RunOutput } from "./run-output";
 import type { RunInfo } from "./recorder-store";
 
@@ -40,7 +43,17 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => h.navigate,
+  // The sidebar (a covered surface below) reads both; neither matters here.
+  useParams: () => ({}),
+  useRouterState: () => "/",
 }));
+
+// The sidebar's dialogs each open their own queries and native bridges; none
+// of them is an icon surface.
+vi.mock("./new-recording-dialog", () => ({ NewRecordingDialog: () => null }));
+vi.mock("./generate-test-dialog", () => ({ GenerateTestDialog: () => null }));
+vi.mock("./import-git-dialog", () => ({ ImportGitDialog: () => null }));
+vi.mock("./tags-dialog", () => ({ TagsDialog: () => null }));
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -64,6 +77,22 @@ vi.mock("../lib/api", () => ({
         h.handlers[channel] = (h.handlers[channel] ?? []).filter((x) => x !== cb);
       };
     },
+    // For the sidebar surface: one test the sessions can attach to, no runs
+    // (the verdict dot is library-sidebar.test.tsx's business, not this file's).
+    tests: {
+      list: async () => [
+        {
+          id: "t1",
+          name: "Checkout",
+          url: "https://example.com",
+          createdAt: 1,
+          updatedAt: 1,
+          steps: [],
+          scriptPath: "/tmp/t1.spec.ts",
+        },
+      ],
+    },
+    runs: { list: async () => [] },
   },
 }));
 
@@ -463,6 +492,82 @@ describe("the global chip", () => {
 // re-rendered from scratch — the failure is silent in both directions: orange
 // on a finished job leaves the user waiting on nothing, and a lost green loses
 // them an answer they asked for.
+
+// ── The library sidebar's per-row sparkle ────────────────────────────
+
+describe("the sidebar row sparkle", () => {
+  // The sidebar needs a QueryClient for its tests/runs queries; the other
+  // surfaces above don't, so the wrapper lives here rather than in a shared
+  // helper that would imply they use it.
+  function renderSidebar() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <AiDebugProvider>
+          <Capture />
+          <LibrarySidebar />
+        </AiDebugProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("shows every status with its own colour and label on the test's row", async () => {
+    for (const status of ALL_STATUSES) {
+      h.listResult = [session({ status })];
+      const { unmount } = renderSidebar();
+      const tone = toneFor(status);
+      const label = `AI debug — ${tone.label}`;
+      await waitFor(() => expect(screen.getByLabelText(label)).toBeTruthy());
+      expect(screen.getByLabelText(label).getAttribute("class") ?? "").toContain(tone.className);
+      unmount();
+    }
+  });
+
+  it("pulses while streaming and holds still once done", async () => {
+    h.listResult = [session({ status: "streaming" })];
+    const first = renderSidebar();
+    const busyLabel = `AI debug — ${toneFor("streaming").label}`;
+    await waitFor(() => expect(screen.getByLabelText(busyLabel)).toBeTruthy());
+    expect(screen.getByLabelText(busyLabel).getAttribute("class") ?? "").toContain("animate-pulse");
+    first.unmount();
+
+    h.listResult = [session({ status: "done" })];
+    renderSidebar();
+    const doneLabel = `AI debug — ${toneFor("done").label}`;
+    await waitFor(() => expect(screen.getByLabelText(doneLabel)).toBeTruthy());
+    expect(screen.getByLabelText(doneLabel).getAttribute("class") ?? "").not.toContain(
+      "animate-pulse",
+    );
+  });
+
+  it("keeps a row without sessions clean", async () => {
+    h.listResult = [];
+    renderSidebar();
+    await screen.findByText("Checkout");
+    expect(screen.queryByLabelText(/^AI debug — /)).toBeNull();
+  });
+
+  it("follows a session from streaming to done, live", async () => {
+    // The row must update while the user is elsewhere in the app — that's the
+    // whole point of surfacing it in the LIST rather than only in the detail
+    // view they navigated away from.
+    h.listResult = [];
+    renderSidebar();
+    await screen.findByText("Checkout");
+
+    openSessionFor("t1");
+    await act(async () => {
+      await store.startStream(runSessionKey("t1"), [{ role: "user", content: "hi" }]);
+    });
+    const busyLabel = `AI debug — ${toneFor("streaming").label}`;
+    await waitFor(() => expect(screen.getByLabelText(busyLabel)).toBeTruthy());
+
+    emit("llm:done", { requestId: "req-1" });
+    const doneLabel = `AI debug — ${toneFor("done").label}`;
+    await waitFor(() => expect(screen.getByLabelText(doneLabel)).toBeTruthy());
+    expect(screen.queryByLabelText(busyLabel)).toBeNull();
+  });
+});
 
 describe("applying a suggested fix", () => {
   function renderFinishedSession() {

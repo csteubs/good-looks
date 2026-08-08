@@ -20,13 +20,16 @@ import {
   Text,
   toast,
 } from "@glaze/core/components";
-import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Tag, Wand2, Copy } from "lucide-react";
+import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
 
 import { api } from "../lib/api";
+import { aggregateStatus } from "../lib/ai-debug-sessions";
+import { toneFor } from "../lib/ai-debug-status";
 import type { LlmProvider } from "../lib/llm-types";
-import type { TestRecord } from "../lib/recorder-types";
+import type { AiDebugStatus, RunRecord, TestRecord } from "../lib/recorder-types";
 import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/duplicate-warnings";
+import { useAiDebug } from "./ai-debug-store";
 import { NewRecordingDialog } from "./new-recording-dialog";
 import { GenerateTestDialog } from "./generate-test-dialog";
 import { ImportGitDialog } from "./import-git-dialog";
@@ -235,6 +238,47 @@ function AiConnectionFooter() {
   );
 }
 
+/** Trailing indicators on a test's sidebar row.
+ *
+ *  The AI-debug sparkle follows the same tone contract as every other surface
+ *  (blue ready / orange thinking / green ready-for-review / red failed) so a
+ *  minimized job stays findable from the LIST of tests, not just from inside
+ *  the one test the user happens to have open. The dot is the latest run's
+ *  verdict — the sidebar answers "which of my tests are broken?" at a glance
+ *  instead of one detail-view visit per test. */
+function RowIndicators({
+  sessions,
+  lastRun,
+}: {
+  sessions: { status: AiDebugStatus }[];
+  lastRun: RunRecord | undefined;
+}) {
+  const agg = aggregateStatus(sessions);
+  const tone = agg === null ? null : toneFor(agg);
+  if (!tone && !lastRun) return null;
+  return (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {tone ? (
+        <Sparkles
+          role="img"
+          aria-label={`AI debug — ${tone.label}`}
+          className={`size-3.5 ${tone.className} ${tone.busy ? "animate-pulse" : ""}`}
+        />
+      ) : null}
+      {lastRun ? (
+        <span
+          role="img"
+          aria-label={lastRun.status === "passed" ? "Last run passed" : "Last run failed"}
+          title={lastRun.status === "passed" ? "Last run passed" : "Last run failed"}
+          className={`size-2 rounded-full ${
+            lastRun.status === "passed" ? "bg-support-green" : "bg-support-red"
+          }`}
+        />
+      ) : null}
+    </span>
+  );
+}
+
 export function LibrarySidebar() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -256,6 +300,30 @@ export function LibrarySidebar() {
   const [copying, setCopying] = React.useState(false);
 
   const { data: tests = [] } = useQuery({ queryKey: ["tests"], queryFn: api.tests.list });
+  // Shares the ["runs"] cache with Stats and the detail view, so the per-row
+  // verdict dots are usually free. One pass to keep the newest run per test —
+  // runs:list makes no ordering promise worth leaning on.
+  const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
+  const lastRunByTest = React.useMemo(() => {
+    const m = new Map<string, RunRecord>();
+    for (const r of runsQuery.data ?? []) {
+      const prev = m.get(r.testId);
+      if (!prev || r.startedAt > prev.startedAt) m.set(r.testId, r);
+    }
+    return m;
+  }, [runsQuery.data]);
+  // AI-debug sessions grouped per test, for the row sparkle.
+  const { sessions } = useAiDebug();
+  const sessionsByTest = React.useMemo(() => {
+    const m = new Map<string, { status: AiDebugStatus }[]>();
+    for (const s of sessions) {
+      if (!s.testId) continue;
+      const list = m.get(s.testId) ?? [];
+      list.push(s);
+      m.set(s.testId, list);
+    }
+    return m;
+  }, [sessions]);
 
   const duplicate = async (test: TestRecord) => {
     setCopying(true);
@@ -357,6 +425,12 @@ export function LibrarySidebar() {
                   title={t.name}
                   subtitle={hostOf(t.url)}
                   selected={t.id === selectedId}
+                  accessory={
+                    <RowIndicators
+                      sessions={sessionsByTest.get(t.id) ?? []}
+                      lastRun={lastRunByTest.get(t.id)}
+                    />
+                  }
                   onClick={() => navigate({ to: "/test/$id", params: { id: t.id } })}
                 />
               </CustomContextMenuTrigger>
