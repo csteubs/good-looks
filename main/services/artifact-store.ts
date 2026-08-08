@@ -41,8 +41,19 @@ export interface ArtifactStepEntry {
   value?: string;
   ok: boolean;
   ts: number;
-  /** wall-clock ms this one screenshot took (absent on pre-instrumentation runs) */
+  /** wall-clock ms this one SCREENSHOT took (absent on pre-instrumentation
+   *  runs). Summed into `captureMs` — this is what capture costs, not what the
+   *  step costs. For the latter see `stepMs`. */
   ms?: number;
+  /** wall-clock ms the ACTION itself took, from call to resolve — excluding the
+   *  screenshot and the axe run, including crawl's settling waits (those are
+   *  time the step really took).
+   *
+   *  Recorded from 2026-08-07. The two durations were conflated before that,
+   *  with only the screenshot's measured: reading `ms` as step duration would
+   *  make "this step went from 1.2s to 4.8s" a statement about how long a PNG
+   *  took to write. Absent on older runs, and not reconstructible from them. */
+  stepMs?: number;
   /** the acted-on element's viewport rect, NORMALIZED 0–1, measured at capture
    *  time. Present only for locator actions; the anchor for component-level
    *  diffing (no selector is re-resolved later). */
@@ -121,6 +132,19 @@ export interface ReplayStep {
   type: string;
   status: ReplayStepStatus;
   screenshot: string | null;
+  /** This step's index in ACTION order — the manifest entry it matched.
+   *
+   *  The join between the app's two index spaces: `index` above counts Step[]
+   *  positions, while the capture fixture numbers screenshots, and tags every
+   *  console.json / network.json entry, by action order. Absent for a step that
+   *  captures nothing (assertions, waits, if/endif).
+   *
+   *  Recorded explicitly since 2026-08-07. It was previously only recoverable
+   *  by parsing it back out of `screenshot`'s filename, which is null whenever
+   *  the shot failed and on every a11y-only or logs-only run — so a join keyed
+   *  on it silently matched nothing exactly when there were no screenshots to
+   *  notice were missing. */
+  actionIndex?: number;
   /** the acted-on element's normalized rect at capture time, when recorded. */
   rect?: NormalizedRect;
   /** visual-diff result for this step's screenshot, when captured (Phase 3). */

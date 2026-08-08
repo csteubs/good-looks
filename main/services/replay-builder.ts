@@ -83,11 +83,23 @@ export function buildReplay(params: {
   // two independent correlations over the same list would be two chances to
   // attribute a result to the wrong step.
   const a11yByStep: (A11yViolation[] | undefined)[] = [];
+  // The manifest's ACTION index for each step, recorded as its own field.
+  //
+  // This is the join between the two index spaces this app counts in: Step[]
+  // order (what the UI and the test record use) and action order (what the
+  // capture fixture numbers screenshots by, and what console.json/network.json
+  // tag every entry with). It was previously recoverable only by parsing it
+  // back out of the screenshot FILENAME — which is null whenever the shot
+  // failed, and on an a11y-only or logs-only run where no screenshot was ever
+  // attempted. Anything joining logs to steps on those runs was therefore
+  // joining against nothing, silently.
+  const actionByStep: (number | undefined)[] = [];
   const shotByStep: (string | null)[] = params.steps.map((s, i) => {
     const method = s.type === "if" || s.type === "endif" ? null : captureMethod(s);
     if (method && shotPtr < shots.length && shots[shotPtr].action === method) {
       const entry = shots[shotPtr++];
       rectByStep[i] = entry.rect;
+      actionByStep[i] = entry.index;
       // Recorded whether or not the screenshot succeeded, and on a11y-only runs
       // where `ok` is false because no screenshot was ever attempted.
       a11yByStep[i] = entry.a11y;
@@ -137,6 +149,7 @@ export function buildReplay(params: {
       type: s.type,
       status,
       screenshot: shotByStep[i],
+      ...(actionByStep[i] !== undefined ? { actionIndex: actionByStep[i] } : {}),
       ...(rectByStep[i] ? { rect: rectByStep[i] } : {}),
       // Raw violations only at this stage. Comparing them against the accepted
       // baseline is `enrichWithA11y`'s job, exactly as pixel diffing is
