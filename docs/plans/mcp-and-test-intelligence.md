@@ -2,12 +2,22 @@
 
 Written 2026-08-07, against `main` at `46a5a63`.
 
-> **Status, updated 2026-08-07.** Phase 1 is implemented except **1c (capture
-> parity)**, which is deferred — see §5. One assumption in §1.4 did not survive
-> contact and is corrected in place below: **secrets cannot be injected from the
-> MCP at all**, because `safeStorage` is a native app-only API. The decision
-> taken instead (refuse and say so) is recorded in `docs/DECISIONS.md` under
-> 2026-08-07. Phases 2–5 are unstarted.
+> **Status, updated 2026-08-07.** **Phase 1** is implemented except **1c
+> (capture parity)**, which is deferred — see §5. **Phase 2 is implemented.**
+> Phases 3–5 are unstarted.
+>
+> Two assumptions did not survive contact and are corrected in place below:
+> **secrets cannot be injected from the MCP at all** (§1.4), because
+> `safeStorage` is a native app-only API; and **`step_metrics.ms` as specified
+> would have measured the screenshot, not the step** (§3.2), which would have
+> made §6.2 a chart of PNG write times. Five columns in §3.2 changed as a
+> result; the schema in this document is annotated rather than rewritten, so the
+> reasoning stays visible. All of it is recorded in `docs/DECISIONS.md` under
+> 2026-08-07.
+>
+> The §1.3 risk is closed positively: `node:sqlite` works, and the packaged
+> backend runs on the host's **pinned** runtime rather than the user's `PATH`
+> node — so the NDJSON fallback is not needed.
 
 Goal: turn the signals the app already collects and throws away into a durable,
 queryable body of evidence — and make the MCP server a trustworthy way for an
@@ -218,6 +228,33 @@ is an architecture.
 
 ### 3.2 Schema
 
+> **Amended during implementation, 2026-08-07.** The schema below is the
+> ORIGINAL. Five things changed, and the reasoning is worth keeping visible:
+>
+> 1. **`ms` is not `ArtifactStepEntry.ms`.** That field times the *screenshot*
+>    (`Date.now() - tShot` around `page.screenshot()`, summed into `captureMs`).
+>    Reading it as step duration would make §6.2 a chart of how long PNGs take to
+>    write. The capture fixture now records `stepMs` separately, around the
+>    action itself, and the column reads that.
+> 2. **`triage` / `triage_confidence` are gone.** A stored verdict is frozen at
+>    the classifier version that wrote it, so improving the classifier leaves old
+>    rows stale and a trend silently mixes generations. Triage is computed on
+>    read.
+> 3. **Three columns split**, because the halves carry opposite evidence:
+>    `console_page_errors` from `console_errors`, `net_worst_api_status` from
+>    `net_worst_status`, and `heal_failed` alongside `healed`. §4.1 asks for the
+>    strong half of each; merged, each pair destroys its own signal.
+> 4. **Added `test_timeout_ms` and `heal_failed_steps`** to `runs`, and
+>    `action_index` to `step_metrics`. The first two are the only unrecoverable
+>    fields in the whole design and shipped ahead of the DB; the third is the
+>    join between the app's two step-index spaces, which was previously hiding in
+>    a screenshot filename that is null on every a11y-only run.
+> 5. **Added `has_artifacts`, `console_dropped`, `network_dropped`.** All three
+>    exist so silence can be read correctly. The capture fixture caps logs
+>    head/tail OVERALL rather than per step — one real run dropped 1861 of 2361
+>    network entries — so "no failing request on that step" and "that step's
+>    requests were discarded" would otherwise be the same answer.
+
 ```sql
 CREATE TABLE runs (
   id                TEXT PRIMARY KEY,
@@ -417,12 +454,32 @@ Ends with: an MCP run matches an app run in pacing, timeout, variables and log
 hygiene; an agent can see the visual, a11y, console/network, heal and batch
 evidence a person can; and where a run still differs, it says so.
 
-### Phase 2 — The metrics DB
+### Phase 2 — The metrics DB ✅
 
 Schema, `rollup.mjs`, the three ingest points, the prune hook, backfill,
 `metrics:rebuild`. Verify `node:sqlite` in the packaged app first (§1.3).
 
 Nothing user-visible ships here. Everything after it becomes cheap.
+
+**Done 2026-08-07.** `shared/metrics-schema.mjs` + `rollup.mjs` +
+`metrics-query.mjs` (pure), `main/services/metrics-store.ts` and
+`mcp/metrics.mjs` (the two writers), the prune preflight, backfill on first
+open, and `rebuild()`. `errorSignature` moved to `shared/` here rather than in
+Phase 4, since `runs.error_signature` has to be computed at ingest — the log it
+comes from is capped and pruned. Guarded by `check:metrics-db` (55 assertions
+against a real database).
+
+Measured on the development machine: 425 runs and 1024 steps in ~600ms,
+byte-identical on a second pass, **540 KB on disk against 253 MB of artifacts**
+— about half the plan's ~60 bytes/row estimate in row count but the same
+conclusion by three orders of magnitude, so the rollup has no storage tension to
+negotiate.
+
+Two things about the DATA that only running it could show, both of which limit
+what triage can conclude and are now recorded per run rather than left implicit:
+logs are capped head/tail overall rather than per step (so a busy site loses
+whole steps' worth of network), and only 98 of 207 failing runs yield a usable
+error signature at all.
 
 ### Phase 3 — Triage
 
@@ -511,8 +568,13 @@ fail when the fix is reverted.
 
 New `check:*` scripts:
 
-- `check:metrics-db` — DDL applies, rollup is idempotent (the same run ingested
-  twice yields one row set), rebuild reproduces a byte-equal result.
+- `check:metrics-db` — ✅ DDL applies, rollup is idempotent (the same run
+  ingested twice yields one row set), rebuild reproduces a byte-equal result.
+  Also pins the step-index translation (a step that captured nothing must be
+  attributed nothing), the three column splits, the `stepMs`-not-`ms` duration,
+  the `Error Context:` exclusion, and that every read tolerates an absent
+  database — metrics are unavailable on a runtime without `node:sqlite`, and a
+  view that crashes when the cache is missing is worse than one showing no data.
 - `check:triage` — every row of §4.1, in both directions, plus the "no
   artifacts → unknown" case and a source-level assertion that the classifier
   cannot reach `runStatus`.

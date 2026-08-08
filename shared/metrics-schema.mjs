@@ -158,9 +158,14 @@ CREATE TABLE IF NOT EXISTS step_metrics (
 export const PRAGMAS = [
   "PRAGMA journal_mode = WAL",
   "PRAGMA busy_timeout = 5000",
-  // Rows in step_metrics outlive their run otherwise: the ON DELETE CASCADE in
-  // the DDL is inert unless this is on, and SQLite defaults it OFF per
-  // connection.
+  // Belt and braces on the ON DELETE CASCADE in the DDL. `node:sqlite`'s
+  // DatabaseSync turns foreign keys ON by default (verified — raw SQLite does
+  // NOT, which is the usual expectation and the reason this is easy to get
+  // wrong), so this is stating the requirement rather than establishing it. It
+  // matters if the constructor is ever given `enableForeignKeyConstraints:
+  // false`, or if a different driver is ever swapped in: without enforcement
+  // a deleted run leaves its step rows behind and every aggregate counts them
+  // forever.
   "PRAGMA foreign_keys = ON",
 ];
 

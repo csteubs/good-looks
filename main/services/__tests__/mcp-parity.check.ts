@@ -462,7 +462,7 @@ function codeOnly(source: string): string {
     runId: "r2",
     steps: [step("s1", "passed"), step("s2", "failed"), step("s3", "passed")],
   };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const cmp = compareReplays(base as any, later as any);
   assert(cmp?.steps[0].delta === "stable", "compare: passed then, passed now → stable");
   // Never "regressed": the run alone cannot tell a real regression from
@@ -473,7 +473,7 @@ function codeOnly(source: string): string {
   assert(cmp?.stepsDiverged === false, "compare: matching step lists are not reported as diverged");
 
   const edited = { testId: "t1", runId: "r3", steps: [step("s9", "passed")] };
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   const drifted = compareReplays(base as any, edited as any);
   assert(
     drifted?.stepsDiverged === true,
@@ -486,7 +486,7 @@ function codeOnly(source: string): string {
     drifted?.steps.every((s) => s.delta === "unknown") === true,
     "compare: an unmatched step is unknown rather than assumed failed",
   );
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   assert(compareReplays(null, later as any) === null, "compare: a pruned run compares to null");
 }
 
