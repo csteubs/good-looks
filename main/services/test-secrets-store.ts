@@ -104,6 +104,31 @@ export const testSecretsStore = {
     await persist(blob);
   },
 
+  /** Copy every secret a test holds onto another test id, for duplication.
+   *
+   *  Backend-only, like `valuesFor`: values are read and written inside this
+   *  module and never cross IPC in either direction, so duplicating a test does
+   *  not open a route to reading a secret back out. The copy is what makes a
+   *  duplicated test runnable — without it the copy declares the same secret
+   *  variables with nothing behind them and fails on its first run, naming an
+   *  env var the user never knew existed.
+   *
+   *  Overwrites whatever `toId` had, which is only ever a fresh uuid here.
+   *  Copying nothing is a no-op rather than an empty entry, so a test with no
+   *  secrets doesn't force a needless re-encrypt of the whole blob. */
+  async copyTest(fromId: string, toId: string): Promise<number> {
+    const blob = await load();
+    const values = blob[fromId];
+    if (!values || Object.keys(values).length === 0) return 0;
+    await persist({ ...blob, [toId]: { ...values } });
+    logger.info("secrets", "Copied a test's secrets", {
+      fromId,
+      toId,
+      count: Object.keys(values).length,
+    });
+    return Object.keys(values).length;
+  },
+
   /** Which secrets this test has values for. Names only — this is what crosses
    *  IPC to the renderer. */
   async names(testId: string): Promise<string[]> {

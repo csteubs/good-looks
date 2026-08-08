@@ -28,6 +28,7 @@ import { acceptRunA11y, acceptStepA11y, resetA11yBaseline } from "../services/a1
 import { sendToMain } from "../services/app-window.js";
 import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
+import { duplicateTest } from "../services/duplicate-test.js";
 import { importService } from "../services/import-service.js";
 import { testSecretsStore } from "../services/test-secrets-store.js";
 import { healJournalStore } from "../services/heal-journal-store.js";
@@ -242,6 +243,21 @@ export function registerHandlers(): void {
     await refreshSecretSnapshot();
     healJournalStore.deleteTest(params.id);
   });
+  // Copy a test: everything that describes it, nothing it has recorded.
+  //
+  // The record's own split lives in `duplicate-test.ts` behind an allowlist.
+  // Secrets are copied HERE rather than there, for the same reason the delete
+  // handler clears them here: the secret store is async and every write to it
+  // has to be followed by refreshing the redaction snapshot, or the copy's
+  // password is a value redaction has never been told about and it reaches the
+  // next run log in plaintext.
+  ipcMain.handle("tests:duplicate", async (_e, params: { id: string }) => {
+    const rec = duplicateTest(params.id);
+    await testSecretsStore.copyTest(params.id, rec.id);
+    await refreshSecretSnapshot();
+    return rec;
+  });
+
   ipcMain.handle("tests:rename", async (_e, params: { id: string; name: string }) => {
     const rec = testStore.get(params.id);
     if (!rec) throw new Error("Test not found: " + params.id);
