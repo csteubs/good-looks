@@ -37,8 +37,9 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      .d.mts). Pure only: no fs, no @glaze/core, no IPC, no process
 mcp/                 standalone MCP server exposing the test library to external MCP clients
                      (list_tests, get_test, list_runs, get_run_log, run_test, run_batch,
-                      get_visual_report, get_a11y_report, get_run_logs, list_heals,
-                      list_batches, compare_runs, capture_app, get_screenshot)
+                      list_groups, run_group, get_visual_report, get_a11y_report,
+                      get_run_logs, list_heals, list_batches, compare_runs,
+                      capture_app, get_screenshot)
                      — see mcp/README.md
 docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated rationale),
                      plus design/research docs for things NOT built: ROUTINES,
@@ -63,7 +64,7 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1804 Vitest tests and 35 checks as of 2026-08-08.
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1809 Vitest tests and 35 checks as of 2026-08-08.
 
 - **Vitest** (`vitest.config.ts`) has two projects. **`node`**: `main/**/*.test.ts`, `mcp/**/*.test.ts`, `renderer/lib/**/*.test.ts`, `shared/**/*.test.mjs` (plain `.mjs`, like the modules they cover — `shared/` used to be tested only indirectly, through whichever check happened to exercise it). **`dom`** (jsdom): `renderer/**/*.test.tsx` plus `main/**/*.dom.test.ts` — that suffix is for BACKEND code needing a document (the injected replayer and Auto-Heal probe are evaluated for real). The node project explicitly excludes `*.dom.test.ts`; without that they match both globs and run again with no DOM, failing for unrelated reasons.
 - **`check:*` scripts** predate Vitest and are kept, not migrated — they catch real bugs and a rewrite would risk that for tooling neatness. Plain assertions + a non-zero exit; no runner. Two are deliberately *source-level* (`check:ai-debug-scroll`, `check:scroll-layout`) because they guard layout contracts that jsdom cannot observe.

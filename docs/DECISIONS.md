@@ -16,6 +16,31 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-08 — run_group shares run_batch's body rather than resembling it
+
+Adding groups to MCP could have been two independent tools. It isn't: the whole
+reason `resolveGroupTests` lives in `shared/` is that a group meaning one set of
+tests in the sidebar and another over MCP is a disagreement nobody notices until
+a scheduled run has been quietly skipping something for a month — and the same
+argument applies one level up, to what *running a suite* means.
+
+So `run_batch`'s ~200-line handler body was extracted into
+`runSelectedAsBatch()` and both tools call it. They now differ only in how the
+selection is arrived at (ids/tag versus a group's membership rules). Queue
+expansion, the write-through batch record, the pool, the summary and the
+fixture caveats cannot drift, because there is one copy.
+
+Both surfaces also refuse an empty selection for the same stated reason: a batch
+with no tests reports `passed`, since nothing failed. That is the most
+misleading possible answer to "did my suite pass?", and it is the answer you get
+by default if you don't think about it.
+
+The guard is source-level in `check:groups`. `mcp/server.mjs` cannot be imported
+by a test — it starts a stdio server on import, which is exactly why
+`run-plan.mjs` was split out of it — so reading the source is the only way to
+pin that MCP uses the shared resolver rather than growing a second
+implementation.
+
 ### 2026-08-08 — The AI debug dialog holds one size
 
 The dialog body was `min-h-[400px] max-h-[70vh]` — a range, so the window

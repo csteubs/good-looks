@@ -34,6 +34,7 @@ import {
 } from "./run-plan.mjs";
 import { buildQueue } from "../shared/batch-queue.mjs";
 import { compareReplays } from "../shared/run-comparison.mjs";
+import { resolveGroupTests } from "../shared/group-select.mjs";
 import {
   PLAYWRIGHT_CONFIG_FILE,
   playwrightConfigSource,
@@ -67,6 +68,11 @@ if (process.argv.includes("--print-data-dir")) {
 
 function listTests() {
   return readJsonFile(dataDir, "recorder/tests.json", []);
+}
+
+function listGroups() {
+  const raw = readJsonFile(dataDir, "recorder/groups.json", []);
+  return Array.isArray(raw) ? raw.filter((g) => g && typeof g.id === "string" && typeof g.name === "string") : [];
 }
 
 function listRuns() {
@@ -612,42 +618,19 @@ server.registerTool(
   },
 );
 
-server.registerTool(
-  "run_batch",
-  {
-    title: "Run many tests",
-    description:
-      `Run several recorded tests and report an aggregate pass/fail summary. Select them by explicit testIds, by tag (see list_tests; pass "${UNTAGGED}" for tests with no tags), or omit both to run every visible test. Pass allDatasets (or datasetIds) to sweep each selected test once per dataset row instead of once. Tests run headless, one at a time by default — set "parallel" to run that many at once (1-${MAX_PARALLEL}), which is much faster for a large suite at the cost of CPU. A failing test does not stop the batch, and a test declaring secret variables is skipped with a note rather than failing the suite. Each test is recorded in the app's run history, and the batch itself appears in the app's Batch view.`,
-    inputSchema: {
-      testIds: z.array(z.string()).optional(),
-      tag: z.string().optional(),
-      browser: z.enum(["chromium", "firefox", "webkit"]).optional(),
-      datasetIds: z
-        .array(z.string())
-        .optional()
-        .describe("Sweep only these dataset rows. A selected test with no matching row still runs once."),
-      allDatasets: z
-        .boolean()
-        .optional()
-        .describe("Sweep every dataset row each selected test declares."),
-      parallel: z.number().int().min(1).max(MAX_PARALLEL).optional(),
-    },
-  },
-  async ({ testIds, tag, browser, datasetIds, allDatasets, parallel }) => {
-    const engine = browser ?? "chromium";
-    if (!RUN_BROWSERS.includes(engine)) {
-      return { content: [{ type: "text", text: `Unknown browser: ${engine}` }], isError: true };
-    }
-
-    const { tests: selected, missing } = selectTests(listTests(), { testIds, tag });
-    if (selected.length === 0) {
-      const how = tag ? `tag "${tag}"` : testIds ? "those ids" : "the library";
-      return {
-        content: [{ type: "text", text: `No tests matched ${how}. Nothing to run.` }],
-        isError: true,
-      };
-    }
-
+/**
+ * Run a selection of tests as ONE batch, and build the tool result.
+ *
+ * Extracted so `run_batch` and `run_group` cannot drift. They differ only in
+ * how the selection is arrived at — ids/tag versus a group's membership rules —
+ * and everything after that (the queue expansion, the write-through record, the
+ * pool, the summary, the fixture caveats) has to be identical or the two tools
+ * would disagree about what running a suite means.
+ *
+ * `group` stamps the batch so a group-started run is identifiable in the app's
+ * Batch view and in batch-history.json, exactly as the app's own group runs are.
+ */
+async function runSelectedAsBatch({ selected, missing = [], engine, datasetIds, allDatasets, parallel, group }) {
     const playwright = findPlaywrightCli();
     if (!playwright) {
       return {
@@ -701,6 +684,9 @@ server.registerTool(
         batchId,
         running,
         startedAt,
+        // Same stamp the app writes, so a group run started from here is
+        // identifiable in the Batch view and joins the group's history.
+        ...(group ? { groupId: group.id, groupName: group.name } : {}),
         ...(running ? {} : { finishedAt: Date.now() }),
         currentIndex: results.findIndex((r) => r.status === "running"),
         results,
@@ -798,6 +784,7 @@ server.registerTool(
           text: JSON.stringify(
             {
               batchId,
+              ...(group ? { groupId: group.id, groupName: group.name } : {}),
               browser: engine,
               parallel: limit,
               ...(missing.length > 0 ? { missingTestIds: missing } : {}),
@@ -822,6 +809,120 @@ server.registerTool(
       // batch as success.
       ...(summary.failed > 0 ? { isError: true } : {}),
     };
+}
+
+server.registerTool(
+  "list_groups",
+  {
+    title: "List test groups",
+    description:
+      "List the app's test groups: id, name, and the tests each one currently contains. A group's membership is a RULE (tests named outright, plus every test carrying one of its tags), resolved against the library each time it is read — so this reports what the group means right now, not what it meant when it was created.",
+    inputSchema: {},
+  },
+  async () => {
+    const tests = listTests().filter((t) => !t.hidden);
+    const groups = listGroups().map((g) => {
+      // The SAME resolver the app runs. A group that meant one set of tests in
+      // the sidebar and another over MCP is a disagreement nobody notices until
+      // a scheduled run has been quietly skipping something for weeks.
+      const members = resolveGroupTests(g, tests);
+      return {
+        id: g.id,
+        name: g.name,
+        tags: g.tags ?? [],
+        testCount: members.length,
+        tests: members.map((t) => ({ id: t.id, name: t.name })),
+      };
+    });
+    return { content: [{ type: "text", text: JSON.stringify(groups, null, 2) }] };
+  },
+);
+
+server.registerTool(
+  "run_group",
+  {
+    title: "Run a test group",
+    description:
+      "Run every test currently in a group (see list_groups) as one batch, and report an aggregate pass/fail summary. Membership is resolved when the run starts, so a group defined by tag picks up newly tagged tests. Behaves exactly like run_batch otherwise — headless, one test at a time unless \"parallel\" is raised, a failing test does not stop the run, and a test declaring secret variables is skipped with a note. The batch is stamped with the group so it is identifiable in the app's Batch view.",
+    inputSchema: {
+      groupId: z.string(),
+      browser: z.enum(["chromium", "firefox", "webkit"]).optional(),
+      parallel: z.number().int().min(1).max(MAX_PARALLEL).optional(),
+    },
+  },
+  async ({ groupId, browser, parallel }) => {
+    const engine = browser ?? "chromium";
+    if (!RUN_BROWSERS.includes(engine)) {
+      return { content: [{ type: "text", text: `Unknown browser: ${engine}` }], isError: true };
+    }
+    const group = listGroups().find((g) => g.id === groupId);
+    if (!group) {
+      return {
+        content: [{ type: "text", text: `No group found with id ${groupId}. See list_groups.` }],
+        isError: true,
+      };
+    }
+    const selected = resolveGroupTests(group, listTests().filter((t) => !t.hidden));
+    // Refused rather than run: an empty batch reports "passed" (nothing
+    // failed), which is the most misleading possible answer to "did my suite
+    // pass?". The app's own groups:run handler refuses for the same reason.
+    if (selected.length === 0) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Group "${group.name}" has no tests in it right now. Nothing to run.`,
+          },
+        ],
+        isError: true,
+      };
+    }
+    return runSelectedAsBatch({
+      selected,
+      engine,
+      parallel,
+      group: { id: group.id, name: group.name },
+    });
+  },
+);
+
+server.registerTool(
+  "run_batch",
+  {
+    title: "Run many tests",
+    description:
+      `Run several recorded tests and report an aggregate pass/fail summary. Select them by explicit testIds, by tag (see list_tests; pass "${UNTAGGED}" for tests with no tags), or omit both to run every visible test. Pass allDatasets (or datasetIds) to sweep each selected test once per dataset row instead of once. Tests run headless, one at a time by default — set "parallel" to run that many at once (1-${MAX_PARALLEL}), which is much faster for a large suite at the cost of CPU. A failing test does not stop the batch, and a test declaring secret variables is skipped with a note rather than failing the suite. Each test is recorded in the app's run history, and the batch itself appears in the app's Batch view.`,
+    inputSchema: {
+      testIds: z.array(z.string()).optional(),
+      tag: z.string().optional(),
+      browser: z.enum(["chromium", "firefox", "webkit"]).optional(),
+      datasetIds: z
+        .array(z.string())
+        .optional()
+        .describe("Sweep only these dataset rows. A selected test with no matching row still runs once."),
+      allDatasets: z
+        .boolean()
+        .optional()
+        .describe("Sweep every dataset row each selected test declares."),
+      parallel: z.number().int().min(1).max(MAX_PARALLEL).optional(),
+    },
+  },
+  async ({ testIds, tag, browser, datasetIds, allDatasets, parallel }) => {
+    const engine = browser ?? "chromium";
+    if (!RUN_BROWSERS.includes(engine)) {
+      return { content: [{ type: "text", text: `Unknown browser: ${engine}` }], isError: true };
+    }
+
+    const { tests: selected, missing } = selectTests(listTests(), { testIds, tag });
+    if (selected.length === 0) {
+      const how = tag ? `tag "${tag}"` : testIds ? "those ids" : "the library";
+      return {
+        content: [{ type: "text", text: `No tests matched ${how}. Nothing to run.` }],
+        isError: true,
+      };
+    }
+
+    return runSelectedAsBatch({ selected, missing, engine, datasetIds, allDatasets, parallel });
   },
 );
 

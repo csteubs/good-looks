@@ -158,6 +158,42 @@ assert(groupStore.create({ name: "   " }) === null, "a blank name is refused");
   assert(groupStore.list().length === 2, "and it joins what was salvageable");
 }
 
+// ── The MCP side means the same thing by "group" ───────────────────────
+// Source-level, because importing mcp/server.mjs starts a stdio server (the
+// same reason run-plan.mjs was split out of it). Two properties, both silent
+// if they break: a group that resolved differently over MCP than in the
+// sidebar would quietly run the wrong set of tests for weeks, and an empty
+// group that RAN would report "passed" because nothing failed — the most
+// misleading possible answer to "did my suite pass?".
+{
+  const server = fs.readFileSync(
+    path.resolve(process.cwd(), "mcp/server.mjs"),
+    "utf8",
+  );
+  assert(
+    /import \{ resolveGroupTests \} from "\.\.\/shared\/group-select\.mjs"/.test(server),
+    "MCP resolves membership with the shared resolver, not a second implementation",
+  );
+  assert(
+    server.indexOf('"list_groups"') > 0 && server.indexOf('"run_group"') > 0,
+    "MCP registers list_groups and run_group",
+  );
+  const runGroupAt = server.indexOf('"run_group"');
+  const body = server.slice(runGroupAt, runGroupAt + 3000);
+  assert(
+    /selected\.length === 0/.test(body),
+    "MCP's run_group refuses a group that currently resolves to no tests",
+  );
+  assert(
+    /resolveGroupTests\(group,/.test(body),
+    "MCP's run_group resolves the group against the live library",
+  );
+  assert(
+    /group: \{ id: group\.id, name: group\.name \}/.test(body),
+    "MCP stamps the batch with the group, so the run joins that group's history",
+  );
+}
+
 fs.rmSync(userData, { recursive: true, force: true });
 
 if (failures > 0) {

@@ -148,6 +148,47 @@ crawl test), and the process is killed a minute past that.
 conclusions from a failure. See [What an MCP run does not
 do](#what-an-mcp-run-does-not-do).
 
+### `list_groups`
+
+The app's test groups, and what each one currently contains.
+
+A group's membership is a **rule**, not a stored list: tests named outright,
+plus every test carrying one of the group's tags. It is resolved against the
+library every time it is read, so this reports what the group means *now* — a
+tag-based group picks up a newly tagged test with no edit, and a test that has
+been deleted simply stops being a member.
+
+```
+list_groups
+```
+
+### `run_group`
+
+Run everything currently in a group as one batch.
+
+| Arg | Type | Required |
+|---|---|---|
+| `groupId` | string | yes — from `list_groups` |
+| `browser` | `chromium` \| `firefox` \| `webkit` | no — defaults to Chromium |
+| `parallel` | number 1–16 | no — how many to run at once; defaults to 1 |
+
+Identical to `run_batch` in every other respect — it goes through the same
+code — so the notes below about parallelism, secret variables and skipped
+fixtures all apply. Membership is resolved when the run starts.
+
+A group that currently resolves to **no tests is refused**, not run: an empty
+batch reports "passed" because nothing failed, which is the most misleading
+possible answer to "did my suite pass?".
+
+The batch is stamped with the group's id and name, so a run started here is
+identifiable in the app's Batch view and belongs to the group's history.
+
+```
+list_groups
+run_group groupId="g-abc123"
+run_group groupId="g-abc123" parallel=4
+```
+
 ### `run_batch`
 
 Run several tests and report an aggregate pass/fail summary. Tests run
