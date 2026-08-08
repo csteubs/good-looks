@@ -21,6 +21,7 @@ import { readJsonFile, resolveDataDir, writeJsonFile } from "./glaze-data.mjs";
 import { selectTests, summarizeResults, UNTAGGED } from "./select-tests.mjs";
 import { listSessions, readShots, requestCapture } from "./debug-shots.mjs";
 import { readReplay, readRunLogs } from "./artifacts.mjs";
+import { recordRun } from "./metrics.mjs";
 import {
   consoleNetworkWithheldReason,
   datasetRow,
@@ -234,45 +235,56 @@ async function executeTest(test, { playwright, browser, batchId, vars, datasetId
   const status = exitCode === 0 ? "passed" : "failed";
   const runId = randomUUID();
   const logFile = path.join(dataDir, "recorder", "logs", `${runId}.log`);
+  const record = {
+    id: runId,
+    testId: test.id,
+    testName: test.name,
+    url: test.url,
+    status,
+    exitCode,
+    startedAt,
+    finishedAt,
+    durationMs: Math.max(0, finishedAt - startedAt),
+    logFile,
+    captureArtifacts: false,
+    // These runs are always headless — there's no user at a screen watching
+    // an MCP-driven run.
+    runHeadless: true,
+    runBrowser: browser,
+    // Recorded so the app's run history can attribute an MCP-driven run to a
+    // speed like any other. Without it these runs show a blank speed and
+    // read as "recorded before the field existed".
+    speed,
+    // The budget this run actually got. Stored per run rather than read back
+    // from the test later: the test's value is the CURRENT one, so a timeout
+    // raised since would make every older run's step-vs-budget comparison
+    // wrong while still looking like a plausible number.
+    testTimeoutMs,
+    ...(batchId ? { batchId } : {}),
+    // Both stored, like the app: the id joins back to the row, and the name
+    // survives the row being renamed or deleted. A sweep whose history can't
+    // say WHICH row failed is a sweep that answered nothing.
+    ...(datasetId ? { datasetId } : {}),
+    ...(datasetName ? { datasetName } : {}),
+  };
 
   // ONE choke point for everything written or returned, mirroring the app's
   // `emitOutput`.
   const safeOutput = sanitizeOutput(output);
 
   saveRunRecord(
-    {
-      id: runId,
-      testId: test.id,
-      testName: test.name,
-      url: test.url,
-      status,
-      exitCode,
-      startedAt,
-      finishedAt,
-      durationMs: Math.max(0, finishedAt - startedAt),
-      logFile,
-      logBytes: Buffer.byteLength(safeOutput, "utf-8"),
-      captureArtifacts: false,
-      // These runs are always headless — there's no user at a screen watching
-      // an MCP-driven run.
-      runHeadless: true,
-      runBrowser: browser,
-      // Recorded so the app's run history can attribute an MCP-driven run to a
-      // speed like any other. Without it these runs show a blank speed and
-      // read as "recorded before the field existed".
-      speed,
-      // The budget this run actually got. Stored per run rather than read back
-      // from the test later: the test's value is the CURRENT one, so a timeout
-      // raised since would make every older run's step-vs-budget comparison
-      // wrong while still looking like a plausible number.
-      testTimeoutMs,
-      ...(batchId ? { batchId } : {}),
-      // Both stored, like the app: the id joins back to the row, and the name
-      // survives the row being renamed or deleted. A sweep whose history can't
-      // say WHICH row failed is a sweep that answered nothing.
-      ...(datasetId ? { datasetId } : {}),
-      ...(datasetName ? { datasetName } : {}),
-    },
+    { ...record, logBytes: Buffer.byteLength(safeOutput, "utf-8") },
+    safeOutput,
+  );
+
+  // Third of the plan's three ingest points. Best-effort by contract: the run
+  // has already happened and is already in run-history.json, so a metrics
+  // failure must not reach the caller. Awaited rather than fired and forgotten
+  // — this server can exit as soon as the tool returns.
+  await recordRun(
+    dataDir,
+    { ...record, logBytes: Buffer.byteLength(safeOutput, "utf-8") },
+    readJsonFile(dataDir, "recorder/heal-journal.json", []),
     safeOutput,
   );
 

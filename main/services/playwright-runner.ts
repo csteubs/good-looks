@@ -17,6 +17,7 @@ import { stepReporterSource } from "./step-reporter-source.js";
 import { captureFixtureSource } from "./capture-fixture-source.js";
 import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 import type { HealFailure } from "./artifact-store.js";
+import { metricsStore } from "./metrics-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { resolveTestTimeoutMs, SLOW_MO_MS } from "./run-pacing.js";
 import { notifyRunOutcome } from "./run-notifier.js";
@@ -1154,6 +1155,11 @@ export const playwrightRunner = {
             logText,
           );
           sendToMain("runs:changed", {});
+          // Distil this run into metric rows while every artifact it produced
+          // is still on disk. Best-effort and non-throwing by contract — a
+          // bookkeeping failure must not become a failed run — and idempotent,
+          // so the prune preflight rewriting the same run later is harmless.
+          metricsStore.ingest(recordId, "app");
         } catch (err) {
           logger.warn("runner", "Failed to persist run history", { err: String(err) });
         }

@@ -143,6 +143,27 @@ CREATE TABLE IF NOT EXISTS step_metrics (
   PRIMARY KEY (run_id, step_index)
 )`;
 
+/**
+ * Applied on every open, by every process.
+ *
+ * TWO processes write this file: the app's backend and the standalone MCP
+ * server, which runs tests of its own. Under the default rollback journal a
+ * write locks out readers entirely, so an MCP run finishing while the app was
+ * reading would block one of them; WAL lets them overlap, and the busy timeout
+ * turns the remaining writer-vs-writer collision into a short wait instead of
+ * an immediate SQLITE_BUSY. Neither matters for correctness — every write is
+ * idempotent — but "the app froze for a moment because an agent ran a test" is
+ * not a trade worth making for a cache.
+ */
+export const PRAGMAS = [
+  "PRAGMA journal_mode = WAL",
+  "PRAGMA busy_timeout = 5000",
+  // Rows in step_metrics outlive their run otherwise: the ON DELETE CASCADE in
+  // the DDL is inert unless this is on, and SQLite defaults it OFF per
+  // connection.
+  "PRAGMA foreign_keys = ON",
+];
+
 export const INDEX_DDL = [
   "CREATE INDEX IF NOT EXISTS idx_step_by_step ON step_metrics(step_id, run_id)",
   "CREATE INDEX IF NOT EXISTS idx_runs_by_test ON runs(test_id, started_at)",

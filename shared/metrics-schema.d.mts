@@ -5,6 +5,7 @@ export declare const SCHEMA_VERSION: number;
 
 export declare const RUNS_DDL: string;
 export declare const STEP_METRICS_DDL: string;
+export declare const PRAGMAS: string[];
 export declare const INDEX_DDL: string[];
 export declare const CREATE_STATEMENTS: string[];
 export declare const DROP_STATEMENTS: string[];

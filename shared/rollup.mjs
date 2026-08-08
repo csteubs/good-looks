@@ -24,6 +24,7 @@
 // two would drift.
 
 import { errorSignature, firstErrorLine } from "./error-signature.mjs";
+import { stripAnsi } from "./strip-ansi.mjs";
 
 /**
  * The ACTION index for a replay step.
@@ -214,7 +215,14 @@ export function rollupRun(input) {
       failed_step_id: failedStep?.stepId,
       // Computed at INGEST, not on read: the log this comes from is capped at
       // 1000 runs and pruned out from under any later reader.
-      error_signature: errorSignature(firstErrorLine(input.logText)),
+      //
+      // ANSI is stripped FIRST. Playwright colours its failures and the escape
+      // sequences land inside the message, so an unstripped signature is full
+      // of control characters and matches no other run unless that one happened
+      // to be coloured identically. Every log written before 2026-08-07 is
+      // still on disk with its colours in, which is most of the history this
+      // rolls up.
+      error_signature: errorSignature(firstErrorLine(stripAnsi(input.logText ?? ""))),
       source: input.source ?? "app",
       // The difference between "captured nothing, so there is no evidence" and
       // "captured, and had nothing to report". Without it a run with no step

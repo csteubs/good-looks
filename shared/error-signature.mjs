@@ -45,17 +45,35 @@ export function errorSignature(raw) {
  * middle, and the run record does not store it separately. Scanning for it here
  * keeps that knowledge in one place instead of in every consumer.
  *
- * Returns "" when nothing matches rather than guessing — an error signature
- * invented from a progress line would cluster unrelated runs together, which is
- * worse than having no signature at all.
+ * Returns "" when nothing matches rather than guessing. An error signature
+ * invented from a progress line clusters unrelated runs together, which is
+ * worse than having no signature at all — a cluster is read as "these twenty
+ * runs failed the same way".
+ *
+ * The caller must strip ANSI first. Playwright colours its failures, and the
+ * escape sequences land INSIDE the message ("Error: \e[31mTimed out…"), so an
+ * unstripped line yields a signature full of control characters that no other
+ * run matches unless it happened to be coloured identically.
  */
 const ERROR_LINE = /^\s*(?:\d+\)\s*)?(?:Error|TimeoutError|AssertionError|[\w.]*Error:|Timeout\b|expect\()/;
+
+/**
+ * Lines that START with "Error" and are not the error.
+ *
+ * "Error Context: test-results/…" is Playwright's pointer to the trace file,
+ * emitted in the attachments section AFTER the failure. It matched first for
+ * 109 of 207 failing runs on the development machine, so the most common
+ * "failure" in the whole history was a file path — one cluster swallowing every
+ * genuinely distinct failure that had no other matching line.
+ */
+const NOT_AN_ERROR = /^Error Context:/;
 
 export function firstErrorLine(log) {
   if (!log) return "";
   for (const line of log.split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
+    if (NOT_AN_ERROR.test(trimmed)) continue;
     if (ERROR_LINE.test(trimmed)) return trimmed.slice(0, 500);
   }
   return "";

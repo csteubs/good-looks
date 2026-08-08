@@ -34,6 +34,24 @@ export const DEFAULT_RETAINED_RUNS = 10;
  *  deleting it during retention would silently destroy the comparison anchor. */
 const RESERVED_DIRS = new Set(["baseline"]);
 
+/**
+ * Called for every run directory about to be deleted, before it is deleted.
+ *
+ * The seam the metrics rollup hangs off: retention is where per-step evidence
+ * dies, so it is the last moment anything can distil a run into the ~60 bytes
+ * of rows that outlive it.
+ *
+ * REGISTERED rather than imported. metrics-store reads through this module, so
+ * importing it here would be a cycle — and this way the store stays free of any
+ * knowledge that metrics exist, which is what keeps a metrics failure from
+ * being able to break pruning.
+ */
+let prunePreflight: ((testId: string, runId: string) => void) | null = null;
+
+export function setPrunePreflight(fn: (testId: string, runId: string) => void): void {
+  prunePreflight = fn;
+}
+
 export interface ArtifactStepEntry {
   index: number;
   action: string;
@@ -371,6 +389,19 @@ export const artifactStore = {
     );
 
     for (const r of doomed) {
+      // Roll the run up BEFORE the evidence goes. Wrapped separately from the
+      // delete so a preflight that throws cannot stop retention from running —
+      // the disk filling up is a worse failure than a gap in the metrics.
+      if (prunePreflight) {
+        try {
+          prunePreflight(testId, path.basename(r.full));
+        } catch (err) {
+          logger.warn("artifacts", "Prune preflight failed", {
+            dir: r.full,
+            err: String(err),
+          });
+        }
+      }
       try {
         fs.rmSync(r.full, { recursive: true, force: true });
       } catch (err) {
