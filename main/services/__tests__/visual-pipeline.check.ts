@@ -759,6 +759,102 @@ eq(partial?.stepsDiverged, true, "a differing step set is reported as diverged")
   );
 }
 
+// ── A `state` step must not desync the screenshot timeline ────────────────
+//
+// The subtlest failure this whole pipeline has. `hover` and `focus` are in
+// LOCATOR_ACTIONS, so the capture fixture patches them and DOES write a
+// manifest entry for each. `buildReplay` walks the manifest with a single
+// pointer that only advances when a step's `captureMethod` matches the entry at
+// the front — so a `state` step classified as "no screenshot" leaves its entry
+// sitting there, the next step compares "click" against "hover", and the
+// pointer never advances again.
+//
+// Nothing throws. Every step AFTER the first hover silently loses its
+// screenshot, its element geometry, its a11y results and its visual diff, and
+// the run reads as "captured" the whole way down.
+{
+  const stateTestId = randomUUID();
+  const stateRunId = randomUUID();
+  const stateSteps: Step[] = [
+    step({ type: "goto", url: "https://example.com" }),
+    step({ type: "state", elementState: "hover", locator: { k: "role", role: "button", name: "Buy" } }),
+    step({ type: "assert", locator: { k: "role", role: "button", name: "Buy" }, assert: "css", cssProp: "background-color", cssMatch: "is", value: "rgb(0, 82, 204)" }),
+    step({ type: "click", locator: { k: "role", role: "button", name: "Buy" } }),
+  ];
+  const dir = artifactStore.ensureRunDir(stateTestId, stateRunId);
+  // What the fixture really writes: one entry per patched action, in execution
+  // order. The assert produces none; the hover does.
+  const actions = ["goto", "hover", "click"];
+  actions.forEach((_a, i) => fs.writeFileSync(path.join(dir, `${i}.png`), RED));
+  fs.writeFileSync(
+    path.join(dir, "manifest.json"),
+    JSON.stringify({
+      testId: stateTestId,
+      runId: stateRunId,
+      status: "passed",
+      steps: actions.map((action, i) => ({ index: i, action, target: "", ok: true, ts: Date.now() })),
+    } satisfies ArtifactManifest),
+  );
+
+  const replay = buildReplay({
+    testId: stateTestId,
+    runId: stateRunId,
+    testName: "hover keeps the timeline aligned",
+    url: "https://example.com",
+    status: "passed",
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+    steps: stateSteps,
+    statuses: { 2: "passed" },
+  });
+
+  eq(replay.steps[0]?.screenshot, "0.png", "the goto keeps its screenshot");
+  eq(replay.steps[1]?.screenshot, "1.png", "the hover state step consumes its own screenshot");
+  eq(replay.steps[2]?.screenshot, null, "the css assert has none, as assertions never do");
+  // THE assertion. With `state` unclassified this is null, and so is every
+  // later step in a real test.
+  eq(
+    replay.steps[3]?.screenshot,
+    "2.png",
+    "the step AFTER a hover still gets its own screenshot (the pointer advanced)",
+  );
+
+  // press/release are `page.mouse.*`, which no fixture patches, so they write
+  // no manifest entry and must consume none — the mirror image of the same bug.
+  const pressTestId = randomUUID();
+  const pressRunId = randomUUID();
+  const pressSteps: Step[] = [
+    step({ type: "goto", url: "https://example.com" }),
+    step({ type: "state", elementState: "press" }),
+    step({ type: "click", locator: { k: "role", role: "button", name: "Buy" } }),
+  ];
+  const pdir = artifactStore.ensureRunDir(pressTestId, pressRunId);
+  const pactions = ["goto", "click"];
+  pactions.forEach((_a, i) => fs.writeFileSync(path.join(pdir, `${i}.png`), RED));
+  fs.writeFileSync(
+    path.join(pdir, "manifest.json"),
+    JSON.stringify({
+      testId: pressTestId,
+      runId: pressRunId,
+      status: "passed",
+      steps: pactions.map((action, i) => ({ index: i, action, target: "", ok: true, ts: Date.now() })),
+    } satisfies ArtifactManifest),
+  );
+  const pressReplay = buildReplay({
+    testId: pressTestId,
+    runId: pressRunId,
+    testName: "press consumes nothing",
+    url: "https://example.com",
+    status: "passed",
+    startedAt: Date.now(),
+    finishedAt: Date.now(),
+    steps: pressSteps,
+    statuses: {},
+  });
+  eq(pressReplay.steps[1]?.screenshot, null, "a press step consumes no screenshot");
+  eq(pressReplay.steps[2]?.screenshot, "1.png", "…so the click after it still gets its own");
+}
+
 // ── cleanup + verdict ──────────────────────────────────────────────────────
 try {
   fs.rmSync(DATA_ROOT, { recursive: true, force: true });

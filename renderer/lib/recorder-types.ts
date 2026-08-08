@@ -17,7 +17,8 @@ export type StepType =
   | "endif"
   | "cookie"
   | "capture"
-  | "runFlow";
+  | "runFlow"
+  | "state";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
@@ -88,7 +89,67 @@ export type AssertKind =
   | "url"
   | "urlEndsWith"
   | "urlIs"
-  | "title";
+  | "title"
+  | "css";
+
+/** Pseudo-state a `state` step applies (mirror of main types).
+ *
+ *  `:active` and `:focus-visible` are deliberately NOT members: each needs two
+ *  Playwright calls, and a step emits exactly one awaited statement. The
+ *  Add-step dialog composes them out of several ordinary rows instead — see the
+ *  doc comment on `ElementState` in main/recorder/types.ts. */
+export type ElementState = "hover" | "focus" | "press" | "release";
+
+export const ELEMENT_STATES: ElementState[] = ["hover", "focus", "press", "release"];
+
+/** How a `css` assertion compares (mirror of main types). */
+export type CssMatch = "is" | "contains";
+
+/** Labels for the element-state picker. The four entries the USER picks are not
+ *  the four `ElementState` members — two of them expand to several steps. */
+export const ELEMENT_STATE_LABELS: Record<ElementState, string> = {
+  hover: "Hover over element",
+  focus: "Focus element",
+  press: "Press and hold mouse",
+  release: "Release mouse",
+};
+
+/** The properties the CSS-assertion picker offers with the element's live
+ *  computed value beside each (mirror of CSS_ASSERT_PROPS in main types).
+ *  KEBAB-case: `getComputedStyle().getPropertyValue()` answers "" for a
+ *  camelCase name, on both the capture side and inside Playwright's toHaveCSS.
+ *  Pinned against the backend list by check:css-assertions. */
+export const CSS_ASSERT_PROPS: string[] = [
+  "color",
+  "background-color",
+  "opacity",
+  "border-color",
+  "border-width",
+  "border-radius",
+  "box-shadow",
+  "outline-color",
+  "font-size",
+  "font-weight",
+  "font-family",
+  "text-decoration",
+  "letter-spacing",
+  "cursor",
+  "display",
+  "visibility",
+  "width",
+  "height",
+  "padding",
+  "margin",
+  "transform",
+  "z-index",
+];
+
+/** A syntactically valid CSS property name (mirror of main types). The renderer
+ *  copy exists so the dialog can refuse a malformed free-text property with a
+ *  message, rather than posting it and having the boundary drop it silently. */
+export function isCssPropName(v: unknown): v is string {
+  return typeof v === "string" && v.length <= 100 && /^-{0,2}[a-zA-Z][a-zA-Z0-9-]*$/.test(v);
+}
 
 export interface Step {
   id: string;
@@ -102,6 +163,11 @@ export interface Step {
   text?: string;
   soft?: boolean;
   attr?: string;
+  /** KEBAB-case CSS property for a "css" assertion, the match mode, and the
+   *  pseudo-state a `state` step applies (mirror of main types). */
+  cssProp?: string;
+  cssMatch?: CssMatch;
+  elementState?: ElementState;
   count?: number;
   width?: number;
   height?: number;
@@ -174,6 +240,9 @@ export interface RawStep {
   text?: string;
   soft?: boolean;
   attr?: string;
+  cssProp?: string;
+  cssMatch?: CssMatch;
+  elementState?: ElementState;
   count?: number;
   width?: number;
   height?: number;
@@ -716,8 +785,10 @@ export interface HealSuggestion {
  *  right-click test-tools menu in the training browser. Mirrors the backend
  *  `ContextAction` in main/services/recorder-service.ts. */
 export interface ContextAction {
-  kind: "assertion" | "wait" | "goto" | "press" | "viewport" | "find" | "refine";
+  kind: "assertion" | "wait" | "goto" | "press" | "viewport" | "find" | "refine" | "elementState";
   assert?: AssertKind;
+  /** pseudo-state to preselect when kind === "elementState" (mirror of main). */
+  elementState?: "hover" | "focus";
   waitMode?: WaitDialogMode;
   picked: PickedElement | null;
   prefillText: string;
