@@ -58,6 +58,7 @@ import {
 } from "../services/debug-capture.js";
 import { ANALYSIS_WINDOW, analysisWindow, gatherRunDetails } from "../services/flake-source.js";
 import {
+  clampBatchConcurrency,
   DEFAULT_VISUAL_THRESHOLD,
   isRunBrowser,
   isTestSpeed,
@@ -885,6 +886,7 @@ export function registerHandlers(): void {
         browser?: string;
         datasetIds?: unknown;
         allDatasets?: boolean;
+        concurrency?: unknown;
       },
     ) => {
       const testIds = Array.isArray(params.testIds) ? params.testIds.filter((t) => !!t) : [];
@@ -898,6 +900,12 @@ export function registerHandlers(): void {
           ? params.datasetIds.filter((d): d is string => typeof d === "string")
           : undefined,
         allDatasets: params.allDatasets === true,
+        // Clamped HERE as well as in the runner. Anything past this point spawns
+        // a browser per unit, so "how many at once" is not a number to take on
+        // trust from a caller — and the MCP reaches the same runner.
+        // `new Set` because the ceiling is distinct TESTS: a dataset sweep
+        // queues one test many times, and those still run one after another.
+        concurrency: clampBatchConcurrency(params.concurrency, new Set(testIds).size),
       });
     },
   );

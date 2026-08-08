@@ -243,6 +243,8 @@ export const api = {
         browser?: RunBrowser;
         datasetIds?: string[];
         allDatasets?: boolean;
+        /** How many tests to run at once. Omitted or 1 = one at a time. */
+        concurrency?: number;
       },
     ) =>
       ipc().invoke<{ batchId: string; alreadyRunning: boolean }>("batch:run", {
@@ -252,6 +254,7 @@ export const api = {
         browser: opts?.browser,
         datasetIds: opts?.datasetIds,
         allDatasets: opts?.allDatasets,
+        concurrency: opts?.concurrency,
       }),
     stop: () => ipc().invoke<void>("batch:stop"),
     status: () => ipc().invoke<BatchState | null>("batch:status"),

@@ -135,14 +135,22 @@ are capped at 5 minutes and get force-killed past that.
 
 ### `run_batch`
 
-Run several tests back to back and report an aggregate pass/fail summary.
-Tests run **one at a time**, headless. A failing test does not stop the batch.
+Run several tests and report an aggregate pass/fail summary. Tests run
+headless, **one at a time by default**. A failing test does not stop the batch.
 
 | Arg | Type | Required |
 |---|---|---|
 | `testIds` | string[] | no — explicit selection, run in the order given |
 | `tag` | string | no — every test carrying that tag |
 | `browser` | `chromium` \| `firefox` \| `webkit` | no — defaults to Chromium |
+| `parallel` | number 1–16 | no — how many to run at once; defaults to 1 |
+
+`parallel` trades CPU for wall-clock time: each unit is its own Node process
+plus its own browser, so past the machine's core count the runs contend and
+each one gets slower. It is clamped to the number of tests selected, and the
+value actually used comes back as `parallel` in the response. There is no
+headed-window warning here as there is in the app — MCP runs are always
+headless, so nothing appears on screen.
 
 Selection rules: `testIds` wins if given; otherwise `tag`; otherwise every
 visible test. Tags match case-insensitively. Pass `tag="__untagged__"` for
@@ -153,6 +161,7 @@ back in `missingTestIds` rather than silently dropped.
 ```
 run_batch tag="smoke"
 run_batch tag="smoke" browser="webkit"
+run_batch tag="smoke" parallel=4
 run_batch testIds=["3f2a1c9e-...", "8b7d2f10-..."]
 run_batch
 ```

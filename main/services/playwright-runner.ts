@@ -26,6 +26,7 @@ import { describeA11yOutcome } from "./a11y-diff.js";
 import { DEFAULT_VISUAL_THRESHOLD } from "../recorder/types.js";
 import { generateSpec, generateSpecDetailed, secretEnvName } from "./script-generator.js";
 import { GLAZE_RUNTIME_FILE, glazeRuntimeSource } from "./glaze-runtime-source.js";
+import { PLAYWRIGHT_CONFIG_SOURCE } from "./playwright-config-source.js";
 import { HEAL_FIXTURE_FILE, healFixtureSource } from "./heal-fixture-source.js";
 import { SETTLE_FIXTURE_FILE, settleFixtureSource } from "./settle-fixture-source.js";
 import { buildHealProbeScript } from "./auto-heal.js";
@@ -128,6 +129,40 @@ function axePath(nodeModules: string): string {
   return path.join(nodeModules, "axe-core", "axe.min.js");
 }
 
+/** Serial number for temp filenames, so two atomic writes in the same process
+ *  can never pick the same scratch path. */
+let tmpSeq = 0;
+
+/**
+ * Write a file only when its content would actually change, and atomically when
+ * it would.
+ *
+ * Every `ensure*` helper below rewrites a file SHARED by every run, on every
+ * run — while other runs' Playwright processes may be reading it. Truncate-then-
+ * write is not atomic, so a concurrent reader could see a half-written config or
+ * fixture; renaming into place is, and the content of these files is fixed per
+ * app build, so after the first run of a session this writes nothing at all.
+ */
+function writeIfChanged(filePath: string, content: string): void {
+  try {
+    if (fs.readFileSync(filePath, "utf-8") === content) return;
+  } catch {
+    // Missing or unreadable — fall through and write it.
+  }
+  const tmp = `${filePath}.${process.pid}.${tmpSeq++}.tmp`;
+  try {
+    fs.writeFileSync(tmp, content, "utf-8");
+    fs.renameSync(tmp, filePath);
+  } catch (err) {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  }
+}
+
 function ensureModuleResolution(scriptsDir: string, nodeModules: string): void {
   // Specs import "@playwright/test"; a node_modules symlink next to them lets
   // Node resolve it even though they live under userData.
@@ -143,27 +178,11 @@ function ensureModuleResolution(scriptsDir: string, nodeModules: string): void {
   }
 }
 
-// Playwright's test CLI has no --slow-mo flag; launchOptions.slowMo only comes
-// from config. The per-test timeout CAN be set via --timeout on the CLI (and
-// is, below), but the config also reads PW_TEST_TIMEOUT_MS so a hand-run of the
-// generated config outside the app still picks up a sensible default instead of
-// Playwright's built-in 30s. Always rewritten so older scripts dirs pick up the
-// timeout field without the user having to delete the file.
+// Contents live in playwright-config-source.ts — see there for why, and for
+// what each env-driven field is for.
 function ensureConfig(scriptsDir: string): string {
   const configPath = path.join(scriptsDir, "playwright.config.ts");
-  fs.writeFileSync(
-    configPath,
-    'import { defineConfig } from "@playwright/test";\n\n' +
-      "export default defineConfig({\n" +
-      "  timeout: Number(process.env.PW_TEST_TIMEOUT_MS || 60000),\n" +
-      "  use: {\n" +
-      "    launchOptions: {\n" +
-      "      slowMo: Number(process.env.PW_SLOWMO_MS || 0),\n" +
-      "    },\n" +
-      "  },\n" +
-      "});\n",
-    "utf-8",
-  );
+  writeIfChanged(configPath, PLAYWRIGHT_CONFIG_SOURCE);
   return configPath;
 }
 
@@ -171,7 +190,7 @@ function ensureConfig(scriptsDir: string): string {
 // Always rewritten so it stays in sync with the app's current build.
 function ensureReporter(scriptsDir: string): string {
   const reporterPath = path.join(scriptsDir, "step-reporter.mjs");
-  fs.writeFileSync(reporterPath, stepReporterSource, "utf-8");
+  writeIfChanged(reporterPath, stepReporterSource);
   return reporterPath;
 }
 
@@ -179,7 +198,7 @@ function ensureReporter(scriptsDir: string): string {
 // capture run's redirected spec can import it. Always rewritten to stay in sync
 // with the app build.
 function ensureCaptureFixture(scriptsDir: string): void {
-  fs.writeFileSync(path.join(scriptsDir, CAPTURE_FIXTURE_FILE), captureFixtureSource, "utf-8");
+  writeIfChanged(path.join(scriptsDir, CAPTURE_FIXTURE_FILE), captureFixtureSource);
 }
 
 // Write the spec runtime helper (glaze-runtime.mjs) next to the specs, for
@@ -188,21 +207,21 @@ function ensureCaptureFixture(scriptsDir: string): void {
 // exists would mean a test that gains one mid-session runs against a missing
 // module until the next app start.
 function ensureRuntime(scriptsDir: string): void {
-  fs.writeFileSync(path.join(scriptsDir, GLAZE_RUNTIME_FILE), glazeRuntimeSource, "utf-8");
+  writeIfChanged(path.join(scriptsDir, GLAZE_RUNTIME_FILE), glazeRuntimeSource);
 }
 
 // Write the run-time heal fixture. Always written alongside the capture
 // fixture, which imports it unconditionally — a missing module would fail the
 // import even on a run with healing switched off.
 function ensureHealFixture(scriptsDir: string): void {
-  fs.writeFileSync(path.join(scriptsDir, HEAL_FIXTURE_FILE), healFixtureSource, "utf-8");
+  writeIfChanged(path.join(scriptsDir, HEAL_FIXTURE_FILE), healFixtureSource);
 }
 
 // Write the "crawl" page-settling fixture. Unconditional for the same reason as
 // the heal fixture: the capture fixture imports it at the top of the module, so
 // a run with settling OFF still has to be able to resolve the file.
 function ensureSettleFixture(scriptsDir: string): void {
-  fs.writeFileSync(path.join(scriptsDir, SETTLE_FIXTURE_FILE), settleFixtureSource, "utf-8");
+  writeIfChanged(path.join(scriptsDir, SETTLE_FIXTURE_FILE), settleFixtureSource);
 }
 
 /** The canonical key the heal fixture tags a locator with. MUST match the
@@ -386,6 +405,41 @@ function isBrowserInstalled(browser: RunBrowser): boolean {
     );
   } catch {
     return false;
+  }
+}
+
+/** Browser installs currently in flight, keyed by engine.
+ *
+ *  Parallel batches make this load-bearing. Several runs can discover the same
+ *  missing engine at the same moment, and N concurrent `playwright install`
+ *  processes unpacking into ONE directory is how you end up with a half-written
+ *  browser that then fails to launch for every run after it. First caller
+ *  installs; the rest await the same promise. */
+const installs = new Map<RunBrowser, Promise<unknown>>();
+
+async function installBrowser(
+  runId: string,
+  browser: RunBrowser,
+  cliPath: string,
+  scriptsDir: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const inProgress = installs.get(browser);
+  if (inProgress) {
+    // Said out loud, because the install's own output is streaming to a
+    // DIFFERENT run's Output panel — without this line, this run just sits
+    // there for a minute with nothing printed.
+    emitOutput(runId, "system", `Waiting for ${browser} to finish installing…\n`);
+    await inProgress;
+    return;
+  }
+  emitOutput(runId, "system", `Installing ${browser} (first run on this browser)…\n`);
+  const pending = runCli(runId, ["install", browser], cliPath, scriptsDir, env);
+  installs.set(browser, pending);
+  try {
+    await pending;
+  } finally {
+    installs.delete(browser);
   }
 }
 
@@ -697,6 +751,13 @@ export const playwrightRunner = {
       let exitCode = -1;
       let tempSpecPath: string | null = null;
       let capturingRun = false;
+      // Playwright's own scratch dir (traces, failure screenshots). Per-run
+      // rather than the shared default: it is derived from the SPEC's path, so
+      // two concurrent runs of one spec would write to — and clean — the same
+      // folder. Nothing in the app reads it (our artifacts go to artifactStore
+      // via GLAZE_ARTIFACT_DIR), so it's removed in the finally rather than
+      // accumulating one directory per run forever.
+      let outputDir = "";
       // Declared out here because the finally block reads them: everything
       // below is set inside the try, which the finally cannot see into.
       let checkedAccessibility = false;
@@ -706,6 +767,7 @@ export const playwrightRunner = {
       try {
         const { cliPath, nodeModules } = resolvePlaywright();
         const scriptsDir = getScriptsDir();
+        outputDir = path.join(scriptsDir, "test-results", recordId);
         ensureModuleResolution(scriptsDir, nodeModules);
         const configPath = ensureConfig(scriptsDir);
         const reporterPath = ensureReporter(scriptsDir);
@@ -867,12 +929,7 @@ export const playwrightRunner = {
         // Each engine is downloaded on its own first use — switching browsers
         // costs one install, not a re-download of everything.
         if (!isBrowserInstalled(runBrowser)) {
-          emitOutput(
-            runId,
-            "system",
-            `Installing ${runBrowser} (first run on this browser)…\n`,
-          );
-          await runCli(runId, ["install", runBrowser], cliPath, scriptsDir, env);
+          await installBrowser(runId, runBrowser, cliPath, scriptsDir, env);
         }
 
         const slowMo = SLOW_MO_MS[speed];
@@ -951,6 +1008,7 @@ export const playwrightRunner = {
             GLAZE_HEAL_MAP: healMapPath,
             PW_SLOWMO_MS: String(slowMo),
             PW_TEST_TIMEOUT_MS: String(testTimeoutMs),
+            PW_OUTPUT_DIR: outputDir,
             GLAZE_CAPTURE_ARTIFACTS: capturing ? "1" : "0",
             GLAZE_RECORD_LOGS: recordLogs ? "1" : "0",
             GLAZE_RECORD_ALL_HEADERS: healSettings.recordAllHeaders ? "1" : "0",
@@ -968,6 +1026,14 @@ export const playwrightRunner = {
         if (tempSpecPath) {
           try {
             fs.rmSync(tempSpecPath, { force: true });
+          } catch {
+            /* ignore */
+          }
+        }
+        // …and this run's Playwright scratch dir, for the same reason.
+        if (outputDir) {
+          try {
+            fs.rmSync(outputDir, { recursive: true, force: true });
           } catch {
             /* ignore */
           }

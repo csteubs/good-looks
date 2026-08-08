@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 
 import { describeStep as backendDescribe } from "../script-generator.js";
 import { describeStep as rendererDescribe } from "../../../renderer/lib/describe-step.js";
+import { ASSERT_KINDS, ELEMENT_STATES, STEP_TYPES } from "../../recorder/types.js";
 import type { Step, StepType } from "../../recorder/types.js";
 import type { Step as RendererStep } from "../../../renderer/lib/recorder-types.js";
 
@@ -41,6 +42,29 @@ const cases: { label: string; step: Step }[] = [
   { label: "wait for locator", step: step({ type: "wait", locator: LOCATOR }) },
   { label: "viewport", step: step({ type: "viewport", width: 1024, height: 768 }) },
   { label: "endif", step: step({ type: "endif" }) },
+  // capture/runFlow were never covered here: the old hand-written step-type
+  // guard omitted them, so nothing said so. Both are described by a PHRASE
+  // rather than by the generated call, which is exactly the shape that drifts.
+  {
+    label: "capture text",
+    step: step({ type: "capture", captureVar: "sku", captureFrom: "text", locator: LOCATOR }),
+  },
+  {
+    label: "capture attribute",
+    step: step({
+      type: "capture",
+      captureVar: "href",
+      captureFrom: "attribute",
+      captureAttr: "href",
+      locator: LOCATOR,
+    }),
+  },
+  { label: "capture url", step: step({ type: "capture", captureVar: "u", captureFrom: "url" }) },
+  {
+    label: "runFlow with args",
+    step: step({ type: "runFlow", flowId: "f1", label: "Login", flowArgs: { user: "a@b.c" } }),
+  },
+  { label: "runFlow without args", step: step({ type: "runFlow", flowId: "f1", label: "Login" }) },
   // Cookie steps — added to both copies by hand this session.
   {
     label: "cookie set",
@@ -65,23 +89,12 @@ const cases: { label: string; step: Step }[] = [
 ];
 
 // Every assert kind, since assertLine is the branchiest part of both files.
-const ASSERTS = [
-  "visible",
-  "hidden",
-  "text",
-  "exactText",
-  "enabled",
-  "disabled",
-  "checked",
-  "unchecked",
-  "value",
-  "attribute",
-  "count",
-  "url",
-  "urlEndsWith",
-  "urlIs",
-  "title",
-] as const;
+//
+// DERIVED from ASSERT_KINDS, not retyped. The hand-written list this replaced
+// looked like it covered everything and had no way to say otherwise — the
+// "covers every step type" guard below had silently fallen two step types
+// behind for the same reason. A list that must be remembered is not a guard.
+const ASSERTS = ASSERT_KINDS;
 
 for (const a of ASSERTS) {
   cases.push({
@@ -93,6 +106,7 @@ for (const a of ASSERTS) {
       text: "some text",
       value: "expected",
       attr: "data-x",
+      cssProp: "background-color",
       count: 2,
     }),
   });
@@ -106,10 +120,48 @@ for (const a of ASSERTS) {
       text: "some text",
       value: "expected",
       attr: "data-x",
+      cssProp: "background-color",
       count: 2,
     }),
   });
 }
+
+// The `css` assert takes a second axis the loop above can't express, and both
+// arms matter: `contains` compiles to a RegExp on both sides, and a css assert
+// with NO property must degrade identically rather than one side printing
+// `toHaveCSS("", …)` and the other bailing out.
+cases.push({
+  label: "assert css (contains)",
+  step: step({
+    type: "assert",
+    assert: "css",
+    locator: LOCATOR,
+    cssProp: "font-family",
+    cssMatch: "contains",
+    value: "Helvetica Neue",
+  }),
+});
+cases.push({
+  label: "assert css with no property",
+  step: step({ type: "assert", assert: "css", locator: LOCATOR, value: "red" }),
+});
+
+// Every pseudo-state. `press`/`release` carry no locator on purpose, and that
+// is exactly the case where the two copies could disagree about what to print.
+for (const s of ELEMENT_STATES) {
+  cases.push({
+    label: `state ${s}`,
+    step: step({
+      type: "state",
+      elementState: s,
+      ...(s === "press" || s === "release" ? {} : { locator: LOCATOR }),
+    }),
+  });
+}
+cases.push({
+  label: "state hover with no locator",
+  step: step({ type: "state", elementState: "hover" }),
+});
 
 // Every condition kind, for `if` steps.
 const CONDITIONS = [
@@ -185,22 +237,27 @@ describe("describeStep parity (backend ↔ renderer)", () => {
   it("covers every step type", () => {
     // Guards the check itself: a new StepType added without a case here would
     // otherwise leave the parity untested for it.
+    //
+    // Derived from STEP_TYPES rather than retyped. The hand-written list this
+    // replaced had gone stale without failing — `capture` and `runFlow` were
+    // both missing from it, so the guard had been passing while guarding
+    // nothing for two step types. A guard you have to remember to update is the
+    // same class of bug it exists to catch.
     const covered = new Set(cases.map((c) => c.step.type));
-    const ALL: StepType[] = [
-      "goto",
-      "click",
-      "fill",
-      "press",
-      "select",
-      "check",
-      "uncheck",
-      "assert",
-      "wait",
-      "viewport",
-      "if",
-      "endif",
-      "cookie",
-    ];
-    expect([...ALL].filter((t) => !covered.has(t))).toEqual([]);
+    expect(STEP_TYPES.filter((t) => !covered.has(t))).toEqual([]);
+  });
+
+  it("covers every assert kind", () => {
+    const covered = new Set(
+      cases.filter((c) => c.step.type === "assert").map((c) => c.step.assert),
+    );
+    expect(ASSERT_KINDS.filter((a) => !covered.has(a))).toEqual([]);
+  });
+
+  it("covers every element state", () => {
+    const covered = new Set(
+      cases.filter((c) => c.step.type === "state").map((c) => c.step.elementState),
+    );
+    expect(ELEMENT_STATES.filter((s) => !covered.has(s))).toEqual([]);
   });
 });

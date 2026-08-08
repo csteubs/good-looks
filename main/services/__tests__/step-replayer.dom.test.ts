@@ -211,6 +211,128 @@ describe("assertions", () => {
   });
 });
 
+describe("css assertions", () => {
+  it("passes when the computed value matches exactly", () => {
+    document.body.innerHTML = `<button data-testid="x" style="color: rgb(255, 0, 0)">Buy</button>`;
+    const res = run(
+      step({
+        type: "assert",
+        assert: "css",
+        locator: { k: "testid", v: "x" },
+        cssProp: "color",
+        cssMatch: "is",
+        value: "rgb(255, 0, 0)",
+      }),
+    );
+    expect(res.ok).toBe(true);
+  });
+
+  it("fails and reports the ACTUAL computed value", () => {
+    document.body.innerHTML = `<button data-testid="x" style="color: rgb(255, 0, 0)">Buy</button>`;
+    const res = run(
+      step({
+        type: "assert",
+        assert: "css",
+        locator: { k: "testid", v: "x" },
+        cssProp: "color",
+        cssMatch: "is",
+        // The classic mistake: the authored value, not the computed one.
+        value: "red",
+      }),
+    );
+    expect(res.ok).toBe(false);
+    expect(JSON.stringify(res.logs)).toContain("rgb(255, 0, 0)");
+  });
+
+  it("matches a substring in `contains` mode", () => {
+    document.body.innerHTML = `<div data-testid="x" style="font-family: 'Helvetica Neue', Arial">t</div>`;
+    const hit = run(
+      step({
+        type: "assert",
+        assert: "css",
+        locator: { k: "testid", v: "x" },
+        cssProp: "font-family",
+        cssMatch: "contains",
+        value: "Arial",
+      }),
+    );
+    expect(hit.ok).toBe(true);
+    const miss = run(
+      step({
+        type: "assert",
+        assert: "css",
+        locator: { k: "testid", v: "x" },
+        cssProp: "font-family",
+        cssMatch: "contains",
+        value: "Comic Sans",
+      }),
+    );
+    expect(miss.ok).toBe(false);
+  });
+
+  it("warns by name when the property reads empty, instead of just failing", () => {
+    // The single most likely user error: a camelCase property name.
+    // getPropertyValue answers "" for it rather than throwing, so without this
+    // the user sees "expected rgb(255, 0, 0), got nothing" and no reason why.
+    document.body.innerHTML = `<div data-testid="x" style="color: rgb(255, 0, 0)">t</div>`;
+    const res = run(
+      step({
+        type: "assert",
+        assert: "css",
+        locator: { k: "testid", v: "x" },
+        cssProp: "backgroundColor",
+        cssMatch: "is",
+        value: "rgb(255, 0, 0)",
+      }),
+    );
+    expect(res.ok).toBe(false);
+    expect(JSON.stringify(res.logs)).toContain("kebab-case");
+  });
+
+  it("refuses a css assert with no property rather than comparing against nothing", () => {
+    document.body.innerHTML = `<div data-testid="x">t</div>`;
+    const res = run(
+      step({ type: "assert", assert: "css", locator: { k: "testid", v: "x" }, value: "" }),
+    );
+    expect(res.ok).toBe(false);
+  });
+});
+
+describe("element state steps", () => {
+  it("focus actually moves document.activeElement", () => {
+    document.body.innerHTML = `<input data-testid="email" /><input data-testid="other" />`;
+    const res = run(step({ type: "state", elementState: "focus", locator: { k: "testid", v: "email" } }));
+    expect(res.ok).toBe(true);
+    expect((document.activeElement as HTMLInputElement)?.dataset.testid).toBe("email");
+  });
+
+  it("hover reports the element's centre point for the native pointer move", () => {
+    document.body.innerHTML = `<button data-testid="buy">Buy</button>`;
+    const res = run(step({ type: "state", elementState: "hover", locator: { k: "testid", v: "buy" } })) as
+      ReplayResult & { point?: { x: number; y: number } };
+    expect(res.ok).toBe(true);
+    // The shimmed box is 100x20 at the origin, so the centre is (50, 10).
+    expect(res.point).toEqual({ x: 50, y: 10 });
+  });
+
+  it("hover fails when the element cannot be resolved, rather than reporting a point", () => {
+    const res = run(step({ type: "state", elementState: "hover", locator: { k: "testid", v: "nope" } })) as
+      ReplayResult & { point?: { x: number; y: number } };
+    expect(res.ok).toBe(false);
+    expect(res.point).toBeUndefined();
+  });
+
+  it("press and release resolve no element — the window sends the button event", () => {
+    // They carry no locator by design, so the injected half must NOT try to
+    // resolve one. If it did, every :active recipe would fail on its own
+    // second step with "Element not found".
+    for (const elementState of ["press", "release"] as const) {
+      const res = run(step({ type: "state", elementState }));
+      expect(res.ok).toBe(true);
+    }
+  });
+});
+
 describe("conditions (if steps)", () => {
   it("reports met=true when the element is visible", () => {
     document.body.innerHTML = `<div data-testid="x">hi</div>`;

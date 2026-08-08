@@ -13,6 +13,8 @@
 // The event listeners installed here live in the world of the injecting call,
 // which WebKit keeps alive because the document retains the listeners.
 
+import { CSS_ASSERT_PROPS } from "./types.js";
+
 // Marker/attribute names, shared with the backend.
 export const ATTR_INSTALLED = "data-pw-installed";
 export const ATTR_QUEUE = "data-pw-queue";
@@ -28,6 +30,43 @@ export const ATTR_PICKED = "data-pw-picked";
 // a locator FROM an element) and the step replayer (which finds an element FROM
 // a locator). Kept as one string so the two injected scripts can't drift. No
 // backticks or ${...} inside except the escaped whitespace regex.
+/**
+ * `cssPropsOf(el)` — the element's computed values for the properties the CSS
+ * assertion picker offers, keyed by their KEBAB-case names.
+ *
+ * One string interpolated into both injected scripts (the capture script and
+ * `PICK_AT_POINT_SCRIPT`), and the property list itself comes from
+ * `CSS_ASSERT_PROPS` rather than being retyped here. Both copies were
+ * hand-maintained before, and the drift they invited was silent in the worst
+ * way: the picker still lists a property, and simply shows no value for it.
+ *
+ * `getPropertyValue` and NOT `cs[name]`: the bracket form needs camelCase and
+ * answers `undefined` for a kebab name, while `getPropertyValue` takes the
+ * kebab name Playwright's `toHaveCSS` also takes. Reading the value with a
+ * different spelling than the assertion compares it with is precisely how a
+ * prefilled value could fail the moment it was used.
+ *
+ * WHAT THESE VALUES INCLUDE. They are read at the instant the user picks the
+ * element — with their real cursor over it, because that is what picking is —
+ * so any `:hover` styling is already applied. That is what makes a hover
+ * assertion prefill correctly, and it is why the dialog says so rather than
+ * presenting them as resting styles.
+ */
+export const CSS_PROPS_HELPER = `
+  function cssPropsOf(el) {
+    var out = {};
+    try {
+      var cs = window.getComputedStyle(el);
+      var keys = ${JSON.stringify(CSS_ASSERT_PROPS)};
+      for (var i = 0; i < keys.length; i++) {
+        var v = cs.getPropertyValue(keys[i]);
+        if (v) out[keys[i]] = String(v).trim();
+      }
+    } catch (e) {}
+    return out;
+  }
+`;
+
 export const DOM_HELPERS = `
   function cssEscape(s) {
     try { return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s); }
@@ -285,20 +324,9 @@ export const CAPTURE_SCRIPT = `
     return out;
   }
 
-  // A curated slice of computed styles, for the review dialog's context.
-  function cssPropsOf(el) {
-    var out = {};
-    try {
-      var cs = window.getComputedStyle(el);
-      var keys = ["display", "position", "color", "backgroundColor", "fontSize",
-        "fontWeight", "width", "height", "visibility", "border"];
-      for (var i = 0; i < keys.length; i++) {
-        var v = cs[keys[i]];
-        if (v) out[keys[i]] = String(v);
-      }
-    } catch (e) {}
-    return out;
-  }
+  // A curated slice of computed styles, for the review dialog's context and to
+  // prefill CSS assertions. See CSS_PROPS_HELPER.
+  ${CSS_PROPS_HELPER}
 
   function attrsOf(el) {
     var out = {};
@@ -648,16 +676,7 @@ export const PICK_AT_POINT_SCRIPT = `
     out.push({ k: "xpath", v: xpathFor(el) });
     return out;
   }
-  function cssPropsOf(el) {
-    var out = {};
-    try {
-      var cs = window.getComputedStyle(el);
-      var keys = ["display", "position", "color", "backgroundColor", "fontSize",
-        "fontWeight", "width", "height", "visibility", "border"];
-      for (var i = 0; i < keys.length; i++) { var v = cs[keys[i]]; if (v) out[keys[i]] = String(v); }
-    } catch (e) {}
-    return out;
-  }
+  ${CSS_PROPS_HELPER}
   function attrsOf(el) {
     var out = {};
     var names = ["id", "class", "type", "name", "role", "href", "placeholder", "aria-label"];
