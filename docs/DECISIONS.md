@@ -16,6 +16,145 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-08 — The AI debug dialog holds one size
+
+The dialog body was `min-h-[400px] max-h-[70vh]` — a range, so the window
+resized itself as tokens arrived: it grew under the cursor while streaming, and
+shrank again when a short answer replaced a long one, moving Stop and Apply out
+from under the pointer mid-read.
+
+A fixed `h-[70vh]` also unblocks something the old comment in that file had
+correctly diagnosed as impossible: with a max-height body, `h-full` on a scroll
+viewport resolves against an auto height and bounds nothing, which is why all
+three panes carried a literal `max-h-[56vh]` on both root and viewport. With a
+definite height they can use the FILL shape `check:ai-debug-scroll` already
+accepts.
+
+The two halves are one contract, so the check now pins both: FILL panes only
+bound anything if the body they fill has a definite height, and a body that
+drifted back to a range would silently un-bound every pane below it — they would
+still LOOK right until content overflowed.
+
+The stop-button ring is gated twice, and the two gates are not the same thing.
+`motion-safe:` is the OS-level reduce-motion request, which is an accessibility
+setting; the Appearance-pane flourish toggle is a preference. Either one leaving
+the ring static must still leave the button usable, so the label and the square
+never depend on either.
+
+### 2026-08-08 — A group is membership rules, not a list of tests
+
+Groups could have been a `groupId` on `TestRecord`, or a stored array of test
+ids. Both make a group a thing that can disagree with the library: delete a test
+and every group holding its id is now wrong, so something has to walk the groups
+and clean up — and a cleanup pass that fails to run leaves a group pointing at a
+test the runner will fail to start.
+
+Storing **rules** instead (explicit ids ∪ tags, resolved on every read) removes
+the category. A stale id resolves to nothing. A test joins as many groups as
+name it. A tag rule picks up a test tagged next week with no edit. The cost is
+that a group's contents are not stable over time, which is the correct trade for
+a thing whose purpose is "run what currently matches".
+
+**A group naming nothing resolves EMPTY, not everything.** Pinned by name in the
+tests, because the opposite default is the dangerous one: an empty group meaning
+"the whole library" turns one careless click into a full-suite run, and it would
+be a perfectly reasonable-looking implementation.
+
+**The `groupId` stamp on a batch lands now, one phase early.** Group health over
+time is phase 2 and nothing reads the field yet — but a group's history *is* its
+batches, and a batch's runs already carry `RunRecord.batchId`, so stamping the
+group at run time is the entire seam. Adding it later would mean every batch run
+before that day is invisible to the panel. The group's NAME is denormalized
+alongside the id for the same class of reason: renaming or deleting a group must
+not rewrite what the history says was run.
+
+`resolveGroupTests` lives in `shared/` rather than `main/` because MCP's
+`run_group` will need the identical answer. A group that means one set of tests
+in the sidebar and a different set over MCP is a disagreement nobody notices
+until a nightly run has quietly been skipping something for a month.
+
+### 2026-08-08 — The step parser's allowlist was narrower than the prompt
+
+Two of the three "model formats" gaps were the same shape: the app told the
+model one thing and accepted another.
+
+`extractStepsJson` validated against ten of the sixteen step types, so `if`,
+`endif`, `cookie`, `capture`, `runFlow` and `state` were rejected outright — the
+AI could not produce them at all, and the user was told the response contained
+no usable steps, which reads as the model being bad at its job rather than the
+parser refusing a valid answer. Worse, the assert allowlist was missing
+`urlEndsWith` and `urlIs` **while the generate-steps prompt already listed both
+as valid**. A model following its instructions exactly had its step dropped.
+
+So the prompt is widened with the parser. Widening only the parser would leave
+the model unaware the types exist; widening only the prompt is what caused the
+assert bug. They are one change.
+
+`cssProp` is validated more strictly here than in `normalizeRawStep`: a standard
+property must be kebab-case. Playwright reads it through `getPropertyValue()`,
+which answers `""` for `backgroundColor` — so the camelCase spelling, the one a
+model writing JavaScript all day is most likely to produce, yields an assertion
+comparing the expected value against an empty string and failing for a reason
+nothing on screen explains. Dropping it costs one generated step; keeping it
+costs a debugging session. Custom properties (`--fooBar`) are exempt because
+they are genuinely case-sensitive.
+
+The `<think>` stripping is extraction-only, never display. Hiding a model's
+reasoning from the person reading it is not this function's job; the problem is
+only that reasoning is prose, prose contains brackets, and the widest-`[...]`
+-span fallback would span from a bracket inside the thinking to the real array's
+closing one and parse neither.
+
+### 2026-08-08 — The visual diffs were never a tuning problem
+
+The note said visual tests are "flaky as s\*\*\* unless tuned finely", which
+frames it as a threshold question. It wasn't. `page.screenshot()` was being
+called with a path and a timeout and nothing else, and Playwright defaults
+`animations` to `"allow"` — so every CSS animation, transition and Web Animation
+was live in every captured PNG. A spinner mid-rotation produces different pixels
+on every run at **any** threshold, because the pixels genuinely are different.
+
+That is why "tuned finely" was the experience: the only lever that appeared to
+work was raising the threshold until the noise stopped being flagged, which also
+raises it past the regressions the feature exists to catch. One option fixes the
+cause.
+
+Three things are deliberately NOT being done:
+
+- **`includeAA: true`.** I nearly wrote this into the research doc as a
+  recommendation. pixelmatch's `includeAA: false` — the default, and what we
+  pass — means *do not skip* anti-aliasing detection, so AA pixels are already
+  detected and ignored. Setting it true would make text noisier, not quieter.
+  The option is named as its own inverse and it reads as the opposite of what it
+  does.
+- **Exposing pixelmatch's per-pixel sensitivity as a second slider.** Two knobs
+  both called "sensitivity", measuring different things (percent-of-pixels vs
+  colour-distance), is how tuning turns into folklore.
+- **Bringing back run-level accept-all** (the note's other half). See below.
+
+The guard is source-level in `check:visual-pipeline`, which is unusual for that
+file — but the option lives inside a fixture shipped to a Playwright subprocess
+as a *string*. Nothing in this repo executes it, and no diff output reveals
+whether it was set. A behavioural test cannot see this; only reading the source
+can.
+
+### 2026-08-08 — Accept-all stays gone until the diffs are trustworthy
+
+The note offers "make accept-all a button, or remove it". It was already removed
+deliberately (2026-08-04, below) and the backend left in place — but
+ARCHITECTURE.md still described the button as present, so the docs said the
+feature existed while the UI said otherwise. Anyone reading them would conclude
+it was broken rather than withdrawn, which is probably part of why the note
+exists. That line is now fixed.
+
+Keeping it gone, for a reason the earlier entry could not have given: while
+diffs flag things nobody changed, a one-click "accept everything" is a button
+whose most common use is re-baselining noise — and the day it swallows a real
+regression will look exactly like all the days it didn't. With the capture fixed
+the flag rate should mean something; if per-step accepting is *then* still
+tedious, it can come back knowing the flags are real. The a11y panel's
+"Accept all for this run" is the template, 150 lines up in the same file.
+
 ### 2026-08-08 — Two variables bugs with one root: the record was the draft
 
 "Cannot create a new standalone variable" turned out to be the visible half of a
