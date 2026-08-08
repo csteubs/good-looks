@@ -16,6 +16,20 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-07 — Routines is specified, not built, and the spec is the deliverable
+
+Batch v2 — renamed "Routines", with scheduled runs and a Shopify-Flow-style builder — is substantially larger than everything else shipped this day put together, and most of its risk is in decisions made before any code. Writing [ROUTINES.md](ROUTINES.md) now, alongside the per-row Batch work, is what stops that work foreclosing it.
+
+Three findings from writing it were worth having in hand while building the smaller feature:
+
+**`batchTestOptions` is a dead end for Routines, and that is fine.** A `Record<testId, BatchRowOptions>` can hold exactly one configuration of each test, so "Smoke runs Login on Chromium headless" and "Nightly runs Login on all three engines" cannot both exist. It was still the right shape for one checklist — no new store, no migration, an absent entry is a working default — and Routines would introduce its own entity and migrate the map into a Routine named "Batch" on first launch. Knowing the exit exists is what made the cheap version safe to ship.
+
+**`runFlow` is not the flow model, and conflating them is the main design risk.** `isFlow`/`flowParams`/`runFlow` already exist and already compose — but they inline one test's STEPS into another at generation time, producing one Playwright test. A Routine composes RUNS: separate processes, separate `RunRecord`s, separate rows in Stats. A builder that lets a Routine step reach inside a flow would be a second composition mechanism competing with the first.
+
+**The lane invariant constrains the builder, not just the runner.** Because `runId === testId`, two Routine steps naming the same test can never run concurrently however the diagram is drawn. That has to be a save-time rejection rather than a silent serialisation: a builder that draws two parallel branches and runs them one after another is lying in a picture, which is worse than refusing to draw it.
+
+The spec also recommends NOT renaming the `batch:*` IPC channels, `batch-history.json`, `RunRecord.batchId`, or the MCP `run_batch` tool. A rename reaching disk formats and external tool names costs a migration and breaks every MCP client with "unknown tool" rather than a redirect — and buys a word. The word is worth having in the UI, not in `run-history.json`.
+
 ### 2026-08-07 — Deleting a test: the name goes, the arithmetic stays
 
 Deleting a test removed its record, spec, screenshots, baselines, annotations, secrets and heal journal — and left its run history, its raw logs, its AI-debug sessions and its recorder debug logs behind. The test vanished from the library and kept appearing in Stats under its last-known name.
