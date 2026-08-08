@@ -26,6 +26,7 @@ import { playwrightRunner } from "./playwright-runner.js";
 import { testStore } from "./test-store.js";
 import { batchHistoryStore } from "./batch-history-store.js";
 import { sendAlert, type BatchAlert } from "./alert-service.js";
+import { buildQueue } from "../../shared/batch-queue.mjs";
 import type {
   BatchState,
   BatchSummary,
@@ -60,44 +61,12 @@ export interface BatchRunParams {
   allDatasets?: boolean;
 }
 
-/** One queued execution: a test, optionally bound to a dataset row. */
-export interface BatchEntry {
-  testId: string;
-  datasetId?: string;
-  datasetName?: string;
-  vars?: Record<string, string>;
-}
-
-/**
- * Expand a selection into the queue actually executed.
- *
- * Pure, and separated from the runner, because this is where a sweep gets its
- * meaning: without dataset options the queue is exactly the selection (so
- * nothing about existing batches changes), and with them the same test appears
- * once per matching row, in the order the rows are declared.
- */
-export function buildQueue(
-  params: BatchRunParams,
-  getDatasets: (testId: string) => Dataset[],
-): BatchEntry[] {
-  const wantsSweep = params.allDatasets === true || (params.datasetIds?.length ?? 0) > 0;
-  if (!wantsSweep) return params.testIds.map((testId) => ({ testId }));
-  const wanted = new Set(params.datasetIds ?? []);
-  const out: BatchEntry[] = [];
-  for (const testId of params.testIds) {
-    const rows = getDatasets(testId).filter(
-      (d) => params.allDatasets === true || wanted.has(d.id),
-    );
-    if (rows.length === 0) {
-      out.push({ testId });
-      continue;
-    }
-    for (const row of rows) {
-      out.push({ testId, datasetId: row.id, datasetName: row.name, vars: row.values });
-    }
-  }
-  return out;
-}
+// Expanding a selection into the queue actually executed lives in
+// shared/batch-queue.mjs, so the MCP's run_batch sweeps datasets with the same
+// semantics rather than a second implementation of them. Re-exported because
+// this module is where the app and check:batch-runner already import it from.
+export type { BatchEntry } from "../../shared/batch-queue.mjs";
+export { buildQueue } from "../../shared/batch-queue.mjs";
 
 /** Seam for testing — the real implementations talk to the Playwright runner,
  *  the test store, and the renderer. */

@@ -33,6 +33,11 @@ import { healJournalStore } from "./heal-journal-store.js";
 import { describeStep } from "./script-generator.js";
 import { testSecretsStore } from "./test-secrets-store.js";
 import { refreshSecretSnapshot, redactWithSnapshot } from "./secret-redaction.js";
+import { stripAnsi } from "../../shared/strip-ansi.mjs";
+import {
+  PLAYWRIGHT_CONFIG_FILE,
+  playwrightConfigSource,
+} from "../../shared/playwright-config-source.mjs";
 import type {
   HealApplyMode,
   HealCandidate,
@@ -143,27 +148,13 @@ function ensureModuleResolution(scriptsDir: string, nodeModules: string): void {
   }
 }
 
-// Playwright's test CLI has no --slow-mo flag; launchOptions.slowMo only comes
-// from config. The per-test timeout CAN be set via --timeout on the CLI (and
-// is, below), but the config also reads PW_TEST_TIMEOUT_MS so a hand-run of the
-// generated config outside the app still picks up a sensible default instead of
-// Playwright's built-in 30s. Always rewritten so older scripts dirs pick up the
-// timeout field without the user having to delete the file.
+// Always rewritten so older scripts dirs pick up the current config without the
+// user having to delete the file — and so an MCP-written copy is replaced by
+// this one rather than silently outliving it. The source string itself lives in
+// shared/, because both writers target the same path; see that file for why.
 function ensureConfig(scriptsDir: string): string {
-  const configPath = path.join(scriptsDir, "playwright.config.ts");
-  fs.writeFileSync(
-    configPath,
-    'import { defineConfig } from "@playwright/test";\n\n' +
-      "export default defineConfig({\n" +
-      "  timeout: Number(process.env.PW_TEST_TIMEOUT_MS || 60000),\n" +
-      "  use: {\n" +
-      "    launchOptions: {\n" +
-      "      slowMo: Number(process.env.PW_SLOWMO_MS || 0),\n" +
-      "    },\n" +
-      "  },\n" +
-      "});\n",
-    "utf-8",
-  );
+  const configPath = path.join(scriptsDir, PLAYWRIGHT_CONFIG_FILE);
+  fs.writeFileSync(configPath, playwrightConfigSource, "utf-8");
   return configPath;
 }
 
@@ -477,23 +468,12 @@ function collectRunHeals(
   return events.length;
 }
 
-/** CSI escape sequences — Playwright's `line` reporter redraws its progress
- *  line with cursor-up + erase-line, and colours failures.
- *
- *  Stripped at the same choke point as redaction, for the same reason: these
- *  bytes are meaningless outside a terminal, and all three consumers suffer
- *  from them. The Output panel renders them as visible mojibake (`⌧[1A⌧[2K`),
- *  the log file keeps them forever, and — worst — they are sent verbatim to
- *  the model in the Debug-with-AI prompt, where they spend context on cursor
- *  movements and give the model garbage to reason about. */
-// Built from a char code rather than a regex literal: ESC is a control
-// character, and `no-control-regex` rejects it inline. Disabling that rule
-// here would also disable it for anything added to this file later.
-const ANSI_ESCAPE = new RegExp(String.fromCharCode(27) + "\\[[0-9;?]*[A-Za-z]", "g");
-
-export function stripAnsi(text: string): string {
-  return text.replace(ANSI_ESCAPE, "");
-}
+/** CSI escape sequences are stripped at the same choke point as redaction, for
+ *  the same reason: these bytes are meaningless outside a terminal, and all
+ *  three consumers suffer from them. Defined in shared/strip-ansi.mjs so the
+ *  MCP server's own single write point can apply it too; re-exported because
+ *  strip-ansi.test.ts and the rest of the app import it from here. */
+export { stripAnsi } from "../../shared/strip-ansi.mjs";
 
 function emitOutput(runId: string, stream: "stdout" | "stderr" | "system", chunk: string): void {
   // Redact HERE, at the single point every byte of run output passes through,
