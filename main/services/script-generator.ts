@@ -755,9 +755,13 @@ function expandSteps(
  *  Spread order is the whole design: declared defaults first, then the run's
  *  injected values (a dataset row), then secrets. Secrets go LAST so nothing
  *  can shadow them — a dataset row naming a secret variable must not be able to
- *  substitute a plaintext value for the encrypted one. */
-function variableHeader(variables: TestVariable[]): string[] {
-  if (variables.length === 0) return [];
+ *  substitute a plaintext value for the encrypted one.
+ *
+ *  `needsCapture` forces the header even with zero declared variables: a
+ *  capture step's emitted `glazeCapture(V, …)` writes into `V` at run time, so
+ *  a spec containing one without the header is a ReferenceError on line one. */
+function variableHeader(variables: TestVariable[], needsCapture: boolean): string[] {
+  if (variables.length === 0 && !needsCapture) return [];
   const plain = variables.filter((v) => v.kind !== "secret");
   const secret = variables.filter((v) => v.kind === "secret");
   const lines: string[] = ["  const V = {"];
@@ -817,7 +821,7 @@ export function generateSpecDetailed(
     preamble.push(`import { glazeCapture } from "./${GLAZE_RUNTIME_FILE}";`);
   }
   preamble.push("");
-  const header = variableHeader(variables);
+  const header = variableHeader(variables, needsRuntime);
   // The `test(...)` line sits at `preamble.length + 1`; the variable header
   // follows it; the first body line is the one after that.
   const bodyStartLine = preamble.length + 2 + header.length;
