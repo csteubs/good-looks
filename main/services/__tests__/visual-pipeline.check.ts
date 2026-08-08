@@ -855,6 +855,34 @@ eq(partial?.stepsDiverged, true, "a differing step set is reported as diverged")
   eq(pressReplay.steps[2]?.screenshot, "1.png", "…so the click after it still gets its own");
 }
 
+// ── the capture itself is stabilized ───────────────────────────────────────
+// Source-level, because this option lives inside a fixture shipped to a
+// Playwright subprocess as a STRING — no test in this repo executes it, and
+// nothing about a diff's output reveals whether it was set. Playwright defaults
+// `animations` to "allow", so without this every CSS animation, transition and
+// Web Animation is live at the moment of capture and differs on every run, at
+// any threshold. Losing this line would reintroduce visual flake that looks
+// exactly like a tuning problem — which is how it went unnoticed the first
+// time (see docs/VISUAL-TUNING.md).
+{
+  // From the repo root, not from import.meta.url: this check is bundled by
+  // esbuild into node_modules/.cache, so a module-relative path would resolve
+  // against the bundle rather than the source.
+  const source = fs.readFileSync(
+    path.resolve(process.cwd(), "main/services/capture-fixture-source.ts"),
+    "utf8",
+  );
+  const shot = /page\.screenshot\(\{[\s\S]*?\}\)/.exec(source)?.[0] ?? "";
+  check(shot.length > 0, "the capture fixture still takes a screenshot");
+  check(
+    /animations:\s*"disabled"/.test(shot),
+    'page.screenshot() passes animations: "disabled"',
+  );
+  // caret already defaults to "hide"; asserting its ABSENCE keeps someone from
+  // "fixing" a non-problem and implying the default is unsafe.
+  check(!/fullPage:\s*true/.test(shot), "the capture stays viewport-only");
+}
+
 // ── cleanup + verdict ──────────────────────────────────────────────────────
 try {
   fs.rmSync(DATA_ROOT, { recursive: true, force: true });

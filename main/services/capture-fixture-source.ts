@@ -265,7 +265,20 @@ async function capture(page, method, target, args, stepMs) {
   if (ON) {
     try {
       if (page && (!page.isClosed || !page.isClosed())) {
-        await page.screenshot({ path: path.join(ctx.dir, index + ".png"), timeout: SHOT_TIMEOUT_MS });
+        // animations: "disabled" is the whole difference between a visual diff
+        // that means something and one that fires on every run. Playwright
+        // defaults it to "allow", so without this line a spinner mid-rotation,
+        // a modal mid-fade or an unfinished hover transition lands in the PNG
+        // and differs on every capture — at ANY threshold, because the pixels
+        // genuinely are different. With it, finite animations fast-forward to
+        // their end state and infinite ones reset and resume after the shot.
+        // (caret already defaults to "hide", so a blinking cursor is not a
+        // source of noise and needs no option here.)
+        await page.screenshot({
+          path: path.join(ctx.dir, index + ".png"),
+          timeout: SHOT_TIMEOUT_MS,
+          animations: "disabled",
+        });
         ok = true;
       }
     } catch (err) {
