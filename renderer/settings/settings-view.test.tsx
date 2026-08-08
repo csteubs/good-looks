@@ -286,6 +286,7 @@ describe("the reset footer", () => {
     // loudly rather than being quietly resettable.
     expect(Object.keys(patch).slice().sort()).toEqual([
       "alertWebhookEnabled",
+      "notifyOnAiDebugDone",
       "notifyOnBatchDone",
       "notifyOnRunIssues",
     ]);
