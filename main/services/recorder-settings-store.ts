@@ -146,6 +146,9 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   artifactRetainedRuns: DEFAULT_RETAINED_RUNS,
   artifactRetentionDays: 0,
   notifyOnRunIssues: false,
+  // ON by default, unlike the per-run notification. A batch is a job you walk
+  // away from, and the whole point is to be told it ended.
+  notifyOnBatchDone: true,
   disabledAestheticEnhancements: [],
 };
 
@@ -243,6 +246,10 @@ function read(): RecorderSettings {
         typeof parsed.notifyOnRunIssues === "boolean"
           ? parsed.notifyOnRunIssues
           : DEFAULT_SETTINGS.notifyOnRunIssues,
+      notifyOnBatchDone:
+        typeof parsed.notifyOnBatchDone === "boolean"
+          ? parsed.notifyOnBatchDone
+          : DEFAULT_SETTINGS.notifyOnBatchDone,
       disabledAestheticEnhancements:
         Array.isArray(parsed.disabledAestheticEnhancements) &&
         parsed.disabledAestheticEnhancements.every((v) => typeof v === "string")
@@ -357,6 +364,10 @@ export const recorderSettingsStore = {
         update.notifyOnRunIssues !== undefined
           ? update.notifyOnRunIssues
           : current.notifyOnRunIssues,
+      notifyOnBatchDone:
+        update.notifyOnBatchDone !== undefined
+          ? update.notifyOnBatchDone
+          : current.notifyOnBatchDone,
       disabledAestheticEnhancements:
         update.disabledAestheticEnhancements !== undefined &&
         Array.isArray(update.disabledAestheticEnhancements) &&
@@ -392,6 +403,7 @@ export const recorderSettingsStore = {
       artifactRetainedRuns: next.artifactRetainedRuns,
       artifactRetentionDays: next.artifactRetentionDays,
       notifyOnRunIssues: next.notifyOnRunIssues,
+      notifyOnBatchDone: next.notifyOnBatchDone,
       disabledAestheticEnhancements: next.disabledAestheticEnhancements,
     });
     return next;

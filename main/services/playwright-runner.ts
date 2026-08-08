@@ -18,7 +18,7 @@ import { captureFixtureSource } from "./capture-fixture-source.js";
 import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { resolveTestTimeoutMs, SLOW_MO_MS } from "./run-pacing.js";
-import { notifyRunOutcome } from "./run-notifier.js";
+import { notifyRunOutcome, shouldNotifyRun } from "./run-notifier.js";
 import { sendAlert } from "./alert-service.js";
 import { applyRetention } from "./retention.js";
 import { buildReplay, enrichWithA11y, enrichWithVisualDiffs } from "./replay-builder.js";
@@ -1163,8 +1163,14 @@ export const playwrightRunner = {
         // one generating screenshots.
         applyRetention();
         // Local desktop notification for a failure or a visual change, when the
-        // user opted in. Never fires for a clean run.
-        if (recorderSettingsStore.get().notifyOnRunIssues) {
+        // user opted in. Never fires for a clean run, and never for a run
+        // inside a batch — see shouldNotifyRun.
+        if (
+          shouldNotifyRun({
+            batchId: params.batchId,
+            enabled: recorderSettingsStore.get().notifyOnRunIssues,
+          })
+        ) {
           notifyRunOutcome({
             testName: rec.name,
             status: runStatus,

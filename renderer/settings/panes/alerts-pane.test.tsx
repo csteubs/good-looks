@@ -13,6 +13,15 @@ import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { makeController, renderPane, savedPatch } from "../__tests__/harness";
 import { AlertsPane } from "./alerts-pane";
 
+/** The "More" disclosure for one row. Every row has one, so a bare
+ *  `getByRole("button", {name: /more/i})` matches them all and reports as
+ *  "found multiple elements" rather than as the wrong row. */
+function moreFor(rowId: string): HTMLElement {
+  const el = document.querySelector(`[aria-controls="${rowId}-details"]`);
+  if (!el) throw new Error(`No details disclosure for row "${rowId}"`);
+  return el as HTMLElement;
+}
+
 describe("local notifications", () => {
   it("saves the toggle", () => {
     const { controller } = renderPane(<AlertsPane />);
@@ -24,8 +33,19 @@ describe("local notifications", () => {
     // The distinction from the webhook row below is the whole reason these two
     // sit next to each other.
     renderPane(<AlertsPane />);
-    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    fireEvent.click(moreFor("notify-run-issues"));
     expect(screen.getByText(/local to this Mac/i)).toBeTruthy();
+  });
+
+  it("offers a separate batch notification, on by default", () => {
+    // A batch is a job you walk away from, so unlike the per-run notice this
+    // one reports success too — and it's the reason a failing batch no longer
+    // fires one notification per failed test.
+    renderPane(<AlertsPane />);
+    const toggle = screen.getByRole("switch", { name: /notify when a batch finishes/i });
+    expect(toggle.getAttribute("data-state")).toBe("checked");
+    fireEvent.click(moreFor("notify-batch-done"));
+    expect(screen.getByText(/one for the suite/i)).toBeTruthy();
   });
 });
 

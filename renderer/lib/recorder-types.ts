@@ -766,6 +766,9 @@ export interface RecorderSettings {
   artifactRetentionDays: number;
   /** notify on macOS when a run fails or shows a visual change (default false). */
   notifyOnRunIssues: boolean;
+  /** post a macOS notification when a batch finishes, pass or fail (default
+   *  true). Suppresses the per-run notification for tests inside a batch. */
+  notifyOnBatchDone: boolean;
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];

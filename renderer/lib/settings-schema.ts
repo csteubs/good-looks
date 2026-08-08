@@ -332,6 +332,13 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     key: "notifyOnRunIssues",
   },
   {
+    id: "notify-batch-done",
+    pane: "alerts",
+    label: "Notify when a batch finishes",
+    keywords: "notification macos banner batch suite finished local",
+    key: "notifyOnBatchDone",
+  },
+  {
     id: "alert-webhook-enabled",
     pane: "alerts",
     label: "Send alerts to a webhook",
@@ -425,6 +432,7 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   artifactRetainedRuns: 10,
   artifactRetentionDays: 0,
   notifyOnRunIssues: false,
+  notifyOnBatchDone: true,
   alertWebhookEnabled: false,
   autoHealEnabled: true,
   autoHealRetries: 3,

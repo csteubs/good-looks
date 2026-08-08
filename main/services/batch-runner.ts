@@ -43,6 +43,8 @@ import { playwrightRunner } from "./playwright-runner.js";
 import { testStore } from "./test-store.js";
 import { batchHistoryStore } from "./batch-history-store.js";
 import { sendAlert, type BatchAlert } from "./alert-service.js";
+import { notifyBatchOutcome, type BatchOutcomeNotice } from "./run-notifier.js";
+import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { clampBatchConcurrency } from "../recorder/types.js";
 import type {
   BatchState,
@@ -216,6 +218,10 @@ export interface BatchDeps {
   persist: (record: BatchState & { summary: BatchSummary }) => void;
   /** Fire-and-forget outgoing alert when the batch finishes. */
   alert: (alert: BatchAlert) => void;
+  /** Local desktop notification for the finished suite. Separate from `alert`
+   *  (an outgoing webhook) because they have different defaults, different
+   *  audiences, and — unlike the webhook — this one fires on success too. */
+  notify: (notice: BatchOutcomeNotice) => void;
 }
 
 const realDeps: BatchDeps = {
@@ -231,6 +237,10 @@ const realDeps: BatchDeps = {
   },
   alert: (alert) => {
     void sendAlert(alert);
+  },
+  notify: (notice) => {
+    if (!recorderSettingsStore.get().notifyOnBatchDone) return;
+    notifyBatchOutcome(notice);
   },
 };
 
@@ -444,6 +454,17 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
           failedTests: s.results.filter((r) => r.status === "failed").map((r) => r.testName),
           stopped: s.stopped,
           browser: params.browser,
+        });
+        // And one desktop notification, for the same reason — plus the reason
+        // the whole feature exists: the Batch view's toast only fires while
+        // that view is mounted, so starting a suite and navigating away used to
+        // mean never being told it finished.
+        deps.notify({
+          total: summary.total,
+          passed: summary.passed,
+          failed: summary.failed,
+          skipped: summary.skipped,
+          stopped: s.stopped,
         });
       })();
 

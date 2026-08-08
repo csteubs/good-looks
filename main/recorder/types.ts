@@ -1271,6 +1271,13 @@ export interface RecorderSettings {
   /** post a macOS notification when a run finishes with a failure or a visual
    *  change (default false). Local only — nothing leaves the machine. */
   notifyOnRunIssues: boolean;
+  /** Post a macOS notification when a BATCH finishes (default true). Unlike
+   *  notifyOnRunIssues this fires on success too: the point of a batch
+   *  notification is that the user started a long job and walked away, so
+   *  "all 12 passed" is the message they were waiting for. While this is on,
+   *  the per-run notification is suppressed for tests inside a batch — one
+   *  notification for the suite, not one per failure. */
+  notifyOnBatchDone: boolean;
   /** additionally delete captured runs older than this many days (0 = off,
    *  max 365). Applies ON TOP of artifactRetainedRuns — a run is kept only if
    *  it satisfies both rules. The pinned baseline is never pruned. */

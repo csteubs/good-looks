@@ -29,6 +29,11 @@ import {
   type BatchState,
   type BatchTestStatus,
 } from "../batch-runner.js";
+import {
+  buildBatchNotice,
+  shouldNotifyRun,
+  type BatchOutcomeNotice,
+} from "../run-notifier.js";
 import { clampBatchConcurrency, MAX_BATCH_CONCURRENCY } from "../../recorder/types.js";
 import type { Dataset } from "../../recorder/types.js";
 import type { BatchSummary } from "../../recorder/types.js";
@@ -107,6 +112,8 @@ function makeFake(opts: {
   const persisted: (BatchState & { summary: BatchSummary })[] = [];
   /** outgoing alerts requested by the runner */
   const alerts: unknown[] = [];
+  /** desktop notifications requested by the runner */
+  const notices: BatchOutcomeNotice[] = [];
   let clock = 1000;
 
   const datasets = opts.datasets ?? {};
@@ -152,6 +159,9 @@ function makeFake(opts: {
     alert: (a) => {
       alerts.push(a);
     },
+    notify: (n) => {
+      notices.push(n);
+    },
     persist: (record) => {
       // Deep-ish copy: the runner mutates its result entries in place, so
       // storing the live objects would make every snapshot look identical.
@@ -167,6 +177,7 @@ function makeFake(opts: {
     stopped,
     persisted,
     alerts,
+    notices,
     get maxLive() {
       return maxLive;
     },
@@ -736,6 +747,96 @@ async function main(): Promise<void> {
       `each row reports its own outcome (got ${rows.map((r) => r.status).join(",")})`,
     );
     assert(fake.maxLiveFor("a") === 1, "a swept test stayed serialized for the whole batch");
+  }
+
+  // ── Batch completion notification ──────────────────────────────────
+  // The whole point: the Batch view's toast only fires while that view is
+  // mounted, so starting a suite and navigating away meant never being told it
+  // finished. A CLEAN batch must notify too — "all 12 passed" is the message
+  // the user walked away waiting for, and the per-run notifier's
+  // return-null-on-success rule is exactly wrong here.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"] });
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+
+    assert(fake.notices.length === 1, `exactly one notification per batch (${fake.notices.length})`);
+    assert(fake.notices[0].failed === 0 && fake.notices[0].passed === 2, "a clean batch notifies");
+    assert(fake.notices[0].stopped === false, "a completed batch is not reported as stopped");
+    assert(
+      buildBatchNotice(fake.notices[0]).title === "Batch passed",
+      `a clean batch says so (got "${buildBatchNotice(fake.notices[0]).title}")`,
+    );
+  }
+
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"] });
+    await tick();
+    fake.finish("a", 1);
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+
+    assert(fake.notices.length === 1, "a failing batch still notifies exactly once");
+    assert(
+      buildBatchNotice(fake.notices[0]).title === "Batch finished — 1 failed",
+      `a failing batch names the count (got "${buildBatchNotice(fake.notices[0]).title}")`,
+    );
+  }
+
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"] });
+    await tick();
+    batch.stop();
+    await tick();
+
+    assert(fake.notices.length === 1, "a stopped batch notifies rather than going silent");
+    assert(fake.notices[0].stopped === true, "the notice knows it was stopped");
+    assert(
+      buildBatchNotice(fake.notices[0]).title === "Batch stopped",
+      `a stopped batch says stopped, not failed (got "${buildBatchNotice(fake.notices[0]).title}")`,
+    );
+  }
+
+  // A run INSIDE a batch stays silent, however the per-run setting is set.
+  // Before this, a batch with eight failures fired eight macOS notifications
+  // and none for the batch — the opposite of what a batch notification is for.
+  {
+    assert(
+      shouldNotifyRun({ batchId: "b1", enabled: true }) === false,
+      "a run inside a batch does not post its own notification",
+    );
+    assert(
+      shouldNotifyRun({ batchId: undefined, enabled: true }) === true,
+      "a standalone run still notifies when the setting is on",
+    );
+    assert(
+      shouldNotifyRun({ batchId: undefined, enabled: false }) === false,
+      "the per-run setting still switches standalone runs off",
+    );
+  }
+
+  // The notice text itself, without a runner.
+  {
+    assert(
+      buildBatchNotice({ total: 1, passed: 1, failed: 0, skipped: 0, stopped: false }).body ===
+        "All 1 run passed.",
+      "singular run reads correctly",
+    );
+    assert(
+      buildBatchNotice({ total: 5, passed: 3, failed: 0, skipped: 2, stopped: false }).body ===
+        "All 3 runs passed. 2 skipped.",
+      "skipped runs are named, so 'all passed' can't hide them",
+    );
   }
 
   // ── Multi-engine fan-out ───────────────────────────────────────────
