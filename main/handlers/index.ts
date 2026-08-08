@@ -46,6 +46,7 @@ import {
   MIN_TEST_TIMEOUT_MS,
   recorderSettingsStore,
 } from "../services/recorder-settings-store.js";
+import { notifyAiDebugOutcome } from "../services/ai-debug-notifier.js";
 import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
 import { applyRetention } from "../services/retention.js";
 import { compareRuns } from "../services/run-comparison.js";
@@ -839,6 +840,16 @@ export function registerHandlers(): void {
     aiDebugStore.remove(String(params?.key ?? "")),
   );
   ipcMain.handle("aiDebug:clear", async () => aiDebugStore.clear());
+  // Completion lives in the RENDERER's session store (the LLM stream terminates
+  // there), so the desktop notification is renderer-triggered. The setting gate
+  // stays HERE: the renderer fires unconditionally and this handler decides,
+  // so a renderer bug can't spam banners the user turned off.
+  ipcMain.handle("aiDebug:notifyDone", async (_e, params: { testName?: unknown; status?: unknown }) => {
+    const testName = typeof params?.testName === "string" && params.testName ? params.testName : "a test";
+    const status = params?.status === "error" ? "error" : "done";
+    notifyAiDebugOutcome({ testName, status }, recorderSettingsStore.get().notifyOnAiDebugDone);
+    return { ok: true };
+  });
 
   // ── Alert (outgoing webhook) handlers ───────────────────────────────
   // The URL is a bearer credential, so it only ever travels renderer→backend.

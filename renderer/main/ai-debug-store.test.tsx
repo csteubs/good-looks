@@ -12,6 +12,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, act, waitFor } from "@testing-library/react";
 import * as React from "react";
 
+import { clearToastCalls, toastCalls, toastTexts } from "../__tests__/sonner-stub";
+import { hashScript } from "../lib/ai-debug-sessions";
 import type { AiDebugSession } from "../lib/recorder-types";
 import {
   AiDebugProvider,
@@ -28,12 +30,14 @@ const h = vi.hoisted(() => {
     listResult: [] as AiDebugSession[],
     nextRequestId: "req-1",
     isActiveResult: false,
+    settings: {} as Record<string, unknown>,
     chat: vi.fn(),
     cancel: vi.fn(),
     isActive: vi.fn(),
     save: vi.fn(),
     remove: vi.fn(),
     clear: vi.fn(),
+    notifyDone: vi.fn(),
   };
 });
 
@@ -53,7 +57,12 @@ vi.mock("../lib/api", () => ({
         h.clear();
         return { removed: 0 };
       },
+      notifyDone: async (p: unknown) => {
+        h.notifyDone(p);
+        return { ok: true };
+      },
     },
+    recorder: { getSettings: async () => h.settings },
     llm: {
       chat: async (params: unknown) => {
         h.chat(params);
@@ -169,6 +178,8 @@ beforeEach(() => {
   h.listResult = [];
   h.nextRequestId = "req-1";
   h.isActiveResult = false;
+  h.settings = {};
+  clearToastCalls();
 });
 
 describe("streaming while minimized", () => {
@@ -715,5 +726,215 @@ describe("script hashing and staleness", () => {
 
     expect(store.sessions[0]).toBe(before);
     expect((store.getContext(KEY) as { script: string }).script).toBe("an EDITED script");
+  });
+});
+
+// ── Finishing while minimized ────────────────────────────────────────
+// The completion side-effects: a toast with a Review action, a ping to the
+// backend notifier (which gates on its own setting), and — behind the
+// experimental autoAcceptAiDebugFixes setting — applying a run fix on its own.
+// Every guard here exists so the auto path can never clobber a user's edit.
+
+/** A run view whose context carries an apply handler, like TestDetailView's. */
+function ViewWithApply({ onApplyScript }: { onApplyScript: (source: string) => Promise<void> }) {
+  const s = useAiDebug();
+  React.useEffect(() => {
+    s.openSession({
+      key: KEY,
+      kind: "run",
+      testId: "t1",
+      label: "Checkout",
+      testName: "Checkout",
+      context: {
+        kind: "run",
+        testName: "Checkout",
+        testUrl: "https://example.com",
+        script: "the script",
+        output: "the output",
+        imported: false,
+        onApplyScript,
+      },
+    });
+  }, []);
+  return null;
+}
+
+/** A model answer whose fenced block satisfies extractCorrectedScript. */
+const CORRECTED_ANSWER = [
+  "The selector was stale. Here is the corrected spec:",
+  "```ts",
+  'import { test, expect } from "@playwright/test";',
+  'test("Checkout", async ({ page }) => { await page.goto("https://example.com"); });',
+  "```",
+].join("\n");
+
+/** The Review action of the most recent toast that carries one.
+ *
+ *  The SDK's toast bakes `action` into the RENDERED element (an `actions`
+ *  prop on its Toast component) rather than forwarding it to sonner's options,
+ *  so pressing the button from a test means rendering the recorded custom
+ *  toast and pulling the handler off its props. */
+function reviewAction(): (() => void) | null {
+  for (let i = toastCalls.length - 1; i >= 0; i--) {
+    const call = toastCalls[i];
+    const direct = (call.options as { action?: { onClick?: () => void } } | undefined)?.action;
+    if (direct?.onClick) return direct.onClick;
+    if (typeof call.message === "function") {
+      const rendered = (call.message as (id: string) => unknown)("test-toast");
+      const props = (rendered as {
+        props?: { actions?: { label?: string; onClick?: () => void }[] };
+      } | null)?.props;
+      const review = (props?.actions ?? []).filter((a) => a.label === "Review")[0];
+      if (review?.onClick) return review.onClick;
+    }
+  }
+  return null;
+}
+
+describe("finishing while minimized", () => {
+  it("announces a finished job with a toast whose Review restores the dialog", async () => {
+    render(<Harness sessionKey={KEY} />);
+    await startStream(KEY);
+    act(() => store.minimize());
+
+    emit("llm:chunk", { requestId: "req-1", delta: "the answer" });
+    emit("llm:done", { requestId: "req-1" });
+
+    await waitFor(() => expect(h.notifyDone).toHaveBeenCalledWith({ testName: "Checkout", status: "done" }));
+    await waitFor(() =>
+      expect(toastTexts().some((t) => t.title.includes("AI debug finished — Checkout"))).toBe(true),
+    );
+
+    const review = reviewAction();
+    expect(review).not.toBeNull();
+    act(() => review!());
+    expect(store.expandedKey).toBe(KEY);
+  });
+
+  it("stays quiet while the dialog is open — the user is already watching", async () => {
+    render(<Harness sessionKey={KEY} />);
+    await startStream(KEY);
+
+    emit("llm:done", { requestId: "req-1" });
+
+    // Flush any stray async work before asserting silence.
+    await act(async () => {});
+    expect(h.notifyDone).not.toHaveBeenCalled();
+    expect(toastTexts()).toHaveLength(0);
+  });
+
+  it("says nothing about a cancel the user asked for", async () => {
+    render(<Harness sessionKey={KEY} />);
+    await startStream(KEY);
+    act(() => store.minimize());
+
+    emit("llm:done", { requestId: "req-1", cancelled: true });
+
+    await act(async () => {});
+    expect(h.notifyDone).not.toHaveBeenCalled();
+    expect(toastTexts()).toHaveLength(0);
+  });
+
+  it("announces a failure as a failure", async () => {
+    render(<Harness sessionKey={KEY} />);
+    await startStream(KEY);
+    act(() => store.minimize());
+
+    emit("llm:error", { requestId: "req-1", message: "connection refused" });
+
+    await waitFor(() => expect(h.notifyDone).toHaveBeenCalledWith({ testName: "Checkout", status: "error" }));
+    await waitFor(() =>
+      expect(toastTexts().some((t) => t.title.includes("AI debug failed — Checkout"))).toBe(true),
+    );
+  });
+
+  it("auto-applies a fix when enabled and the script has not changed since send", async () => {
+    h.settings = { autoAcceptAiDebugFixes: true };
+    const onApplyScript = vi.fn(async (_source: string) => {});
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <ViewWithApply onApplyScript={onApplyScript} />
+      </AiDebugProvider>,
+    );
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    await act(async () => {
+      await store.startStream(
+        KEY,
+        [{ role: "user", content: "fix it" }],
+        { scriptHash: hashScript("the script") },
+      );
+    });
+    act(() => store.minimize());
+
+    emit("llm:chunk", { requestId: "req-1", delta: CORRECTED_ANSWER });
+    emit("llm:done", { requestId: "req-1" });
+
+    await waitFor(() => expect(onApplyScript).toHaveBeenCalledTimes(1));
+    expect(onApplyScript.mock.calls[0][0]).toContain('test("Checkout"');
+    await waitFor(() =>
+      expect(toastTexts().some((t) => t.title.includes("Applied the AI fix"))).toBe(true),
+    );
+  });
+
+  it("refuses to auto-apply over a script edited while the model was thinking", async () => {
+    // Delete the hash guard in announceFinished and THIS is the test that
+    // fails — the apply fires against a script the prompt never saw.
+    h.settings = { autoAcceptAiDebugFixes: true };
+    const onApplyScript = vi.fn(async (_source: string) => {});
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <ViewWithApply onApplyScript={onApplyScript} />
+      </AiDebugProvider>,
+    );
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    await act(async () => {
+      await store.startStream(
+        KEY,
+        [{ role: "user", content: "fix it" }],
+        { scriptHash: hashScript("what the prompt was built from") },
+      );
+    });
+    act(() => store.minimize());
+
+    emit("llm:chunk", { requestId: "req-1", delta: CORRECTED_ANSWER });
+    emit("llm:done", { requestId: "req-1" });
+
+    await waitFor(() =>
+      expect(toastTexts().some((t) => t.title.includes("AI debug finished — Checkout"))).toBe(true),
+    );
+    expect(onApplyScript).not.toHaveBeenCalled();
+    // The toast says WHY nothing was applied, not just that there is a result.
+    expect(
+      toastTexts().some((t) => (t.description ?? "").includes("script changed")),
+    ).toBe(true);
+  });
+
+  it("leaves auto-apply off by default", async () => {
+    const onApplyScript = vi.fn(async (_source: string) => {});
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <ViewWithApply onApplyScript={onApplyScript} />
+      </AiDebugProvider>,
+    );
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    await act(async () => {
+      await store.startStream(
+        KEY,
+        [{ role: "user", content: "fix it" }],
+        { scriptHash: hashScript("the script") },
+      );
+    });
+    act(() => store.minimize());
+
+    emit("llm:chunk", { requestId: "req-1", delta: CORRECTED_ANSWER });
+    emit("llm:done", { requestId: "req-1" });
+
+    await waitFor(() =>
+      expect(toastTexts().some((t) => t.title.includes("AI debug finished — Checkout"))).toBe(true),
+    );
+    expect(onApplyScript).not.toHaveBeenCalled();
   });
 });

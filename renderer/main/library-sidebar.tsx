@@ -23,10 +23,10 @@ import {
 import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
 
 import { api } from "../lib/api";
-import { aggregateStatus } from "../lib/ai-debug-sessions";
+import { aggregateStatus, type SessionLike } from "../lib/ai-debug-sessions";
 import { toneFor } from "../lib/ai-debug-status";
 import type { LlmProvider } from "../lib/llm-types";
-import type { AiDebugStatus, RunRecord, TestRecord } from "../lib/recorder-types";
+import type { RunRecord, TestRecord } from "../lib/recorder-types";
 import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/duplicate-warnings";
 import { useAiDebug } from "./ai-debug-store";
@@ -250,7 +250,7 @@ function RowIndicators({
   sessions,
   lastRun,
 }: {
-  sessions: { status: AiDebugStatus }[];
+  sessions: SessionLike[];
   lastRun: RunRecord | undefined;
 }) {
   const agg = aggregateStatus(sessions);
@@ -315,7 +315,7 @@ export function LibrarySidebar() {
   // AI-debug sessions grouped per test, for the row sparkle.
   const { sessions } = useAiDebug();
   const sessionsByTest = React.useMemo(() => {
-    const m = new Map<string, { status: AiDebugStatus }[]>();
+    const m = new Map<string, SessionLike[]>();
     for (const s of sessions) {
       if (!s.testId) continue;
       const list = m.get(s.testId) ?? [];

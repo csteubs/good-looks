@@ -1318,6 +1318,18 @@ export interface RecorderSettings {
    *  the per-run notification is suppressed for tests inside a batch — one
    *  notification for the suite, not one per failure. */
   notifyOnBatchDone: boolean;
+  /** Post a macOS notification when an AI debug job finishes or fails
+   *  (default false). Like notifyOnBatchDone it fires on success: the reason
+   *  to be told is that the user minimized a slow job and walked away, and
+   *  "the answer is ready" is the message they were waiting for. Local only. */
+  notifyOnAiDebugDone: boolean;
+  /** EXPERIMENTAL. Apply an AI debug job's suggested script fix automatically
+   *  the moment the job completes (default false). Guarded: only a run-scoped
+   *  job, only while its dialog is minimized, and only when the script is
+   *  byte-identical to the one the prompt was built from — an edit made while
+   *  the model was thinking always wins, and the suggestion falls back to a
+   *  review toast instead. */
+  autoAcceptAiDebugFixes: boolean;
   /** additionally delete captured runs older than this many days (0 = off,
    *  max 365). Applies ON TOP of artifactRetainedRuns — a run is kept only if
    *  it satisfies both rules. The pinned baseline is never pruned. */

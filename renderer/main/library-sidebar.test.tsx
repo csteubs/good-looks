@@ -65,6 +65,7 @@ vi.mock("../lib/api", () => ({
       save: async (session: unknown) => session,
       remove: async () => ({ removed: 0 }),
       clear: async () => ({ removed: 0 }),
+      notifyDone: async () => ({ ok: true }),
     },
     on: () => () => {},
   },

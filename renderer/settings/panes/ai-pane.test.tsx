@@ -203,6 +203,16 @@ describe("the experimental section", () => {
     expect(savedPatch(controller)).toEqual({ keepRunningAiDebugJobs: true });
   });
 
+  it("saves the auto-accept toggle, which defaults off", () => {
+    // Off is the safe default: this switch lets a background job rewrite a
+    // script. Flipping the default silently would be the worst kind of bug.
+    const { controller } = renderPane(<AiPane />);
+    const sw = screen.getByRole("switch", { name: /apply AI debug fixes automatically/i });
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(sw);
+    expect(savedPatch(controller)).toEqual({ autoAcceptAiDebugFixes: true });
+  });
+
   it("is labelled as experimental rather than burying that in the row name", () => {
     // It used to be the whole row label: "Experimental: keep a running AI debug
     // job when a test is re-run".

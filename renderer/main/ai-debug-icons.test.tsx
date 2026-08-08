@@ -62,7 +62,9 @@ vi.mock("../lib/api", () => ({
       save: async (s: unknown) => s,
       remove: async () => ({ removed: 1 }),
       clear: async () => ({ removed: 0 }),
+      notifyDone: async () => ({ ok: true }),
     },
+    recorder: { getSettings: async () => ({}) },
     llm: {
       chat: async () => ({ requestId: "req-1" }),
       cancel: async () => {},
