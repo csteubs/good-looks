@@ -31,6 +31,9 @@ const batchRun = vi.fn(
 
 let library: TestRecord[] = [];
 let settings: Partial<RecorderSettings> = {};
+// Live backend pushes, so a test can put the view into a mid-batch state
+// without a backend. Keyed by channel, same shape as the real api.on.
+const listeners = new Map<string, ((payload: unknown) => void)[]>();
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -46,9 +49,24 @@ vi.mock("../lib/api", () => ({
       stop: async () => {},
       clearHistory: async () => ({ removed: 0 }),
     },
-    on: () => () => {},
+    on: (channel: string, fn: (payload: unknown) => void) => {
+      const forChannel = listeners.get(channel) ?? [];
+      forChannel.push(fn);
+      listeners.set(channel, forChannel);
+      return () => {
+        listeners.set(
+          channel,
+          (listeners.get(channel) ?? []).filter((f) => f !== fn),
+        );
+      };
+    },
   },
 }));
+
+/** Push a backend event the way the IPC bridge would. */
+function emit(channel: string, payload: unknown): void {
+  for (const fn of listeners.get(channel) ?? []) fn(payload);
+}
 
 // Router is only used for "click a test name to open it"; a stub keeps the test
 // focused on batch behavior rather than routing.
@@ -96,6 +114,7 @@ async function rowNames(): Promise<string[]> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  listeners.clear();
   library = [test_("a", "Alpha"), test_("b", "Beta"), test_("c", "Gamma")];
   settings = { batchOrder: [], defaultRunBrowser: "chromium" };
 });
@@ -326,6 +345,199 @@ describe("BatchView run options", () => {
     const opts = batchRun.mock.calls[0][1] as { runHeadless?: boolean; captureArtifacts?: boolean };
     expect(opts.runHeadless).toBe(true);
     expect(opts.captureArtifacts).toBe(true);
+  });
+});
+
+describe("BatchView parallel runs", () => {
+  // The picker itself cannot be driven here: the SDK's Select is
+  // native-menu-backed, so its options never enter the DOM. Every test below
+  // therefore SEEDS the choice through settings (which is also how a user's
+  // saved default arrives) and asserts on the displayed value and on what
+  // reaches api.batch.run — the two things that actually matter.
+  const runOpts = () => batchRun.mock.calls[0]?.[1] as { concurrency?: number } | undefined;
+
+  it("defaults to off, and runs one at a time", async () => {
+    renderView();
+    await rowNames();
+    const trigger = screen.getByRole("combobox", { name: /how many tests to run at once/i });
+    await waitFor(() => expect(trigger.textContent).toContain("Off"));
+
+    fireEvent.click(screen.getByRole("button", { name: /^Run/ }));
+    await waitFor(() => expect(batchRun).toHaveBeenCalled());
+    expect(runOpts()?.concurrency).toBe(1);
+    expect(screen.getByText(/tests run one at a time/i)).toBeTruthy();
+  });
+
+  it("shows a saved default and sends it with the batch", async () => {
+    settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 2 };
+    renderView();
+    await rowNames();
+    const trigger = screen.getByRole("combobox", { name: /how many tests to run at once/i });
+    await waitFor(() => expect(trigger.textContent).toContain("2 at once"));
+
+    fireEvent.click(screen.getByRole("button", { name: /^Run/ }));
+    await waitFor(() => expect(batchRun).toHaveBeenCalled());
+    expect(runOpts()?.concurrency).toBe(2);
+  });
+
+  it("says how many run at a time once parallel is on", async () => {
+    settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 2 };
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(screen.getByText(/2 tests run at a time/i)).toBeTruthy());
+    expect(screen.queryByText(/tests run one at a time/i)).toBeNull();
+  });
+
+  // "All at once" is capped by how many tests there ARE — with three in the
+  // library it must ask for three, not the hard ceiling.
+  it("never asks for more parallelism than there are tests", async () => {
+    settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 16 };
+    renderView();
+    await rowNames();
+    const trigger = screen.getByRole("combobox", { name: /how many tests to run at once/i });
+    await waitFor(() => expect(trigger.textContent).toContain("All at once"));
+
+    fireEvent.click(screen.getByRole("button", { name: /^Run/ }));
+    await waitFor(() => expect(batchRun).toHaveBeenCalled());
+    expect(runOpts()?.concurrency).toBe(3);
+  });
+});
+
+describe("BatchView live progress", () => {
+  /** A batch:progress payload with the given per-test statuses. */
+  const progress = (statuses: string[]) => ({
+    batchId: "b1",
+    running: true,
+    startedAt: 0,
+    // Deliberately the value the BACKEND would send. Nothing in the view may
+    // depend on it — with several tests in flight there is no "current" one.
+    currentIndex: statuses.indexOf("running"),
+    stopped: false,
+    results: statuses.map((status, i) => ({
+      testId: ["a", "b", "c"][i],
+      testName: ["Alpha", "Beta", "Gamma"][i],
+      status,
+    })),
+    summary: { total: 3, passed: 0, failed: 0, skipped: 0, ok: false, durationMs: 0 },
+  });
+
+  it("keeps the familiar wording while one test runs at a time", async () => {
+    renderView();
+    await rowNames();
+    emit("batch:progress", progress(["passed", "running", "pending"]));
+    await waitFor(() => expect(screen.getByText(/Running 2 of 3/)).toBeTruthy());
+  });
+
+  it("reports how many are in flight rather than an ordinal", async () => {
+    // "Running 1 of 3" while three are running is simply false — and it was
+    // what currentIndex + 1 produced.
+    renderView();
+    await rowNames();
+    emit("batch:progress", progress(["running", "running", "running"]));
+    await waitFor(() => expect(screen.getByText(/0 of 3 done · 3 running/)).toBeTruthy());
+    expect(screen.queryByText(/Running 1 of 3/)).toBeNull();
+  });
+
+  it("counts finished tests, not the position of the first running one", async () => {
+    // currentIndex here is 2, so an ordinal reading would say "Running 3 of 3"
+    // with one still queued and two done.
+    renderView();
+    await rowNames();
+    emit("batch:progress", progress(["passed", "failed", "running"]));
+    await waitFor(() => expect(screen.getByText(/Running 3 of 3/)).toBeTruthy());
+
+    emit("batch:progress", progress(["passed", "running", "running"]));
+    await waitFor(() => expect(screen.getByText(/1 of 3 done · 2 running/)).toBeTruthy());
+  });
+});
+
+describe("BatchView headed parallel warning", () => {
+  /** A library big enough that "all at once" exceeds the 10-window threshold. */
+  const bigLibrary = () =>
+    Array.from({ length: 14 }, (_, i) => test_(`t${i}`, `Test ${i}`));
+
+  beforeEach(() => {
+    library = bigLibrary();
+    settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 16 };
+  });
+
+  it("asks before opening more than ten visible browsers, and starts nothing yet", async () => {
+    renderView();
+    await rowNames();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Run/ }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    // The count has to be the real one — 14 windows, not "16" (the cap) and not
+    // the raw picker value.
+    expect(within(dialog).getByText(/open 14 browser windows at once\?/i)).toBeTruthy();
+    // Nothing may start while the question is on screen.
+    expect(batchRun).not.toHaveBeenCalled();
+  });
+
+  it("runs it anyway when confirmed, at the number it warned about", async () => {
+    renderView();
+    await rowNames();
+    fireEvent.click(screen.getByRole("button", { name: /^Run/ }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /run anyway/i }));
+
+    await waitFor(() => expect(batchRun).toHaveBeenCalled());
+    const opts = batchRun.mock.calls[0][1] as { concurrency?: number; runHeadless?: boolean };
+    expect(opts.concurrency).toBe(14);
+    expect(opts.runHeadless).toBe(false);
+  });
+
+  it("starts nothing when the warning is dismissed", async () => {
+    renderView();
+    await rowNames();
+    fireEvent.click(screen.getByRole("button", { name: /^Run/ }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(batchRun).not.toHaveBeenCalled();
+  });
+
+  // The whole reason the threshold is on headedness: nothing appears on screen,
+  // so there is nothing to warn about however wide the batch is.
+  it("never asks for a headless batch, however wide", async () => {
+    renderView();
+    await rowNames();
+    fireEvent.click(screen.getByLabelText(/run this batch headless/i));
+
+    fireEvent.click(screen.getByRole("button", { name: /^Run/ }));
+
+    await waitFor(() => expect(batchRun).toHaveBeenCalled());
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect((batchRun.mock.calls[0][1] as { concurrency?: number }).concurrency).toBe(14);
+  });
+
+  // A big selection run a few at a time is the safe case. Nagging about it
+  // would train people to click straight through the dialog that matters.
+  it("does not ask when a big library runs only a few at a time", async () => {
+    settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 4 };
+    renderView();
+    await rowNames();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Run/ }));
+
+    await waitFor(() => expect(batchRun).toHaveBeenCalled());
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect((batchRun.mock.calls[0][1] as { concurrency?: number }).concurrency).toBe(4);
+  });
+
+  it("does not ask for a headed batch that runs one at a time", async () => {
+    settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 1 };
+    renderView();
+    await rowNames();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Run/ }));
+
+    await waitFor(() => expect(batchRun).toHaveBeenCalled());
+    expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 });
 

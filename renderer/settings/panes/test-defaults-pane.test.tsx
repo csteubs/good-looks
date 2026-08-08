@@ -89,6 +89,44 @@ describe("headless", () => {
   });
 });
 
+describe("batch concurrency", () => {
+  // NOT TESTED: picking a different value, for the same reason as the browser
+  // Select above — its options are a native menu and never enter the DOM. The
+  // displayed value is asserted here, the clamp on save in
+  // main/handlers/handlers.test.ts, and the resolve/warn logic directly in
+  // renderer/lib/batch-parallel.test.ts.
+
+  it("reads as off when nothing is stored", () => {
+    const controller = makeController({ settings: {} });
+    renderPane(<TestDefaultsPane />, { controller });
+    expect(screen.getByRole("combobox", { name: /at once/i }).textContent).toContain("Off");
+  });
+
+  it("shows a stored default", () => {
+    const controller = makeController({ settings: { defaultBatchConcurrency: 4 } });
+    renderPane(<TestDefaultsPane />, { controller });
+    expect(screen.getByRole("combobox", { name: /at once/i }).textContent).toContain("4 at once");
+  });
+
+  it("shows the ceiling as 'All at once' rather than a bare number", () => {
+    const controller = makeController({ settings: { defaultBatchConcurrency: 16 } });
+    renderPane(<TestDefaultsPane />, { controller });
+    expect(screen.getByRole("combobox", { name: /at once/i }).textContent).toContain(
+      "All at once",
+    );
+  });
+
+  it("never renders blank for a hand-edited value it doesn't offer", () => {
+    // A Select whose value isn't one of its items renders EMPTY, which reads as
+    // "no default set" while a default is very much set.
+    const controller = makeController({ settings: { defaultBatchConcurrency: 7 } });
+    renderPane(<TestDefaultsPane />, { controller });
+    const trigger = screen.getByRole("combobox", { name: /at once/i });
+    expect(trigger.textContent?.trim()).toBeTruthy();
+    expect(trigger.textContent).toContain("4 at once");
+  });
+});
+
 describe("timeout", () => {
   it("shows seconds but stores milliseconds", () => {
     const controller = makeController({ settings: { defaultTestTimeoutMs: 180_000 } });

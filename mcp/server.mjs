@@ -19,6 +19,8 @@ import { z } from "zod";
 
 import { readJsonFile, resolveDataDir, writeJsonFile } from "./glaze-data.mjs";
 import { selectTests, summarizeResults, UNTAGGED } from "./select-tests.mjs";
+import { clampParallel, MAX_PARALLEL, runPool } from "./run-pool.mjs";
+import { PLAYWRIGHT_CONFIG_SOURCE } from "./playwright-config.mjs";
 import { listSessions, readShots, requestCapture } from "./debug-shots.mjs";
 
 const MCP_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -107,19 +109,18 @@ function ensureModuleResolution(scriptsDir, nodeModules) {
 
 function ensurePlaywrightConfig(scriptsDir) {
   const configPath = path.join(scriptsDir, "playwright.config.ts");
-  if (fs.existsSync(configPath)) return;
-  fs.writeFileSync(
-    configPath,
-    'import { defineConfig } from "@playwright/test";\n\n' +
-      "export default defineConfig({\n" +
-      "  use: {\n" +
-      "    launchOptions: {\n" +
-      "      slowMo: Number(process.env.PW_SLOWMO_MS || 0),\n" +
-      "    },\n" +
-      "  },\n" +
-      "});\n",
-    "utf-8",
-  );
+  // Write-if-different rather than write-if-absent: this file gained fields
+  // over time, and skipping on existence left an older config in place forever.
+  // Comparing also means concurrent runs don't rewrite a file each other's
+  // Playwright process is reading.
+  try {
+    if (fs.readFileSync(configPath, "utf-8") === PLAYWRIGHT_CONFIG_SOURCE) return;
+  } catch {
+    // Missing or unreadable — fall through and write it.
+  }
+  const tmp = `${configPath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, PLAYWRIGHT_CONFIG_SOURCE, "utf-8");
+  fs.renameSync(tmp, configPath);
 }
 
 function saveRunRecord(record, logText) {
@@ -158,12 +159,20 @@ async function executeTest(test, { playwright, browser, batchId, timeoutMs }) {
   ensureModuleResolution(scriptsDir, playwright.nodeModules);
   ensurePlaywrightConfig(scriptsDir);
 
+  // Minted before the spawn, not after, because it names this run's Playwright
+  // output directory. Playwright derives that directory from the SPEC's path by
+  // default, so with run_batch running several tests at once, two runs of one
+  // spec would write to — and clean — the same folder mid-flight.
+  const runId = randomUUID();
+  const outputDir = path.join(scriptsDir, "test-results", runId);
+
   const browsersPath = path.join(dataDir, "recorder", "browsers");
   const env = {
     ...process.env,
     PLAYWRIGHT_BROWSERS_PATH: browsersPath,
     NODE_PATH: playwright.nodeModules,
     PW_SLOWMO_MS: String(SLOW_MO_MS[test.speed ?? "fast"] ?? 0),
+    PW_OUTPUT_DIR: outputDir,
   };
   // Relative to the scripts root, so a sandboxed spec resolves as
   // `imported/<id>/tests/foo.spec.ts` rather than a bare basename that only
@@ -195,7 +204,13 @@ async function executeTest(test, { playwright, browser, batchId, timeoutMs }) {
   });
   const finishedAt = Date.now();
   const status = exitCode === 0 ? "passed" : "failed";
-  const runId = randomUUID();
+  // Per-run scratch (traces, failure shots). Nothing here reads it, and leaving
+  // it would grow one directory per run forever.
+  try {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  } catch {
+    // ignore
+  }
   const logFile = path.join(dataDir, "recorder", "logs", `${runId}.log`);
 
   saveRunRecord(
@@ -435,14 +450,15 @@ server.registerTool(
   {
     title: "Run many tests",
     description:
-      `Run several recorded tests back to back and report an aggregate pass/fail summary. Select them by explicit testIds, by tag (see list_tests; pass "${UNTAGGED}" for tests with no tags), or omit both to run every visible test. Tests run one at a time, headless. A failing test does not stop the batch. Each test is recorded in the app's run history, and the batch itself appears in the app's Batch view.`,
+      `Run several recorded tests and report an aggregate pass/fail summary. Select them by explicit testIds, by tag (see list_tests; pass "${UNTAGGED}" for tests with no tags), or omit both to run every visible test. Tests run headless, one at a time by default — set "parallel" to run that many at once (1-${MAX_PARALLEL}), which is much faster for a large suite at the cost of CPU. A failing test does not stop the batch. Each test is recorded in the app's run history, and the batch itself appears in the app's Batch view.`,
     inputSchema: {
       testIds: z.array(z.string()).optional(),
       tag: z.string().optional(),
       browser: z.enum(["chromium", "firefox", "webkit"]).optional(),
+      parallel: z.number().int().min(1).max(MAX_PARALLEL).optional(),
     },
   },
-  async ({ testIds, tag, browser }) => {
+  async ({ testIds, tag, browser, parallel }) => {
     const engine = browser ?? "chromium";
     if (!RUN_BROWSERS.includes(engine)) {
       return { content: [{ type: "text", text: `Unknown browser: ${engine}` }], isError: true };
@@ -486,28 +502,34 @@ server.registerTool(
 
     // Write-through, matching the app: a crash mid-batch still leaves the
     // results collected so far, and the app's Batch view can watch progress.
-    const persist = (running, index) => {
+    //
+    // `currentIndex` is DERIVED rather than passed in: with several tests in
+    // flight there's no single current one, and the app reads this field back
+    // out of batch-history.json. The lowest running index is the closest honest
+    // answer and degrades to the old meaning when only one runs. -1 when idle.
+    const persist = (running) => {
       saveBatchRecord({
         batchId,
         running,
         startedAt,
         ...(running ? {} : { finishedAt: Date.now() }),
-        currentIndex: index,
+        currentIndex: results.findIndex((r) => r.status === "running"),
         results,
         stopped: false,
         summary: summarizeResults(results, Date.now() - startedAt),
       });
     };
-    persist(true, -1);
+    persist(true);
 
-    for (let i = 0; i < selected.length; i++) {
-      const test = selected[i];
+    const limit = clampParallel(parallel, selected.length);
+    await runPool(selected, limit, async (test, i) => {
       results[i].status = "running";
       results[i].startedAt = Date.now();
-      persist(true, i);
+      persist(true);
 
       // One test failing must not abort the batch — that's the whole point of
-      // running a suite.
+      // running a suite. runPool swallows a throw as a backstop, but the record
+      // has to be written here or the entry would sit at "running" forever.
       try {
         const r = await executeTest(test, {
           playwright,
@@ -526,12 +548,12 @@ server.registerTool(
         results[i].finishedAt = Date.now();
         results[i].durationMs = Math.max(0, results[i].finishedAt - (results[i].startedAt ?? results[i].finishedAt));
       }
-      persist(true, i);
-    }
+      persist(true);
+    });
 
     const finishedAt = Date.now();
     const summary = summarizeResults(results, finishedAt - startedAt);
-    persist(false, -1);
+    persist(false);
 
     return {
       content: [
@@ -541,6 +563,7 @@ server.registerTool(
             {
               batchId,
               browser: engine,
+              parallel: limit,
               ...(missing.length > 0 ? { missingTestIds: missing } : {}),
               summary,
               results: results.map((r) => ({
