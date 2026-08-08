@@ -410,6 +410,47 @@ function codeOnly(source: string): string {
   );
 }
 
+// ── 8b. Parallel batches run the QUEUE, not the selection ─────────────
+//
+// Where two independently-developed features met: dataset sweeps expand one
+// test into one entry per row, and parallel batches run a bounded pool. The
+// pool has to iterate the expanded queue. Pointing it at the SELECTION instead
+// is silent and specific — a sweep runs one row per test and leaves every other
+// row sitting at "pending" forever, reported as a batch that finished.
+
+{
+  const mcpSrc = codeOnly(readFileSync(resolve(process.cwd(), "mcp/server.mjs"), "utf8"));
+  assert(
+    /runPool\(\s*queue\s*,/.test(mcpSrc),
+    "mcp: the batch pool iterates the expanded queue, not the selection",
+  );
+  assert(
+    /clampParallel\(\s*parallel\s*,\s*queue\.length\s*\)/.test(mcpSrc),
+    "mcp: parallelism is clamped to the QUEUE's length (a sweep is longer than its selection)",
+  );
+  // Each run needs its own Playwright scratch dir, or concurrent runs of ONE
+  // spec — which is exactly what a sweep is — clean each other's output
+  // mid-flight. run-pool.mjs's "no lanes here" note depends on this being true.
+  assert(
+    /PW_OUTPUT_DIR/.test(readFileSync(resolve(process.cwd(), "mcp/run-plan.mjs"), "utf8")),
+    "mcp: every run gets its own PW_OUTPUT_DIR, which is what makes a parallel sweep safe",
+  );
+}
+
+{
+  // The dedupe the parallel work added to buildQueue, exercised through the
+  // shared copy the MCP uses. A repeated id breaks the queue's one structural
+  // guarantee — that a test's entries sit together — which the app's lane
+  // grouping depends on. The Batch view can't produce a repeat; IPC and an
+  // agent calling run_batch can.
+  const queue = buildQueue({ testIds: ["a", "b", "a"] }, () => []);
+  assert(queue.length === 2, "queue: a repeated test id is deduped, not queued twice");
+  assert(
+    queue.map((e) => e.testId).join(",") === "a,b",
+    "queue: dedupe keeps first-appearance order",
+  );
+}
+
 // ── 9. Console + network are withheld when they cannot be redacted ────
 //
 // The one read tool that can leak. console.json and network.json are stored

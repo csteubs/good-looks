@@ -150,8 +150,8 @@ do](#what-an-mcp-run-does-not-do).
 
 ### `run_batch`
 
-Run several tests back to back and report an aggregate pass/fail summary.
-Tests run **one at a time**, headless. A failing test does not stop the batch.
+Run several tests and report an aggregate pass/fail summary. Tests run
+headless, **one at a time by default**. A failing test does not stop the batch.
 
 | Arg | Type | Required |
 |---|---|---|
@@ -160,6 +160,19 @@ Tests run **one at a time**, headless. A failing test does not stop the batch.
 | `browser` | `chromium` \| `firefox` \| `webkit` | no — defaults to Chromium |
 | `allDatasets` | boolean | no — run each selected test once per dataset row it declares |
 | `datasetIds` | string[] | no — sweep only these rows |
+| `parallel` | number 1–16 | no — how many to run at once; defaults to 1 |
+
+`parallel` trades CPU for wall-clock time: each unit is its own Node process
+plus its own browser, so past the machine's core count the runs contend and
+each one gets slower. It is clamped to the size of the queue — which is the
+number of tests selected, or the number of dataset ROWS when sweeping — and the
+value actually used comes back as `parallel` in the response. There is no
+headed-window warning here as there is in the app — MCP runs are always
+headless, so nothing appears on screen.
+
+A sweep parallelises across rows too: each run gets its own id and its own
+Playwright scratch directory, so several rows of one test run side by side
+safely.
 
 Selection rules: `testIds` wins if given; otherwise `tag`; otherwise every
 visible test. Tags match case-insensitively. Pass `tag="__untagged__"` for
@@ -179,6 +192,7 @@ nobody runs.
 ```
 run_batch tag="smoke"
 run_batch tag="smoke" browser="webkit"
+run_batch tag="smoke" parallel=4
 run_batch testIds=["3f2a1c9e-...", "8b7d2f10-..."]
 run_batch tag="checkout" allDatasets=true
 run_batch

@@ -21,11 +21,16 @@ import {
 } from "@glaze/core/components";
 import { Crosshair, X } from "lucide-react";
 
-import { DEFAULT_WAIT_TIMEOUT_MS } from "../lib/recorder-types";
+import {
+  CSS_ASSERT_PROPS,
+  DEFAULT_WAIT_TIMEOUT_MS,
+  isCssPropName,
+} from "../lib/recorder-types";
 import type {
   AssertKind,
   CaptureSource,
   ConditionKind,
+  CssMatch,
   Locator,
   PickedElement,
   RawStep,
@@ -33,6 +38,7 @@ import type {
   WaitUntilKind,
 } from "../lib/recorder-types";
 import { api } from "../lib/api";
+import { buildStateSteps, type StatePick } from "../lib/element-states";
 import { clampViewportAxis, RESIZE_PRESETS } from "../lib/viewport-presets";
 import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 
@@ -45,7 +51,8 @@ export type AddStepKind =
   | "find"
   | "viewport"
   | "capture"
-  | "runFlow";
+  | "runFlow"
+  | "elementState";
 
 export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   assertion: "Add assertion",
@@ -57,7 +64,43 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   viewport: "Set viewport",
   capture: "Capture a value",
   runFlow: "Run a flow",
+  elementState: "Set element state",
 };
+
+/**
+ * The pseudo-states the USER picks, which are deliberately not the same set as
+ * `ElementState`.
+ *
+ * `:hover` and `:focus` are one step each. The other two need more than one
+ * Playwright call, and a step emits exactly one awaited statement — so they are
+ * emitted as SEVERAL ordinary rows, the same way the wait dialog emits one
+ * `wait` step per ticked property. Rows rather than a compound step because
+ * each stays independently reorderable, editable and deletable, and because a
+ * user looking at `page.mouse.down()` in the list can see what will run.
+ */
+const STATE_OPTIONS: {
+  value: StatePick;
+  label: string;
+  /** What the pick expands to, shown in the dialog so the row count is never a
+   *  surprise after the fact. */
+  emits: string;
+  needsElement: boolean;
+}[] = [
+  { value: "hover", label: "Hover (:hover)", emits: "1 step — hover", needsElement: true },
+  { value: "focus", label: "Focus (:focus)", emits: "1 step — focus", needsElement: true },
+  {
+    value: "focusVisible",
+    label: "Keyboard focus (:focus-visible)",
+    emits: "2 steps — press Tab, then focus",
+    needsElement: true,
+  },
+  {
+    value: "active",
+    label: "Pressed (:active)",
+    emits: "3 steps — hover, press, release",
+    needsElement: true,
+  },
+];
 
 // What a `capture` step reads. url/title read the page and need no element,
 // which is why the target picker is hidden for them.
@@ -108,7 +151,7 @@ const WAIT_UNTIL_OPTIONS: {
 ];
 
 // assert kind → what operands it needs.
-type Need = "none" | "text" | "value" | "attr" | "count";
+type Need = "none" | "text" | "value" | "attr" | "count" | "css";
 const ASSERT_OPTIONS: {
   value: AssertKind;
   label: string;
@@ -126,11 +169,138 @@ const ASSERT_OPTIONS: {
   { value: "value", label: "Has value", need: "value" },
   { value: "attribute", label: "Has attribute", need: "attr" },
   { value: "count", label: "Has count", need: "count" },
+  { value: "css", label: "Has CSS property", need: "css" },
   { value: "url", label: "URL contains", need: "value", pageLevel: true },
   { value: "urlEndsWith", label: "URL ends with", need: "value", pageLevel: true },
   { value: "urlIs", label: "URL is", need: "value", pageLevel: true },
   { value: "title", label: "Page title is", need: "value", pageLevel: true },
 ];
+
+/**
+ * Property + expected value for a `css` assertion.
+ *
+ * The load-bearing part is the live-values list. Playwright compares against
+ * the COMPUTED value, so `red` never matches `rgb(255, 0, 0)` and `bold` never
+ * matches `700` — a user typing what they wrote in their stylesheet gets a
+ * failing test and no clue why. Offering the element's actual computed values
+ * one click away makes the correct value the easy one.
+ *
+ * The values come from the picked element, read at the moment it was picked —
+ * which means the user's real cursor was over it, so `:hover` styling is
+ * already included. That is exactly right for a hover assertion and exactly
+ * wrong if mistaken for resting styles, so the list says so rather than
+ * leaving it to be discovered.
+ */
+function CssAssertFields({
+  picked,
+  cssProp,
+  onCssProp,
+  cssMatch,
+  onCssMatch,
+  value,
+  onValue,
+}: {
+  picked: PickedElement | null;
+  cssProp: string;
+  onCssProp: (v: string) => void;
+  cssMatch: CssMatch;
+  onCssMatch: (v: CssMatch) => void;
+  value: string;
+  onValue: (v: string) => void;
+}) {
+  const computed = picked?.css ?? {};
+  const live = Object.entries(computed);
+  const prop = cssProp.trim();
+  const validProp = isCssPropName(prop);
+  // A property the picked element has a computed value for, but which isn't in
+  // the curated list, still belongs in the dropdown — otherwise choosing it
+  // from the live list would immediately look like a typo.
+  const options = [...new Set([...CSS_ASSERT_PROPS, ...Object.keys(computed)])];
+
+  return (
+    <>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="CSS property" orientation="vertical">
+          <Select value={options.includes(prop) ? prop : ""} onValueChange={onCssProp}>
+            <SelectTrigger size="small">
+              <SelectValue placeholder="Choose or type below" />
+            </SelectTrigger>
+            <SelectContent>
+              {options.map((p) => (
+                <SelectItem key={p} value={p}>
+                  {p}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </Field>
+        <Field label="Match" orientation="vertical">
+          <SegmentedControl
+            size="small"
+            value={cssMatch}
+            onValueChange={(v) => onCssMatch(v as CssMatch)}
+          >
+            <SegmentedControlItem value="is">Is exactly</SegmentedControlItem>
+            <SegmentedControlItem value="contains">Contains</SegmentedControlItem>
+          </SegmentedControl>
+        </Field>
+      </div>
+      <Field label="Property name" orientation="vertical">
+        <Input
+          size="small"
+          placeholder="background-color"
+          value={cssProp}
+          onChange={(e) => onCssProp(e.target.value)}
+        />
+      </Field>
+      {prop && !validProp ? (
+        <Text variant="small" color="danger">
+          “{prop}” isn’t a valid CSS property name. Use the kebab-case form —
+          <code> background-color</code>, not <code>backgroundColor</code>.
+        </Text>
+      ) : null}
+      <Field label="Expected value" orientation="vertical">
+        <Input
+          size="small"
+          placeholder="rgb(0, 82, 204)"
+          value={value}
+          onChange={(e) => onValue(e.target.value)}
+        />
+      </Field>
+      {live.length > 0 ? (
+        <div className="flex flex-col gap-1">
+          <Text variant="small" color="secondary">
+            This element’s computed values — read while your cursor was over it, so any
+            <code> :hover</code> styling is included. Click one to use it.
+          </Text>
+          <div className="flex flex-wrap gap-1">
+            {live.map(([p, v]) => (
+              <button
+                key={p}
+                type="button"
+                onClick={() => {
+                  onCssProp(p);
+                  onValue(v);
+                }}
+                className="rounded-md border border-separator px-2 py-0.5 text-left text-small transition-colors hover:border-accent hover:bg-accent/5"
+              >
+                <span className="text-secondary">{p}</span>
+                <span className="text-tertiary">: </span>
+                <span className="font-mono">{v}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <Text variant="small" color="tertiary">
+          Pick a target element to see its current computed values and fill this in from
+          them. Playwright compares the COMPUTED value, so <code>red</code> won’t match{" "}
+          <code>rgb(255, 0, 0)</code>.
+        </Text>
+      )}
+    </>
+  );
+}
 
 // "Target element" picker — reuses the same crosshair element-picker as the
 // per-step "Refine selector" flow. Instead of typing a CSS selector + value by
@@ -277,6 +447,7 @@ export function AddStepDialog({
   onClearPick,
   initialAssert,
   initialWaitMode,
+  initialState,
   prefillText,
   prefillValue,
   currentTestId,
@@ -297,6 +468,9 @@ export function AddStepDialog({
   initialAssert?: AssertKind;
   /** When opened from the right-click menu: the wait mode to preselect. */
   initialWaitMode?: WaitDialogMode;
+  /** When opened from the right-click menu: the pseudo-state to preselect. Only
+   *  the single-step states arrive this way — see ContextAction. */
+  initialState?: "hover" | "focus";
   /** When opened from the right-click menu: prefilled text (the element's
    *  current text) for text/exactText asserts. */
   prefillText?: string;
@@ -312,6 +486,9 @@ export function AddStepDialog({
   const [attr, setAttr] = React.useState("");
   const [count, setCount] = React.useState("1");
   const [soft, setSoft] = React.useState(false);
+  const [cssProp, setCssProp] = React.useState("background-color");
+  const [cssMatch, setCssMatch] = React.useState<CssMatch>("is");
+  const [statePick, setStatePick] = React.useState<StatePick>("hover");
   const [url, setUrl] = React.useState("");
   const [key, setKey] = React.useState("Enter");
   // The three wait properties are independent checkboxes, not one mode: a
@@ -348,6 +525,9 @@ export function AddStepDialog({
       setAttr("");
       setCount("1");
       setSoft(false);
+      setCssProp("background-color");
+      setCssMatch("is");
+      setStatePick(initialState ?? "hover");
       setUrl("");
       setKey("Enter");
       // Preselect the box the caller asked for; with no caller preference the
@@ -368,7 +548,7 @@ export function AddStepDialog({
       setCaptureAttr("");
       setFlowId("");
     }
-  }, [open, kind, initialAssert, initialWaitMode, prefillText, prefillValue]);
+  }, [open, kind, initialAssert, initialWaitMode, initialState, prefillText, prefillValue]);
 
   // Flows available to call from here. Fetched when the dialog opens rather
   // than held by the parent, so a flow created in another window shows up
@@ -506,7 +686,25 @@ export function AddStepDialog({
           step.value = value;
         }
         if (opt.need === "count") step.count = Number(count) || 0;
+        if (opt.need === "css") {
+          // A malformed property refuses the WHOLE submit, the same rule the
+          // wait dialog applies to a ticked box with no element. The boundary
+          // would drop `cssProp` and keep the rest, which produces a css assert
+          // with no property — a step that looks added and asserts nothing.
+          const prop = cssProp.trim();
+          if (!isCssPropName(prop)) return null;
+          step.cssProp = prop;
+          step.cssMatch = cssMatch;
+          step.value = value;
+        }
         return [step];
+      }
+      case "elementState": {
+        // The expansion itself lives in renderer/lib/element-states.ts: the
+        // state picker is a native-menu Select, so a pick cannot be driven in
+        // jsdom and the multi-row cases would otherwise be untestable.
+        const stateSteps = buildStateSteps(statePick, locator);
+        return stateSteps.length > 0 ? stateSteps : null;
       }
       default:
         return null;
@@ -874,6 +1072,59 @@ export function AddStepDialog({
                 <Input size="small" type="number" value={count} onChange={(e) => setCount(e.target.value)} />
               </Field>
             ) : null}
+            {opt.need === "css" ? (
+              <CssAssertFields
+                picked={picked}
+                cssProp={cssProp}
+                onCssProp={setCssProp}
+                cssMatch={cssMatch}
+                onCssMatch={setCssMatch}
+                value={value}
+                onValue={setValue}
+              />
+            ) : null}
+          </>
+        ) : null}
+
+        {kind === "elementState" ? (
+          <>
+            <Text variant="small" color="secondary">
+              Put an element into a pseudo-state so the assertion after it measures the
+              styled state instead of the resting one. Add your CSS assertion directly
+              after these steps.
+            </Text>
+            <Field label="State" orientation="vertical">
+              <Select value={statePick} onValueChange={(v) => setStatePick(v as StatePick)}>
+                <SelectTrigger size="small">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {STATE_OPTIONS.map((s) => (
+                    <SelectItem key={s.value} value={s.value}>
+                      {s.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            {/* The row count is stated BEFORE the submit. Two of the four picks
+                add more than one row, and a dialog that silently turns one
+                choice into three steps reads as a bug the first time. */}
+            <Text variant="small" color="tertiary">
+              Adds {STATE_OPTIONS.find((s) => s.value === statePick)?.emits}.
+              {statePick === "active"
+                ? " Drag your assertion between the press and release rows."
+                : null}
+              {statePick === "focusVisible"
+                ? " Focus rings that only appear for keyboard users need the Tab first; browsers differ on this, so verify it on the engines you run."
+                : null}
+            </Text>
+            <TargetElementPicker
+              picked={picked}
+              onChange={setLocator}
+              onStartPick={onStartPick}
+              onClearPick={onClearPick}
+            />
           </>
         ) : null}
 

@@ -6,7 +6,7 @@ import * as path from "path";
 
 import { app, logger } from "@glaze/core/backend";
 
-import { isRunBrowser, isTestSpeed } from "../recorder/types.js";
+import { isRunBrowser, isTestSpeed, MAX_BATCH_CONCURRENCY } from "../recorder/types.js";
 import type { RecorderSettings } from "../recorder/types.js";
 import { normalizeViewport } from "../recorder/window-size.js";
 import { DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
@@ -51,6 +51,16 @@ function clampRetained(n: number): number {
   return Math.min(MAX_RETAINED_RUNS, Math.max(MIN_RETAINED_RUNS, Math.round(n)));
 }
 
+/** Clamp the stored batch-concurrency default into 1–MAX_BATCH_CONCURRENCY.
+ *
+ *  Falls back rather than clamping for a non-number: a hand-edited `"4"` or a
+ *  null is a corrupt file, not a request for one-at-a-time, and `Math.round`
+ *  would happily turn `null` into 0 and then into the floor. */
+function clampBatchDefault(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(MAX_BATCH_CONCURRENCY, Math.max(1, Math.round(value)));
+}
+
 const DEFAULT_SETTINGS: RecorderSettings = {
   showUrlBar: true,
   // Opt-in: the panel moves and resizes real windows, so it stays off until
@@ -77,6 +87,10 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   defaultTestTimeoutMs: DEFAULT_TEST_TIMEOUT_MS,
   alertWebhookEnabled: false,
   batchOrder: [],
+  // One at a time. Parallel batches are opt-in: they multiply CPU load and, run
+  // headed, open a browser window per test — neither is something to hand
+  // someone who never asked for it.
+  defaultBatchConcurrency: 1,
   artifactRetainedRuns: DEFAULT_RETAINED_RUNS,
   artifactRetentionDays: 0,
   notifyOnRunIssues: false,
@@ -160,6 +174,10 @@ function read(): RecorderSettings {
       batchOrder: Array.isArray(parsed.batchOrder)
         ? parsed.batchOrder.filter((v: unknown) => typeof v === "string").slice(0, MAX_BATCH_ORDER)
         : DEFAULT_SETTINGS.batchOrder,
+      defaultBatchConcurrency: clampBatchDefault(
+        parsed.defaultBatchConcurrency,
+        DEFAULT_SETTINGS.defaultBatchConcurrency,
+      ),
       artifactRetainedRuns:
         typeof parsed.artifactRetainedRuns === "number" && parsed.artifactRetainedRuns > 0
           ? clampRetained(parsed.artifactRetainedRuns)
@@ -260,6 +278,10 @@ export const recorderSettingsStore = {
       batchOrder: Array.isArray(update.batchOrder)
         ? update.batchOrder.filter((v) => typeof v === "string").slice(0, MAX_BATCH_ORDER)
         : current.batchOrder,
+      defaultBatchConcurrency:
+        update.defaultBatchConcurrency !== undefined
+          ? clampBatchDefault(update.defaultBatchConcurrency, current.defaultBatchConcurrency)
+          : current.defaultBatchConcurrency,
       artifactRetainedRuns:
         update.artifactRetainedRuns !== undefined &&
         typeof update.artifactRetainedRuns === "number" &&
@@ -305,6 +327,7 @@ export const recorderSettingsStore = {
       defaultTestTimeoutMs: next.defaultTestTimeoutMs,
       alertWebhookEnabled: next.alertWebhookEnabled,
       batchOrderCount: next.batchOrder.length,
+      defaultBatchConcurrency: next.defaultBatchConcurrency,
       artifactRetainedRuns: next.artifactRetainedRuns,
       artifactRetentionDays: next.artifactRetentionDays,
       notifyOnRunIssues: next.notifyOnRunIssues,

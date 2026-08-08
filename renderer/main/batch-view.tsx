@@ -1,14 +1,16 @@
-// Batch (suite) runs — pick a set of tests, run them back to back, watch the
-// aggregate result.
+// Batch (suite) runs — pick a set of tests, run them, watch the aggregate
+// result.
 //
-// The batch drives ordinary runs sequentially on the backend, so each test also
-// writes its usual RunRecord and shows up in Stats. This view is the driver +
-// live progress, not a second history.
+// The batch drives ordinary runs on the backend — one at a time by default, or
+// several at once via the "At once" picker — so each test also writes its usual
+// RunRecord and shows up in Stats. This view is the driver + live progress, not
+// a second history.
 
 import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertDialog,
   Badge,
   Button,
   Checkbox,
@@ -41,6 +43,14 @@ import {
   orderIdsOf,
   orderIsStale,
 } from "../lib/batch-order";
+import {
+  BATCH_CONCURRENCY_CHOICES,
+  batchConcurrencyLabel,
+  choiceFromSetting,
+  needsHeadedParallelWarning,
+  resolveConcurrency,
+  type BatchConcurrencyChoice,
+} from "../lib/batch-parallel";
 import type {
   BatchRecord,
   BatchState,
@@ -144,14 +154,20 @@ export function BatchView() {
   const [runHeadless, setRunHeadless] = React.useState(false);
   const [captureArtifacts, setCaptureArtifacts] = React.useState(false);
   const [browser, setBrowser] = React.useState<RunBrowser>("chromium");
+  const [concurrency, setConcurrency] = React.useState<BatchConcurrencyChoice>(1);
   const [optionsInited, setOptionsInited] = React.useState(false);
   React.useEffect(() => {
     if (optionsInited || !settingsQuery.data) return;
     setRunHeadless(settingsQuery.data.defaultRunHeadless ?? false);
     setCaptureArtifacts(settingsQuery.data.defaultCaptureArtifacts ?? false);
     setBrowser(settingsQuery.data.defaultRunBrowser ?? "chromium");
+    setConcurrency(choiceFromSetting(settingsQuery.data.defaultBatchConcurrency));
     setOptionsInited(true);
   }, [optionsInited, settingsQuery.data]);
+
+  // Set when Run is pressed on a headed batch big enough to be worth asking
+  // about; holds the number of windows so the dialog can name it.
+  const [pendingHeadedRun, setPendingHeadedRun] = React.useState<number | null>(null);
 
   // User-defined run order, persisted as ids in settings. Held locally while
   // dragging so rows track the pointer without a round trip per frame.
@@ -271,18 +287,36 @@ export function BatchView() {
     });
   };
 
-    const startBatch = async () => {
+  // How many tests will actually be in flight. Derived, not the raw picker
+  // value: "all at once" means "as many as there are tests" and every choice is
+  // capped, so this is the number of browsers that really open — which is what
+  // the warning has to be about.
+  const effectiveConcurrency = resolveConcurrency(concurrency, selectedIds.length);
+
+  const startBatch = async () => {
     if (selectedIds.length === 0) return;
     try {
       const res = await api.batch.run(selectedIds, {
         captureArtifacts,
         runHeadless,
         browser,
+        concurrency: effectiveConcurrency,
       });
       if (res.alreadyRunning) toast.info("A batch is already running.");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to start the batch.");
     }
+  };
+
+  // Ask before opening more than a screenful of real browser windows. Headless
+  // runs skip this entirely — nothing appears, so there's nothing to warn about.
+  const requestBatch = () => {
+    if (selectedIds.length === 0) return;
+    if (needsHeadedParallelWarning({ concurrency: effectiveConcurrency, runHeadless })) {
+      setPendingHeadedRun(effectiveConcurrency);
+      return;
+    }
+    void startBatch();
   };
 
   // Live results are keyed by testId so each row can show its own outcome
@@ -295,6 +329,18 @@ export function BatchView() {
 
   const summary = shown?.summary;
 
+  // Counted from the results, not read off currentIndex: with several tests in
+  // flight there is no single current one, and "Running 3 of 12" needs to mean
+  // "3 finished" rather than "the third one".
+  const liveCounts = React.useMemo(() => {
+    const results = batch?.results ?? [];
+    return {
+      inFlight: results.filter((r) => r.status === "running").length,
+      settled: results.filter((r) => r.status !== "running" && r.status !== "pending").length,
+      total: results.length,
+    };
+  }, [batch]);
+
   return (
     <div className="flex h-full flex-col">
       <Toolbar>
@@ -302,7 +348,16 @@ export function BatchView() {
           <ToolbarTitle>Batch run</ToolbarTitle>
           <ToolbarDescription>
             {running
-              ? `Running ${(batch?.currentIndex ?? 0) + 1} of ${batch?.results.length ?? 0}…`
+              ? liveCounts.inFlight > 1
+                ? // Parallel: an ordinal would be a lie, so report progress and
+                  // how many are in flight.
+                  `${liveCounts.settled} of ${liveCounts.total} done · ${liveCounts.inFlight} running`
+                : // Sequential: unchanged wording. `settled + 1` is the same
+                  // number the old `currentIndex + 1` produced, since with one
+                  // test in flight everything before it has finished.
+                  `Running ${Math.min(liveCounts.settled + 1, liveCounts.total)} of ${
+                    liveCounts.total
+                  }…`
               : summary && shown
                 ? `${summary.passed} passed · ${summary.failed} failed${
                     summary.skipped > 0 ? ` · ${summary.skipped} skipped` : ""
@@ -332,6 +387,29 @@ export function BatchView() {
               {RUN_BROWSERS.map((b) => (
                 <SelectItem key={b} value={b} icon={BROWSER_SF_SYMBOLS[b]}>
                   {RUN_BROWSER_LABELS[b]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {/* Parallelism, next to the option it most interacts with. Off is the
+              default and is byte-for-byte the old sequential behaviour. */}
+          <Select
+            value={String(concurrency)}
+            onValueChange={(v) => setConcurrency(v === "all" ? "all" : Number(v))}
+            disabled={running}
+          >
+            <SelectTrigger
+              variant="filled"
+              size="small"
+              className="w-32"
+              aria-label="How many tests to run at once"
+            >
+              <SelectValue placeholder="Off" />
+            </SelectTrigger>
+            <SelectContent>
+              {BATCH_CONCURRENCY_CHOICES.map((c) => (
+                <SelectItem key={String(c)} value={String(c)}>
+                  {batchConcurrencyLabel(c)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -366,7 +444,7 @@ export function BatchView() {
           ) : (
             <Button
               variant="accent"
-              onClick={() => void startBatch()}
+              onClick={requestBatch}
               disabled={selectedIds.length === 0}
             >
               <Play className="size-4" />
@@ -449,7 +527,9 @@ export function BatchView() {
                   </Button>
                 ) : null}
                 <Text variant="small" color="tertiary">
-                  Tests run one at a time, in this order.
+                  {effectiveConcurrency > 1
+                    ? `${effectiveConcurrency} tests run at a time, starting in this order.`
+                    : "Tests run one at a time, in this order."}
                 </Text>
               </div>
 
@@ -610,6 +690,29 @@ export function BatchView() {
           )}
         </div>
       </ScrollArea>
+
+      {/* Controlled rather than trigger-driven: the Run button has to be able
+          to start the batch OUTRIGHT in every other case, so the dialog can't
+          be what's wrapped around it. */}
+      <AlertDialog
+        open={pendingHeadedRun !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingHeadedRun(null);
+        }}
+        size="small"
+        title={`Open ${pendingHeadedRun ?? 0} browser windows at once?`}
+        description={
+          `This batch runs ${pendingHeadedRun ?? 0} tests in parallel with visible browsers, so ` +
+          `${pendingHeadedRun ?? 0} windows will open together and take focus as they launch — ` +
+          "the machine will be hard to use until the batch finishes. Tick Headless to run the " +
+          "same batch invisibly, or lower “At once”."
+        }
+        confirmLabel="Run anyway"
+        onConfirm={() => {
+          setPendingHeadedRun(null);
+          void startBatch();
+        }}
+      />
     </div>
   );
 }

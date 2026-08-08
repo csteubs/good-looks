@@ -211,6 +211,13 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     key: "defaultRunHeadless",
   },
   {
+    id: "default-batch-concurrency",
+    pane: "test-defaults",
+    label: "Batch tests at once",
+    keywords: "parallel concurrent simultaneous suite batch workers speed",
+    key: "defaultBatchConcurrency",
+  },
+  {
     id: "default-test-timeout",
     pane: "test-defaults",
     label: "Test timeout",
@@ -413,6 +420,7 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   keepRunningAiDebugJobs: false,
   defaultRunHeadless: false,
   defaultRunBrowser: "chromium",
+  defaultBatchConcurrency: 1,
   defaultTestTimeoutMs: 60_000,
   artifactRetainedRuns: 10,
   artifactRetentionDays: 0,

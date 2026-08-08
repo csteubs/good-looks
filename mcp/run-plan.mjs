@@ -88,13 +88,18 @@ export function consoleNetworkWithheldReason(tests) {
  * redaction question rather than quietly creating a plaintext-credentials path
  * in a file `get_run_log` serves back.
  */
-export function runEnv({ base, browsersPath, nodeModules, speed, testTimeoutMs, vars }) {
+export function runEnv({ base, browsersPath, nodeModules, speed, testTimeoutMs, outputDir, vars }) {
   return {
     ...base,
     PLAYWRIGHT_BROWSERS_PATH: browsersPath,
     NODE_PATH: nodeModules,
     PW_SLOWMO_MS: String(slowMoFor(speed)),
     PW_TEST_TIMEOUT_MS: String(testTimeoutMs),
+    // Playwright derives its scratch directory from the SPEC's path by default,
+    // so two concurrent runs of one spec would write to — and clean — the same
+    // folder mid-flight. run_batch runs several tests at once, so each run
+    // names its own.
+    ...(outputDir ? { PW_OUTPUT_DIR: outputDir } : {}),
     ...(vars && Object.keys(vars).length > 0 ? { GLAZE_VARS: JSON.stringify(vars) } : {}),
   };
 }

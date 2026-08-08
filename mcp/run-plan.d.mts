@@ -30,6 +30,9 @@ export declare function runEnv(params: {
   nodeModules: string;
   speed: TestSpeed | string | undefined;
   testTimeoutMs: number;
+  /** this run's own Playwright scratch directory — parallel batch lanes would
+   *  otherwise share (and clean) one folder derived from the spec's path */
+  outputDir?: string;
   vars?: Record<string, string>;
 }): NodeJS.ProcessEnv;
 

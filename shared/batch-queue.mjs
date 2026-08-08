@@ -13,16 +13,25 @@
 /**
  * Resolve a selection plus dataset options into the ordered list of executions.
  *
+ * The selection is DEDUPED first. The Batch view's selection is a Set so it
+ * can't produce a repeat, but IPC and the MCP can, and a repeated id is what
+ * breaks the queue's one structural guarantee: that all of a test's entries sit
+ * together. `["a", "b", "a"]` would otherwise interleave, and the app's runner
+ * groups the queue into lanes (see `buildLanes`), which would reorder it.
+ * Running one test twice in a single batch with identical options has no
+ * meaning anyway; running it once per dataset row does, and that still works.
+ *
  * @param {{ testIds: string[], datasetIds?: string[], allDatasets?: boolean }} params
  * @param {(testId: string) => Array<{ id: string, name: string, values: Record<string, string> }>} getDatasets
  * @returns {Array<{ testId: string, datasetId?: string, datasetName?: string, vars?: Record<string, string> }>}
  */
 export function buildQueue(params, getDatasets) {
+  const testIds = [...new Set(params.testIds)];
   const wantsSweep = params.allDatasets === true || (params.datasetIds?.length ?? 0) > 0;
-  if (!wantsSweep) return params.testIds.map((testId) => ({ testId }));
+  if (!wantsSweep) return testIds.map((testId) => ({ testId }));
   const wanted = new Set(params.datasetIds ?? []);
   const out = [];
-  for (const testId of params.testIds) {
+  for (const testId of testIds) {
     const rows = getDatasets(testId).filter(
       (d) => params.allDatasets === true || wanted.has(d.id),
     );

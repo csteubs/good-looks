@@ -1,13 +1,23 @@
-// Batch (suite) runs — execute a set of tests back to back and report an
-// aggregate result.
+// Batch (suite) runs — execute a set of tests and report an aggregate result.
 //
-// Tests run STRICTLY SEQUENTIALLY. `playwrightRunner.start` is keyed by testId,
-// so the runner would happily run several tests at once, but each run spawns its
-// own Playwright process and browser: running a library of tests in parallel
-// would contend for CPU and, worse, make headed runs fight over the screen.
-// Sequential also keeps the existing per-run event stream (runner:output /
-// runner:step / runner:done, all keyed by runId === testId) unambiguous for the
-// renderer, which already renders exactly one live run.
+// Tests run ONE AT A TIME by default. `concurrency` raises that, and the whole
+// design of this file is about what makes raising it safe:
+//
+// `playwrightRunner.start` keys a run by testId — runId === testId — and so
+// does every per-run map it owns, plus the runner:output / runner:step /
+// runner:done stream the renderer's run store is keyed by. Two DIFFERENT tests
+// in flight are therefore already unambiguous. The SAME test twice is not:
+// start() declines with `alreadyRunning`, and the entry would be skipped.
+//
+// A dataset sweep queues exactly that — the same test once per row — so the
+// queue is partitioned into LANES keyed by testId. Lanes run concurrently up to
+// the limit; entries within a lane stay sequential. That keeps runId === testId
+// true without touching the runner, and it means the real ceiling is the number
+// of DISTINCT tests queued, not the queue length.
+//
+// Because buildQueue emits a test's rows contiguously, lane order at limit 1 is
+// exactly queue order — the sequential path is the same code, not a parallel
+// path pretending. check:batch-runner pins that.
 //
 // Only one batch runs at a time. Each test's own RunRecord is still written by
 // the runner, so a batch shows up in Stats as ordinary runs — the batch is a
@@ -27,6 +37,8 @@ import { testStore } from "./test-store.js";
 import { batchHistoryStore } from "./batch-history-store.js";
 import { sendAlert, type BatchAlert } from "./alert-service.js";
 import { buildQueue } from "../../shared/batch-queue.mjs";
+import type { BatchEntry } from "../../shared/batch-queue.mjs";
+import { clampBatchConcurrency } from "../recorder/types.js";
 import type {
   BatchState,
   BatchSummary,
@@ -59,6 +71,12 @@ export interface BatchRunParams {
   datasetIds?: string[];
   /** Sweep every dataset row each selected test declares. */
   allDatasets?: boolean;
+  /** How many tests to run at once. Absent or 1 = strictly one at a time (the
+   *  default, and the behaviour every batch had before this option existed).
+   *  Clamped down to the number of distinct tests queued, and to
+   *  MAX_BATCH_CONCURRENCY — asking for more than either is not an error, it
+   *  just runs what it can. */
+  concurrency?: number;
 }
 
 // Expanding a selection into the queue actually executed lives in
@@ -67,6 +85,29 @@ export interface BatchRunParams {
 // this module is where the app and check:batch-runner already import it from.
 export type { BatchEntry } from "../../shared/batch-queue.mjs";
 export { buildQueue } from "../../shared/batch-queue.mjs";
+
+/**
+ * Partition a queue into lanes of entry indices, one lane per distinct testId.
+ *
+ * This is what makes concurrency safe. Everything in the runner is keyed by
+ * testId (runId === testId), so two entries for the SAME test must never be in
+ * flight together — start() would decline the second with `alreadyRunning` and
+ * the row would be reported as skipped, which for a dataset sweep means
+ * silently not running half the rows you asked for.
+ *
+ * Lane order is first-appearance order, and a test's rows are contiguous in the
+ * queue, so flattening the lanes reproduces the queue exactly — which is why
+ * running with one worker is indistinguishable from the old sequential loop.
+ */
+export function buildLanes(queue: BatchEntry[]): number[][] {
+  const byTest = new Map<string, number[]>();
+  for (let i = 0; i < queue.length; i++) {
+    const lane = byTest.get(queue[i].testId);
+    if (lane) lane.push(i);
+    else byTest.set(queue[i].testId, [i]);
+  }
+  return [...byTest.values()];
+}
 
 /** Seam for testing — the real implementations talk to the Playwright runner,
  *  the test store, and the renderer. */
@@ -140,6 +181,13 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
 
   const emitProgress = (): void => {
     if (!state) return;
+    // Derived, not assigned by the loop: with several entries in flight there
+    // is no single "current" one. The LOWEST running index is the closest
+    // honest answer, and it degrades to exactly the old meaning when only one
+    // runs — which matters because currentIndex is persisted, and batch records
+    // written before this option existed are still read back. -1 when idle, the
+    // same sentinel as before (findIndex's miss value).
+    state.currentIndex = state.results.findIndex((r) => r.status === "running");
     const payload = { ...snapshot(), summary: summarize(state, deps.now()) } as BatchState & {
       summary: BatchSummary;
     };
@@ -174,22 +222,34 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
           ...(entry.datasetName ? { datasetName: entry.datasetName } : {}),
         })),
       };
+      const lanes = buildLanes(queue);
+      // Never more workers than there are lanes: asking for 8 when only 3
+      // distinct tests are queued would leave five workers spinning on an empty
+      // lane list, and — more importantly — would make the number the user was
+      // warned about ("8 windows") differ from the number that opens.
+      const limit = clampBatchConcurrency(params.concurrency, lanes.length);
       logger.info("batch", "Batch run started", {
         batchId,
         total: queue.length,
         tests: params.testIds.length,
+        lanes: lanes.length,
+        concurrency: limit,
       });
       emitProgress();
 
       void (async () => {
         const s = state;
         if (!s) return;
-        for (let i = 0; i < s.results.length; i++) {
+
+        /** Run one queued entry to completion. This is the old sequential
+         *  loop's body, unchanged — the only difference is that several copies
+         *  of it may now be in flight, each on a different test. */
+        const runEntry = async (i: number): Promise<void> => {
           const entry = s.results[i];
           if (cancelled) {
             entry.status = "skipped";
             entry.note = "Batch stopped";
-            continue;
+            return;
           }
           // A test deleted after the batch was queued is skipped, not fatal —
           // the rest of the batch is still worth running.
@@ -197,9 +257,8 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
             entry.status = "skipped";
             entry.note = "Test no longer exists";
             emitProgress();
-            continue;
+            return;
           }
-          s.currentIndex = i;
           entry.status = "running";
           entry.startedAt = deps.now();
           emitProgress();
@@ -228,6 +287,10 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
             // a run the batch didn't start (different options, no batchId) to
             // this entry — so skip instead. The null-waitFor check below is the
             // backstop for a run that finished between start and waitFor.
+            //
+            // Lanes mean the batch can no longer collide with ITSELF here, but
+            // this is still live: the user can start a test by hand from the
+            // test view while a batch is running.
             const pending = alreadyRunning ? null : deps.waitFor(runId);
             if (pending === null) {
               entry.status = "skipped";
@@ -235,7 +298,7 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
               entry.finishedAt = deps.now();
               entry.durationMs = entry.finishedAt - (entry.startedAt ?? entry.finishedAt);
               emitProgress();
-              continue;
+              return;
             }
             exitCode = await pending;
           } catch (err) {
@@ -250,7 +313,7 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
             entry.finishedAt = deps.now();
             entry.durationMs = entry.finishedAt - (entry.startedAt ?? entry.finishedAt);
             emitProgress();
-            continue;
+            return;
           }
 
           entry.exitCode = exitCode;
@@ -258,7 +321,23 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
           entry.finishedAt = deps.now();
           entry.durationMs = entry.finishedAt - (entry.startedAt ?? entry.finishedAt);
           emitProgress();
-        }
+        };
+
+        // Bounded pool: each worker claims the next lane and drains it. The
+        // claim is a bare `nextLane++` with no await between the read and the
+        // write, so on a single-threaded event loop two workers cannot take the
+        // same lane.
+        let nextLane = 0;
+        const worker = async (): Promise<void> => {
+          for (;;) {
+            const laneIndex = nextLane++;
+            if (laneIndex >= lanes.length) return;
+            for (const entryIndex of lanes[laneIndex]) {
+              await runEntry(entryIndex);
+            }
+          }
+        };
+        await Promise.all(Array.from({ length: limit }, () => worker()));
 
         s.running = false;
         s.currentIndex = -1;
@@ -283,14 +362,17 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
       return { batchId, alreadyRunning: false };
     },
 
-    /** Stop the batch: kill the test currently running and skip the rest.
-     *  Already-finished results are kept. */
+    /** Stop the batch: kill every test currently running and skip the rest.
+     *  Already-finished results are kept.
+     *
+     *  EVERY running entry, not just `currentIndex` — a parallel batch has
+     *  several in flight, and killing only the head of the pack would leave the
+     *  rest of the browsers open with the UI reporting the batch as stopped. */
     stop(): void {
       if (!state?.running) return;
       cancelled = true;
-      const current = state.results[state.currentIndex];
-      if (current && current.status === "running") {
-        deps.stopRun(current.testId);
+      for (const result of state.results) {
+        if (result.status === "running") deps.stopRun(result.testId);
       }
       logger.info("batch", "Batch run stopping", { batchId: state.batchId });
     },

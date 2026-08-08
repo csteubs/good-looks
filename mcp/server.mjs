@@ -19,6 +19,7 @@ import { z } from "zod";
 
 import { readJsonFile, resolveDataDir, writeJsonFile } from "./glaze-data.mjs";
 import { selectTests, summarizeResults, UNTAGGED } from "./select-tests.mjs";
+import { clampParallel, MAX_PARALLEL, runPool } from "./run-pool.mjs";
 import { listSessions, readShots, requestCapture } from "./debug-shots.mjs";
 import { readReplay, readRunLogs } from "./artifacts.mjs";
 import { recordRun } from "./metrics.mjs";
@@ -133,7 +134,19 @@ function ensureModuleResolution(scriptsDir, nodeModules) {
  *  silently hand a later run Playwright's built-in default. */
 function ensurePlaywrightConfig(scriptsDir) {
   const configPath = path.join(scriptsDir, PLAYWRIGHT_CONFIG_FILE);
-  fs.writeFileSync(configPath, playwrightConfigSource, "utf-8");
+  // Write-if-different, via an atomic rename. Both matter now that run_batch
+  // runs several tests at once: rewriting unconditionally means one run can be
+  // truncating the file while another's Playwright process is reading it, and a
+  // plain write is not atomic. The contents come from shared/, so the app and
+  // this server cannot disagree about them — see that file.
+  try {
+    if (fs.readFileSync(configPath, "utf-8") === playwrightConfigSource) return configPath;
+  } catch {
+    // Missing or unreadable — fall through and write it.
+  }
+  const tmp = `${configPath}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, playwrightConfigSource, "utf-8");
+  fs.renameSync(tmp, configPath);
   return configPath;
 }
 
@@ -173,6 +186,13 @@ async function executeTest(test, { playwright, browser, batchId, vars, datasetId
   ensureModuleResolution(scriptsDir, playwright.nodeModules);
   const configPath = ensurePlaywrightConfig(scriptsDir);
 
+  // Minted before the spawn, not after, because it names this run's Playwright
+  // output directory. Playwright derives that directory from the SPEC's path by
+  // default, so with run_batch running several tests at once, two runs of one
+  // spec would write to — and clean — the same folder mid-flight.
+  const runId = randomUUID();
+  const outputDir = path.join(scriptsDir, "test-results", runId);
+
   const speed = test.speed ?? "fast";
   // The per-test timeout, resolved exactly as the app resolves it: explicit
   // per-test value → the app's global default → 1 minute, then raised to the
@@ -195,6 +215,7 @@ async function executeTest(test, { playwright, browser, batchId, vars, datasetId
     nodeModules: playwright.nodeModules,
     speed,
     testTimeoutMs,
+    outputDir,
     vars,
   });
   // Relative to the scripts root, so a sandboxed spec resolves as
@@ -233,7 +254,13 @@ async function executeTest(test, { playwright, browser, batchId, vars, datasetId
   });
   const finishedAt = Date.now();
   const status = exitCode === 0 ? "passed" : "failed";
-  const runId = randomUUID();
+  // Per-run scratch (traces, failure shots). Nothing here reads it, and leaving
+  // it would grow one directory per run forever.
+  try {
+    fs.rmSync(outputDir, { recursive: true, force: true });
+  } catch {
+    // ignore
+  }
   const logFile = path.join(dataDir, "recorder", "logs", `${runId}.log`);
   const record = {
     id: runId,
@@ -580,7 +607,7 @@ server.registerTool(
   {
     title: "Run many tests",
     description:
-      `Run several recorded tests back to back and report an aggregate pass/fail summary. Select them by explicit testIds, by tag (see list_tests; pass "${UNTAGGED}" for tests with no tags), or omit both to run every visible test. Pass allDatasets (or datasetIds) to sweep each selected test once per dataset row instead of once. Tests run one at a time, headless. A failing test does not stop the batch, and a test declaring secret variables is skipped with a note rather than failing the suite. Each test is recorded in the app's run history, and the batch itself appears in the app's Batch view.`,
+      `Run several recorded tests and report an aggregate pass/fail summary. Select them by explicit testIds, by tag (see list_tests; pass "${UNTAGGED}" for tests with no tags), or omit both to run every visible test. Pass allDatasets (or datasetIds) to sweep each selected test once per dataset row instead of once. Tests run headless, one at a time by default — set "parallel" to run that many at once (1-${MAX_PARALLEL}), which is much faster for a large suite at the cost of CPU. A failing test does not stop the batch, and a test declaring secret variables is skipped with a note rather than failing the suite. Each test is recorded in the app's run history, and the batch itself appears in the app's Batch view.`,
     inputSchema: {
       testIds: z.array(z.string()).optional(),
       tag: z.string().optional(),
@@ -593,9 +620,10 @@ server.registerTool(
         .boolean()
         .optional()
         .describe("Sweep every dataset row each selected test declares."),
+      parallel: z.number().int().min(1).max(MAX_PARALLEL).optional(),
     },
   },
-  async ({ testIds, tag, browser, datasetIds, allDatasets }) => {
+  async ({ testIds, tag, browser, datasetIds, allDatasets, parallel }) => {
     const engine = browser ?? "chromium";
     if (!RUN_BROWSERS.includes(engine)) {
       return { content: [{ type: "text", text: `Unknown browser: ${engine}` }], isError: true };
@@ -653,22 +681,36 @@ server.registerTool(
 
     // Write-through, matching the app: a crash mid-batch still leaves the
     // results collected so far, and the app's Batch view can watch progress.
-    const persist = (running, index) => {
+    //
+    // `currentIndex` is DERIVED rather than passed in: with several tests in
+    // flight there's no single current one, and the app reads this field back
+    // out of batch-history.json. The lowest running index is the closest honest
+    // answer and degrades to the old meaning when only one runs. -1 when idle.
+    const persist = (running) => {
       saveBatchRecord({
         batchId,
         running,
         startedAt,
         ...(running ? {} : { finishedAt: Date.now() }),
-        currentIndex: index,
+        currentIndex: results.findIndex((r) => r.status === "running"),
         results,
         stopped: false,
         summary: summarizeResults(results, Date.now() - startedAt),
       });
     };
-    persist(true, -1);
+    persist(true);
 
-    for (let i = 0; i < queue.length; i++) {
-      const test = byId.get(queue[i].testId);
+    // Over the QUEUE, not the selection: a dataset sweep expands one test into
+    // one entry per row, and the pool has to see all of them or a sweep runs
+    // one row and reports the rest as pending forever.
+    //
+    // Running the same test's rows concurrently is safe for exactly the reason
+    // run-pool.mjs gives for having no lanes: executeTest mints a fresh uuid per
+    // run and each gets its own PW_OUTPUT_DIR, so two runs of one spec never
+    // share Playwright's scratch directory.
+    const limit = clampParallel(parallel, queue.length);
+    await runPool(queue, limit, async (entry, i) => {
+      const test = byId.get(entry.testId);
       // Skipped, not failed, and the batch carries on. A suite that aborts —
       // or reports red — because one of its tests happens to log in would make
       // run_batch useless against any real library.
@@ -680,26 +722,28 @@ server.registerTool(
           "which are encrypted to the app and unreadable from here. Run it from the app.";
         results[i].finishedAt = Date.now();
         results[i].durationMs = 0;
-        persist(true, i);
-        continue;
+        persist(true);
+        return;
       }
+
 
       results[i].status = "running";
       results[i].startedAt = Date.now();
-      persist(true, i);
+      persist(true);
 
       // One test failing must not abort the batch — that's the whole point of
-      // running a suite.
+      // running a suite. runPool swallows a throw as a backstop, but the record
+      // has to be written here or the entry would sit at "running" forever.
       try {
         const r = await executeTest(test, {
           playwright,
           browser: engine,
           batchId,
-          // Read from the QUEUE, not from `results`: the values belong in the
-          // child process's env and nowhere near the persisted batch record.
-          vars: queue[i].vars,
-          datasetId: queue[i].datasetId,
-          datasetName: queue[i].datasetName,
+          // Read from the QUEUE entry, not from `results`: the values belong in
+          // the child process's env and nowhere near the persisted batch record.
+          vars: entry.vars,
+          datasetId: entry.datasetId,
+          datasetName: entry.datasetName,
         });
         results[i].status = r.status;
         results[i].exitCode = r.exitCode;
@@ -712,12 +756,12 @@ server.registerTool(
         results[i].finishedAt = Date.now();
         results[i].durationMs = Math.max(0, results[i].finishedAt - (results[i].startedAt ?? results[i].finishedAt));
       }
-      persist(true, i);
-    }
+      persist(true);
+    });
 
     const finishedAt = Date.now();
     const summary = summarizeResults(results, finishedAt - startedAt);
-    persist(false, -1);
+    persist(false);
 
     // Said once for the batch rather than per result: every run in it went
     // through the same fixture-free path, and repeating that per row would
@@ -745,6 +789,7 @@ server.registerTool(
             {
               batchId,
               browser: engine,
+              parallel: limit,
               ...(missing.length > 0 ? { missingTestIds: missing } : {}),
               summary,
               ...(suiteSkips.length > 0 ? { fixturesSkipped: suiteSkips } : {}),

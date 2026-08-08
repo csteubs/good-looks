@@ -71,6 +71,7 @@ const ASSERT_PICKABLE: { kind: AssertKind; label: string }[] = [
 /** Order matters: index === commandId in the native "+ Add step" menu. */
 const ADD_STEP_KINDS: AddStepKind[] = [
   "assertion",
+  "elementState",
   "condition",
   "wait",
   "goto",
@@ -172,6 +173,8 @@ export function TrainerPanelView() {
     picked: PickedElement | null;
     assert?: AssertKind;
     waitMode?: WaitDialogMode;
+    /** pseudo-state preselected by the right-click "Set element state" submenu */
+    elementState?: "hover" | "focus";
     prefillText?: string;
     prefillValue?: string;
   } | null>(null);
@@ -233,6 +236,9 @@ export function TrainerPanelView() {
     } else if (a.kind === "wait") {
       setContextPick({ picked: a.picked, waitMode: a.waitMode });
       setAddKind("wait");
+    } else if (a.kind === "elementState") {
+      setContextPick({ picked: a.picked, elementState: a.elementState });
+      setAddKind("elementState");
     } else {
       setContextPick({ picked: a.picked });
       setAddKind(a.kind as AddStepKind);
@@ -545,6 +551,7 @@ export function TrainerPanelView() {
           }}
           initialAssert={contextPick?.assert}
           initialWaitMode={contextPick?.waitMode}
+          initialState={contextPick?.elementState}
           prefillText={contextPick?.prefillText}
           prefillValue={contextPick?.prefillValue}
         />
