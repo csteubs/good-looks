@@ -20,7 +20,9 @@ import { z } from "zod";
 import { readJsonFile, resolveDataDir, writeJsonFile } from "./glaze-data.mjs";
 import { selectTests, summarizeResults, UNTAGGED } from "./select-tests.mjs";
 import { listSessions, readShots, requestCapture } from "./debug-shots.mjs";
+import { readReplay, readRunLogs } from "./artifacts.mjs";
 import {
+  consoleNetworkWithheldReason,
   datasetRow,
   describeRun,
   runArgs,
@@ -29,6 +31,7 @@ import {
   secretVariableNames,
 } from "./run-plan.mjs";
 import { buildQueue } from "../shared/batch-queue.mjs";
+import { compareReplays } from "../shared/run-comparison.mjs";
 import {
   PLAYWRIGHT_CONFIG_FILE,
   playwrightConfigSource,
@@ -747,6 +750,350 @@ server.registerTool(
       // batch as success.
       ...(summary.failed > 0 ? { isError: true } : {}),
     };
+  },
+);
+
+// ── Evidence already on disk ────────────────────────────────────────────────
+//
+// The app captures far more per run than pass/fail: per-step visual diffs and
+// their ratios, accessibility violations against an accepted baseline, console
+// and network with per-request latency, every locator Auto-Heal changed, and
+// whole batch histories. Until now none of it was reachable from here, so an
+// agent asking "why did this fail?" had one log file to reason from while the
+// answer sat in five others.
+//
+// All read-only. Nothing here writes, accepts a baseline, or changes a setting.
+
+/** Resolve the run and its replay, or the reason there isn't one. Shared by the
+ *  three tools that read a run's captured evidence so they explain an absent
+ *  artifact the same way — "no artifacts" and "run doesn't exist" are different
+ *  answers, and collapsing them sends someone looking in the wrong place. */
+function replayFor(runId) {
+  const run = listRuns().find((r) => r.id === runId);
+  if (!run) return { error: `No run found with id ${runId}.` };
+  const replay = readReplay(dataDir, run.testId, runId);
+  if (!replay) {
+    return {
+      run,
+      error:
+        `Run ${runId} ("${run.testName}") captured no artifacts, so there is nothing to report. ` +
+        "A run only captures when the test has capture switched on and the run came from the " +
+        "app — MCP-driven runs do not capture yet. Retention also prunes older run directories.",
+    };
+  }
+  return { run, replay };
+}
+
+function jsonResult(value) {
+  return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
+}
+
+function errorResult(text) {
+  return { content: [{ type: "text", text }], isError: true };
+}
+
+server.registerTool(
+  "get_visual_report",
+  {
+    title: "Get a run's visual-diff report",
+    description:
+      "Per-step visual-diff outcome for one captured run: which steps changed against the pinned " +
+      "baseline, by how much (the fraction of pixels), at what threshold, and whether the " +
+      "comparison was page-wide or scoped to an element. Use this to answer whether a failure " +
+      "was accompanied by the page rendering differently. Run ids come from list_runs.",
+    inputSchema: { runId: z.string() },
+  },
+  async ({ runId }) => {
+    const { run, replay, error } = replayFor(runId);
+    if (error) return errorResult(error);
+    const steps = replay.steps
+      .filter((s) => s.diff)
+      .map((s) => ({
+        index: s.index,
+        stepId: s.stepId,
+        label: s.label,
+        status: s.status,
+        state: s.diff.state,
+        // Reported as a percentage as well as the raw fraction: 0.0064 and
+        // "0.65%" are the same number, and only one of them is comparable by
+        // eye against a threshold expressed in percent.
+        changedPixelsPercent: typeof s.diff.ratio === "number" ? +(s.diff.ratio * 100).toFixed(4) : undefined,
+        ratio: s.diff.ratio,
+        thresholdPercent: s.diff.threshold,
+        scope: s.diff.scope ?? "page",
+        ...(s.diff.maskedCount ? { maskedRegions: s.diff.maskedCount } : {}),
+        ...(s.diff.reason ? { reason: s.diff.reason } : {}),
+      }));
+    return jsonResult({
+      runId,
+      testId: replay.testId,
+      testName: replay.testName,
+      status: replay.status,
+      startedAt: run.startedAt,
+      thresholdPercent: replay.visualThreshold,
+      failedIndex: replay.failedIndex,
+      changedSteps: steps.filter((s) => s.state === "changed").length,
+      // Named rather than left as an empty list: "nothing changed" and "nothing
+      // was compared" look identical in a list of zero rows.
+      comparedSteps: steps.length,
+      steps,
+    });
+  },
+);
+
+server.registerTool(
+  "get_a11y_report",
+  {
+    title: "Get a run's accessibility report",
+    description:
+      "Accessibility violations found during one captured run, per step, separated into ones " +
+      "already accepted for this test and ones that are new. Reported only — a run's pass/fail " +
+      "is decided by its assertions, never by these. Run ids come from list_runs.",
+    inputSchema: { runId: z.string() },
+  },
+  async ({ runId }) => {
+    const { run, replay, error } = replayFor(runId);
+    if (error) return errorResult(error);
+    const steps = replay.steps
+      .filter((s) => s.a11y)
+      .map((s) => {
+        const newKeys = new Set(s.a11y.newKeys ?? []);
+        return {
+          index: s.index,
+          stepId: s.stepId,
+          label: s.label,
+          acceptedCount: s.a11y.acceptedCount ?? 0,
+          newCount: newKeys.size,
+          violations: (s.a11y.violations ?? []).map((v) => ({
+            ...v,
+            // The accepted/new split is the whole point: against any real site
+            // the first run reports dozens of pre-existing problems, and a
+            // report that can't say which are NEW is one nobody reads twice.
+            isNew: newKeys.has(v.id ?? v.key ?? ""),
+          })),
+        };
+      });
+    return jsonResult({
+      runId,
+      testId: replay.testId,
+      testName: replay.testName,
+      status: replay.status,
+      startedAt: run.startedAt,
+      checkedSteps: steps.length,
+      newViolationSteps: steps.filter((s) => s.newCount > 0).length,
+      a11yMs: run.a11yMs,
+      steps,
+    });
+  },
+);
+
+server.registerTool(
+  "get_run_logs",
+  {
+    title: "Get a run's console and network",
+    description:
+      "The browser console messages and network requests recorded during one captured run, " +
+      "keyed to the step that was running. Network entries carry status and latency, so this is " +
+      "what answers 'did the server error, or did we look for the wrong thing?'. Only available " +
+      "for runs that recorded logs. Run ids come from list_runs.",
+    inputSchema: {
+      runId: z.string(),
+      failuresOnly: z
+        .boolean()
+        .optional()
+        .describe("Return only page errors and non-2xx/failed requests. Defaults to false."),
+    },
+  },
+  async ({ runId, failuresOnly = false }) => {
+    const run = listRuns().find((r) => r.id === runId);
+    if (!run) return errorResult(`No run found with id ${runId}.`);
+
+    // THE ONE THING THIS SERVER MUST NOT DO — see consoleNetworkWithheldReason
+    // for why these are withheld whenever the library holds a secret at all.
+    const withheld = consoleNetworkWithheldReason(listTests());
+    if (withheld) return errorResult(withheld);
+
+    const logs = readRunLogs(dataDir, run.testId, runId);
+    if (!logs) {
+      return errorResult(
+        `Run ${runId} ("${run.testName}") recorded no console or network. That is per-test ` +
+          '("Record console and network" on the test) and only happens on app-driven runs.',
+      );
+    }
+    const consoleEntries = failuresOnly
+      ? logs.console.filter((c) => c.type === "pageerror" || c.type === "error")
+      : logs.console;
+    const network = failuresOnly ? logs.network.filter((n) => !n.ok) : logs.network;
+    return jsonResult({
+      runId,
+      testId: run.testId,
+      testName: run.testName,
+      status: run.status,
+      failuresOnly,
+      counts: {
+        console: logs.console.length,
+        consoleErrors: logs.console.filter((c) => c.type === "pageerror" || c.type === "error").length,
+        network: logs.network.length,
+        networkFailures: logs.network.filter((n) => !n.ok).length,
+      },
+      // Said out loud. Entries past the per-run cap are gone, and a report that
+      // stays silent about that invites "no request matched" to be read as
+      // "the request was never made".
+      ...(logs.consoleDropped || logs.networkDropped
+        ? {
+            truncated: {
+              consoleDropped: logs.consoleDropped,
+              networkDropped: logs.networkDropped,
+              note: "Entries past this run's per-run cap were never written. Absence here is not evidence of absence.",
+            },
+          }
+        : {}),
+      headersFiltered: logs.headersFiltered,
+      console: consoleEntries,
+      network,
+    });
+  },
+);
+
+server.registerTool(
+  "list_heals",
+  {
+    title: "List Auto-Heal events",
+    description:
+      "Every locator Auto-Heal has changed, newest first: which step, what the locator was and " +
+      "became, whether it was actually applied or only suggested, and which run proposed it. " +
+      "A step that heals repeatedly is a decaying locator; a step that healed and passed is a " +
+      "run that only passed because something was substituted. Optionally filter to one test.",
+    inputSchema: {
+      testId: z.string().optional(),
+      limit: z.number().int().min(1).max(200).optional(),
+    },
+  },
+  async ({ testId, limit }) => {
+    let entries = readJsonFile(dataDir, "recorder/heal-journal.json", []);
+    if (!Array.isArray(entries)) entries = [];
+    const names = new Map(listTests().map((t) => [t.id, t.name]));
+    let filtered = entries.filter((e) => !testId || e.testId === testId);
+    filtered = filtered.sort((a, b) => b.at - a.at).slice(0, limit ?? 50);
+    // Healed-step COUNTS per step, across everything retained. A single heal is
+    // an event; the same step healing four times is the finding, and it is
+    // invisible in a list sorted by time.
+    const perStep = new Map();
+    for (const e of entries) {
+      if (testId && e.testId !== testId) continue;
+      const key = `${e.testId}:${e.stepId}`;
+      perStep.set(key, (perStep.get(key) ?? 0) + 1);
+    }
+    return jsonResult({
+      total: entries.filter((e) => !testId || e.testId === testId).length,
+      chronicSteps: [...perStep.entries()]
+        .filter(([, n]) => n >= 3)
+        .map(([key, n]) => ({ key, heals: n }))
+        .sort((a, b) => b.heals - a.heals),
+      entries: filtered.map((e) => ({
+        id: e.id,
+        testId: e.testId,
+        testName: names.get(e.testId) ?? null,
+        stepId: e.stepId,
+        stepIndex: e.stepIndex,
+        stepLabel: e.stepLabel,
+        source: e.source,
+        runId: e.runId,
+        originalLocator: e.originalLocator,
+        appliedLocator: e.appliedLocator,
+        applied: e.applied,
+        status: e.status,
+        at: e.at,
+        healsForThisStep: perStep.get(`${e.testId}:${e.stepId}`) ?? 1,
+      })),
+    });
+  },
+);
+
+server.registerTool(
+  "list_batches",
+  {
+    title: "List batch runs",
+    description:
+      "Past batch (suite) runs, newest first: the aggregate summary and each test's outcome, " +
+      "including which dataset row it was when the batch was a sweep. This server has written " +
+      "this file since run_batch existed but could never read it back.",
+    inputSchema: {
+      limit: z.number().int().min(1).max(50).optional(),
+      batchId: z.string().optional().describe("Return just this batch, with every result."),
+    },
+  },
+  async ({ limit, batchId }) => {
+    const batches = listBatches().sort((a, b) => b.startedAt - a.startedAt);
+    if (batchId) {
+      const one = batches.find((b) => b.batchId === batchId);
+      if (!one) return errorResult(`No batch found with id ${batchId}.`);
+      return jsonResult(one);
+    }
+    return jsonResult(
+      batches.slice(0, limit ?? 20).map((b) => ({
+        batchId: b.batchId,
+        running: b.running,
+        startedAt: b.startedAt,
+        finishedAt: b.finishedAt,
+        stopped: b.stopped,
+        summary: b.summary,
+        failedTests: (b.results ?? [])
+          .filter((r) => r.status === "failed")
+          .map((r) => ({
+            testName: r.testName,
+            runId: r.runRecordId,
+            ...(r.datasetName ? { datasetName: r.datasetName } : {}),
+          })),
+      })),
+    );
+  },
+);
+
+server.registerTool(
+  "compare_runs",
+  {
+    title: "Compare two runs of a test",
+    description:
+      "Then-vs-now for two captured runs of the same test, per step: stable, fixed, " +
+      "changed-since, or still-failing, with each step's visual outcome in the later run. " +
+      "A step that passed before and fails now is reported as 'changed-since' rather than as a " +
+      "regression — the run alone cannot tell a real regression from environment drift, and " +
+      "saying so is the point. Both runs must have captured artifacts.",
+    inputSchema: {
+      baseRunId: z.string().describe("The earlier run."),
+      runId: z.string().describe("The later run to compare against it."),
+    },
+  },
+  async ({ baseRunId, runId }) => {
+    const runs = listRuns();
+    const base = runs.find((r) => r.id === baseRunId);
+    const later = runs.find((r) => r.id === runId);
+    if (!base) return errorResult(`No run found with id ${baseRunId}.`);
+    if (!later) return errorResult(`No run found with id ${runId}.`);
+    if (base.testId !== later.testId) {
+      return errorResult(
+        `Those runs are of different tests ("${base.testName}" and "${later.testName}"). ` +
+          "A step-by-step comparison only means anything within one test.",
+      );
+    }
+    const comparison = compareReplays(
+      readReplay(dataDir, base.testId, baseRunId),
+      readReplay(dataDir, later.testId, runId),
+    );
+    if (!comparison) {
+      return errorResult(
+        "At least one of those runs captured no artifacts, so there is nothing to compare " +
+          "step by step. Only runs with capture switched on produce a replay model, and " +
+          "retention prunes older run directories.",
+      );
+    }
+    return jsonResult({
+      ...comparison,
+      testName: base.testName,
+      baseStartedAt: base.startedAt,
+      startedAt: later.startedAt,
+    });
   },
 );
 

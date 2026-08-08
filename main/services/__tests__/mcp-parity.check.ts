@@ -36,6 +36,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import {
+  consoleNetworkWithheldReason,
   datasetRow,
   describeRun,
   runArgs,
@@ -43,6 +44,7 @@ import {
   sanitizeOutput,
   secretVariableNames,
 } from "../../../mcp/run-plan.mjs";
+import { compareReplays } from "../../../shared/run-comparison.mjs";
 import { generateSpec, secretEnvName } from "../script-generator.js";
 import { resolveTestTimeoutMs, CRAWL_MIN_TEST_TIMEOUT_MS } from "../../../shared/run-pacing.mjs";
 import { playwrightConfigSource } from "../../../shared/playwright-config-source.mjs";
@@ -406,6 +408,86 @@ function codeOnly(source: string): string {
     !resultsBlock.includes("vars") && !resultsBlock.includes("values"),
     "mcp: the persisted batch record carries a row's id and name, never its values",
   );
+}
+
+// ── 9. Console + network are withheld when they cannot be redacted ────
+//
+// The one read tool that can leak. console.json and network.json are stored
+// RAW; the app strips secret values on the way out, and this process has no
+// secret values to strip with. Serving them would hand out exactly what
+// artifact-store.readLogs is careful to remove.
+
+{
+  const clean = [testWith({ id: "a" }), testWith({ id: "b" })];
+  assert(
+    consoleNetworkWithheldReason(clean) === null,
+    "logs: a library with no secrets may serve console and network",
+  );
+
+  const withOne = [
+    testWith({ id: "a" }),
+    testWith({ id: "b", variables: [{ name: "password", kind: "secret" }] }),
+  ];
+  const reason = consoleNetworkWithheldReason(withOne);
+  assert(typeof reason === "string", "logs: one secret anywhere withholds them");
+  // Keyed on the WHOLE library, not the run's own test — any run's log can
+  // contain any test's secret, which is why the app's redaction snapshot holds
+  // every value it knows rather than the current test's.
+  assert(
+    consoleNetworkWithheldReason([testWith({ id: "a" })]) === null &&
+      consoleNetworkWithheldReason(withOne) !== null,
+    "logs: the rule is library-wide, not per-test",
+  );
+  assert(
+    (reason ?? "").includes("Visual tab"),
+    "logs: the refusal says where the redacted version can be read instead",
+  );
+  assert(
+    !(reason ?? "").includes("password"),
+    "logs: the refusal does not name the secret variables it is protecting",
+  );
+}
+
+// ── 10. Comparison reads the same way for both callers ────────────────
+
+{
+  const step = (stepId: string, status: string) => ({ stepId, label: stepId, status });
+  const base = {
+    testId: "t1",
+    runId: "r1",
+    steps: [step("s1", "passed"), step("s2", "passed"), step("s3", "failed")],
+  };
+  const later = {
+    testId: "t1",
+    runId: "r2",
+    steps: [step("s1", "passed"), step("s2", "failed"), step("s3", "passed")],
+  };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cmp = compareReplays(base as any, later as any);
+  assert(cmp?.steps[0].delta === "stable", "compare: passed then, passed now → stable");
+  // Never "regressed": the run alone cannot tell a real regression from
+  // environment drift, and claiming one during an outage is expensive.
+  assert(cmp?.steps[1].delta === "changed-since", "compare: passed then, failed now → changed-since");
+  assert(cmp?.steps[2].delta === "fixed", "compare: failed then, passed now → fixed");
+  assert(cmp?.changedSinceCount === 1 && cmp?.fixedCount === 1, "compare: counts the two deltas");
+  assert(cmp?.stepsDiverged === false, "compare: matching step lists are not reported as diverged");
+
+  const edited = { testId: "t1", runId: "r3", steps: [step("s9", "passed")] };
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const drifted = compareReplays(base as any, edited as any);
+  assert(
+    drifted?.stepsDiverged === true,
+    "compare: a test edited between runs is reported as diverged, not silently mismatched",
+  );
+  // `=== true` rather than a bare `?.`: an undefined comparison would otherwise
+  // read as a falsy pass-through, and this assertion would go quiet exactly
+  // when compareReplays stopped returning anything.
+  assert(
+    drifted?.steps.every((s) => s.delta === "unknown") === true,
+    "compare: an unmatched step is unknown rather than assumed failed",
+  );
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert(compareReplays(null, later as any) === null, "compare: a pruned run compares to null");
 }
 
 if (failures > 0) {

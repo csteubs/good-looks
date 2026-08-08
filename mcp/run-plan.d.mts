@@ -18,6 +18,12 @@ export declare function datasetRow(
   datasetId: string | undefined,
 ): Dataset | null;
 
+/** Why a run's recorded console + network must not be served from the MCP, or
+ *  null when they may be. */
+export declare function consoleNetworkWithheldReason(
+  tests: PlannedTest[] | undefined,
+): string | null;
+
 export declare function runEnv(params: {
   base: NodeJS.ProcessEnv;
   browsersPath: string;

@@ -43,6 +43,36 @@ export function datasetRow(test, datasetId) {
 }
 
 /**
+ * Why a run's recorded console + network must not be served from here, or null
+ * when they may be.
+ *
+ * THE LEAK THIS CLOSES. console.json and network.json are stored RAW; the app
+ * redacts secret values on the way out (artifact-store.readLogs), because a
+ * test that logs in can put a credential in a request header or a query string.
+ * Redaction needs the secret values, and those are encrypted to the app — so
+ * this process cannot redact, and serving these files would hand out exactly
+ * what the app is careful to strip.
+ *
+ * Keyed on the WHOLE library, not on the run's own test, for the same reason
+ * the app's redaction snapshot holds every secret it knows: any run's log can
+ * contain any test's secret. That makes this deliberately strict — one secret
+ * anywhere disables the tool — and strict is the correct direction for a rule
+ * whose failure mode is silent disclosure.
+ */
+export function consoleNetworkWithheldReason(tests) {
+  const withSecrets = (tests ?? []).filter((t) => secretVariableNames(t).length > 0);
+  if (withSecrets.length === 0) return null;
+  const n = withSecrets.length;
+  return (
+    "Console and network recordings are withheld here. They are stored raw and the app redacts " +
+    "secret values when it reads them, which this server cannot do — secret values are " +
+    `encrypted to the app. ${n} test${n === 1 ? "" : "s"} in this library ` +
+    `declare${n === 1 ? "s" : ""} a secret variable, and a recorded request header or URL can ` +
+    "carry one. Read these from the app's Visual tab, which redacts on the way out."
+  );
+}
+
+/**
  * The environment for one run's Playwright child process.
  *
  * `GLAZE_VARS` is the single channel for variable values, spread by the
