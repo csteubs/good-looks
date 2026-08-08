@@ -11,7 +11,7 @@ import { logger } from "@glaze/core/backend";
 import { artifactStore } from "./artifact-store.js";
 import { healJournalStore } from "./heal-journal-store.js";
 import { runHistoryStore } from "./run-history-store.js";
-import type { RunDetail } from "./flake-analysis.js";
+import type { RunDetail } from "../../shared/flake-analysis.mjs";
 import type { RunRecord } from "../recorder/types.js";
 
 /**

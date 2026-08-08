@@ -250,6 +250,133 @@ export function runEvidence(db, runId) {
   return { run, steps };
 }
 
+/**
+ * Per-step duration percentiles over the most recent runs, and over the N
+ * before those.
+ *
+ * `stepDurationTrend` answers this for ONE step; the slowness view needs it for
+ * every step at once, and 200 round trips to answer "what got slower" is the
+ * shape that makes a view feel broken. Same two-window reasoning: the question
+ * is "is this slower than it was", which needs a before.
+ *
+ * p95 as well as p50 because they answer different questions and the plan asked
+ * for both. A p50 that moved says the step genuinely got slower; a p50 that held
+ * while p95 doubled says it usually fine and occasionally terrible, which is the
+ * profile of a step about to start failing on the timeout.
+ *
+ * SQLite has no percentile function, so each is taken by offset into an ordered
+ * window — `NTILE`/`PERCENT_RANK` would need a window function per group and
+ * this stays one pass. The offset is `(n * pct) / 100` clamped to the last row,
+ * which is the nearest-rank definition; with fewer than ~20 samples p95 IS the
+ * maximum, and that is the honest answer rather than an interpolation invented
+ * from four points.
+ *
+ * Steps with no timed runs in a window come back null there rather than zero: a
+ * made-up duration in a column people sort by is worse than a gap, same rule
+ * `stepHealth.p50_ms` follows.
+ */
+export function stepDurations(db, { testId, window = 10, limit = 200 } = {}) {
+  const rows = all(
+    db,
+    `WITH ranked AS (
+       SELECT s.step_id, s.ms, s.label, s.type, r.test_id, r.test_name,
+              row_number() OVER (PARTITION BY s.step_id ORDER BY r.started_at DESC) AS rn
+       FROM step_metrics s JOIN runs r ON r.id = s.run_id
+       WHERE s.ms IS NOT NULL ${testId ? "AND r.test_id = ?" : ""}
+     )
+     SELECT step_id AS stepId, ms, label, type,
+            test_id AS testId, test_name AS testName, rn
+     FROM ranked
+     WHERE rn <= ?
+     ORDER BY step_id, rn`,
+    testId ? [testId, window * 2] : [window * 2],
+  );
+
+  // The percentiles are computed HERE rather than in the statement, and that is
+  // deliberate after getting it wrong the other way. Nearest-rank by `LIMIT 1
+  // OFFSET <expression>` needs the offset to be an expression over aggregates
+  // of the same window, and SQLite rejected it with "datatype mismatch" for p50
+  // while accepting the identical shape for p95. Worse, `all()` swallows a
+  // throw by contract — it treats the database as a cache — so the broken half
+  // came back as `null` and read exactly like "this step has no timings". A
+  // query that can fail SILENTLY is not worth the cleverness when the same
+  // arithmetic over at most `window * 2` numbers per step is four lines of JS.
+  const byStep = new Map();
+  for (const r of rows) {
+    const g = byStep.get(r.stepId) ?? { row: r, recent: [], previous: [] };
+    (r.rn <= window ? g.recent : g.previous).push(r.ms);
+    byStep.set(r.stepId, g);
+  }
+
+  return [...byStep.values()]
+    .sort((a, b) => b.recent.length - a.recent.length)
+    .slice(0, limit)
+    .map(({ row, recent, previous }) => {
+      const recentP50 = percentile(recent, 50);
+      const previousP50 = percentile(previous, 50);
+      return {
+        stepId: row.stepId,
+        label: row.label,
+        type: row.type,
+        testId: row.testId,
+        testName: row.testName,
+        recentRuns: recent.length,
+        previousRuns: previous.length,
+        recentP50Ms: recentP50,
+        recentP95Ms: percentile(recent, 95),
+        previousP50Ms: previousP50,
+        // Only when BOTH windows have data. A ratio against a missing baseline
+        // reads as "no change" when it means "nothing to compare".
+        changeRatio: recentP50 !== null && previousP50 ? recentP50 / previousP50 : null,
+      };
+    });
+}
+
+/**
+ * Nearest-rank percentile, or null for an empty sample.
+ *
+ * Nearest-rank rather than interpolated: with the ten-run windows this uses,
+ * p95 IS the maximum, and that is the honest answer — an interpolated value
+ * invented from four points reads as a measurement.
+ */
+function percentile(values, p) {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.floor((sorted.length * p) / 100));
+  return sorted[index];
+}
+
+/**
+ * A step × engine matrix of outcomes.
+ *
+ * `browserMatrix` answers this per TEST, which is what triage needs. The
+ * divergence view needs it per STEP, because that is where the answer is
+ * actionable: "this test fails on WebKit" sends you to read the whole test,
+ * "step 7 fails on WebKit and nowhere else" sends you to one locator.
+ *
+ * Keyed on `step_id`, not index — a step's index changes the moment the test is
+ * edited, and a matrix that reshuffles on every edit is not a matrix.
+ */
+export function stepBrowserMatrix(db, { testId, limit = 400 } = {}) {
+  const where = testId ? "WHERE r.test_id = ?" : "";
+  return all(
+    db,
+    `SELECT s.step_id                 AS stepId,
+            MAX(s.label)              AS label,
+            r.test_id                 AS testId,
+            MAX(r.test_name)          AS testName,
+            COALESCE(r.browser, 'unknown') AS browser,
+            COUNT(*)                  AS runs,
+            SUM(CASE WHEN s.status = 'failed' THEN 1 ELSE 0 END) AS failed
+     FROM step_metrics s JOIN runs r ON r.id = s.run_id
+     ${where}
+     GROUP BY s.step_id, r.test_id, browser
+     ORDER BY testName, stepId, browser
+     LIMIT ?`,
+    testId ? [testId, limit] : [limit],
+  );
+}
+
 /** Past runs of the same test, for the cross-run half of triage: did this fail
  *  on every engine, on every dataset row, only when capture was on? */
 export function siblingRuns(db, testId, { limit = 50, excludeRunId } = {}) {

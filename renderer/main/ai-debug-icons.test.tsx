@@ -39,6 +39,9 @@ const h = vi.hoisted(() => ({
   listResult: [] as AiDebugSession[],
   handlers: {} as Record<string, ((payload: unknown) => void)[]>,
   navigate: vi.fn(),
+  /** What the run panel's triage line resolves to. Null — no verdict — for
+   *  every test but the ones that put a verdict on screen deliberately. */
+  triage: null as unknown,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -94,7 +97,16 @@ vi.mock("../lib/api", () => ({
         },
       ],
     },
-    runs: { list: async () => [] },
+    // `triage` because the run panel carries a triage line; it resolves to "no
+    // verdict" unless a test sets one. run-triage.test.tsx covers the line
+    // itself — what matters here is that it cannot disturb the icon.
+    runs: {
+      list: async () => [],
+      triage: async () => {
+        if (h.triage === "throw") throw new Error("metrics unavailable");
+        return h.triage;
+      },
+    },
   },
 }));
 
@@ -181,6 +193,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   for (const k of Object.keys(h.handlers)) delete h.handlers[k];
   h.listResult = [];
+  h.triage = null;
 });
 
 // ── The run panel's icon ─────────────────────────────────────────────
@@ -640,5 +653,67 @@ describe("applying a suggested fix", () => {
 
     expect(store.sessions).toHaveLength(0);
     expect(screen.queryByLabelText(toneFor("done").label)).toBeNull();
+  });
+});
+
+// ── The icon alongside the triage line ───────────────────────────────
+//
+// Both live in the run panel's header area and both arrive asynchronously. The
+// icon is the surface this file exists to protect: a wrong colour is silent,
+// because the panel works perfectly while the icon lies. Triage is new traffic
+// through the same component, and it queries on mount — so the failure to rule
+// out is triage rendering, re-rendering or THROWING and taking the icon's
+// colour with it.
+
+describe("the run panel icon, alongside a triage verdict", () => {
+  const verdict = {
+    verdict: "site",
+    confidence: 0.7,
+    evidence: [
+      { signal: "server-error", direction: "site", detail: "The failing step saw a 503 response." },
+    ],
+    limits: [],
+    failingStepId: "step-2",
+    suggestedNext: "Open the run's network report.",
+  };
+
+  it("keeps its colour once a verdict lands beside it", async () => {
+    h.triage = verdict;
+    h.listResult = [session({ status: "done" })];
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <TestPanel testId="t1" />
+      </AiDebugProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText(toneFor("done").label)).toBeTruthy());
+    // The verdict really is on screen — without this the assertion below would
+    // pass against a panel where triage rendered nothing at all.
+    await screen.findByText(/503 response/);
+
+    expect(iconClassOf(toneFor("done").label)).toContain("text-support-green");
+  });
+
+  // What this pins is the RENDERED result of a failed triage query: the icon
+  // keeps its colour and the line shows nothing — not a half-built row, not an
+  // error string where a verdict goes. It does not distinguish a caught
+  // rejection from an uncaught one (a rejected promise in an effect leaves the
+  // tree standing either way, as a mutation confirmed), so the catch in
+  // run-triage.tsx is load-bearing for the console, not for this assertion.
+  it("shows no verdict and keeps its icon when triage fails", async () => {
+    h.triage = "throw";
+    h.listResult = [session({ status: "error" })];
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <TestPanel testId="t1" />
+      </AiDebugProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText(toneFor("error").label)).toBeTruthy());
+    expect(iconClassOf(toneFor("error").label)).toContain("text-support-red");
+    expect(screen.queryByText(/metrics unavailable/)).toBeNull();
+    expect(screen.queryByText(/Likely the/)).toBeNull();
   });
 });

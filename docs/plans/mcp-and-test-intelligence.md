@@ -2,9 +2,9 @@
 
 Written 2026-08-07, against `main` at `46a5a63`.
 
-> **Status, updated 2026-08-07.** **Phase 1** is implemented except **1c
-> (capture parity)**, which is deferred — see §5. **Phase 2 is implemented.**
-> Phases 3–5 are unstarted.
+> **Status, updated 2026-08-08.** **Phase 1** is implemented except **1c
+> (capture parity)**, which is deferred — see §5. **Phases 2, 3 and 4 are
+> implemented.** Phase 5 (emit adapters) is unstarted.
 >
 > Two assumptions did not survive contact and are corrected in place below:
 > **secrets cannot be injected from the MCP at all** (§1.4), because
@@ -481,15 +481,76 @@ logs are capped head/tail overall rather than per step (so a busy site loses
 whole steps' worth of network), and only 98 of 207 failing runs yield a usable
 error signature at all.
 
-### Phase 3 — Triage
+### Phase 3 — Triage ✅
 
 `shared/triage.mjs`, the MCP `triage_run` tool, the run Output panel line, and
 `check:triage`.
 
-### Phase 4 — The views the join makes possible
+**Done 2026-08-08.** All four, plus `readHandle()` in `mcp/metrics.mjs` — the
+MCP had no way to READ the database it writes, only a handle left over from its
+own runs (see DECISIONS). `TRIAGE_COHORT` is exported from `shared/triage.mjs`
+so the app and the MCP cannot drift on the sibling window.
+
+The signal table in §4.1 landed as written, with one addition the design did not
+have: **`limits`**, a list of what the capture did not record, costed against
+confidence per entry. §4.2's four rules all survived contact; the shape gained
+`limits` and `failingStepId` alongside them.
+
+Measured across the 269 failed runs on the development machine: **53 site, 55
+runner, 2 mixed, 159 unknown**. The unknowns are not a classifier gap — 114 of
+them captured no artifacts at all, 124 have no identifiable failing step, and
+141 were only ever run on one engine — but they do say plainly that this feature
+is worth what capture is worth, and on this history capture is off more often
+than on.
+
+Two things only running it could show. The **clean-wait** signal (a timeout with
+clean network and console) is the most frequently useful runner-ward signal and
+also the only one argued from an absence, so it is gated on the dropped counters
+— the first real run it was tried against had discarded 1,861 network entries.
+And **"fails on every engine" fires far more often than expected**, because most
+tests here have only ever run on chromium and firefox: two engines with no
+passing engine between them satisfies "all", so the signal is reported at
+MODERATE rather than STRONG below three.
+
+### Phase 4 — The views the join makes possible ✅
 
 Detailed in §6. Move `flake-analysis.ts` into `shared/` here so
 `get_flake_report` can serve the same verdicts the app shows.
+
+**Done 2026-08-08.** All three views (§6.1–6.3) as panels in Stats, the flake
+move, and four MCP tools: `get_step_health`, `get_suite_cost`,
+`get_browser_matrix`, `get_flake_report`. Two new queries
+(`stepDurations`, `stepBrowserMatrix`) and a new pure module,
+`shared/step-insights.mjs`, holding what the rows MEAN — divergence verdicts,
+the slowdown threshold, the cost split — so the panel and the tool cannot
+disagree.
+
+The flake move retired a real copy: the renderer's hand-written mirror of the
+verdict union and `MIN_RUNS_FOR_VERDICT`, which existed only because a renderer
+cannot import from `main/`.
+
+**What the real history says, and it changes how these read.** 305 steps, 534
+runs on the development machine:
+
+- **255 of 305 steps have only ever run on one engine.** So `insufficient` is
+  the majority verdict, not an edge case, and the plan's implicit assumption
+  that a step × engine matrix is mostly populated is wrong here. It is
+  summarised as a count rather than listed, and it is kept strictly distinct
+  from `clean` — the alternative gives a single-engine suite a clean bill of
+  cross-browser health. 13 steps do diverge on one engine and 4 fail on all,
+  which is the finding the view exists for.
+- **No step has two full timing windows yet**, so the §6.2 trend has nothing to
+  compare and reports *why* rather than "no slowdowns" — which on this history
+  would read as reassurance. The attribution half works today and says
+  instrumentation is **4% of 9,814s**: the honest answer is that capture is not
+  what makes this suite slow.
+
+Two implementation notes worth keeping. Percentiles are computed in JS, not SQL,
+after SQLite accepted the `LIMIT 1 OFFSET <aggregate expression>` form for p95
+and rejected it for p50 — which `metrics-query`'s never-throw `all()` turned
+into a silent null. And the instrumentation figure excludes the speed setting:
+derivable, but not recorded as a total, and an estimate beside two measurements
+reads as a third measurement.
 
 ### Phase 5 — Emit adapters
 

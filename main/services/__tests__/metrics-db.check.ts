@@ -49,6 +49,8 @@ import {
   isPopulated,
   runEvidence,
   siblingRuns,
+  stepBrowserMatrix,
+  stepDurations,
   stepHealth,
   suiteCost,
 } from "../../../shared/metrics-query.mjs";
@@ -377,6 +379,52 @@ try {
       matrix.find((m) => m.browser === "webkit")?.failed === 0,
     "query: browser matrix separates the engines' outcomes",
   );
+
+  // ── The Phase 4 queries, against a REAL database ────────────────────
+  //
+  // Exercised here rather than as pure functions because both are SQL, and the
+  // one thing a fixture cannot catch is a statement SQLite rejects. That is not
+  // hypothetical: `stepDurations` first computed its percentiles with `LIMIT 1
+  // OFFSET <expression over aggregates>`, which SQLite accepted for p95 and
+  // refused for p50 with "datatype mismatch" — and because `all()` swallows a
+  // throw by contract (the DB is a cache, a failed read is a missing answer),
+  // the broken half came back as `null` and read exactly like "this step was
+  // never timed". A pure test of the arithmetic would have passed.
+  {
+    const durations = stepDurations(db, { window: 10 });
+    assert(durations.length > 0, "query: step durations returns the timed steps");
+    const timed = durations.filter((d) => d.recentRuns > 0);
+    assert(
+      timed.length > 0 && timed.every((d) => d.recentP50Ms !== null),
+      "query: every step with timed runs has a median — a null here is the silent-failure shape",
+    );
+    assert(
+      timed.every((d) => d.recentP95Ms !== null && d.recentP95Ms >= (d.recentP50Ms ?? 0)),
+      "query: p95 is never below p50, and never null when p50 is not",
+    );
+    assert(
+      durations.every((d) => d.previousRuns > 0 || d.changeRatio === null),
+      "query: no change ratio is invented against a window with no samples",
+    );
+
+    const stepMatrix = stepBrowserMatrix(db);
+    assert(
+      stepMatrix.length > 0 && stepMatrix.every((r) => r.stepId && r.browser),
+      "query: the step-browser matrix is keyed by step AND engine",
+    );
+    assert(
+      stepMatrix.some((r) => r.browser === "chromium") &&
+        stepMatrix.some((r) => r.browser === "webkit"),
+      "query: …and both engines in the fixture are present",
+    );
+    // Every (step, browser) pair appears once — a duplicate would double every
+    // count downstream and read as real data.
+    const keys = stepMatrix.map((r) => `${r.testId}:${r.stepId}:${r.browser}`);
+    assert(
+      new Set(keys).size === keys.length,
+      "query: one row per (test, step, engine), never a duplicate",
+    );
+  }
 
   const clusters = failureClusters(db);
   assert(

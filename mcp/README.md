@@ -281,6 +281,113 @@ as a regression: the run alone cannot tell a real regression from environment
 drift (the site changed, auth expired, the data is gone), and saying so is the
 point. `stepsDiverged` flags a test that was edited between the two runs.
 
+### `triage_run`
+
+Attribute one **failed** run to the **site** or to the **test/runner**, from
+evidence already on disk.
+
+| Arg | Type | Required |
+|---|---|---|
+| `runId` | string | yes |
+
+Returns `verdict` (`site` / `runner` / `mixed` / `unknown`), `confidence`,
+`evidence[]`, `limits[]` and `suggestedNext`.
+
+**Read `evidence` and `limits` before `verdict`.** The verdict is a one-word
+summary; the evidence is the product, and each entry says which signal fired,
+which way it points and what the underlying number was. Site-ward signals include
+a 5xx or a non-navigational 4xx on the failing step, the page's own JS throwing,
+Auto-Heal exhausting every candidate locator, and the test failing on every
+engine or every dataset row. Runner-ward signals include Auto-Heal *succeeding*
+(the element existed; the locator was stale), failing on one engine or one
+dataset row only, the failing step running out the test's timeout, and a step
+that has been healed repeatedly before.
+
+`limits` is what the capture did **not** record — a run with no artifacts, or a
+step whose console/network entries the per-run cap discarded. An absent signal
+there is not evidence of absence, and any claim that depended on one is withdrawn
+into `limits` rather than made. Each entry lowers `confidence`, which is never 1.
+
+`unknown` is a real answer, not a failure: a run with no artifacts and no sibling
+runs has almost no signal, and the useful next step is to re-run with capture on.
+This never changes a run's pass/fail.
+
+Needs the metrics database, which the **app** builds — if it does not exist yet,
+open Good Looks! once.
+
+### `get_step_health`
+
+One row per **step** across every retained run, joining what five separate files
+hold: runs, failures, Auto-Heal substitutions, visual drift, page errors, and the
+fastest/slowest measured duration.
+
+| Arg | Type | Required |
+|---|---|---|
+| `testId` | string | no — all tests by default |
+| `limit` | number (1–500) | no — defaults to 200 |
+
+The rows worth looking for are the ones no single view can show: a step that
+**never fails but heals repeatedly** (a decaying locator, buying you days), or one
+whose duration range is widening while it still passes. `minMs`/`maxMs` are null
+for steps whose runs predate per-step timing — that is a gap, not a zero.
+
+### `get_suite_cost`
+
+Two answers about time.
+
+| Arg | Type | Required |
+|---|---|---|
+| `testId` | string | no |
+| `window` | number (2–100) | no — defaults to 10 runs per window |
+
+**Attribution:** how much of the suite's wall-clock is screenshot capture and
+accessibility checking. Both are measured per run, not estimated, which is what
+makes the number safe to act on. The speed setting is reported separately, per
+speed, because slow-motion delay is derivable but not recorded as a total.
+
+**Trend:** per-step median and p95 over the most recent runs against the window
+before them, and the steps whose median grew by at least 1.5×. A step that got
+slower while still passing is the leading indicator of the timeout failure that
+arrives later. When `slowed` is empty the response carries `comparableSteps` —
+if that is 0, nothing had two full windows and the empty list means "cannot
+say", not "all clear".
+
+### `get_browser_matrix`
+
+A step × engine matrix reduced to a verdict per step.
+
+| Arg | Type | Required |
+|---|---|---|
+| `testId` | string | no |
+
+`single-engine` (fails on one engine while others pass — an engine-specific
+selector or race), `all-engines` (look at the site, not the test), `mixed`,
+`clean`, and `insufficient`.
+
+**`insufficient` is not `clean`.** It means the step has only ever run on one
+engine, so nothing can be concluded — "never failed anywhere" and "only ever
+tried in one place" are different facts, and on a young suite the second is the
+common one. Only the diverging steps are listed; the rest appear in `counts`.
+
+### `get_flake_report`
+
+Per-test stability and failure clusters — the same analysis, on the same records,
+that the app's Stability panel shows.
+
+| Arg | Type | Required |
+|---|---|---|
+| `limit` | number (1–200) | no — defaults to 50 |
+
+The verdict measures **transitions** — how often consecutive runs disagree — not
+a pass rate. A test that alternates pass/fail and one that worked ten times then
+broke and stayed broken have the *same* pass rate and need opposite responses:
+`flaky` versus `changed-since`. `data-dependent` is separated out too, because a
+sweep that fails only on one dataset row is 100% reliable and is telling you
+something true about that row.
+
+Reads `run-history.json` and the run artifacts rather than the metrics database,
+so it answers even on a machine where the app has never been opened.
+
 ### `capture_app`
 
 Ask the running app to screenshot **every one of its open windows** right now,
@@ -376,7 +483,10 @@ past runs and their logs — stays readable from here.
 
 - Read-only tools (`list_tests`, `get_test`, `list_runs`, `get_run_log`,
   `get_visual_report`, `get_a11y_report`, `get_run_logs`, `list_heals`,
-  `list_batches`, `compare_runs`, `get_screenshot`) never modify app data.
+  `list_batches`, `compare_runs`, `triage_run`, `get_step_health`,
+  `get_suite_cost`, `get_browser_matrix`, `get_flake_report`, `get_screenshot`)
+  never modify app data. The metrics-backed ones open the metrics database but
+  never create it — it is the app's to build.
   `run_test` and `run_batch` execute Playwright and append run
   records; `run_batch` also writes a batch record and persists progress after
   every test, so an interrupted batch keeps the results it already collected.
