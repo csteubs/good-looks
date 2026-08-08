@@ -46,7 +46,21 @@ const updateSteps = vi.fn(
 const updateScript = vi.fn(async (_id: string, _source: string) => ({}) as TestRecord);
 
 vi.mock("./recorder-store", () => ({
-  useRecorder: () => ({ runs: {}, run, stopRun: vi.fn(), start: vi.fn() }),
+  // Mirrors the real store's contract: calling run() bumps runEpoch, which the
+  // view watches to retire the new-step glow the moment a run starts.
+  useRecorder: () => {
+    const [epoch, setEpoch] = React.useState(0);
+    return {
+      runs: {},
+      run: (...a: unknown[]) => {
+        run(...(a as []));
+        setEpoch((e) => e + 1);
+      },
+      stopRun: vi.fn(),
+      start: vi.fn(),
+      runEpoch: epoch,
+    };
+  },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -699,6 +713,25 @@ describe("applying an AI-debug fix, in the Steps tab", () => {
 
     await waitFor(() => expect(glowingRows()).toHaveLength(1));
     expect(glowingText()[0]).toMatch(/500/);
+  });
+
+  it("retires the glow the moment Run test is clicked", async () => {
+    // The glow means "look what the AI changed". Once a run starts, the run's
+    // verdict is the story — stale green outlines over failing steps would
+    // read as the AI's work being fine.
+    const goto = mkStep({ type: "goto", url: "https://example.com" });
+    test_ = record({ steps: [goto] });
+
+    const view = renderWithApply();
+    await screen.findByText("Checkout");
+
+    applyYields([...reparsed([goto]), mkStep({ type: "wait", waitMs: 500 })]);
+    await view.apply("// corrected spec");
+    await waitFor(() => expect(glowingRows()).toHaveLength(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /run test/i }));
+    await waitFor(() => expect(glowingRows()).toHaveLength(0));
+    expect(run).toHaveBeenCalled();
   });
 
   it("glows every step of a multi-step addition", async () => {

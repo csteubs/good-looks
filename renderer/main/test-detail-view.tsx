@@ -101,7 +101,7 @@ export function TestDetailView() {
   const { id } = useParams({ from: "/test/$id" });
   const navigate = useNavigate();
   const qc = useQueryClient();
-  const { runs, run, stopRun, start } = useRecorder();
+  const { runs, run, stopRun, start, runEpoch } = useRecorder();
   const [renameOpen, setRenameOpen] = React.useState(false);
   const [renameValue, setRenameValue] = React.useState("");
   const [editingName, setEditingName] = React.useState(false);
@@ -154,8 +154,13 @@ export function TestDetailView() {
   // Not on a timer, deliberately. Applying happens from the AI debug panel,
   // which is usually open over the Run tab — a timeout would expire before the
   // user ever switched to Steps to look. It clears when the list changes again
-  // for some other reason instead (see the two callers of setNewStepIds below).
+  // for some other reason (see the two callers of setNewStepIds below), or the
+  // moment a run starts: from then on the run's verdict is the story, not the
+  // glow (the runEpoch effect below).
   const [newStepIds, setNewStepIds] = React.useState<Set<string>>(() => new Set());
+  React.useEffect(() => {
+    if (runEpoch > 0) setNewStepIds((prev) => (prev.size === 0 ? prev : new Set()));
+  }, [runEpoch]);
   // Controlled so the active tab can be forced off "steps" when an apply
   // deletes the last step and the trigger disappears out from under it.
   const [tab, setTab] = React.useState<string | null>(null);
