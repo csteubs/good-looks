@@ -27,6 +27,7 @@ import { BatchView } from "./batch-view";
 
 // ── Mocks ────────────────────────────────────────────────────────────
 const setSettings = vi.fn(async (_update: Partial<RecorderSettings>) => ({}) as RecorderSettings);
+const getLog = vi.fn(async (_runId: string) => "expect(received).toBeVisible() — boom");
 const batchRun = vi.fn(
   async (_testIds: string[], _opts?: Record<string, unknown>) => ({
     batchId: "b1",
@@ -57,6 +58,7 @@ vi.mock("../lib/api", () => ({
         }) as RecorderSettings,
       setSettings: (u: Partial<RecorderSettings>) => setSettings(u),
     },
+    runs: { getLog: (id: string) => getLog(id) },
     batch: {
       list: async () => [],
       status: async () => null,
@@ -697,6 +699,68 @@ describe("BatchView live progress", () => {
 
     emit("batch:progress", progress(["passed", "running", "running"]));
     await waitFor(() => expect(screen.getByText(/1 of 3 done · 2 running/)).toBeTruthy());
+  });
+});
+
+describe("BatchView log drill-through", () => {
+  // BatchTestResult.runRecordId was persisted from the day batches got history,
+  // but nothing in the renderer ever read it — the row said "Failed" and the
+  // only route to the why was a detour through Stats. The badge is now the
+  // shortcut, and these pin both the door and the frame it must NOT appear in.
+
+  it("opens the run's console output from a finished row's badge", async () => {
+    renderView();
+    await rowNames();
+
+    emit("batch:progress", {
+      batchId: "b1",
+      running: false,
+      startedAt: 0,
+      currentIndex: 3,
+      stopped: false,
+      results: [
+        {
+          testId: "a",
+          testName: "Alpha",
+          status: "failed",
+          browser: "chromium",
+          runRecordId: "r-77",
+          durationMs: 120,
+        },
+      ],
+    });
+
+    fireEvent.click(await screen.findByLabelText("Open console output for Alpha"));
+
+    // The dialog is the Stats LogInspector, fed by THIS run's id — the wrong id
+    // here would show a plausible but unrelated log, silently.
+    await waitFor(() => expect(getLog).toHaveBeenCalledWith("r-77"));
+    expect(await screen.findByText(/Raw console output for this run/i)).toBeTruthy();
+    expect(await screen.findByText(/boom/)).toBeTruthy();
+  });
+
+  it("keeps the badge inert while running or when no run record exists", async () => {
+    renderView();
+    await rowNames();
+
+    emit("batch:progress", {
+      batchId: "b1",
+      running: true,
+      startedAt: 0,
+      currentIndex: 1,
+      stopped: false,
+      results: [
+        // Still running: there is no settled log to open yet.
+        { testId: "a", testName: "Alpha", status: "running", browser: "chromium" },
+        // Finished but recorded before runRecordId existed (or the record
+        // write failed): the badge must not be a dead button.
+        { testId: "b", testName: "Beta", status: "failed", browser: "chromium" },
+      ],
+    });
+
+    expect(await screen.findByText(/^Running$/)).toBeTruthy();
+    expect(await screen.findByText(/^Failed$/)).toBeTruthy();
+    expect(screen.queryByLabelText(/Open console output/)).toBeNull();
   });
 });
 
