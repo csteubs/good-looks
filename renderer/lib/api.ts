@@ -139,6 +139,9 @@ export const api = {
     remove: (id: string) => ipc().invoke<void>("tests:delete", { id }),
     rename: (id: string, name: string) =>
       ipc().invoke<TestRecord>("tests:rename", { id, name }),
+    /** Copy a test — steps, script and settings, none of its history. Returns
+     *  the new record, whose name is `<original> [n]`. */
+    duplicate: (id: string) => ipc().invoke<TestRecord>("tests:duplicate", { id }),
     updateScript: (id: string, source: string) =>
       ipc().invoke<TestRecord>("tests:updateScript", { id, source }),
     /** `regenerate` rebuilds the .spec.ts from these steps even when it was

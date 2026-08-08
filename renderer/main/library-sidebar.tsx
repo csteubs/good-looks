@@ -20,16 +20,18 @@ import {
   Text,
   toast,
 } from "@glaze/core/components";
-import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Tag, Wand2 } from "lucide-react";
+import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Tag, Wand2, Copy } from "lucide-react";
 
 import { api } from "../lib/api";
 import type { LlmProvider } from "../lib/llm-types";
 import type { TestRecord } from "../lib/recorder-types";
 import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
+import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/duplicate-warnings";
 import { NewRecordingDialog } from "./new-recording-dialog";
 import { GenerateTestDialog } from "./generate-test-dialog";
 import { ImportGitDialog } from "./import-git-dialog";
 import { TagsDialog } from "./tags-dialog";
+import { DuplicateTestDialog } from "./duplicate-test-dialog";
 
 interface NativeShell {
   showItemInFolder: (fullPath: string) => void;
@@ -243,8 +245,52 @@ export function LibrarySidebar() {
   const [generateOpen, setGenerateOpen] = React.useState(false);
   const [gitDialogOpen, setGitDialogOpen] = React.useState(false);
   const [tagsFor, setTagsFor] = React.useState<TestRecord | null>(null);
+  // A duplication waiting on the warning dialog. Holds the warnings themselves
+  // rather than recomputing them for the dialog: they were already needed to
+  // decide whether to open it, and deriving the same list twice is how the
+  // dialog ends up describing something other than what the click evaluated.
+  const [pendingCopy, setPendingCopy] = React.useState<{
+    test: TestRecord;
+    warnings: DuplicationWarning[];
+  } | null>(null);
+  const [copying, setCopying] = React.useState(false);
 
   const { data: tests = [] } = useQuery({ queryKey: ["tests"], queryFn: api.tests.list });
+
+  const duplicate = async (test: TestRecord) => {
+    setCopying(true);
+    try {
+      const created = await api.tests.duplicate(test.id);
+      qc.invalidateQueries({ queryKey: ["tests"] });
+      setPendingCopy(null);
+      navigate({ to: "/test/$id", params: { id: created.id } });
+      toast.success(`Duplicated as “${created.name}”.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to duplicate test.");
+    } finally {
+      setCopying(false);
+    }
+  };
+
+  // Warn only when there is something to warn about. A dialog that always
+  // appears is one nobody reads, which would cost exactly the cases it exists
+  // for — a copied credential, or a run history the user expected to come with.
+  const startDuplicate = async (test: TestRecord) => {
+    let storedSecrets = 0;
+    try {
+      const status = await api.tests.secretStatus(test.id);
+      storedSecrets = status.filter((s) => s.hasValue).length;
+    } catch {
+      // Leave the count at zero: the other warnings still stand, and inventing
+      // a secrets line we couldn't verify is worse than omitting one.
+    }
+    const warnings = describeDuplicationWarnings(test, storedSecrets);
+    if (warnings.length === 0) {
+      await duplicate(test);
+      return;
+    }
+    setPendingCopy({ test, warnings });
+  };
 
   const importFromFiles = async () => {
     try {
@@ -318,6 +364,10 @@ export function LibrarySidebar() {
                 <CustomContextMenuItem onSelect={() => nativeShell().showItemInFolder(t.scriptPath)}>
                   <FolderOpen className="size-4" />
                   Reveal in Finder
+                </CustomContextMenuItem>
+                <CustomContextMenuItem onSelect={() => void startDuplicate(t)}>
+                  <Copy className="size-4" />
+                  Duplicate Test
                 </CustomContextMenuItem>
                 <CustomContextMenuSeparator />
                 <CustomContextMenuItem
@@ -394,6 +444,18 @@ export function LibrarySidebar() {
       <NewRecordingDialog open={dialogOpen} onOpenChange={setDialogOpen} />
       <GenerateTestDialog open={generateOpen} onOpenChange={setGenerateOpen} />
       <ImportGitDialog open={gitDialogOpen} onOpenChange={setGitDialogOpen} />
+      <DuplicateTestDialog
+        testName={pendingCopy?.test.name ?? ""}
+        warnings={pendingCopy?.warnings ?? []}
+        open={pendingCopy !== null}
+        busy={copying}
+        onOpenChange={(o) => {
+          if (!o && !copying) setPendingCopy(null);
+        }}
+        onConfirm={() => {
+          if (pendingCopy) void duplicate(pendingCopy.test);
+        }}
+      />
       <TagsDialog
         test={tagsFor}
         open={tagsFor !== null}
