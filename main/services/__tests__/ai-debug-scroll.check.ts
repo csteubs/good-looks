@@ -25,6 +25,14 @@
 // shape or the other. It guards against reintroducing either non-scrolling
 // dialog the next time someone touches these ScrollAreas.
 //
+// It ALSO pins the dialog body to a fixed height. The two are one contract:
+// FILL only bounds anything if the body it fills has a definite height, so a
+// body that drifts back to `min-h`/`max-h` would silently un-bound every FILL
+// pane below it — the panes would still LOOK right until content overflowed.
+// The fixed height is a feature in its own right too: a body sized by a range
+// resized the dialog as tokens streamed in, moving Stop and Apply out from
+// under the pointer.
+//
 // No test runner exists in this project (see package.json) — plain assertions +
 // a non-zero exit code on failure stand in for one. Run with:
 //   npx tsx main/services/__tests__/ai-debug-scroll.check.ts
@@ -132,6 +140,24 @@ assert(
   fillCount >= 2,
   `the two streamed-response panes fill their dialog (found ${fillCount})`,
 );
+
+// ── Dialog bodies are a FIXED height ────────────────────────────────────────
+// The wrapper each dialog's content sits in: `<div className="relative flex
+// h-[..vh] flex-col gap-3">`. Both dialogs have one.
+{
+  const bodies = source.match(/className="relative flex [^"]*flex-col gap-3"/g) ?? [];
+  assert(bodies.length >= 2, `found both dialog bodies (found ${bodies.length})`);
+  for (const body of bodies) {
+    assert(
+      /\bh-\[\d+vh\]/.test(body),
+      `dialog body has a definite height, so the FILL panes inside it are bounded: ${body}`,
+    );
+    assert(
+      !/\bmin-h-\[/.test(body) && !/\bmax-h-\[/.test(body),
+      `dialog body is not sized by a range, which would resize the dialog as tokens stream in: ${body}`,
+    );
+  }
+}
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);

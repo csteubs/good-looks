@@ -1340,7 +1340,8 @@ export interface RecorderSettings {
    *  shortcut works regardless of this. */
   debugScreenshots: boolean;
   /** IDs of aesthetic enhancement features the user has disabled.
-   *  Empty = all enabled. Known IDs: "aiThinkingGif". */
+   *  Empty = all enabled. Known IDs: "aiThinkingGif", "homeBlackHole",
+   *  "aiStopSpinner". */
   disabledAestheticEnhancements: string[];
 }
 

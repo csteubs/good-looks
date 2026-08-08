@@ -18,6 +18,7 @@ import { PaneSection } from "../pane-section";
  *  a new flourish ships enabled without a migration. */
 const AI_THINKING_GIF = "aiThinkingGif";
 const HOME_BLACK_HOLE = "homeBlackHole";
+const AI_STOP_SPINNER = "aiStopSpinner";
 
 export function AppearancePane() {
   const { settings, save, themeSource, setTheme } = useSettingsController();
@@ -76,6 +77,19 @@ export function AppearancePane() {
             id="home-black-hole"
             checked={disabled.indexOf(HOME_BLACK_HOLE) === -1}
             onCheckedChange={(checked) => toggleEnhancement(HOME_BLACK_HOLE, checked)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          id="ai-stop-spinner"
+          label="AI stop-button spinner"
+          summary="A ring turns around the stop square while the AI is working."
+          details="Turning it off leaves the plain stop square — the button still works, and the orange sparkle still says the model is thinking. The ring never spins for anyone who has asked the system to reduce motion."
+        >
+          <Switch
+            id="ai-stop-spinner"
+            checked={disabled.indexOf(AI_STOP_SPINNER) === -1}
+            onCheckedChange={(checked) => toggleEnhancement(AI_STOP_SPINNER, checked)}
           />
         </SettingRow>
       </PaneSection>

@@ -16,6 +16,7 @@
 //   • the trainer Console's per-step sparkles (per step)
 //   • the global chip (aggregate across sessions)
 //   • the library sidebar's per-row sparkle (aggregate per test)
+//   • the open dialog's stop-button spinner (streaming, in both dialogs)
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, act, waitFor } from "@testing-library/react";
@@ -31,6 +32,7 @@ import {
   useAiDebugStatus,
   type AiDebugContextValue,
 } from "./ai-debug-store";
+import { AiDebugHost } from "./ai-debug-panel";
 import { LibrarySidebar } from "./library-sidebar";
 import { RunOutput } from "./run-output";
 import type { RunInfo } from "./recorder-store";
@@ -39,6 +41,9 @@ const h = vi.hoisted(() => ({
   listResult: [] as AiDebugSession[],
   handlers: {} as Record<string, ((payload: unknown) => void)[]>,
   navigate: vi.fn(),
+  /** What `api.recorder.getSettings()` answers — the stop-spinner surface is
+   *  gated on `disabledAestheticEnhancements`. */
+  settings: {} as Record<string, unknown>,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -64,7 +69,7 @@ vi.mock("../lib/api", () => ({
       clear: async () => ({ removed: 0 }),
       notifyDone: async () => ({ ok: true }),
     },
-    recorder: { getSettings: async () => ({}) },
+    recorder: { getSettings: async () => h.settings },
     llm: {
       chat: async () => ({ requestId: "req-1" }),
       cancel: async () => {},
@@ -181,6 +186,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   for (const k of Object.keys(h.handlers)) delete h.handlers[k];
   h.listResult = [];
+  h.settings = {};
 });
 
 // ── The run panel's icon ─────────────────────────────────────────────
@@ -568,6 +574,119 @@ describe("the sidebar row sparkle", () => {
     const doneLabel = `AI debug — ${toneFor("done").label}`;
     await waitFor(() => expect(screen.getByLabelText(doneLabel)).toBeTruthy());
     expect(screen.queryByLabelText(busyLabel)).toBeNull();
+  });
+});
+
+// ── The open dialog's stop-button spinner ────────────────────────────
+
+describe("the stop button's spinner", () => {
+  // The ring around the stop square says "still working" at the one control
+  // the user reaches for when deciding whether to wait or kill the job. It is
+  // a status icon like the sparkles above, so it belongs in this file: a ring
+  // left spinning on a finished job, or missing on a live one, is silent.
+
+  function renderHost() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <AiDebugProvider>
+          <Capture />
+          <AiDebugHost />
+        </AiDebugProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  /** Open a session of either kind and leave its dialog expanded. */
+  function openExpanded(kind: "run" | "step") {
+    act(() => {
+      store.openSession(
+        kind === "run"
+          ? {
+              key: runSessionKey("t1"),
+              kind: "run",
+              testId: "t1",
+              label: "Checkout",
+              testName: "Checkout",
+              runKey: "rec-t1",
+              context: {
+                kind: "run",
+                testName: "Checkout",
+                testUrl: "u",
+                script: "",
+                output: "",
+                imported: false,
+              },
+            }
+          : {
+              key: "step:t1:0",
+              kind: "step",
+              testId: "t1",
+              label: "Click Submit",
+              testName: "Checkout",
+              context: {
+                kind: "step",
+                testName: "Checkout",
+                url: "u",
+                stepLabel: "Click Submit",
+                error: "boom",
+                logs: [],
+              },
+            },
+      );
+    });
+  }
+
+  for (const kind of ["run", "step"] as const) {
+    it(`spins only while the ${kind} dialog's job is streaming`, async () => {
+      renderHost();
+      await waitFor(() => expect(store.hydrated).toBe(true));
+      openExpanded(kind);
+      const key = kind === "run" ? runSessionKey("t1") : "step:t1:0";
+
+      // Idle: the stop button isn't offered at all, so neither is the ring.
+      await waitFor(() => expect(screen.queryByLabelText("Stop")).toBeNull());
+
+      await act(async () => {
+        await store.startStream(key, [{ role: "user", content: "hi" }]);
+      });
+      await waitFor(() => expect(screen.getByLabelText("Stop")).toBeTruthy());
+      expect(screen.getByTestId("ai-stop-spinner")).toBeTruthy();
+
+      emit("llm:done", { requestId: "req-1" });
+      // The job is finished: no stop control, and therefore no ring still
+      // turning to claim otherwise.
+      await waitFor(() => expect(screen.queryByLabelText("Stop")).toBeNull());
+      expect(screen.queryByTestId("ai-stop-spinner")).toBeNull();
+    });
+  }
+
+  it("respects reduce-motion by gating the animation, not the icon", async () => {
+    // motion-safe: is the OS accessibility request. The ring must still be
+    // THERE (it is part of the button's shape) — only its animation is gated.
+    renderHost();
+    await waitFor(() => expect(store.hydrated).toBe(true));
+    openExpanded("run");
+    await act(async () => {
+      await store.startStream(runSessionKey("t1"), [{ role: "user", content: "hi" }]);
+    });
+    const ring = await screen.findByTestId("ai-stop-spinner");
+    expect(ring.getAttribute("class") ?? "").toContain("motion-safe:animate-spin");
+  });
+
+  it("leaves the plain square when the flourish is switched off", async () => {
+    // The Appearance pane can retire the ring. The button must survive it —
+    // this is decoration, and the stop control is not.
+    h.settings = { disabledAestheticEnhancements: ["aiStopSpinner"] };
+    renderHost();
+    await waitFor(() => expect(store.hydrated).toBe(true));
+    openExpanded("run");
+    await act(async () => {
+      await store.startStream(runSessionKey("t1"), [{ role: "user", content: "hi" }]);
+    });
+
+    await waitFor(() => expect(screen.getByLabelText("Stop")).toBeTruthy());
+    await waitFor(() => expect(screen.queryByTestId("ai-stop-spinner")).toBeNull());
   });
 });
 

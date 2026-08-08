@@ -788,7 +788,8 @@ export interface RecorderSettings {
    *  was sent (default false). */
   autoAcceptAiDebugFixes: boolean;
   /** IDs of aesthetic enhancement features the user has disabled.
-   *  Empty = all enabled. Known IDs: "aiThinkingGif". */
+   *  Empty = all enabled. Known IDs: "aiThinkingGif", "homeBlackHole",
+   *  "aiStopSpinner". */
   disabledAestheticEnhancements: string[];
 }
 

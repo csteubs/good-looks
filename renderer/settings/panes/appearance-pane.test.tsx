@@ -93,6 +93,14 @@ describe("flourishes are stored as disabled ids", () => {
     expect(saved.slice().sort()).toEqual(["aiThinkingGif", "homeBlackHole"]);
   });
 
+  it("offers the AI stop-spinner flourish, on by default, and saves it", () => {
+    const controller = makeController({ settings: { disabledAestheticEnhancements: [] } });
+    renderPane(<AppearancePane />, { controller });
+    expect(switchState(/ai stop-button spinner/i)).toMatch(/true|checked/i);
+    fireEvent.click(screen.getByRole("switch", { name: /ai stop-button spinner/i }));
+    expect(savedPatch(controller)).toEqual({ disabledAestheticEnhancements: ["aiStopSpinner"] });
+  });
+
   it("preserves an unknown id it does not have a switch for", () => {
     // A flourish added in a later version and disabled there must survive
     // being edited by an older pane.

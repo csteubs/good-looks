@@ -10,6 +10,7 @@ import {
   Check,
   ChevronDown,
   Copy,
+  LoaderCircle,
   Minimize2,
   RotateCcw,
   FileSearch,
@@ -138,6 +139,32 @@ function ThinkingGifOverlay({
         />
       </div>
     </div>
+  );
+}
+
+/** The stop control, shown only while a job is streaming.
+ *
+ *  The ring orbiting the square carries the same fact as the pulsing sparkle —
+ *  "the model is still working" — at the one place the user looks when they are
+ *  deciding whether to wait or to kill it. Two suppressions, and they are not
+ *  the same thing: `motion-safe:` is the OS-level "reduce motion" request,
+ *  which is an accessibility setting; `spin` is this app's own flourish toggle.
+ *  Either one leaving the ring static must still leave the button usable, so
+ *  the label and the square never depend on either. */
+function StopStreamButton({ onStop, spin }: { onStop: () => void; spin: boolean }) {
+  return (
+    <Button iconOnly size="small" variant="muted" onClick={onStop} aria-label="Stop" title="Stop">
+      <span className="relative inline-flex size-3.5 items-center justify-center">
+        {spin ? (
+          <LoaderCircle
+            aria-hidden="true"
+            data-testid="ai-stop-spinner"
+            className="absolute inset-0 size-3.5 text-support-orange motion-safe:animate-spin"
+          />
+        ) : null}
+        <Square className="size-2" />
+      </span>
+    </Button>
   );
 }
 
@@ -701,6 +728,7 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
   const { modelName, models, confirmModel, currentModel } = useModelPicker(open);
   const disabledEnhancements = useDisabledEnhancements();
   const thinkingGifEnabled = !disabledEnhancements.has("aiThinkingGif");
+  const stopSpinnerEnabled = !disabledEnhancements.has("aiStopSpinner");
 
   const status = session?.status ?? "idle";
   // Read-only: restored from disk with no live run behind it. The answer is
@@ -889,16 +917,10 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
         <span className="inline-flex items-center gap-2">
           {session?.testName ?? ""}
           {status === "streaming" ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="muted"
-              onClick={() => store.stopStream(sessionKey)}
-              aria-label="Stop"
-              title="Stop"
-            >
-              <Square className="size-3.5" />
-            </Button>
+            <StopStreamButton
+              onStop={() => store.stopStream(sessionKey)}
+              spin={stopSpinnerEnabled}
+            />
           ) : null}
           {!reviewing && status !== "streaming" && !readOnly ? (
             <Button
@@ -940,7 +962,7 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
       }
       size="2xl"
     >
-      <div className="relative flex min-h-[400px] max-h-[70vh] flex-col gap-3">
+      <div className="relative flex h-[70vh] flex-col gap-3">
         <ThinkingGifOverlay status={status} enabled={thinkingGifEnabled} />
         <div className="relative z-10 flex flex-1 flex-col gap-3">
           {readOnly ? (
@@ -1009,8 +1031,8 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                 </Button>
               </div>
               <ScrollArea
-                className="max-h-[56vh] flex-1 min-h-0 rounded-md border border-separator"
-                viewportClassName="max-h-[56vh]"
+                className="min-h-0 flex-1 rounded-md border border-separator"
+                viewportClassName="h-full"
               >
                 <div className="flex flex-col gap-3 p-3">
                   {promptMessages.map((m, i) => (
@@ -1055,16 +1077,16 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
               ) : null}
               {/* Both halves are needed and they do different jobs.
                   flex-1 + min-h-0 makes the pane FILL the dialog instead of
-                  shrinking to its content and leaving the lower half empty.
-                  max-h-[56vh] is what actually CLIPS: the dialog body is
-                  max-height, not height, so `h-full` on the viewport resolves
-                  against an auto height and never bounds anything — the
-                  streamed text then ran straight out through the bottom of the
-                  dialog. A definite max-height on both root and viewport is the
-                  only shape in this codebase that reliably scrolls. */}
+                  shrinking to its content and leaving the lower half empty;
+                  viewportClassName="h-full" is what actually CLIPS, so the
+                  streamed text scrolls instead of running out through the
+                  bottom of the dialog. This shape only works because the body
+                  above is a FIXED h-[70vh] — while it was max-height, `h-full`
+                  resolved against an auto height and bounded nothing, which is
+                  why both root and viewport used to carry a literal 56vh. */}
               <ScrollArea
-                className="min-h-0 flex-1 max-h-[56vh] rounded-md border border-separator"
-                viewportClassName="max-h-[56vh]"
+                className="min-h-0 flex-1 rounded-md border border-separator"
+                viewportClassName="h-full"
                 autoScrollToBottom={draft.autoScroll}
                 autoScrollDeps={[content.length, reasoning.length]}
               >
@@ -1163,6 +1185,7 @@ export function StepAiDebugDialog({ sessionKey }: { sessionKey: string }) {
   const { modelName, models, confirmModel, currentModel } = useModelPicker(open);
   const disabledEnhancements = useDisabledEnhancements();
   const thinkingGifEnabled = !disabledEnhancements.has("aiThinkingGif");
+  const stopSpinnerEnabled = !disabledEnhancements.has("aiStopSpinner");
   const startedKeyRef = React.useRef<string | null>(null);
 
   const status = session?.status ?? "idle";
@@ -1225,16 +1248,10 @@ export function StepAiDebugDialog({ sessionKey }: { sessionKey: string }) {
         <span className="inline-flex items-center gap-2">
           {session?.label ?? "Step"}
           {status === "streaming" ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="muted"
-              onClick={() => store.stopStream(sessionKey)}
-              aria-label="Stop"
-              title="Stop"
-            >
-              <Square className="size-3.5" />
-            </Button>
+            <StopStreamButton
+              onStop={() => store.stopStream(sessionKey)}
+              spin={stopSpinnerEnabled}
+            />
           ) : null}
           {status !== "streaming" && !readOnly ? (
             <Button
@@ -1266,7 +1283,7 @@ export function StepAiDebugDialog({ sessionKey }: { sessionKey: string }) {
       }
       size="2xl"
     >
-      <div className="relative flex min-h-[400px] max-h-[70vh] flex-col gap-3">
+      <div className="relative flex h-[70vh] flex-col gap-3">
         <ThinkingGifOverlay status={status} enabled={thinkingGifEnabled} />
         <div className="relative z-10 flex flex-1 flex-col gap-3">
           {readOnly ? (
@@ -1280,9 +1297,11 @@ export function StepAiDebugDialog({ sessionKey }: { sessionKey: string }) {
           {refused ? (
             <CapacityNotice decision={refused} onStopOldest={() => void runDiagnosis(true)} />
           ) : null}
+          {/* Same FILL shape as the run dialog's response pane, and for the
+              same reason — see the comment there. */}
           <ScrollArea
-            className="min-h-0 flex-1 max-h-[56vh] rounded-md border border-separator"
-            viewportClassName="max-h-[56vh]"
+            className="min-h-0 flex-1 rounded-md border border-separator"
+            viewportClassName="h-full"
             autoScrollToBottom={autoScroll}
             autoScrollDeps={[content.length]}
           >
