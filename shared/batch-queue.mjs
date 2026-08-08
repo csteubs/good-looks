@@ -9,6 +9,13 @@
 // exactly the selection (so nothing about existing batches changes), and with
 // them the same test appears once per matching row, in the order the rows are
 // declared.
+//
+// TWO things multiply a test's entries: dataset rows, and the Batch view's
+// per-row engine multi-select (`perTest`). Both expand ENGINE-MAJOR INSIDE the
+// test and never across tests, because the app's runner groups the queue into
+// lanes by testId and a test's entries must stay contiguous for that grouping
+// to reproduce queue order. The MCP passes no `perTest`, so its queues are
+// byte-identical to what they were.
 
 /**
  * Resolve a selection plus dataset options into the ordered list of executions.
@@ -21,29 +28,49 @@
  * Running one test twice in a single batch with identical options has no
  * meaning anyway; running it once per dataset row does, and that still works.
  *
- * @param {{ testIds: string[], datasetIds?: string[], allDatasets?: boolean }} params
+ * `perTest` entries arrive already validated, deduped and RUN_BROWSERS-ordered
+ * by the `batch:run` IPC handler — this module is shared with the MCP and so
+ * cannot import the app's types to re-check them. A test absent from `perTest`
+ * contributes one entry with no engine of its own, which is exactly what every
+ * caller produced before per-row options existed.
+ *
+ * @param {{ testIds: string[], datasetIds?: string[], allDatasets?: boolean, perTest?: Array<{ testId: string, browsers: string[], headless: boolean }> }} params
  * @param {(testId: string) => Array<{ id: string, name: string, values: Record<string, string> }>} getDatasets
- * @returns {Array<{ testId: string, datasetId?: string, datasetName?: string, vars?: Record<string, string> }>}
+ * @returns {Array<{ testId: string, datasetId?: string, datasetName?: string, vars?: Record<string, string>, browser?: string, headless?: boolean }>}
  */
 export function buildQueue(params, getDatasets) {
   const testIds = [...new Set(params.testIds)];
   const wantsSweep = params.allDatasets === true || (params.datasetIds?.length ?? 0) > 0;
-  if (!wantsSweep) return testIds.map((testId) => ({ testId }));
   const wanted = new Set(params.datasetIds ?? []);
+  const byTest = new Map();
+  for (const p of params.perTest ?? []) byTest.set(p.testId, p);
+
   const out = [];
   for (const testId of testIds) {
-    const rows = getDatasets(testId).filter(
-      (d) => params.allDatasets === true || wanted.has(d.id),
-    );
-    // A test with no matching rows still runs once, with its declared defaults.
-    // Dropping it would turn "sweep my suite" into "silently skip the tests that
-    // aren't parameterized yet".
-    if (rows.length === 0) {
-      out.push({ testId });
-      continue;
-    }
-    for (const row of rows) {
-      out.push({ testId, datasetId: row.id, datasetName: row.name, vars: row.values });
+    // No per-row entry → one undefined "engine", so the test takes the
+    // batch-wide browser exactly as it did before per-row options existed.
+    // That is the MCP path and every stored batch replayed from it.
+    const engines = byTest.get(testId)?.browsers ?? [undefined];
+    const headless = byTest.get(testId)?.headless;
+    const rows = wantsSweep
+      ? getDatasets(testId).filter((d) => params.allDatasets === true || wanted.has(d.id))
+      : [];
+    for (const browser of engines) {
+      const base = {
+        testId,
+        ...(browser ? { browser } : {}),
+        ...(headless !== undefined ? { headless } : {}),
+      };
+      // A test with no matching rows still runs once, with its declared
+      // defaults. Dropping it would turn "sweep my suite" into "silently skip
+      // the tests that aren't parameterized yet".
+      if (rows.length === 0) {
+        out.push(base);
+        continue;
+      }
+      for (const row of rows) {
+        out.push({ ...base, datasetId: row.id, datasetName: row.name, vars: row.values });
+      }
     }
   }
   return out;

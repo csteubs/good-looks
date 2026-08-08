@@ -124,6 +124,25 @@ export const aiDebugStore = {
     return { removed: all.length - kept.length };
   },
 
+  /**
+   * Drop every session belonging to a deleted test.
+   *
+   * A real delete, not the tombstone run records get: a session's content is
+   * the model quoting the test's script and its run output (see the header
+   * above), it contributes to no aggregate anybody looks at, and with the test
+   * gone there is no longer any route in the UI to reach or remove it.
+   *
+   * Filtered by `testId`, not by parsing the `run:<id>` / `step:<id>:<n>` key —
+   * the key format is a renderer convention and would silently stop matching if
+   * it ever gained a third form.
+   */
+  deleteTest(testId: string): { removed: number } {
+    const all = readAll();
+    const kept = all.filter((s) => s.testId !== testId);
+    if (kept.length !== all.length) writeAll(kept);
+    return { removed: all.length - kept.length };
+  },
+
   clear(): { removed: number } {
     const all = readAll();
     writeAll([]);

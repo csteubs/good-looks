@@ -95,7 +95,13 @@ export function gatherRunDetails(runs: readonly RunRecord[]): RunDetail[] {
   return out;
 }
 
-/** The recent runs to analyse, newest-first as stored. */
+/** The recent runs to analyse, newest-first as stored.
+ *
+ *  listLive, so a deleted test cannot appear in Stability. Two reasons, and the
+ *  second is the one that bites: the panel names the test in every row, and its
+ *  detail is enriched from `artifactStore.readReplay` and the heal journal —
+ *  both of which the delete really does remove — so an orphan would render as a
+ *  named row with the explanation stripped out of it. */
 export function analysisWindow(): RunRecord[] {
-  return runHistoryStore.list().slice(0, ANALYSIS_WINDOW);
+  return runHistoryStore.listLive().slice(0, ANALYSIS_WINDOW);
 }

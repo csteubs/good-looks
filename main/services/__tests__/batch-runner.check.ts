@@ -29,6 +29,11 @@ import {
   type BatchState,
   type BatchTestStatus,
 } from "../batch-runner.js";
+import {
+  buildBatchNotice,
+  shouldNotifyRun,
+  type BatchOutcomeNotice,
+} from "../run-notifier.js";
 import { clampBatchConcurrency, MAX_BATCH_CONCURRENCY } from "../../recorder/types.js";
 import type { Dataset } from "../../recorder/types.js";
 import type { BatchSummary } from "../../recorder/types.js";
@@ -73,11 +78,15 @@ function makeFake(opts: {
   const events: { channel: string; payload: unknown }[] = [];
   /** every testId startRun was called with, in order */
   const started: string[] = [];
-  /** the full start params, so a sweep's dataset binding can be asserted */
+  /** the full start params, so a sweep's dataset binding and a fan-out's
+   *  per-engine binding can both be asserted */
   const startedWithDataset: {
     testId: string;
     datasetId?: string;
     vars?: Record<string, string>;
+    browser?: string;
+    runHeadless?: boolean;
+    headed?: boolean;
   }[] = [];
   /** how many runs are in flight at once, and the high-water mark */
   let live = 0;
@@ -103,6 +112,8 @@ function makeFake(opts: {
   const persisted: (BatchState & { summary: BatchSummary })[] = [];
   /** outgoing alerts requested by the runner */
   const alerts: unknown[] = [];
+  /** desktop notifications requested by the runner */
+  const notices: BatchOutcomeNotice[] = [];
   let clock = 1000;
 
   const datasets = opts.datasets ?? {};
@@ -110,8 +121,8 @@ function makeFake(opts: {
   const deps: BatchDeps = {
     getTestName: (id) => (id in names ? names[id] : `Test ${id}`),
     getDatasets: (id) => datasets[id] ?? [],
-    startRun: ({ testId, datasetId, vars }) => {
-      startedWithDataset.push({ testId, datasetId, vars });
+    startRun: ({ testId, datasetId, vars, browser, runHeadless, headed }) => {
+      startedWithDataset.push({ testId, datasetId, vars, browser, runHeadless, headed });
       if (busy.has(testId)) {
         // No new run started — and, like the real runner, a stale promise for
         // the OTHER run is still resolvable via waitFor.
@@ -148,6 +159,9 @@ function makeFake(opts: {
     alert: (a) => {
       alerts.push(a);
     },
+    notify: (n) => {
+      notices.push(n);
+    },
     persist: (record) => {
       // Deep-ish copy: the runner mutates its result entries in place, so
       // storing the live objects would make every snapshot look identical.
@@ -163,6 +177,7 @@ function makeFake(opts: {
     stopped,
     persisted,
     alerts,
+    notices,
     get maxLive() {
       return maxLive;
     },
@@ -544,6 +559,20 @@ async function main(): Promise<void> {
       plain.length === 2 && plain.every((e) => e.datasetId === undefined),
       "no dataset options → the queue is exactly the selection",
     );
+    // And the entries are BARE — `{testId}` and nothing else. This used to be
+    // guaranteed by an early return that the per-engine fan-out replaced with a
+    // loop; the MCP calls this function with no options at all, so an entry
+    // carrying `browser: undefined` would spread into the BatchTestResult that
+    // gets written to batch-history.json.
+    //
+    // Object.keys, NOT JSON.stringify: stringify DROPS undefined-valued keys,
+    // so it reports `{testId:"a", browser:undefined}` as `{"testId":"a"}` and
+    // this assertion would pass against exactly the regression it names.
+    const keys = plain.map((e) => Object.keys(e).sort().join(","));
+    assert(
+      keys.every((k) => k === "testId"),
+      `a no-options queue carries no extra keys (got ${keys.join(" | ")})`,
+    );
 
     const swept = buildQueue({ testIds: ["a", "b"], allDatasets: true }, getDatasets);
     assert(
@@ -732,6 +761,278 @@ async function main(): Promise<void> {
       `each row reports its own outcome (got ${rows.map((r) => r.status).join(",")})`,
     );
     assert(fake.maxLiveFor("a") === 1, "a swept test stayed serialized for the whole batch");
+  }
+
+  // ── Batch completion notification ──────────────────────────────────
+  // The whole point: the Batch view's toast only fires while that view is
+  // mounted, so starting a suite and navigating away meant never being told it
+  // finished. A CLEAN batch must notify too — "all 12 passed" is the message
+  // the user walked away waiting for, and the per-run notifier's
+  // return-null-on-success rule is exactly wrong here.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"] });
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+
+    assert(fake.notices.length === 1, `exactly one notification per batch (${fake.notices.length})`);
+    assert(fake.notices[0].failed === 0 && fake.notices[0].passed === 2, "a clean batch notifies");
+    assert(fake.notices[0].stopped === false, "a completed batch is not reported as stopped");
+    assert(
+      buildBatchNotice(fake.notices[0]).title === "Batch passed",
+      `a clean batch says so (got "${buildBatchNotice(fake.notices[0]).title}")`,
+    );
+  }
+
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"] });
+    await tick();
+    fake.finish("a", 1);
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+
+    assert(fake.notices.length === 1, "a failing batch still notifies exactly once");
+    assert(
+      buildBatchNotice(fake.notices[0]).title === "Batch finished — 1 failed",
+      `a failing batch names the count (got "${buildBatchNotice(fake.notices[0]).title}")`,
+    );
+  }
+
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"] });
+    await tick();
+    batch.stop();
+    await tick();
+
+    assert(fake.notices.length === 1, "a stopped batch notifies rather than going silent");
+    assert(fake.notices[0].stopped === true, "the notice knows it was stopped");
+    assert(
+      buildBatchNotice(fake.notices[0]).title === "Batch stopped",
+      `a stopped batch says stopped, not failed (got "${buildBatchNotice(fake.notices[0]).title}")`,
+    );
+  }
+
+  // A run INSIDE a batch stays silent, however the per-run setting is set.
+  // Before this, a batch with eight failures fired eight macOS notifications
+  // and none for the batch — the opposite of what a batch notification is for.
+  {
+    assert(
+      shouldNotifyRun({ batchId: "b1", enabled: true }) === false,
+      "a run inside a batch does not post its own notification",
+    );
+    assert(
+      shouldNotifyRun({ batchId: undefined, enabled: true }) === true,
+      "a standalone run still notifies when the setting is on",
+    );
+    assert(
+      shouldNotifyRun({ batchId: undefined, enabled: false }) === false,
+      "the per-run setting still switches standalone runs off",
+    );
+  }
+
+  // The notice text itself, without a runner.
+  {
+    assert(
+      buildBatchNotice({ total: 1, passed: 1, failed: 0, skipped: 0, stopped: false }).body ===
+        "All 1 run passed.",
+      "singular run reads correctly",
+    );
+    assert(
+      buildBatchNotice({ total: 5, passed: 3, failed: 0, skipped: 2, stopped: false }).body ===
+        "All 3 runs passed. 2 skipped.",
+      "skipped runs are named, so 'all passed' can't hide them",
+    );
+  }
+
+  // ── Multi-engine fan-out ───────────────────────────────────────────
+  // One test on N engines is N queue entries. The lane invariant is what makes
+  // that safe, and it only holds because a test's entries are CONTIGUOUS in the
+  // queue — interleave them across tests and buildLanes reorders everything.
+  {
+    const queue = buildQueue(
+      {
+        testIds: ["a", "b"],
+        perTest: [
+          { testId: "a", browsers: ["chromium", "firefox", "webkit"], headless: true },
+          { testId: "b", browsers: ["webkit"], headless: false },
+        ],
+      },
+      () => [],
+    );
+    assert(queue.length === 4, `3 engines + 1 engine is 4 entries (got ${queue.length})`);
+    assert(
+      queue.map((e) => `${e.testId}:${e.browser}`).join(",") ===
+        "a:chromium,a:firefox,a:webkit,b:webkit",
+      `a test's engines stay contiguous and in order (got ${queue
+        .map((e) => `${e.testId}:${e.browser}`)
+        .join(",")})`,
+    );
+    assert(
+      queue.every((e) => (e.testId === "a" ? e.headless === true : e.headless === false)),
+      "each entry carries its own row's headedness",
+    );
+    // Flattening lanes must reproduce queue order, or running at concurrency 1
+    // stops being byte-identical to the old sequential loop.
+    const flat = buildLanes(queue).flat();
+    assert(
+      flat.join(",") === queue.map((_, i) => i).join(","),
+      `flattened lanes reproduce queue order exactly (got ${flat.join(",")})`,
+    );
+  }
+
+  // A test with no perTest entry is the MCP path and every batch recorded
+  // before per-row options existed. It contributes ONE entry carrying no engine
+  // of its own — which is what lets runEntry fall back to the batch-wide
+  // `browser`. The queue has no opinion about that fallback (the shared module
+  // never sees `params.browser`); the runner applies it, and the fan-out block
+  // above asserts that end of it.
+  {
+    const queue = buildQueue(
+      {
+        testIds: ["a", "b"],
+        perTest: [{ testId: "a", browsers: ["webkit"], headless: false }],
+      },
+      () => [],
+    );
+    assert(queue.length === 2, `an unlisted test contributes exactly one entry (${queue.length})`);
+    assert(queue[1].browser === undefined, "an unlisted test carries no engine of its own");
+    assert(queue[1].headless === undefined, "and no headedness of its own");
+  }
+
+  // Engines multiply dataset rows rather than replacing them.
+  {
+    const queue = buildQueue(
+      {
+        testIds: ["a"],
+        allDatasets: true,
+        perTest: [{ testId: "a", browsers: ["chromium", "webkit"], headless: false }],
+      },
+      () => [
+        { id: "d1", name: "GBP", values: { currency: "GBP" } },
+        { id: "d2", name: "USD", values: { currency: "USD" } },
+      ],
+    );
+    assert(queue.length === 4, `2 engines x 2 rows is 4 entries (got ${queue.length})`);
+    assert(
+      queue.map((e) => `${e.browser}/${e.datasetName}`).join(",") ===
+        "chromium/GBP,chromium/USD,webkit/GBP,webkit/USD",
+      `engine-major within the test (got ${queue.map((e) => `${e.browser}/${e.datasetName}`).join(",")})`,
+    );
+  }
+
+  // THE load-bearing assertion. Three engines of one test must never be in
+  // flight together however wide the batch is asked to run: runId === testId, so
+  // the runner would decline the second and third with `alreadyRunning` and the
+  // batch would report two of the three engines as skipped.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b"],
+      concurrency: 8,
+      perTest: [
+        { testId: "a", browsers: ["chromium", "firefox", "webkit"], headless: true },
+        { testId: "b", browsers: ["chromium"], headless: false },
+      ],
+    });
+    await tick();
+
+    assert(
+      fake.maxLiveFor("a") === 1,
+      `a fanned-out test never has two engines in flight at once (peak ${fake.maxLiveFor("a")})`,
+    );
+    assert(fake.isPending("b"), "a different test still runs in parallel with the fan-out");
+
+    fake.finish("a", 0);
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+    fake.finish("a", 1);
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+
+    assert(fake.maxLiveFor("a") === 1, "stayed serialized for the whole batch");
+
+    const startsForA = fake.startedWithDataset.filter((s) => s.testId === "a");
+    assert(
+      startsForA.map((s) => s.browser).join(",") === "chromium,firefox,webkit",
+      `each engine was actually requested (got ${startsForA.map((s) => s.browser).join(",")})`,
+    );
+    // headed and runHeadless are two spellings of one choice; letting them
+    // disagree opens a window for a run the user asked to be headless.
+    assert(
+      startsForA.every((s) => s.runHeadless === true && s.headed === false),
+      "a headless row starts headless, with headed derived from the same value",
+    );
+    const startsForB = fake.startedWithDataset.filter((s) => s.testId === "b");
+    assert(
+      startsForB.every((s) => s.runHeadless === false && s.headed === true),
+      "a headed row in the same batch still starts headed",
+    );
+
+    const done = fake.doneEvent();
+    const rows = done?.results.filter((r) => r.testId === "a") ?? [];
+    assert(rows.length === 3, `every engine has its own result row (got ${rows.length})`);
+    assert(
+      rows.map((r) => r.browser).join(",") === "chromium,firefox,webkit",
+      `results name their engine, so three rows are distinguishable (got ${rows
+        .map((r) => r.browser)
+        .join(",")})`,
+    );
+    assert(
+      rows.map((r) => r.status).join(",") === "passed,passed,failed",
+      `each engine reports its own outcome (got ${rows.map((r) => r.status).join(",")})`,
+    );
+  }
+
+  // Stopping mid-fan-out kills by testId, which is still the run id.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a"],
+      perTest: [{ testId: "a", browsers: ["chromium", "firefox", "webkit"], headless: false }],
+    });
+    await tick();
+    batch.stop();
+    await tick();
+    assert(fake.stopped.includes("a"), "stop killed the in-flight engine by test id");
+    const done = fake.doneEvent();
+    assert(done?.stopped === true, "the batch reports itself stopped");
+    assert(
+      (done?.results ?? []).filter((r) => r.status === "skipped").length === 2,
+      "the engines that never started are skipped, not left pending",
+    );
+  }
+
+  // The concurrency ceiling stays DISTINCT TESTS, not the fan-out count.
+  // Raising it to the queue length would leave workers idling on empty lanes
+  // and make the headed warning promise more windows than ever open.
+  {
+    const queue = buildQueue(
+      {
+        testIds: ["a", "b"],
+        perTest: [
+          { testId: "a", browsers: ["chromium", "firefox", "webkit"], headless: false },
+          { testId: "b", browsers: ["chromium", "webkit"], headless: false },
+        ],
+      },
+      () => [],
+    );
+    assert(
+      buildLanes(queue).length === clampBatchConcurrency(99, new Set(["a", "b"]).size),
+      "lane count equals the handler's clamp over distinct tests",
+    );
   }
 
   // ── Asking for more than there are tests is not an error ───────────

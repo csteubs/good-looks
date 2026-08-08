@@ -424,7 +424,14 @@ server.registerTool(
     },
   },
   async ({ testId, limit }) => {
-    let runs = listRuns().sort((a, b) => b.startedAt - a.startedAt);
+    // Deleted tests' runs are tombstoned in run-history.json rather than
+    // removed (the app keeps them so its aggregate stats hold still). This
+    // server reads that file directly and has no aggregates of its own, so
+    // showing them would contradict list_tests — the same test would be absent
+    // from the library and present, by name, in its run history.
+    let runs = listRuns()
+      .filter((r) => !r.testDeleted)
+      .sort((a, b) => b.startedAt - a.startedAt);
     if (testId) runs = runs.filter((r) => r.testId === testId);
     runs = runs.slice(0, limit ?? 50).map((r) => ({
       id: r.id,
@@ -453,7 +460,10 @@ server.registerTool(
   },
   async ({ runId }) => {
     const run = listRuns().find((r) => r.id === runId);
-    if (!run) {
+    // A tombstoned run is treated as gone, not as an empty log: its test was
+    // deleted, its log really was unlinked, and answering with the record would
+    // hand back the run's metadata for a test list_runs says doesn't exist.
+    if (!run || run.testDeleted) {
       return { content: [{ type: "text", text: `No run found with id ${runId}` }], isError: true };
     }
     let log = "";

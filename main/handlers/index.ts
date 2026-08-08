@@ -37,6 +37,7 @@ import { parseSpecDetailed } from "../services/spec-parser.js";
 import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
 import { aiDebugStore } from "../services/ai-debug-store.js";
+import { recorderDebugStore } from "../services/recorder-debug-store.js";
 import { anthropicKeyStore } from "../services/anthropic-key-store.js";
 import {
   clampTestTimeoutMs,
@@ -63,10 +64,12 @@ import {
   isRunBrowser,
   isTestSpeed,
   isValidVariableName,
+  MAX_BATCH_TEST_OPTIONS,
   normalizeDatasets,
   normalizeStep,
   normalizeTags,
   normalizeVariables,
+  RUN_BROWSERS,
 } from "../recorder/types.js";
 import type { AiDebugSession, AssertKind, CookieSpec, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
@@ -232,6 +235,18 @@ export function registerHandlers(): void {
   ipcMain.handle("tests:getScript", async (_e, params: { id: string }) =>
     testStore.readScript(params.id),
   );
+  // Delete a test and everything it left behind.
+  //
+  // The line this draws: anything that NAMES the test goes, and anything that
+  // holds its CONTENT goes. What stays is the arithmetic — run records survive
+  // as tombstones (`RunRecord.testDeleted`) so the pass rate, the daily chart
+  // and the capture-overhead figures don't lurch when a test is removed. Those
+  // numbers answer "what has this machine done", and having them rewrite
+  // history on a delete is what makes people stop trusting them.
+  //
+  // Adding a per-test store? It belongs in this list. A store that isn't here
+  // fails silently: nothing errors, the test is gone from the library, and its
+  // leftovers surface weeks later under a name nobody recognises.
   ipcMain.handle("tests:delete", async (_e, params: { id: string }) => {
     testStore.remove(params.id);
     // Drop any captured visual-testing artifacts + pinned baselines for this test.
@@ -243,6 +258,26 @@ export function registerHandlers(): void {
     await testSecretsStore.clearTest(params.id);
     await refreshSecretSnapshot();
     healJournalStore.deleteTest(params.id);
+    // Tombstone the history: records kept for the aggregates, raw logs deleted.
+    runHistoryStore.markTestDeleted(params.id);
+    batchHistoryStore.markTestDeleted(params.id);
+    // Really deleted — the model's answers quote the script and the run output,
+    // and with the test gone there is no route left to reach or remove them.
+    aiDebugStore.deleteTest(params.id);
+    recorderDebugStore.clear(params.id);
+    // Stale ids in the Batch view's stored order and per-row options. Both
+    // tolerate an unknown id, so this is housekeeping rather than a fix — but
+    // without it a re-imported test could inherit a choice nobody remembers.
+    const settings = recorderSettingsStore.get();
+    const batchOrder = settings.batchOrder.filter((id) => id !== params.id);
+    const batchTestOptions = { ...settings.batchTestOptions };
+    delete batchTestOptions[params.id];
+    if (batchOrder.length !== settings.batchOrder.length || params.id in settings.batchTestOptions) {
+      recorderSettingsStore.set({ batchOrder, batchTestOptions });
+    }
+    // Stats and Stability read run history, not the library, so without this
+    // they keep showing the deleted test until something else invalidates them.
+    sendToMain("runs:changed", {});
   });
   // Copy a test: everything that describes it, nothing it has recorded.
   //
@@ -887,15 +922,40 @@ export function registerHandlers(): void {
         datasetIds?: unknown;
         allDatasets?: boolean;
         concurrency?: unknown;
+        perTest?: unknown;
       },
     ) => {
       const testIds = Array.isArray(params.testIds) ? params.testIds.filter((t) => !!t) : [];
       if (testIds.length === 0) throw new Error("Select at least one test to run.");
+      // REBUILT, not filtered: every element is reconstructed from known keys,
+      // so an unknown field on the wire can never ride along into the runner.
+      // Filtering `browsers` THROUGH RUN_BROWSERS validates, dedupes and
+      // normalises order in one pass — which is what stops a caller sending
+      // ["chromium","chromium","chromium"] and running one test three times on
+      // one engine. It also bounds each entry at 3, so the queue can be no
+      // longer than 3 × testIds and needs no separate cap.
+      const perTest = Array.isArray(params.perTest)
+        ? (params.perTest as unknown[])
+            .filter((e): e is Record<string, unknown> => !!e && typeof e === "object")
+            .map((e) => ({
+              testId: typeof e.testId === "string" ? e.testId : "",
+              browsers: Array.isArray(e.browsers)
+                ? RUN_BROWSERS.filter((b) => (e.browsers as unknown[]).includes(b))
+                : [],
+              headless: e.headless === true,
+            }))
+            // A zero-engine entry would contribute no queue entries, so the
+            // batch would silently run fewer tests than were selected. Dropping
+            // it falls back to the batch-wide browser instead.
+            .filter((e) => e.testId !== "" && e.browsers.length > 0)
+            .slice(0, MAX_BATCH_TEST_OPTIONS)
+        : undefined;
       return batchRunner.start({
         testIds,
         captureArtifacts: params.captureArtifacts ?? false,
         runHeadless: params.runHeadless ?? false,
         browser: isRunBrowser(params.browser) ? params.browser : undefined,
+        perTest,
         datasetIds: Array.isArray(params.datasetIds)
           ? params.datasetIds.filter((d): d is string => typeof d === "string")
           : undefined,
@@ -903,8 +963,11 @@ export function registerHandlers(): void {
         // Clamped HERE as well as in the runner. Anything past this point spawns
         // a browser per unit, so "how many at once" is not a number to take on
         // trust from a caller — and the MCP reaches the same runner.
-        // `new Set` because the ceiling is distinct TESTS: a dataset sweep
-        // queues one test many times, and those still run one after another.
+        // `new Set` because the ceiling is distinct TESTS: a dataset sweep and
+        // a multi-engine row both queue one test many times, and those still
+        // run one after another. Do NOT change this to the fan-out count — the
+        // lanes are per-testId, so the extra workers would idle and the headed
+        // warning would promise more windows than ever open.
         concurrency: clampBatchConcurrency(params.concurrency, new Set(testIds).size),
       });
     },

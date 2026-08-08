@@ -1141,6 +1141,20 @@ export interface RunRecord {
   kind?: RunRecordKind;
   /** Human-readable summary for non-run events (e.g. baseline-update notes). */
   note?: string;
+  /**
+   * The test this run belonged to has been deleted.
+   *
+   * A TOMBSTONE, not a delete. The record stays so the aggregate numbers hold
+   * still — pass rate, the daily chart and capture overhead are answers about
+   * what this machine has done, and having them lurch when a test is removed
+   * makes them untrustworthy for the thing they are for. What goes away is
+   * every surface that NAMES the test: the run table, the test filter, log
+   * search, and the Stability panel. See `markTestDeleted`.
+   *
+   * The run's screenshots and its raw .log are really deleted — nothing can
+   * display them once the rows are hidden, and they are the bulk of the bytes.
+   */
+  testDeleted?: boolean;
 }
 
 /** A hit from searching the raw run logs. */
@@ -1167,6 +1181,38 @@ export interface PickedElement {
   /** curated element attributes */
   attributes: Record<string, string>;
 }
+
+/**
+ * One test's row in the Batch view: whether it's ticked, which engines it runs
+ * on, and headed or headless. Persisted per test id in
+ * `RecorderSettings.batchTestOptions`.
+ *
+ * An ABSENT entry is the default, not a bug — unticked, the test's own
+ * `TestRecord.runBrowser` (falling back to `defaultRunBrowser`), and
+ * `defaultRunHeadless`. Entries are written only when the user touches a
+ * control, so an existing settings file needs no migration.
+ */
+export interface BatchRowOptions {
+  /** ticked in the Batch checklist */
+  selected: boolean;
+  /** Engines this test runs on, 1–3, deduped, in RUN_BROWSERS order. NEVER
+   *  empty: an empty array is a ticked test that silently doesn't run, which
+   *  reads as the batch dropping it. Every writer must preserve this. */
+  browsers: RunBrowser[];
+  /** headed or headless for this row alone */
+  headless: boolean;
+}
+
+/** Ceiling on the persisted per-row batch options, mirroring MAX_BATCH_ORDER:
+ *  far above any real library, so a corrupt file can't grow without bound. */
+export const MAX_BATCH_TEST_OPTIONS = 1000;
+
+/** What a deleted test's denormalized name is replaced with in run and batch
+ *  history. The records survive so the aggregate counts hold still, but the
+ *  NAME is the identifying leftover the delete is supposed to take with it —
+ *  and it is the one thing in those files a person would recognise. Matches the
+ *  fallback wording the Heals view already uses for an unknown test. */
+export const DELETED_TEST_NAME = "(deleted test)";
 
 /** Global trainer preferences, independent of any recording session. */
 export interface RecorderSettings {
@@ -1247,6 +1293,12 @@ export interface RecorderSettings {
    *  this list (newly added) run after it, in library order; ids for deleted
    *  tests are ignored. Empty = plain library order. */
   batchOrder: string[];
+  /** Per-row Batch-view options, keyed by test id: ticked, engines, headed.
+   *  Written straight from the Batch view (like `batchOrder`) rather than from
+   *  the Settings window, so it has no row in `settings-schema.ts`. A test with
+   *  no entry falls back to its own record and the defaults above — see
+   *  `BatchRowOptions`. */
+  batchTestOptions: Record<string, BatchRowOptions>;
   /** How many tests a batch starts at once by default (default 1 = one at a
    *  time, clamped 1–MAX_BATCH_CONCURRENCY). Seeds the Batch view's picker; the
    *  view never writes it back, so choosing "4 at once" for one suite run
@@ -1259,6 +1311,13 @@ export interface RecorderSettings {
   /** post a macOS notification when a run finishes with a failure or a visual
    *  change (default false). Local only — nothing leaves the machine. */
   notifyOnRunIssues: boolean;
+  /** Post a macOS notification when a BATCH finishes (default true). Unlike
+   *  notifyOnRunIssues this fires on success too: the point of a batch
+   *  notification is that the user started a long job and walked away, so
+   *  "all 12 passed" is the message they were waiting for. While this is on,
+   *  the per-run notification is suppressed for tests inside a batch — one
+   *  notification for the suite, not one per failure. */
+  notifyOnBatchDone: boolean;
   /** additionally delete captured runs older than this many days (0 = off,
    *  max 365). Applies ON TOP of artifactRetainedRuns — a run is kept only if
    *  it satisfies both rules. The pinned baseline is never pruned. */
@@ -1436,6 +1495,15 @@ export interface BatchTestResult {
    *  with no way to tell which row was the one that failed. */
   datasetId?: string;
   datasetName?: string;
+  /** The engine this entry ran on, when the batch fanned the test out across
+   *  more than one. Same reasoning as `datasetId`: without it, three results
+   *  for one test are indistinguishable. Optional, so batch-history.json
+   *  records written before per-row browsers load unchanged. */
+  browser?: RunBrowser;
+  /** The test has since been deleted. The row is kept so the batch's own
+   *  summary still adds up, and hidden by the view. See `RunRecord.testDeleted`
+   *  for the reasoning. */
+  testDeleted?: boolean;
 }
 
 export interface BatchSummary {

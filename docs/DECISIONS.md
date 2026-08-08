@@ -16,6 +16,50 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-07 — Routines is specified, not built, and the spec is the deliverable
+
+Batch v2 — renamed "Routines", with scheduled runs and a Shopify-Flow-style builder — is substantially larger than everything else shipped this day put together, and most of its risk is in decisions made before any code. Writing [ROUTINES.md](ROUTINES.md) now, alongside the per-row Batch work, is what stops that work foreclosing it.
+
+Three findings from writing it were worth having in hand while building the smaller feature:
+
+**`batchTestOptions` is a dead end for Routines, and that is fine.** A `Record<testId, BatchRowOptions>` can hold exactly one configuration of each test, so "Smoke runs Login on Chromium headless" and "Nightly runs Login on all three engines" cannot both exist. It was still the right shape for one checklist — no new store, no migration, an absent entry is a working default — and Routines would introduce its own entity and migrate the map into a Routine named "Batch" on first launch. Knowing the exit exists is what made the cheap version safe to ship.
+
+**`runFlow` is not the flow model, and conflating them is the main design risk.** `isFlow`/`flowParams`/`runFlow` already exist and already compose — but they inline one test's STEPS into another at generation time, producing one Playwright test. A Routine composes RUNS: separate processes, separate `RunRecord`s, separate rows in Stats. A builder that lets a Routine step reach inside a flow would be a second composition mechanism competing with the first.
+
+**The lane invariant constrains the builder, not just the runner.** Because `runId === testId`, two Routine steps naming the same test can never run concurrently however the diagram is drawn. That has to be a save-time rejection rather than a silent serialisation: a builder that draws two parallel branches and runs them one after another is lying in a picture, which is worse than refusing to draw it.
+
+The spec also recommends NOT renaming the `batch:*` IPC channels, `batch-history.json`, `RunRecord.batchId`, or the MCP `run_batch` tool. A rename reaching disk formats and external tool names costs a migration and breaks every MCP client with "unknown tool" rather than a redirect — and buys a word. The word is worth having in the UI, not in `run-history.json`.
+
+### 2026-08-07 — Deleting a test: the name goes, the arithmetic stays
+
+Deleting a test removed its record, spec, screenshots, baselines, annotations, secrets and heal journal — and left its run history, its raw logs, its AI-debug sessions and its recorder debug logs behind. The test vanished from the library and kept appearing in Stats under its last-known name.
+
+**Run records are tombstoned, not deleted, and that was the whole decision.** Purging them is the tidier mental model and it was the obvious first design. It also means the pass rate, the last-week chart and the capture-overhead figures all change retroactively every time somebody removes a test. Those numbers answer "what has this machine done", and a number that rewrites its own history on an unrelated action is one people stop reading. So the records stay and `testDeleted: true` hides them from every surface that NAMES a test — the run table, the test filter, log search, Stability, and the MCP's `list_runs`.
+
+**What actually gets destroyed is the identity and the content**: the raw `.log` (the one artifact here that quotes the site — page text, URLs, values typed while recording), the screenshots, and `testName`, which is denormalized into both `run-history.json` and `batch-history.json` precisely so they render without the library, and therefore outlives the test. Marking a row without clearing its name would have been bookkeeping for a row nothing renders; replacing the name with `DELETED_TEST_NAME` is what makes the tombstone do the job the user asked for.
+
+**The visible cost is named rather than hidden.** "Total runs" now legitimately exceeds the rows listed beneath it. Two numbers disagreeing with no explanation reads as a bug in whichever one the reader trusts less, so the table says "N from deleted tests counted above, not listed" whenever they differ.
+
+**AI-debug sessions and recorder debug logs are really deleted**, unlike run records: a session's content is the model quoting the script and the run output, neither contributes to any aggregate, and with the test gone there is no route left in the UI to reach or remove them. `aiDebugStore.deleteTest` filters on `testId` rather than parsing the `run:<id>` / `step:<id>:<n>` key — the key format is a renderer convention that would silently stop matching if it ever gained a third form.
+
+**Every store is asserted separately in the regression suite, on purpose.** One combined "nothing is left" check passes vacuously the day someone adds a per-test store and forgets this handler — which is the exact failure this feature exists to prevent, and a completely silent one. Each cleanup call was reverted individually and confirmed to turn exactly one test red, including the inverse: making the tombstone a hard delete must fail "the pass rate does not move", or the trade-off above isn't actually pinned.
+
+### 2026-08-07 — Batch options move into the rows, and one test can run on three engines
+
+A batch had one browser and one headed/headless choice for the whole suite. "Run the checkout flow on all three engines, headless, but leave the login test headed on Chromium" was not expressible — and neither was running one test on more than one engine at all.
+
+**The fan-out did NOT need a composite run id.** `runId === testId` runs through `playwright-runner`'s per-run maps and through the `runner:output`/`runner:step`/`runner:done` stream the renderer's run store is keyed by. The obvious reading is that one test producing three runs breaks that. It doesn't, because a dataset sweep already queues the same test several times and `buildLanes` already puts them in one lane that runs strictly sequentially. Queuing engines the same way — one entry per (test, engine), **contiguous per test** — reuses that whole mechanism: `playwright-runner.ts` is untouched, the event key is untouched, `stop()`'s kill-by-testId is untouched. The cost is real and worth naming: three engines for one test run one after another, not three-up. Lifting that would mean re-keying every per-run map AND the event contract the renderer consumes, for parallelism *inside* a single test that nobody asked for. Contiguity is the load-bearing part, and `check:batch-runner` pins it directly — interleave the engines across tests and both the ordering assertion and `maxLiveFor("a") === 1` go red.
+
+**The concurrency clamp still counts distinct tests, not planned runs.** This looks wrong at a glance and there is a comment in the handler saying so, because lanes are per-testId: raising the clamp to the fan-out count leaves the extra workers idling on lanes that don't exist, and — worse — makes the headed-parallel dialog promise more browser windows than will ever open.
+
+**An absent `batchTestOptions` entry is the default, not missing data.** That one decision removes the entire migration: an existing `recorder-settings.json` has no such key, so every test resolves from its own `runBrowser` and the global defaults, and entries are written only when a control is touched. The visible consequence, stated rather than hidden: on upgrade every test appears unticked and "Run" runs nothing until the user selects. That is the requested reversal of the old auto-tick applied consistently — the alternative, seeding every existing test as ticked once, would contradict it on exactly the first launch where it mattered.
+
+**A row's engine list may never be empty.** A ticked test with zero engines contributes zero queue entries, so the batch runs fewer tests than the toolbar just said it would, with no error and no skipped row. Deselecting the last engine is therefore a no-op, `setRow` restores the previous list if a caller patches it away, the settings validator drops a stored row that came back empty, and the IPC handler drops such an entry so it falls back to the batch-wide browser. Four guards for one rule because every one of them is a place the rule could be violated silently.
+
+**The master Headless overwrite lives in the event handler, never in an effect.** The init effect sets `runHeadless` from `defaultRunHeadless` on every mount. An effect keyed on `runHeadless` would therefore wipe every saved row choice each time the user merely visited the Batch view — silently, with the UI looking correct throughout. There is a test whose only job is "mounting writes nothing".
+
+**`BROWSER_SF_SYMBOLS` is the wrong map for a row.** Its own header says so: SF Symbols exist for the SDK's native `Select`, whose options never enter the DOM. Rendering one in a DOM row goes through an async native bridge that returns `null` under jsdom, which would make every engine toggle render empty and the whole feature unassertable. The rows use `BrowserIcon` (lucide), and `aria-pressed` — not a class name — is what the tests assert, since that is both the accessibility contract and the thing that doesn't change when the styling does.
+
 ### 2026-08-07 — Two fixes for one bug, met in a merge
 
 The MCP phases and the parallel-batch work landed within hours of each other and had independently found the same problem: the app and the standalone MCP server both write `<scriptsDir>/playwright.config.ts`, so whichever ran last is the one Playwright reads, and the two copies had drifted (the MCP's carried no `timeout` line).
@@ -73,6 +117,7 @@ Implements Phase 1 of [plans/mcp-and-test-intelligence.md](plans/mcp-and-test-in
 **Driving the server for real found what reading it could not.** Every tool was exercised over stdio against the actual data directory before commit. `get_run_logs` threw `logs.console.filter is not a function`: the capture fixture writes `{ testId, runId, dropped, entries[] }`, not a bare array. `dropped` is now carried through — a log truncated by the per-run cap has to say so, or "no request matched" and "the request was past the cap" read identically to whoever is reasoning from it.
 
 **`list_heals` reports chronic steps, not just events.** A list of heals sorted by time is a list in which the actual finding is invisible: one heal is an event, the *same step healing six times* is a decaying locator. The tool computes that count across everything retained and surfaces steps at three or more, alongside the per-entry chronology. The development machine's journal has exactly one such step.
+
 ### 2026-08-07 — Duplicating a test: an allowlist, a copied credential, and a dialog that usually doesn't appear
 
 A copy of a test should be everything the test IS and nothing it has DONE. Most of that line drew itself: run history, screenshots, pinned visual baselines, step notes, the Auto-Heal journal and AI debug sessions all live in their own stores keyed by test id, so a new id starts empty in every one of them without a single delete. Only the fields ON the `TestRecord` had to be decided between, and exactly one of them is run output — `a11yBaseline`, the violations somebody accepted after looking at a real run. Carrying it would make the copy report a clean page it has never been run against, which is the one thing that feature must never do.

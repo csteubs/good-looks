@@ -9,8 +9,9 @@
 import { describe, it, expect } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 
-import type { FlakeReport, TestFlake } from "../lib/recorder-types";
-import { FlakePanel } from "./flake-panel";
+import { MIN_RUNS_FOR_VERDICT } from "../lib/recorder-types";
+import type { FlakeReport, StabilityVerdict, TestFlake } from "../lib/recorder-types";
+import { FlakePanel, VERDICT_COPY } from "./flake-panel";
 
 function test_(partial: Partial<TestFlake> = {}): TestFlake {
   return {
@@ -204,5 +205,64 @@ describe("FlakePanel", () => {
   it("does not claim a cap when the whole history fits", () => {
     render(<FlakePanel report={report({ tests: [test_()], windowRuns: 20, windowCap: 200 })} />);
     expect(screen.queryByText(/capped at/i)).toBeNull();
+  });
+});
+
+// ── The verdict copy ─────────────────────────────────────────────────
+// Asserted on the exported map rather than through the tooltip that shows it:
+// the SDK's Tooltip is Radix-backed and CANNOT be opened under jsdom (its
+// pointer tracking needs APIs jsdom doesn't implement), the same class of
+// problem as the native-menu Select. Driving the hover is not on offer; the
+// words being right is, and that is the part that can be wrong. The expanded
+// row renders the same strings, and is covered below.
+describe("verdict copy", () => {
+  const VERDICTS: StabilityVerdict[] = [
+    "flaky",
+    "data-dependent",
+    "changed-since",
+    "still-failing",
+    "fixed",
+    "stable",
+    "unknown",
+  ];
+
+  it("gives every verdict both a meaning and a rule", () => {
+    for (const v of VERDICTS) {
+      const copy = VERDICT_COPY[v];
+      expect(copy.label.length, `${v} has a label`).toBeGreaterThan(0);
+      expect(copy.hint.length, `${v} says what it means`).toBeGreaterThan(0);
+      expect(copy.rule.length, `${v} says how it was decided`).toBeGreaterThan(0);
+    }
+  });
+
+  it("explains the three mixed-result verdicts by FLIPS, not by pass rate", () => {
+    // The whole reason these tooltips exist: flaky, broke-recently and fixed
+    // can all sit at the same pass rate, and the thing that separates them is
+    // how many times consecutive runs disagreed. A tooltip that talked about
+    // percentages would explain the wrong mechanism convincingly.
+    for (const v of ["flaky", "changed-since", "fixed"] as StabilityVerdict[]) {
+      expect(VERDICT_COPY[v].rule, `${v} names flips`).toMatch(/flip/i);
+      expect(VERDICT_COPY[v].rule, `${v} avoids talking about a rate`).not.toMatch(/rate|%/i);
+    }
+  });
+
+  it("quotes the real minimum-runs threshold", () => {
+    // MIN_RUNS_FOR_VERDICT is mirrored from the backend and pinned by
+    // check:flake-analysis, so this copy can't drift from the analysis.
+    expect(VERDICT_COPY.unknown.rule).toContain(String(MIN_RUNS_FOR_VERDICT));
+  });
+
+  it("distinguishes one flip that ended badly from one that ended well", () => {
+    expect(VERDICT_COPY["changed-since"].rule).toMatch(/most recent run failed/i);
+    expect(VERDICT_COPY.fixed.rule).toMatch(/most recent run passed/i);
+  });
+
+  it("shows the rule in the expanded row, where hover isn't available", () => {
+    // The tooltip is mouse-only by construction (its trigger sits inside the
+    // row's button, so it can't be focusable). The expanded body is the
+    // keyboard and touch path to the same explanation.
+    render(<FlakePanel report={report({ tests: [test_()] })} />);
+    fireEvent.click(screen.getAllByRole("button", { expanded: false })[0]);
+    expect(screen.getByText(VERDICT_COPY.flaky.rule)).toBeTruthy();
   });
 });

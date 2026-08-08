@@ -9,11 +9,18 @@
 // in flight are therefore already unambiguous. The SAME test twice is not:
 // start() declines with `alreadyRunning`, and the entry would be skipped.
 //
-// A dataset sweep queues exactly that — the same test once per row — so the
-// queue is partitioned into LANES keyed by testId. Lanes run concurrently up to
-// the limit; entries within a lane stay sequential. That keeps runId === testId
-// true without touching the runner, and it means the real ceiling is the number
-// of DISTINCT tests queued, not the queue length.
+// Two things queue the same test more than once — a dataset sweep (one entry
+// per row) and a multi-engine row in the Batch view (one entry per browser) —
+// so the queue is partitioned into LANES keyed by testId. Lanes run
+// concurrently up to the limit; entries within a lane stay sequential. That
+// keeps runId === testId true without touching the runner, and it means the
+// real ceiling is the number of DISTINCT tests queued, not the queue length.
+//
+// The cost is that one test on three engines runs them one after another rather
+// than three-up. Lifting that would mean re-keying every per-run map in
+// playwright-runner AND the runner:* event key the renderer's run store
+// consumes — a large change for parallelism inside a single test, which is not
+// the case anyone hit. See docs/DECISIONS.md.
 //
 // Because buildQueue emits a test's rows contiguously, lane order at limit 1 is
 // exactly queue order — the sequential path is the same code, not a parallel
@@ -36,8 +43,10 @@ import { playwrightRunner } from "./playwright-runner.js";
 import { testStore } from "./test-store.js";
 import { batchHistoryStore } from "./batch-history-store.js";
 import { sendAlert, type BatchAlert } from "./alert-service.js";
+import { notifyBatchOutcome, type BatchOutcomeNotice } from "./run-notifier.js";
+import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { buildQueue } from "../../shared/batch-queue.mjs";
-import type { BatchEntry } from "../../shared/batch-queue.mjs";
+import type { BatchEntry, PerTestRunOption } from "../../shared/batch-queue.mjs";
 import { clampBatchConcurrency } from "../recorder/types.js";
 import type {
   BatchState,
@@ -77,13 +86,21 @@ export interface BatchRunParams {
    *  MAX_BATCH_CONCURRENCY — asking for more than either is not an error, it
    *  just runs what it can. */
   concurrency?: number;
+  /** Per-test engines and headedness from the Batch view's rows. A test named
+   *  here runs once per engine listed; a test NOT named here (the MCP path, or
+   *  any caller that never had rows) falls back to the batch-wide `browser` and
+   *  `runHeadless` above, so those two must keep working unchanged. */
+  perTest?: PerTestRunOption[];
 }
 
 // Expanding a selection into the queue actually executed lives in
 // shared/batch-queue.mjs, so the MCP's run_batch sweeps datasets with the same
-// semantics rather than a second implementation of them. Re-exported because
-// this module is where the app and check:batch-runner already import it from.
-export type { BatchEntry } from "../../shared/batch-queue.mjs";
+// semantics rather than a second implementation of them. The per-engine fan-out
+// lives there too, for the same reason and with the same constraint: a test's
+// entries must stay contiguous or buildLanes below reorders the queue.
+// Re-exported because this module is where the app and check:batch-runner
+// already import them from.
+export type { BatchEntry, PerTestRunOption } from "../../shared/batch-queue.mjs";
 export { buildQueue } from "../../shared/batch-queue.mjs";
 
 /**
@@ -136,6 +153,10 @@ export interface BatchDeps {
   persist: (record: BatchState & { summary: BatchSummary }) => void;
   /** Fire-and-forget outgoing alert when the batch finishes. */
   alert: (alert: BatchAlert) => void;
+  /** Local desktop notification for the finished suite. Separate from `alert`
+   *  (an outgoing webhook) because they have different defaults, different
+   *  audiences, and — unlike the webhook — this one fires on success too. */
+  notify: (notice: BatchOutcomeNotice) => void;
 }
 
 const realDeps: BatchDeps = {
@@ -151,6 +172,10 @@ const realDeps: BatchDeps = {
   },
   alert: (alert) => {
     void sendAlert(alert);
+  },
+  notify: (notice) => {
+    if (!recorderSettingsStore.get().notifyOnBatchDone) return;
+    notifyBatchOutcome(notice);
   },
 };
 
@@ -220,6 +245,9 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
           status: "pending" as BatchTestStatus,
           ...(entry.datasetId ? { datasetId: entry.datasetId } : {}),
           ...(entry.datasetName ? { datasetName: entry.datasetName } : {}),
+          // Same reasoning as datasetId: without it, three results for one test
+          // are indistinguishable in the view and in batch-history.json.
+          ...(entry.browser ? { browser: entry.browser } : {}),
         })),
       };
       const lanes = buildLanes(queue);
@@ -265,12 +293,17 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
 
           let exitCode = -1;
           try {
+            // Per-entry when the Batch view sent rows, batch-wide otherwise.
+            // `headed` and `runHeadless` are derived from the SAME value — they
+            // are two spellings of one choice, and letting them disagree opens a
+            // window for a run the user asked to be headless.
+            const entryHeadless = queue[i]?.headless ?? params.runHeadless;
             const { runId, recordId, alreadyRunning } = deps.startRun({
               testId: entry.testId,
-              headed: !params.runHeadless,
+              headed: !entryHeadless,
               captureArtifacts: params.captureArtifacts,
-              runHeadless: params.runHeadless,
-              browser: params.browser,
+              runHeadless: entryHeadless,
+              browser: queue[i]?.browser ?? params.browser,
               batchId,
               // Read from the queue, not from `entry`: BatchState is persisted
               // to disk on every transition, and a dataset row's values have no
@@ -356,6 +389,17 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
           failedTests: s.results.filter((r) => r.status === "failed").map((r) => r.testName),
           stopped: s.stopped,
           browser: params.browser,
+        });
+        // And one desktop notification, for the same reason — plus the reason
+        // the whole feature exists: the Batch view's toast only fires while
+        // that view is mounted, so starting a suite and navigating away used to
+        // mean never being told it finished.
+        deps.notify({
+          total: summary.total,
+          passed: summary.passed,
+          failed: summary.failed,
+          skipped: summary.skipped,
+          stopped: s.stopped,
         });
       })();
 

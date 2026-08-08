@@ -426,6 +426,13 @@ export interface TestFlake {
   healedRuns: number;
 }
 
+/** Mirror of MIN_RUNS_FOR_VERDICT in main/services/flake-analysis.ts — the
+ *  number of runs below which no verdict is offered. Duplicated because the
+ *  Stability tooltips quote it, and a tooltip that says "fewer than 4" while
+ *  the analysis uses 5 is worse than no tooltip: it teaches a rule that isn't
+ *  the rule. Pinned to the backend by check:flake-analysis. */
+export const MIN_RUNS_FOR_VERDICT = 4;
+
 export interface FlakeReport {
   tests: TestFlake[];
   clusters: FailureCluster[];
@@ -508,6 +515,10 @@ export interface RunRecord {
   replayOfRunId?: string;
   kind?: RunRecordKind;
   note?: string;
+  /** The test this run belonged to has been deleted (mirrors main types). The
+   *  record is kept so the aggregate counters hold still; every surface that
+   *  NAMES a test filters these out. Its screenshots and raw log are gone. */
+  testDeleted?: boolean;
 }
 
 /** One accessibility violation, compacted by the capture fixture
@@ -707,6 +718,17 @@ export interface PickedElement {
   attributes: Record<string, string>;
 }
 
+/** One test's row in the Batch view (mirrors main types). An ABSENT entry is
+ *  the default — unticked, the test's own runBrowser, defaultRunHeadless.
+ *  `browsers` is never empty: a zero-engine row silently doesn't run. */
+export interface BatchRowOptions {
+  selected: boolean;
+  browsers: RunBrowser[];
+  headless: boolean;
+}
+
+export const MAX_BATCH_TEST_OPTIONS = 1000;
+
 export interface RecorderSettings {
   showUrlBar: boolean;
   /** Open the trainer panel docked beside the training browser (default false). */
@@ -744,6 +766,9 @@ export interface RecorderSettings {
   alertWebhookEnabled: boolean;
   /** user-chosen Batch run order, as test ids (mirrors main types) */
   batchOrder: string[];
+  /** per-row Batch-view options by test id (mirrors main types). An absent
+   *  entry is the default — see BatchRowOptions. */
+  batchTestOptions: Record<string, BatchRowOptions>;
   /** how many tests a batch starts at once by default (default 1, 1–16). */
   defaultBatchConcurrency: number;
   /** how many runs' screenshot artifacts to keep per test (default 10, 1–50). */
@@ -752,6 +777,9 @@ export interface RecorderSettings {
   artifactRetentionDays: number;
   /** notify on macOS when a run fails or shows a visual change (default false). */
   notifyOnRunIssues: boolean;
+  /** post a macOS notification when a batch finishes, pass or fail (default
+   *  true). Suppresses the per-run notification for tests inside a batch. */
+  notifyOnBatchDone: boolean;
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];
@@ -878,6 +906,12 @@ export interface BatchTestResult {
   note?: string;
   /** id of the RunRecord this test produced, for linking to its log */
   runRecordId?: string;
+  /** engine this entry ran on, when the batch fanned the test out across more
+   *  than one (mirrors main types; absent on pre-fan-out history records) */
+  browser?: RunBrowser;
+  /** the test has since been deleted — the row is kept so the batch's summary
+   *  still adds up, and hidden by the view (mirrors main types) */
+  testDeleted?: boolean;
 }
 
 export interface BatchSummary {
