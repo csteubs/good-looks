@@ -439,8 +439,12 @@ async function main(): Promise<void> {
       }),
     );
     const elapsed = Date.now() - started;
+    // The upper bound is the real assertion: the wait terminates instead of
+    // hanging. The lower bound only rules out "resolved immediately", and gets a
+    // tolerance because timer resolution can land a few ms under the nominal
+    // timeout — it failed once at 1998ms against a 2000ms timeout.
     assert(
-      elapsed >= SETTLE_PAINT_TIMEOUT_MS && elapsed < SETTLE_PAINT_TIMEOUT_MS + 2000,
+      elapsed >= SETTLE_PAINT_TIMEOUT_MS - 50 && elapsed < SETTLE_PAINT_TIMEOUT_MS + 2000,
       `settle: a paint wait that never resolves is bounded (took ${elapsed}ms)`,
     );
   }
