@@ -287,6 +287,43 @@ describe("recorder:setSettings — persistence and validation", () => {
     expect(s.batchOrder).toEqual(["a", "b"]);
   });
 
+  it("defaults batch concurrency to one at a time", async () => {
+    // Parallel batches multiply CPU load and, run headed, open a browser window
+    // per test. Nobody gets that without asking for it.
+    const initial = await invokeHandler<{ defaultBatchConcurrency: number }>(
+      "recorder:getSettings",
+    );
+    expect(initial.defaultBatchConcurrency).toBe(1);
+  });
+
+  it("clamps batch concurrency into range and ignores nonsense", async () => {
+    const read = async () =>
+      (await invokeHandler<{ defaultBatchConcurrency: number }>("recorder:getSettings"))
+        .defaultBatchConcurrency;
+
+    await invokeHandler("recorder:setSettings", { defaultBatchConcurrency: 4 });
+    expect(await read()).toBe(4);
+
+    // Each of these would otherwise be handed to the batch runner as "how many
+    // browsers to open at once".
+    await invokeHandler("recorder:setSettings", { defaultBatchConcurrency: 9999 });
+    expect(await read()).toBe(16);
+
+    await invokeHandler("recorder:setSettings", { defaultBatchConcurrency: 0 });
+    expect(await read()).toBe(1);
+
+    await invokeHandler("recorder:setSettings", { defaultBatchConcurrency: -5 });
+    expect(await read()).toBe(1);
+
+    // A non-number keeps the stored value rather than collapsing to the floor:
+    // `Math.round(null)` is 0, which would silently turn "4 at once" back off.
+    await invokeHandler("recorder:setSettings", { defaultBatchConcurrency: 8 });
+    for (const bad of ["4", null, Number.NaN, Infinity, {}]) {
+      await invokeHandler("recorder:setSettings", { defaultBatchConcurrency: bad });
+      expect(await read()).toBe(8);
+    }
+  });
+
   it("defaults the per-test timeout to one minute and clamps on save", async () => {
     const initial = await invokeHandler<{ defaultTestTimeoutMs: number }>("recorder:getSettings");
     expect(initial.defaultTestTimeoutMs).toBe(60_000);
