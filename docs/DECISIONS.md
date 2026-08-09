@@ -16,6 +16,18 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-09 — Abandoning Glaze: the drift guard retires itself, and a comment that regenerated dead CSS
+
+Glaze is no longer part of this project's life, so the things that existed to keep two shells in step come down. `main` already carried no `@glaze/*` dependency — the port finished at #18 — but `shell/electron` was still on the remote, 18 commits of parallel history whose *content* `main` had entirely absorbed (zero files existed there and not here; the diff was 1037 insertions on main's side and nothing on the branch's). Keeping it had one visible cost: `check:shell-drift` compared `main` against it on every push and went red, on `main`, permanently.
+
+**The branch was the fix, not the check.** `check-shell-drift.mjs` was written to retire itself: with no counterpart ref it prints `nothing to compare` and exits 0, *deliberately* rather than erroring, on the reasoning that a guard which goes red because its problem was solved trains people to ignore it. Deleting the branch turned CI green with no code change. The branch is preserved as the tag `archive/shell-electron`, which costs nothing and makes "we can always look" true rather than hoped. The check stays wired up — it is what would notice a second shell reappearing.
+
+**What did NOT come down, and this is the point.** `window.glazeAPI` (85 references across 28 files) and `@shell/backend` both keep their names. The global is a rename with real breakage risk and no functional gain. The seam is better than that: it is what confines `electron` imports to `main/shell/`, enforced by ESLint, and it would be worth having if Glaze had never existed. Abandoning a vendor is a reason to delete their branches and directories, not their good ideas.
+
+**The repository also moved out of `~/Library/Application Support/app.glaze.macos.main/…/.glaze-sources`.** The canonical checkout had been living inside Glaze's own data directory, where uninstalling Glaze would have taken the repo and its worktrees with it. It is now an ordinary clone at `~/Code/good-looks`. The duplicate `source/` tree in the hand-off folder went at the same time: it had no `.git`, it had already drifted, and on this same day it produced the confusing result of a fixed bug appearing unfixed, because the running app was built from a tree nobody was tracking.
+
+**A postscript worth more than the rest of this entry: Tailwind v4 extracts class candidates from raw file text, and does not skip comments.** The fix above removed an arbitrary-variant z-index lift from the markup, and the comment explaining its removal *spelled the utility out* — which regenerated the rule into the built CSS for a class no element carries. Behaviourally harmless, and still a real defect: grepping a shipped bundle for that rule then reports the fix as missing when it is present, which is exactly the false signal that cost an hour the same afternoon. `check:clickable-chrome` now tests RAW source, comments included, and the comment describes the removed utility in prose instead of spelling it. Verified by putting the literal back in a comment alone and watching the check go red.
+
 ### 2026-08-09 — The "+" button could not be clicked, because a drag region from a window shape we no longer have was sitting on top of it
 
 Creating a test is what this app is for, and the "+" in the sidebar header — the one the empty state tells you to click — did nothing. Hovering it did not even change the cursor, which is the detail that named the bug: a dead handler still shows hover feedback, so the pointer was never reaching the button at all.

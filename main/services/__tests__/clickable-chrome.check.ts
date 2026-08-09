@@ -110,7 +110,7 @@ function read(rel: string): string {
     const name = rel.split("/").pop();
 
     // Every className string mentioning drag-region, comments excluded — the
-    // explanation of why the overlay is gone names the classes it removed.
+    // explanation of why the overlay is gone describes the markup it removed.
     const withoutComments = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
     const classLists = [...withoutComments.matchAll(/className="([^"]*)"/g)].map((m) => m[1]);
 
@@ -125,9 +125,18 @@ function read(rel: string): string {
     }
 
     // The z-index lift that existed only to raise that overlay went with it.
+    //
+    // Checked against RAW source, comments included, and that is the whole
+    // point. Tailwind v4 extracts class candidates from raw file text and does
+    // NOT skip comments, so a comment that spells the utility out regenerates
+    // the rule into the built CSS for a class no element carries. The dead rule
+    // changes no behaviour, but it makes the built bundle lie: grepping a
+    // shipped build for it then reports this fix as missing when it is present,
+    // which is exactly how an hour went missing on 2026-08-09. Describe the
+    // removed utility in prose; do not spell it.
     assert(
-      !/:not\(:has\(\[data-toolbar\]\)\)_\.drag-region\]:z-/.test(withoutComments),
-      `${name}: no drag-region z-index lift — it existed only to raise the removed overlay`,
+      !/:not\(:has\(\[data-toolbar\]\)\)_\.drag-region\]:z-/.test(src),
+      `${name}: no drag-region z-index lift, in markup OR in a comment — Tailwind scans comments too, and the regenerated dead rule makes built CSS misreport this fix`,
     );
   }
 }
