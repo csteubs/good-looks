@@ -109,7 +109,18 @@ async function createMainWindow() {
   // In production: __dirname = build/main, package.json is at ../../package.json
   const packageJsonPath = path.join(__dirname, "..", "..", "package.json");
 
-  const minWindowWidth = 390;
+  // 960, not 390. The old minimum was a promise the layout could not keep: the
+  // widest toolbar (test detail) needs 688px beside a 240px sidebar, so below
+  // ~928px the run controls — including `Run test` itself — left the viewport
+  // with no horizontal scroll anywhere to bring them back. Batch lost its `Run`
+  // the same way. A window the user is allowed to make cannot be a window the
+  // primary action falls out of, so the floor is now the measured requirement
+  // plus a little slack, rather than a number chosen independently of it.
+  //
+  // If a future toolbar needs more room, this is the number that moves — but
+  // `check:narrow-layout` pins it against the measured requirement, so a wider
+  // toolbar fails there rather than silently overflowing here.
+  const minWindowWidth = 960;
   const minWindowHeight = 456;
   const windowWidth = 1000;
   const windowHeight = 700;

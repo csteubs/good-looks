@@ -2230,3 +2230,56 @@ records the decisions.
   site in the ported build, and the packaged app's UI was not visually
   inspected (only the dev build was). Visual fidelity of the rebuilt component
   library against the original is an approximation, not a pixel match.
+
+## 2026-08-09 — The narrow-window contract: measured floor, content-aware rows
+
+`minWindowWidth` was 390. The widest toolbar (test detail) needs 688px of
+content pane beside a 240px sidebar, so from roughly 928px down the run
+controls left the viewport — `Run test` on test detail, `Run 0` on batch — and
+nothing could bring them back: `document.scrollWidth` equalled the viewport and
+no ancestor carried `overflow-x: auto`. The app was permitting a window size its
+own primary actions fell out of. Batch additionally rendered two test names at
+`width: 0` — not ellipsised, absent.
+
+- **Both halves were needed, and they fail in opposite directions.** Raising the
+  floor alone leaves the collapsing grids intact, so the next layout change
+  reintroduces the failure *above* the floor where the window size is no longer
+  protecting anything. Fixing the grids alone leaves a 390px minimum that no
+  toolbar can honour. The floor bounds how far the squeeze can go; the grids
+  decide whether the squeeze degrades or destroys.
+
+- **`grid-cols-2` was the mechanism, not the symptom.** Tailwind's shorthand is
+  `repeat(2, minmax(0, 1fr))`. That `0` is a real floor of zero: a column may
+  shrink below the width of its own text. Because the run-option labels are
+  `overflow: visible`, they neither clip nor ellipsise when it happens — they
+  paint across the neighbouring column. At 860px the columns were 48px holding
+  text that needed 96px, which read on screen as the four options printed on top
+  of one another. Same shape in batch's rows, where every cell but the name is
+  `shrink-0`, so the name absorbed the entire squeeze and `min-w-0` let it reach
+  zero.
+
+- **`max-content` was tried first and is wrong.** It does floor the columns at
+  their content, but it also forbids wrapping, which pushed test detail's
+  toolbar minimum to 1085px — wider than this window's 1000px *default*. That
+  trades a rare overlap for a guaranteed one. `auto` resolves to
+  `minmax(min-content, max-content)`: the floor becomes the longest unbreakable
+  word, so labels still wrap to two lines when tight — which was always fine to
+  read — and simply cannot be squeezed narrower than a word. That is what took
+  the requirement from 1085 back to 928.
+
+- **The floor is measured, not chosen.** 960 is the 928px requirement plus
+  slack, taken from the browser preview against the real stylesheet rather than
+  picked as a round number. `check:narrow-layout` pins the requirement as a
+  constant, so a future toolbar that needs more room fails the check rather than
+  silently overflowing the window.
+
+- **Guarded at source level**, like `check:scroll-layout` and for the same
+  reason: jsdom has no layout engine, so no rendered test in this repo can
+  observe a column collapsing or a control leaving the viewport. The check pins
+  the floor, the default-vs-floor ordering, and both grid shapes; all five
+  substantive assertions were verified to fail against the pre-fix code.
+
+- **One existing test changed meaning.** `test-detail-view.test.tsx` asserted the
+  literal `grid-cols-2` class. Its intent — all four toggles in one two-column
+  block — still holds and is kept; the class assertion now requires explicit
+  tracks and explicitly rejects `grid-cols-2`, because that shorthand is the bug.
