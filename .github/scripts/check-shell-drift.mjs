@@ -65,6 +65,10 @@ const SHELL_BOUNDARY = new Map([
   ["renderer/trainer/index.tsx", "window entry point"],
   ["renderer/preload.ts", "the preload IS the shell boundary"],
   ["renderer/styles.css", "the Glaze framework injected its theme; the port declares Tailwind and the token bridge explicitly"],
+  [
+    "main/services/__tests__/text-color.check.ts",
+    "cross-checks Text's pinned colour union against wherever the component is declared: the SDK's text-variants.d.ts on Glaze, renderer/ui/primitives.tsx on the port. Same 15 colours, different source of truth — and the port's is in-tree, so a missing source is a failure there rather than a skip",
+  ],
 ]);
 
 /**
