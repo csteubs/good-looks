@@ -16,6 +16,142 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-08 — Phase 4: the views the join makes possible, and two vacuous tests
+
+Step Health, suite slowness and cross-browser divergence, plus the flake
+analysis moving into `shared/` so `get_flake_report` serves the same verdicts
+the app's Stability panel shows.
+
+**The move retired a copy, and the check that guarded it.**
+`renderer/lib/recorder-types.ts` carried a hand-written mirror of
+`StabilityVerdict` and `MIN_RUNS_FOR_VERDICT`, kept honest by an assertion in
+`check:flake-analysis` — necessary, because a renderer cannot import from
+`main/`. It can import from `shared/`, so the mirror is gone. But the assertion
+then compared the re-exported constant against itself: a test that passes
+forever and proves nothing. It is now a SOURCE assertion that the renderer
+declares no threshold of its own, which is strictly stronger and is the only
+form that can see a copy being reintroduced.
+
+**`insufficient` is not `clean`, and this is the whole feature.** 255 of the 305
+steps on this machine have only ever run on one engine. Folding those into
+"clean" would give a suite that has never been tried outside Chromium a clean
+bill of cross-browser health — the most misleading thing this view could do, and
+nothing on screen would look wrong. The same rule shaped the panel copy: the
+"no step disagrees across engines" reassurance is withheld unless at least one
+step was actually compared, and a component test pins that. Writing that test is
+what caught the panel doing exactly the wrong thing.
+
+**Percentiles moved out of SQL after SQLite disagreed with itself.**
+`stepDurations` first took each percentile by `LIMIT 1 OFFSET <expression over
+aggregates of the same window>`. SQLite accepted that for p95 and rejected it
+for p50 with "datatype mismatch" — and because `metrics-query`'s `all()`
+swallows a throw by contract (the DB is a cache; a failed read is a missing
+answer, never an error worth propagating), the broken half came back as `null`
+and was indistinguishable from "this step has never been timed". It was visible
+only because a probe against the real database showed rows with a p95 and no
+p50, which is arithmetically impossible. The arithmetic is now four lines of JS
+over at most `window * 2` numbers per step. **The general lesson is about the
+swallow, not the SQL:** a layer that turns every failure into "no data" makes
+broken queries look like empty ones, so anything non-trivial in it needs a test
+that runs the real statement. `check:metrics-db` now does.
+
+**The instrumentation figure excludes the speed setting.** `capture_ms` and
+`a11y_ms` are measured per run. Slow-motion delay is exactly derivable but is
+spread across steps rather than recorded as a total, so folding it in would put
+an estimate in the same sentence as two measurements with nothing saying which
+was which. It is reported separately, per speed, instead. Measured here: only
+4% of 9,814 seconds is instrumentation — so the panel's honest answer on this
+history is "your suite is not slow because of capture".
+
+**A second vacuous test, found the same way.** "An unmeasured duration renders
+as a dash, never a zero" was written negatively — assert no `0ms` on screen —
+and passed against a component with the guard deleted, because the formatter
+returned a dash anyway. Rewritten positively (the cell holds exactly `—`, and
+the opposite case renders `120ms–800ms`), it fails on that mutation. Both of
+this phase's vacuous tests were negative assertions; that is the shape to
+distrust.
+
+**One duplication kept, and named.** The MCP finds a run's failure line with
+`firstErrorLine`; the app uses `extractError`. They agree on ordinary failures,
+and `firstErrorLine` is the better of the two — it skips Playwright's "Error
+Context:" pointer. Converging them is an app-side behaviour change with its own
+check, so it is written down in `mcp/server.mjs` rather than folded into this
+phase. Stability verdicts are unaffected either way: they come from run
+outcomes, not error text.
+
+### 2026-08-08 — Triage: the verdict is the summary, the evidence is the product
+
+Phase 3 of the MCP-and-test-intelligence plan. `shared/triage.mjs` answers "is
+this the site's fault or mine?" for one failed run, surfaced as the MCP's
+`triage_run` and as a line in the run Output panel.
+
+Every signal it uses was already on disk before it existed. What was missing was
+the join, and Phase 2 built exactly that — `runEvidence()` and `siblingRuns()`
+were written for this caller by name. So the interesting decisions here are all
+about **what to claim**, not how to compute it.
+
+**Weights, not booleans.** "The page's own JS threw on the failing step" and
+"the screenshot differs" are both site-ward and are not the same claim. A flat
+count of matched rules makes the weak one able to outvote the strong one three
+to one. Scale is deliberately coarse — 3/2/1 — because anything finer implies a
+precision the underlying data does not have.
+
+**`limits` costs confidence per entry, not once.** This started as a flat "were
+there any limits" penalty and the check caught it: a run that captured nothing
+AND has no siblings AND dropped its console is three separate blind spots, and
+pricing that the same as one reads as "we looked and found little" when it means
+"we could barely look". There is a floor, because the limits are about what is
+MISSING — an observed 5xx is still a 5xx however much else went unrecorded.
+
+**Absence is only evidence when the absence is real.** The clean-wait signal —
+"we waited for something that never came while every request succeeded and the
+page threw nothing" — is the classic wrong-locator shape and the single most
+useful runner-ward signal available. It is also the only one argued from an
+absence, so it is gated on `console_dropped`/`network_dropped` being zero. The
+capture fixture caps those per RUN, not per step; on a busy site whole steps
+keep no requests at all, and one real run here dropped 1,861 network entries.
+Without the gate, "no failing request on that step" reads as evidence the site
+was healthy. When the gate fires the claim is withdrawn INTO `limits` rather
+than dropped silently, so the reason is visible.
+
+**No `triage` column.** Deliberate, and already anticipated by the note against
+the `runs` table in `metrics-schema.mjs`: a verdict frozen at the classifier
+version that wrote it goes stale silently, and a trend then mixes verdicts from
+several generations with nothing saying so. Triage is pure and cheap, so it is
+computed on read — which also means improving it improves every historical run
+at once.
+
+**The MCP could not read its own database.** `mcp/metrics.mjs` had `handle()`,
+which returns a handle only if this process had already recorded a run. The rule
+behind it is right — a read tool must not CREATE the database, or it writes an
+empty schema nobody backfills — but it had been implemented as "never open one",
+which made every read tool useless in a fresh MCP process, i.e. every MCP
+process that has not itself run a test. `readHandle()` splits the two: open an
+existing file, never create, and return null on a version mismatch rather than
+dropping (dropping is a write; the app rebuilds on its next start).
+
+**`TRIAGE_COHORT` lives in `shared/`, not in both callers.** The classifier
+takes no view on the sibling window — it classifies whatever it is handed — but
+the app and the MCP must choose the same one, or the same run triaged from the
+two surfaces gives two different answers and neither is wrong.
+
+**Measured on the real history, not just fixtures.** 269 failed runs on this
+machine: 53 site, 55 runner, 2 mixed, **159 unknown**. That 59% looked like a
+classifier gap and is not one — 114 of those runs captured no artifacts at all,
+124 have no identifiable failing step, and 141 were only ever run on a single
+engine. The evidence genuinely is not there, which is the case `unknown` exists
+for, and the suggested next step for all of them is to re-run with capture on.
+It does mean the feature's usefulness scales with capture being switched on, and
+that is the honest thing to know about it.
+
+Pinned by `check:triage`: every row of the plan's signal table in BOTH
+directions, the two cross-run signals proved mutually exclusive, and a
+source-level assertion — like `a11y-diff.test.ts` — that the file contains no
+`runStatus`, no `exitCode` and no `throw`. Four mutations were run against the
+finished check; the fourth found a **vacuous test** (a passed-run guard asserted
+against a fixture carrying no signals, so it passed with or without the guard)
+and the fixture was loaded until it could fail.
+
 ### 2026-08-08 — Two variables bugs with one root: the record was the draft
 
 "Cannot create a new standalone variable" turned out to be the visible half of a

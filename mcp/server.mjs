@@ -22,7 +22,7 @@ import { selectTests, summarizeResults, UNTAGGED } from "./select-tests.mjs";
 import { clampParallel, MAX_PARALLEL, runPool } from "./run-pool.mjs";
 import { listSessions, readShots, requestCapture } from "./debug-shots.mjs";
 import { readReplay, readRunLogs } from "./artifacts.mjs";
-import { recordRun } from "./metrics.mjs";
+import { readHandle, recordRun } from "./metrics.mjs";
 import {
   consoleNetworkWithheldReason,
   datasetRow,
@@ -33,7 +33,24 @@ import {
   secretVariableNames,
 } from "./run-plan.mjs";
 import { buildQueue } from "../shared/batch-queue.mjs";
+import {
+  runEvidence,
+  siblingRuns,
+  stepBrowserMatrix,
+  stepDurations,
+  stepHealth,
+  suiteCost,
+} from "../shared/metrics-query.mjs";
+import { analyseFlake } from "../shared/flake-analysis.mjs";
+import { firstErrorLine } from "../shared/error-signature.mjs";
+import {
+  costBreakdown,
+  divergentSteps,
+  MIN_SAMPLES_FOR_TREND,
+  slowdowns,
+} from "../shared/step-insights.mjs";
 import { compareReplays } from "../shared/run-comparison.mjs";
+import { TRIAGE_COHORT, triageRun } from "../shared/triage.mjs";
 import {
   PLAYWRIGHT_CONFIG_FILE,
   playwrightConfigSource,
@@ -1265,6 +1282,277 @@ server.registerTool(
     // ends up debugging a UI state that stopped existing ten minutes ago.
     const note = age < 90 ? "Captured just now —" : `Captured ${Math.round(age / 60)} minutes ago —`;
     return sessionContent(session, note);
+  },
+);
+
+server.registerTool(
+  "triage_run",
+  {
+    title: "Triage a failed run",
+    description:
+      "Attribute one failed run to the SITE or to the TEST/RUNNER, from evidence already on " +
+      "disk: response codes and page errors on the failing step, whether Auto-Heal found the " +
+      "element under a different locator or none at all, whether the same test fails on every " +
+      "engine or just one, on every dataset row or one, only when capture is on, and whether " +
+      "the failing step simply ran out the test's timeout. " +
+      "Read `evidence` and `limits` before `verdict` — `limits` says what the capture did NOT " +
+      "record, and an absent signal there is not evidence of absence. Verdicts are never " +
+      "certain and this never changes a run's pass/fail. Run ids come from list_runs.",
+    inputSchema: { runId: z.string() },
+  },
+  async ({ runId }) => {
+    const db = await readHandle(dataDir);
+    if (!db) {
+      return errorResult(
+        "The metrics database is not available, so there is nothing to triage from. It is built " +
+          "by the app — open Good Looks! once and it will roll up the run history on start.",
+      );
+    }
+
+    const evidence = runEvidence(db, runId);
+    if (!evidence) {
+      // Deliberately distinguished from "the run exists but has no metrics":
+      // retention prunes run DIRECTORIES, not metrics rows, so a run missing
+      // from here after being listed by list_runs means the rollup never saw
+      // it — a different thing to go and look at.
+      const known = listRuns().find((r) => r.id === runId);
+      return errorResult(
+        known
+          ? `Run ${runId} is in the run history but has no metrics row yet. The app rolls runs up ` +
+              "on completion and on start; open the app once, or run `metrics:rebuild`."
+          : `No run found with id ${runId}.`,
+      );
+    }
+
+    const { run, steps } = evidence;
+    const failingStepId = run.failed_step_id ?? steps.find((s) => s.status === "failed")?.step_id;
+    const siblings = siblingRuns(db, run.test_id, { limit: TRIAGE_COHORT, excludeRunId: runId });
+    const result = triageRun({
+      run,
+      steps,
+      siblings,
+      // stepHealth is keyed by step id across all history, which is exactly the
+      // chronic-decay question. Filtered here rather than queried per-step
+      // because the query is already grouped and one pass is cheaper than two.
+      stepHistory:
+        stepHealth(db, { testId: run.test_id }).find((s) => s.stepId === failingStepId) ?? null,
+    });
+
+    return jsonResult({
+      runId,
+      testId: run.test_id,
+      testName: run.test_name,
+      status: run.status,
+      browser: run.browser,
+      startedAt: run.started_at,
+      failingStep: steps.find((s) => s.step_id === result.failingStepId)?.label ?? null,
+      ...result,
+      // What the cross-run half of the verdict was drawn from. Without it,
+      // "does not fail on other engines" is unreadable — it means one thing
+      // against 30 sibling runs and nothing at all against zero.
+      cohortSize: siblings.length,
+    });
+  },
+);
+
+/**
+ * The per-run detail the flake analysis needs, assembled from this side's files.
+ *
+ * Mirrors `main/services/flake-source.ts`'s `gatherRunDetails` — the I/O half
+ * that the analysis itself deliberately does not do, which is what let the
+ * analysis move to shared/ at all.
+ *
+ * ONE KNOWN DIFFERENCE, stated rather than hidden: the app finds the failure
+ * line with `extractError`, this uses `firstErrorLine` from
+ * shared/error-signature.mjs. They agree on ordinary failures. `firstErrorLine`
+ * is the stricter one — it skips Playwright's "Error Context:" trace pointer,
+ * which matched first for 109 of 207 failing runs on the development machine
+ * and made a file path the most common "failure" in the whole history. So this
+ * side clusters slightly BETTER, and the two should be converged on
+ * `firstErrorLine`; that is an app-side behaviour change with its own check
+ * (check:flake-analysis pins `extractError`), so it is not folded in here.
+ * Stability verdicts are unaffected either way — they are computed from run
+ * outcomes, not from error text.
+ */
+function runDetails(runs) {
+  // Read ONCE per call, not once per run and not once per process. Per run is
+  // a file read per run; per process is a cache that goes stale the moment
+  // anything heals, and this server outlives many runs.
+  const heals = readJsonFile(dataDir, "recorder/heal-journal.json", []);
+  return runs.map((run) => runDetail(run, heals));
+}
+
+function runDetail(run, heals) {
+  const detail = { runId: run.id };
+  try {
+    const replay = readReplay(dataDir, run.testId, run.id);
+    if (replay && replay.failedIndex !== null && replay.failedIndex !== undefined) {
+      const step = replay.steps[replay.failedIndex];
+      if (step) {
+        detail.failedStepId = step.stepId;
+        detail.failedStepLabel = step.label;
+      }
+    }
+  } catch {
+    // No replay is ordinary: capture may be off, and retention prunes.
+  }
+  if (run.status === "failed") {
+    try {
+      detail.error = firstErrorLine(stripAnsi(fs.readFileSync(run.logFile, "utf-8")));
+    } catch {
+      // A pruned or unreadable log just means this run can't be clustered.
+    }
+  }
+  if (run.healedSteps) {
+    const ids = heals.filter((h) => h.runId === run.id).map((h) => h.stepId);
+    if (ids.length > 0) detail.healedStepIds = ids;
+  }
+  return detail;
+}
+
+/** Shared preamble for the metrics-backed tools: the database, or the reason
+ *  there isn't one. Written once because "open the app to build it" is exactly
+ *  the kind of instruction that drifts into three slightly different wordings. */
+async function metricsDb() {
+  const db = await readHandle(dataDir);
+  if (db) return { db };
+  return {
+    error:
+      "The metrics database is not available, so there is nothing to read. It is built by the " +
+      "app — open Good Looks! once and it will roll up the run history on start.",
+  };
+}
+
+server.registerTool(
+  "get_step_health",
+  {
+    title: "Step health across all history",
+    description:
+      "One row per STEP across every retained run, joining what five separate files hold: how " +
+      "often it ran, how often it failed, how many times Auto-Heal had to substitute a locator, " +
+      "how often its screenshot drifted, how many page errors happened during it, and its " +
+      "fastest/slowest measured duration. " +
+      "The rows worth looking for are the ones no single view can show: a step that never fails " +
+      "but heals repeatedly (a decaying locator, buying time), or one whose duration range is " +
+      "widening while it still passes. Pass `testId` to scope it to one test.",
+    inputSchema: {
+      testId: z.string().optional(),
+      limit: z.number().int().min(1).max(500).optional(),
+    },
+  },
+  async ({ testId, limit }) => {
+    const { db, error } = await metricsDb();
+    if (error) return errorResult(error);
+    const rows = stepHealth(db, { testId, limit: limit ?? 200 });
+    return jsonResult({
+      steps: rows.length,
+      // Named rather than left implicit: a `p50` of null means the step's runs
+      // predate the fixture that measures duration, not that it took no time.
+      note:
+        "minMs/maxMs are null for steps whose runs predate per-step timing. " +
+        "Counts are against each step's own run count, not the suite's.",
+      rows,
+    });
+  },
+);
+
+server.registerTool(
+  "get_suite_cost",
+  {
+    title: "Where the suite's time goes, and what got slower",
+    description:
+      "Two answers about time. First, ATTRIBUTION: how much of the suite's total wall-clock is " +
+      "screenshot capture and accessibility checking — both measured per run, not estimated — " +
+      "plus a per-speed breakdown, so the instrumentation you can switch off is separated from " +
+      "the site's own time. Second, TREND: per-step median and p95 over the most recent runs " +
+      "against the window before them, and the steps whose median grew by at least 1.5×. " +
+      "A step that got slower while still passing is the leading indicator of the timeout " +
+      "failure that arrives later.",
+    inputSchema: {
+      testId: z.string().optional(),
+      window: z.number().int().min(2).max(100).optional(),
+    },
+  },
+  async ({ testId, window }) => {
+    const { db, error } = await metricsDb();
+    if (error) return errorResult(error);
+    const rows = stepDurations(db, { testId, window });
+    const slowed = slowdowns(rows);
+    return jsonResult({
+      cost: costBreakdown(suiteCost(db)),
+      slowed,
+      // The honest reason an empty `slowed` may mean nothing rather than good
+      // news. Without it, "no slowdowns" reads as a clean bill of health on a
+      // history that simply has not run anything twice.
+      ...(slowed.length === 0
+        ? {
+            comparableSteps: rows.filter(
+              (r) => r.recentRuns >= MIN_SAMPLES_FOR_TREND && r.previousRuns >= MIN_SAMPLES_FOR_TREND,
+            ).length,
+          }
+        : {}),
+      steps: rows,
+    });
+  },
+);
+
+server.registerTool(
+  "get_browser_matrix",
+  {
+    title: "Which steps disagree across engines",
+    description:
+      "A step × engine matrix of outcomes, reduced to a verdict per step: `single-engine` (fails " +
+      "on one engine while others pass — an engine-specific selector or race), `all-engines` " +
+      "(look at the site, not the test), `mixed`, `clean`, or `insufficient` (only ever run on " +
+      "one engine, so nothing can be concluded). " +
+      "`insufficient` is the common case on a young history and is NOT the same as `clean` — " +
+      "'never failed anywhere' and 'only ever tried in one place' are different facts. " +
+      "Same vocabulary as triage_run's cross-run signals, applied to a whole history.",
+    inputSchema: { testId: z.string().optional() },
+  },
+  async ({ testId }) => {
+    const { db, error } = await metricsDb();
+    if (error) return errorResult(error);
+    const steps = divergentSteps(stepBrowserMatrix(db, { testId }));
+    const counts = {};
+    for (const s of steps) counts[s.verdict] = (counts[s.verdict] ?? 0) + 1;
+    return jsonResult({
+      counts,
+      // Divergence first, and only the steps that have something to say — a
+      // list where nine tenths of the rows are "we don't know" trains a reader
+      // to stop reading it. The counts above still report the rest.
+      diverging: steps.filter((s) => s.verdict !== "clean" && s.verdict !== "insufficient"),
+    });
+  },
+);
+
+server.registerTool(
+  "get_flake_report",
+  {
+    title: "Stability verdicts across the run history",
+    description:
+      "Per-test stability, and failure clusters across every test. The verdict measures " +
+      "TRANSITIONS — how often consecutive runs disagree — not a pass rate, because a test that " +
+      "alternates pass/fail and one that worked ten times then broke and stayed broken have the " +
+      "SAME pass rate and need opposite responses: `flaky` versus `changed-since`. " +
+      "`data-dependent` is separated out too: a sweep that fails only on one dataset row is 100% " +
+      "reliable and is telling you something true about that row. " +
+      "This is the same analysis, on the same records, that the app's Stability panel shows.",
+    inputSchema: { limit: z.number().int().min(1).max(200).optional() },
+  },
+  async ({ limit }) => {
+    // Reads run-history.json and the run artifacts, NOT the metrics DB: the
+    // analysis is over run records, and this way it answers before the app has
+    // ever been opened on this machine.
+    const runs = listRuns().filter((r) => !r.testDeleted);
+    const details = runDetails(runs);
+    const report = analyseFlake(runs, details);
+    return jsonResult({
+      ...report,
+      tests: report.tests.slice(0, limit ?? 50),
+      clusters: report.clusters.slice(0, limit ?? 50),
+      windowRuns: runs.length,
+    });
   },
 );
 

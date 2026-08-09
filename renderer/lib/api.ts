@@ -37,6 +37,9 @@ import type {
   TestRecord,
   TestSpeed,
 } from "./recorder-types";
+import type { TriageResult } from "../../shared/triage.mjs";
+import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
+import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
 import type {
   LlmChatParams,
   LlmConfig,
@@ -308,8 +311,28 @@ export const api = {
     deleteRange: (fromMs: number, toMs: number) =>
       ipc().invoke<{ removed: number }>("runs:deleteRange", { fromMs, toMs }),
     logsDir: () => ipc().invoke<string>("runs:logsDir"),
+    /** Site or runner, for one failed run. Null when metrics are unavailable or
+     *  the run has no rows yet — "no opinion" rather than an error. */
+    triage: (id: string) => ipc().invoke<TriageResult | null>("runs:triage", { id }),
     captureOverhead: (testId?: string) =>
       ipc().invoke<CaptureOverheadSummary>("runs:captureOverhead", { testId }),
+  },
+  /** The metrics views. Every response carries `available`, because "metrics
+   *  are off on this runtime" and "you have no history" must not render alike. */
+  metrics: {
+    stepHealth: (testId?: string) =>
+      ipc().invoke<{ available: boolean; rows: StepHealthRow[] }>("metrics:stepHealth", { testId }),
+    slowness: (testId?: string) =>
+      ipc().invoke<{
+        available: boolean;
+        rows: StepDurationRow[];
+        slowed: StepDurationRow[];
+        cost: CostBreakdown;
+      }>("metrics:slowness", { testId }),
+    divergence: (testId?: string) =>
+      ipc().invoke<{ available: boolean; steps: DivergentStep[] }>("metrics:divergence", {
+        testId,
+      }),
   },
   artifacts: {
     list: () => ipc().invoke<RunReplaySummary[]>("artifacts:list"),

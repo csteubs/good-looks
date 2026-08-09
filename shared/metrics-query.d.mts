@@ -91,6 +91,43 @@ export declare function failureClusters(
   firstSeenAt: number;
 }[];
 
+export interface StepDurationRow {
+  stepId: string;
+  label: string | null;
+  type: string | null;
+  testId: string;
+  testName: string | null;
+  /** how many of the most recent `window` runs had a measured duration */
+  recentRuns: number;
+  /** …and how many of the `window` before those */
+  previousRuns: number;
+  recentP50Ms: number | null;
+  recentP95Ms: number | null;
+  previousP50Ms: number | null;
+  /** recentP50 ÷ previousP50, or null when either window has no timings */
+  changeRatio: number | null;
+}
+
+export declare function stepDurations(
+  db: Db,
+  opts?: { testId?: string; window?: number; limit?: number },
+): StepDurationRow[];
+
+export interface StepBrowserRow {
+  stepId: string;
+  label: string | null;
+  testId: string;
+  testName: string | null;
+  browser: string;
+  runs: number;
+  failed: number;
+}
+
+export declare function stepBrowserMatrix(
+  db: Db,
+  opts?: { testId?: string; limit?: number },
+): StepBrowserRow[];
+
 export declare function runEvidence(
   db: Db,
   runId: string,

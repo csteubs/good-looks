@@ -125,3 +125,40 @@ export async function recordRun(dataDir, run, heals, logText) {
 export function handle() {
   return db ?? null;
 }
+
+/**
+ * A handle for reading, opening an EXISTING database if one is on disk.
+ *
+ * The distinction `handle()` draws is worth keeping and is not quite the one it
+ * enforced. "A read tool should not CREATE the database" is right: an empty
+ * schema written by a triage call would then be backfilled by nobody, and every
+ * later read would answer "no data" against a file that exists. But refusing to
+ * open a database the app has already built and filled is a different rule, and
+ * it made every read tool useless in a fresh MCP process — which is every MCP
+ * process that has not itself run a test.
+ *
+ * So: `existsSync` first, and no CREATE_STATEMENTS. A missing file is an
+ * ordinary "no metrics yet" answer. A version mismatch is left alone rather
+ * than dropped — dropping is a write, this side is reading, and the app rebuilds
+ * on its next start. The curated queries already tolerate a schema they don't
+ * recognise by answering empty.
+ */
+export async function readHandle(dataDir) {
+  if (db) return db;
+  try {
+    const file = path.join(dataDir, "recorder", "metrics.db");
+    if (!fs.existsSync(file)) return null;
+    const handle = await openDatabase(file);
+    for (const pragma of PRAGMAS) handle.exec(pragma);
+    const version = Number(handle.prepare("PRAGMA user_version").all()[0]?.user_version ?? 0);
+    if (version !== SCHEMA_VERSION) {
+      handle.close();
+      return null;
+    }
+    db = handle;
+    attempted = true;
+    return db;
+  } catch {
+    return null;
+  }
+}

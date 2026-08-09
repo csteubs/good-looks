@@ -1,6 +1,7 @@
 // Mirror of main/recorder/types.ts for the renderer. Keep shapes in sync.
 
 import type { LlmErrorKind } from "./llm-types";
+import type { FlakeReport as SharedFlakeReport } from "../../shared/flake-analysis.mjs";
 
 export type StepType =
   | "goto"
@@ -383,60 +384,23 @@ export interface HealEntry {
   at: number;
 }
 
-/** Stability verdict for a test (mirror of main/services/flake-analysis.ts).
- *  Shares run-comparison's vocabulary rather than inventing a second one. */
-export type StabilityVerdict =
-  | "stable"
-  | "still-failing"
-  | "changed-since"
-  | "fixed"
-  | "flaky"
-  | "data-dependent"
-  | "unknown";
+// The stability vocabulary is the ANALYSIS's, imported rather than restated.
+// These were hand-written mirrors of `main/services/flake-analysis.ts`, kept
+// honest by an assertion in check:flake-analysis, because a renderer cannot
+// import from `main/`. Phase 4 moved the analysis into `shared/`, which the
+// renderer CAN import — so the copies are gone, and with them the possibility
+// of the Stability tooltips quoting a threshold the analysis no longer uses.
+export type {
+  FailureCluster,
+  StabilityVerdict,
+  StepFlake,
+  TestFlake,
+} from "../../shared/flake-analysis.mjs";
+export { MIN_RUNS_FOR_VERDICT } from "../../shared/flake-analysis.mjs";
 
-export interface StepFlake {
-  stepId: string;
-  label: string;
-  failures: number;
-  heals: number;
-  failureRate: number;
-}
-
-export interface FailureCluster {
-  signature: string;
-  example: string;
-  stepId?: string;
-  stepLabel?: string;
-  count: number;
-  lastSeenAt: number;
-  runIds: string[];
-}
-
-export interface TestFlake {
-  testId: string;
-  testName: string;
-  runs: number;
-  passed: number;
-  failed: number;
-  transitions: number;
-  flakeRate: number;
-  verdict: StabilityVerdict;
-  failingDatasets: { id: string; name: string; failed: number; runs: number }[];
-  steps: StepFlake[];
-  healedRuns: number;
-}
-
-/** Mirror of MIN_RUNS_FOR_VERDICT in main/services/flake-analysis.ts — the
- *  number of runs below which no verdict is offered. Duplicated because the
- *  Stability tooltips quote it, and a tooltip that says "fewer than 4" while
- *  the analysis uses 5 is worse than no tooltip: it teaches a rule that isn't
- *  the rule. Pinned to the backend by check:flake-analysis. */
-export const MIN_RUNS_FOR_VERDICT = 4;
-
-export interface FlakeReport {
-  tests: TestFlake[];
-  clusters: FailureCluster[];
-  analysedTests: number;
+/** The analysis's report, plus what the IPC handler adds: a truncated history
+ *  has to be visible in the UI rather than implied. */
+export interface FlakeReport extends SharedFlakeReport {
   /** how many runs the analysis actually looked at, and the cap it uses */
   windowRuns: number;
   windowCap: number;

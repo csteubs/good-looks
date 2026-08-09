@@ -28,9 +28,17 @@ import {
 } from "../flake-analysis.js";
 import { extractError } from "../flake-source.js";
 import type { RunRecord } from "../../recorder/types.js";
-// The renderer keeps its own copy so the Stability tooltips can quote the
-// threshold without an IPC round trip. Pinned here — see the check below.
+// The renderer re-exports the threshold so the Stability tooltips can quote it
+// without an IPC round trip. That it is a RE-EXPORT and not a copy is itself
+// pinned — see the check below.
 import { MIN_RUNS_FOR_VERDICT as RENDERER_MIN_RUNS_FOR_VERDICT } from "../../../renderer/lib/recorder-types.js";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+// Anchored on the npm-script cwd (the project root), NOT on `import.meta.url`:
+// this check is BUNDLED to CJS by esbuild, where import.meta is not available
+// and reading it throws before any assertion runs.
+const root = process.cwd();
 
 let failures = 0;
 
@@ -333,15 +341,34 @@ function main(): void {
     assertEqual(empty.analysedTests, 0, "no runs means nothing analysed");
   }
 
-  // ── The renderer's copy of the threshold ───────────────────────────
-  // The Stability tooltips quote this number. A tooltip saying "fewer than 4"
-  // while the analysis uses 5 is worse than no tooltip — it teaches a rule that
-  // isn't the rule, and nothing on screen would look wrong.
+  // ── The renderer must not grow a second threshold ──────────────────
+  //
+  // The Stability tooltips quote this number, and a tooltip saying "fewer than
+  // 4" while the analysis uses 5 is worse than no tooltip — it teaches a rule
+  // that isn't the rule, and nothing on screen looks wrong.
+  //
+  // This used to compare the renderer's hand-written copy against the
+  // analysis's. Phase 4 moved the analysis into shared/, which the renderer can
+  // import, so the copy is gone — and that assertion became a comparison of a
+  // value with ITSELF, which passes forever and proves nothing.
+  //
+  // So the property is now the stronger one, and it is a source assertion
+  // because that is the only thing that can see a copy being REINTRODUCED: the
+  // renderer declares no threshold of its own.
   {
+    const src = readFileSync(join(root, "renderer/lib/recorder-types.ts"), "utf-8");
+    assert(
+      !/\bconst\s+MIN_RUNS_FOR_VERDICT\s*=/.test(src),
+      "the renderer re-exports the threshold instead of declaring its own",
+    );
+    assert(
+      /from\s+"\.\.\/\.\.\/shared\/flake-analysis\.mjs"/.test(src),
+      "and it takes the stability vocabulary from the analysis itself",
+    );
     assertEqual(
       RENDERER_MIN_RUNS_FOR_VERDICT,
       MIN_RUNS_FOR_VERDICT,
-      "the renderer's MIN_RUNS_FOR_VERDICT matches the analysis",
+      "the value the renderer exposes is the analysis's own",
     );
   }
 

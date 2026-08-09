@@ -51,6 +51,17 @@ import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
 import { applyRetention } from "../services/retention.js";
 import { compareRuns } from "../services/run-comparison.js";
 import { analyseFlake } from "../services/flake-analysis.js";
+import { metricsStore } from "../services/metrics-store.js";
+import {
+  runEvidence,
+  siblingRuns,
+  stepBrowserMatrix,
+  stepDurations,
+  stepHealth,
+  suiteCost,
+} from "../../shared/metrics-query.mjs";
+import { costBreakdown, divergentSteps, slowdowns } from "../../shared/step-insights.mjs";
+import { TRIAGE_COHORT, triageRun } from "../../shared/triage.mjs";
 import {
   captureWindows,
   debugDir,
@@ -1047,6 +1058,67 @@ export function registerHandlers(): void {
     },
   );
   ipcMain.handle("runs:logsDir", async () => runHistoryStore.logsDirPath());
+  /**
+   * Site problem or runner problem, for one failed run.
+   *
+   * Computed on read, never stored — see the note against the `runs` table in
+   * metrics-schema.mjs. A verdict frozen at the classifier version that wrote
+   * it goes stale silently, and improving the classifier here improves every
+   * historical run at once.
+   *
+   * Returns null rather than throwing when metrics are unavailable or the run
+   * has no rows: the panel then shows nothing, which is the correct UI for "no
+   * opinion". An error here would put a red toast on a run that already failed.
+   */
+  // ── The metrics views (Phase 4) ─────────────────────────────────────
+  //
+  // One handler per view rather than one "give me everything": each is a
+  // separate query over a table that can hold a hundred thousand rows, and the
+  // Step Health table is useful long before the slowness panel has two windows
+  // to compare. They also fail independently — `available: false` is the
+  // ordinary answer on a runtime without `node:sqlite`, and a view that showed
+  // an empty table there would read as "you have no history".
+  ipcMain.handle("metrics:stepHealth", async (_e, params?: { testId?: string }) => ({
+    available: metricsStore.available,
+    rows: stepHealth(metricsStore.handle(), { testId: params?.testId }),
+  }));
+  ipcMain.handle(
+    "metrics:slowness",
+    async (_e, params?: { testId?: string; window?: number }) => {
+      const rows = stepDurations(metricsStore.handle(), {
+        testId: params?.testId,
+        window: params?.window,
+      });
+      return {
+        available: metricsStore.available,
+        rows,
+        // Computed backend-side so the panel and `get_suite_cost` cannot
+        // disagree about what counts as a slowdown.
+        slowed: slowdowns(rows),
+        cost: costBreakdown(suiteCost(metricsStore.handle())),
+      };
+    },
+  );
+  ipcMain.handle("metrics:divergence", async (_e, params?: { testId?: string }) => ({
+    available: metricsStore.available,
+    steps: divergentSteps(stepBrowserMatrix(metricsStore.handle(), { testId: params?.testId })),
+  }));
+
+  ipcMain.handle("runs:triage", async (_e, params: { id: string }) => {
+    const db = metricsStore.handle();
+    const evidence = runEvidence(db, params?.id ?? "");
+    if (!evidence) return null;
+    const { run, steps } = evidence;
+    const failingStepId =
+      run.failed_step_id ?? steps.find((s) => s.status === "failed")?.step_id;
+    return triageRun({
+      run,
+      steps,
+      siblings: siblingRuns(db, run.test_id, { limit: TRIAGE_COHORT, excludeRunId: run.id }),
+      stepHistory:
+        stepHealth(db, { testId: run.test_id }).find((s) => s.stepId === failingStepId) ?? null,
+    });
+  });
   // What screenshot capture costs, measured from run history (optionally for
   // one test — the fair comparison, since different tests do different work).
   ipcMain.handle("runs:captureOverhead", async (_e, params?: { testId?: string }) =>

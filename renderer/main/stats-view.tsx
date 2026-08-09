@@ -48,6 +48,9 @@ import {
 import { api } from "../lib/api";
 import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
 import { FlakePanel } from "./flake-panel";
+import { StepHealthPanel } from "./step-health-panel";
+import { SuiteCostPanel } from "./suite-cost-panel";
+import { DivergencePanel } from "./divergence-panel";
 import { LogInspector } from "./log-inspector";
 import { Pager } from "./pager";
 import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
@@ -322,6 +325,7 @@ export function StatsView() {
     return api.on("runs:changed", () => {
       qc.invalidateQueries({ queryKey: ["runs"] });
     qc.invalidateQueries({ queryKey: ["captureOverhead"] });
+    qc.invalidateQueries({ queryKey: ["metrics"] });
     });
   }, [qc]);
 
@@ -346,6 +350,23 @@ export function StatsView() {
   const overheadQuery = useQuery({
     queryKey: ["captureOverhead"],
     queryFn: () => api.runs.captureOverhead(),
+  });
+
+  // The metrics views. Three queries rather than one, because each is a
+  // separate scan and each is useful on its own — Step Health says something
+  // from the first run, while the slowness trend needs two windows of history
+  // before it can say anything at all.
+  const stepHealthQuery = useQuery({
+    queryKey: ["metrics", "stepHealth"],
+    queryFn: () => api.metrics.stepHealth(),
+  });
+  const slownessQuery = useQuery({
+    queryKey: ["metrics", "slowness"],
+    queryFn: () => api.metrics.slowness(),
+  });
+  const divergenceQuery = useQuery({
+    queryKey: ["metrics", "divergence"],
+    queryFn: () => api.metrics.divergence(),
   });
 
   // Runs whose test still exists. Everything that NAMES a test works from this
@@ -395,6 +416,7 @@ export function StatsView() {
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["runs"] });
     qc.invalidateQueries({ queryKey: ["captureOverhead"] });
+    qc.invalidateQueries({ queryKey: ["metrics"] });
     qc.invalidateQueries({ queryKey: ["run-log-search"] });
     qc.invalidateQueries({ queryKey: ["run-log"] });
   };
@@ -529,6 +551,33 @@ export function StatsView() {
                   nor the pass rate above can answer: both count outcomes, and
                   what makes a test flaky is how often it CHANGES its mind. */}
               {flakeQuery.data ? <FlakePanel report={flakeQuery.data} /> : null}
+
+              {/* The three views the metrics join makes possible (Phase 4).
+                  Ordered by how often they have something to say: divergence
+                  and slowdowns are findings and render only when there is one,
+                  Step Health is a table and is always worth having. */}
+              {divergenceQuery.data ? (
+                <DivergencePanel
+                  steps={divergenceQuery.data.steps}
+                  available={divergenceQuery.data.available}
+                />
+              ) : null}
+
+              {slownessQuery.data ? (
+                <SuiteCostPanel
+                  cost={slownessQuery.data.cost}
+                  rows={slownessQuery.data.rows}
+                  slowed={slownessQuery.data.slowed}
+                  available={slownessQuery.data.available}
+                />
+              ) : null}
+
+              {stepHealthQuery.data ? (
+                <StepHealthPanel
+                  rows={stepHealthQuery.data.rows}
+                  available={stepHealthQuery.data.available}
+                />
+              ) : null}
 
               {/* Search */}
               <div className="flex flex-col gap-2">
