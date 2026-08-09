@@ -71,8 +71,16 @@ export function RootView() {
     // button and the pointer never saw it, so the cursor didn't change either:
     // the feature looked disabled rather than obstructed.
     //
-    // The `[&:not(:has([data-toolbar]))_.drag-region]:z-50` class that used to
-    // be on this wrapper went with it — it existed only to lift that overlay.
+    // A companion class on this wrapper went with it — an arbitrary-variant
+    // z-index lift, keyed off "no data-toolbar present", whose only job was to
+    // raise that overlay. It is deliberately NOT spelled out here: Tailwind v4
+    // scans raw file text for class candidates and does not skip comments, so
+    // writing the utility in prose regenerates the dead rule into the built CSS
+    // for a class no element carries. That is not harmless — it cost real time
+    // once, because grepping a built bundle for the rule then reports the fix
+    // as missing when it is present. `check:clickable-chrome` asserts against
+    // RAW source, comments included, for exactly this reason.
+    //
     // Drag regions that DO earn their keep stay where they are: `Toolbar`, the
     // `Sidebar` header, and the trainer panel's header (that window is
     // `titleBarStyle: "hiddenInset"` and genuinely has no native strip).
