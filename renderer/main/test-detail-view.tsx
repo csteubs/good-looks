@@ -550,8 +550,26 @@ export function TestDetailView() {
             <span className="text-tertiary">s</span>
           </label>
           {/* The gang of four: a compact 2×2 block until the run-options row
-              gets its real design pass. */}
-          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+              gets its real design pass.
+
+              Columns are `auto`, NOT `grid-cols-2`. Tailwind's `grid-cols-2` is
+              `repeat(2, minmax(0, 1fr))`, and that `0` floor lets a column
+              shrink below the width of its own text. These labels are
+              `overflow: visible`, so they do not clip or ellipsise when that
+              happens — they paint straight across the neighbouring column. At
+              860px the columns were 48px wide holding text that needed 96px,
+              two labels deep, which read as the four options printed on top of
+              each other.
+
+              `auto` resolves to `minmax(min-content, max-content)`: the floor
+              becomes the longest unbreakable WORD rather than zero. The labels
+              still wrap to two lines when the toolbar is tight — which was
+              always fine to read — they just can no longer be squeezed narrower
+              than a word and spill. `max-content` was tried first and is wrong:
+              it forbids wrapping outright, which pushed the toolbar's own
+              minimum to 1085px, i.e. wider than this window's 1000px DEFAULT,
+              trading a rare overlap for a guaranteed one. */}
+          <div className="grid grid-cols-[auto_auto] gap-x-3 gap-y-1">
             <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
               <Checkbox
                 checked={runHeadless}

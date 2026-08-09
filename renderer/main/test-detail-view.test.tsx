@@ -337,7 +337,15 @@ describe("run controls", () => {
       .getByLabelText(/run this test headless/i)
       .closest("div.grid") as HTMLElement | null;
     expect(block).not.toBeNull();
-    expect(block!.className).toContain("grid-cols-2");
+    // Two columns, but NOT via `grid-cols-2`. That shorthand is
+    // `repeat(2, minmax(0, 1fr))`, and the 0 floor let a column shrink below
+    // its own text; since these labels are overflow:visible the text then
+    // painted across its neighbour instead of clipping. Explicit `auto` tracks
+    // floor each column at min-content, so they still wrap but cannot spill.
+    // Asserted as the class because the dom project runs with `css: false` —
+    // no computed grid geometry exists here to measure.
+    expect(block!.className).toMatch(/grid-cols-\[[^\]]+_[^\]]+\]/);
+    expect(block!.className).not.toContain("grid-cols-2");
     // All four toggles live in the same block — a checkbox that escapes the
     // grid silently breaks the gang-of-four layout without failing anything.
     for (const label of [

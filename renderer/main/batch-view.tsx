@@ -645,9 +645,24 @@ export function BatchView() {
                         disabled={running}
                         aria-label={`Include ${t.name} in the batch`}
                       />
+                      {/* `basis-32` with a `min-w-24` floor, NOT a bare
+                          `min-w-0 flex-1`.
+
+                          Every other cell in this row is `shrink-0`, so the name
+                          was the only thing that could give — and `min-w-0` let
+                          it give all the way to `width: 0`. The row then looked
+                          like it had no name at all rather than a shortened one,
+                          which is worse than the overflow it was avoiding: a
+                          truncated name still identifies the test, and an absent
+                          one makes the checkbox beside it meaningless.
+
+                          The floor makes the name the last thing to yield
+                          instead of the first. `truncate` still does the
+                          shortening; this only stops the shortening reaching
+                          zero. */}
                       <button
                         type="button"
-                        className="min-w-0 flex-1 truncate text-left text-small font-medium hover:underline"
+                        className="min-w-24 basis-32 grow truncate text-left text-small font-medium hover:underline"
                         title={t.name}
                         onClick={() => navigate({ to: "/test/$id", params: { id: t.id } })}
                       >
@@ -835,7 +850,10 @@ export function BatchView() {
                         <Text variant="small" color="secondary" className="w-32 shrink-0">
                           {fmtDateTime(b.startedAt)}
                         </Text>
-                        <Text variant="small" className="min-w-0 flex-1 truncate">
+                        {/* Same floor as the test rows above: the only flexible
+                            cell in a row of `shrink-0` furniture will otherwise
+                            take the entire squeeze and reach zero. */}
+                        <Text variant="small" className="min-w-24 grow basis-32 truncate">
                           {b.summary.total} {b.summary.total === 1 ? "test" : "tests"} ·{" "}
                           {fmtDuration(b.summary.durationMs)}
                         </Text>
