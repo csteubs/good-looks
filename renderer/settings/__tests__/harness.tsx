@@ -40,6 +40,7 @@ export function makeController(overrides: Partial<SettingsController> = {}): Set
     llmStatus: null,
     baseUrl: "http://127.0.0.1:11434",
     hasApiKey: false,
+    hasLmStudioToken: false,
     testing: false,
     savingKey: false,
     defaultUrlFor: (p) =>
@@ -53,6 +54,8 @@ export function makeController(overrides: Partial<SettingsController> = {}): Set
     changeProvider: vi.fn(async () => {}),
     saveApiKey: vi.fn(async () => {}),
     clearApiKey: vi.fn(async () => {}),
+    saveLmStudioToken: vi.fn(async () => {}),
+    clearLmStudioToken: vi.fn(async () => {}),
     testConnection: vi.fn(async () => {}),
     changeModel: vi.fn(async () => {}),
 

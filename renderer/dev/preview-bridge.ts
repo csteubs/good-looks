@@ -410,6 +410,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       LLM_STATUS.find((s) => s.provider === p?.provider) ?? LLM_STATUS[0],
     "llm:listModels": (): LlmModel[] => [],
     "llm:hasApiKey": () => ({ hasKey: false }),
+    "llm:hasLmStudioToken": () => ({ hasToken: false }),
     "llm:isActive": () => ({ active: false }),
     "alerts:status": () => ({ hasUrl: false, host: null }),
 

@@ -16,6 +16,20 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-09 — LM Studio can demand a bearer token, and the 401 it answers with looked like a wrong URL
+
+LM Studio's local server has an authentication setting. With it on, every route returns 401 — including `GET /v1/models`, the probe behind the connection dot — and this app sent no `Authorization` header anywhere, so the provider simply could not be connected to. `fetchModels` turned the 401 into `LM Studio returned HTTP 401`, which named neither the cause nor the fix.
+
+**What made it expensive to diagnose is LM Studio's own log.** A rejected request is logged as `Unexpected endpoint or method. (GET /v1/models). Returning 200 anyway`. That sentence points at the URL — the one thing that was correct — and it says 200 while the wire carried 401. Anyone reading it goes to check the server address and finds nothing wrong. `curl` against the port is what settled it, and the decoded message now has to carry what the log won't: the setting that causes this, and where the token lives on each side.
+
+**A stored token, not a settings field.** The token is a bearer credential, so it goes through the same safeStorage path as the Anthropic key rather than into `llm-config.json` next to the base URLs — write-only from the renderer, `hasToken` boolean back. That meant extracting `encrypted-secret-store.ts` from `anthropic-key-store.ts`; the parts worth not re-typing are the ones that are silently wrong when re-typed (the tmp+rename write, and not caching a decryption failure).
+
+**The header goes on all three LM Studio routes, not just chat.** `/api/v0/models` — the load-state probe — swallows its own failures by design, so a token applied only to `/v1/models` and chat would cost the load badge with no error anywhere. And no stored token means NO header rather than an empty bearer: unauthenticated is the default configuration, and an empty `Authorization` would turn a working server into the exact 401 this exists to fix.
+
+**A 401 is not "make sure it is running".** `status()` used to regex the error text for transport patterns and replace anything matching with the "is it running?" hint. An authentication failure proves the opposite — the server answered — so `/v1/models` throws a `ProviderError` for 401/403 and `status()` now checks the TYPE, the same argument already made for `runChat`. Text-matching would also have been fragile here in a new way: the decoded sentence quotes nothing from the provider, but it does contain the words "token" and "server".
+
+**Missing and rejected are separate messages.** Same status, different fix: paste a first token, versus replace a stale one. Collapsing them sends half the users to do the wrong thing, so `describeLmStudioAuthFailure` takes `hasToken` and the tests pin both. The generic "unauthorized (HTTP 401)" wording stays for Ollama, which has no token field in this app — pointing at one it doesn't have would be a confident lie about where the problem is.
+
 ### 2026-08-09 — Merging main into the Electron port: twelve conflicts, and the two that could have shipped a regression
 
 `shell/electron` branched at `main@8262136` and then both sides moved. Six commits landed on `main` — the redesign foundation, the fifteen primitives, and the favicon egress fix — while the branch ported the app off the Glaze SDK onto stock Electron. Twelve files conflicted. Most were mechanical; two were not, and both would have passed a careless resolution.

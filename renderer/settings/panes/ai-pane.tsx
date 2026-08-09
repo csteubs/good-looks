@@ -35,6 +35,7 @@ export function AiPane() {
     llmStatus,
     baseUrl,
     hasApiKey,
+    hasLmStudioToken,
     testing,
     savingKey,
     defaultUrlFor,
@@ -43,16 +44,24 @@ export function AiPane() {
     changeProvider,
     saveApiKey,
     clearApiKey,
+    saveLmStudioToken,
+    clearLmStudioToken,
     testConnection,
     changeModel,
   } = useSettingsController();
 
   const [apiKeyInput, setApiKeyInput] = useState("");
+  const [tokenInput, setTokenInput] = useState("");
 
   const onSaveKey = async () => {
     await saveApiKey(apiKeyInput);
     // Don't hold the key in renderer state once it's been handed over.
     setApiKeyInput("");
+  };
+
+  const onSaveToken = async () => {
+    await saveLmStudioToken(tokenInput);
+    setTokenInput("");
   };
 
   return (
@@ -118,6 +127,43 @@ export function AiPane() {
               <Button variant="muted" onClick={() => void testConnection()} disabled={testing}>
                 {testing ? "Testing…" : "Test connection"}
               </Button>
+            </div>
+          </SettingRow>
+        ) : null}
+
+        {/* No Status chip here on purpose: the Server URL row above already
+            reports Online/Offline for this provider, and a second indicator for
+            the same connection is how you end up with two that disagree. */}
+        {provider === "lmstudio" ? (
+          <SettingRow
+            id="lmstudio-token"
+            label="API token"
+            summary={
+              hasLmStudioToken
+                ? "Stored encrypted on this Mac. Enter a new token to replace it."
+                : "Only needed if you turned authentication on in LM Studio (Developer → server settings). Stored encrypted on this Mac."
+            }
+          >
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Input
+                id="lmstudio-token"
+                type="password"
+                className="w-56"
+                spellCheck={false}
+                autoCapitalize="off"
+                autoCorrect="off"
+                placeholder={hasLmStudioToken ? "••••••••" : "Paste token…"}
+                value={tokenInput}
+                onChange={(e) => setTokenInput(e.target.value)}
+              />
+              <Button onClick={() => void onSaveToken()} disabled={savingKey || !tokenInput.trim()}>
+                {savingKey ? "Saving…" : "Save"}
+              </Button>
+              {hasLmStudioToken ? (
+                <Button variant="muted" onClick={() => void clearLmStudioToken()}>
+                  Clear
+                </Button>
+              ) : null}
             </div>
           </SettingRow>
         ) : null}

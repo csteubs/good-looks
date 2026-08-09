@@ -314,6 +314,12 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
   },
   { id: "llm-server-url", pane: "ai", label: "Server URL", keywords: "ollama lm studio host port localhost" },
   { id: "anthropic-key", pane: "ai", label: "API key", keywords: "claude anthropic secret token credential" },
+  {
+    id: "lmstudio-token",
+    pane: "ai",
+    label: "API token",
+    keywords: "lm studio bearer authentication unauthorized 401 credential secret",
+  },
   { id: "llm-model", pane: "ai", label: "Model", keywords: "llm ollama claude sonnet opus haiku" },
   {
     id: "keep-running-ai-debug-jobs",
