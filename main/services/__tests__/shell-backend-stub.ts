@@ -12,11 +12,28 @@ import * as path from "path";
 
 // Resolved lazily on every call so the check can set GLAZE_TEST_USERDATA in its
 // body (after these imports initialize) and still have the stores land there.
+//
+// `setPath` overrides that for the rest of the process, mirroring Electron's
+// own semantics — it exists so `installUserDataPath()` (shell/user-data.ts) can
+// be driven under test rather than only its pure helpers. An override always
+// wins over GLAZE_TEST_USERDATA, since a caller that set a path explicitly
+// meant it.
+const overrides = new Map<string, string>();
+
 export const app = {
-  getPath(_key: string): string {
+  getPath(key: string): string {
+    const override = overrides.get(key);
+    if (override !== undefined) return override;
     return (
       process.env.GLAZE_TEST_USERDATA ?? path.join(os.tmpdir(), "glaze-visual-pipeline-check")
     );
+  },
+  setPath(key: string, value: string): void {
+    overrides.set(key, value);
+  },
+  /** Test-only: forget every override, so one test cannot leak into the next. */
+  __resetPaths(): void {
+    overrides.clear();
   },
 };
 

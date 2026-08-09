@@ -447,6 +447,29 @@ recorder's navigation guards are written against. The wrapper is a function
 returning an instance rather than a subclass — Electron's `BrowserWindow` is
 native-backed and cannot be `extend`ed.
 
+### `main/shell/user-data.ts`
+Decides where the app's data lives, and must run as the **first statement** in
+`main/index.ts` — before `applyRetention()`, which sweeps at module scope and
+would otherwise prune the wrong directory. (Imports are hoisted, so "first"
+means first in the body.)
+
+Under Glaze the host supplied `userData`; stock Electron derives it from
+`productName`, so the port silently began reading an empty `Good Looks!/`
+directory while the real 1.4 GB store sat beside it under
+`app.glaze.macos.<id>-local/`. The app looked wiped rather than misdirected.
+
+Resolution order: the `GOOD_LOOKS_USERDATA` override; then the current
+directory if it already holds a recorder store; then the newest legacy Glaze
+store, **adopted in place** (no copy, so a Glaze build keeps working and there
+is no half-migrated state); then Electron's default. Adoption fires only when
+the current directory has no store of its own, which makes it one-shot and
+means it can never redirect an install that has real data.
+
+`metrics.db` deliberately does **not** count as "has a store" — it is a derived
+shadow and the port writes an empty one on first launch, so counting it would
+stop adoption from ever firing. Covered by `user-data.test.ts` (18 cases),
+including that one.
+
 ### `main/shell/logger.ts`
 `logger.info(scope, message, meta?)`, matching the SDK's shape so ~40 call
 sites were untouched. Console plus an append-only file under
