@@ -20,16 +20,21 @@ import {
   Text,
   toast,
 } from "@ui";
-import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Tag, Wand2 } from "lucide-react";
+import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
 
 import { api } from "../lib/api";
+import { aggregateStatus, type SessionLike } from "../lib/ai-debug-sessions";
+import { toneFor } from "../lib/ai-debug-status";
 import type { LlmProvider } from "../lib/llm-types";
-import type { TestRecord } from "../lib/recorder-types";
+import type { RunRecord, TestRecord } from "../lib/recorder-types";
 import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
+import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/duplicate-warnings";
+import { useAiDebug } from "./ai-debug-store";
 import { NewRecordingDialog } from "./new-recording-dialog";
 import { GenerateTestDialog } from "./generate-test-dialog";
 import { ImportGitDialog } from "./import-git-dialog";
 import { TagsDialog } from "./tags-dialog";
+import { DuplicateTestDialog } from "./duplicate-test-dialog";
 
 interface NativeShell {
   showItemInFolder: (fullPath: string) => void;
@@ -233,6 +238,47 @@ function AiConnectionFooter() {
   );
 }
 
+/** Trailing indicators on a test's sidebar row.
+ *
+ *  The AI-debug sparkle follows the same tone contract as every other surface
+ *  (blue ready / orange thinking / green ready-for-review / red failed) so a
+ *  minimized job stays findable from the LIST of tests, not just from inside
+ *  the one test the user happens to have open. The dot is the latest run's
+ *  verdict — the sidebar answers "which of my tests are broken?" at a glance
+ *  instead of one detail-view visit per test. */
+function RowIndicators({
+  sessions,
+  lastRun,
+}: {
+  sessions: SessionLike[];
+  lastRun: RunRecord | undefined;
+}) {
+  const agg = aggregateStatus(sessions);
+  const tone = agg === null ? null : toneFor(agg);
+  if (!tone && !lastRun) return null;
+  return (
+    <span className="flex shrink-0 items-center gap-1.5">
+      {tone ? (
+        <Sparkles
+          role="img"
+          aria-label={`AI debug — ${tone.label}`}
+          className={`size-3.5 ${tone.className} ${tone.busy ? "animate-pulse" : ""}`}
+        />
+      ) : null}
+      {lastRun ? (
+        <span
+          role="img"
+          aria-label={lastRun.status === "passed" ? "Last run passed" : "Last run failed"}
+          title={lastRun.status === "passed" ? "Last run passed" : "Last run failed"}
+          className={`size-2 rounded-full ${
+            lastRun.status === "passed" ? "bg-support-green" : "bg-support-red"
+          }`}
+        />
+      ) : null}
+    </span>
+  );
+}
+
 export function LibrarySidebar() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -243,8 +289,76 @@ export function LibrarySidebar() {
   const [generateOpen, setGenerateOpen] = React.useState(false);
   const [gitDialogOpen, setGitDialogOpen] = React.useState(false);
   const [tagsFor, setTagsFor] = React.useState<TestRecord | null>(null);
+  // A duplication waiting on the warning dialog. Holds the warnings themselves
+  // rather than recomputing them for the dialog: they were already needed to
+  // decide whether to open it, and deriving the same list twice is how the
+  // dialog ends up describing something other than what the click evaluated.
+  const [pendingCopy, setPendingCopy] = React.useState<{
+    test: TestRecord;
+    warnings: DuplicationWarning[];
+  } | null>(null);
+  const [copying, setCopying] = React.useState(false);
 
   const { data: tests = [] } = useQuery({ queryKey: ["tests"], queryFn: api.tests.list });
+  // Shares the ["runs"] cache with Stats and the detail view, so the per-row
+  // verdict dots are usually free. One pass to keep the newest run per test —
+  // runs:list makes no ordering promise worth leaning on.
+  const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
+  const lastRunByTest = React.useMemo(() => {
+    const m = new Map<string, RunRecord>();
+    for (const r of runsQuery.data ?? []) {
+      const prev = m.get(r.testId);
+      if (!prev || r.startedAt > prev.startedAt) m.set(r.testId, r);
+    }
+    return m;
+  }, [runsQuery.data]);
+  // AI-debug sessions grouped per test, for the row sparkle.
+  const { sessions } = useAiDebug();
+  const sessionsByTest = React.useMemo(() => {
+    const m = new Map<string, SessionLike[]>();
+    for (const s of sessions) {
+      if (!s.testId) continue;
+      const list = m.get(s.testId) ?? [];
+      list.push(s);
+      m.set(s.testId, list);
+    }
+    return m;
+  }, [sessions]);
+
+  const duplicate = async (test: TestRecord) => {
+    setCopying(true);
+    try {
+      const created = await api.tests.duplicate(test.id);
+      qc.invalidateQueries({ queryKey: ["tests"] });
+      setPendingCopy(null);
+      navigate({ to: "/test/$id", params: { id: created.id } });
+      toast.success(`Duplicated as “${created.name}”.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to duplicate test.");
+    } finally {
+      setCopying(false);
+    }
+  };
+
+  // Warn only when there is something to warn about. A dialog that always
+  // appears is one nobody reads, which would cost exactly the cases it exists
+  // for — a copied credential, or a run history the user expected to come with.
+  const startDuplicate = async (test: TestRecord) => {
+    let storedSecrets = 0;
+    try {
+      const status = await api.tests.secretStatus(test.id);
+      storedSecrets = status.filter((s) => s.hasValue).length;
+    } catch {
+      // Leave the count at zero: the other warnings still stand, and inventing
+      // a secrets line we couldn't verify is worse than omitting one.
+    }
+    const warnings = describeDuplicationWarnings(test, storedSecrets);
+    if (warnings.length === 0) {
+      await duplicate(test);
+      return;
+    }
+    setPendingCopy({ test, warnings });
+  };
 
   const importFromFiles = async () => {
     try {
@@ -311,6 +425,12 @@ export function LibrarySidebar() {
                   title={t.name}
                   subtitle={hostOf(t.url)}
                   selected={t.id === selectedId}
+                  accessory={
+                    <RowIndicators
+                      sessions={sessionsByTest.get(t.id) ?? []}
+                      lastRun={lastRunByTest.get(t.id)}
+                    />
+                  }
                   onClick={() => navigate({ to: "/test/$id", params: { id: t.id } })}
                 />
               </CustomContextMenuTrigger>
@@ -318,6 +438,10 @@ export function LibrarySidebar() {
                 <CustomContextMenuItem onSelect={() => nativeShell().showItemInFolder(t.scriptPath)}>
                   <FolderOpen className="size-4" />
                   Reveal in Finder
+                </CustomContextMenuItem>
+                <CustomContextMenuItem onSelect={() => void startDuplicate(t)}>
+                  <Copy className="size-4" />
+                  Duplicate Test
                 </CustomContextMenuItem>
                 <CustomContextMenuSeparator />
                 <CustomContextMenuItem
@@ -394,6 +518,18 @@ export function LibrarySidebar() {
       <NewRecordingDialog open={dialogOpen} onOpenChange={setDialogOpen} />
       <GenerateTestDialog open={generateOpen} onOpenChange={setGenerateOpen} />
       <ImportGitDialog open={gitDialogOpen} onOpenChange={setGitDialogOpen} />
+      <DuplicateTestDialog
+        testName={pendingCopy?.test.name ?? ""}
+        warnings={pendingCopy?.warnings ?? []}
+        open={pendingCopy !== null}
+        busy={copying}
+        onOpenChange={(o) => {
+          if (!o && !copying) setPendingCopy(null);
+        }}
+        onConfirm={() => {
+          if (pendingCopy) void duplicate(pendingCopy.test);
+        }}
+      />
       <TagsDialog
         test={tagsFor}
         open={tagsFor !== null}

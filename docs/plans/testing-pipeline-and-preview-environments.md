@@ -381,7 +381,7 @@ single point of failure, and it is an hour of work.
 | 1 — Real CI on Electron | **built** | A green tick that means something |
 | 2 — Playwright-driven Electron E2E | **built** | Agents exercise the real app pre-merge |
 | 3 — Browser preview + per-PR artifacts | **built** | Seconds-long loop, shareable previews |
-| 4a — Close the drift | **built** | `shell/electron` is level with `main` |
+| 4a — Close the drift | **built, then reopened** | Levelled the trees on 2026-08-07; 40 commits behind again by 2026-08-08 — see §11 |
 | 4b — Converge on `@shell/backend` | blocked on a decision | One tree; drift stops existing |
 | 5 — Drift guard | not started (0.5d) | It stays converged |
 
@@ -424,8 +424,25 @@ everything else is on **`shell/electron`**, branched from `a61598c`:
 3. `build/` was not gitignored — every build left the bundle one `git add -A`
    from being committed, which `check-repo-hygiene` bans.
 
-**Phase 4a — the drift is closed.** `shell/electron` is now **0 commits behind
-`main`**, done as one `git merge` rather than 13 cherry-picks: both trees
+**Phase 4a — the drift was closed, and has since reopened.**
+
+> **Measured 2026-08-08:** `shell/electron` is **10 ahead, 40 behind `main`**,
+> with **243 files differing** (108 under `renderer/`, 80 under `main/`).
+> Eighteen of those 40 commits touch `renderer/`.
+>
+> The convergence below held for about a day. That is the finding, not a
+> footnote: **4a closes the gap, it does not keep it closed** — Phase 5, the
+> drift guard, is what does that, and it has never been built. Any future
+> catch-up merge should land the guard in the same push, or this paragraph
+> needs rewriting again.
+>
+> Commit counts are not conflict counts. 4a resolved 4 conflicts across 164
+> changed files because the trees share a real merge base and most edits sit on
+> different lines; expect the next catch-up to be worse than that and nowhere
+> near 40 files of manual work.
+
+On 2026-08-07 it was **0 commits behind `main`**, done as one `git merge`
+rather than 13 cherry-picks: both trees
 descend from `a61598c`, so git's three-way handles the mechanical part — a file
 where `main` changed logic and the port changed only its import line
 auto-merges, because those are different lines. **4 conflicts out of 164
@@ -461,7 +478,8 @@ return types.
   publishes into `../.glaze/build` and would replace whatever build is
   currently installed in the Glaze app — the exact behaviour this plan exists
   to remove. Nothing in that change touches build inputs.
-- **Neither branch has been pushed.** Both are committed locally.
+- ~~**Neither branch has been pushed.**~~ Both are on `origin` as of 2026-08-08
+  (`shell/electron` and `claude/testing-pipeline-optimization-0dfc4b`).
 - **A per-pull-request preview URL** needs a `gh-pages` branch with a
   `pr-<number>/` prefix; the official Pages actions deploy one site per
   repository. The artifact ships today and the Pages job is behind an

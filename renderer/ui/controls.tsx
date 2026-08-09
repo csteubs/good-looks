@@ -262,8 +262,27 @@ export function TooltipProvider({ children }: { children: React.ReactNode }) {
   return <TooltipPrimitive.Provider delayDuration={450}>{children}</TooltipPrimitive.Provider>;
 }
 
+/**
+ * Self-providing, like the original.
+ *
+ * Radix's `Root` throws "`Tooltip` must be used within `TooltipProvider`" when
+ * there is no provider above it. The original design system does not have that
+ * requirement — its Tooltip carries a default context — so views use `<Tooltip>`
+ * on its own, and twelve `flake-panel` tests went red the moment one such view
+ * arrived from the other tree.
+ *
+ * Wrapping every Tooltip in its own Provider is safe: nesting providers is
+ * supported, an outer one still wins for shared open/close timing, and the cost
+ * is a context node per tooltip. The alternative — mounting one Provider at each
+ * app root — leaves this failing for anyone who renders a view in isolation,
+ * which is exactly what the tests do.
+ */
 export function Tooltip({ children, open }: { children: React.ReactNode; open?: boolean }) {
-  return <TooltipPrimitive.Root open={open}>{children}</TooltipPrimitive.Root>;
+  return (
+    <TooltipPrimitive.Provider delayDuration={450}>
+      <TooltipPrimitive.Root open={open}>{children}</TooltipPrimitive.Root>
+    </TooltipPrimitive.Provider>
+  );
 }
 
 export function TooltipTrigger({

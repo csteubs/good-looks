@@ -110,6 +110,48 @@ function flush() {
   }
 }
 
+/**
+ * Record an attempt that did NOT heal.
+ *
+ * Until 2026-08-07 this fixture wrote an event only when a candidate WORKED, so
+ * "Auto-Heal tried and could not rescue this step" existed nowhere on disk —
+ * and it is the more informative half. A step that healed says the locator went
+ * stale; a step that could not be healed says the element is GONE, under every
+ * locator the probe could rank. That points at the site rather than at the
+ * test, which is the question this whole evidence layer exists to answer.
+ *
+ * Two outcomes, deliberately distinguished:
+ *   • "no-candidates" — the probe found nothing on the page resembling the
+ *     element. The strongest form: there was not even anything to try.
+ *   • "exhausted"     — candidates were ranked, and acting on every one of them
+ *     failed too.
+ *
+ * Never throws and never alters control flow: every caller rethrows the
+ * original error immediately after, exactly as it did before this existed.
+ */
+function recordFailure(entry, method, outcome, candidates) {
+  try {
+    events.push({
+      outcome: outcome,
+      stepId: entry.stepId,
+      stepIndex: entry.stepIndex,
+      stepLabel: entry.stepLabel,
+      method: method,
+      originalLocator: entry.locator,
+      candidates: (candidates || []).slice(0, 8),
+      at: Date.now(),
+    });
+    flush();
+    process.stderr.write(
+      "[glaze-heal] could not heal " + (entry.stepLabel || entry.stepId) +
+      " (" + outcome + ")\\n"
+    );
+  } catch (e) {
+    // Recording is best-effort. A failure here must not become a second
+    // failure on top of the one already being reported.
+  }
+}
+
 /** Patch the page's locator factories to tag what they return, and the Locator
  *  prototype's actions to heal on a resolve failure. */
 export function installHealing(page) {
@@ -153,7 +195,15 @@ export function installHealing(page) {
           process.stderr.write("[glaze-heal] probe failed: " + String(probeErr) + "\\n");
           throw err;
         }
-        if (!candidates || candidates.length === 0) throw err;
+        // Nothing on the page resembled this element AT ALL. Recorded, because
+        // it is the strongest single piece of evidence that the failure is the
+        // site's rather than the test's: a stale locator still has something to
+        // rank, and this had nothing. Rethrown exactly as before — recording
+        // must never change what the run does.
+        if (!candidates || candidates.length === 0) {
+          recordFailure(entry, method, "no-candidates", []);
+          throw err;
+        }
 
         // Try candidates best-first. A candidate that also fails is not a heal;
         // moving on is what stops one bad suggestion from failing the run.
@@ -164,6 +214,7 @@ export function installHealing(page) {
             if (!healed) continue;
             const result = await orig.apply(healed, args);
             events.push({
+              outcome: "healed",
               stepId: entry.stepId,
               stepIndex: entry.stepIndex,
               stepLabel: entry.stepLabel,
@@ -183,6 +234,10 @@ export function installHealing(page) {
             // Try the next candidate.
           }
         }
+        // Every candidate was tried and every one failed. The element could be
+        // ranked but could not be acted on under ANY locator — see
+        // recordFailure for why this is worth writing down.
+        recordFailure(entry, method, "exhausted", candidates);
         throw err;
       }
     };

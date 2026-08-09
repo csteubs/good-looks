@@ -1,12 +1,16 @@
 // Standalone regression check for batch (suite) runs.
 //
-// The batch runner drives ordinary Playwright runs sequentially. The properties
-// that matter and are easy to break:
-//   - tests run STRICTLY one at a time (never overlapping) and in order;
-//   - a failing test does not abort the batch;
+// The batch runner drives ordinary Playwright runs — one at a time by default,
+// several at once when asked. The properties that matter and are easy to break:
+//   - with no concurrency asked for, tests run STRICTLY one at a time, in order;
+//   - with concurrency, exactly that many run at once — and never more;
+//   - entries for the SAME test stay serialized however wide the batch is,
+//     because the runner keys a live run by testId;
+//   - a failing test does not abort the batch, and does not stall the pool;
 //   - a test deleted after queueing, or one already running, is skipped rather
 //     than crashing the batch or reporting a bogus failure;
-//   - stop() kills the current run and skips the rest, keeping earlier results;
+//   - stop() kills EVERY running test and skips the rest, keeping earlier
+//     results;
 //   - the summary counts match the per-test results.
 //
 // createBatchRunner takes injected deps, so all of that is exercised here
@@ -17,6 +21,7 @@
 //   npm run check:batch-runner
 
 import {
+  buildLanes,
   buildQueue,
   createBatchRunner,
   summarize,
@@ -24,8 +29,18 @@ import {
   type BatchState,
   type BatchTestStatus,
 } from "../batch-runner.js";
+import {
+  buildBatchNotice,
+  shouldNotifyRun,
+  type BatchOutcomeNotice,
+} from "../run-notifier.js";
+import { clampBatchConcurrency, MAX_BATCH_CONCURRENCY } from "../../recorder/types.js";
 import type { Dataset } from "../../recorder/types.js";
 import type { BatchSummary } from "../../recorder/types.js";
+// The MCP server runs the same kind of suite from its own standalone .mjs (it
+// must run without the app build), so it carries its own pool. This check
+// bundles both and pins them to the same sequencing.
+import { clampParallel, runPool } from "../../../mcp/run-pool.mjs";
 // The MCP server is standalone .mjs by design (it must run without the app
 // build), so it cannot import the app's summarizer — it carries its own copy.
 // This check bundles both and pins them to the same verdicts.
@@ -63,21 +78,42 @@ function makeFake(opts: {
   const events: { channel: string; payload: unknown }[] = [];
   /** every testId startRun was called with, in order */
   const started: string[] = [];
-  /** the full start params, so a sweep's dataset binding can be asserted */
+  /** the full start params, so a sweep's dataset binding and a fan-out's
+   *  per-engine binding can both be asserted */
   const startedWithDataset: {
     testId: string;
     datasetId?: string;
     vars?: Record<string, string>;
+    browser?: string;
+    runHeadless?: boolean;
+    headed?: boolean;
   }[] = [];
   /** how many runs are in flight at once, and the high-water mark */
   let live = 0;
   let maxLive = 0;
+  /** the same, per testId — the runner keys a live run by testId, so two runs
+   *  of ONE test overlapping is the specific thing lanes exist to prevent */
+  const liveByTest = new Map<string, number>();
+  const maxLiveByTest = new Map<string, number>();
+  const enter = (testId: string): void => {
+    live++;
+    maxLive = Math.max(maxLive, live);
+    const n = (liveByTest.get(testId) ?? 0) + 1;
+    liveByTest.set(testId, n);
+    maxLiveByTest.set(testId, Math.max(maxLiveByTest.get(testId) ?? 0, n));
+  };
+  const leave = (testId: string): void => {
+    live--;
+    liveByTest.set(testId, (liveByTest.get(testId) ?? 1) - 1);
+  };
   const stopped: string[] = [];
   /** every write-through persist, in order — the last one is what a restart
    *  would load back. */
   const persisted: (BatchState & { summary: BatchSummary })[] = [];
   /** outgoing alerts requested by the runner */
   const alerts: unknown[] = [];
+  /** desktop notifications requested by the runner */
+  const notices: BatchOutcomeNotice[] = [];
   let clock = 1000;
 
   const datasets = opts.datasets ?? {};
@@ -85,16 +121,15 @@ function makeFake(opts: {
   const deps: BatchDeps = {
     getTestName: (id) => (id in names ? names[id] : `Test ${id}`),
     getDatasets: (id) => datasets[id] ?? [],
-    startRun: ({ testId, datasetId, vars }) => {
-      startedWithDataset.push({ testId, datasetId, vars });
+    startRun: ({ testId, datasetId, vars, browser, runHeadless, headed }) => {
+      startedWithDataset.push({ testId, datasetId, vars, browser, runHeadless, headed });
       if (busy.has(testId)) {
         // No new run started — and, like the real runner, a stale promise for
         // the OTHER run is still resolvable via waitFor.
         return { runId: testId, alreadyRunning: true };
       }
       started.push(testId);
-      live++;
-      maxLive = Math.max(maxLive, live);
+      enter(testId);
       return { runId: testId, recordId: `rec-${testId}` };
     },
     waitFor: (runId) => {
@@ -103,12 +138,12 @@ function makeFake(opts: {
         return Promise.resolve(0);
       }
       if (notInFlight.has(runId)) {
-        live--;
+        leave(runId);
         return null;
       }
       return new Promise<number>((resolve) => {
         pending.set(runId, (code) => {
-          live--;
+          leave(runId);
           resolve(code);
         });
       });
@@ -123,6 +158,9 @@ function makeFake(opts: {
     now: () => (clock += 10),
     alert: (a) => {
       alerts.push(a);
+    },
+    notify: (n) => {
+      notices.push(n);
     },
     persist: (record) => {
       // Deep-ish copy: the runner mutates its result entries in place, so
@@ -139,9 +177,12 @@ function makeFake(opts: {
     stopped,
     persisted,
     alerts,
+    notices,
     get maxLive() {
       return maxLive;
     },
+    /** high-water mark of concurrent runs for one test — must stay 1 */
+    maxLiveFor: (testId: string) => maxLiveByTest.get(testId) ?? 0,
     /** resolve the run for `testId` with an exit code */
     finish(testId: string, code = 0) {
       const r = pending.get(testId);
@@ -149,6 +190,8 @@ function makeFake(opts: {
       pending.delete(testId);
       r(code);
     },
+    /** every testId currently awaiting a result, in the order they started */
+    pendingIds: () => [...pending.keys()],
     isPending: (testId: string) => pending.has(testId),
     doneEvent: () => {
       const done = events.filter((e) => e.channel === "batch:done");
@@ -516,6 +559,20 @@ async function main(): Promise<void> {
       plain.length === 2 && plain.every((e) => e.datasetId === undefined),
       "no dataset options → the queue is exactly the selection",
     );
+    // And the entries are BARE — `{testId}` and nothing else. This used to be
+    // guaranteed by an early return that the per-engine fan-out replaced with a
+    // loop; the MCP calls this function with no options at all, so an entry
+    // carrying `browser: undefined` would spread into the BatchTestResult that
+    // gets written to batch-history.json.
+    //
+    // Object.keys, NOT JSON.stringify: stringify DROPS undefined-valued keys,
+    // so it reports `{testId:"a", browser:undefined}` as `{"testId":"a"}` and
+    // this assertion would pass against exactly the regression it names.
+    const keys = plain.map((e) => Object.keys(e).sort().join(","));
+    assert(
+      keys.every((k) => k === "testId"),
+      `a no-options queue carries no extra keys (got ${keys.join(" | ")})`,
+    );
 
     const swept = buildQueue({ testIds: ["a", "b"], allDatasets: true }, getDatasets);
     assert(
@@ -594,6 +651,615 @@ async function main(): Promise<void> {
       !JSON.stringify(last).includes("GBP=") && !("vars" in last.results[0]),
       "persisted batch state carries the row's NAME, never its values",
     );
+  }
+
+  // ---- parallel batches ---------------------------------------------------
+  //
+  // `concurrency` is the only thing that lets several runs overlap. Every
+  // property below is one a plausible implementation gets wrong: running more
+  // than asked, running the same test twice at once, stalling the pool on a
+  // failure, or stopping only the head of the pack.
+
+  // ── Exactly N at once, and the next starts only as one frees up ────
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b", "c", "d", "e"], concurrency: 3 });
+    await tick();
+
+    assert(
+      fake.started.length === 3,
+      `concurrency 3 starts exactly three runs up front (got ${fake.started.length})`,
+    );
+    assert(
+      fake.started.join(",") === "a,b,c",
+      `the first three are started in queue order (got ${fake.started.join(",")})`,
+    );
+    assert(!fake.isPending("d"), "the fourth test waits for a slot");
+
+    fake.finish("b", 0);
+    await tick();
+    assert(
+      fake.started.length === 4 && fake.started[3] === "d",
+      "a finished run frees a slot for the next test",
+    );
+    assert(fake.maxLive === 3, `never exceeds the requested concurrency (peak ${fake.maxLive})`);
+
+    fake.finish("a", 0);
+    fake.finish("c", 1);
+    await tick();
+    fake.finish("d", 0);
+    fake.finish("e", 0);
+    await tick();
+
+    const done = fake.doneEvent();
+    assert(done?.summary.total === 5, "every test in a parallel batch is accounted for");
+    assert(
+      done?.summary.passed === 4 && done?.summary.failed === 1,
+      `parallel results are attributed correctly (${done?.summary.passed}p/${done?.summary.failed}f)`,
+    );
+    assert(fake.maxLive === 3, `peak concurrency held at 3 for the whole batch (${fake.maxLive})`);
+  }
+
+  // ── A sweep still runs ONE test's rows one at a time ───────────────
+  //
+  // THE load-bearing case. The runner keys a live run by testId, so two rows of
+  // the same test in flight together means start() declines the second with
+  // `alreadyRunning` and the row is reported skipped — i.e. a "run every row"
+  // sweep silently runs one row. Lanes are what prevent it, and nothing else in
+  // this suite would notice if they were removed.
+  {
+    const fake = makeFake({
+      datasets: {
+        a: [
+          { id: "d1", name: "GBP", values: { currency: "GBP" } },
+          { id: "d2", name: "USD", values: { currency: "USD" } },
+          { id: "d3", name: "EUR", values: { currency: "EUR" } },
+        ],
+      },
+    });
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"], allDatasets: true, concurrency: 8 });
+    await tick();
+
+    assert(
+      fake.maxLiveFor("a") === 1,
+      `a swept test never has two rows in flight at once (peak ${fake.maxLiveFor("a")})`,
+    );
+    assert(
+      fake.started.filter((id) => id === "a").length === 1,
+      "only the first row of a swept test has started",
+    );
+    assert(fake.isPending("b"), "an unrelated test runs in parallel with the sweep");
+    assert(
+      fake.maxLive === 2,
+      `concurrency is capped at the number of DISTINCT tests (peak ${fake.maxLive})`,
+    );
+
+    fake.finish("a", 0);
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+    fake.finish("a", 1);
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+
+    const done = fake.doneEvent();
+    const rows = done?.results.filter((r) => r.testId === "a") ?? [];
+    assert(rows.length === 3, `every row is still queued (got ${rows.length})`);
+    assert(
+      rows.every((r) => r.status !== "skipped"),
+      "no row is skipped as 'That test was already running'",
+    );
+    assert(
+      rows.map((r) => r.datasetName).join(",") === "GBP,USD,EUR",
+      `rows keep their declared order (got ${rows.map((r) => r.datasetName).join(",")})`,
+    );
+    assert(
+      rows.map((r) => r.status).join(",") === "passed,passed,failed",
+      `each row reports its own outcome (got ${rows.map((r) => r.status).join(",")})`,
+    );
+    assert(fake.maxLiveFor("a") === 1, "a swept test stayed serialized for the whole batch");
+  }
+
+  // ── Batch completion notification ──────────────────────────────────
+  // The whole point: the Batch view's toast only fires while that view is
+  // mounted, so starting a suite and navigating away meant never being told it
+  // finished. A CLEAN batch must notify too — "all 12 passed" is the message
+  // the user walked away waiting for, and the per-run notifier's
+  // return-null-on-success rule is exactly wrong here.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"] });
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+
+    assert(fake.notices.length === 1, `exactly one notification per batch (${fake.notices.length})`);
+    assert(fake.notices[0].failed === 0 && fake.notices[0].passed === 2, "a clean batch notifies");
+    assert(fake.notices[0].stopped === false, "a completed batch is not reported as stopped");
+    assert(
+      buildBatchNotice(fake.notices[0]).title === "Batch passed",
+      `a clean batch says so (got "${buildBatchNotice(fake.notices[0]).title}")`,
+    );
+  }
+
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"] });
+    await tick();
+    fake.finish("a", 1);
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+
+    assert(fake.notices.length === 1, "a failing batch still notifies exactly once");
+    assert(
+      buildBatchNotice(fake.notices[0]).title === "Batch finished — 1 failed",
+      `a failing batch names the count (got "${buildBatchNotice(fake.notices[0]).title}")`,
+    );
+  }
+
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"] });
+    await tick();
+    batch.stop();
+    await tick();
+
+    assert(fake.notices.length === 1, "a stopped batch notifies rather than going silent");
+    assert(fake.notices[0].stopped === true, "the notice knows it was stopped");
+    assert(
+      buildBatchNotice(fake.notices[0]).title === "Batch stopped",
+      `a stopped batch says stopped, not failed (got "${buildBatchNotice(fake.notices[0]).title}")`,
+    );
+  }
+
+  // A run INSIDE a batch stays silent, however the per-run setting is set.
+  // Before this, a batch with eight failures fired eight macOS notifications
+  // and none for the batch — the opposite of what a batch notification is for.
+  {
+    assert(
+      shouldNotifyRun({ batchId: "b1", enabled: true }) === false,
+      "a run inside a batch does not post its own notification",
+    );
+    assert(
+      shouldNotifyRun({ batchId: undefined, enabled: true }) === true,
+      "a standalone run still notifies when the setting is on",
+    );
+    assert(
+      shouldNotifyRun({ batchId: undefined, enabled: false }) === false,
+      "the per-run setting still switches standalone runs off",
+    );
+  }
+
+  // The notice text itself, without a runner.
+  {
+    assert(
+      buildBatchNotice({ total: 1, passed: 1, failed: 0, skipped: 0, stopped: false }).body ===
+        "All 1 run passed.",
+      "singular run reads correctly",
+    );
+    assert(
+      buildBatchNotice({ total: 5, passed: 3, failed: 0, skipped: 2, stopped: false }).body ===
+        "All 3 runs passed. 2 skipped.",
+      "skipped runs are named, so 'all passed' can't hide them",
+    );
+  }
+
+  // ── Multi-engine fan-out ───────────────────────────────────────────
+  // One test on N engines is N queue entries. The lane invariant is what makes
+  // that safe, and it only holds because a test's entries are CONTIGUOUS in the
+  // queue — interleave them across tests and buildLanes reorders everything.
+  {
+    const queue = buildQueue(
+      {
+        testIds: ["a", "b"],
+        perTest: [
+          { testId: "a", browsers: ["chromium", "firefox", "webkit"], headless: true },
+          { testId: "b", browsers: ["webkit"], headless: false },
+        ],
+      },
+      () => [],
+    );
+    assert(queue.length === 4, `3 engines + 1 engine is 4 entries (got ${queue.length})`);
+    assert(
+      queue.map((e) => `${e.testId}:${e.browser}`).join(",") ===
+        "a:chromium,a:firefox,a:webkit,b:webkit",
+      `a test's engines stay contiguous and in order (got ${queue
+        .map((e) => `${e.testId}:${e.browser}`)
+        .join(",")})`,
+    );
+    assert(
+      queue.every((e) => (e.testId === "a" ? e.headless === true : e.headless === false)),
+      "each entry carries its own row's headedness",
+    );
+    // Flattening lanes must reproduce queue order, or running at concurrency 1
+    // stops being byte-identical to the old sequential loop.
+    const flat = buildLanes(queue).flat();
+    assert(
+      flat.join(",") === queue.map((_, i) => i).join(","),
+      `flattened lanes reproduce queue order exactly (got ${flat.join(",")})`,
+    );
+  }
+
+  // A test with no perTest entry is the MCP path and every batch recorded
+  // before per-row options existed. It contributes ONE entry carrying no engine
+  // of its own — which is what lets runEntry fall back to the batch-wide
+  // `browser`. The queue has no opinion about that fallback (the shared module
+  // never sees `params.browser`); the runner applies it, and the fan-out block
+  // above asserts that end of it.
+  {
+    const queue = buildQueue(
+      {
+        testIds: ["a", "b"],
+        perTest: [{ testId: "a", browsers: ["webkit"], headless: false }],
+      },
+      () => [],
+    );
+    assert(queue.length === 2, `an unlisted test contributes exactly one entry (${queue.length})`);
+    assert(queue[1].browser === undefined, "an unlisted test carries no engine of its own");
+    assert(queue[1].headless === undefined, "and no headedness of its own");
+  }
+
+  // Engines multiply dataset rows rather than replacing them.
+  {
+    const queue = buildQueue(
+      {
+        testIds: ["a"],
+        allDatasets: true,
+        perTest: [{ testId: "a", browsers: ["chromium", "webkit"], headless: false }],
+      },
+      () => [
+        { id: "d1", name: "GBP", values: { currency: "GBP" } },
+        { id: "d2", name: "USD", values: { currency: "USD" } },
+      ],
+    );
+    assert(queue.length === 4, `2 engines x 2 rows is 4 entries (got ${queue.length})`);
+    assert(
+      queue.map((e) => `${e.browser}/${e.datasetName}`).join(",") ===
+        "chromium/GBP,chromium/USD,webkit/GBP,webkit/USD",
+      `engine-major within the test (got ${queue.map((e) => `${e.browser}/${e.datasetName}`).join(",")})`,
+    );
+  }
+
+  // THE load-bearing assertion. Three engines of one test must never be in
+  // flight together however wide the batch is asked to run: runId === testId, so
+  // the runner would decline the second and third with `alreadyRunning` and the
+  // batch would report two of the three engines as skipped.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b"],
+      concurrency: 8,
+      perTest: [
+        { testId: "a", browsers: ["chromium", "firefox", "webkit"], headless: true },
+        { testId: "b", browsers: ["chromium"], headless: false },
+      ],
+    });
+    await tick();
+
+    assert(
+      fake.maxLiveFor("a") === 1,
+      `a fanned-out test never has two engines in flight at once (peak ${fake.maxLiveFor("a")})`,
+    );
+    assert(fake.isPending("b"), "a different test still runs in parallel with the fan-out");
+
+    fake.finish("a", 0);
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+    fake.finish("a", 1);
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+
+    assert(fake.maxLiveFor("a") === 1, "stayed serialized for the whole batch");
+
+    const startsForA = fake.startedWithDataset.filter((s) => s.testId === "a");
+    assert(
+      startsForA.map((s) => s.browser).join(",") === "chromium,firefox,webkit",
+      `each engine was actually requested (got ${startsForA.map((s) => s.browser).join(",")})`,
+    );
+    // headed and runHeadless are two spellings of one choice; letting them
+    // disagree opens a window for a run the user asked to be headless.
+    assert(
+      startsForA.every((s) => s.runHeadless === true && s.headed === false),
+      "a headless row starts headless, with headed derived from the same value",
+    );
+    const startsForB = fake.startedWithDataset.filter((s) => s.testId === "b");
+    assert(
+      startsForB.every((s) => s.runHeadless === false && s.headed === true),
+      "a headed row in the same batch still starts headed",
+    );
+
+    const done = fake.doneEvent();
+    const rows = done?.results.filter((r) => r.testId === "a") ?? [];
+    assert(rows.length === 3, `every engine has its own result row (got ${rows.length})`);
+    assert(
+      rows.map((r) => r.browser).join(",") === "chromium,firefox,webkit",
+      `results name their engine, so three rows are distinguishable (got ${rows
+        .map((r) => r.browser)
+        .join(",")})`,
+    );
+    assert(
+      rows.map((r) => r.status).join(",") === "passed,passed,failed",
+      `each engine reports its own outcome (got ${rows.map((r) => r.status).join(",")})`,
+    );
+  }
+
+  // Stopping mid-fan-out kills by testId, which is still the run id.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a"],
+      perTest: [{ testId: "a", browsers: ["chromium", "firefox", "webkit"], headless: false }],
+    });
+    await tick();
+    batch.stop();
+    await tick();
+    assert(fake.stopped.includes("a"), "stop killed the in-flight engine by test id");
+    const done = fake.doneEvent();
+    assert(done?.stopped === true, "the batch reports itself stopped");
+    assert(
+      (done?.results ?? []).filter((r) => r.status === "skipped").length === 2,
+      "the engines that never started are skipped, not left pending",
+    );
+  }
+
+  // The concurrency ceiling stays DISTINCT TESTS, not the fan-out count.
+  // Raising it to the queue length would leave workers idling on empty lanes
+  // and make the headed warning promise more windows than ever open.
+  {
+    const queue = buildQueue(
+      {
+        testIds: ["a", "b"],
+        perTest: [
+          { testId: "a", browsers: ["chromium", "firefox", "webkit"], headless: false },
+          { testId: "b", browsers: ["chromium", "webkit"], headless: false },
+        ],
+      },
+      () => [],
+    );
+    assert(
+      buildLanes(queue).length === clampBatchConcurrency(99, new Set(["a", "b"]).size),
+      "lane count equals the handler's clamp over distinct tests",
+    );
+  }
+
+  // ── Asking for more than there are tests is not an error ───────────
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"], concurrency: MAX_BATCH_CONCURRENCY });
+    await tick();
+    assert(fake.maxLive === 2, `clamped to the number of tests (peak ${fake.maxLive})`);
+    fake.finish("a", 0);
+    fake.finish("b", 0);
+    await tick();
+    assert(fake.doneEvent()?.summary.passed === 2, "both tests still ran");
+  }
+
+  // ── concurrency 1 (and absent) is byte-for-byte the old behaviour ──
+  //
+  // The sequential path must not become "the parallel path with the dial turned
+  // down": lanes are flattened in first-appearance order, and buildQueue emits a
+  // test's rows contiguously, so one worker reproduces queue order exactly.
+  {
+    const rows: Record<string, Dataset[]> = {
+      a: [
+        { id: "d1", name: "GBP", values: {} },
+        { id: "d2", name: "USD", values: {} },
+      ],
+    };
+    // The repeated "a" is the case that breaks this if the selection isn't
+    // deduped: its entries would straddle b's, and grouping them into one lane
+    // would reorder the queue — a silent behaviour change at concurrency 1.
+    const queue = buildQueue({ testIds: ["a", "b", "a"], allDatasets: true }, (id) => rows[id] ?? []);
+    assert(
+      queue.map((e) => `${e.testId}${e.datasetName ?? ""}`).join(",") === "aGBP,aUSD,b",
+      `a repeated id in the selection is deduped (got ${queue.map((e) => e.testId).join(",")})`,
+    );
+    const flattened = buildLanes(queue).flat();
+    assert(
+      flattened.join(",") === queue.map((_, i) => i).join(","),
+      `one worker walks the queue in queue order (got ${flattened.join(",")})`,
+    );
+
+    for (const concurrency of [undefined, 1]) {
+      const fake = makeFake({});
+      const batch = createBatchRunner(fake.deps);
+      batch.start({ testIds: ["a", "b", "c"], concurrency });
+      await tick();
+      assert(
+        fake.started.length === 1,
+        `concurrency ${String(concurrency)} starts only the first test`,
+      );
+      fake.finish("a", 0);
+      await tick();
+      fake.finish("b", 0);
+      await tick();
+      fake.finish("c", 0);
+      await tick();
+      assert(
+        fake.maxLive === 1,
+        `concurrency ${String(concurrency)} never overlaps (peak ${fake.maxLive})`,
+      );
+      assert(
+        fake.started.join(",") === "a,b,c",
+        `concurrency ${String(concurrency)} keeps queue order`,
+      );
+    }
+  }
+
+  // ── A failure in one lane doesn't stall the others ─────────────────
+  {
+    const fake = makeFake({ names: { gone: null } });
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["gone", "a", "b", "c"], concurrency: 2 });
+    await tick();
+
+    // "gone" is skipped without ever starting, so its worker must move straight
+    // on rather than holding a slot.
+    assert(!fake.started.includes("gone"), "a deleted test never starts a run");
+    assert(
+      fake.started.length === 2 && fake.started.join(",") === "a,b",
+      `the pool refills past a skipped test (started ${fake.started.join(",")})`,
+    );
+
+    fake.finish("a", 1);
+    await tick();
+    assert(fake.started.includes("c"), "a FAILING test frees its slot like any other");
+    fake.finish("b", 0);
+    fake.finish("c", 0);
+    await tick();
+
+    const done = fake.doneEvent();
+    assert(done?.summary.skipped === 1, "the deleted test counts as skipped");
+    assert(done?.summary.failed === 1 && done?.summary.passed === 2, "the rest are attributed");
+    assert(done?.running === false, "the batch finishes rather than hanging on the empty lane");
+  }
+
+  // ── stop() kills EVERY running test, not just the first ────────────
+  //
+  // Regression: stop() used to kill `results[currentIndex]`. With several in
+  // flight that leaves the other browsers open while the UI reports the batch
+  // as stopped — windows the user then has to close by hand.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b", "c", "d"], concurrency: 3 });
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+    // a passed; b, c, d are now the live set.
+    assert(fake.pendingIds().length === 3, "three runs are in flight before the stop");
+
+    batch.stop();
+    await tick();
+    await tick();
+
+    assert(
+      ["b", "c", "d"].every((id) => fake.stopped.includes(id)),
+      `stop() kills every running test (killed ${fake.stopped.join(",")})`,
+    );
+    const done = fake.doneEvent();
+    assert(done?.stopped === true, "a stopped parallel batch is marked stopped");
+    assert(done?.running === false, "a stopped parallel batch is no longer running");
+    assert(
+      done?.results.find((r) => r.testId === "a")?.status === "passed",
+      "results from before the stop are kept",
+    );
+  }
+
+  // ── currentIndex stays meaningful for readers that persist it ──────
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b", "c"], concurrency: 3 });
+    await tick();
+    assert(
+      batch.getState()?.currentIndex === 0,
+      `currentIndex is the LOWEST running entry (got ${batch.getState()?.currentIndex})`,
+    );
+    fake.finish("a", 0);
+    await tick();
+    assert(
+      batch.getState()?.currentIndex === 1,
+      `currentIndex advances as the head finishes (got ${batch.getState()?.currentIndex})`,
+    );
+    fake.finish("b", 0);
+    fake.finish("c", 0);
+    await tick();
+    assert(batch.getState()?.currentIndex === -1, "currentIndex is -1 once nothing is running");
+  }
+
+  // ── Clamping agrees wherever it is applied ─────────────────────────
+  {
+    assert(clampBatchConcurrency(4, 10) === 4, "an in-range request is honoured");
+    assert(clampBatchConcurrency(99, 10) === 10, "clamped down to the lane count");
+    assert(
+      clampBatchConcurrency(99, 999) === MAX_BATCH_CONCURRENCY,
+      "clamped down to the hard ceiling",
+    );
+    assert(clampBatchConcurrency(0, 10) === 1, "zero means one at a time");
+    assert(clampBatchConcurrency(-5, 10) === 1, "a negative means one at a time");
+    assert(clampBatchConcurrency(2.9, 10) === 2, "a fraction floors rather than rounding up");
+    assert(clampBatchConcurrency(undefined, 10) === 1, "absent means one at a time");
+    // A hostile IPC payload: the handler's `params` is untyped at runtime.
+    assert(clampBatchConcurrency("8" as unknown, 10) === 1, "a numeric STRING is not a number");
+    assert(clampBatchConcurrency(Number.NaN, 10) === 1, "NaN means one at a time");
+    assert(clampBatchConcurrency(Infinity, 10) === 1, "Infinity means one at a time");
+    assert(clampBatchConcurrency(4, 0) === 1, "an empty queue can't run four at once");
+  }
+
+  // ── App ↔ MCP pool parity ─────────────────────────────────────────
+  //
+  // Same reasoning as the summary parity below: two implementations of one
+  // rule. A suite must not behave differently depending on whether a person or
+  // an agent started it.
+  {
+    assert(clampParallel(4, 10) === 4, "MCP: an in-range request is honoured");
+    assert(clampParallel(99, 10) === 10, "MCP: clamped down to the item count");
+    assert(
+      clampParallel(99, 999) === MAX_BATCH_CONCURRENCY,
+      "MCP and app share one hard ceiling",
+    );
+    for (const [requested, items] of [
+      [4, 10],
+      [99, 10],
+      [99, 999],
+      [0, 10],
+      [-5, 10],
+      [2.9, 10],
+      [Number.NaN, 10],
+      [4, 0],
+    ] as [number, number][]) {
+      assert(
+        clampParallel(requested, items) === clampBatchConcurrency(requested, items),
+        `app and MCP clamp agree — ${requested} over ${items} items`,
+      );
+    }
+
+    // Ordering + limit, on the pool itself.
+    const order: number[] = [];
+    let poolLive = 0;
+    let poolPeak = 0;
+    const release: (() => void)[] = [];
+    const items = [0, 1, 2, 3, 4];
+    const finished = runPool(items, 2, async (item: number) => {
+      order.push(item);
+      poolLive++;
+      poolPeak = Math.max(poolPeak, poolLive);
+      await new Promise<void>((r) => release.push(r));
+      poolLive--;
+    });
+    await tick();
+    assert(order.join(",") === "0,1", `MCP pool claims items in order (got ${order.join(",")})`);
+    assert(poolPeak === 2, `MCP pool honours its limit (peak ${poolPeak})`);
+    while (release.length > 0) {
+      release.shift()?.();
+      await tick();
+    }
+    await finished;
+    assert(order.join(",") === "0,1,2,3,4", "MCP pool eventually runs every item");
+    assert(poolPeak === 2, `MCP pool never exceeded its limit (peak ${poolPeak})`);
+
+    // A throwing worker must not take the batch down with it.
+    const seen: number[] = [];
+    await runPool([0, 1, 2], 2, async (item: number) => {
+      if (item === 0) throw new Error("boom");
+      seen.push(item);
+    });
+    assert(seen.join(",") === "1,2", `MCP pool survives a throwing item (got ${seen.join(",")})`);
   }
 
   if (failures > 0) {

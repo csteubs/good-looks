@@ -86,6 +86,18 @@ export interface SettingRowProps {
   danger?: string;
   /** Indent under the row above and draw the dependency rule. */
   nested?: boolean;
+  /**
+   * Put the control on its own full-width line BELOW the label and summary,
+   * instead of in a right-hand column.
+   *
+   * For rows whose control is a cluster rather than a single switch — the
+   * webhook row is a password field plus three buttons. In the horizontal
+   * layout the two columns compete for the same width, and the wide one wins:
+   * the label column collapses until "Webhook URL" breaks across two lines and
+   * its summary renders as a one-word-per-line ribbon. Stacking gives each the
+   * full width in turn.
+   */
+  stacked?: boolean;
   /** The control. Wire its `id` to this row's `id`. */
   children?: ReactNode;
 }
@@ -97,6 +109,7 @@ export function SettingRow({
   details,
   danger,
   nested,
+  stacked,
   children,
 }: SettingRowProps) {
   const [open, setOpen] = useState(false);
@@ -110,7 +123,7 @@ export function SettingRow({
 
   return (
     <Field
-      orientation="horizontal"
+      orientation={stacked ? "vertical" : "horizontal"}
       data-setting-row={id}
       // `rounded-none` because a single-sided border with rounded corners
       // renders as a detached arc.
@@ -154,7 +167,7 @@ export function SettingRow({
           <FieldDescription id={`${id}-details`}>{details}</FieldDescription>
         ) : null}
       </FieldContent>
-      {children}
+      {stacked ? <div className="flex w-full justify-end">{children}</div> : children}
     </Field>
   );
 }

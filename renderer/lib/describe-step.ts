@@ -2,7 +2,7 @@
 // leading `await`/trailing `;`), for display in the UI. Mirrors the backend
 // script generator so what the user sees matches the generated script.
 
-import { DEFAULT_WAIT_TIMEOUT_MS } from "./recorder-types";
+import { DEFAULT_WAIT_TIMEOUT_MS, ELEMENT_STATES, isCssPropName } from "./recorder-types";
 import type { Locator, Step, StepType } from "./recorder-types";
 
 function q(s: string): string {
@@ -67,6 +67,14 @@ function describeAssert(step: Step, target: string | null): string {
       return x + ".toHaveAttribute(" + q(step.attr ?? "") + ", " + q(step.value ?? "") + ")";
     case "count":
       return x + ".toHaveCount(" + (step.count ?? 0) + ")";
+    case "css": {
+      if (!isCssPropName(step.cssProp)) return "assert";
+      const expected =
+        step.cssMatch === "contains"
+          ? "new RegExp(" + q(reEscape(step.value ?? "")) + ", \"i\")"
+          : q(step.value ?? "");
+      return x + ".toHaveCSS(" + q(step.cssProp) + ", " + expected + ")";
+    }
     case "visible":
     default:
       return x + ".toBeVisible()";
@@ -199,6 +207,28 @@ export function describeWait(step: Step): string {
   }
 }
 
+/** Mirror of stateLine in main/services/script-generator.ts — keep in sync.
+ *
+ *  Rendered as the generated call rather than phrased (unlike a wait), because
+ *  the call IS the explanation: `page.mouse.down()` with no target is exactly
+ *  what the step does, and phrasing it as "press and hold" would hide that it
+ *  presses wherever the preceding hover left the cursor. */
+function describeState(step: Step, target: string | null): string {
+  const state = step.elementState;
+  if (!state || !ELEMENT_STATES.includes(state)) return "state";
+  switch (state) {
+    case "press":
+      return "page.mouse.down()";
+    case "release":
+      return "page.mouse.up()";
+    case "focus":
+      return target ? target + ".focus()" : "state";
+    case "hover":
+    default:
+      return target ? target + ".hover()" : "state";
+  }
+}
+
 export function describeStep(step: Step): string {
   if (step.type === "if") return "if " + describeCondition(step);
   if (step.type === "endif") return "end if";
@@ -236,6 +266,8 @@ export function describeStep(step: Step): string {
       return "page.setViewportSize({ width: " + (step.width ?? 1280) + ", height: " + (step.height ?? 800) + " })";
     case "assert":
       return describeAssert(step, target);
+    case "state":
+      return describeState(step, target);
     default:
       return step.type;
   }

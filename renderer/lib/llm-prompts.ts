@@ -5,14 +5,15 @@
 import type { LlmMessage } from "./llm-types";
 import type { Locator, TestSpeed } from "./recorder-types";
 import { LOG_REQUEST_PROTOCOL } from "./ai-log-request";
+// The runner's own table, not a copy of it. The model is told what the run
+// ACTUALLY did, so a stale number here is the app confidently stating a wrong
+// fact to something reasoning from it — quieter than the MCP's copy was, and
+// no more true. This used to be a third transcription kept honest by a
+// text-scraping assertion in check:crawl-speed.
+import { slowMoFor } from "../../shared/run-pacing.mjs";
 
 const MAX_SCRIPT_CHARS = 6000;
 const MAX_OUTPUT_CHARS = 8000;
-
-// Mirror of main/services/playwright-runner.ts SLOW_MO_MS — keep in sync.
-// Mirror of the runner's own table (playwright-runner.ts). The model is told
-// what the run ACTUALLY did, so these numbers have to be the real ones.
-const SLOW_MO_MS: Record<TestSpeed, number> = { fast: 0, medium: 400, slow: 1200, crawl: 2500 };
 
 // Errors are the most informative part of a long run output, so keep the tail.
 function truncateTail(text: string, max: number): string {
@@ -56,7 +57,7 @@ export interface DebugContext {
 }
 
 export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
-  const slowMo = SLOW_MO_MS[ctx.speed ?? "fast"];
+  const slowMo = slowMoFor(ctx.speed);
   const scriptTruncated = ctx.script.length > MAX_SCRIPT_CHARS;
   const contextLines = [
     `Test: "${ctx.testName}"`,
@@ -197,7 +198,7 @@ export function buildGenerateMessages(ctx: GenerateContext): LlmMessage[] {
     `Starting URL: ${ctx.url}`,
   ];
   if (ctx.speed && ctx.speed !== "fast") {
-    const slowMo = SLOW_MO_MS[ctx.speed];
+    const slowMo = slowMoFor(ctx.speed);
     optLines.push(
       ctx.speed === "crawl"
         ? `Playback speed: "crawl" — the runner inserts a ${slowMo}ms delay between actions AND waits for the page to load, go quiet and paint after every one of them. Do not write any waits of your own; they are already there.`

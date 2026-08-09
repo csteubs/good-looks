@@ -143,6 +143,37 @@ describe("numeric parameters", () => {
     });
     expect(savedPatch(controller)).toEqual({ autoHealAttemptTimeoutMs: 1000 });
   });
+
+  it("keeps the ms unit inside the control, at the same width as the row above", () => {
+    // The unit used to be a sibling `<span>`. Because the row right-aligns its
+    // control, that span displaced the field leftward by its own width and the
+    // two parameter inputs stopped lining up. jsdom cannot measure that, so pin
+    // the two things that cause it: the unit lives inside the control, and both
+    // controls declare the same width.
+    const { container } = renderPane(<AutoHealPane />);
+    const timeout = container.querySelector('[data-setting-row="auto-heal-timeout"]');
+    const retries = container.querySelector('[data-setting-row="auto-heal-retries"]');
+
+    const unit = timeout?.querySelector('[data-slot="number-input-unit"]');
+    expect(unit?.textContent).toBe("ms");
+    // Inside the control, not beside it.
+    expect(unit?.closest('[data-slot="number-input"]')).not.toBeNull();
+
+    const width = (el: Element | null | undefined) =>
+      Array.from(el?.querySelector('[data-slot="number-input"]')?.classList ?? []).filter((c) =>
+        c.startsWith("w-"),
+      );
+    expect(width(timeout)).toEqual(width(retries));
+    expect(width(timeout).length).toBeGreaterThan(0);
+  });
+
+  it("still says milliseconds in the accessible name", () => {
+    // `NumberInput` renders `unit` as `aria-hidden` decoration, so a screen
+    // reader gets no unit from it. Losing the aria-label would leave "5" and
+    // "30000" as bare numbers on a control whose own label says only "timeout".
+    renderPane(<AutoHealPane />);
+    expect(screen.getByRole("spinbutton", { name: /per-attempt timeout in milliseconds/i })).toBeTruthy();
+  });
 });
 
 describe("search filtering", () => {

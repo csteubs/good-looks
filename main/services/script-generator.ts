@@ -1,7 +1,13 @@
 // Convert recorded steps into a @playwright/test spec file.
 
 import { GLAZE_RUNTIME_FILE } from "./glaze-runtime-source.js";
-import { cookieScopeIsValid, toPlaywrightSameSite, VAR_REF_RE } from "../recorder/types.js";
+import {
+  cookieScopeIsValid,
+  ELEMENT_STATES,
+  isCssPropName,
+  toPlaywrightSameSite,
+  VAR_REF_RE,
+} from "../recorder/types.js";
 import type {
   CookieSpec,
   Locator,
@@ -146,6 +152,23 @@ function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>
       return "await " + x + ".toHaveAttribute(" + q(step.attr ?? "") + ", " + valueExpr(step.value, vars) + ");";
     case "count":
       return "await " + x + ".toHaveCount(" + num(step.count, 0) + ");";
+    case "css": {
+      // `cssProp` is re-checked HERE and not merely at the capture boundary:
+      // `recorder:updateStep` copies its allowlisted fields without
+      // re-normalizing, and tests recorded before the boundary check existed
+      // are regenerated from their stored steps. Same argument as `num()`.
+      const prop = isCssPropName(step.cssProp) ? step.cssProp : "";
+      if (!prop) return null;
+      // `contains` embeds the expected value in a pattern, so — exactly like
+      // urlEndsWith/urlIs — it takes the literal text rather than an
+      // expression: `reEscape` only works on a string known now, so a `${var}`
+      // reference inside a regex assert stays literal by design.
+      const expected =
+        step.cssMatch === "contains"
+          ? "new RegExp(" + q(reEscape(step.value ?? "")) + ", \"i\")"
+          : valueExpr(step.value, vars);
+      return "await " + x + ".toHaveCSS(" + q(prop) + ", " + expected + ");";
+    }
     case "visible":
     default:
       return "await " + x + ".toBeVisible();";
@@ -168,6 +191,39 @@ function captureLine(step: Step, target: string | null): string | null {
   const args = ["V", q(step.captureVar), subject, q(from)];
   if (from === "attribute") args.push(q(step.captureAttr ?? ""));
   return "await glazeCapture(" + args.join(", ") + ");";
+}
+
+/**
+ * The `state` step: put an element into a pseudo-state so the assertion after
+ * it measures the styled state rather than the resting one.
+ *
+ * Real input, not a forced pseudo-class. Chromium's CDP could force `:hover`
+ * with `CSS.forcePseudoState`, but runs here execute on Chromium, Firefox AND
+ * WebKit, and `locator.hover()` moves a real virtual mouse on all three.
+ *
+ * `press`/`release` carry no locator on purpose: `page.mouse.down()` acts
+ * wherever the cursor already is, which is where the preceding `hover` put it.
+ * Emitting a locator-bearing call would be a second, redundant way to say the
+ * same thing, and it would disagree with the preceding hover the moment
+ * somebody edited one of the two.
+ *
+ * `elementState` is re-checked here for the same reason `cssProp` is — see the
+ * `css` case in `assertLine`.
+ */
+function stateLine(step: Step, target: string | null): string | null {
+  const state = step.elementState;
+  if (!state || !ELEMENT_STATES.includes(state)) return null;
+  switch (state) {
+    case "press":
+      return "await page.mouse.down();";
+    case "release":
+      return "await page.mouse.up();";
+    case "focus":
+      return target ? "await " + target + ".focus();" : null;
+    case "hover":
+    default:
+      return target ? "await " + target + ".hover();" : null;
+  }
 }
 
 /** Build the boolean expression for an `if` step's condition. */
@@ -396,6 +452,8 @@ function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | 
       return cookieLine(step);
     case "capture":
       return captureLine(step, target);
+    case "state":
+      return stateLine(step, target);
     // A runFlow step emits no line of its own — its target flow's steps are
     // inlined in its place by `expandSteps` before generation reaches here.
     case "runFlow":
@@ -697,9 +755,13 @@ function expandSteps(
  *  Spread order is the whole design: declared defaults first, then the run's
  *  injected values (a dataset row), then secrets. Secrets go LAST so nothing
  *  can shadow them — a dataset row naming a secret variable must not be able to
- *  substitute a plaintext value for the encrypted one. */
-function variableHeader(variables: TestVariable[]): string[] {
-  if (variables.length === 0) return [];
+ *  substitute a plaintext value for the encrypted one.
+ *
+ *  `needsCapture` forces the header even with zero declared variables: a
+ *  capture step's emitted `glazeCapture(V, …)` writes into `V` at run time, so
+ *  a spec containing one without the header is a ReferenceError on line one. */
+function variableHeader(variables: TestVariable[], needsCapture: boolean): string[] {
+  if (variables.length === 0 && !needsCapture) return [];
   const plain = variables.filter((v) => v.kind !== "secret");
   const secret = variables.filter((v) => v.kind === "secret");
   const lines: string[] = ["  const V = {"];
@@ -759,7 +821,7 @@ export function generateSpecDetailed(
     preamble.push(`import { glazeCapture } from "./${GLAZE_RUNTIME_FILE}";`);
   }
   preamble.push("");
-  const header = variableHeader(variables);
+  const header = variableHeader(variables, needsRuntime);
   // The `test(...)` line sits at `preamble.length + 1`; the variable header
   // follows it; the first body line is the one after that.
   const bodyStartLine = preamble.length + 2 + header.length;

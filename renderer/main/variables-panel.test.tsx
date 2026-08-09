@@ -193,3 +193,81 @@ describe("VariablesPanel", () => {
     expect(sweep.disabled).toBe(true);
   });
 });
+
+describe("creating and renaming variables (drafts stay local until valid)", () => {
+  // The backend's normalizeVariables DROPS entries with invalid names. If the
+  // panel persists a half-typed row, the save + invalidate cycle deletes it out
+  // from under the user — which is exactly how "Add variable" used to do
+  // nothing at all. These tests pin the fix: the screen updates instantly, but
+  // the backend only ever hears lists it will store verbatim.
+
+  it("adds a variable as an editable local row without persisting an empty name", async () => {
+    renderPanel(makeTest());
+    fireEvent.click(await screen.findByRole("button", { name: /add variable/i }));
+    // The row appears immediately...
+    expect((await screen.findByLabelText("Variable name")) as HTMLInputElement).toBeTruthy();
+    // ...and nothing was sent: an empty name would be normalized away on write.
+    expect(setVariables).not.toHaveBeenCalled();
+  });
+
+  it("persists the new variable exactly once its name becomes valid", async () => {
+    renderPanel(makeTest());
+    fireEvent.click(await screen.findByRole("button", { name: /add variable/i }));
+    const name = (await screen.findByLabelText("Variable name")) as HTMLInputElement;
+
+    // "1x" is not a valid identifier — still nothing persisted, row still here.
+    fireEvent.change(name, { target: { value: "1x" } });
+    expect(setVariables).not.toHaveBeenCalled();
+    expect(screen.getByText(/Use letters, numbers and underscores/i)).toBeTruthy();
+
+    // "x1" is valid — exactly one save, carrying the finished name.
+    fireEvent.change(name, { target: { value: "x1" } });
+    await waitFor(() => expect(setVariables).toHaveBeenCalledTimes(1));
+    expect(setVariables).toHaveBeenCalledWith("t1", [{ name: "x1", kind: "plain", value: "" }]);
+  });
+
+  it("keeps a variable alive while its name is cleared mid-rename", async () => {
+    renderPanel(makeTest({ variables: [{ name: "email", kind: "plain", value: "a@b.com" }] }));
+    const name = (await screen.findByLabelText("Variable name")) as HTMLInputElement;
+
+    fireEvent.change(name, { target: { value: "" } });
+    // The cleared name must actually show — with the record as the render
+    // source it could not, because the prop never carried the keystroke back.
+    await waitFor(() =>
+      expect((screen.getByLabelText("Variable name") as HTMLInputElement).value).toBe(""),
+    );
+    // The row survives on screen with its value intact...
+    expect((screen.getByLabelText(/Default value for/i) as HTMLInputElement).value).toBe("a@b.com");
+    // ...and no save fired — persisting `""` would delete the variable on disk.
+    // Flush a tick first so a scheduled mutate can't hide behind the assertion.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(setVariables).not.toHaveBeenCalled();
+
+    fireEvent.change(name, { target: { value: "emailAddr" } });
+    await waitFor(() =>
+      expect(setVariables).toHaveBeenCalledWith("t1", [
+        { name: "emailAddr", kind: "plain", value: "a@b.com" },
+      ]),
+    );
+  });
+
+  it("holds a duplicate name locally and says why", async () => {
+    renderPanel(makeTest({ variables: [{ name: "email", kind: "plain", value: "a@b.com" }] }));
+    fireEvent.click(await screen.findByRole("button", { name: /add variable/i }));
+    const inputs = screen.getAllByLabelText("Variable name") as HTMLInputElement[];
+    fireEvent.change(inputs[1], { target: { value: "email" } });
+
+    // normalizeVariables keeps only the FIRST of a duplicate pair, so this list
+    // must not round-trip: nothing saved, and the row explains itself.
+    expect(setVariables).not.toHaveBeenCalled();
+    expect(screen.getByText(/Already declared above/i)).toBeTruthy();
+
+    fireEvent.change(inputs[1], { target: { value: "email2" } });
+    await waitFor(() =>
+      expect(setVariables).toHaveBeenCalledWith("t1", [
+        { name: "email", kind: "plain", value: "a@b.com" },
+        { name: "email2", kind: "plain", value: "" },
+      ]),
+    );
+  });
+});

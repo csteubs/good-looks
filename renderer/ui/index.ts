@@ -17,6 +17,7 @@ export {
   Badge,
   Button,
   Input,
+  NumberInput,
   Label,
   Status,
   Table,

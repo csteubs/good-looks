@@ -352,6 +352,7 @@ export function Field({
       <button
         ref={ref as React.Ref<HTMLButtonElement>}
         type="button"
+        data-orientation={effectiveOrientation}
         onClick={onClick}
         disabled={disabled}
         className={cn(
@@ -369,6 +370,7 @@ export function Field({
   return (
     <div
       ref={ref as React.Ref<HTMLDivElement>}
+      data-orientation={effectiveOrientation}
       className={cn(fieldVariants({ orientation: effectiveOrientation }), className)}
       {...props}
     >

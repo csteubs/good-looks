@@ -251,7 +251,7 @@ async function runAxe(page) {
  * step index, so a step's shot and its violations always describe the same
  * moment.
  */
-async function capture(page, method, target, args) {
+async function capture(page, method, target, args, stepMs) {
   if (!ctx) return;
   const index = ctx.index++;
   const info = describe(target, method, args);
@@ -287,7 +287,10 @@ async function capture(page, method, target, args) {
     if (violations) ctx.a11yChecks++;
   }
 
-  const entry = { index: index, action: info.action, target: info.target, value: info.value, ok: ok, ts: Date.now(), ms: ms };
+  // \`ms\` is the SCREENSHOT's cost (and is summed into captureMs); \`stepMs\` is
+  // how long the action itself took. Two different questions — what capture
+  // costs, and why the suite is slow — and a single field cannot answer both.
+  const entry = { index: index, action: info.action, target: info.target, value: info.value, ok: ok, ts: Date.now(), ms: ms, stepMs: stepMs };
   if (rect) entry.rect = rect;
   if (violations) entry.a11y = violations;
   ctx.manifest.push(entry);
@@ -297,9 +300,24 @@ function wrap(obj, method, getPage) {
   const orig = obj[method];
   if (typeof orig !== "function") return;
   obj[method] = async function (...args) {
+    // How long the STEP took — the action itself, from call to resolve.
+    //
+    // Distinct from \`entry.ms\`, which times the screenshot and is summed into
+    // captureMs. Conflating the two is an easy mistake to make and a bad one:
+    // "this step went from 1.2s to 4.8s" is the answer to "why is the suite
+    // slow?", and the screenshot's duration answers a completely different
+    // question (what capture costs) that this fixture already reports
+    // separately.
+    //
+    // Measured HERE rather than around the whole wrapper so it excludes the
+    // screenshot and the axe run. On a crawl run it DOES include the settling
+    // waits, which is correct: those are time the step really took, and a
+    // number that hid them would make crawl runs look as fast as fast ones.
+    const tStep = Date.now();
     const result = await orig.apply(this, args);
+    const stepMs = Date.now() - tStep;
     // Screenshot AFTER the action resolves, so the frame reflects its effect.
-    try { await capture(getPage(this), method, this, args); } catch (e) { /* never throw into the test */ }
+    try { await capture(getPage(this), method, this, args, stepMs); } catch (e) { /* never throw into the test */ }
     return result;
   };
 }

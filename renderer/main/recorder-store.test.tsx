@@ -101,6 +101,7 @@ function baseState(): RecorderState {
 let actionsUnderTest: {
   insertGeneratedSteps: (steps: never[]) => Promise<void>;
   deleteStep: (id: string) => void;
+  run: (id: string) => void;
 } | null = null;
 
 /** Renders the store's state as text so tests can assert on it. */
@@ -116,16 +117,19 @@ function Probe() {
     replayStepStatus,
     insertGeneratedSteps,
     deleteStep,
+    run,
+    runEpoch,
   } = useRecorder();
   // Stashed for the tests that need to invoke an action rather than observe
   // state; a button per action would drown the markup the other suites read.
-  actionsUnderTest = { insertGeneratedSteps, deleteStep };
+  actionsUnderTest = { insertGeneratedSteps, deleteStep, run };
   return (
     <div>
       <span data-testid="recording">{String(state.recording)}</span>
       <span data-testid="steps">{liveSteps.map((s) => s.id).join(",")}</span>
       <span data-testid="steps-loaded">{String(stepsLoaded)}</span>
       <span data-testid="new-steps">{[...newStepIds].sort().join(",")}</span>
+      <span data-testid="run-epoch">{String(runEpoch)}</span>
       <span data-testid="run-lines">{(runs["t1"]?.lines ?? []).join("|")}</span>
       <span data-testid="run-running">{String(runs["t1"]?.running ?? "none")}</span>
       <span data-testid="run-code">{String(runs["t1"]?.code ?? "none")}</span>
@@ -461,6 +465,27 @@ describe("marking AI-generated steps as new", () => {
     });
 
     expect(text("new-steps")).toBe("");
+  });
+
+  it("clears the marks and bumps the epoch when a run starts", async () => {
+    // "Run test" is the natural end of the "look what the AI changed" moment:
+    // stale green outlines over a failing run would vouch for the AI's work.
+    // The epoch is what OTHER views (holding their own new-step sets) watch to
+    // clear at the same moment.
+    await withExistingStep();
+    fetchedSteps = AFTER;
+    await act(async () => {
+      await actionsUnderTest!.insertGeneratedSteps(RAW);
+    });
+    expect(text("new-steps")).toBe("new1,new2");
+    expect(text("run-epoch")).toBe("0");
+
+    await act(async () => {
+      actionsUnderTest!.run("t1");
+    });
+
+    expect(text("new-steps")).toBe("");
+    expect(text("run-epoch")).toBe("1");
   });
 
   it("marks nothing for steps the user recorded on the page", async () => {

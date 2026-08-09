@@ -32,6 +32,12 @@ import {
   TEST_SPEEDS,
   TEST_SPEED_LABELS,
 } from "../../lib/recorder-types";
+import {
+  BATCH_CONCURRENCY_CHOICES,
+  batchConcurrencyLabel,
+  choiceFromSetting,
+  settingFromChoice,
+} from "../../lib/batch-parallel";
 import { clampTestTimeoutSec } from "../../lib/settings-schema";
 import { useSettingsController } from "../settings-controller";
 import { SettingRow, useRowVisible } from "../setting-row";
@@ -107,6 +113,33 @@ export function TestDefaultsPane() {
         </SettingRow>
 
         <SettingRow
+          id="default-batch-concurrency"
+          label="Batch tests at once"
+          summary="How many tests a batch run starts in parallel. Off runs them one after another."
+          details="Each parallel test is its own browser, so this trades CPU for wall-clock time. Run headed and the Batch view asks before opening more than 10 windows at once."
+        >
+          <Select
+            value={String(choiceFromSetting(settings.defaultBatchConcurrency))}
+            onValueChange={(v) =>
+              void save({
+                defaultBatchConcurrency: settingFromChoice(v === "all" ? "all" : Number(v)),
+              })
+            }
+          >
+            <SelectTrigger id="default-batch-concurrency" className="w-36">
+              <SelectValue placeholder="Off" />
+            </SelectTrigger>
+            <SelectContent>
+              {BATCH_CONCURRENCY_CHOICES.map((c) => (
+                <SelectItem key={String(c)} value={String(c)}>
+                  {batchConcurrencyLabel(c)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </SettingRow>
+
+        <SettingRow
           id="default-test-timeout"
           label="Test timeout"
           summary="How long a single test may run before it fails."
@@ -118,7 +151,7 @@ export function TestDefaultsPane() {
               type="number"
               min={5}
               max={1800}
-              step={5}
+              step={1}
               className="w-24"
               value={Math.round((settings.defaultTestTimeoutMs ?? 60_000) / 1000)}
               onChange={(e) =>

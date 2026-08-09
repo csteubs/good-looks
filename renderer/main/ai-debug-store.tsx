@@ -15,16 +15,19 @@
 // AiDebugContext; only the open dialog subscribes to AiDebugContentContext.
 
 import * as React from "react";
+import { toast } from "@ui";
 
 import { api } from "../lib/api";
 import {
   canStartStream,
+  hashScript,
   pruneSessions,
   runSessionKey,
   sortSessions,
   stepSessionKey,
   type StartDecision,
 } from "../lib/ai-debug-sessions";
+import { extractCorrectedScript } from "../lib/parse-llm-response";
 import type { AiDebugKind, AiDebugSession, AiDebugStatus, TestSpeed } from "../lib/recorder-types";
 import type { LlmErrorKind, LlmMessage } from "../lib/llm-types";
 
@@ -202,8 +205,12 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
   const metaRef = React.useRef<Record<string, AiDebugMeta>>({});
   const ctxRef = React.useRef<Record<string, AiDebugContextData>>({});
   const lastPersistRef = React.useRef<Record<string, number>>({});
+  // Readable from the llm:done/llm:error handlers, whose closures outlive any
+  // one render: "is this session's dialog on screen right now?"
+  const expandedRef = React.useRef<string | null>(null);
 
   metaRef.current = metas;
+  expandedRef.current = expandedKey;
 
   const persist = React.useCallback((key: string, force: boolean) => {
     const meta = metaRef.current[key];
@@ -268,6 +275,75 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
     [scheduleFlush],
   );
 
+  /** Completion side-effects for a job that finished while MINIMIZED: an
+   *  in-app toast with a Review action, the desktop notification (the backend
+   *  gates it on notifyOnAiDebugDone), and — behind its own experimental
+   *  setting — auto-applying a run fix.
+   *
+   *  Auto-accept only ever fires when the script is byte-identical to the one
+   *  the prompt was built from (`scriptHash`, stamped at send time). An edit
+   *  made while the model was thinking always wins; the answer then falls back
+   *  to the review toast, never silently applies, never silently disappears. */
+  const announceFinished = React.useCallback((key: string, status: "done" | "error") => {
+    const meta = metaRef.current[key];
+    if (!meta) return;
+    // A watched dialog needs no announcement — the answer finishes in front of
+    // the user, and a banner on top of it would just be noise.
+    if (expandedRef.current === key) return;
+    const testName = meta.testName || meta.label || "test";
+
+    void api.aiDebug.notifyDone({ testName, status }).catch(() => {
+      // Best-effort, like every notification in this app.
+    });
+
+    if (status === "error") {
+      toast.error(`AI debug failed — ${testName}`, {
+        action: { label: "Review", onClick: () => setExpandedKey(key) },
+      });
+      return;
+    }
+
+    void (async () => {
+      let auto = false;
+      try {
+        auto = (await api.recorder.getSettings()).autoAcceptAiDebugFixes === true;
+      } catch {
+        auto = false;
+      }
+      const ctx = ctxRef.current[key];
+      const corrected = extractCorrectedScript(contentRef.current[key]?.content ?? "");
+      const fresh =
+        meta.scriptHash != null &&
+        ctx?.kind === "run" &&
+        hashScript(ctx.script) === meta.scriptHash;
+      if (
+        auto &&
+        !meta.superseded &&
+        meta.kind === "run" &&
+        corrected &&
+        ctx?.kind === "run" &&
+        ctx.onApplyScript &&
+        fresh
+      ) {
+        try {
+          await ctx.onApplyScript(corrected);
+          toast.success(`Applied the AI fix to “${testName}” automatically.`);
+          return;
+        } catch {
+          // Fall through to the review toast — a failed apply must surface as
+          // "there is something to review", not vanish.
+        }
+      }
+      toast(`AI debug finished — ${testName}`, {
+        description:
+          auto && corrected && !fresh
+            ? "The script changed while the AI was thinking, so nothing was applied."
+            : "The suggestions are ready for review.",
+        action: { label: "Review", onClick: () => setExpandedKey(key) },
+      });
+    })();
+  }, []);
+
   // ── Backend stream subscription ────────────────────────────────────
   React.useEffect(() => {
     const offChunk = api.on<{ requestId: string; delta: string; reasoning?: boolean }>(
@@ -291,6 +367,8 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
           status: cancelled ? "cancelled" : "done",
           requestId: null,
         });
+        // A cancel is the user's own act — nothing to announce.
+        if (!cancelled) announceFinished(key, "done");
       },
     );
     const offError = api.on<{ requestId: string; message: string; kind?: LlmErrorKind }>(
@@ -301,6 +379,7 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
         delete routeRef.current[requestId];
         flushPending();
         patchMeta(key, { status: "error", error: message, errorKind: kind ?? null, requestId: null });
+        announceFinished(key, "error");
       },
     );
     return () => {
@@ -308,7 +387,7 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
       offDone();
       offError();
     };
-  }, [appendChunk, flushPending, patchMeta]);
+  }, [announceFinished, appendChunk, flushPending, patchMeta]);
 
   // Flush any buffered chunk on unmount so a pending timer can't drop the tail
   // of an answer.

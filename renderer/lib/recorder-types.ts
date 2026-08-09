@@ -1,6 +1,7 @@
 // Mirror of main/recorder/types.ts for the renderer. Keep shapes in sync.
 
 import type { LlmErrorKind } from "./llm-types";
+import type { FlakeReport as SharedFlakeReport } from "../../shared/flake-analysis.mjs";
 
 export type StepType =
   | "goto"
@@ -17,7 +18,8 @@ export type StepType =
   | "endif"
   | "cookie"
   | "capture"
-  | "runFlow";
+  | "runFlow"
+  | "state";
 
 /** Predicate for an `if` step. Element conditions use `Step.locator`; page
  *  conditions (urlContains/titleContains) use `Step.value` as the substring. */
@@ -88,7 +90,67 @@ export type AssertKind =
   | "url"
   | "urlEndsWith"
   | "urlIs"
-  | "title";
+  | "title"
+  | "css";
+
+/** Pseudo-state a `state` step applies (mirror of main types).
+ *
+ *  `:active` and `:focus-visible` are deliberately NOT members: each needs two
+ *  Playwright calls, and a step emits exactly one awaited statement. The
+ *  Add-step dialog composes them out of several ordinary rows instead — see the
+ *  doc comment on `ElementState` in main/recorder/types.ts. */
+export type ElementState = "hover" | "focus" | "press" | "release";
+
+export const ELEMENT_STATES: ElementState[] = ["hover", "focus", "press", "release"];
+
+/** How a `css` assertion compares (mirror of main types). */
+export type CssMatch = "is" | "contains";
+
+/** Labels for the element-state picker. The four entries the USER picks are not
+ *  the four `ElementState` members — two of them expand to several steps. */
+export const ELEMENT_STATE_LABELS: Record<ElementState, string> = {
+  hover: "Hover over element",
+  focus: "Focus element",
+  press: "Press and hold mouse",
+  release: "Release mouse",
+};
+
+/** The properties the CSS-assertion picker offers with the element's live
+ *  computed value beside each (mirror of CSS_ASSERT_PROPS in main types).
+ *  KEBAB-case: `getComputedStyle().getPropertyValue()` answers "" for a
+ *  camelCase name, on both the capture side and inside Playwright's toHaveCSS.
+ *  Pinned against the backend list by check:css-assertions. */
+export const CSS_ASSERT_PROPS: string[] = [
+  "color",
+  "background-color",
+  "opacity",
+  "border-color",
+  "border-width",
+  "border-radius",
+  "box-shadow",
+  "outline-color",
+  "font-size",
+  "font-weight",
+  "font-family",
+  "text-decoration",
+  "letter-spacing",
+  "cursor",
+  "display",
+  "visibility",
+  "width",
+  "height",
+  "padding",
+  "margin",
+  "transform",
+  "z-index",
+];
+
+/** A syntactically valid CSS property name (mirror of main types). The renderer
+ *  copy exists so the dialog can refuse a malformed free-text property with a
+ *  message, rather than posting it and having the boundary drop it silently. */
+export function isCssPropName(v: unknown): v is string {
+  return typeof v === "string" && v.length <= 100 && /^-{0,2}[a-zA-Z][a-zA-Z0-9-]*$/.test(v);
+}
 
 export interface Step {
   id: string;
@@ -102,6 +164,11 @@ export interface Step {
   text?: string;
   soft?: boolean;
   attr?: string;
+  /** KEBAB-case CSS property for a "css" assertion, the match mode, and the
+   *  pseudo-state a `state` step applies (mirror of main types). */
+  cssProp?: string;
+  cssMatch?: CssMatch;
+  elementState?: ElementState;
   count?: number;
   width?: number;
   height?: number;
@@ -174,6 +241,9 @@ export interface RawStep {
   text?: string;
   soft?: boolean;
   attr?: string;
+  cssProp?: string;
+  cssMatch?: CssMatch;
+  elementState?: ElementState;
   count?: number;
   width?: number;
   height?: number;
@@ -314,53 +384,23 @@ export interface HealEntry {
   at: number;
 }
 
-/** Stability verdict for a test (mirror of main/services/flake-analysis.ts).
- *  Shares run-comparison's vocabulary rather than inventing a second one. */
-export type StabilityVerdict =
-  | "stable"
-  | "still-failing"
-  | "changed-since"
-  | "fixed"
-  | "flaky"
-  | "data-dependent"
-  | "unknown";
+// The stability vocabulary is the ANALYSIS's, imported rather than restated.
+// These were hand-written mirrors of `main/services/flake-analysis.ts`, kept
+// honest by an assertion in check:flake-analysis, because a renderer cannot
+// import from `main/`. Phase 4 moved the analysis into `shared/`, which the
+// renderer CAN import — so the copies are gone, and with them the possibility
+// of the Stability tooltips quoting a threshold the analysis no longer uses.
+export type {
+  FailureCluster,
+  StabilityVerdict,
+  StepFlake,
+  TestFlake,
+} from "../../shared/flake-analysis.mjs";
+export { MIN_RUNS_FOR_VERDICT } from "../../shared/flake-analysis.mjs";
 
-export interface StepFlake {
-  stepId: string;
-  label: string;
-  failures: number;
-  heals: number;
-  failureRate: number;
-}
-
-export interface FailureCluster {
-  signature: string;
-  example: string;
-  stepId?: string;
-  stepLabel?: string;
-  count: number;
-  lastSeenAt: number;
-  runIds: string[];
-}
-
-export interface TestFlake {
-  testId: string;
-  testName: string;
-  runs: number;
-  passed: number;
-  failed: number;
-  transitions: number;
-  flakeRate: number;
-  verdict: StabilityVerdict;
-  failingDatasets: { id: string; name: string; failed: number; runs: number }[];
-  steps: StepFlake[];
-  healedRuns: number;
-}
-
-export interface FlakeReport {
-  tests: TestFlake[];
-  clusters: FailureCluster[];
-  analysedTests: number;
+/** The analysis's report, plus what the IPC handler adds: a truncated history
+ *  has to be visible in the UI rather than implied. */
+export interface FlakeReport extends SharedFlakeReport {
   /** how many runs the analysis actually looked at, and the cap it uses */
   windowRuns: number;
   windowCap: number;
@@ -439,6 +479,10 @@ export interface RunRecord {
   replayOfRunId?: string;
   kind?: RunRecordKind;
   note?: string;
+  /** The test this run belonged to has been deleted (mirrors main types). The
+   *  record is kept so the aggregate counters hold still; every surface that
+   *  NAMES a test filters these out. Its screenshots and raw log are gone. */
+  testDeleted?: boolean;
 }
 
 /** One accessibility violation, compacted by the capture fixture
@@ -638,6 +682,17 @@ export interface PickedElement {
   attributes: Record<string, string>;
 }
 
+/** One test's row in the Batch view (mirrors main types). An ABSENT entry is
+ *  the default — unticked, the test's own runBrowser, defaultRunHeadless.
+ *  `browsers` is never empty: a zero-engine row silently doesn't run. */
+export interface BatchRowOptions {
+  selected: boolean;
+  browsers: RunBrowser[];
+  headless: boolean;
+}
+
+export const MAX_BATCH_TEST_OPTIONS = 1000;
+
 export interface RecorderSettings {
   showUrlBar: boolean;
   /** Open the trainer panel docked beside the training browser (default false). */
@@ -675,12 +730,27 @@ export interface RecorderSettings {
   alertWebhookEnabled: boolean;
   /** user-chosen Batch run order, as test ids (mirrors main types) */
   batchOrder: string[];
+  /** per-row Batch-view options by test id (mirrors main types). An absent
+   *  entry is the default — see BatchRowOptions. */
+  batchTestOptions: Record<string, BatchRowOptions>;
+  /** how many tests a batch starts at once by default (default 1, 1–16). */
+  defaultBatchConcurrency: number;
   /** how many runs' screenshot artifacts to keep per test (default 10, 1–50). */
   artifactRetainedRuns: number;
   /** also delete captured runs older than N days (0 = off, max 365). */
   artifactRetentionDays: number;
   /** notify on macOS when a run fails or shows a visual change (default false). */
   notifyOnRunIssues: boolean;
+  /** post a macOS notification when a batch finishes, pass or fail (default
+   *  true). Suppresses the per-run notification for tests inside a batch. */
+  notifyOnBatchDone: boolean;
+  /** post a macOS notification when an AI debug job finishes or fails
+   *  (default false). */
+  notifyOnAiDebugDone: boolean;
+  /** EXPERIMENTAL. Auto-apply a finished AI debug job's script fix while its
+   *  dialog is minimized, only when the script hasn't changed since the prompt
+   *  was sent (default false). */
+  autoAcceptAiDebugFixes: boolean;
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];
@@ -714,8 +784,10 @@ export interface HealSuggestion {
  *  right-click test-tools menu in the training browser. Mirrors the backend
  *  `ContextAction` in main/services/recorder-service.ts. */
 export interface ContextAction {
-  kind: "assertion" | "wait" | "goto" | "press" | "viewport" | "find" | "refine";
+  kind: "assertion" | "wait" | "goto" | "press" | "viewport" | "find" | "refine" | "elementState";
   assert?: AssertKind;
+  /** pseudo-state to preselect when kind === "elementState" (mirror of main). */
+  elementState?: "hover" | "focus";
   waitMode?: WaitDialogMode;
   picked: PickedElement | null;
   prefillText: string;
@@ -780,11 +852,18 @@ export interface RecorderState {
 }
 
 // ── Batch (suite) runs ────────────────────────────────────────────────
-// Mirrors main/services/batch-runner.ts. A batch drives ordinary runs
-// sequentially; each test still writes its own RunRecord, so a batch shows up
-// in Stats as normal runs rather than a separate kind of history.
+// Mirrors main/services/batch-runner.ts. A batch drives ordinary runs — one at
+// a time by default, up to `concurrency` at a time when asked; each test still
+// writes its own RunRecord, so a batch shows up in Stats as normal runs rather
+// than a separate kind of history.
 
 export type BatchTestStatus = "pending" | "running" | "passed" | "failed" | "skipped";
+
+/** Mirror of main/recorder/types.ts. Both halves must agree: the renderer warns
+ *  about a number the BACKEND is going to clamp, so if these drift the dialog
+ *  names a count that never happens. */
+export const MAX_BATCH_CONCURRENCY = 16;
+export const HEADED_PARALLEL_WARN = 10;
 
 export interface BatchTestResult {
   testId: string;
@@ -798,6 +877,12 @@ export interface BatchTestResult {
   note?: string;
   /** id of the RunRecord this test produced, for linking to its log */
   runRecordId?: string;
+  /** engine this entry ran on, when the batch fanned the test out across more
+   *  than one (mirrors main types; absent on pre-fan-out history records) */
+  browser?: RunBrowser;
+  /** the test has since been deleted — the row is kept so the batch's summary
+   *  still adds up, and hidden by the view (mirrors main types) */
+  testDeleted?: boolean;
 }
 
 export interface BatchSummary {

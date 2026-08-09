@@ -26,6 +26,11 @@ export interface ReplayResult {
   error?: string;
   /** For an `if` step: whether the condition held (block body should run). */
   met?: boolean;
+  /** For a `state: "hover"` step: where in the viewport (CSS client pixels) the
+   *  real cursor must be moved to. The page reports the geometry because only
+   *  the page can resolve the locator; the move itself is native, because
+   *  `:hover` follows the OS pointer and no synthetic event can fake it. */
+  point?: { x: number; y: number };
   logs: DebugLogLine[];
 }
 
@@ -198,6 +203,23 @@ export function buildReplayScript(step: Step): string {
         log(aOk ? "info" : "error", "attr[" + (step.attr || "") + "] = \\"" + av + "\\"; expected \\"" + (step.value || "") + "\\"");
         return { ok: aOk, error: aOk ? undefined : "Attribute is " + av };
       }
+      case "css": {
+        var prop = step.cssProp || "";
+        if (!prop) { log("error", "no CSS property set on this assertion"); return { ok: false, error: "No CSS property set" }; }
+        var cv = "";
+        try { cv = String(getComputedStyle(el).getPropertyValue(prop) || "").trim(); } catch (e) { log("error", "getComputedStyle threw: " + String(e)); }
+        var cExp = String(step.value == null ? "" : step.value);
+        var contains = step.cssMatch === "contains";
+        var cssOk = contains ? ci(cv).indexOf(ci(cExp)) >= 0 : cv === cExp;
+        // An empty computed value almost always means the property NAME is
+        // wrong rather than the style being absent — getPropertyValue answers
+        // "" for an unknown or camelCase name instead of throwing. Saying so
+        // here is the difference between a two-minute fix and a baffling
+        // "expected rgb(0, 82, 204), got nothing".
+        if (cv === "") log("warn", "computed " + prop + " is empty — check the property name is valid and kebab-case (background-color, not backgroundColor)");
+        log(cssOk ? "info" : "error", prop + " = \\"" + cv + "\\"; expected " + (contains ? "to contain " : "") + "\\"" + cExp + "\\"");
+        return { ok: cssOk, error: cssOk ? undefined : prop + " is " + (cv === "" ? "(empty)" : cv) };
+      }
       default: return { ok: visible(el) };
     }
   }
@@ -327,6 +349,33 @@ export function buildReplayScript(step: Step): string {
     // so a future caller that bypasses that dispatch gets a clear reason
     // instead of "Element not found" from the resolver below.
     if (t === "viewport") { log("info", "a resize is applied to the window, not from the page"); return { ok: true, error: "a resize is applied to the window, not from the page" }; }
+    if (t === "state") {
+      var es = step.elementState || "hover";
+      // press/release carry no locator: page.mouse.down acts wherever the
+      // cursor already is. The button event itself is sent natively by
+      // input-service — a page cannot press its own mouse button any more than
+      // it can resize its own window.
+      if (es === "press" || es === "release") { log("info", es + " is dispatched to the window, not from the page"); return { ok: true }; }
+      var sEl = resolve(step.locator);
+      if (!sEl) { log("error", "Element not found for state " + es); return { ok: false, error: "Element not found" }; }
+      if (es === "focus") {
+        try { sEl.focus(); } catch (e) { log("error", "focus threw: " + String(e)); return { ok: false, error: "focus failed" }; }
+        var focused = document.activeElement === sEl;
+        log(focused ? "info" : "warn", focused ? "element focused" : "focus() ran but the element did not take focus (is it focusable?)");
+        return { ok: true };
+      }
+      // hover: report WHERE, and let the backend move the real cursor there.
+      // A synthetic mouseover would fire the page's JS handlers but would not
+      // apply :hover CSS at all — the browser drives that off the actual
+      // pointer position — so dispatching one here would make a hover preview
+      // that looks like it worked and proves nothing.
+      try { sEl.scrollIntoView({ block: "center", inline: "center" }); } catch (e) {}
+      var sr = sEl.getBoundingClientRect();
+      if (!(sr.width > 0 || sr.height > 0)) { log("error", "element has no size to hover"); return { ok: false, error: "Element has no size" }; }
+      var pt = { x: sr.left + sr.width / 2, y: sr.top + sr.height / 2 };
+      log("info", "hover target at (" + Math.round(pt.x) + ", " + Math.round(pt.y) + ")");
+      return { ok: true, point: pt };
+    }
     if (t === "wait") {
       if (step.waitUntil) return runWaitUntil();
       if (typeof step.waitMs === "number") {

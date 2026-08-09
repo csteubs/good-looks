@@ -94,6 +94,44 @@ for (const name of ["replayFromStart", "replayAll"]) {
   );
 }
 
+// ── A failed heal attempt goes to the artifacts, never to the journal ──
+//
+// Both kinds of event share one file (heals.json), so the runner has to sort
+// them. Getting that wrong is silent in BOTH directions and each is bad in its
+// own way: journal a failure and the review list fills with rows whose "revert"
+// button has nothing to revert to; classify a heal as a failure and a real
+// locator change vanishes from the only place it can be reviewed or undone.
+{
+  const runner = readFileSync(resolve(here, "../playwright-runner.ts"), "utf8");
+
+  assert(
+    /function isHeal\(/.test(runner) && /function isHealFailure\(/.test(runner),
+    "the runner sorts heals.json with typed guards, not an inline filter",
+  );
+  // The backwards-compatibility direction. Every event written before
+  // 2026-08-07 has no `outcome`, and every one of those was a heal — reading
+  // them the other way would reclassify the whole existing journal as failures.
+  assert(
+    /\(e\.outcome \?\? "healed"\) === "healed"/.test(runner),
+    "an event with no outcome is read as a HEAL (that was the only kind written)",
+  );
+  // Keyed on the outcomes that exist rather than on "not a heal", so a value
+  // this build doesn't recognise is dropped rather than counted as a failure.
+  assert(
+    /e\.outcome === "exhausted" \|\| e\.outcome === "no-candidates"/.test(runner),
+    "a failure is recognised by its own outcomes, not by NOT being a heal",
+  );
+  assert(
+    /artifactStore\.writeHealFailures\(/.test(runner),
+    "failures are persisted to the run's artifacts",
+  );
+  // The journal loop must run over the HEALS, not over everything read.
+  assert(
+    /const events = all\.filter\(isHeal\);/.test(runner),
+    "only heals reach healJournalStore.record",
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

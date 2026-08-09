@@ -281,7 +281,15 @@ describe("the reset footer", () => {
     fireEvent.click(await screen.findByRole("button", { name: /reset section/i }));
     await waitFor(() => expect(setSettings).toHaveBeenCalled());
     const patch = setSettings.mock.calls[0][0];
-    expect(Object.keys(patch).slice().sort()).toEqual(["alertWebhookEnabled", "notifyOnRunIssues"]);
+    // Every plain setting on the pane, and NOTHING else — the assertion is the
+    // exhaustive key list precisely so a credential added here later fails
+    // loudly rather than being quietly resettable.
+    expect(Object.keys(patch).slice().sort()).toEqual([
+      "alertWebhookEnabled",
+      "notifyOnAiDebugDone",
+      "notifyOnBatchDone",
+      "notifyOnRunIssues",
+    ]);
   });
 
   it("is hidden while a search is running", async () => {

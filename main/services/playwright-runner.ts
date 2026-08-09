@@ -16,9 +16,11 @@ import { runHistoryStore } from "./run-history-store.js";
 import { stepReporterSource } from "./step-reporter-source.js";
 import { captureFixtureSource } from "./capture-fixture-source.js";
 import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
+import type { HealFailure } from "./artifact-store.js";
+import { metricsStore } from "./metrics-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { resolveTestTimeoutMs, SLOW_MO_MS } from "./run-pacing.js";
-import { notifyRunOutcome } from "./run-notifier.js";
+import { notifyRunOutcome, shouldNotifyRun } from "./run-notifier.js";
 import { sendAlert } from "./alert-service.js";
 import { applyRetention } from "./retention.js";
 import { buildReplay, enrichWithA11y, enrichWithVisualDiffs } from "./replay-builder.js";
@@ -33,6 +35,11 @@ import { healJournalStore } from "./heal-journal-store.js";
 import { describeStep } from "./script-generator.js";
 import { testSecretsStore } from "./test-secrets-store.js";
 import { refreshSecretSnapshot, redactWithSnapshot } from "./secret-redaction.js";
+import { stripAnsi } from "../../shared/strip-ansi.mjs";
+import {
+  PLAYWRIGHT_CONFIG_FILE,
+  playwrightConfigSource,
+} from "../../shared/playwright-config-source.mjs";
 import type {
   HealApplyMode,
   HealCandidate,
@@ -126,6 +133,40 @@ function axePath(nodeModules: string): string {
   return path.join(nodeModules, "axe-core", "axe.min.js");
 }
 
+/** Serial number for temp filenames, so two atomic writes in the same process
+ *  can never pick the same scratch path. */
+let tmpSeq = 0;
+
+/**
+ * Write a file only when its content would actually change, and atomically when
+ * it would.
+ *
+ * Every `ensure*` helper below rewrites a file SHARED by every run, on every
+ * run — while other runs' Playwright processes may be reading it. Truncate-then-
+ * write is not atomic, so a concurrent reader could see a half-written config or
+ * fixture; renaming into place is, and the content of these files is fixed per
+ * app build, so after the first run of a session this writes nothing at all.
+ */
+function writeIfChanged(filePath: string, content: string): void {
+  try {
+    if (fs.readFileSync(filePath, "utf-8") === content) return;
+  } catch {
+    // Missing or unreadable — fall through and write it.
+  }
+  const tmp = `${filePath}.${process.pid}.${tmpSeq++}.tmp`;
+  try {
+    fs.writeFileSync(tmp, content, "utf-8");
+    fs.renameSync(tmp, filePath);
+  } catch (err) {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch {
+      /* ignore */
+    }
+    throw err;
+  }
+}
+
 function ensureModuleResolution(scriptsDir: string, nodeModules: string): void {
   // Specs import "@playwright/test"; a node_modules symlink next to them lets
   // Node resolve it even though they live under userData.
@@ -141,27 +182,12 @@ function ensureModuleResolution(scriptsDir: string, nodeModules: string): void {
   }
 }
 
-// Playwright's test CLI has no --slow-mo flag; launchOptions.slowMo only comes
-// from config. The per-test timeout CAN be set via --timeout on the CLI (and
-// is, below), but the config also reads PW_TEST_TIMEOUT_MS so a hand-run of the
-// generated config outside the app still picks up a sensible default instead of
-// Playwright's built-in 30s. Always rewritten so older scripts dirs pick up the
-// timeout field without the user having to delete the file.
+// Contents live in shared/playwright-config-source.mjs — see there for why ONE
+// definition serves both this and the MCP server, and for what each env-driven
+// field is for. The write is `writeIfChanged`, like every other fixture here.
 function ensureConfig(scriptsDir: string): string {
-  const configPath = path.join(scriptsDir, "playwright.config.ts");
-  fs.writeFileSync(
-    configPath,
-    'import { defineConfig } from "@playwright/test";\n\n' +
-      "export default defineConfig({\n" +
-      "  timeout: Number(process.env.PW_TEST_TIMEOUT_MS || 60000),\n" +
-      "  use: {\n" +
-      "    launchOptions: {\n" +
-      "      slowMo: Number(process.env.PW_SLOWMO_MS || 0),\n" +
-      "    },\n" +
-      "  },\n" +
-      "});\n",
-    "utf-8",
-  );
+  const configPath = path.join(scriptsDir, PLAYWRIGHT_CONFIG_FILE);
+  writeIfChanged(configPath, playwrightConfigSource);
   return configPath;
 }
 
@@ -169,7 +195,7 @@ function ensureConfig(scriptsDir: string): string {
 // Always rewritten so it stays in sync with the app's current build.
 function ensureReporter(scriptsDir: string): string {
   const reporterPath = path.join(scriptsDir, "step-reporter.mjs");
-  fs.writeFileSync(reporterPath, stepReporterSource, "utf-8");
+  writeIfChanged(reporterPath, stepReporterSource);
   return reporterPath;
 }
 
@@ -177,7 +203,7 @@ function ensureReporter(scriptsDir: string): string {
 // capture run's redirected spec can import it. Always rewritten to stay in sync
 // with the app build.
 function ensureCaptureFixture(scriptsDir: string): void {
-  fs.writeFileSync(path.join(scriptsDir, CAPTURE_FIXTURE_FILE), captureFixtureSource, "utf-8");
+  writeIfChanged(path.join(scriptsDir, CAPTURE_FIXTURE_FILE), captureFixtureSource);
 }
 
 // Write the spec runtime helper (glaze-runtime.mjs) next to the specs, for
@@ -186,21 +212,21 @@ function ensureCaptureFixture(scriptsDir: string): void {
 // exists would mean a test that gains one mid-session runs against a missing
 // module until the next app start.
 function ensureRuntime(scriptsDir: string): void {
-  fs.writeFileSync(path.join(scriptsDir, GLAZE_RUNTIME_FILE), glazeRuntimeSource, "utf-8");
+  writeIfChanged(path.join(scriptsDir, GLAZE_RUNTIME_FILE), glazeRuntimeSource);
 }
 
 // Write the run-time heal fixture. Always written alongside the capture
 // fixture, which imports it unconditionally — a missing module would fail the
 // import even on a run with healing switched off.
 function ensureHealFixture(scriptsDir: string): void {
-  fs.writeFileSync(path.join(scriptsDir, HEAL_FIXTURE_FILE), healFixtureSource, "utf-8");
+  writeIfChanged(path.join(scriptsDir, HEAL_FIXTURE_FILE), healFixtureSource);
 }
 
 // Write the "crawl" page-settling fixture. Unconditional for the same reason as
 // the heal fixture: the capture fixture imports it at the top of the module, so
 // a run with settling OFF still has to be able to resolve the file.
 function ensureSettleFixture(scriptsDir: string): void {
-  fs.writeFileSync(path.join(scriptsDir, SETTLE_FIXTURE_FILE), settleFixtureSource, "utf-8");
+  writeIfChanged(path.join(scriptsDir, SETTLE_FIXTURE_FILE), settleFixtureSource);
 }
 
 /** The canonical key the heal fixture tags a locator with. MUST match the
@@ -387,6 +413,41 @@ function isBrowserInstalled(browser: RunBrowser): boolean {
   }
 }
 
+/** Browser installs currently in flight, keyed by engine.
+ *
+ *  Parallel batches make this load-bearing. Several runs can discover the same
+ *  missing engine at the same moment, and N concurrent `playwright install`
+ *  processes unpacking into ONE directory is how you end up with a half-written
+ *  browser that then fails to launch for every run after it. First caller
+ *  installs; the rest await the same promise. */
+const installs = new Map<RunBrowser, Promise<unknown>>();
+
+async function installBrowser(
+  runId: string,
+  browser: RunBrowser,
+  cliPath: string,
+  scriptsDir: string,
+  env: NodeJS.ProcessEnv,
+): Promise<void> {
+  const inProgress = installs.get(browser);
+  if (inProgress) {
+    // Said out loud, because the install's own output is streaming to a
+    // DIFFERENT run's Output panel — without this line, this run just sits
+    // there for a minute with nothing printed.
+    emitOutput(runId, "system", `Waiting for ${browser} to finish installing…\n`);
+    await inProgress;
+    return;
+  }
+  emitOutput(runId, "system", `Installing ${browser} (first run on this browser)…\n`);
+  const pending = runCli(runId, ["install", browser], cliPath, scriptsDir, env);
+  installs.set(browser, pending);
+  try {
+    await pending;
+  } finally {
+    installs.delete(browser);
+  }
+}
+
 function baseEnv(nodeModules: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
@@ -396,38 +457,107 @@ function baseEnv(nodeModules: string): NodeJS.ProcessEnv {
   };
 }
 
+/** One line of the fixture's heals.json. Every field beyond the identity is
+ *  outcome-dependent, which is what the two guards below exist to sort out. */
+interface HealEvent {
+  outcome?: "healed" | "exhausted" | "no-candidates";
+  stepId: string;
+  stepIndex: number;
+  stepLabel: string;
+  method?: string;
+  originalLocator?: Locator;
+  /** Present only on a heal — a failed attempt applied nothing. */
+  appliedLocator?: Locator;
+  candidates?: HealCandidate[];
+  at: number;
+}
+
+/** A heal, narrowed so the journal can rely on `appliedLocator` being there.
+ *
+ *  An event with NO `outcome` predates the field (2026-08-07) and is therefore
+ *  a heal — that was the only kind the fixture wrote. Defaulting the other way
+ *  would reclassify every historical heal as a failure. The `appliedLocator`
+ *  test is not belt-and-braces: journalling one without a locator would write a
+ *  review row whose "revert" button has nothing to revert to. */
+function isHeal(e: HealEvent): e is HealEvent & { appliedLocator: Locator } {
+  return (e.outcome ?? "healed") === "healed" && !!e.appliedLocator;
+}
+
+/** A failed attempt. Keyed on the outcomes that EXIST rather than on
+ *  "not a heal", so a value this build doesn't recognise is dropped from both
+ *  counts instead of silently inflating the failure one. */
+function isHealFailure(e: HealEvent): e is HealEvent & HealFailure {
+  return e.outcome === "exhausted" || e.outcome === "no-candidates";
+}
+
 /**
- * Read the heals a finished run performed, write them to the journal, and
- * return how many there were.
+ * Read what run-time Auto-Heal did, journal the heals, persist the failures,
+ * and return a count of each.
  *
  * Under "suggest" (the default) nothing is written back to the test: the run
  * used the healed locator in memory to get past the step, and the journal entry
  * is the user's record of that plus the means to apply or dismiss it. Under
  * "apply" the step's locator is updated here, on the backend, because the child
  * process has no business writing to tests.json.
+ *
+ * FAILED attempts are deliberately NOT journalled. The journal is a review
+ * surface — every row is a locator change to accept or revert — and an attempt
+ * that healed nothing offers no such action; putting it there would fill the
+ * review list with rows nobody can act on. They go to the run's artifacts
+ * instead, beside console.json and network.json, because that is what they are:
+ * evidence about one run, keyed by step. See `recordFailure` in
+ * heal-fixture-source.ts for why they are worth keeping at all.
  */
 function collectRunHeals(
   testId: string,
   runId: string,
   healDir: string,
   mode: HealApplyMode,
-): number {
-  if (!healDir) return 0;
+): { healed: number; failed: number } {
+  const none = { healed: 0, failed: 0 };
+  if (!healDir) return none;
+  // The fixture's scratch dir, removed on EVERY path out of here. It used to be
+  // cleaned only on the heals path; once failures became recordable, a run that
+  // failed to heal and healed nothing would have left it behind for good.
+  const discardScratch = (): void => {
+    try {
+      fs.rmSync(healDir, { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
+  };
   const file = path.join(healDir, "heals.json");
-  let events: {
-    stepId: string;
-    stepIndex: number;
-    stepLabel: string;
-    originalLocator?: Locator;
-    appliedLocator: Locator;
-    candidates?: HealCandidate[];
-  }[] = [];
+  let all: HealEvent[] = [];
   try {
-    events = JSON.parse(fs.readFileSync(file, "utf-8"));
+    all = JSON.parse(fs.readFileSync(file, "utf-8"));
   } catch {
-    return 0; // no heals (the common case) — the fixture only writes on a heal
+    // Nothing happened (the common case) — the fixture only writes on an event.
+    discardScratch();
+    return none;
   }
-  if (!Array.isArray(events) || events.length === 0) return 0;
+  if (!Array.isArray(all) || all.length === 0) {
+    discardScratch();
+    return none;
+  }
+
+  const events = all.filter(isHeal);
+  const failures = all.filter(isHealFailure);
+  if (failures.length > 0) {
+    try {
+      artifactStore.writeHealFailures(testId, runId, failures);
+    } catch (err) {
+      logger.warn("runner", "Could not persist heal failures", { err: String(err) });
+    }
+  }
+  if (events.length === 0) {
+    discardScratch();
+    logger.info("runner", "Run could not heal steps", {
+      testId,
+      runId,
+      failed: failures.length,
+    });
+    return { healed: 0, failed: failures.length };
+  }
 
   const apply = mode === "apply";
   const rec = apply ? testStore.get(testId) : null;
@@ -466,32 +596,23 @@ function collectRunHeals(
       logger.warn("runner", "Could not persist applied heals", { err: String(err) });
     }
   }
-  try {
-    fs.rmSync(healDir, { recursive: true, force: true });
-  } catch {
-    /* ignore */
-  }
-  logger.info("runner", "Run healed steps", { testId, runId, count: events.length, apply });
-  return events.length;
+  discardScratch();
+  logger.info("runner", "Run healed steps", {
+    testId,
+    runId,
+    count: events.length,
+    failed: failures.length,
+    apply,
+  });
+  return { healed: events.length, failed: failures.length };
 }
 
-/** CSI escape sequences — Playwright's `line` reporter redraws its progress
- *  line with cursor-up + erase-line, and colours failures.
- *
- *  Stripped at the same choke point as redaction, for the same reason: these
- *  bytes are meaningless outside a terminal, and all three consumers suffer
- *  from them. The Output panel renders them as visible mojibake (`⌧[1A⌧[2K`),
- *  the log file keeps them forever, and — worst — they are sent verbatim to
- *  the model in the Debug-with-AI prompt, where they spend context on cursor
- *  movements and give the model garbage to reason about. */
-// Built from a char code rather than a regex literal: ESC is a control
-// character, and `no-control-regex` rejects it inline. Disabling that rule
-// here would also disable it for anything added to this file later.
-const ANSI_ESCAPE = new RegExp(String.fromCharCode(27) + "\\[[0-9;?]*[A-Za-z]", "g");
-
-export function stripAnsi(text: string): string {
-  return text.replace(ANSI_ESCAPE, "");
-}
+/** CSI escape sequences are stripped at the same choke point as redaction, for
+ *  the same reason: these bytes are meaningless outside a terminal, and all
+ *  three consumers suffer from them. Defined in shared/strip-ansi.mjs so the
+ *  MCP server's own single write point can apply it too; re-exported because
+ *  strip-ansi.test.ts and the rest of the app import it from here. */
+export { stripAnsi } from "../../shared/strip-ansi.mjs";
 
 function emitOutput(runId: string, stream: "stdout" | "stderr" | "system", chunk: string): void {
   // Redact HERE, at the single point every byte of run output passes through,
@@ -702,15 +823,28 @@ export const playwrightRunner = {
       let exitCode = -1;
       let tempSpecPath: string | null = null;
       let capturingRun = false;
+      // Playwright's own scratch dir (traces, failure screenshots). Per-run
+      // rather than the shared default: it is derived from the SPEC's path, so
+      // two concurrent runs of one spec would write to — and clean — the same
+      // folder. Nothing in the app reads it (our artifacts go to artifactStore
+      // via GLAZE_ARTIFACT_DIR), so it's removed in the finally rather than
+      // accumulating one directory per run forever.
+      let outputDir = "";
       // Declared out here because the finally block reads them: everything
       // below is set inside the try, which the finally cannot see into.
       let checkedAccessibility = false;
       let healDir = "";
       let healMapPath = "";
       let healApplyMode: HealApplyMode = "suggest";
+      // The budget this run actually got. Hoisted so the RunRecord can carry
+      // it: read back from the TestRecord later it would be the CURRENT value,
+      // and a timeout raised since would make every older run's "how close was
+      // this step to its budget?" read wrong while still looking plausible.
+      let runTestTimeoutMs: number | undefined;
       try {
         const { cliPath, nodeModules } = resolvePlaywright();
         const scriptsDir = getScriptsDir();
+        outputDir = path.join(scriptsDir, "test-results", recordId);
         ensureModuleResolution(scriptsDir, nodeModules);
         const configPath = ensureConfig(scriptsDir);
         const reporterPath = ensureReporter(scriptsDir);
@@ -872,12 +1006,7 @@ export const playwrightRunner = {
         // Each engine is downloaded on its own first use — switching browsers
         // costs one install, not a re-download of everything.
         if (!isBrowserInstalled(runBrowser)) {
-          emitOutput(
-            runId,
-            "system",
-            `Installing ${runBrowser} (first run on this browser)…\n`,
-          );
-          await runCli(runId, ["install", runBrowser], cliPath, scriptsDir, env);
+          await installBrowser(runId, runBrowser, cliPath, scriptsDir, env);
         }
 
         const slowMo = SLOW_MO_MS[speed];
@@ -890,6 +1019,7 @@ export const playwrightRunner = {
           settingsTimeout,
           speed,
         );
+        runTestTimeoutMs = testTimeoutMs;
         // Process kill must outlive the test timeout, otherwise a legitimate
         // long test dies with "Timed out — stopping test run" before Playwright
         // can report a clean per-test timeout.
@@ -956,6 +1086,7 @@ export const playwrightRunner = {
             GLAZE_HEAL_MAP: healMapPath,
             PW_SLOWMO_MS: String(slowMo),
             PW_TEST_TIMEOUT_MS: String(testTimeoutMs),
+            PW_OUTPUT_DIR: outputDir,
             GLAZE_CAPTURE_ARTIFACTS: capturing ? "1" : "0",
             GLAZE_RECORD_LOGS: recordLogs ? "1" : "0",
             GLAZE_RECORD_ALL_HEADERS: healSettings.recordAllHeaders ? "1" : "0",
@@ -977,12 +1108,25 @@ export const playwrightRunner = {
             /* ignore */
           }
         }
+        // …and this run's Playwright scratch dir, for the same reason.
+        if (outputDir) {
+          try {
+            fs.rmSync(outputDir, { recursive: true, force: true });
+          } catch {
+            /* ignore */
+          }
+        }
         const finishedAt = Date.now();
         const runStatus = exitCode === 0 ? "passed" : "failed";
 
         // Collect anything run-time Auto-Heal did, and journal it. Read before
         // the temp files are cleaned up below.
-        const healedSteps = collectRunHeals(rec.id, recordId, healDir, healApplyMode);
+        const { healed: healedSteps, failed: healFailedSteps } = collectRunHeals(
+          rec.id,
+          recordId,
+          healDir,
+          healApplyMode,
+        );
         if (healMapPath) {
           try {
             fs.rmSync(healMapPath, { force: true });
@@ -1084,6 +1228,8 @@ export const playwrightRunner = {
               datasetId: params.datasetId,
               datasetName: params.datasetName,
               healedSteps,
+              healFailedSteps,
+              testTimeoutMs: runTestTimeoutMs,
               captureOverheadMs,
               shotCount,
               a11yMs,
@@ -1094,6 +1240,11 @@ export const playwrightRunner = {
             logText,
           );
           sendToMain("runs:changed", {});
+          // Distil this run into metric rows while every artifact it produced
+          // is still on disk. Best-effort and non-throwing by contract — a
+          // bookkeeping failure must not become a failed run — and idempotent,
+          // so the prune preflight rewriting the same run later is harmless.
+          metricsStore.ingest(recordId, "app");
         } catch (err) {
           logger.warn("runner", "Failed to persist run history", { err: String(err) });
         }
@@ -1102,8 +1253,14 @@ export const playwrightRunner = {
         // one generating screenshots.
         applyRetention();
         // Local desktop notification for a failure or a visual change, when the
-        // user opted in. Never fires for a clean run.
-        if (recorderSettingsStore.get().notifyOnRunIssues) {
+        // user opted in. Never fires for a clean run, and never for a run
+        // inside a batch — see shouldNotifyRun.
+        if (
+          shouldNotifyRun({
+            batchId: params.batchId,
+            enabled: recorderSettingsStore.get().notifyOnRunIssues,
+          })
+        ) {
           notifyRunOutcome({
             testName: rec.name,
             status: runStatus,

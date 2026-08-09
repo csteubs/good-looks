@@ -154,6 +154,76 @@ export function Input({
   return <input type={type} className={cn(inputVariants({ variant, size }), className)} {...props} />;
 }
 
+/* ── NumberInput ────────────────────────────────────────────────────── */
+
+/**
+ * Compact numeric input with an optional unit suffix.
+ *
+ * Added when `main` grew it and this library had not reproduced it — the merge
+ * surfaced it as the one symbol the port was actually missing, rather than as a
+ * conflict about an import specifier.
+ *
+ * Two details are load-bearing and are asserted by the app's own tests, so they
+ * are contract rather than styling:
+ *
+ *   • It is a real `<input type="number">`, so it has role `spinbutton`,
+ *     keyboard arrows, and min/max clamping for free. `auto-heal-pane.test.tsx`
+ *     queries it by that role.
+ *   • `unit` is decoration and is `aria-hidden`. A screen reader gets the unit
+ *     from the control's own `aria-label` instead — which is why the panes pass
+ *     "…timeout in milliseconds" explicitly. Exposing the suffix here would
+ *     double it.
+ *
+ * `onValueChange` reports `null` for an empty field rather than `NaN` or 0, so
+ * clearing the box is distinguishable from typing a zero. Callers coalesce it.
+ */
+export interface NumberInputProps
+  extends Omit<React.ComponentProps<"input">, "size" | "value" | "onChange" | "type">,
+    VariantProps<typeof inputVariants> {
+  value?: number | null;
+  onValueChange?: (value: number | null) => void;
+  unit?: React.ReactNode;
+  steppers?: boolean;
+}
+
+export function NumberInput({
+  className,
+  size,
+  variant,
+  value,
+  onValueChange,
+  unit,
+  // Accepted and ignored: the browser's own spinner is what this port uses, so
+  // there is nothing to hide. Kept in the signature so a caller passing it
+  // still type-checks against the original contract.
+  steppers: _steppers,
+  ...props
+}: NumberInputProps) {
+  return (
+    <div data-slot="number-input" className={cn("relative inline-flex items-center", className)}>
+      <input
+        type="number"
+        value={value ?? ""}
+        onChange={(e) => {
+          const raw = e.target.value;
+          onValueChange?.(raw === "" ? null : Number(raw));
+        }}
+        className={cn(inputVariants({ variant, size }), unit ? "pr-8" : undefined)}
+        {...props}
+      />
+      {unit ? (
+        <span
+          data-slot="number-input-unit"
+          aria-hidden="true"
+          className="pointer-events-none absolute right-2 text-xs text-muted-foreground"
+        >
+          {unit}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
 const textareaVariants = cva(
   "w-full min-w-0 rounded-md border border-input bg-background px-2.5 py-1.5 text-foreground placeholder:text-muted-foreground outline-none transition-[border-color,box-shadow] focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 disabled:cursor-not-allowed disabled:opacity-50",
   {

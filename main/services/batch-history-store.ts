@@ -19,6 +19,8 @@ import * as path from "path";
 
 import { app, logger } from "@shell/backend";
 
+import { DELETED_TEST_NAME } from "../recorder/types.js";
+
 import type { BatchRecord } from "../recorder/types.js";
 
 /** Cap the index. Batches are small (a few hundred bytes each), but this is a
@@ -99,6 +101,34 @@ export const batchHistoryStore = {
     });
     if (reconciled > 0) writeAll(fixed);
     return { reconciled };
+  },
+
+  /**
+   * Tombstone a deleted test's rows in every stored batch, and drop the name.
+   *
+   * Marked rather than removed, for the same reason run records are: a batch's
+   * summary counts are a record of what that batch DID, and rewriting them
+   * afterwards would make "3 passed, 1 failed" stop adding up to the rows
+   * beneath it.
+   *
+   * The NAME is what actually goes. `testName` is denormalized into this file
+   * precisely so a batch renders without the library, which means it outlives
+   * the test — it is the leftover a person would recognise months later, and
+   * the reason marking here isn't just bookkeeping for a row nothing renders.
+   */
+  markTestDeleted(testId: string): { marked: number } {
+    const all = readAll();
+    let marked = 0;
+    const next = all.map((b) => ({
+      ...b,
+      results: b.results.map((r) => {
+        if (r.testId !== testId || r.testDeleted) return r;
+        marked++;
+        return { ...r, testDeleted: true, testName: DELETED_TEST_NAME };
+      }),
+    }));
+    if (marked > 0) writeAll(next);
+    return { marked };
   },
 
   remove(batchId: string): { removed: number } {

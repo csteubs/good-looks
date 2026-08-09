@@ -5,6 +5,7 @@ import { useState } from "react";
 import { toneFor } from "../lib/ai-debug-status";
 import type { AiDebugStatus } from "../lib/recorder-types";
 import type { RunInfo } from "./recorder-store";
+import { RunTriage } from "./run-triage";
 
 export function RunOutput({
   info,
@@ -69,6 +70,11 @@ export function RunOutput({
           </Button>
         ) : null}
       </div>
+      {/* Only for a finished, failed run: triage explains a failure, and there
+          is nothing to explain until there is one. Keyed on recordId, which
+          only exists once the run has been written to history — which is also
+          when its metrics row exists for triage to read. */}
+      {failed && info.recordId ? <RunTriage runId={info.recordId} /> : null}
       <ScrollArea className="min-h-0 flex-1" autoScrollToBottom autoScrollDeps={[info.lines.length]}>
         <pre className="text-small-mono whitespace-pre-wrap break-words px-4 py-2 text-secondary">
           {info.lines.join("") || "Starting…"}

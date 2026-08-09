@@ -14,6 +14,13 @@ import type { AiDebugStatus } from "../lib/recorder-types";
 import { RunOutput } from "./run-output";
 import type { RunInfo } from "./recorder-store";
 
+// The panel now carries a triage line, which queries on mount. Mocked to "no
+// verdict" so these tests stay about the AI debug icon — run-triage.test.tsx
+// covers the line itself.
+vi.mock("../lib/api", () => ({
+  api: { runs: { triage: async () => null } },
+}));
+
 function info(over: Partial<RunInfo> = {}): RunInfo {
   return { lines: ["output line\n"], running: false, code: 1, stepStatus: {}, startedAt: 1, ...over };
 }
