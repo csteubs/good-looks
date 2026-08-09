@@ -20,8 +20,9 @@ import {
   Text,
   toast,
 } from "@glaze/core/components";
-import { Plus, FlaskConical, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
+import { Plus, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
 
+import { SiteIcon } from "../theme";
 import { api } from "../lib/api";
 import { aggregateStatus, type SessionLike } from "../lib/ai-debug-sessions";
 import { toneFor } from "../lib/ai-debug-status";
@@ -115,29 +116,30 @@ function hostOf(url: string): string {
   }
 }
 
-/** A test row's icon: the recorded site's favicon, falling back to the
- * generic FlaskConical icon when the favicon can't be loaded (offline,
- * malformed URL, or a site with no favicon). Uses Google's S2 favicon
- * service so we don't have to fetch/parse `<link rel="icon">` ourselves. */
+/** A test row's icon: a monogram generated from the recorded site's host.
+ *
+ * THIS USED TO FETCH A THIRD-PARTY FAVICON, and that was an egress path nobody
+ * had agreed to. It called
+ * `https://www.google.com/s2/favicons?domain=<host>` for EVERY test in the
+ * library, on every render of the sidebar — so simply opening the app sent
+ * Google the hostname of every site under test. A QA tool's library routinely
+ * names unreleased staging hosts and internal domains, and this app's stated
+ * egress posture is ONE opt-in summary-only webhook (DECISIONS 2026-08-04). It
+ * had no setting, no disclosure, and it was not visible from anywhere except
+ * this function.
+ *
+ * `SiteIcon` (REDESIGN §3.5) is the answer and was built for exactly this: the
+ * monogram is deterministic per host, needs no network, and is a complete
+ * design rather than a degraded one — it was already what reserved names like
+ * `localhost` fell back to. Third-party favicons stay available as an
+ * explicitly opt-in setting whose copy has to say what it sends and where; that
+ * setting lands with the settings work (REDESIGN §B4), and until it exists the
+ * honest default is the one that sends nothing.
+ *
+ * Guarded by `check:renderer-egress`, so the next one of these is a build
+ * failure rather than a discovery. */
 function Favicon({ url }: { url: string }) {
-  const [failed, setFailed] = React.useState(false);
-  const host = hostOf(url);
-  // 64px source for retina crispness; rendered in a 16px (size-4) box.
-  const src = `https://www.google.com/s2/favicons?domain=${encodeURIComponent(host)}&sz=64`;
-  if (failed) return <FlaskConical className="size-4" />;
-  return (
-    <img
-      src={src}
-      alt=""
-      width={16}
-      height={16}
-      className="size-4 shrink-0 object-contain"
-      loading="lazy"
-      decoding="async"
-      draggable={false}
-      onError={() => setFailed(true)}
-    />
-  );
+  return <SiteIcon host={hostOf(url)} size={16} />;
 }
 
 // Native popup menu bridge. The sidebar header action renders as a native
