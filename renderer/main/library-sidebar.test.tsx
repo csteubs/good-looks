@@ -58,6 +58,10 @@ vi.mock("../lib/api", () => ({
       status: async () => ({ reachable: true, models: [] }),
     },
     runs: { list: async () => runRecords },
+    // The sidebar asks whether the branch switcher is available before it
+    // offers the row. Unavailable is the right default here: these tests are
+    // about the library, and a Branches row in them would only be noise.
+    branches: { status: async () => ({ available: false, switched: false, hasToken: false }) },
     // The AI debug provider (now above the sidebar for the row sparkles)
     // hydrates persisted sessions on mount and subscribes to pushes.
     aiDebug: {

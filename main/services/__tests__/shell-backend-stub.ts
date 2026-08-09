@@ -35,7 +35,48 @@ export const app = {
   __resetPaths(): void {
     overrides.clear();
   },
+
+  // ── Launch identity, for the branch switcher ────────────────────────
+  // `isPackaged` DEFAULTS TO FALSE, matching a checkout — the state in which
+  // that feature is available. A test that wants the packaged branch sets it.
+  isPackaged: false,
+  getAppPath(): string {
+    return appPathOverride ?? process.cwd();
+  },
+  /** Records rather than performs. A test asserting on a relaunch must never
+   *  actually restart anything, and `relaunched` is the only way to see that
+   *  the switcher got as far as scheduling one. */
+  relaunch(options?: { args?: string[] }): void {
+    relaunched.push(options?.args ?? []);
+  },
+  quit(): void {
+    quitCalls++;
+  },
 };
+
+let appPathOverride: string | null = null;
+const relaunched: string[][] = [];
+let quitCalls = 0;
+
+/** Test-only controls for the launch identity above. */
+export function setAppPath(dir: string | null): void {
+  appPathOverride = dir;
+}
+export function setPackaged(packaged: boolean): void {
+  app.isPackaged = packaged;
+}
+export function relaunchCalls(): string[][] {
+  return relaunched.map((args) => [...args]);
+}
+export function quitCallCount(): number {
+  return quitCalls;
+}
+export function resetLaunchState(): void {
+  appPathOverride = null;
+  app.isPackaged = false;
+  relaunched.length = 0;
+  quitCalls = 0;
+}
 
 const noop = (..._args: unknown[]): void => {};
 export const logger = { info: noop, warn: noop, error: noop, debug: noop };

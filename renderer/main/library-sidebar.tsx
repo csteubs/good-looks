@@ -20,7 +20,7 @@ import {
   Text,
   toast,
 } from "@ui";
-import { Plus, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
+import { Plus, FolderOpen, Gauge, EyeOff, BarChart3, GitBranch, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
 
 import { SiteIcon } from "../theme";
 import { api } from "../lib/api";
@@ -302,6 +302,15 @@ export function LibrarySidebar() {
   const [copying, setCopying] = React.useState(false);
 
   const { data: tests = [] } = useQuery({ queryKey: ["tests"], queryFn: api.tests.list });
+  // Whether to offer the branch switcher at all. Shares the ["branches",
+  // "status"] cache with the view itself, so opening it costs nothing extra.
+  const branchesAvailable = useQuery({
+    queryKey: ["branches", "status"],
+    queryFn: api.branches.status,
+    // The answer is a property of how this app was launched, so it cannot
+    // change while it is running. Refetching it would be pure noise.
+    staleTime: Infinity,
+  }).data?.available === true;
   // Shares the ["runs"] cache with Stats and the detail view, so the per-row
   // verdict dots are usually free. One pass to keep the newest run per test —
   // runs:list makes no ordering promise worth leaning on.
@@ -515,6 +524,20 @@ export function LibrarySidebar() {
             selected={pathname === "/heals"}
             onClick={() => navigate({ to: "/heals" })}
           />
+          {/* Only when the app is running from a git checkout of its own
+              repository — never in a packaged build, never in the browser
+              preview. Hidden rather than disabled: this is a tool for whoever
+              is building the app, and a permanently greyed row would be a
+              standing question for everyone else. */}
+          {branchesAvailable ? (
+            <SidebarListItem
+              icon={<GitBranch className="size-4" />}
+              title="Branches"
+              subtitle="Run a PR of this app"
+              selected={pathname === "/branches"}
+              onClick={() => navigate({ to: "/branches" })}
+            />
+          ) : null}
         </SidebarList>
       </div>
       <NewRecordingDialog open={dialogOpen} onOpenChange={setDialogOpen} />

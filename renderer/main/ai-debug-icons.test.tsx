@@ -107,6 +107,9 @@ vi.mock("../lib/api", () => ({
         return h.triage;
       },
     },
+    // The sidebar asks before offering the Branches row. Unavailable, so the
+    // extra row cannot shift anything these icon assertions look at.
+    branches: { status: async () => ({ available: false, switched: false, hasToken: false }) },
   },
 }));
 

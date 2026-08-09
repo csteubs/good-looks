@@ -55,6 +55,7 @@ import type {
   TestRecord,
 } from "../lib/recorder-types";
 import type { LlmConfig, LlmModel, LlmProviderStatus } from "../lib/llm-types";
+import type { BranchStatus } from "../lib/branch-types";
 import type { TriageResult } from "../../shared/triage.mjs";
 import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
 import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
@@ -458,6 +459,26 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
      *  object. A `{ running: false }` stand-in is missing every other field the
      *  view reads once it decides a batch exists. */
     "batch:status": (): BatchState | null => null,
+
+    // ── Branch switcher ──────────────────────────────────────────────────
+    /** Answered explicitly, and answered UNAVAILABLE.
+     *
+     *  This is the one feature in the app that cannot have a fake. Everything
+     *  else here stands in for data; the branch switcher's job is to run git,
+     *  build a checkout, and relaunch the Electron app onto it — none of which
+     *  a browser tab can pretend to do, and a pretend one would end in a button
+     *  that does nothing. So the preview reports the truth, the sidebar entry
+     *  never renders, and there is no dead end to find.
+     *
+     *  `defaultFor` would return null here (the verb is "status"), and the view
+     *  destructures the answer — a crash rather than a degraded panel. */
+    "branches:status": (): BranchStatus => ({
+      available: false,
+      switched: false,
+      hasToken: false,
+      reason:
+        "The browser preview has no backend — no git, no build, no way to relaunch anything. Branch switching only works in the Electron app.",
+    }),
   };
 }
 
