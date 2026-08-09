@@ -1,6 +1,8 @@
 import * as path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 
+import { NO_DEV_URL_ARG } from "../../shared/branch-paths.mjs";
+
 // Use unique names to avoid conflicts with esbuild's CommonJS shims
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDirPath = path.dirname(currentFilePath);
@@ -48,9 +50,19 @@ export function getPreloadPath(): string {
  * NOT file:// — Vite emits module scripts, and a module script loaded from
  * file:// has a null origin and is blocked by CORS, which presents as a blank
  * window with a clean log. See shell/app-protocol.ts.
+ *
+ * `--gl-no-dev-url` overrides the env var, and the branch switcher passes it on
+ * every relaunch it performs. Electron's `app.relaunch` hands the new instance
+ * this one's ENVIRONMENT, so a build started from `npm run dev` inherits that
+ * dev server's origin — and the dev harness closes that server as soon as it
+ * sees Electron exit. Honouring the inherited value would load the new build's
+ * windows from an origin that no longer answers: a blank window with, again, a
+ * clean log. The flag is how a relaunch says "I brought my own build".
  */
 export async function getWindowUrl(htmlFileName: string): Promise<string> {
-  const devUrl = process.env.GOOD_LOOKS_DEV_URL;
+  const devUrl = process.argv.includes(NO_DEV_URL_ARG)
+    ? undefined
+    : process.env.GOOD_LOOKS_DEV_URL;
   if (devUrl) {
     return `${devUrl.replace(/\/$/, "")}/${htmlFileName}`;
   }

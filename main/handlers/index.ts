@@ -40,6 +40,7 @@ import { aiDebugStore } from "../services/ai-debug-store.js";
 import { recorderDebugStore } from "../services/recorder-debug-store.js";
 import { anthropicKeyStore } from "../services/anthropic-key-store.js";
 import { lmStudioTokenStore } from "../services/lm-studio-token-store.js";
+import { branchSwitcher } from "../services/branch-switcher.js";
 import {
   clampTestTimeoutMs,
   isTestTimeoutMs,
@@ -852,6 +853,38 @@ export function registerHandlers(): void {
   ipcMain.handle("llm:hasLmStudioToken", async () => ({
     hasToken: await lmStudioTokenStore.hasToken(),
   }));
+
+  // ── Branch switcher (a testing tool, Electron-only) ─────────────────
+  // Build another branch of THIS app and relaunch onto it. See
+  // services/branch-switcher.ts for why it cannot exist outside the Electron
+  // app, and scripts/switch-branch.mjs for the build itself.
+  //
+  // `branches:status` is the gate every other channel here sits behind, and it
+  // never throws: the view has to be able to render the reason the feature is
+  // unavailable, and a rejected status call would render as a broken view.
+  ipcMain.handle("branches:status", async () => branchSwitcher.status());
+  ipcMain.handle("branches:listPulls", async () => branchSwitcher.pullRequests());
+  ipcMain.handle("branches:listBranches", async (_e, params: { refresh?: unknown }) =>
+    branchSwitcher.branches(params?.refresh === true),
+  );
+  // Resolves as the relaunch is scheduled; this process is gone a moment later.
+  // Progress arrives on the `branches:progress` channel while it runs.
+  ipcMain.handle("branches:switch", async (_e, params: { branch?: unknown }) => {
+    const branch = typeof params?.branch === "string" ? params.branch : "";
+    return branchSwitcher.switchToBranch(branch);
+  });
+  ipcMain.handle("branches:home", async () => branchSwitcher.returnToCheckout());
+  // Write-only from the renderer, same contract as the Anthropic key and the
+  // LM Studio token: it can save one and ask whether one exists, never read it.
+  ipcMain.handle("branches:setToken", async (_e, params: { token?: unknown }) => {
+    const token = typeof params?.token === "string" ? params.token : "";
+    await branchSwitcher.setToken(token);
+    return { hasToken: true };
+  });
+  ipcMain.handle("branches:clearToken", async () => {
+    await branchSwitcher.clearToken();
+    return { hasToken: false };
+  });
 
   // ── AI debug sessions (minimized "Debug with AI" jobs) ──────────────
   // Persisted so a diagnosis survives a restart. The job itself cannot — see

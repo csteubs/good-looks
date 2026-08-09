@@ -73,6 +73,9 @@ describe("preview bridge channel coverage", () => {
       "metrics:stepHealth",
       "metrics:slowness",
       "metrics:divergence",
+      // Same reason: the view destructures `{ available, reason }` to decide
+      // whether to render at all. `defaultFor` would hand it null.
+      "branches:status",
     ];
 
     const handled = new Set(handledChannels());
