@@ -5,7 +5,9 @@ Batch work of 2026-08-07 so that work doesn't paint the next version into a
 corner. Nothing described here exists. Where it says "would", it means would.
 
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for what exists today,
-[DECISIONS.md](DECISIONS.md) for why the current Batch is shaped the way it is.
+[DECISIONS.md](DECISIONS.md) for why the current Batch is shaped the way it is,
+and [REDESIGN.md](REDESIGN.md) §7.1 for where a Routine would live in the
+redesigned shell.
 
 ---
 
