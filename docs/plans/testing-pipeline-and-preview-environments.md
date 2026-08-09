@@ -299,6 +299,22 @@ flows, and Phase 2 covers what it cannot.
 - Both shells build in CI on every PR.
 - A `docs/DECISIONS.md` entry for the two-shell architecture.
 
+> **Corrected 2026-08-09.** The first item is **built**:
+> `.github/scripts/check-shell-drift.mjs`, run from `gate.yml`, with
+> `npm run check:shell-drift` for local use. It lives on `shell/electron`, which
+> is why the table said "not started" — this plan was being read against `main`,
+> where the file does not exist.
+>
+> It is deliberately **not** in the `test:checks` chain: it needs both branches
+> fetched, which only CI reliably has, and `check-repo-hygiene.mjs` carries that
+> exclusion with its reason. It also exits 0 with a note once the counterpart
+> ref stops existing, so finishing 4b does not turn it red — a guard that fails
+> because the problem it guards was solved is a guard people learn to ignore.
+>
+> Its own header records the history this plan has been tracking from the other
+> side: the trees reached 13 commits apart once, and *"within an hour of being
+> brought level a settings redesign put them apart again."*
+
 ---
 
 ## 6. Git workflow changes
@@ -383,7 +399,7 @@ single point of failure, and it is an hour of work.
 | 3 — Browser preview + per-PR artifacts | **built** | Seconds-long loop, shareable previews |
 | 4a — Close the drift | **built, then reopened** | Levelled the trees on 2026-08-07; 40 commits behind again by 2026-08-08 — see §11 |
 | 4b — Converge on `@shell/backend` | blocked on a decision | One tree; drift stops existing |
-| 5 — Drift guard | not started (0.5d) | It stays converged |
+| 5 — Drift guard | **built** (on `shell/electron`) | It stays converged |
 
 ---
 

@@ -254,7 +254,7 @@ function CssAssertFields({
         />
       </Field>
       {prop && !validProp ? (
-        <Text variant="small" color="danger">
+        <Text variant="small" color="red">
           “{prop}” isn’t a valid CSS property name. Use the kebab-case form —
           <code> background-color</code>, not <code>backgroundColor</code>.
         </Text>

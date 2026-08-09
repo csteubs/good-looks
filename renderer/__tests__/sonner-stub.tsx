@@ -75,7 +75,18 @@ export interface ToastText {
 export function toastTexts(): ToastText[] {
   return toastCalls.map((call) => {
     if (typeof call.message !== "function") {
-      return { type: call.kind, title: String(call.message ?? "") };
+      // A DIRECT sonner call: `toast(title, { description, action })`. This is
+      // the shape on the Electron shell, where `toast` is sonner itself rather
+      // than the design system's wrapper — so the description lives in the
+      // options argument instead of in a rendered element's props. Reading both
+      // shapes here is what lets one test assert the sentence a user sees
+      // without caring which shell raised it.
+      const opts = call.options as { description?: unknown } | undefined;
+      return {
+        type: call.kind,
+        title: String(call.message ?? ""),
+        description: opts?.description === undefined ? undefined : String(opts.description),
+      };
     }
     const rendered = (call.message as (id: string) => unknown)("test-toast");
     const props = (rendered as { props?: Record<string, unknown> } | null)?.props;
