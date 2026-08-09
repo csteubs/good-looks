@@ -16,6 +16,20 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-09 — The port pointed at an empty data directory, and only launching it showed that
+
+The first launch of the Electron build on a machine with real data opened an empty library: no tests, no runs, no saved API keys, no downloaded browsers. Nothing had been deleted. Under Glaze the host supplied `userData` as an app-scoped directory (`app.glaze.macos.<id>-local/`); stock Electron derives it from `productName`, so the port began reading and writing `~/Library/Application Support/Good Looks!/` while 1.4 GB of real store sat one directory away.
+
+**The failure mode is the point.** It did not error, log a warning, or fail a test — it presented as a wiped install. Every store test points `userData` at a temp directory, which is the correct thing for a test to do and precisely why this was invisible: the tests were all passing against exactly the behaviour that was broken. It survived a 42-check suite, 1912 tests, a five-job CI run including a packaged-app e2e pass, and an independent verification by a second agent. What found it was reading one line of a launch log — `[metrics] Built the metrics database from history {"runs":0,"steps":0}` — and asking why the number was zero.
+
+**Adopt in place, do not copy.** Copying 1.4 GB creates a second source of truth, a half-migrated state if it is interrupted, and a moment after which the two builds silently diverge. Pointing at the existing directory has none of those: no data moves, a Glaze build of this app keeps working against the same store, and the operation is idempotent. The cost is that two builds can share one store and disagree about it — strictly better than the port pretending the data does not exist.
+
+**Adoption is one-shot by construction.** It fires only when the current directory has no recorder store of its own, so it can never redirect an install that has started accumulating data, and it stops firing the moment the port writes anything real. The subtle part is what counts as "has a store": `metrics.db` must NOT, because it is a derived shadow (see the metrics DB note in CLAUDE.md) and the port writes an empty one on first launch. Counting it would mean adoption never fires on the second launch, reproducing the original bug in a form that looks like correct behaviour. That case has its own test.
+
+**Ordering is load-bearing.** `installUserDataPath()` is the first statement in `main/index.ts` because `applyRetention()` runs at module scope there and prunes artifacts; pointed at the wrong directory it sweeps the wrong ones. Imports are hoisted, so "first" means first in the body, not first in the import list — which is why the call is not tucked in among the imports where it would read more naturally and run too late.
+
+**Coverage:** `user-data.test.ts`, 18 cases against real temp directories rather than a mocked `fs` — the bug was about what is actually on disk, and a mock would have agreed with whatever the code believed. Verified failing three ways: adoption removed entirely (3 fail), `metrics.db` counted as a store (2 fail), and the own-store guard dropped (2 fail). Then verified by launching: the app adopted the real directory, logged it, wrote `main.log` there, and the 36 tests were intact and unpruned afterwards.
+
 ### 2026-08-09 — Merging main into the Electron port: twelve conflicts, and the two that could have shipped a regression
 
 `shell/electron` branched at `main@8262136` and then both sides moved. Six commits landed on `main` — the redesign foundation, the fifteen primitives, and the favicon egress fix — while the branch ported the app off the Glaze SDK onto stock Electron. Twelve files conflicted. Most were mechanical; two were not, and both would have passed a careless resolution.

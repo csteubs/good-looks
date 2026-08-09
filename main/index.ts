@@ -9,6 +9,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
 
+import { installUserDataPath } from "./shell/user-data.js";
 import {
   app,
   BrowserWindow,
@@ -35,6 +36,15 @@ import { batchHistoryStore } from "./services/batch-history-store.js";
 import { aiDebugStore } from "./services/ai-debug-store.js";
 import { metricsStore } from "./services/metrics-store.js";
 import { setPrunePreflight } from "./services/artifact-store.js";
+
+// ── Data directory ────────────────────────────────────────────────────
+// FIRST STATEMENT IN THIS FILE, before anything touches a store. Every store
+// resolves `app.getPath("userData")` lazily on each access, so this only has to
+// run before the first access — but `applyRetention()` below runs at module
+// scope, and pointing it at the wrong directory means sweeping the wrong
+// artifacts. Imports are hoisted, so being "first" means first in the body, not
+// first in the import list. See shell/user-data.ts for what it decides and why.
+installUserDataPath();
 
 // Get directory paths
 const __filename = fileURLToPath(import.meta.url);
