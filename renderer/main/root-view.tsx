@@ -56,8 +56,29 @@ export function RootView() {
   );
 
   return (
-    <div className="relative h-full [&:not(:has([data-toolbar]))_.drag-region]:z-50">
-      <div className="drag-region fixed left-0 right-0 top-0 h-13" />
+    // No window-drag overlay across the top edge. There used to be a
+    // `drag-region fixed left-0 right-0 top-0 h-13` div here, from the days when
+    // the Glaze host window was frameless and the web content owned the title
+    // bar. The main window now keeps Electron's DEFAULT native title bar
+    // (`main/index.ts` passes no `frame`/`titleBarStyle`), so the OS strip
+    // already drags the window and that div dragged nothing.
+    //
+    // What it did do was cover the top 52px of the app with a transparent
+    // `fixed` element. A positioned box paints above in-flow content whatever
+    // the DOM order, so every static control in that strip — in practice the
+    // sidebar's own header, which is where the "+" (Add test) button lives —
+    // was hit-tested to the overlay instead. The click never reached the
+    // button and the pointer never saw it, so the cursor didn't change either:
+    // the feature looked disabled rather than obstructed.
+    //
+    // The `[&:not(:has([data-toolbar]))_.drag-region]:z-50` class that used to
+    // be on this wrapper went with it — it existed only to lift that overlay.
+    // Drag regions that DO earn their keep stay where they are: `Toolbar`, the
+    // `Sidebar` header, and the trainer panel's header (that window is
+    // `titleBarStyle: "hiddenInset"` and genuinely has no native strip).
+    //
+    // Guarded by `check:clickable-chrome`.
+    <div className="relative h-full">
       <RecorderProvider onFinished={onFinished}>
         {/* Above the shell, so an AI debug session survives navigation AND the
             trainer replacing the whole outlet. The host renders whichever
