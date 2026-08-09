@@ -130,6 +130,40 @@ function run(over: Partial<RunRecord>): RunRecord {
   } as RunRecord;
 }
 
+describe("LibrarySidebar — the row icon sends nothing", () => {
+  it("draws a monogram rather than fetching a third-party favicon", async () => {
+    // THE REGRESSION THIS PINS ALREADY SHIPPED. Every row used to render
+    // `<img src="https://www.google.com/s2/favicons?domain=<host>">`, so simply
+    // opening the app sent Google the hostname of every site under test — and a
+    // QA library routinely names unreleased staging hosts and internal domains.
+    // No setting, no disclosure, and invisible from anywhere but that one
+    // function.
+    //
+    // Asserted on the RENDERED OUTPUT rather than on the source, because
+    // `check:renderer-egress` already reads the source and these two failing
+    // together is the point: one catches the string, this one catches the
+    // behaviour.
+    tests = [record({ url: "https://staging.unreleased.test/checkout" })];
+    renderSidebar();
+    await screen.findByText("Login");
+
+    for (const img of document.querySelectorAll("img")) {
+      expect(img.getAttribute("src") ?? "").not.toMatch(/^https?:\/\//);
+    }
+    const icon = document.querySelector('[data-gl="site-icon"]') as HTMLElement;
+    expect(icon.dataset.kind).toBe("monogram");
+  });
+
+  it("still shows an icon for a host nothing could resolve", async () => {
+    // "Never falls through to nothing" — the old code degraded to a generic
+    // flask on failure, and a hole in the row would read as a broken render.
+    tests = [record({ url: "not a url at all" })];
+    renderSidebar();
+    await screen.findByText("Login");
+    expect(document.querySelector('[data-gl="site-icon"]')).not.toBeNull();
+  });
+});
+
 describe("LibrarySidebar — run verdict dots", () => {
   it("dots a test with its LATEST run's verdict, not an older one's", async () => {
     // Two runs, newer one failed. A dot driven by list order instead of

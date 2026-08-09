@@ -285,6 +285,15 @@ says what it sends and where. The monogram is already deterministic per host and
 already the answer for reserved names — it is a complete design on its own, not a
 degraded one.
 
+> **This was not hypothetical, and it is fixed.** While surveying the sidebar for
+> A4, the SHIPPING app turned out to be doing the same thing already — every test
+> row fetched `https://www.google.com/s2/favicons?domain=<host>`, so opening the
+> app sent Google the hostname of every site under test. `SiteIcon` replaced it
+> (2026-08-08), and `check:renderer-egress` now judges every absolute URL in the
+> renderer against an allowlist of specific strings with written reasons.
+> **The opt-in setting is still outstanding** and lands with §B4; until then the
+> default is the one that sends nothing.
+
 **The textures are 75MB.** With texture fixed at the `ember` default, the app
 needs `acid-25.jpg` (4.2MB) and the grain plate `super-light-1.png` (4.2MB). Both
 are used at low opacity, over-scaled, behind other content. Convert to WebP at the
