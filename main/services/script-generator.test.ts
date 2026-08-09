@@ -124,6 +124,30 @@ describe("generateSpecDetailed line map", () => {
       ['await glazeCapture(V, "orderId", page.getByTestId("order"), "text");', 1],
       ['await page.getByTestId("done").click();', 2],
     ]);
+    // This record declares NO variables, but glazeCapture writes into `V` —
+    // without the header the emitted spec is a ReferenceError at run time.
+    expect(source).toContain("const V = {");
+  });
+
+  it("emits exactly one V header when a capture step meets declared variables", () => {
+    // The zero-variable path above must not stack a second declaration on top
+    // of the normal one — `const V` twice in one scope doesn't parse.
+    const steps = [
+      step({
+        type: "capture",
+        locator: { k: "testid", v: "order" },
+        captureVar: "orderId",
+        captureFrom: "text",
+      }),
+    ];
+    const { source } = generateSpecDetailed({
+      name: "t",
+      url: "u",
+      steps,
+      variables: [{ name: "region", kind: "plain", value: "eu" }],
+    });
+    expect(source.split("const V = {").length - 1).toBe(1);
+    expect(source).toContain('region: "eu",');
   });
 
   it("does not map a disabled step's commented-out line", () => {

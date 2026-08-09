@@ -74,6 +74,15 @@ export const testStore = {
     return readAll().find((t) => t.id === id) ?? null;
   },
 
+  /** Every test's name, HIDDEN ONES INCLUDED — for deciding what a new name may
+   *  collide with. `list()` is the wrong input for that: it filters hidden
+   *  tests out, so a name already taken by one would be handed out as free, and
+   *  the duplicate only shows up the day that test is restored. Same reasoning
+   *  as `removeTag` reading through `readAll()`. */
+  allNames(): string[] {
+    return readAll().map((t) => t.name);
+  },
+
   save(record: TestRecord): void {
     // Derive each step's variable references on write, at the ONE choke point
     // every record passes through. Computing this at the call sites instead

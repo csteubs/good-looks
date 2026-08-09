@@ -24,6 +24,13 @@ import {
   PICK_AT_POINT_SCRIPT,
 } from "../recorder/capture-script.js";
 import { buildReplayScript } from "./step-replayer.js";
+import {
+  applyStateStep,
+  isMouseHeld,
+  releaseHeldMouse,
+  resetInputState,
+  type InputHost,
+} from "./input-service.js";
 import { applyViewportStep, type ResizeHost } from "./resize-service.js";
 import { healStep } from "./auto-heal.js";
 import { healJournalStore } from "./heal-journal-store.js";
@@ -331,12 +338,14 @@ function currentPageUrl(): string {
 /**
  * Run one step during trainer replay.
  *
- * Single dispatch point on purpose: two step kinds CANNOT go through the
- * injected-script replayer. A `cookie` step needs the session API, because an
- * httpOnly cookie is invisible to document.cookie by definition; a `viewport`
- * step needs the window API, because a page cannot resize the window it is
- * loaded in. Routing every path through here means a new step kind can't be
- * handled in some replay paths and silently missed in others.
+ * Single dispatch point on purpose: three step kinds CANNOT go through the
+ * injected-script replayer alone. A `cookie` step needs the session API,
+ * because an httpOnly cookie is invisible to document.cookie by definition; a
+ * `viewport` step needs the window API, because a page cannot resize the window
+ * it is loaded in; a `state` step needs the input API, because `:hover` follows
+ * the OS pointer and no event a page dispatches at itself can move it. Routing
+ * every path through here means a new step kind can't be handled in some replay
+ * paths and silently missed in others.
  */
 async function runStep(
   wc: { executeJavaScript: (script: string) => Promise<unknown> },
@@ -373,13 +382,46 @@ async function runStep(
       currentPageUrl(),
     );
   }
-  return (await execWithTimeout(wc, buildReplayScript(step), REPLAY_STEP_TIMEOUT_MS)) as ReplayStepResult;
+  const result = (await execWithTimeout(
+    wc,
+    buildReplayScript(step),
+    REPLAY_STEP_TIMEOUT_MS,
+  )) as ReplayStepResult & { point?: { x: number; y: number } };
+
+  // A `state` step is a two-part move: the PAGE resolves the locator and
+  // measures the element (only it can), then the WINDOW drives the real
+  // pointer (only it can). Both halves' logs are kept, in order — the page's
+  // half says which element was found, and losing that would make a failed
+  // hover indistinguishable from a hover onto the wrong thing.
+  if (step.type === "state" && step.elementState !== "focus") {
+    if (!result?.ok) return result;
+    const host =
+      recWindow && !recWindow.isDestroyed() ? (recWindow as unknown as InputHost) : null;
+    const native = applyStateStep(host, step, result.point ?? null);
+    const offset = result.logs?.length ?? 0;
+    return {
+      ok: native.ok,
+      ...(native.error ? { error: native.error } : {}),
+      logs: [
+        ...(result.logs ?? []),
+        ...native.logs.map((l) => ({ ...l, i: l.i + offset })),
+      ],
+    };
+  }
+  return result;
 }
 
 /** `tryHeal` with the standard in-window re-run wiring — every replay path
- *  re-runs a healed step the same way (substitute the locator, execute the
- *  replay script against the training window under the usual step timeout), so
- *  the four callers share this instead of repeating it. */
+ *  re-runs a healed step the same way (substitute the locator, re-run it under
+ *  the usual step timeout), so the four callers share this instead of repeating
+ *  it.
+ *
+ *  The retry goes through `runStep`, NOT straight to `buildReplayScript`. Those
+ *  were the same thing until a step kind needed a native half: a healed
+ *  `state: "hover"` run through the injected script alone reports `ok` because
+ *  the page found the element, while the pointer never moves — a heal that
+ *  says it worked and didn't. Only steps WITH a locator are ever healed, so the
+ *  locator-less branches of `runStep` are unreachable from here. */
 async function healAndRetry(
   wc: { executeJavaScript: (script: string) => Promise<unknown> },
   step: Step,
@@ -388,7 +430,7 @@ async function healAndRetry(
 ): Promise<{ heal: HealResult | null; okWithHeal: boolean; healedLogs?: DebugEntry["logs"] }> {
   return tryHeal(wc, step, stepIndex, error, async (locator) => {
     const healedStep = { ...step, locator: locator! };
-    return (await execWithTimeout(wc, buildReplayScript(healedStep), REPLAY_STEP_TIMEOUT_MS)) as {
+    return (await runStep(wc, healedStep)) as {
       ok: boolean;
       error?: string;
       logs?: DebugEntry["logs"];
@@ -613,6 +655,19 @@ async function withCaptureSuspended<T>(body: () => Promise<T>): Promise<T> {
       session.paused = wasPaused;
       session.replaying = false;
     }
+    // A `press` step holds the left mouse button down so the assertion after it
+    // can measure `:active`. If that assertion FAILS the replay stops there —
+    // and unlike a real run, which tears the browser down, the training window
+    // stays open with the button still held: every later click in it would be a
+    // drag. Released here, in the same `finally` and for the same reason
+    // capture is restored here — every early return and every throw in every
+    // replay path passes through this one place.
+    if (isMouseHeld()) {
+      const released = releaseHeldMouse(
+        recWindow && !recWindow.isDestroyed() ? (recWindow as unknown as InputHost) : null,
+      );
+      for (const line of released) logger.warn("recorder", line.m);
+    }
     await applyStateAttributes().catch(() => {});
     broadcastState();
   }
@@ -672,9 +727,14 @@ function windowLabel(): string {
  *  right-click test-tools menu in the training browser. The renderer opens the
  *  Add-step dialog prefilled with these so the user can tweak before inserting. */
 export interface ContextAction {
-  kind: "assertion" | "wait" | "goto" | "press" | "viewport" | "find" | "refine";
+  kind: "assertion" | "wait" | "goto" | "press" | "viewport" | "find" | "refine" | "elementState";
   /** assert kind when kind === "assertion" */
   assert?: AssertKind;
+  /** which pseudo-state to preselect when kind === "elementState". Only the
+   *  one-step states are offered from the right-click menu — the composite
+   *  picks (:active, :focus-visible) add several rows and belong in the dialog,
+   *  where the row count can be stated before the user commits. */
+  elementState?: "hover" | "focus";
   /** wait mode when kind === "wait": "element" resolves the locator, "hidden"
    *  opens a Wait Until on the `hidden` predicate, "until" opens Wait Until
    *  with nothing preselected, "time" is a fixed duration. */
@@ -808,6 +868,12 @@ export const recorderService = {
       pageReady: false,
       loadFailed: false,
     };
+
+    // The pointer position remembered from the previous session was measured
+    // against a page that is no longer loaded. Carrying it over would let the
+    // first `press` of a new session click a coordinate chosen for a different
+    // document — a real click, on whatever happens to be there now.
+    resetInputState();
 
     // Push the existing steps to the renderer so the trainer's live list shows
     // full context while extending. They're already in session.steps above, so
@@ -1065,6 +1131,14 @@ export const recorderService = {
           { label: "Has value", click: () => ctxAction({ kind: "assertion", assert: "value", picked, prefillText, prefillValue }) },
           { label: "Has attribute", click: () => ctxAction({ kind: "assertion", assert: "attribute", picked, prefillText, prefillValue }) },
           { label: "Has count", click: () => ctxAction({ kind: "assertion", assert: "count", picked, prefillText, prefillValue }) },
+          // The one item here worth right-clicking for: `picked.css` carries the
+          // element's computed values, read with the cursor over it, so the
+          // dialog opens with the HOVERED values already listed.
+          { label: "Has CSS property…", click: () => ctxAction({ kind: "assertion", assert: "css", picked, prefillText, prefillValue }) },
+        ];
+        const stateItems: MenuItemConstructorOptions[] = [
+          { label: "Hover (:hover)", click: () => ctxAction({ kind: "elementState", elementState: "hover", picked, prefillText: "", prefillValue: "" }) },
+          { label: "Focus (:focus)", click: () => ctxAction({ kind: "elementState", elementState: "focus", picked, prefillText: "", prefillValue: "" }) },
         ];
         const assertPageItems: MenuItemConstructorOptions[] = [
           { label: "URL contains…", click: () => ctxAction({ kind: "assertion", assert: "url", picked: null, prefillText: "", prefillValue }) },
@@ -1090,6 +1164,7 @@ export const recorderService = {
           { type: "separator" },
           { label: "Assert element", submenu: assertElItems },
           { label: "Assert page", submenu: assertPageItems },
+          { label: "Set element state", submenu: stateItems },
           { label: "Wait", submenu: waitItems },
           {
             label: "Refine selector for this element",
@@ -1361,6 +1436,12 @@ export const recorderService = {
           "text",
           "url",
           "attr",
+          // Copied WITHOUT re-normalizing, like every other key here — which is
+          // exactly why `script-generator` re-checks `cssProp` and
+          // `elementState` on its own rather than trusting the step model.
+          "cssProp",
+          "cssMatch",
+          "elementState",
           "count",
           "width",
           "height",

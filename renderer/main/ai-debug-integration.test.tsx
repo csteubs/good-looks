@@ -72,7 +72,7 @@ vi.mock("../lib/api", () => ({
       getSettings: async () =>
         ({ keepRunningAiDebugJobs: h.keepRunningJobs }) as unknown as RecorderSettings,
     },
-    runs: { captureOverhead: async () => null },
+    runs: { captureOverhead: async () => null, triage: async () => null },
     artifacts: {
       hasLogs: async () => ({ hasLogs: h.hasLogs }),
       getLogs: async () => h.runLogs,
@@ -82,6 +82,7 @@ vi.mock("../lib/api", () => ({
       save: async (s: unknown) => s,
       remove: async () => ({ removed: 1 }),
       clear: async () => ({ removed: 0 }),
+      notifyDone: async () => ({ ok: true }),
     },
     llm: {
       chat: async (params: unknown) => {

@@ -13,6 +13,15 @@ import { screen, fireEvent, waitFor } from "@testing-library/react";
 import { makeController, renderPane, savedPatch } from "../__tests__/harness";
 import { AlertsPane } from "./alerts-pane";
 
+/** The "More" disclosure for one row. Every row has one, so a bare
+ *  `getByRole("button", {name: /more/i})` matches them all and reports as
+ *  "found multiple elements" rather than as the wrong row. */
+function moreFor(rowId: string): HTMLElement {
+  const el = document.querySelector(`[aria-controls="${rowId}-details"]`);
+  if (!el) throw new Error(`No details disclosure for row "${rowId}"`);
+  return el as HTMLElement;
+}
+
 describe("local notifications", () => {
   it("saves the toggle", () => {
     const { controller } = renderPane(<AlertsPane />);
@@ -24,8 +33,33 @@ describe("local notifications", () => {
     // The distinction from the webhook row below is the whole reason these two
     // sit next to each other.
     renderPane(<AlertsPane />);
-    fireEvent.click(screen.getByRole("button", { name: /more/i }));
+    fireEvent.click(moreFor("notify-run-issues"));
     expect(screen.getByText(/local to this Mac/i)).toBeTruthy();
+  });
+
+  it("offers a separate batch notification, on by default", () => {
+    // A batch is a job you walk away from, so unlike the per-run notice this
+    // one reports success too — and it's the reason a failing batch no longer
+    // fires one notification per failed test.
+    renderPane(<AlertsPane />);
+    const toggle = screen.getByRole("switch", { name: /notify when a batch finishes/i });
+    expect(toggle.getAttribute("data-state")).toBe("checked");
+    fireEvent.click(moreFor("notify-batch-done"));
+    expect(screen.getByText(/one for the suite/i)).toBeTruthy();
+  });
+
+  it("offers an AI-debug notification, off by default, that saves", () => {
+    // A minimized AI job is walked away from exactly like a batch, but the
+    // default is off: not everyone uses the AI feature at all.
+    renderPane(<AlertsPane />);
+    const toggle = screen.getByRole("switch", { name: /notify when an AI debug job finishes/i });
+    expect(toggle.getAttribute("data-state")).toBe("unchecked");
+  });
+
+  it("saves the AI-debug toggle", () => {
+    const { controller } = renderPane(<AlertsPane />);
+    fireEvent.click(screen.getByRole("switch", { name: /notify when an AI debug job finishes/i }));
+    expect(savedPatch(controller)).toEqual({ notifyOnAiDebugDone: true });
   });
 });
 
@@ -141,13 +175,65 @@ describe("the alert webhook is write-only", () => {
     );
   });
 
-  it("saves the enable toggle once a URL exists", () => {
+  it("saves the enable toggle once a URL exists and the user confirms", async () => {
     const controller = makeController({
       webhookStatus: { hasUrl: true, host: "hooks.example.com" },
     });
     renderPane(<AlertsPane />, { controller });
     fireEvent.click(screen.getByRole("switch", { name: /send alerts to a webhook/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /send alerts/i }));
+    await waitFor(() => expect(controller.save).toHaveBeenCalledTimes(1));
     expect(savedPatch(controller)).toEqual({ alertWebhookEnabled: true });
+  });
+});
+
+describe("turning the webhook on asks first", () => {
+  const configured = () =>
+    makeController({ webhookStatus: { hasUrl: true, host: "hooks.example.com" } });
+
+  it("saves nothing until the confirmation is accepted", async () => {
+    // The switch is driven by the SAVED setting, so it must not appear to flip
+    // while the dialog is still open — that would read as "already on, and now
+    // I'm being asked whether I meant it".
+    const controller = configured();
+    renderPane(<AlertsPane />, { controller });
+    const sw = screen.getByRole("switch", { name: /send alerts to a webhook/i });
+    fireEvent.click(sw);
+
+    expect(await screen.findByRole("alertdialog")).toBeTruthy();
+    expect(controller.save).not.toHaveBeenCalled();
+    expect(sw.getAttribute("data-state")).toBe("unchecked");
+  });
+
+  it("names the destination host in the confirmation", async () => {
+    renderPane(<AlertsPane />, { controller: configured() });
+    fireEvent.click(screen.getByRole("switch", { name: /send alerts to a webhook/i }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toMatch(/hooks\.example\.com/);
+    // The point of asking: it keeps sending afterwards without asking again.
+    expect(dialog.textContent).toMatch(/automatically/i);
+  });
+
+  it("leaves the setting off when the confirmation is cancelled", async () => {
+    const controller = configured();
+    renderPane(<AlertsPane />, { controller });
+    fireEvent.click(screen.getByRole("switch", { name: /send alerts to a webhook/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    expect(controller.save).not.toHaveBeenCalled();
+  });
+
+  it("turns OFF without asking", async () => {
+    // Confirming the way out trains people to click through the one on the way
+    // in, and stopping the sending is not the risky direction.
+    const controller = makeController({
+      webhookStatus: { hasUrl: true, host: "hooks.example.com" },
+      settings: { alertWebhookEnabled: true },
+    });
+    renderPane(<AlertsPane />, { controller });
+    fireEvent.click(screen.getByRole("switch", { name: /send alerts to a webhook/i }));
+    expect(savedPatch(controller)).toEqual({ alertWebhookEnabled: false });
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
   });
 });
 

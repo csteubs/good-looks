@@ -71,11 +71,13 @@ const ASSERT_LABEL: Record<AssertKind, string> = {
   urlEndsWith: "URL ends with",
   urlIs: "URL is",
   title: "Page title is",
+  css: "Has CSS property",
 };
 
 // Order matters: index === commandId in the native "+ Add step" menu.
 const ADD_STEP_KINDS: AddStepKind[] = [
   "assertion",
+  "elementState",
   "condition",
   "wait",
   "goto",
@@ -546,6 +548,8 @@ export function RecordingView() {
     picked: PickedElement | null;
     assert?: AssertKind;
     waitMode?: WaitDialogMode;
+    /** pseudo-state preselected by the right-click "Set element state" submenu */
+    elementState?: "hover" | "focus";
     prefillText?: string;
     prefillValue?: string;
   } | null>(null);
@@ -579,6 +583,9 @@ export function RecordingView() {
     } else if (a.kind === "wait") {
       setContextPick({ picked: a.picked, waitMode: a.waitMode, prefillText: a.prefillText, prefillValue: a.prefillValue });
       setAddKind("wait");
+    } else if (a.kind === "elementState") {
+      setContextPick({ picked: a.picked, elementState: a.elementState, prefillText: a.prefillText, prefillValue: a.prefillValue });
+      setAddKind("elementState");
     } else {
       setContextPick({ picked: a.picked, prefillText: a.prefillText, prefillValue: a.prefillValue });
       setAddKind(a.kind as AddStepKind);
@@ -961,6 +968,7 @@ export function RecordingView() {
           }}
           initialAssert={contextPick?.assert}
           initialWaitMode={contextPick?.waitMode}
+          initialState={contextPick?.elementState}
           prefillText={contextPick?.prefillText}
           prefillValue={contextPick?.prefillValue}
         />

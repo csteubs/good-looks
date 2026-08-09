@@ -15,9 +15,11 @@
 //   • the run Output panel's sparkle (per test)
 //   • the trainer Console's per-step sparkles (per step)
 //   • the global chip (aggregate across sessions)
+//   • the library sidebar's per-row sparkle (aggregate per test)
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, act, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { AiDebugSession, AiDebugStatus } from "../lib/recorder-types";
 import { toneFor } from "../lib/ai-debug-status";
@@ -29,6 +31,7 @@ import {
   useAiDebugStatus,
   type AiDebugContextValue,
 } from "./ai-debug-store";
+import { LibrarySidebar } from "./library-sidebar";
 import { RunOutput } from "./run-output";
 import type { RunInfo } from "./recorder-store";
 
@@ -36,11 +39,24 @@ const h = vi.hoisted(() => ({
   listResult: [] as AiDebugSession[],
   handlers: {} as Record<string, ((payload: unknown) => void)[]>,
   navigate: vi.fn(),
+  /** What the run panel's triage line resolves to. Null — no verdict — for
+   *  every test but the ones that put a verdict on screen deliberately. */
+  triage: null as unknown,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => h.navigate,
+  // The sidebar (a covered surface below) reads both; neither matters here.
+  useParams: () => ({}),
+  useRouterState: () => "/",
 }));
+
+// The sidebar's dialogs each open their own queries and native bridges; none
+// of them is an icon surface.
+vi.mock("./new-recording-dialog", () => ({ NewRecordingDialog: () => null }));
+vi.mock("./generate-test-dialog", () => ({ GenerateTestDialog: () => null }));
+vi.mock("./import-git-dialog", () => ({ ImportGitDialog: () => null }));
+vi.mock("./tags-dialog", () => ({ TagsDialog: () => null }));
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -49,7 +65,9 @@ vi.mock("../lib/api", () => ({
       save: async (s: unknown) => s,
       remove: async () => ({ removed: 1 }),
       clear: async () => ({ removed: 0 }),
+      notifyDone: async () => ({ ok: true }),
     },
+    recorder: { getSettings: async () => ({}) },
     llm: {
       chat: async () => ({ requestId: "req-1" }),
       cancel: async () => {},
@@ -63,6 +81,31 @@ vi.mock("../lib/api", () => ({
       return () => {
         h.handlers[channel] = (h.handlers[channel] ?? []).filter((x) => x !== cb);
       };
+    },
+    // For the sidebar surface: one test the sessions can attach to, no runs
+    // (the verdict dot is library-sidebar.test.tsx's business, not this file's).
+    tests: {
+      list: async () => [
+        {
+          id: "t1",
+          name: "Checkout",
+          url: "https://example.com",
+          createdAt: 1,
+          updatedAt: 1,
+          steps: [],
+          scriptPath: "/tmp/t1.spec.ts",
+        },
+      ],
+    },
+    // `triage` because the run panel carries a triage line; it resolves to "no
+    // verdict" unless a test sets one. run-triage.test.tsx covers the line
+    // itself — what matters here is that it cannot disturb the icon.
+    runs: {
+      list: async () => [],
+      triage: async () => {
+        if (h.triage === "throw") throw new Error("metrics unavailable");
+        return h.triage;
+      },
     },
   },
 }));
@@ -150,6 +193,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   for (const k of Object.keys(h.handlers)) delete h.handlers[k];
   h.listResult = [];
+  h.triage = null;
 });
 
 // ── The run panel's icon ─────────────────────────────────────────────
@@ -464,6 +508,82 @@ describe("the global chip", () => {
 // on a finished job leaves the user waiting on nothing, and a lost green loses
 // them an answer they asked for.
 
+// ── The library sidebar's per-row sparkle ────────────────────────────
+
+describe("the sidebar row sparkle", () => {
+  // The sidebar needs a QueryClient for its tests/runs queries; the other
+  // surfaces above don't, so the wrapper lives here rather than in a shared
+  // helper that would imply they use it.
+  function renderSidebar() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <AiDebugProvider>
+          <Capture />
+          <LibrarySidebar />
+        </AiDebugProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("shows every status with its own colour and label on the test's row", async () => {
+    for (const status of ALL_STATUSES) {
+      h.listResult = [session({ status })];
+      const { unmount } = renderSidebar();
+      const tone = toneFor(status);
+      const label = `AI debug — ${tone.label}`;
+      await waitFor(() => expect(screen.getByLabelText(label)).toBeTruthy());
+      expect(screen.getByLabelText(label).getAttribute("class") ?? "").toContain(tone.className);
+      unmount();
+    }
+  });
+
+  it("pulses while streaming and holds still once done", async () => {
+    h.listResult = [session({ status: "streaming" })];
+    const first = renderSidebar();
+    const busyLabel = `AI debug — ${toneFor("streaming").label}`;
+    await waitFor(() => expect(screen.getByLabelText(busyLabel)).toBeTruthy());
+    expect(screen.getByLabelText(busyLabel).getAttribute("class") ?? "").toContain("animate-pulse");
+    first.unmount();
+
+    h.listResult = [session({ status: "done" })];
+    renderSidebar();
+    const doneLabel = `AI debug — ${toneFor("done").label}`;
+    await waitFor(() => expect(screen.getByLabelText(doneLabel)).toBeTruthy());
+    expect(screen.getByLabelText(doneLabel).getAttribute("class") ?? "").not.toContain(
+      "animate-pulse",
+    );
+  });
+
+  it("keeps a row without sessions clean", async () => {
+    h.listResult = [];
+    renderSidebar();
+    await screen.findByText("Checkout");
+    expect(screen.queryByLabelText(/^AI debug — /)).toBeNull();
+  });
+
+  it("follows a session from streaming to done, live", async () => {
+    // The row must update while the user is elsewhere in the app — that's the
+    // whole point of surfacing it in the LIST rather than only in the detail
+    // view they navigated away from.
+    h.listResult = [];
+    renderSidebar();
+    await screen.findByText("Checkout");
+
+    openSessionFor("t1");
+    await act(async () => {
+      await store.startStream(runSessionKey("t1"), [{ role: "user", content: "hi" }]);
+    });
+    const busyLabel = `AI debug — ${toneFor("streaming").label}`;
+    await waitFor(() => expect(screen.getByLabelText(busyLabel)).toBeTruthy());
+
+    emit("llm:done", { requestId: "req-1" });
+    const doneLabel = `AI debug — ${toneFor("done").label}`;
+    await waitFor(() => expect(screen.getByLabelText(doneLabel)).toBeTruthy());
+    expect(screen.queryByLabelText(busyLabel)).toBeNull();
+  });
+});
+
 describe("applying a suggested fix", () => {
   function renderFinishedSession() {
     h.listResult = [session({ status: "done" })];
@@ -533,5 +653,67 @@ describe("applying a suggested fix", () => {
 
     expect(store.sessions).toHaveLength(0);
     expect(screen.queryByLabelText(toneFor("done").label)).toBeNull();
+  });
+});
+
+// ── The icon alongside the triage line ───────────────────────────────
+//
+// Both live in the run panel's header area and both arrive asynchronously. The
+// icon is the surface this file exists to protect: a wrong colour is silent,
+// because the panel works perfectly while the icon lies. Triage is new traffic
+// through the same component, and it queries on mount — so the failure to rule
+// out is triage rendering, re-rendering or THROWING and taking the icon's
+// colour with it.
+
+describe("the run panel icon, alongside a triage verdict", () => {
+  const verdict = {
+    verdict: "site",
+    confidence: 0.7,
+    evidence: [
+      { signal: "server-error", direction: "site", detail: "The failing step saw a 503 response." },
+    ],
+    limits: [],
+    failingStepId: "step-2",
+    suggestedNext: "Open the run's network report.",
+  };
+
+  it("keeps its colour once a verdict lands beside it", async () => {
+    h.triage = verdict;
+    h.listResult = [session({ status: "done" })];
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <TestPanel testId="t1" />
+      </AiDebugProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText(toneFor("done").label)).toBeTruthy());
+    // The verdict really is on screen — without this the assertion below would
+    // pass against a panel where triage rendered nothing at all.
+    await screen.findByText(/503 response/);
+
+    expect(iconClassOf(toneFor("done").label)).toContain("text-support-green");
+  });
+
+  // What this pins is the RENDERED result of a failed triage query: the icon
+  // keeps its colour and the line shows nothing — not a half-built row, not an
+  // error string where a verdict goes. It does not distinguish a caught
+  // rejection from an uncaught one (a rejected promise in an effect leaves the
+  // tree standing either way, as a mutation confirmed), so the catch in
+  // run-triage.tsx is load-bearing for the console, not for this assertion.
+  it("shows no verdict and keeps its icon when triage fails", async () => {
+    h.triage = "throw";
+    h.listResult = [session({ status: "error" })];
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <TestPanel testId="t1" />
+      </AiDebugProvider>,
+    );
+
+    await waitFor(() => expect(screen.getByLabelText(toneFor("error").label)).toBeTruthy());
+    expect(iconClassOf(toneFor("error").label)).toContain("text-support-red");
+    expect(screen.queryByText(/metrics unavailable/)).toBeNull();
+    expect(screen.queryByText(/Likely the/)).toBeNull();
   });
 });

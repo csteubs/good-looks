@@ -24,9 +24,13 @@ import { DEFAULT_WAIT_TIMEOUT_MS } from "../lib/recorder-types";
 import { clampViewportAxis } from "../lib/viewport-presets";
 import type { Step, StepType } from "../lib/recorder-types";
 
-function badgeColor(type: StepType): "green" | "blue" | "secondary" | "purple" {
+function badgeColor(type: StepType): "green" | "blue" | "secondary" | "purple" | "yellow" {
   if (type === "if" || type === "endif") return "purple";
   if (type === "assert") return "green";
+  // A pseudo-state step gets its own colour because it is the one kind whose
+  // effect is invisible in the step list AFTER it: it changes what the next
+  // assertion measures without changing the page.
+  if (type === "state") return "yellow";
   // Environment/setup steps share a colour: navigation, viewport, waits, cookies.
   if (type === "goto" || type === "viewport" || type === "wait" || type === "cookie") return "blue";
   return "secondary";
@@ -94,6 +98,13 @@ function editableField(
       if (step.assert === "value" || step.assert === "url" || step.assert === "urlEndsWith" || step.assert === "urlIs" || step.assert === "title")
         return { key: "value", label: "Expected", value: step.value ?? "" };
       if (step.assert === "attribute")
+        return { key: "value", label: "Expected", value: step.value ?? "" };
+      // The expected value is the half of a CSS assert most likely to need a
+      // tweak (a brand colour changes; the property doesn't), so it gets the
+      // same inline edit `attribute` has. The property name and match mode are
+      // not inline-editable — one is validated, the other is an enum, and
+      // neither fits a bare text field on a row this narrow.
+      if (step.assert === "css")
         return { key: "value", label: "Expected", value: step.value ?? "" };
       return null;
     case "if":
@@ -370,8 +381,16 @@ export function StepRow({
           {/* `viewport` IS replayable on its own — it resizes the training
               window, which is exactly the thing worth previewing before
               trusting the step. `goto`/`endif` still aren't: one restarts the
-              session's navigation, the other is a block delimiter. */}
-          {onReplay && step.type !== "goto" && step.type !== "endif" ? (
+              session's navigation, the other is a block delimiter.
+
+              A lone `press` isn't either: replaying it holds the left mouse
+              button down in the live training window with no `release` coming,
+              so the user's next click there would be a drag. It only means
+              anything as part of the run that also releases it. */}
+          {onReplay &&
+          step.type !== "goto" &&
+          step.type !== "endif" &&
+          !(step.type === "state" && step.elementState === "press") ? (
             <Button
               iconOnly
               variant="transparent"

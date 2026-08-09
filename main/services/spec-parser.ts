@@ -600,6 +600,21 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
       continue;
     }
 
+    // page.mouse.down() / page.mouse.up() — the two halves of an `:active`
+    // assertion. Neither carries a locator: `mouse.down` acts wherever the
+    // cursor already is, which is where the preceding hover put it.
+    const mouseM = rest.match(/^[\s;]*(?:await\s+|return\s+)?page\.mouse\.(down|up)\s*\(/);
+    if (mouseM) {
+      const openIdx = i + mouseM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      steps.push(
+        makeStep("state", { elementState: mouseM[1] === "down" ? "press" : "release" }),
+      );
+      i = close + 1;
+      continue;
+    }
+
     // page.waitForTimeout(<ms>)
     const waitM = rest.match(/^[\s;]*(?:await\s+|return\s+)?page\.waitForTimeout\s*\(/);
     if (waitM) {
@@ -793,7 +808,7 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
         }
 
         const assertM = after.match(
-          /^\s*\.(toBeVisible|toBeHidden|toContainText|toHaveText|toBeEnabled|toBeDisabled|toBeChecked|toHaveValue|toHaveAttribute|toHaveCount)\s*\(/,
+          /^\s*\.(toBeVisible|toBeHidden|toContainText|toHaveText|toBeEnabled|toBeDisabled|toBeChecked|toHaveValue|toHaveAttribute|toHaveCount|toHaveCSS)\s*\(/,
         );
         if (assertM) {
           const method = assertM[1];
@@ -846,6 +861,40 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
                 emit("count", base, numM ? { count: parseInt(numM[0], 10) } : {});
                 break;
               }
+              case "toHaveCSS": {
+                // Two shapes, and the second argument is what tells them apart:
+                //   ("color", "rgb(1, 2, 3)")            → cssMatch "is"
+                //   ("color", new RegExp("rgb\\(1", "i")) → cssMatch "contains"
+                // The regex arm is checked FIRST because a literal-string match
+                // would also match the quoted pattern inside `new RegExp(...)`
+                // and silently downgrade every `contains` assert to an `is`
+                // against a regex source — which then fails at run time against
+                // a value it looks like it should match.
+                const reM = argsStr.match(
+                  /['"`]([^'"`\n]*)['"`]\s*,\s*new\s+RegExp\s*\(\s*['"`]([^'"`\n]*)['"`]/,
+                );
+                if (reM) {
+                  emit("css", base, {
+                    cssProp: unescapeLit(reM[1]),
+                    cssMatch: "contains",
+                    // Always unescape: the generator regex-escaped this on the
+                    // way out, so leaving it escaped would re-escape it on the
+                    // next regeneration and the pattern would drift a backslash
+                    // further from the value on every round trip.
+                    value: reUnescape(unescapeLit(reM[2])),
+                  });
+                  break;
+                }
+                const m3 = argsStr.match(/['"`]([^'"`\n]*)['"`]\s*,\s*['"`]([^'"`\n]*)['"`]/);
+                emit(
+                  "css",
+                  base,
+                  m3
+                    ? { cssProp: unescapeLit(m3[1]), cssMatch: "is", value: unescapeLit(m3[2]) }
+                    : {},
+                );
+                break;
+              }
             }
             i = isWait ? lineEnd : aClose + 1;
             continue;
@@ -872,7 +921,9 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
       const parsed = parseLocator(src.slice(i, locClose + 1));
       if (parsed) {
         const after = src.slice(locClose + 1);
-        const actionM = after.match(/^\s*\.(click|fill|selectOption|check|uncheck|press|waitFor)\s*\(/);
+        const actionM = after.match(
+          /^\s*\.(click|fill|selectOption|check|uncheck|press|waitFor|hover|focus)\s*\(/,
+        );
         if (actionM) {
           const action = actionM[1];
           const aOpen = locClose + 1 + after.indexOf("(", actionM[0].length - 1);
@@ -886,8 +937,20 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
               uncheck: "uncheck",
               press: "press",
               waitFor: "wait",
+              hover: "state",
+              focus: "state",
             };
             const argsStr = src.slice(aOpen + 1, aClose);
+            // Until pseudo-states existed, `.hover()` fell through to the
+            // unclassified branch below and counted as a SKIP — which set
+            // `stepsDiverged` permanently on any imported test that hovered.
+            if (action === "hover" || action === "focus") {
+              steps.push(
+                makeStep("state", { locator: parsed.locator, elementState: action }),
+              );
+              i = aClose + 1;
+              continue;
+            }
             if (action === "waitFor") {
               // `.waitFor({ state: … })` is a conditional wait with a native
               // API, so it needs no marker. The state is the whole meaning of
@@ -944,10 +1007,18 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
     }
 
     // Nothing matched. If this looks like an action statement we should have
-    // recognized (a bare `page.<method>(...)` call not covered above), count
-    // it as skipped and jump to the next top-level `;` instead of limping
-    // forward one character at a time and re-triggering this check per char.
-    const skipM = rest.match(/^[\s;]*(?:await\s+|return\s+)?page\.\w+\s*\(/);
+    // recognized (a `page.<method>(...)` call not covered above), count it as
+    // skipped and jump to the next top-level `;` instead of limping forward one
+    // character at a time and re-triggering this check per char.
+    //
+    // NESTED paths (`page.mouse.move`, `page.keyboard.down`, `page.clock.*`)
+    // match too. They did not before, and the consequence was worse than a
+    // miscount: no branch claimed them and no fallback caught them, so the scan
+    // walked them character by character and they contributed neither a step
+    // NOR a skip. The statement simply vanished on the next `tests:updateScript`
+    // resync, taking its behaviour out of the test with nothing on screen
+    // saying so — the exact failure `skipped` exists to make visible.
+    const skipM = rest.match(/^[\s;]*(?:await\s+|return\s+)?page\.\w+(?:\.\w+)*\s*\(/);
     if (skipM) {
       skipped++;
       // Start scanning just past the call's opening paren (depth 1) so a

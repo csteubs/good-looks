@@ -94,40 +94,62 @@ assert(
   "renderer mirror: the same label for every speed",
 );
 
-// The MCP server keeps a THIRD copy of the delay table (it spawns Playwright
-// itself, without importing this codebase). Read as text rather than imported:
-// importing server.mjs starts an MCP server on stdio.
+// The delay table used to be TRANSCRIBED into two more files — mcp/server.mjs,
+// which spawns Playwright itself, and renderer/lib/llm-prompts.ts, which tells
+// the model how the run was paced. The MCP copy was the nastiest: a speed
+// missing from it read as `undefined`, and the server's `?? 0` turned that into
+// a full-speed run of a test the user deliberately slowed down, reported as a
+// normal pass or fail with nothing anywhere saying the pacing was ignored.
 //
-// This one is the nastiest of the three to lose. A speed missing from that
-// table reads as `undefined`, and the server's `?? 0` turns it into a
-// full-speed run of a test the user deliberately slowed down — reported as a
-// normal pass or fail, with nothing anywhere saying the pacing was ignored.
-// The prompt builder keeps a fourth copy, for the line that tells the model how
-// the run was paced. A stale one here is quieter than the MCP case but is still
-// the app confidently stating a wrong number to something reasoning from it.
+// Both now IMPORT the one definition from shared/run-pacing.mjs, so the numbers
+// cannot drift and there is nothing left to compare. What is pinned instead is
+// that neither has grown a replacement copy: re-declaring the table is exactly
+// how this got to three of them, and a fresh copy would be right on the day it
+// was written and silent forever after.
 //
-// Both are read as TEXT rather than imported: importing server.mjs starts an
-// MCP server on stdio. Anchored on cwd, not on import.meta.url — this check is
-// bundled into node_modules/.cache before it runs, so a source-relative path
-// would resolve from the cache directory. `npm run` always starts at the root.
-function delayTableIn(relPath: string): Map<string, number> {
+// Read as TEXT rather than imported: importing server.mjs starts an MCP server
+// on stdio. Anchored on cwd, not on import.meta.url — this check is bundled
+// into node_modules/.cache before it runs, so a source-relative path would
+// resolve from the cache directory. `npm run` always starts at the root.
+for (const [label, relPath, imported] of [
+  ["mcp run-plan", "mcp/run-plan.mjs", "../shared/run-pacing.mjs"],
+  ["llm-prompts", "renderer/lib/llm-prompts.ts", "../../shared/run-pacing.mjs"],
+] as const) {
   const src = readFileSync(resolve(process.cwd(), relPath), "utf8");
-  const table = /SLOW_MO_MS[^=]*= \{([^}]*)\}/.exec(src)?.[1] ?? "";
-  const delays = new Map<string, number>();
-  for (const m of table.matchAll(/(\w+)\s*:\s*(\d+)/g)) delays.set(m[1], Number(m[2]));
-  return delays;
+  assert(
+    src.includes(`from "${imported}"`),
+    `${label}: imports the pacing table from shared/ rather than keeping a copy`,
+  );
 }
 
-for (const [label, relPath] of [
-  ["mcp", "mcp/server.mjs"],
-  ["llm-prompts", "renderer/lib/llm-prompts.ts"],
-] as const) {
-  const delays = delayTableIn(relPath);
-  assert(delays.size > 0, `${label} mirror: found the SLOW_MO_MS table in ${relPath}`);
+// Asserted across every file that once held a copy, including the ones that no
+// longer import the table at all — the failure mode is someone re-adding a
+// literal next to a call site, not someone editing the import.
+for (const relPath of [
+  "mcp/server.mjs",
+  "mcp/run-plan.mjs",
+  "renderer/lib/llm-prompts.ts",
+]) {
+  const src = readFileSync(resolve(process.cwd(), relPath), "utf8");
+  assert(
+    !/(const|let|var)\s+SLOW_MO_MS\s*[:=]/.test(src),
+    `${relPath}: declares no SLOW_MO_MS of its own`,
+  );
+}
+
+// The one remaining definition is the shared one, and it is what both of the
+// above resolve to. Asserted here so this check still fails if the table itself
+// loses a speed — the failure the two mirrors existed to catch.
+{
+  const src = readFileSync(resolve(process.cwd(), "shared/run-pacing.mjs"), "utf8");
+  const table = /SLOW_MO_MS\s*=\s*\{([^}]*)\}/.exec(src)?.[1] ?? "";
+  const delays = new Map<string, number>();
+  for (const m of table.matchAll(/(\w+)\s*:\s*(\d+)/g)) delays.set(m[1], Number(m[2]));
+  assert(delays.size > 0, "shared: found the SLOW_MO_MS table in shared/run-pacing.mjs");
   for (const speed of TEST_SPEEDS) {
     assert(
       delays.get(speed) === SLOW_MO_MS[speed],
-      `${label} mirror: "${speed}" is ${SLOW_MO_MS[speed]}ms there too`,
+      `shared: "${speed}" is ${SLOW_MO_MS[speed]}ms in the shared table`,
     );
   }
 }
@@ -417,8 +439,12 @@ async function main(): Promise<void> {
       }),
     );
     const elapsed = Date.now() - started;
+    // The upper bound is the real assertion: the wait terminates instead of
+    // hanging. The lower bound only rules out "resolved immediately", and gets a
+    // tolerance because timer resolution can land a few ms under the nominal
+    // timeout — it failed once at 1998ms against a 2000ms timeout.
     assert(
-      elapsed >= SETTLE_PAINT_TIMEOUT_MS && elapsed < SETTLE_PAINT_TIMEOUT_MS + 2000,
+      elapsed >= SETTLE_PAINT_TIMEOUT_MS - 50 && elapsed < SETTLE_PAINT_TIMEOUT_MS + 2000,
       `settle: a paint wait that never resolves is bounded (took ${elapsed}ms)`,
     );
   }

@@ -17,6 +17,8 @@ Records interactions on any website (clicks, typing, navigation, assertions) and
 - **Backend** (Node.js, `main/`) is the Electron main process.
 - They talk over Electron IPC (handlers in `main/handlers/`, called from the renderer via `window.glazeAPI.*` exposed in `renderer/preload.ts`). The global keeps its historical name because every view, page-world helper and test stub addresses it.
 - **`main/shell/` is the only place that may import `electron`.** Everything else in `main/` goes through `@shell/backend`, which is where the logger, the `windowKey`-stripping BrowserWindow wrapper and the navigation-event types live. An ESLint rule enforces the boundary.
+- **The metrics DB** (`userData/recorder/metrics.db`, `node:sqlite`) is a **derived shadow** of the JSON stores and run artifacts — never a store of record. Three consequences, all load-bearing: it is rolled up **before** retention prunes (that is the whole point — after it, retention costs you pictures, not history); a failure to open, migrate or write it must **never** reach a run, so every method swallows its own errors and degrades to "no metrics"; and a schema change needs no migration, because dropping and replaying from disk gives the same answer. `node:sqlite` is imported **dynamically** — a static import would throw at module load on a runtime without it and take the backend down.
+- **`shared/`** holds logic the app AND the standalone MCP server both need. They can't share a `.ts` module — the app is compiled and bundled, the MCP is plain `.mjs` with no build step — so these are `.mjs` with a hand-written `.d.mts` beside them, which keeps `type-check` a real gate over every TypeScript caller. **Pure only** (no `fs`, no shell import, no IPC, no `process`); anything needing the filesystem stays on its own side and hands data in. Reach for this before transcribing a constant into `mcp/` — a copy is right the day it's written and silent forever after.
 
 ## Directory map
 
@@ -24,7 +26,8 @@ Records interactions on any website (clicks, typing, navigation, assertions) and
 main/shell/         the Electron seam: backend adapter, logger, host IPC handlers,
                     the app:// protocol. THE ONLY PLACE THAT IMPORTS `electron`.
 main/handlers/      IPC handler registration
-main/services/      business logic (recorder, playwright-runner, llm, spec-parser, visual-pipeline)
+main/services/      business logic (recorder, playwright-runner, llm, spec-parser, visual-pipeline,
+                    metrics-store — the derived metrics DB, rolled up before retention prunes)
 main/services/llm/  local + hosted LLM chat integration (Ollama, LM Studio, Claude)
 main/recorder/       recording-session logic (script injection, step capture)
 main/windows/        BrowserWindow creation/config
@@ -36,8 +39,13 @@ renderer/ui/         the app's component library (Radix + Tailwind + cva). Repla
                      backed by real macOS menus via Menu.popup.
 renderer/components/ reusable UI composed from renderer/ui
 renderer/lib/        shared frontend utilities (llm-prompts, host bridge types, etc.)
+shared/              the ONE pure core both the app and the MCP import (.mjs + hand-written
+                     .d.mts). Pure only: no fs, no @glaze/core, no IPC, no process
 mcp/                 standalone MCP server exposing the test library to external MCP clients
                      (list_tests, get_test, list_runs, get_run_log, run_test, run_batch,
+                      get_visual_report, get_a11y_report, get_run_logs, list_heals,
+                      list_batches, compare_runs, triage_run, get_step_health,
+                      get_suite_cost, get_browser_matrix, get_flake_report,
                       capture_app, get_screenshot)
                      — see mcp/README.md
 docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated rationale)
@@ -64,7 +72,7 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1453 Vitest tests and 29 checks as of 2026-08-07.
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1781 Vitest tests and 37 checks in the chain as of 2026-08-09 (38 defined — `check:shell-drift` is deliberately outside it; it needs both branches fetched, which only CI reliably has).
 
 - **Vitest** (`vitest.config.ts`) has two projects. **`node`**: `main/**/*.test.ts`, `mcp/**/*.test.ts`, `renderer/lib/**/*.test.ts`. **`dom`** (jsdom): `renderer/**/*.test.tsx` plus `main/**/*.dom.test.ts` — that suffix is for BACKEND code needing a document (the injected replayer and Auto-Heal probe are evaluated for real). The node project explicitly excludes `*.dom.test.ts`; without that they match both globs and run again with no DOM, failing for unrelated reasons.
 - **`check:*` scripts** predate Vitest and are kept, not migrated — they catch real bugs and a rewrite would risk that for tooling neatness. Plain assertions + a non-zero exit; no runner. Two are deliberately *source-level* (`check:ai-debug-scroll`, `check:scroll-layout`) because they guard layout contracts that jsdom cannot observe.
@@ -86,8 +94,10 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 - **Radix `TabsTrigger` activates on pointer-down/focus, not a bare `click`** — `fireEvent.click` leaves the tab unchanged and assertions silently run against the previous tab.
 - **`SidebarListItem` activates on `mouseDown`**, same idiom, same silent failure: `fireEvent.click` doesn't fire its `onClick`, and the assertion then reports "0 calls", which reads as a broken handler rather than the wrong event. Use `fireEvent.mouseDown`.
 - **A fresh worktree needs `npm run bootstrap` before anything else.** Without it there is no `node_modules`, and the first `vitest` run CREATES an empty one for its own cache (`node_modules/.vite`) — which then makes `bootstrap` report "already present — nothing to do" and leaves you permanently broken. `vitest.config.ts` then points every React alias into a tree with no React, and every component test fails at import reading like a missing dependency; `type-check` degrades separately, reporting `Property 'children' does not exist` on SDK components across files you never touched. Fix: `rm -rf node_modules && npm run bootstrap`.
+- **Radix-backed `Tooltip` cannot be opened in jsdom.** Its trigger tracks pointers with APIs jsdom doesn't implement, so `pointerEnter`/`pointerMove`/`focus` all leave the content unmounted and the assertion reports as "unable to find the text" — which reads as wrong copy rather than an undrivable control. Same shape as the `Select` below: export the copy and assert it directly, and make sure the same string is reachable without hover (Stability puts it in the expanded row).
 - **The SDK's `Select` is native-menu-backed**: its options never enter the DOM, so a selection cannot be driven in jsdom. Assert the displayed value and cover persistence at the IPC layer instead.
 - An ambiguous `findBy*` (matching 2+ elements) retries until timeout, which reports as "never rendered" rather than "your query was ambiguous".
+- **`type-check` does not check SDK component props.** `<Text color="totally-not-a-color">` compiles clean on this tree — verified by compiling exactly that. `cva` falls through to the variant default when handed an unknown key, so a misspelt colour or variant renders as ordinary text and nothing throws. `add-step-dialog.tsx` shipped `color="danger"` this way and the invalid-property warning rendered in default foreground for its whole life. `check:text-color` guards `Text`'s colour; every other component prop is still unchecked here.
 - This project targets **ES2020**: no `Array.prototype.at`.
 
 ## The capture boundary is a security boundary

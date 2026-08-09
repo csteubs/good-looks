@@ -24,7 +24,10 @@ export type StepType =
   // Variable layer: `capture` reads a value off the page into the run's
   // variable scope; `runFlow` inlines another test's steps as a reusable flow.
   | "capture"
-  | "runFlow";
+  | "runFlow"
+  // Pseudo-state layer: puts an element into :hover / :focus / :active so the
+  // assertion AFTER it measures the styled state rather than the resting one.
+  | "state";
 
 /**
  * Predicate for an `if` step. Element conditions resolve `Step.locator`; page
@@ -94,7 +97,33 @@ export type AssertKind =
   | "url"
   | "urlEndsWith"
   | "urlIs"
-  | "title";
+  | "title"
+  // Computed CSS property, e.g. background-color is "rgb(0, 82, 204)". Reads
+  // `Step.cssProp` / `Step.cssMatch`, with the expected value in `Step.value`.
+  | "css";
+
+/**
+ * Pseudo-state a `state` step puts an element into (`Step.elementState`).
+ *
+ * Each one emits EXACTLY ONE awaited statement, which is not a stylistic
+ * choice: `generateSpecDetailed` records one spec line per step in its line
+ * map, and the `buildStepLineMap` fallback for hand-edited specs classifies
+ * steps by counting leading-`await` lines. A step emitting two awaited
+ * statements shifts every later step's run highlight by one.
+ *
+ * That is why `:active` and `:focus-visible` are not members here — they need
+ * two calls apiece, so the Add-step dialog emits them as SEVERAL ordinary rows
+ * (the same shape the "Wait until" dialog uses for multiple ticked properties):
+ *   :active         → hover, press, <the assertion>, release
+ *   :focus-visible  → press "Tab" (a plain `press` step), focus
+ *
+ * `press`/`release` carry no locator. `page.mouse.down()` acts wherever the
+ * cursor already is, which is what the preceding `hover` put there.
+ */
+export type ElementState = "hover" | "focus" | "press" | "release";
+
+/** How a `css` assertion compares the computed value against the expected one. */
+export type CssMatch = "is" | "contains";
 
 export interface Step {
   id: string;
@@ -116,6 +145,16 @@ export interface Step {
   soft?: boolean;
   /** attribute name for an "attribute" assertion */
   attr?: string;
+  /** CSS property for a "css" assertion, as a KEBAB-case name
+   *  ("background-color", not "backgroundColor"). Playwright reads it through
+   *  `getComputedStyle().getPropertyValue()`, which answers "" for a camelCase
+   *  name — so a camelCase property would compare an empty string against the
+   *  expected value and fail for a reason nothing on screen explains. */
+  cssProp?: string;
+  /** how a "css" assertion compares (default "is"). */
+  cssMatch?: CssMatch;
+  /** the pseudo-state a `state` step applies. */
+  elementState?: ElementState;
   /** expected element count for a "count" assertion */
   count?: number;
   /** viewport width when type === "viewport" */
@@ -225,6 +264,9 @@ export interface RawStep {
   text?: string;
   soft?: boolean;
   attr?: string;
+  cssProp?: string;
+  cssMatch?: CssMatch;
+  elementState?: ElementState;
   count?: number;
   width?: number;
   height?: number;
@@ -523,13 +565,71 @@ export function normalizeDatasets(input: unknown): Dataset[] {
 
 export const STEP_TYPES: StepType[] = [
   "goto", "click", "fill", "press", "select", "check", "uncheck", "assert",
-  "wait", "viewport", "if", "endif", "cookie", "capture", "runFlow",
+  "wait", "viewport", "if", "endif", "cookie", "capture", "runFlow", "state",
 ];
 
 export const ASSERT_KINDS: AssertKind[] = [
   "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked",
   "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs", "title",
+  "css",
 ];
+
+export const ELEMENT_STATES: ElementState[] = ["hover", "focus", "press", "release"];
+
+export const CSS_MATCHES: CssMatch[] = ["is", "contains"];
+
+/**
+ * The properties the CSS-assertion picker offers with the element's live
+ * computed value beside each — the ones a visual regression is actually about.
+ * A property outside this list is still assertable; the picker has a free-text
+ * field, and `isCssPropName` is what bounds THAT.
+ *
+ * KEBAB-case throughout, and `check:css-assertions` pins that: these names are
+ * passed to `getComputedStyle().getPropertyValue()` on both sides (the capture
+ * script that reads them, and Playwright's `toHaveCSS` that compares them), and
+ * that call answers "" for a camelCase name rather than throwing.
+ *
+ * Interpolated into `capture-script.ts` rather than retyped there, the same
+ * one-list discipline as `page-actions.ts`: two hand-maintained copies would
+ * drift the first time a property was added to one, and the failure is silent —
+ * the picker simply stops offering a value for a property it still lists.
+ */
+export const CSS_ASSERT_PROPS: string[] = [
+  "color",
+  "background-color",
+  "opacity",
+  "border-color",
+  "border-width",
+  "border-radius",
+  "box-shadow",
+  "outline-color",
+  "font-size",
+  "font-weight",
+  "font-family",
+  "text-decoration",
+  "letter-spacing",
+  "cursor",
+  "display",
+  "visibility",
+  "width",
+  "height",
+  "padding",
+  "margin",
+  "transform",
+  "z-index",
+];
+
+/**
+ * A syntactically valid CSS property name (including custom properties).
+ *
+ * `cssProp` reaches the generator as the first argument of `toHaveCSS`, where
+ * `q()` quotes it — but a property name has a KNOWN grammar, and checking the
+ * shape at the boundary means the generator's quoting is the second line of
+ * defence rather than the only one. Same reasoning as `isValidVariableName`.
+ */
+export function isCssPropName(v: unknown): v is string {
+  return typeof v === "string" && v.length <= 100 && /^-{0,2}[a-zA-Z][a-zA-Z0-9-]*$/.test(v);
+}
 
 export const CONDITION_KINDS: ConditionKind[] = [
   "visible", "hidden", "exists", "enabled", "disabled", "checked", "unchecked",
@@ -726,6 +826,16 @@ export function normalizeRawStep(input: unknown): RawStep | null {
   if (cond) out.cond = cond;
   if (waitUntil) out.waitUntil = waitUntil;
   if (bool(s.soft)) out.soft = true;
+
+  // A CSS property name is checked for SHAPE, not merely length-capped like the
+  // other free strings: it is the one string field whose grammar is known, and
+  // `str()` alone would carry `"); require("child_process")…` through to the
+  // generator's quoting and no further check.
+  if (isCssPropName(s.cssProp)) out.cssProp = s.cssProp;
+  const cssMatch = oneOf(s.cssMatch, CSS_MATCHES);
+  if (cssMatch) out.cssMatch = cssMatch;
+  const elementState = oneOf(s.elementState, ELEMENT_STATES);
+  if (elementState) out.elementState = elementState;
 
   // The fields that reach the generator as bare numerals.
   const count = int(s.count, 0, 1_000_000);
@@ -982,6 +1092,25 @@ export interface RunRecord {
    *  something was silently substituted is not the same evidence as one that
    *  passed outright. */
   healedSteps?: number;
+  /** How many steps Auto-Heal TRIED to rescue and could not — it looked for
+   *  the element under every candidate locator it could rank, and none of them
+   *  worked (or nothing on the page resembled it at all).
+   *
+   *  The opposite evidence to `healedSteps`, and the more informative half. A
+   *  step that healed says the locator was stale; a step that could not be
+   *  healed says the element is *gone*, which points at the site rather than at
+   *  the test. Nothing recorded this before 2026-08-07 — the fixture only ever
+   *  wrote an event on success — so it is absent on older runs and, unlike
+   *  everything else in this record, could never have been reconstructed. */
+  healFailedSteps?: number;
+  /** The per-test Playwright timeout THIS run actually executed under, in ms.
+   *
+   *  Stored on the run rather than read back from the TestRecord, because the
+   *  TestRecord holds the CURRENT value: raise a test's timeout today and every
+   *  older run's "how close was this step to its budget?" comparison silently
+   *  becomes wrong, while still looking like a plausible number. Absent on runs
+   *  recorded before this field; read as unknown, never as the default. */
+  testTimeoutMs?: number;
   /** The dataset row this run used, when it was one row of a sweep. Both are
    *  stored: the id joins back to the record, and the name survives the row
    *  being renamed or deleted — a run history that can't say WHICH row failed
@@ -1012,6 +1141,20 @@ export interface RunRecord {
   kind?: RunRecordKind;
   /** Human-readable summary for non-run events (e.g. baseline-update notes). */
   note?: string;
+  /**
+   * The test this run belonged to has been deleted.
+   *
+   * A TOMBSTONE, not a delete. The record stays so the aggregate numbers hold
+   * still — pass rate, the daily chart and capture overhead are answers about
+   * what this machine has done, and having them lurch when a test is removed
+   * makes them untrustworthy for the thing they are for. What goes away is
+   * every surface that NAMES the test: the run table, the test filter, log
+   * search, and the Stability panel. See `markTestDeleted`.
+   *
+   * The run's screenshots and its raw .log are really deleted — nothing can
+   * display them once the rows are hidden, and they are the bulk of the bytes.
+   */
+  testDeleted?: boolean;
 }
 
 /** A hit from searching the raw run logs. */
@@ -1038,6 +1181,38 @@ export interface PickedElement {
   /** curated element attributes */
   attributes: Record<string, string>;
 }
+
+/**
+ * One test's row in the Batch view: whether it's ticked, which engines it runs
+ * on, and headed or headless. Persisted per test id in
+ * `RecorderSettings.batchTestOptions`.
+ *
+ * An ABSENT entry is the default, not a bug — unticked, the test's own
+ * `TestRecord.runBrowser` (falling back to `defaultRunBrowser`), and
+ * `defaultRunHeadless`. Entries are written only when the user touches a
+ * control, so an existing settings file needs no migration.
+ */
+export interface BatchRowOptions {
+  /** ticked in the Batch checklist */
+  selected: boolean;
+  /** Engines this test runs on, 1–3, deduped, in RUN_BROWSERS order. NEVER
+   *  empty: an empty array is a ticked test that silently doesn't run, which
+   *  reads as the batch dropping it. Every writer must preserve this. */
+  browsers: RunBrowser[];
+  /** headed or headless for this row alone */
+  headless: boolean;
+}
+
+/** Ceiling on the persisted per-row batch options, mirroring MAX_BATCH_ORDER:
+ *  far above any real library, so a corrupt file can't grow without bound. */
+export const MAX_BATCH_TEST_OPTIONS = 1000;
+
+/** What a deleted test's denormalized name is replaced with in run and batch
+ *  history. The records survive so the aggregate counts hold still, but the
+ *  NAME is the identifying leftover the delete is supposed to take with it —
+ *  and it is the one thing in those files a person would recognise. Matches the
+ *  fallback wording the Heals view already uses for an unknown test. */
+export const DELETED_TEST_NAME = "(deleted test)";
 
 /** Global trainer preferences, independent of any recording session. */
 export interface RecorderSettings {
@@ -1118,6 +1293,17 @@ export interface RecorderSettings {
    *  this list (newly added) run after it, in library order; ids for deleted
    *  tests are ignored. Empty = plain library order. */
   batchOrder: string[];
+  /** Per-row Batch-view options, keyed by test id: ticked, engines, headed.
+   *  Written straight from the Batch view (like `batchOrder`) rather than from
+   *  the Settings window, so it has no row in `settings-schema.ts`. A test with
+   *  no entry falls back to its own record and the defaults above — see
+   *  `BatchRowOptions`. */
+  batchTestOptions: Record<string, BatchRowOptions>;
+  /** How many tests a batch starts at once by default (default 1 = one at a
+   *  time, clamped 1–MAX_BATCH_CONCURRENCY). Seeds the Batch view's picker; the
+   *  view never writes it back, so choosing "4 at once" for one suite run
+   *  doesn't silently become everyone's default. */
+  defaultBatchConcurrency: number;
   /** how many runs' screenshot artifacts to keep per test before the oldest
    *  are pruned (default 10, clamped 1–50). The pinned visual baseline is
    *  never pruned regardless of this number. */
@@ -1125,6 +1311,25 @@ export interface RecorderSettings {
   /** post a macOS notification when a run finishes with a failure or a visual
    *  change (default false). Local only — nothing leaves the machine. */
   notifyOnRunIssues: boolean;
+  /** Post a macOS notification when a BATCH finishes (default true). Unlike
+   *  notifyOnRunIssues this fires on success too: the point of a batch
+   *  notification is that the user started a long job and walked away, so
+   *  "all 12 passed" is the message they were waiting for. While this is on,
+   *  the per-run notification is suppressed for tests inside a batch — one
+   *  notification for the suite, not one per failure. */
+  notifyOnBatchDone: boolean;
+  /** Post a macOS notification when an AI debug job finishes or fails
+   *  (default false). Like notifyOnBatchDone it fires on success: the reason
+   *  to be told is that the user minimized a slow job and walked away, and
+   *  "the answer is ready" is the message they were waiting for. Local only. */
+  notifyOnAiDebugDone: boolean;
+  /** EXPERIMENTAL. Apply an AI debug job's suggested script fix automatically
+   *  the moment the job completes (default false). Guarded: only a run-scoped
+   *  job, only while its dialog is minimized, and only when the script is
+   *  byte-identical to the one the prompt was built from — an edit made while
+   *  the model was thinking always wins, and the suggestion falls back to a
+   *  review toast instead. */
+  autoAcceptAiDebugFixes: boolean;
   /** additionally delete captured runs older than this many days (0 = off,
    *  max 365). Applies ON TOP of artifactRetainedRuns — a run is kept only if
    *  it satisfies both rules. The pinned baseline is never pruned. */
@@ -1245,12 +1450,43 @@ export interface RecorderState {
 }
 
 // ── Batch (suite) runs ────────────────────────────────────────────────
-// A batch drives ordinary runs sequentially. Each test still writes its own
-// RunRecord (joined back by `RunRecord.batchId`), so a batch is a grouping over
-// runs rather than a separate kind of history. Mirror kept in
+// A batch drives ordinary runs, one at a time by default and up to
+// `concurrency` at a time when asked. Each test still writes its own RunRecord
+// (joined back by `RunRecord.batchId`), so a batch is a grouping over runs
+// rather than a separate kind of history. Mirror kept in
 // renderer/lib/recorder-types.ts.
 
 export type BatchTestStatus = "pending" | "running" | "passed" | "failed" | "skipped";
+
+/** Hard ceiling on how many tests a batch may run at once.
+ *
+ *  Every concurrent test is a full Node process plus its own browser, so this
+ *  is a machine limit, not a preference: past it the runs contend for CPU and
+ *  each one gets slower, which looks like flakiness rather than saturation.
+ *  Enforced on the BACKEND (see the batch:run handler) so a hostile or buggy
+ *  caller — IPC, MCP — can't ask for 500 browsers. */
+export const MAX_BATCH_CONCURRENCY = 16;
+
+/** Above this many VISIBLE browsers at once, the Batch view asks first.
+ *
+ *  Headless runs are invisible and cost only CPU, but every headed run opens a
+ *  real window that takes focus when it launches — so a big headed batch makes
+ *  the machine unusable for as long as it runs. Ten is where "I can still see
+ *  what's happening" stops being true. */
+export const HEADED_PARALLEL_WARN = 10;
+
+/** Clamp a requested batch concurrency to something runnable.
+ *
+ *  `lanes` is how many tests could possibly run at once (see the batch runner:
+ *  entries for the SAME test are serialized, so the real ceiling is the number
+ *  of DISTINCT tests queued, not the queue length). Shared by the backend
+ *  handler and — via the renderer mirror — the warning threshold, so the number
+ *  the user is warned about is the number that actually runs. */
+export function clampBatchConcurrency(requested: unknown, lanes: number): number {
+  const max = Math.max(1, Math.min(MAX_BATCH_CONCURRENCY, Math.floor(lanes) || 1));
+  if (typeof requested !== "number" || !Number.isFinite(requested)) return 1;
+  return Math.max(1, Math.min(max, Math.floor(requested)));
+}
 
 export interface BatchTestResult {
   testId: string;
@@ -1271,6 +1507,15 @@ export interface BatchTestResult {
    *  with no way to tell which row was the one that failed. */
   datasetId?: string;
   datasetName?: string;
+  /** The engine this entry ran on, when the batch fanned the test out across
+   *  more than one. Same reasoning as `datasetId`: without it, three results
+   *  for one test are indistinguishable. Optional, so batch-history.json
+   *  records written before per-row browsers load unchanged. */
+  browser?: RunBrowser;
+  /** The test has since been deleted. The row is kept so the batch's own
+   *  summary still adds up, and hidden by the view. See `RunRecord.testDeleted`
+   *  for the reasoning. */
+  testDeleted?: boolean;
 }
 
 export interface BatchSummary {

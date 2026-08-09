@@ -182,6 +182,65 @@ function main(): void {
       undefined,
       "a wait-only predicate is NOT accepted as an if-condition",
     );
+    assertEqual(
+      normalizeRawStep({ type: "state", elementState: "evil" })?.elementState,
+      undefined,
+      "an unknown element state is dropped",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "state", elementState: "hover" })?.elementState,
+      "hover",
+      "…while a real one survives",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "assert", assert: "css", cssMatch: "evil" })?.cssMatch,
+      undefined,
+      "an unknown css match mode is dropped",
+    );
+  }
+
+  // ── 4c. cssProp is checked for SHAPE, not just length ────────────────────
+  //
+  // It is the one free string with a known grammar, and it reaches the
+  // generator as the first argument of `toHaveCSS`. `q()` would quote a hostile
+  // value safely today, but "safe through the current sink" is a property of
+  // today's generator rather than of the data — the same argument that made
+  // every numeric field go through `int()` as well as `num()`.
+  {
+    const bad = [
+      NODE_CODE,
+      'color"); require("child_process").execSync("id"); ("',
+      "background color",
+      "background_color",
+      "1color",
+      "",
+      "color;",
+      "a".repeat(101),
+    ];
+    for (const v of bad) {
+      assertEqual(
+        normalizeRawStep({ type: "assert", assert: "css", cssProp: v })?.cssProp,
+        undefined,
+        `a malformed cssProp is dropped: ${JSON.stringify(v.slice(0, 24))}`,
+      );
+    }
+    for (const v of ["color", "background-color", "-webkit-line-clamp", "--brand-accent"]) {
+      assertEqual(
+        normalizeRawStep({ type: "assert", assert: "css", cssProp: v })?.cssProp,
+        v,
+        `a real cssProp survives: ${v}`,
+      );
+    }
+    // A camelCase name is syntactically VALID and deliberately allowed through
+    // — refusing it here would be the boundary second-guessing CSS rather than
+    // checking it. It reads as "" from getPropertyValue, which the trainer's
+    // replay log calls out by name. That split is the point: the boundary
+    // rejects what is malformed, the UI warns about what is merely wrong.
+    assertEqual(
+      normalizeRawStep({ type: "assert", assert: "css", cssProp: "backgroundColor" })?.cssProp,
+      "backgroundColor",
+      "a camelCase property is syntactically valid and is not dropped here",
+    );
   }
 
   // ── 4b. timeoutMs is a numeral field, so it gets the count treatment ──────
@@ -302,6 +361,85 @@ function main(): void {
     const spec = specFor(poisoned);
     assert(!spec.includes("evil("), "a poisoned timeout on the native waitFor form is inert too");
   }
+  // `cssProp` is the newest string field concatenated into a call ARGUMENT, and
+  // like `timeoutMs` it arrives via `recorder:updateStep`, which copies its
+  // allowlisted fields without re-normalizing. So the generator re-checks the
+  // property's shape itself rather than relying on the boundary having seen it.
+  {
+    const poisoned = [
+      {
+        id: "s1",
+        timestamp: 0,
+        type: "assert",
+        assert: "css",
+        locator: { k: "testid", v: "x" },
+        cssProp: 'color"); require("child_process").execSync("id"); ("',
+        cssMatch: "is",
+        value: "red",
+      },
+    ] as unknown as Step[];
+    const spec = specFor(poisoned);
+    assert(!spec.includes("require("), "a poisoned cssProp never reaches the spec");
+    assert(!spec.includes("toHaveCSS"), "…and the step emits no line at all rather than a broken one");
+  }
+  // The same field routed through the `contains` arm, which builds a RegExp
+  // rather than a plain string — a second sink, with a second escaper.
+  //
+  // Asserting the absence of "require(" would pass here for the WRONG reason:
+  // `reEscape` turns `(` into `\(`, so the substring is gone whether or not the
+  // value escaped its literal. The property that actually matters is that the
+  // emitted statement still parses as ONE statement — an injection is by
+  // definition a value that closes its literal and opens new syntax, so a value
+  // that cannot change the parse cannot inject.
+  {
+    for (const value of [
+      '"), (function(){ return require("child_process") })(), new RegExp("',
+      '\\"); evil(); ("',
+      "rgb(0, 0, 0)",
+      "`${evil()}`",
+    ]) {
+      const poisoned = [
+        {
+          id: "s1",
+          timestamp: 0,
+          type: "assert",
+          assert: "css",
+          locator: { k: "testid", v: "x" },
+          cssProp: "color",
+          cssMatch: "contains",
+          value,
+        },
+      ] as unknown as Step[];
+      const line = lineWith(specFor(poisoned), "toHaveCSS");
+      assert(line.startsWith("await expect("), `a css contains value stays inside its call: ${JSON.stringify(value.slice(0, 20))}`);
+      let statements = -1;
+      try {
+        // Parsed, not pattern-matched. If the value broke out, this is two or
+        // more statements (or a syntax error) instead of one.
+        const fn = new Function("expect", "page", `return (async () => { ${line} });`);
+        statements = typeof fn === "function" ? 1 : 0;
+      } catch {
+        statements = 0;
+      }
+      assertEqual(statements, 1, `…and the emitted line is still a single parseable statement`);
+      assert(
+        (line.match(/toHaveCSS/g) ?? []).length === 1,
+        "…with exactly one toHaveCSS call on it",
+      );
+    }
+  }
+  // The state a `state` step applies selects a fixed call rather than being
+  // concatenated, so an unrecognized one must emit NOTHING rather than reaching
+  // the source text.
+  {
+    const poisoned = [
+      { id: "s1", timestamp: 0, type: "state", elementState: "hover(); evil(); //", locator: { k: "testid", v: "x" } },
+    ] as unknown as Step[];
+    const spec = specFor(poisoned);
+    assert(!spec.includes("evil("), "an unrecognized elementState never reaches the spec");
+    assert(!spec.includes(".hover("), "…and emits no line at all");
+  }
+
   // The predicate itself selects a fixed string rather than being concatenated,
   // so an unrecognized one must degrade to the legacy wait rather than reaching
   // the source text.

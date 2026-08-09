@@ -28,6 +28,7 @@ import { acceptRunA11y, acceptStepA11y, resetA11yBaseline } from "../services/a1
 import { sendToMain } from "../services/app-window.js";
 import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
+import { duplicateTest } from "../services/duplicate-test.js";
 import { importService } from "../services/import-service.js";
 import { testSecretsStore } from "../services/test-secrets-store.js";
 import { healJournalStore } from "../services/heal-journal-store.js";
@@ -36,6 +37,7 @@ import { parseSpecDetailed } from "../services/spec-parser.js";
 import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
 import { aiDebugStore } from "../services/ai-debug-store.js";
+import { recorderDebugStore } from "../services/recorder-debug-store.js";
 import { anthropicKeyStore } from "../services/anthropic-key-store.js";
 import {
   clampTestTimeoutMs,
@@ -44,10 +46,22 @@ import {
   MIN_TEST_TIMEOUT_MS,
   recorderSettingsStore,
 } from "../services/recorder-settings-store.js";
+import { notifyAiDebugOutcome } from "../services/ai-debug-notifier.js";
 import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
 import { applyRetention } from "../services/retention.js";
 import { compareRuns } from "../services/run-comparison.js";
 import { analyseFlake } from "../services/flake-analysis.js";
+import { metricsStore } from "../services/metrics-store.js";
+import {
+  runEvidence,
+  siblingRuns,
+  stepBrowserMatrix,
+  stepDurations,
+  stepHealth,
+  suiteCost,
+} from "../../shared/metrics-query.mjs";
+import { costBreakdown, divergentSteps, slowdowns } from "../../shared/step-insights.mjs";
+import { TRIAGE_COHORT, triageRun } from "../../shared/triage.mjs";
 import {
   captureWindows,
   debugDir,
@@ -57,14 +71,17 @@ import {
 } from "../services/debug-capture.js";
 import { ANALYSIS_WINDOW, analysisWindow, gatherRunDetails } from "../services/flake-source.js";
 import {
+  clampBatchConcurrency,
   DEFAULT_VISUAL_THRESHOLD,
   isRunBrowser,
   isTestSpeed,
   isValidVariableName,
+  MAX_BATCH_TEST_OPTIONS,
   normalizeDatasets,
   normalizeStep,
   normalizeTags,
   normalizeVariables,
+  RUN_BROWSERS,
 } from "../recorder/types.js";
 import type { AiDebugSession, AssertKind, CookieSpec, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
@@ -230,6 +247,18 @@ export function registerHandlers(): void {
   ipcMain.handle("tests:getScript", async (_e, params: { id: string }) =>
     testStore.readScript(params.id),
   );
+  // Delete a test and everything it left behind.
+  //
+  // The line this draws: anything that NAMES the test goes, and anything that
+  // holds its CONTENT goes. What stays is the arithmetic — run records survive
+  // as tombstones (`RunRecord.testDeleted`) so the pass rate, the daily chart
+  // and the capture-overhead figures don't lurch when a test is removed. Those
+  // numbers answer "what has this machine done", and having them rewrite
+  // history on a delete is what makes people stop trusting them.
+  //
+  // Adding a per-test store? It belongs in this list. A store that isn't here
+  // fails silently: nothing errors, the test is gone from the library, and its
+  // leftovers surface weeks later under a name nobody recognises.
   ipcMain.handle("tests:delete", async (_e, params: { id: string }) => {
     testStore.remove(params.id);
     // Drop any captured visual-testing artifacts + pinned baselines for this test.
@@ -241,7 +270,42 @@ export function registerHandlers(): void {
     await testSecretsStore.clearTest(params.id);
     await refreshSecretSnapshot();
     healJournalStore.deleteTest(params.id);
+    // Tombstone the history: records kept for the aggregates, raw logs deleted.
+    runHistoryStore.markTestDeleted(params.id);
+    batchHistoryStore.markTestDeleted(params.id);
+    // Really deleted — the model's answers quote the script and the run output,
+    // and with the test gone there is no route left to reach or remove them.
+    aiDebugStore.deleteTest(params.id);
+    recorderDebugStore.clear(params.id);
+    // Stale ids in the Batch view's stored order and per-row options. Both
+    // tolerate an unknown id, so this is housekeeping rather than a fix — but
+    // without it a re-imported test could inherit a choice nobody remembers.
+    const settings = recorderSettingsStore.get();
+    const batchOrder = settings.batchOrder.filter((id) => id !== params.id);
+    const batchTestOptions = { ...settings.batchTestOptions };
+    delete batchTestOptions[params.id];
+    if (batchOrder.length !== settings.batchOrder.length || params.id in settings.batchTestOptions) {
+      recorderSettingsStore.set({ batchOrder, batchTestOptions });
+    }
+    // Stats and Stability read run history, not the library, so without this
+    // they keep showing the deleted test until something else invalidates them.
+    sendToMain("runs:changed", {});
   });
+  // Copy a test: everything that describes it, nothing it has recorded.
+  //
+  // The record's own split lives in `duplicate-test.ts` behind an allowlist.
+  // Secrets are copied HERE rather than there, for the same reason the delete
+  // handler clears them here: the secret store is async and every write to it
+  // has to be followed by refreshing the redaction snapshot, or the copy's
+  // password is a value redaction has never been told about and it reaches the
+  // next run log in plaintext.
+  ipcMain.handle("tests:duplicate", async (_e, params: { id: string }) => {
+    const rec = duplicateTest(params.id);
+    await testSecretsStore.copyTest(params.id, rec.id);
+    await refreshSecretSnapshot();
+    return rec;
+  });
+
   ipcMain.handle("tests:rename", async (_e, params: { id: string; name: string }) => {
     const rec = testStore.get(params.id);
     if (!rec) throw new Error("Test not found: " + params.id);
@@ -787,6 +851,16 @@ export function registerHandlers(): void {
     aiDebugStore.remove(String(params?.key ?? "")),
   );
   ipcMain.handle("aiDebug:clear", async () => aiDebugStore.clear());
+  // Completion lives in the RENDERER's session store (the LLM stream terminates
+  // there), so the desktop notification is renderer-triggered. The setting gate
+  // stays HERE: the renderer fires unconditionally and this handler decides,
+  // so a renderer bug can't spam banners the user turned off.
+  ipcMain.handle("aiDebug:notifyDone", async (_e, params: { testName?: unknown; status?: unknown }) => {
+    const testName = typeof params?.testName === "string" && params.testName ? params.testName : "a test";
+    const status = params?.status === "error" ? "error" : "done";
+    notifyAiDebugOutcome({ testName, status }, recorderSettingsStore.get().notifyOnAiDebugDone);
+    return { ok: true };
+  });
 
   // ── Alert (outgoing webhook) handlers ───────────────────────────────
   // The URL is a bearer credential, so it only ever travels renderer→backend.
@@ -869,19 +943,54 @@ export function registerHandlers(): void {
         browser?: string;
         datasetIds?: unknown;
         allDatasets?: boolean;
+        concurrency?: unknown;
+        perTest?: unknown;
       },
     ) => {
       const testIds = Array.isArray(params.testIds) ? params.testIds.filter((t) => !!t) : [];
       if (testIds.length === 0) throw new Error("Select at least one test to run.");
+      // REBUILT, not filtered: every element is reconstructed from known keys,
+      // so an unknown field on the wire can never ride along into the runner.
+      // Filtering `browsers` THROUGH RUN_BROWSERS validates, dedupes and
+      // normalises order in one pass — which is what stops a caller sending
+      // ["chromium","chromium","chromium"] and running one test three times on
+      // one engine. It also bounds each entry at 3, so the queue can be no
+      // longer than 3 × testIds and needs no separate cap.
+      const perTest = Array.isArray(params.perTest)
+        ? (params.perTest as unknown[])
+            .filter((e): e is Record<string, unknown> => !!e && typeof e === "object")
+            .map((e) => ({
+              testId: typeof e.testId === "string" ? e.testId : "",
+              browsers: Array.isArray(e.browsers)
+                ? RUN_BROWSERS.filter((b) => (e.browsers as unknown[]).includes(b))
+                : [],
+              headless: e.headless === true,
+            }))
+            // A zero-engine entry would contribute no queue entries, so the
+            // batch would silently run fewer tests than were selected. Dropping
+            // it falls back to the batch-wide browser instead.
+            .filter((e) => e.testId !== "" && e.browsers.length > 0)
+            .slice(0, MAX_BATCH_TEST_OPTIONS)
+        : undefined;
       return batchRunner.start({
         testIds,
         captureArtifacts: params.captureArtifacts ?? false,
         runHeadless: params.runHeadless ?? false,
         browser: isRunBrowser(params.browser) ? params.browser : undefined,
+        perTest,
         datasetIds: Array.isArray(params.datasetIds)
           ? params.datasetIds.filter((d): d is string => typeof d === "string")
           : undefined,
         allDatasets: params.allDatasets === true,
+        // Clamped HERE as well as in the runner. Anything past this point spawns
+        // a browser per unit, so "how many at once" is not a number to take on
+        // trust from a caller — and the MCP reaches the same runner.
+        // `new Set` because the ceiling is distinct TESTS: a dataset sweep and
+        // a multi-engine row both queue one test many times, and those still
+        // run one after another. Do NOT change this to the fan-out count — the
+        // lanes are per-testId, so the extra workers would idle and the headed
+        // warning would promise more windows than ever open.
+        concurrency: clampBatchConcurrency(params.concurrency, new Set(testIds).size),
       });
     },
   );
@@ -949,6 +1058,67 @@ export function registerHandlers(): void {
     },
   );
   ipcMain.handle("runs:logsDir", async () => runHistoryStore.logsDirPath());
+  /**
+   * Site problem or runner problem, for one failed run.
+   *
+   * Computed on read, never stored — see the note against the `runs` table in
+   * metrics-schema.mjs. A verdict frozen at the classifier version that wrote
+   * it goes stale silently, and improving the classifier here improves every
+   * historical run at once.
+   *
+   * Returns null rather than throwing when metrics are unavailable or the run
+   * has no rows: the panel then shows nothing, which is the correct UI for "no
+   * opinion". An error here would put a red toast on a run that already failed.
+   */
+  // ── The metrics views (Phase 4) ─────────────────────────────────────
+  //
+  // One handler per view rather than one "give me everything": each is a
+  // separate query over a table that can hold a hundred thousand rows, and the
+  // Step Health table is useful long before the slowness panel has two windows
+  // to compare. They also fail independently — `available: false` is the
+  // ordinary answer on a runtime without `node:sqlite`, and a view that showed
+  // an empty table there would read as "you have no history".
+  ipcMain.handle("metrics:stepHealth", async (_e, params?: { testId?: string }) => ({
+    available: metricsStore.available,
+    rows: stepHealth(metricsStore.handle(), { testId: params?.testId }),
+  }));
+  ipcMain.handle(
+    "metrics:slowness",
+    async (_e, params?: { testId?: string; window?: number }) => {
+      const rows = stepDurations(metricsStore.handle(), {
+        testId: params?.testId,
+        window: params?.window,
+      });
+      return {
+        available: metricsStore.available,
+        rows,
+        // Computed backend-side so the panel and `get_suite_cost` cannot
+        // disagree about what counts as a slowdown.
+        slowed: slowdowns(rows),
+        cost: costBreakdown(suiteCost(metricsStore.handle())),
+      };
+    },
+  );
+  ipcMain.handle("metrics:divergence", async (_e, params?: { testId?: string }) => ({
+    available: metricsStore.available,
+    steps: divergentSteps(stepBrowserMatrix(metricsStore.handle(), { testId: params?.testId })),
+  }));
+
+  ipcMain.handle("runs:triage", async (_e, params: { id: string }) => {
+    const db = metricsStore.handle();
+    const evidence = runEvidence(db, params?.id ?? "");
+    if (!evidence) return null;
+    const { run, steps } = evidence;
+    const failingStepId =
+      run.failed_step_id ?? steps.find((s) => s.status === "failed")?.step_id;
+    return triageRun({
+      run,
+      steps,
+      siblings: siblingRuns(db, run.test_id, { limit: TRIAGE_COHORT, excludeRunId: run.id }),
+      stepHistory:
+        stepHealth(db, { testId: run.test_id }).find((s) => s.stepId === failingStepId) ?? null,
+    });
+  });
   // What screenshot capture costs, measured from run history (optionally for
   // one test — the fair comparison, since different tests do different work).
   ipcMain.handle("runs:captureOverhead", async (_e, params?: { testId?: string }) =>

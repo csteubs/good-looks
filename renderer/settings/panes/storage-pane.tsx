@@ -6,12 +6,20 @@
 // space is this costing me" would ever find it. Here it is the first thing in
 // the pane, and it is what the Clean up button reports against.
 
-import { Button, Input } from "@ui";
+import { Button, NumberInput } from "@ui";
 
 import { clampRetainedRuns, clampRetentionDays, formatBytes } from "../../lib/settings-schema";
 import { useSettingsController } from "../settings-controller";
 import { SettingRow } from "../setting-row";
 import { PaneSection } from "../pane-section";
+
+// Both retention controls share one width so their edges line up. "days" used
+// to be a `<span>` OUTSIDE the input; because the row right-aligns its control,
+// that span pushed the field left by its own width and the two inputs in this
+// section sat on different vertical lines. `NumberInput`'s `unit` renders the
+// suffix INSIDE the control, so the field is the whole control again and equal
+// widths are enough to align them.
+const RETENTION_CONTROL_WIDTH = "w-32";
 
 function UsageReadout() {
   const { artifactUsage, pruning, pruneNow } = useSettingsController();
@@ -50,15 +58,14 @@ export function StoragePane() {
           label="Screenshot history per test"
           summary="How many runs' screenshots to keep for each test before the oldest are deleted (1–50)."
         >
-          <Input
+          <NumberInput
             id="artifact-retained-runs"
-            type="number"
             min={1}
             max={50}
             step={1}
-            className="w-24"
+            className={RETENTION_CONTROL_WIDTH}
             value={settings.artifactRetainedRuns ?? 10}
-            onChange={(e) => void save({ artifactRetainedRuns: clampRetainedRuns(e.target.value) })}
+            onValueChange={(v) => void save({ artifactRetainedRuns: clampRetainedRuns(v ?? "") })}
           />
         </SettingRow>
 
@@ -67,21 +74,16 @@ export function StoragePane() {
           label="Delete screenshots older than"
           summary="Days to keep captured screenshots, on top of the history limit. 0 disables the age rule."
         >
-          <div className="flex items-center gap-2">
-            <Input
-              id="artifact-retention-days"
-              type="number"
-              min={0}
-              max={365}
-              step={1}
-              className="w-24"
-              value={settings.artifactRetentionDays ?? 0}
-              onChange={(e) =>
-                void save({ artifactRetentionDays: clampRetentionDays(e.target.value) })
-              }
-            />
-            <span className="text-secondary text-sm">days</span>
-          </div>
+          <NumberInput
+            id="artifact-retention-days"
+            min={0}
+            max={365}
+            step={1}
+            unit="days"
+            className={RETENTION_CONTROL_WIDTH}
+            value={settings.artifactRetentionDays ?? 0}
+            onValueChange={(v) => void save({ artifactRetentionDays: clampRetentionDays(v ?? "") })}
+          />
         </SettingRow>
       </PaneSection>
     </>

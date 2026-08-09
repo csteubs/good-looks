@@ -37,6 +37,9 @@ import type {
   TestRecord,
   TestSpeed,
 } from "./recorder-types";
+import type { TriageResult } from "../../shared/triage.mjs";
+import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
+import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
 import type {
   LlmChatParams,
   LlmConfig,
@@ -139,6 +142,9 @@ export const api = {
     remove: (id: string) => ipc().invoke<void>("tests:delete", { id }),
     rename: (id: string, name: string) =>
       ipc().invoke<TestRecord>("tests:rename", { id, name }),
+    /** Copy a test — steps, script and settings, none of its history. Returns
+     *  the new record, whose name is `<original> [n]`. */
+    duplicate: (id: string) => ipc().invoke<TestRecord>("tests:duplicate", { id }),
     updateScript: (id: string, source: string) =>
       ipc().invoke<TestRecord>("tests:updateScript", { id, source }),
     /** `regenerate` rebuilds the .spec.ts from these steps even when it was
@@ -240,6 +246,12 @@ export const api = {
         browser?: RunBrowser;
         datasetIds?: string[];
         allDatasets?: boolean;
+        /** How many tests to run at once. Omitted or 1 = one at a time. */
+        concurrency?: number;
+        /** Per-test engines and headedness from the Batch view's rows. A test
+         *  listed here runs once per engine; one omitted falls back to the
+         *  batch-wide `browser`/`runHeadless` above. */
+        perTest?: { testId: string; browsers: RunBrowser[]; headless: boolean }[];
       },
     ) =>
       ipc().invoke<{ batchId: string; alreadyRunning: boolean }>("batch:run", {
@@ -249,6 +261,8 @@ export const api = {
         browser: opts?.browser,
         datasetIds: opts?.datasetIds,
         allDatasets: opts?.allDatasets,
+        concurrency: opts?.concurrency,
+        perTest: opts?.perTest,
       }),
     stop: () => ipc().invoke<void>("batch:stop"),
     status: () => ipc().invoke<BatchState | null>("batch:status"),
@@ -297,8 +311,28 @@ export const api = {
     deleteRange: (fromMs: number, toMs: number) =>
       ipc().invoke<{ removed: number }>("runs:deleteRange", { fromMs, toMs }),
     logsDir: () => ipc().invoke<string>("runs:logsDir"),
+    /** Site or runner, for one failed run. Null when metrics are unavailable or
+     *  the run has no rows yet — "no opinion" rather than an error. */
+    triage: (id: string) => ipc().invoke<TriageResult | null>("runs:triage", { id }),
     captureOverhead: (testId?: string) =>
       ipc().invoke<CaptureOverheadSummary>("runs:captureOverhead", { testId }),
+  },
+  /** The metrics views. Every response carries `available`, because "metrics
+   *  are off on this runtime" and "you have no history" must not render alike. */
+  metrics: {
+    stepHealth: (testId?: string) =>
+      ipc().invoke<{ available: boolean; rows: StepHealthRow[] }>("metrics:stepHealth", { testId }),
+    slowness: (testId?: string) =>
+      ipc().invoke<{
+        available: boolean;
+        rows: StepDurationRow[];
+        slowed: StepDurationRow[];
+        cost: CostBreakdown;
+      }>("metrics:slowness", { testId }),
+    divergence: (testId?: string) =>
+      ipc().invoke<{ available: boolean; steps: DivergentStep[] }>("metrics:divergence", {
+        testId,
+      }),
   },
   artifacts: {
     list: () => ipc().invoke<RunReplaySummary[]>("artifacts:list"),
@@ -371,6 +405,9 @@ export const api = {
       ipc().invoke<AiDebugSession | null>("aiDebug:save", { session }),
     remove: (key: string) => ipc().invoke<{ removed: number }>("aiDebug:remove", { key }),
     clear: () => ipc().invoke<{ removed: number }>("aiDebug:clear"),
+    /** Fire-and-forget: the backend gates on notifyOnAiDebugDone itself. */
+    notifyDone: (p: { testName: string; status: "done" | "error" }) =>
+      ipc().invoke<{ ok: boolean }>("aiDebug:notifyDone", p),
   },
   /** Subscribe to a backend push event. Returns an unsubscribe function. */
   on<T>(channel: string, cb: (payload: T) => void): () => void {

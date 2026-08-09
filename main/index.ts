@@ -33,6 +33,8 @@ import {
 import { applyRetention } from "./services/retention.js";
 import { batchHistoryStore } from "./services/batch-history-store.js";
 import { aiDebugStore } from "./services/ai-debug-store.js";
+import { metricsStore } from "./services/metrics-store.js";
+import { setPrunePreflight } from "./services/artifact-store.js";
 
 // Get directory paths
 const __filename = fileURLToPath(import.meta.url);
@@ -296,6 +298,17 @@ app.whenReady().then(async () => {
 
   // Before any window loads: the renderer is served over app://.
   installAppProtocol();
+
+  // ── Metrics ────────────────────────────────────────────────────────
+  // Opened BEFORE the prune preflight is registered and before any run can
+  // start, because everything downstream of this is synchronous — retention
+  // reaches the preflight from a sync code path, and node:sqlite is
+  // synchronous by design. Never throws: a runtime without node:sqlite, or an
+  // unwritable file, degrades to "no metrics" and the app is unchanged.
+  await metricsStore.init();
+  // Retention is where per-step evidence dies. This is the last moment anything
+  // can distil a run into the rows that outlive its screenshots.
+  setPrunePreflight((testId, runId) => metricsStore.ingestBeforePrune(testId, runId));
 
   await setupApplicationMenu();
   await setupDebugScreenshots();

@@ -16,6 +16,430 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-08 — Phase 4: the views the join makes possible, and two vacuous tests
+
+Step Health, suite slowness and cross-browser divergence, plus the flake
+analysis moving into `shared/` so `get_flake_report` serves the same verdicts
+the app's Stability panel shows.
+
+**The move retired a copy, and the check that guarded it.**
+`renderer/lib/recorder-types.ts` carried a hand-written mirror of
+`StabilityVerdict` and `MIN_RUNS_FOR_VERDICT`, kept honest by an assertion in
+`check:flake-analysis` — necessary, because a renderer cannot import from
+`main/`. It can import from `shared/`, so the mirror is gone. But the assertion
+then compared the re-exported constant against itself: a test that passes
+forever and proves nothing. It is now a SOURCE assertion that the renderer
+declares no threshold of its own, which is strictly stronger and is the only
+form that can see a copy being reintroduced.
+
+**`insufficient` is not `clean`, and this is the whole feature.** 255 of the 305
+steps on this machine have only ever run on one engine. Folding those into
+"clean" would give a suite that has never been tried outside Chromium a clean
+bill of cross-browser health — the most misleading thing this view could do, and
+nothing on screen would look wrong. The same rule shaped the panel copy: the
+"no step disagrees across engines" reassurance is withheld unless at least one
+step was actually compared, and a component test pins that. Writing that test is
+what caught the panel doing exactly the wrong thing.
+
+**Percentiles moved out of SQL after SQLite disagreed with itself.**
+`stepDurations` first took each percentile by `LIMIT 1 OFFSET <expression over
+aggregates of the same window>`. SQLite accepted that for p95 and rejected it
+for p50 with "datatype mismatch" — and because `metrics-query`'s `all()`
+swallows a throw by contract (the DB is a cache; a failed read is a missing
+answer, never an error worth propagating), the broken half came back as `null`
+and was indistinguishable from "this step has never been timed". It was visible
+only because a probe against the real database showed rows with a p95 and no
+p50, which is arithmetically impossible. The arithmetic is now four lines of JS
+over at most `window * 2` numbers per step. **The general lesson is about the
+swallow, not the SQL:** a layer that turns every failure into "no data" makes
+broken queries look like empty ones, so anything non-trivial in it needs a test
+that runs the real statement. `check:metrics-db` now does.
+
+**The instrumentation figure excludes the speed setting.** `capture_ms` and
+`a11y_ms` are measured per run. Slow-motion delay is exactly derivable but is
+spread across steps rather than recorded as a total, so folding it in would put
+an estimate in the same sentence as two measurements with nothing saying which
+was which. It is reported separately, per speed, instead. Measured here: only
+4% of 9,814 seconds is instrumentation — so the panel's honest answer on this
+history is "your suite is not slow because of capture".
+
+**A second vacuous test, found the same way.** "An unmeasured duration renders
+as a dash, never a zero" was written negatively — assert no `0ms` on screen —
+and passed against a component with the guard deleted, because the formatter
+returned a dash anyway. Rewritten positively (the cell holds exactly `—`, and
+the opposite case renders `120ms–800ms`), it fails on that mutation. Both of
+this phase's vacuous tests were negative assertions; that is the shape to
+distrust.
+
+**One duplication kept, and named.** The MCP finds a run's failure line with
+`firstErrorLine`; the app uses `extractError`. They agree on ordinary failures,
+and `firstErrorLine` is the better of the two — it skips Playwright's "Error
+Context:" pointer. Converging them is an app-side behaviour change with its own
+check, so it is written down in `mcp/server.mjs` rather than folded into this
+phase. Stability verdicts are unaffected either way: they come from run
+outcomes, not error text.
+
+### 2026-08-08 — Triage: the verdict is the summary, the evidence is the product
+
+Phase 3 of the MCP-and-test-intelligence plan. `shared/triage.mjs` answers "is
+this the site's fault or mine?" for one failed run, surfaced as the MCP's
+`triage_run` and as a line in the run Output panel.
+
+Every signal it uses was already on disk before it existed. What was missing was
+the join, and Phase 2 built exactly that — `runEvidence()` and `siblingRuns()`
+were written for this caller by name. So the interesting decisions here are all
+about **what to claim**, not how to compute it.
+
+**Weights, not booleans.** "The page's own JS threw on the failing step" and
+"the screenshot differs" are both site-ward and are not the same claim. A flat
+count of matched rules makes the weak one able to outvote the strong one three
+to one. Scale is deliberately coarse — 3/2/1 — because anything finer implies a
+precision the underlying data does not have.
+
+**`limits` costs confidence per entry, not once.** This started as a flat "were
+there any limits" penalty and the check caught it: a run that captured nothing
+AND has no siblings AND dropped its console is three separate blind spots, and
+pricing that the same as one reads as "we looked and found little" when it means
+"we could barely look". There is a floor, because the limits are about what is
+MISSING — an observed 5xx is still a 5xx however much else went unrecorded.
+
+**Absence is only evidence when the absence is real.** The clean-wait signal —
+"we waited for something that never came while every request succeeded and the
+page threw nothing" — is the classic wrong-locator shape and the single most
+useful runner-ward signal available. It is also the only one argued from an
+absence, so it is gated on `console_dropped`/`network_dropped` being zero. The
+capture fixture caps those per RUN, not per step; on a busy site whole steps
+keep no requests at all, and one real run here dropped 1,861 network entries.
+Without the gate, "no failing request on that step" reads as evidence the site
+was healthy. When the gate fires the claim is withdrawn INTO `limits` rather
+than dropped silently, so the reason is visible.
+
+**No `triage` column.** Deliberate, and already anticipated by the note against
+the `runs` table in `metrics-schema.mjs`: a verdict frozen at the classifier
+version that wrote it goes stale silently, and a trend then mixes verdicts from
+several generations with nothing saying so. Triage is pure and cheap, so it is
+computed on read — which also means improving it improves every historical run
+at once.
+
+**The MCP could not read its own database.** `mcp/metrics.mjs` had `handle()`,
+which returns a handle only if this process had already recorded a run. The rule
+behind it is right — a read tool must not CREATE the database, or it writes an
+empty schema nobody backfills — but it had been implemented as "never open one",
+which made every read tool useless in a fresh MCP process, i.e. every MCP
+process that has not itself run a test. `readHandle()` splits the two: open an
+existing file, never create, and return null on a version mismatch rather than
+dropping (dropping is a write; the app rebuilds on its next start).
+
+**`TRIAGE_COHORT` lives in `shared/`, not in both callers.** The classifier
+takes no view on the sibling window — it classifies whatever it is handed — but
+the app and the MCP must choose the same one, or the same run triaged from the
+two surfaces gives two different answers and neither is wrong.
+
+**Measured on the real history, not just fixtures.** 269 failed runs on this
+machine: 53 site, 55 runner, 2 mixed, **159 unknown**. That 59% looked like a
+classifier gap and is not one — 114 of those runs captured no artifacts at all,
+124 have no identifiable failing step, and 141 were only ever run on a single
+engine. The evidence genuinely is not there, which is the case `unknown` exists
+for, and the suggested next step for all of them is to re-run with capture on.
+It does mean the feature's usefulness scales with capture being switched on, and
+that is the honest thing to know about it.
+
+Pinned by `check:triage`: every row of the plan's signal table in BOTH
+directions, the two cross-run signals proved mutually exclusive, and a
+source-level assertion — like `a11y-diff.test.ts` — that the file contains no
+`runStatus`, no `exitCode` and no `throw`. Four mutations were run against the
+finished check; the fourth found a **vacuous test** (a passed-run guard asserted
+against a fixture carrying no signals, so it passed with or without the guard)
+and the fixture was loaded until it could fail.
+
+### 2026-08-08 — Two variables bugs with one root: the record was the draft
+
+"Cannot create a new standalone variable" turned out to be the visible half of a
+structural mistake. The Variables panel rendered straight from `TestRecord`, and
+every keystroke round-tripped through `tests:setVariables` → `normalizeVariables`,
+which **drops** entries whose names aren't valid JS identifiers. So "Add variable"
+persisted `{name: ""}`, the normalizer discarded it, the query invalidation
+re-rendered from the record, and the row the user had just created vanished
+before it could be named. The same mechanism deleted an EXISTING variable the
+moment a rename passed through an invalid intermediate state — clear the field to
+retype it and the variable was gone from disk.
+
+The fix is not "validate harder before saving". It is that a text field being
+edited is renderer state, not backend state. The panel now holds a local working
+copy (seeded per test id, the same latch idiom `test-detail-view` uses for its
+run controls) and only writes lists the backend will store **verbatim** — every
+name a valid identifier, no duplicates. A held row keeps rendering with a visible
+reason, so "not saved yet" is a state the user can see rather than a row that
+disappears. Duplicates are held for the same reason: `normalizeVariables` keeps
+the first of a pair, so a list containing one would not round-trip losslessly and
+the second row would evaporate on the next refetch.
+
+Rejected: mirroring the normalizer's rules into the renderer as a gate BEFORE the
+mutation and keeping the record as the render source. That still loses the
+in-progress text — the record has nothing to render for a half-typed name — so
+the row would flicker or reset while typing. The duplicated regex that already
+existed in the panel (as a warning) is exactly that idea half-applied, and it is
+why the bug read as cosmetic for so long.
+
+**The second bug came out of the first while reading the generator.**
+`variableHeader()` returned nothing for a test with zero declared variables, but
+`captureLine()` always emits `await glazeCapture(V, …)`. A test whose only
+variable usage was a capture step therefore generated a spec that threw
+`ReferenceError: V is not defined` on its first line. The header is now emitted
+whenever a capture step exists. Worth noting: `script-generator.test.ts` already
+asserted the broken output — it was pinning line alignment and happened to encode
+the missing header as correct — which is a reminder that a test asserting on a
+whole generated artifact can lock in a defect it wasn't looking at.
+
+### 2026-08-08 — The AI-debug glow ends at the next run, not on a timer
+
+The "these steps were just added by the AI" outline had no exit except the step
+list changing for some other reason. Deliberate at the time (a timer would expire
+while the user was still in the AI panel, before they ever switched to the Steps
+tab), but it meant the green outline sat over steps a subsequent run had just
+failed — the highlight vouching for work the run had already disproved.
+
+The run is the right terminator because it is the moment the question changes
+from "what did the AI change?" to "did it work?". Implemented as a `runEpoch`
+counter on the recorder store rather than by lifting `newStepIds` out of
+`test-detail-view`: there are two independent owners of a new-step set (the store,
+for trainer insertions; the detail view, for applied script fixes) and a shared
+counter lets both retire on the same event without moving state across a boundary
+`check:step-glow` deliberately pins.
+
+### 2026-08-08 — AI-debug completion: renderer decides WHEN, backend decides WHETHER
+
+A finished AI debug job announced itself only by turning an icon green, which is
+invisible if you minimized it and walked away — the exact case minimizing exists
+for. Three additions, all gated on the dialog NOT being expanded (a job you are
+watching needs no banner).
+
+**The macOS notification is renderer-triggered, which is a compromise.** Run and
+batch notifications fire from the backend because the backend owns run state. AI
+debug completion has no backend event at all: the LLM stream terminates in the
+renderer's session store, and `llm-service` knows only that a request ended, not
+which session it belonged to or whether that session was minimized. So the
+renderer calls a new `aiDebug:notifyDone` IPC. The consequence is honest and
+accepted: no notification if the renderer is gone — acceptable, because the job
+itself dies with the renderer too (see the 2026-08-06 session-persistence entry).
+The **setting gate stays backend-side**, so a renderer bug can post at most a
+no-op rather than banners the user switched off.
+
+**Auto-accept is guarded by the send-time script hash, not by a confirmation.**
+`scriptHash` already existed for the stale-script warning, stamped at SEND time
+precisely because opening a session must not refresh it. Reusing it as the
+auto-apply gate means the dangerous case — the user edited the script while the
+model was thinking, and the model's answer describes a file that no longer exists
+— can't happen: the hash differs, nothing is applied, and the toast says why. A
+confirmation dialog was rejected because it defeats the point (the user isn't
+there), and applying-then-offering-undo was rejected because the apply path
+re-parses the spec and re-mints every step id, so "undo" would not be a restore.
+
+### 2026-08-08 — The batch row already knew which run it was
+
+`BatchTestResult.runRecordId` has been written since batches gained history, with
+a comment saying it exists to link a persisted batch to its run log. Nothing in
+the renderer ever read it, so the only route from "Beta failed" to the reason was
+to remember the test name, go to Stats, and find the run by hand.
+
+Making the status badge open `LogInspector` needed no new data and no new IPC —
+only extracting that dialog out of `stats-view.tsx` so two views can mount it. The
+badge is a button ONLY for a settled row that actually carries a run id: rows
+still running have no finished log, and rows recorded before the field existed
+would otherwise be dead buttons. The fuller idea from the notes — a step view with
+console output pre-populated — is deliberately not this: `ReplayViewer` has no
+console pane, and merging the two is a bigger piece of work than the drill-through
+that unblocks the common question.
+
+### 2026-08-07 — Routines is specified, not built, and the spec is the deliverable
+
+Batch v2 — renamed "Routines", with scheduled runs and a Shopify-Flow-style builder — is substantially larger than everything else shipped this day put together, and most of its risk is in decisions made before any code. Writing [ROUTINES.md](ROUTINES.md) now, alongside the per-row Batch work, is what stops that work foreclosing it.
+
+Three findings from writing it were worth having in hand while building the smaller feature:
+
+**`batchTestOptions` is a dead end for Routines, and that is fine.** A `Record<testId, BatchRowOptions>` can hold exactly one configuration of each test, so "Smoke runs Login on Chromium headless" and "Nightly runs Login on all three engines" cannot both exist. It was still the right shape for one checklist — no new store, no migration, an absent entry is a working default — and Routines would introduce its own entity and migrate the map into a Routine named "Batch" on first launch. Knowing the exit exists is what made the cheap version safe to ship.
+
+**`runFlow` is not the flow model, and conflating them is the main design risk.** `isFlow`/`flowParams`/`runFlow` already exist and already compose — but they inline one test's STEPS into another at generation time, producing one Playwright test. A Routine composes RUNS: separate processes, separate `RunRecord`s, separate rows in Stats. A builder that lets a Routine step reach inside a flow would be a second composition mechanism competing with the first.
+
+**The lane invariant constrains the builder, not just the runner.** Because `runId === testId`, two Routine steps naming the same test can never run concurrently however the diagram is drawn. That has to be a save-time rejection rather than a silent serialisation: a builder that draws two parallel branches and runs them one after another is lying in a picture, which is worse than refusing to draw it.
+
+The spec also recommends NOT renaming the `batch:*` IPC channels, `batch-history.json`, `RunRecord.batchId`, or the MCP `run_batch` tool. A rename reaching disk formats and external tool names costs a migration and breaks every MCP client with "unknown tool" rather than a redirect — and buys a word. The word is worth having in the UI, not in `run-history.json`.
+
+### 2026-08-07 — Deleting a test: the name goes, the arithmetic stays
+
+Deleting a test removed its record, spec, screenshots, baselines, annotations, secrets and heal journal — and left its run history, its raw logs, its AI-debug sessions and its recorder debug logs behind. The test vanished from the library and kept appearing in Stats under its last-known name.
+
+**Run records are tombstoned, not deleted, and that was the whole decision.** Purging them is the tidier mental model and it was the obvious first design. It also means the pass rate, the last-week chart and the capture-overhead figures all change retroactively every time somebody removes a test. Those numbers answer "what has this machine done", and a number that rewrites its own history on an unrelated action is one people stop reading. So the records stay and `testDeleted: true` hides them from every surface that NAMES a test — the run table, the test filter, log search, Stability, and the MCP's `list_runs`.
+
+**What actually gets destroyed is the identity and the content**: the raw `.log` (the one artifact here that quotes the site — page text, URLs, values typed while recording), the screenshots, and `testName`, which is denormalized into both `run-history.json` and `batch-history.json` precisely so they render without the library, and therefore outlives the test. Marking a row without clearing its name would have been bookkeeping for a row nothing renders; replacing the name with `DELETED_TEST_NAME` is what makes the tombstone do the job the user asked for.
+
+**The visible cost is named rather than hidden.** "Total runs" now legitimately exceeds the rows listed beneath it. Two numbers disagreeing with no explanation reads as a bug in whichever one the reader trusts less, so the table says "N from deleted tests counted above, not listed" whenever they differ.
+
+**AI-debug sessions and recorder debug logs are really deleted**, unlike run records: a session's content is the model quoting the script and the run output, neither contributes to any aggregate, and with the test gone there is no route left in the UI to reach or remove them. `aiDebugStore.deleteTest` filters on `testId` rather than parsing the `run:<id>` / `step:<id>:<n>` key — the key format is a renderer convention that would silently stop matching if it ever gained a third form.
+
+**Every store is asserted separately in the regression suite, on purpose.** One combined "nothing is left" check passes vacuously the day someone adds a per-test store and forgets this handler — which is the exact failure this feature exists to prevent, and a completely silent one. Each cleanup call was reverted individually and confirmed to turn exactly one test red, including the inverse: making the tombstone a hard delete must fail "the pass rate does not move", or the trade-off above isn't actually pinned.
+
+### 2026-08-07 — Batch options move into the rows, and one test can run on three engines
+
+A batch had one browser and one headed/headless choice for the whole suite. "Run the checkout flow on all three engines, headless, but leave the login test headed on Chromium" was not expressible — and neither was running one test on more than one engine at all.
+
+**The fan-out did NOT need a composite run id.** `runId === testId` runs through `playwright-runner`'s per-run maps and through the `runner:output`/`runner:step`/`runner:done` stream the renderer's run store is keyed by. The obvious reading is that one test producing three runs breaks that. It doesn't, because a dataset sweep already queues the same test several times and `buildLanes` already puts them in one lane that runs strictly sequentially. Queuing engines the same way — one entry per (test, engine), **contiguous per test** — reuses that whole mechanism: `playwright-runner.ts` is untouched, the event key is untouched, `stop()`'s kill-by-testId is untouched. The cost is real and worth naming: three engines for one test run one after another, not three-up. Lifting that would mean re-keying every per-run map AND the event contract the renderer consumes, for parallelism *inside* a single test that nobody asked for. Contiguity is the load-bearing part, and `check:batch-runner` pins it directly — interleave the engines across tests and both the ordering assertion and `maxLiveFor("a") === 1` go red.
+
+**The concurrency clamp still counts distinct tests, not planned runs.** This looks wrong at a glance and there is a comment in the handler saying so, because lanes are per-testId: raising the clamp to the fan-out count leaves the extra workers idling on lanes that don't exist, and — worse — makes the headed-parallel dialog promise more browser windows than will ever open.
+
+**An absent `batchTestOptions` entry is the default, not missing data.** That one decision removes the entire migration: an existing `recorder-settings.json` has no such key, so every test resolves from its own `runBrowser` and the global defaults, and entries are written only when a control is touched. The visible consequence, stated rather than hidden: on upgrade every test appears unticked and "Run" runs nothing until the user selects. That is the requested reversal of the old auto-tick applied consistently — the alternative, seeding every existing test as ticked once, would contradict it on exactly the first launch where it mattered.
+
+**A row's engine list may never be empty.** A ticked test with zero engines contributes zero queue entries, so the batch runs fewer tests than the toolbar just said it would, with no error and no skipped row. Deselecting the last engine is therefore a no-op, `setRow` restores the previous list if a caller patches it away, the settings validator drops a stored row that came back empty, and the IPC handler drops such an entry so it falls back to the batch-wide browser. Four guards for one rule because every one of them is a place the rule could be violated silently.
+
+**The master Headless overwrite lives in the event handler, never in an effect.** The init effect sets `runHeadless` from `defaultRunHeadless` on every mount. An effect keyed on `runHeadless` would therefore wipe every saved row choice each time the user merely visited the Batch view — silently, with the UI looking correct throughout. There is a test whose only job is "mounting writes nothing".
+
+**`BROWSER_SF_SYMBOLS` is the wrong map for a row.** Its own header says so: SF Symbols exist for the SDK's native `Select`, whose options never enter the DOM. Rendering one in a DOM row goes through an async native bridge that returns `null` under jsdom, which would make every engine toggle render empty and the whole feature unassertable. The rows use `BrowserIcon` (lucide), and `aria-pressed` — not a class name — is what the tests assert, since that is both the accessibility contract and the thing that doesn't change when the styling does.
+
+### 2026-08-07 — Two fixes for one bug, met in a merge
+
+The MCP phases and the parallel-batch work landed within hours of each other and had independently found the same problem: the app and the standalone MCP server both write `<scriptsDir>/playwright.config.ts`, so whichever ran last is the one Playwright reads, and the two copies had drifted (the MCP's carried no `timeout` line).
+
+The fixes were different. One kept a copy per process — `main/services/playwright-config-source.ts` and `mcp/playwright-config.mjs` — and pinned them byte-equal with `check:runner-config`, reasoning that the MCP "must run without the app build" and so cannot import from `main/`. The other collapsed them into `shared/playwright-config-source.mjs`.
+
+**The shared one wins, because the premise behind the copy is not quite right.** The MCP genuinely cannot import from `main/` — but it can import from `shared/`, which is plain ESM with a hand-written `.d.mts` and no build step, exactly what `mcp/select-tests.mjs` has always been. So there is nothing left to compare and `check:runner-config` was rewritten to guard the property that actually keeps them in step: that no second copy comes back. It also now asserts each writer passes a per-run `PW_OUTPUT_DIR`, since a config field is only half of that behaviour.
+
+What was kept from the copy-based fix, because it was better: `outputDir` driven by `PW_OUTPUT_DIR` (parallel lanes need separate scratch directories, and without it they silently share one), and write-if-different via an atomic rename. The WRITE deliberately stayed with each caller rather than moving to `shared/` — the app already had `writeIfChanged`, which every other fixture goes through and which handles same-process collisions and cleanup better than a generic one would, and passing `fs`/`path`/a temp suffix into a shared writer to preserve that module's no-I/O rule was more machinery than the problem needed. Only the CONTENT was ever what drifted.
+
+`buildQueue` merged the same way round: `shared/batch-queue.mjs` gained the dedupe the parallel work added to it, since a repeated test id breaks the queue's structural guarantee that a test's entries sit together — which the app's lane grouping depends on, and which an agent passing `["a","b","a"]` can trigger.
+
+### 2026-08-07 — MCP Phase 2: the metrics DB, and five columns the plan had wrong
+
+Implements Phase 2 of [plans/mcp-and-test-intelligence.md](plans/mcp-and-test-intelligence.md). The phase order was reviewed before starting, per the maintainer's ask; no phase swap was warranted, but the review and the build together turned up seven corrections, five of them to the §3.2 schema.
+
+**The `node:sqlite` risk closes better than the plan hoped.** §1.3 flagged "must survive the Vite/tsc build as an externalized builtin *in the packaged app*, not merely under `tsx`". It does — but the more important finding is *which Node*: the packaged backend runs on the host's **pinned** runtime (`app.glaze.macos.main/node/runtime/node-v24.14.1-darwin-arm64/bin/node`), not on the user's `PATH`. So a customer with Node 20 cannot break it, and the NDJSON fallback the plan held in reserve is not needed. `DatabaseSync` and `backup` were verified on that exact binary, and the build output confirms `import("node:sqlite")` stays a dynamic external rather than being bundled.
+
+**Two signals had to be recorded before the DB, because they are the only unrecoverable parts.** Everything else in the rollup is derived from files still on disk; these are not on disk at all until something writes them. First, the timeout a run *actually used*: §4.1's "failing step `ms` within ~10% of `testTimeoutMs`" was specified to read it from the TestRecord, which holds the CURRENT value — raise a test's timeout and every older run's step-vs-budget comparison silently becomes wrong while still looking plausible. Second, Auto-Heal attempts that FAILED: the fixture only ever wrote an event on success, so §4.1's site signal "tried every candidate and all failed" had no data source anywhere. That one is the more informative half of the pair — a step that healed says the locator went stale, a step that could not be healed says the element is *gone* — and it is never backfillable by definition.
+
+**`step_metrics.ms` was going to measure the wrong thing entirely.** §3.2 annotates it "ArtifactStepEntry.ms" and §6.2 builds "checkout submit went 1.2s → 4.8s over six runs" on it. But that field is `Date.now() - tShot` around `page.screenshot()` — the SCREENSHOT's duration, and the number that gets summed into `captureMs`. The flagship suite-slowness view would have been a chart of how long PNGs take to write. The capture fixture now also times the action itself (`stepMs`), measured around `orig.apply` so it excludes the screenshot and the axe run but *includes* crawl's settling waits, which are time the step really took. Also not backfillable, so it shipped with the other two.
+
+**No stored triage verdict.** §3.2 has `triage` and `triage_confidence` columns. A verdict frozen at the classifier version that wrote it goes stale silently: improve the classifier and old rows keep the old answer, so a trend chart mixes verdicts from several generations with nothing saying so. Triage is pure and cheap, so it is computed on read — which also means improving it improves every historical run at once, instead of requiring a rebuild to be visible.
+
+**Three columns split, because the halves carry opposite evidence.** A `pageerror` is the page's own JavaScript throwing; a `console.error` is a log line healthy sites emit on every load. A 4xx on a *navigation* is often the page under test (a 404 page is a legitimate thing to test); a 4xx on anything else means an API contract broke. A step that healed blames the test; a step that could not be healed blames the site. Merged, each pair destroys its own signal — and §4.1 asks for the strong half of all three.
+
+**`has_artifacts`, and then `console_dropped` / `network_dropped`.** The first was designed in: a run with no step rows must be able to say whether it captured nothing or captured and had nothing to report, because §4.2's `unknown` verdict depends on the distinction. The second came from running the rollup against real artifacts, and would not have been found any other way: the capture fixture keeps the first 100 and last 400 entries of each log OVERALL, not per step, so on a busy site the middle goes wholesale. One real run retained 500 network entries and dropped 1861, leaving three of its nine steps with no requests recorded at all. Without those counts, "no 5xx on the failing step" is indistinguishable from "that step's requests were thrown away" — and the first reads as evidence the site was healthy.
+
+**The two step-index spaces, and the join that was hiding in a filename.** The app counts steps in Step[] order (the test record, the UI, replay.json) and in ACTION order (what the fixture numbers screenshots by, and tags every console/network entry with). Joining logs to steps needs the translation, and getting it wrong is silent — every number still lands in a row, just against the wrong step. It was recoverable only by parsing it back out of `ReplayStep.screenshot`'s filename, which is `null` whenever the shot failed and on *every* a11y-only or logs-only run: a join keyed on it matched nothing precisely when there were no screenshots around to notice were missing. `buildReplay` now records `actionIndex` explicitly. The rollup still reads the filename as a legacy path, since no replay.json written before this branch has the field — and that recovered 344 of 570 steps on the development machine, the rest being assertions and waits that legitimately perform no action.
+
+**Running it against real data found two things reading it could not.** The most common "failure" in the entire history was a file path: Playwright emits `Error Context: test-results/…` in its attachments section, and it matched first for 109 of 207 failing runs — one cluster swallowing every genuinely distinct failure that had no other matching line. And signatures carried ANSI, because Playwright colours failures and the escape codes land *inside* the message, so a signature matched no other run unless that one happened to be coloured identically. With both fixed the top cluster is "Timed out `<ms>` waiting for expect(locator).toBeVisible()", shared by 26 runs — something worth acting on. The count of runs with a signature drops from 207 to 98, which is the honest number.
+
+**No incremental migrations.** A version mismatch drops and replays. The database is a derived shadow of files that all still exist, so "migrate" and "rebuild" produce identical results — and only one of them can be got subtly wrong. This is also why corruption is a non-event and why a metrics failure is never allowed to reach a run.
+
+**WAL, because two processes write one file.** The app and the standalone MCP server both ingest. Correctness never depended on the locking — every write is idempotent, the rollup being a pure function of a run's own artifacts — but "the app paused because an agent ran a test" is not a trade worth making for a cache. `foreign_keys = ON` is in the same list; while writing the check it turned out `node:sqlite`'s `DatabaseSync` enables foreign keys **by default**, unlike raw SQLite, so the pragma states the requirement rather than establishing it. The comment claiming otherwise was corrected, and the check pins the *outcome* (a deleted run takes its steps with it) rather than the pragma, so it still fails if either stops being true.
+
+**`check:metrics-db` exercises a real database.** 55 assertions against a temp file, because "the same run ingested twice yields one row set" is behaviour and a source-text assertion would pass against a schema that does none of it. Each guarantee was reverted and confirmed to fail — including one that initially failed *badly*: a plain `INSERT` threw "UNIQUE constraint failed" as an uncaught exception rather than a named assertion, so the re-ingest is now caught and reported as the property it is.
+
+### 2026-08-07 — MCP Phase 1: closing the drift, and the one gap that turned out to be a wall
+
+Implements Phase 1 of [plans/mcp-and-test-intelligence.md](plans/mcp-and-test-intelligence.md). Four silent drift bugs, six new read tools, and one plan assumption that did not survive contact.
+
+**Secrets cannot be injected from the MCP, and the plan assumed they could.** §1.4 called for injecting `GLAZE_SECRET_*` "exactly as `variableEnv` does". `variableEnv` reads `testSecretsStore`, which decrypts `test-secrets.bin` through `safeStorage` — a *native* API reached over the Glaze host bridge. A standalone `node mcp/server.mjs` has no bridge and never will, so there is no version of this that works. Three options were weighed with the maintainer: broker the values from the running app over the `debug-shots`-style request/response file protocol; delegate the whole run to the app's own runner; or refuse and say so. **Refuse.** Brokering would put plaintext credentials in a file under `userData`, breaking the guarantee the encrypted store exists to make ("the plaintext reaches the Playwright child process and nowhere else") for a crash window nobody would ever see. Delegating would fix all four bugs at once — one runner, no drift — but makes MCP runs need a GUI app open, which contradicts the server's whole premise and is useless to the unattended-agent and CI audiences the plan names first. Refusing costs the least and, importantly, is not a regression: today those runs go ahead, the spec resolves each secret to `""`, the test types empty strings into the login form, and it fails on an assertion several steps later with nothing connecting the two. An agent then debugs the *site*. A clear "this test needs secrets, run it from the app" is strictly more useful than that. `get_test` reports which variables are secret so it can be known before the call, and `run_batch` **skips** rather than fails such a test — a suite that reports red because one of its tests happens to log in is a suite nobody runs.
+
+**The four bugs were ordered, not independent, and refusing preserves that.** The plan's §1.4 argues bugs 1 and 4 ship together: fixing secret injection without redaction creates a plaintext-credentials-on-disk path in a file `get_run_log` serves back. Refusing to inject satisfies that constraint from the other side — there is nothing to redact because nothing is injected. ANSI stripping still shipped on its own merits, and *on read* as well as on write, because every log written before today is still on disk full of `⌧[1A⌧[2K`, and `get_run_log` is what feeds them to a model. That is prompt budget spent on cursor movements.
+
+**`shared/`, rather than five more `debug-shots`-shaped comparison tests.** The plan's §3.1 rule, adopted as written. What forced the point immediately: `playwright.config.ts` is written by *both* processes into the *same* directory, so whichever ran last won — and the MCP's copy had no `timeout` line at all. That is not a tidiness problem, it is behaviour that depends on which process last touched the disk. The speed→delay table had reached **four** transcriptions (`run-pacing.ts`, `server.mjs`, `llm-prompts.ts`, and the old `playwright-runner.ts` comment referencing them); all now import one definition. `check:crawl-speed`'s mirror assertions, which compared the copies, are replaced by assertions that **no copy exists** — comparing four spellings was only ever a way of surviving having four.
+
+**`check:mcp-parity` runs the generator rather than reading the server.** The parity that matters is not "the two files look alike", it is "the env this server builds satisfies what the generated spec actually reads". So the check generates a spec, pulls every `process.env.X` out of it, and checks the MCP's env against that set. A source-text assertion would pass against a server that names all the right variables and sets none of them. Writing it surfaced a bug in the check itself worth recording: the first scan used `/process\.env\.([A-Z0-9_]+)/`, and `secretEnvName` does *not* uppercase — so `GLAZE_SECRET_password` matched as the bare prefix `GLAZE_SECRET_`, and the assertion would have been satisfied by any secret at all. Each of the four bugs was reverted in turn and confirmed to fail the check.
+
+**Capture parity (§1c) is deliberately NOT in this change.** Making an MCP run appear in the Visual tab means producing `replay.json`, and that is built by `replay-builder.ts` → `visual-diff.ts` (pixelmatch + pngjs) → `a11y-diff.ts` → `script-generator.ts`. Porting that chain into `shared/*.mjs` is a large refactor that would strip the types off the spec generator — the module CLAUDE.md names as a security boundary, where a TypeScript type being *not* a runtime check is the documented lesson. Half-doing it is worse than not doing it: a run that writes screenshots but no replay model still does not appear in the Visual tab, so it would look finished and not be. The honest substitute is §1d, shipped here: every run response carries a `fixtures` field naming what it skipped, **measured against what the test itself asks for** rather than as a flat feature list. A test that never wanted screenshots is told nothing; a test with capture switched on is told exactly why its runs stopped showing up. `check:mcp-parity` pins those messages, so closing 1c has to change them rather than leave them lying.
+
+**`get_run_logs` withholds when it cannot redact.** `console.json` and `network.json` are stored raw — the app strips secret values on the way *out*, in `artifact-store.readLogs`, because a test that logs in can put a credential in a request header or a query string. This process cannot redact, so it serves these only when **no test in the whole library** declares a secret. Library-wide, not per-test, matching why the app's redaction snapshot holds every value it knows rather than the current test's: any run's log can contain any test's secret. Deliberately strict — one secret anywhere disables the tool — because strict is the correct direction for a rule whose failure mode is silent disclosure. The refusal names where the redacted version can be read instead, and does not name the secret variables it is protecting.
+
+**Driving the server for real found what reading it could not.** Every tool was exercised over stdio against the actual data directory before commit. `get_run_logs` threw `logs.console.filter is not a function`: the capture fixture writes `{ testId, runId, dropped, entries[] }`, not a bare array. `dropped` is now carried through — a log truncated by the per-run cap has to say so, or "no request matched" and "the request was past the cap" read identically to whoever is reasoning from it.
+
+**`list_heals` reports chronic steps, not just events.** A list of heals sorted by time is a list in which the actual finding is invisible: one heal is an event, the *same step healing six times* is a decaying locator. The tool computes that count across everything retained and surfaces steps at three or more, alongside the per-entry chronology. The development machine's journal has exactly one such step.
+
+### 2026-08-07 — Duplicating a test: an allowlist, a copied credential, and a dialog that usually doesn't appear
+
+A copy of a test should be everything the test IS and nothing it has DONE. Most of that line drew itself: run history, screenshots, pinned visual baselines, step notes, the Auto-Heal journal and AI debug sessions all live in their own stores keyed by test id, so a new id starts empty in every one of them without a single delete. Only the fields ON the `TestRecord` had to be decided between, and exactly one of them is run output — `a11yBaseline`, the violations somebody accepted after looking at a real run. Carrying it would make the copy report a clean page it has never been run against, which is the one thing that feature must never do.
+
+**The record is rebuilt from an allowlist, not spread.** Spreading the source and overwriting the handful of fields that must change is shorter, reads fine, and is the same shape as the step-ingest bug: it carries every field added later. `TestRecord` has grown 29 fields and will keep growing, so the next one that happens to be run state rides into every copy with nothing failing and nobody asked. `DUPLICATED_FIELDS` and `DROPPED_FIELDS` classify all 29, and `check:duplicate-test` parses the interface out of `types.ts` and fails while any field is missing from both — turning a bug that surfaces months later as "why does my copy think it passed?" into a 30-second decision at the moment the field is added. The check also asserts its own parser found a plausible field count, because an exhaustiveness check that silently parses zero fields is worse than no check: it reads as coverage.
+
+**Secret values are copied, and that was a real choice.** The alternative — copy the declarations, make the user re-enter the values — keeps a credential in one place, which is the tidier security story. It also ships a duplicate that fails on its first run naming a `GLAZE_SECRET_*` env var the user has never seen, and the fix is to retype a password they may not have. The copy happens backend-to-backend through a new `testSecretsStore.copyTest`; no value crosses IPC in either direction, so duplication opens no route to reading a secret back out. The handler owns that step rather than the service, because it must be followed by `refreshSecretSnapshot()` — a copy whose secrets never reached the redaction snapshot writes that password into the next run log in plaintext, which is precisely the failure the secret store exists to prevent. The dialog says the credential now lives under two tests; that is the honest cost of the choice.
+
+**The dialog appears only when something is active.** Variables, stored secrets, cookie/capture/`runFlow` steps, datasets, being a flow, hand-edited or imported — otherwise the click just duplicates. A confirmation on every duplication is a confirmation nobody reads, and the cost of that lands on exactly the cases it exists for: the copied credential, the recorded session cookie. `describeDuplicationWarnings` returning `[]` IS the "don't ask" decision, which is why the sidebar computes the warnings once and hands them to the dialog rather than the dialog deriving them — a component that sometimes renders nothing and instead fires a mutation from an effect is the wrong shape for both halves.
+
+**Step ids are kept, not regenerated.** `visualMasks[].stepId` and `visualElementSteps` point at steps by id, so new ids would silently unhook every mask the user drew while the mask list still looked populated. Nothing keys on a step id without a test id alongside it, so two tests holding the same step id never meet.
+
+**Naming counts hidden tests.** `<base> [n]`, lowest free n from 2 up, with the base stripped of an existing marker so duplicating a copy gives `[3]` rather than `Login [2] [2]`. The names are read through `testStore.allNames()` rather than `list()`, which hides hidden tests — a name taken by a hidden test would be handed out as free and the collision only appears the day that test is restored.
+
+**Imported tests duplicate by copying the whole sandbox**, since an imported spec's `../helpers/x.ts` has to resolve in the copy too and the original checkout is long gone. Both roots are derived from ids and then asserted inside the scripts dir anyway (the same two-boundary rule as `copyRelativeImports` — one bounds reads, one bounds writes; ids are uuids and cannot escape, but layout logic drifts and an assert doesn't). Only regular files are copied: `readdirSync(withFileTypes)` reports entry types without dereferencing, so a symlink is skipped rather than followed. The importer already refuses siblings from outside the project it read, so a link should not be in there — but this copy must not be the thing that reads through one if it is.
+
+One thing the test suite taught mid-change: the first pair of deep-copy tests were **vacuous**. They asserted the copy's arrays weren't the source's, through `duplicateTest` — but the store re-reads every record from JSON on every access, so the aliasing they were checking survives only inside a single call and the assertions compared against a different object entirely. Both passed with `structuredClone` replaced by the identity function. `inheritedFields` is exported for that reason and asserted directly, and every other test in the file was re-run against a deliberately broken implementation before being kept.
+
+### 2026-08-07 — CSS assertions, and pseudo-states you can actually record
+
+**Goal:** assert an element's computed CSS, and put the element into `:hover` / `:focus` / `:focus-visible` / `:active` first — because that is the only way most of those styles are ever reachable. The workflow being replaced is a person moving their mouse onto a button and looking at it.
+
+**Real input, not a forced pseudo-class.** Chromium's CDP can force `:hover` with `CSS.forcePseudoState`, and it is by far the tidiest option — for Chromium. Runs here execute on Chromium, Firefox and WebKit (`RunBrowser`), and `locator.hover()` moves a real virtual mouse on all three. Chose the one that behaves identically everywhere over the one that reads better in a diff. Pseudo-*elements* (`::before`/`::after`) are out of scope for a separate reason: `toHaveCSS`'s `pseudo` option shipped in Playwright 1.60 and this repo pins 1.53.0.
+
+**One awaited statement per step is the constraint the whole design bends around.** `stepLine` returns exactly one, and two independent mechanisms rely on it: `generateSpecDetailed` records one spec line per step in its line map, and `buildStepLineMap` — the fallback for hand-edited specs — classifies steps by counting leading-`await` lines. A step emitting two shifts every later step's run highlight by one. Routing a multi-call step through a runtime helper is the other obvious escape, and it costs the step its highlight instead (`StepReporter` drops any `pw:api` step whose `location.file` isn't the spec, which is what `glazeCapture` already pays).
+
+So `ElementState` has four members that each compile to one call — `hover`, `focus`, `press` (`page.mouse.down()`), `release` (`page.mouse.up()`) — and the two pseudo-states that need more are **compositions the dialog emits as several ordinary rows**: `:focus-visible` → a plain `press` step with key `Tab`, then `focus`; `:active` → `hover`, `press`, `release`, with the user dragging the assertion between the last two exactly as they do with `if`/`end if`. Precedent: the "Wait until" dialog already emits one `wait` step per ticked property, and `onAdd` already takes a `RawStep[]`. Each row stays independently reorderable, editable and deletable, and a user reading `page.mouse.down()` in the list can see what will run. **Order is the entire meaning and is invisible once inserted** — a `press` before its `hover` presses wherever the pointer last was, a `Tab` after its `focus` moves focus off the element under test — so it is pinned in `element-states.test.ts` rather than left to the dialog, whose native-menu `Select` jsdom cannot drive at all.
+
+**`press`/`release` deliberately carry no locator.** `page.mouse.down()` acts wherever the cursor is, which is where the preceding `hover` put it. A locator would be a second way to say the same thing, and the two would disagree the moment either was edited.
+
+**The trainer preview moves a real cursor, because a synthetic one proves nothing.** `:hover` is not an event — it follows the OS pointer, which is why "you cannot hover" is a documented Cypress limitation. A dispatched `mouseover` would fire the page's handlers, apply no style, and report success: the preview would certify precisely the thing it failed to test. `input-service.ts` therefore takes the same shape as `resize-service.ts` — a backend service dispatched from `runStep`, because the capability lives on the native window. Split by who can answer: the PAGE resolves the locator and reports the element's centre point (only it can), the WINDOW sends `mouseMove`/`mouseDown`/`mouseUp` via `webContents.sendInputEvent` (only it can). A real run uses none of this.
+
+**Three things about that were only obvious once written.** A press with no preceding hover is **refused**, not defaulted to `(0, 0)` — the origin is a real left click on the top-left corner of a live page. `releaseHeldMouse` runs in `withCaptureSuspended`'s `finally`, beside the capture restore and for the same reason: a failing assertion between press and release stops the replay, and unlike a real run (which tears the browser down) the training window stays open with the button held, turning the user's next click into a drag. And a lone `press` lost its per-step ▶, since replaying it alone can only ever leave the window stuck.
+
+**Two silent bugs found while building it, neither in the feature.**
+- **`captureMethod` would have desynced every screenshot after the first hover.** `hover` and `focus` are already in `LOCATOR_ACTIONS`, so the capture fixture writes a manifest entry for them — but `replay-builder` walks the manifest with a single pointer that only advances when a step's `captureMethod` matches the entry at the front. An unclassified `state` step leaves its entry unconsumed, the next step compares `click` against `hover`, and **the pointer never advances again**: every later step silently loses its screenshot, geometry, a11y results and visual diff while the run still reads as captured. Pinned in `visual-pipeline.check.ts`, which previously hard-coded `["goto","fill","click"]` and could not have seen it.
+- **`page.mouse.down()` was invisible to the parser — not skipped, swallowed.** The unclassified-statement fallback matched `page.<method>(` but not a nested `page.a.b(`, so the scan walked such statements character by character and they produced neither a step nor a skip. That is strictly worse than the `.hover()` wart being fixed here (which at least incremented `skipped` and flagged `stepsDiverged`): the statement simply vanished on the next `tests:updateScript` resync. The fallback now matches dotted paths, so `page.mouse.move`, `page.keyboard.down` and `page.clock.*` are at least *counted*.
+
+**`.hover()` and `.focus()` now parse, which fixes an existing wart.** Both used to land in the unclassified branch, so importing anyone's Playwright test that hovered flagged it permanently diverged. `spec-parser.check.ts` had *pinned* that behaviour; that assertion is inverted.
+
+**`describeStep` parity was weaker than it read.** Its "covers every step type" guard was a hand-written list that had already fallen two step types behind (`capture` and `runFlow` were missing) and passed anyway. Both it and the assert-kind list are now derived from `STEP_TYPES` / `ASSERT_KINDS`, and the two missing types got cases. A guard you have to remember to update is the bug it exists to catch.
+
+**Kebab-case, everywhere, and checked.** `getComputedStyle().getPropertyValue()` answers `""` for a camelCase name rather than throwing — on both sides, the capture script reading the value and `toHaveCSS` comparing it. So `cssPropsOf` moved off camelCase bracket access, and the property list is interpolated into both injected scripts from one constant (the `page-actions.ts` idiom) rather than hand-written twice as it was. `check:css-assertions` pins the casing, the single definition, and the backend↔renderer mirror.
+
+**Expected values are picked, not typed.** Playwright compares the COMPUTED value: `red` never matches `rgb(255, 0, 0)`, `bold` never matches `700`. The dialog lists the picked element's live computed values one click away — and labels them honestly, because picking an element means the user's real cursor was over it, so `:hover` styling is already included. That is exactly right for a hover assertion and exactly wrong read as resting styles. The replay log additionally calls out an empty computed value by name, since that almost always means the property name is wrong rather than the style being absent.
+
+**`cssProp` is checked for SHAPE at the boundary, not just quoted at the generator.** It is the one free string with a known grammar. `q()` would quote a hostile value safely today, but "safe through the current sink" describes today's generator rather than the data — the same argument that put every numeric field through `int()` as well as `num()`. `recorder:updateStep` copies its allowlisted fields without re-normalizing, so the generator re-validates independently; `check:step-ingest` pins both halves, and the `contains` arm is pinned by PARSING the emitted line rather than grepping it (grepping for `require(` passes for the wrong reason — `reEscape` removes the parenthesis either way).
+
+**Auto-Heal retries now go through `runStep`.** They called `buildReplayScript` directly, which was the same thing until a step kind gained a native half: a healed `state: "hover"` would have reported success from the page finding the element while the pointer never moved.
+
+**Known limits, stated rather than discovered.** `page.mouse.*` is on a nested object that no fixture patches, so `press`/`release` produce no capture screenshot and no crawl settle; `hover`/`focus` behave normally. `:focus-visible` depends on the browser's keyboard-modality heuristic and is the least robust of the four — the dialog says so, and a failure there is at least loud.
+
+### 2026-08-07 — Parallel batch runs: lanes, not a worker pool over the queue
+
+Batches ran strictly one test at a time, which on a ten-core machine made a suite take the sum of its parts. Adding a "how many at once" picker is the easy half; the design is all in what makes concurrency *safe here*.
+
+**`runId === testId` is the constraint everything follows from.** `playwrightRunner.start` keys a live run by test id, and so does every per-run map it owns plus the `runner:output` / `runner:step` / `runner:done` stream. Two *different* tests in flight were therefore already unambiguous — the renderer's run store is a map keyed by `runId`, so it needed no change at all. The *same* test twice is the problem: `start()` declines the second with `alreadyRunning`, and the batch marks that entry **skipped**. A dataset sweep queues exactly that — one entry per row — so a naive pool would turn "run all 3 rows" into "run 1 row and skip 2", silently, with the batch still reporting green.
+
+So the queue is partitioned into **lanes keyed by test id**: lanes run concurrently, entries within a lane stay sequential. Rejected: making `runId` unique per execution. It is the correct long-term shape, but it reaches the run store, the output panel, `stop`, `isRunning`, the AI-debug wiring and the artifact joins — a much larger change to buy the same behaviour a lane already gives.
+
+**The sequential path had to stay the *same* path, not a parallel one with the dial at 1.** Lanes are flattened in first-appearance order, so one worker walks the queue in queue order — but only if each test's entries are contiguous. `["a", "b", "a"]` breaks that, and a check caught it: with a repeated id, lane grouping reordered the queue. `buildQueue` now dedupes the selection. The Batch view's selection is a `Set` and can't produce a repeat; IPC and the MCP can, and running one test twice in a batch with identical options has no meaning anyway.
+
+**The warning is about windows, not tests.** "Warn above 10 headed in parallel" could mean the selection size or the concurrency. It has to be the concurrency: 40 tests at "4 at once" never shows more than four windows, while "all at once" with 14 shows fourteen. Warning on the selection would nag about the safe case and stay silent on the loud one — and a dialog people learn to click through protects nothing. Headless skips it entirely: nothing appears on screen, so there is nothing to warn about however wide the batch is.
+
+**Three latent races that only concurrency makes real**, all in `playwright-runner.ts` and all fixed here rather than left to surface as flakiness:
+
+- Every `ensure*` helper truncates-and-rewrites a file *shared by all runs*, on *every* run, while other runs' Playwright processes may be reading it. `writeIfChanged` compares first and renames into place when it must write — and since the content is fixed per app build, it writes nothing at all after the first run of a session.
+- N runs discovering the same missing engine at once meant N `playwright install` processes unpacking into one directory. Now the first caller installs and the rest await it. The waiters are *told* they're waiting, because the install's output streams to a different run's Output panel and silence there looks like a hang.
+- Playwright derives its output directory from the spec's path, so two runs of one spec would share and clean the same folder. Each run now passes its own `PW_OUTPUT_DIR`. Lanes already prevent that case in the app, but the MCP has no lanes — and it is cheap insurance either way.
+
+That last one put the generated `playwright.config.ts` in two hands: the app writes it on every run, the MCP server writes its own copy, and they share the directory — so whichever ran last wins. A field present in one copy and not the other doesn't fail, it works *intermittently*, which is close to the worst way for a bug to present. Both now read from a dedicated source module and `check:runner-config` pins them byte-identical.
+
+**`currentIndex` is derived rather than deleted.** With several tests in flight there is no single current one, but the field is persisted and pre-parallel `BatchRecord`s are still loaded back. It is now the lowest-index running entry (-1 when idle), which degrades to exactly the old meaning when one test runs. The Batch view stopped reading it and counts the results instead.
+
+**`stop()` killed `results[currentIndex]`.** With several in flight that left the other browsers open while the UI reported the batch as stopped — windows the user then closes by hand. It now kills every running entry; a check pins it, and reverting the fix fails that check specifically.
+### 2026-08-07 — Settings: three fixes the redesign's own layout caused, and one confirmation
+
+Three problems visible in the first build of the new window. Two are the same bug wearing different clothes, and the third is a deliberate speed bump.
+
+**A horizontal row is two columns competing for one width, and the wide one wins.** `SettingRow` put the control in a right-hand column. That is right for a switch and wrong for a *cluster*: the webhook row's control is a password field plus Save, Send test and Remove, so it claimed most of the row and left the label column narrow enough that "Webhook URL" broke across two lines and its summary rendered roughly one word per line. Adding `stacked` (the SDK `Field`'s `orientation="vertical"`) puts the control on its own full-width line beneath the text, so each gets the whole width in turn. Rejected: capping the control's width instead — it fixes the label and moves the wrapping into the button row, and the next row with a cluster hits it again.
+
+**The same collision, quieter, in Storage.** "days" was a `<span>` *beside* the number input. Because the row right-aligns its control, that span displaced the field leftward by exactly its own width — so the days field and the history field above it, both `w-24`, sat on two different vertical lines with nothing on screen explaining why. The SDK's `NumberInput` takes a `unit` that renders inside the control, which makes the field the whole control again; equal widths then align. This is worth writing down because the fix that suggests itself — nudging a margin until it looks right — encodes the width of the word "days" and silently breaks if the unit or the font changes. **`auto-heal-timeout` had the identical `<span>ms</span>` form** and was fixed the same way in the same change; both panes now name their shared width in one constant rather than repeating a literal, so the two controls cannot drift apart one edit at a time.
+
+One thing the move costs: `NumberInput` renders `unit` as `aria-hidden` decoration. The old `<span>ms</span>` was not announced either, so nothing regressed — but it means the unit can only ever reach a screen reader through the accessible name, which is why `auto-heal-timeout` keeps its explicit `aria-label="Per-attempt timeout in milliseconds"` and has a test pinning it. `artifact-retention-days` needs no equivalent: its label already ends in "older than" and its summary gives the unit.
+
+**Turning the webhook ON asks first; turning it OFF does not.** This is the only setting in the app whose *side effect outlives the click*: after it, every failing run POSTs somewhere, without asking again. The `danger` badge and the always-visible summary describe that, but they are equally present whether the switch is on or off — nothing marks the moment of consent. The confirmation names the destination host, since the URL is write-only and the host is all the user can still verify. The switch stays bound to the saved setting rather than to local state, so it does not flip while the dialog is open — a switch that has already moved makes the dialog read as "you did this, did you mean it?" rather than as a decision still to be made. OFF is unguarded on purpose: it only stops the sending, and a prompt in the harmless direction is what teaches people to dismiss the one in the harmful direction. `AlertDialog`, not `Dialog` — single decision, `role="alertdialog"`, no side actions to invent.
+
 ### 2026-08-07 — Settings: eight panes and a search box, not a longer scroll
 
 **The diagnosis was not "it's too long".** `settings-view.tsx` was 1,359 lines rendering ~30 rows into a 560×480 window — about eight screens. But length was the symptom. Three things caused it:

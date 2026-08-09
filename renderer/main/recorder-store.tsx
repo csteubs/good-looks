@@ -178,6 +178,10 @@ interface RecorderContextValue {
   clearContextAction: () => void;
   run: (id: string, captureArtifacts?: boolean, headless?: boolean, browser?: RunBrowser) => void;
   stopRun: (id: string) => void;
+  /** Counts calls to `run`. The "the AI added these" glow lasts until the next
+   *  test run, not on a timer — views holding their own new-step sets watch
+   *  this to clear them the moment a run starts. */
+  runEpoch: number;
 }
 
 const RecorderContext = React.createContext<RecorderContextValue | null>(null);
@@ -211,6 +215,7 @@ export function RecorderProvider({
   const [liveSteps, setLiveSteps] = React.useState<Step[]>([]);
   const [stepsLoaded, setStepsLoaded] = React.useState(false);
   const [newStepIds, setNewStepIds] = React.useState<Set<string>>(() => new Set());
+  const [runEpoch, setRunEpoch] = React.useState(0);
   // Mirror of liveSteps for the callbacks below. They are created once (empty
   // dep arrays, so the trainer's props don't rebuild on every captured step),
   // which means reading `liveSteps` from their closure would read the list as
@@ -619,13 +624,17 @@ export function RecorderProvider({
   }, []);
   const clearPicked = React.useCallback(() => setPicked(null), []);
   const run = React.useCallback((id: string, captureArtifacts?: boolean, headless?: boolean, browser?: RunBrowser) => {
+    // The run is the natural end of the "look what the AI changed" moment:
+    // whatever glows now gets judged by the run's result instead.
+    clearNewSteps();
+    setRunEpoch((n) => n + 1);
     setRuns((prev) => ({
       ...prev,
       [id]: { lines: [], running: true, code: null, stepStatus: {}, startedAt: Date.now() },
     }));
     // headed = not headless — the trainer path is unaffected (separate channel).
     api.runner.run(id, !headless, captureArtifacts, headless, browser).catch(() => {});
-  }, []);
+  }, [clearNewSteps]);
   const stopRun = React.useCallback((id: string) => void api.runner.stop(id), []);
 
   const value: RecorderContextValue = {
@@ -666,6 +675,7 @@ export function RecorderProvider({
     discardExit,
     run,
     stopRun,
+    runEpoch,
   };
 
   return <RecorderContext.Provider value={value}>{children}</RecorderContext.Provider>;
