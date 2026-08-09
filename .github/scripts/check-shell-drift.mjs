@@ -17,6 +17,22 @@
  * Run locally:   npm run check:shell-drift
  * Against refs:  node .github/scripts/check-shell-drift.mjs origin/main HEAD
  *
+ * ── Which two refs ─────────────────────────────────────────────────────────
+ * With no arguments this compares HEAD against THE OTHER TREE, chosen by which
+ * one HEAD already contains. That is not a convenience: the old default pair,
+ * `origin/main HEAD`, compared a ref with its own base, and it could only ever
+ * be wrong or vacuous.
+ *
+ *   - On a pull request into `main`, HEAD is the merge result, so every file the
+ *     PR touches "differs from origin/main" — which is what a PR IS. It failed
+ *     by construction on any change to shared code, and passed only when a PR
+ *     happened to touch nothing outside SHELL_BOUNDARY / ONE_SIDED (#37 did).
+ *   - On a push to `main`, `origin/main` and HEAD are the SAME COMMIT, so it
+ *     compared the tree with itself and went green having compared nothing.
+ *
+ * Both symptoms read as the check working. It had never once compared the two
+ * trees, which is the only thing it exists to do.
+ *
  * ── After convergence ──────────────────────────────────────────────────────
  * If the two trees ever become one, the counterpart ref stops existing and this
  * exits 0 with a note. It is deliberately not an error: a guard that goes red
@@ -27,7 +43,9 @@ import { execFileSync } from "node:child_process";
 import process from "node:process";
 import console from "node:console";
 
-const [refA = "origin/main", refB = "HEAD"] = process.argv.slice(2);
+/** The two trees, by branch. */
+const GLAZE_TREE = "origin/main";
+const ELECTRON_TREE = "origin/shell/electron";
 
 /**
  * The seam. These rewrites are the entire sanctioned difference between the two
@@ -115,7 +133,31 @@ function oneSided(path) {
   return ONE_SIDED.some((re) => re.test(path));
 }
 
+/**
+ * The tree `ref` is NOT on.
+ *
+ * Decided by ancestry rather than by branch name, so it is right for a detached
+ * PR merge commit as much as for a branch tip: a ref that already contains the
+ * Electron branch is on that side, and its counterpart is main. Anything else —
+ * main itself, or a branch cut from it — is compared against the Electron tree.
+ *
+ * A missing counterpart branch is not special-cased here; it falls through to
+ * the `refExists` check below, which is where convergence is handled.
+ */
+function counterpartOf(ref) {
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", ELECTRON_TREE, ref], { stdio: "ignore" });
+    return GLAZE_TREE;
+  } catch {
+    return ELECTRON_TREE;
+  }
+}
+
 // ── Run ──────────────────────────────────────────────────────────────────────
+
+const [refAArg, refBArg] = process.argv.slice(2);
+const refB = refBArg ?? "HEAD";
+const refA = refAArg ?? counterpartOf(refB);
 
 for (const ref of [refA, refB]) {
   if (!refExists(ref)) {
