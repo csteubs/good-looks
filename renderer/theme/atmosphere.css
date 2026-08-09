@@ -1,0 +1,120 @@
+/*
+ * The three global overlay layers, and the motion floor.  docs/REDESIGN.md §3.6.
+ *
+ * Nothing in here renders until `<Atmosphere />` is mounted, which A2 does not
+ * do — A4 (shell) is where it goes up. See atmosphere.tsx for why the roots and
+ * the layers ship before anything uses them.
+ *
+ * THE MOTION RULE, which is the part of this file that is not decoration:
+ *
+ *   alive   everything moves
+ *   calm    ambient motion stops; status motion continues
+ *   still   nothing moves
+ *
+ * `calm` is the interesting one and the design gets it right: a running step
+ * must still pulse, because MOTION THAT REPORTS SOMETHING IS NOT DECORATION.
+ * Stopping it would delete information, not chrome. So the two kinds of motion
+ * are separated by a marker attribute rather than by animation name — CSS has
+ * no way to select "elements whose animation-name is X", and threading a flag
+ * through every animation string is exactly the kind of thing that gets missed
+ * on the one element nobody re-tested.
+ *
+ *   data-gl-motion="ambient"   decorative; `calm` and `still` stop it
+ *   (unmarked)                 reports state; only `still` stops it
+ *
+ * `!important` is load-bearing here, not laziness: the redesign applies most of
+ * its animation shorthand inline (it is what the mockup does and what the
+ * primitives will carry), and an inline `animation:` beats any selector this
+ * file could write. A motion setting that loses to the thing it is supposed to
+ * turn off is worse than no setting.
+ */
+
+/* ── Ambient motion off ───────────────────────────────────────────────── */
+
+:root[data-atmo="calm"] [data-gl-motion="ambient"],
+:root[data-atmo="still"] [data-gl-motion="ambient"] {
+  animation: none !important;
+}
+
+/* ── All motion off ───────────────────────────────────────────────────── */
+
+/* Transitions count. A 300ms ease on a panel that slides in is motion, and
+   somebody who asked for `still` asked for that to stop too. */
+:root[data-atmo="still"] *,
+:root[data-atmo="still"] *::before,
+:root[data-atmo="still"] *::after {
+  animation: none !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+
+/* The floor, in CSS as well as in the resolver.
+ *
+ * `resolveAtmo()` clamps `alive` to `calm` whenever the OS asks for reduced
+ * motion, and that is the mechanism — it is what makes the attribute honest, so
+ * a test and a settings pane can both read the EFFECTIVE level rather than the
+ * requested one. This rule is the backstop for the window between first paint
+ * and React mounting, when the attribute is not on the root yet and any
+ * ambient animation in the initial HTML would already be running.
+ *
+ * Note the asymmetry, and it is deliberate: reduced-motion can only make this
+ * quieter, never louder. `still` is untouched here because someone who chose
+ * `still` has asked for less than the floor, and they get to keep it. */
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-atmo]) [data-gl-motion="ambient"],
+  :root[data-atmo="alive"] [data-gl-motion="ambient"] {
+    animation: none !important;
+  }
+}
+
+/* ── The layers ───────────────────────────────────────────────────────── */
+
+/* All three are fixed, cover the viewport, and never take a pointer. They are
+   drawn ABOVE the app and BELOW anything that is evidence: `CRT` sits at 610 on
+   purpose (see tokens.css), because a screenshot the user is being asked to
+   judge must read exactly as the browser rendered it, untinted by our chrome. */
+.gl-atmo-layer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--gl-z-atmo);
+  pointer-events: none;
+}
+
+/* Scanlines — the CRT overlay. A SETTING, and off by default (REDESIGN §0):
+   it is the one atmosphere layer that reduces legibility, so it is opt-in. */
+.gl-atmo-scanlines {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.26) 0,
+    rgba(0, 0, 0, 0.26) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}
+
+/* Grain.
+ *
+ * The mockup uses a 4.2MB PNG plate for this, over-scaled and drawn at ~3%
+ * opacity — REDESIGN §3.5 budgets the texture assets under 400KB combined and
+ * this is how that budget is met: an inline feTurbulence is roughly 400 BYTES,
+ * has no resolution to be wrong at, and needs no asset pipeline. The plate was
+ * always going to look like noise at this opacity; this IS noise.
+ *
+ * `mix-blend-mode: overlay` rather than a flat alpha so the grain lifts the
+ * near-blacks without washing out the phosphor accents on top of them. */
+.gl-atmo-grain {
+  background-image: url("data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  opacity: 0.038;
+  mix-blend-mode: overlay;
+}
+
+/* Vignette. Pulls the eye to the middle third, which is where every screen in
+   this design puts the thing you came for. Centred slightly high (40%) because
+   the top strip and a panel header eat the first ~70px of every view. */
+.gl-atmo-vignette {
+  background-image: radial-gradient(
+    120% 90% at 50% 40%,
+    transparent 38%,
+    rgba(0, 0, 0, 0.55) 100%
+  );
+}

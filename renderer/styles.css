@@ -4,6 +4,24 @@
  * Add your custom styles and @source directives below.
  */
 
+/*
+ * The indie redesign's theme layer (docs/REDESIGN.md §3).
+ *
+ * FIRST, AND ABOVE THE `@source` LINES. `@import` has to precede every other
+ * at-rule except `@charset` and `@layer`, and the SDK's build PREPENDS its two
+ * framework imports to this file — so these three have to sit at the top of
+ * what we write for all five to end up contiguous. Below `@source` they would
+ * be dropped by any pipeline that does not inline them first, which is a
+ * stylesheet that silently loses the entire theme.
+ *
+ * This is also the single entry point the whole theme reaches the app through —
+ * all three windows import this file — which is what `check:theme-tokens`
+ * follows to prove tokens.css is not an orphan.
+ */
+@import "./theme/tokens.css";
+@import "./theme/fonts.css";
+@import "./theme/atmosphere.css";
+
 /* Tell Tailwind to scan all local renderer window files for class names */
 @source "./**/*.{ts,tsx}";
 @source not "./preload.ts";

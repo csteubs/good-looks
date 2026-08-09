@@ -289,6 +289,16 @@ resolution actually rendered and budget **under 400KB combined**; drop the other
 thirteen plates from the repo entirely. `glitch.gif` (723KB) is already in the
 tree and already used by `ai-debug-panel.tsx`.
 
+> **Grain: solved in A2, and not with a plate.** An inline `feTurbulence` data
+> URI is ~400 bytes, has no resolution to be wrong at, and needs no asset
+> pipeline — the PNG was always going to look like noise at 3.8% opacity, and
+> this *is* noise. `super-light-1.png` is not needed.
+>
+> **`ember` is still outstanding, and its source art is not in this repo.** The
+> mockup zip is not checked in, so `acid-25.jpg` has to be supplied before the
+> texture plate can ship. It first matters in **B1** (home's full-bleed textured
+> plate), not in A2 — the three global overlay layers do not depend on it.
+
 ### 3.6 Motion, and the accessibility rule the mockup does not state
 
 The design's `atmosphere` setting has three levels — `alive` (everything),
@@ -313,10 +323,16 @@ One PR per numbered item.
 
 **A1. Port `dev:web` to `main`.** §2. Prerequisite for everything else. ✅ **Done.**
 
-**A2. Tokens, fonts, atmosphere.** `renderer/theme/tokens.css`, self-hosted
-woff2, the three fixed overlay layers, `data-atmo`/`data-glitch` roots, the
-reduced-motion floor. Lands with the app still looking exactly as it does — the
-overlays default off until A4.
+**A2. Tokens, fonts, atmosphere.** ✅ **Done, 2026-08-08.**
+`renderer/theme/tokens.css`, self-hosted woff2, the three fixed overlay layers,
+`data-atmo`/`data-glitch` roots, the reduced-motion floor. Landed with the app
+still looking exactly as it does — nothing mounts `<Atmosphere />` until A4, and
+`@font-face` is a declaration rather than a fetch, so a normal load requests no
+font at all. `check:theme-tokens` shipped with it (§8.3). Two things resolved in
+the building: the 500 → 400 / 600 → 700 mono mapping lives in the `@font-face`
+weight RANGES rather than at the call sites, so no engine ever synthesises; and
+the grain plate is an inline `feTurbulence` data URI (~400 bytes) instead of the
+mockup's 4.2MB PNG. See DECISIONS 2026-08-08.
 
 **A3. Primitives.** The fifteen in §3.3, each with its own test file. No screen
 consumes them yet. This is the PR where the visual contract gets pinned: fixed
@@ -695,7 +711,7 @@ which exists for exactly this reason.
 
 | Check | Pins |
 |---|---|
-| `check:theme-tokens` | Every `--gl-*` referenced in `renderer/` is declared in `tokens.css`. The direct answer to the `bg-muted` / `border-token-border` class of bug, and it should run against the *emitted* stylesheet as well as source. |
+| `check:theme-tokens` ✅ | **Shipped in A2.** Every `--gl-*` referenced in `renderer/` is declared in `tokens.css` — the direct answer to the `bg-muted` / `border-token-border` class of bug — and it runs against the *emitted* stylesheet as well as source whenever `build-preview/` exists. Grew four things while being written, each guarding a silent failure: no token declared twice or empty; all three theme sheets imported *above* the `@source` lines (below them a pipeline drops them and the stylesheet loses the theme); every woff2 present **and really woff2** (a proxied download leaves an HTML error page with the right extension); and the overlay layers never taking the pointer — a full-viewport fixed layer that does makes the entire app unclickable with nothing on screen to say why. |
 | `check:status-width` | Every status chip uses `STATUS_W`. A ragged status column is the exact thing the fixed width exists to prevent, and it degrades one row at a time. |
 | `check:selection-neutral` | No selection treatment uses a status hue. Encodes "colour means outcome" so the next contributor inherits the rule. |
 | `check:crt-untreated` | No scanline, grain, vignette or tint style is applied inside a `CRT`. Evidence must read as the browser rendered it; a screenshot the user is asked to judge must not be tinted by chrome. |
@@ -761,8 +777,13 @@ Not blocking, but each will need an answer before the PR it affects.
 3. **Report mode's "Where it goes"** (§7.3). Confirmed as emit-only? If any of it
    ever sends, that is a new egress path and needs its own decision entry.
 4. **`check:text-color`'s fate** (§8.3).
-5. **CLAUDE.md's directory map is stale** — it lists `renderer/components/`,
-   which does not exist. Worth fixing in A2 alongside adding `renderer/theme/`.
+5. ~~**CLAUDE.md's directory map is stale**~~ — ✅ **Resolved in A2.**
+   `renderer/components/` had already gone by the time A2 landed;
+   `renderer/theme/` and the undocumented `renderer/trainer/` were added, and the
+   test counts refreshed.
+6. **The `ember` texture plate needs source art** (§3.5). `acid-25.jpg` is in the
+   mockup zip, which is not checked in. Blocks B1's full-bleed plate, nothing
+   earlier — the three global overlay layers do not depend on it.
 
 ---
 
