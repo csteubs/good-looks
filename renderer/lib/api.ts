@@ -37,6 +37,7 @@ import type {
   TestRecord,
   TestSpeed,
 } from "./recorder-types";
+import type { BranchStatus, BranchSummary, PullRequestSummary } from "./branch-types";
 import type { TriageResult } from "../../shared/triage.mjs";
 import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
 import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
@@ -413,6 +414,23 @@ export const api = {
     /** Fire-and-forget: the backend gates on notifyOnAiDebugDone itself. */
     notifyDone: (p: { testName: string; status: "done" | "error" }) =>
       ipc().invoke<{ ok: boolean }>("aiDebug:notifyDone", p),
+  },
+  /** The branch switcher — a testing tool for whoever is building this app.
+   *
+   *  Every call here is gated on `status().available`, which is false in the
+   *  browser preview and in a packaged build. Nothing in this namespace has a
+   *  degraded mode: there is no way to check out a branch without a backend. */
+  branches: {
+    status: () => ipc().invoke<BranchStatus>("branches:status"),
+    listPulls: () => ipc().invoke<PullRequestSummary[]>("branches:listPulls"),
+    listBranches: (refresh = false) =>
+      ipc().invoke<BranchSummary[]>("branches:listBranches", { refresh }),
+    /** Resolves as the app is about to relaunch — so a caller should expect the
+     *  window to disappear rather than expect to render a success state. */
+    switch: (branch: string) => ipc().invoke<{ appPath: string }>("branches:switch", { branch }),
+    home: () => ipc().invoke<{ appPath: string }>("branches:home"),
+    setToken: (token: string) => ipc().invoke<{ hasToken: boolean }>("branches:setToken", { token }),
+    clearToken: () => ipc().invoke<{ hasToken: boolean }>("branches:clearToken"),
   },
   /** Subscribe to a backend push event. Returns an unsubscribe function. */
   on<T>(channel: string, cb: (payload: T) => void): () => void {

@@ -55,4 +55,10 @@ Tick anything this change reaches, and say how it stays safe:
 - [ ] **Import sandbox** — `copyRelativeImports` and friends. Both the
       `projectRoot` read bound and the `destRoot` write bound are still asserted,
       on realpaths, on both sides.
-- [ ] Neither.
+- [ ] **Branch switcher** — anything reaching `shared/branch-paths.mjs`,
+      `scripts/switch-branch.mjs` or `branch-switcher.ts`. A branch name comes
+      from a PR head ref and becomes both a git argument and a directory that
+      gets built and executed: the leading-`-` refusal and the containment throw
+      are both still there, there is still only ONE copy of the validator, and
+      nothing writes into the user's own checkout.
+- [ ] None of these.
