@@ -33,14 +33,21 @@ main/recorder/       recording-session logic (script injection, step capture)
 main/windows/        BrowserWindow creation/config
 renderer/main/       primary views (home, recording/trainer, script view, ai-debug-panel, stats)
 renderer/settings/   settings window UI
+renderer/trainer/    the trainer window's own panel (runs the recorder store with no router)
 renderer/ui/         the app's component library (Radix + Tailwind + cva). Replaces the
                      former SDK design system; same symbol names and prop contracts, so
                      consuming views were not rewritten. Select/DropdownMenu are still
                      backed by real macOS menus via Menu.popup.
 renderer/components/ reusable UI composed from renderer/ui
 renderer/lib/        shared frontend utilities (llm-prompts, host bridge types, etc.)
+renderer/theme/      the indie redesign's bespoke layer: --gl-* tokens, self-hosted fonts,
+                     the atmosphere overlays + reduced-motion floor. Distinct from
+                     renderer/ui: that is the component library the views import, this is
+                     the redesign's own token/treatment layer on top of it, declared by us
+                     so `check:theme-tokens` can catch a name that resolves to nothing
+renderer/dev/        the browser preview's fake backend (`npm run dev:web`) — never shipped
 shared/              the ONE pure core both the app and the MCP import (.mjs + hand-written
-                     .d.mts). Pure only: no fs, no @glaze/core, no IPC, no process
+                     .d.mts). Pure only: no fs, no @shell/backend, no IPC, no process
 mcp/                 standalone MCP server exposing the test library to external MCP clients
                      (list_tests, get_test, list_runs, get_run_log, run_test, run_batch,
                       get_visual_report, get_a11y_report, get_run_logs, list_heals,
@@ -50,10 +57,12 @@ mcp/                 standalone MCP server exposing the test library to external
                      — see mcp/README.md
 docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated rationale)
 .github/             PR template, hygiene workflow, and the script it runs
-vite.config.ts       renderer build (three windows)
+vite.config.ts       renderer build (three windows). `--mode preview` builds the browser
+                     preview instead — preview.html + renderer/dev/, into build-preview/
 scripts/build-main.mjs   esbuild bundling for the main process + preload
 eslint.config.js     lint config, incl. the `electron`-import boundary rule
 vitest.config.ts     test runner config (node + jsdom projects)
+preview.html         browser-preview entry. NOT `*-window.html` on purpose — see the file
 *.test.ts(x)         Vitest tests, colocated with the code they cover
 main/services/__tests__/  standalone check:* scripts + the @shell/backend stub
 renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
@@ -66,15 +75,16 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 - `npm run build` — Vite (renderer) then esbuild (main + preload)
 - `npm run package` — build, then electron-builder → `dist/mac-arm64/Good Looks!.app`
 - `npm run dev` — Vite dev server + Electron, renderer hot-reloads
+- `npm run dev:web` — **the browser preview**: the whole renderer in an ordinary tab at `http://localhost:5199`, against fixtures, with no native shell. The fastest way to see a UI change, and the only one an agent can drive. Open one view directly with `?view=stats|visual|batch|heals` or `?test=<id>` — the router uses memory history, so a URL PATH cannot select a view. **`?view=specimen`** mounts `renderer/dev/specimen.tsx` INSTEAD of the app: every redesign primitive in every state, which is the only place they can be seen rendered (jsdom has no layout engine and the dom project runs with `css: false`). `npm run build:preview` emits a static bundle to `build-preview/`. It does not replace running the real app: a preview has no backend, so it cannot catch a broken IPC handler, a window that fails to open, or native menu behaviour.
 - `npm test` (Vitest, one pass) / `npm run test:watch` / `npm run test:coverage`
 - `npm run test:checks` — the standalone `check:*` scripts; `npm run test:all` runs those **and** Vitest
 - `npm run check:repo-hygiene` — repo-level checks (no generated files committed, no absolute paths, no secrets, lockfile in sync). This is the only part of the gate CI can run.
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1781 Vitest tests and 37 checks in the chain as of 2026-08-09 (38 defined — `check:shell-drift` is deliberately outside it; it needs both branches fetched, which only CI reliably has).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1912 Vitest tests across 97 files and 42 checks in the chain as of 2026-08-09 (44 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it; shell-drift needs both branches fetched, which only CI reliably has).
 
-- **Vitest** (`vitest.config.ts`) has two projects. **`node`**: `main/**/*.test.ts`, `mcp/**/*.test.ts`, `renderer/lib/**/*.test.ts`. **`dom`** (jsdom): `renderer/**/*.test.tsx` plus `main/**/*.dom.test.ts` — that suffix is for BACKEND code needing a document (the injected replayer and Auto-Heal probe are evaluated for real). The node project explicitly excludes `*.dom.test.ts`; without that they match both globs and run again with no DOM, failing for unrelated reasons.
+- **Vitest** (`vitest.config.ts`) has two projects. **`node`**: `main/**/*.test.ts`, `mcp/**/*.test.ts`, `renderer/lib/**/*.test.ts`. **`dom`** (jsdom): `renderer/**/*.test.tsx`, `renderer/dev/**/*.test.ts`, plus `main/**/*.dom.test.ts` — that suffix is for BACKEND code needing a document (the injected replayer and Auto-Heal probe are evaluated for real). The node project explicitly excludes `*.dom.test.ts`; without that they match both globs and run again with no DOM, failing for unrelated reasons. **A `.ts` test under `renderer/` outside `lib/` or `dev/` matches NEITHER project and is silently never run** — that is why `renderer/dev/**/*.test.ts` is listed by hand.
 - **`check:*` scripts** predate Vitest and are kept, not migrated — they catch real bugs and a rewrite would risk that for tooling neatness. Plain assertions + a non-zero exit; no runner. Two are deliberately *source-level* (`check:ai-debug-scroll`, `check:scroll-layout`) because they guard layout contracts that jsdom cannot observe.
 - **Adding a check?** Anything importing `@shell/backend` must be bundled with esbuild + `--alias:@shell/backend=./main/services/__tests__/glaze-backend-stub.ts --external:electron`; pure logic can run under `tsx`. **Bundled checks do NOT type-check — `npm run type-check` is the real gate for them.**
 
@@ -97,7 +107,8 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 - **Radix-backed `Tooltip` cannot be opened in jsdom.** Its trigger tracks pointers with APIs jsdom doesn't implement, so `pointerEnter`/`pointerMove`/`focus` all leave the content unmounted and the assertion reports as "unable to find the text" — which reads as wrong copy rather than an undrivable control. Same shape as the `Select` below: export the copy and assert it directly, and make sure the same string is reachable without hover (Stability puts it in the expanded row).
 - **The SDK's `Select` is native-menu-backed**: its options never enter the DOM, so a selection cannot be driven in jsdom. Assert the displayed value and cover persistence at the IPC layer instead.
 - An ambiguous `findBy*` (matching 2+ elements) retries until timeout, which reports as "never rendered" rather than "your query was ambiguous".
-- **`type-check` does not check SDK component props.** `<Text color="totally-not-a-color">` compiles clean on this tree — verified by compiling exactly that. `cva` falls through to the variant default when handed an unknown key, so a misspelt colour or variant renders as ordinary text and nothing throws. `add-step-dialog.tsx` shipped `color="danger"` this way and the invalid-property warning rendered in default foreground for its whole life. `check:text-color` guards `Text`'s colour; every other component prop is still unchecked here.
+- **`type-check` does not check SDK component props.** `<Text color="totally-not-a-color">` compiles clean on this tree — verified by compiling exactly that. `cva` falls through to the variant default when handed an unknown key, so a misspelt colour or variant renders as ordinary text and nothing throws. `add-step-dialog.tsx` shipped `color="danger"` this way and the invalid-property warning rendered in default foreground for its whole life. `check:text-color` guards `Text`'s colour; every other component prop is still unchecked here. This is the reason the redesign's theme layer declares its own `--gl-*` tokens rather than borrowing names: a custom property we declare is one `check:theme-tokens` can prove resolves, and an SDK class or prop is not.
+- **jsdom normalises `color` and `background` but NOT `box-shadow`.** An inline `#6bff9e55` reads back from `.style.color` as `rgba(107, 255, 158, 0.333)` and from `.style.boxShadow` as the original hex. The failure that matters is the NEGATIVE assertion: `expect(el.style.boxShadow).not.toContain("rgb(...)")` can never fire, so it passes against a shadow that does contain the colour. Check either notation (see `renderer/theme/primitives/step-row.test.tsx`).
 - This project targets **ES2020**: no `Array.prototype.at`.
 
 ## The capture boundary is a security boundary
@@ -161,4 +172,6 @@ npm run lint && npm run type-check && npm run test:all && npm run build
 
 `.github/workflows/repo-hygiene.yml` runs on every push and pull request and checks repo hygiene — no generated files committed, no absolute paths, no secrets, lockfile in sync.
 
-**The rest of the gate is now CI-able and wasn't before.** Removing the SDK removed the reason: `@glaze/core` used to resolve to a Glaze.app install outside the repo, which no hosted runner has. Every dependency now comes from `npm install`, so `lint`, `type-check`, `test:all` and `build` all run on a stock `macos-latest` runner. Wiring that up is a worthwhile follow-up; until it exists, step 2 is still a local gate.
+**The rest of the gate now runs in CI too, and could not before.** Removing the SDK removed the reason: `@glaze/core` used to resolve to a Glaze.app install outside the repo, which no hosted runner has. Every dependency now comes from `npm install`, so `.github/workflows/gate.yml` runs `lint`, `type-check`, `test:all` and `build` on a stock `macos-latest` runner, plus the Playwright e2e run, the browser-preview build, and an `electron-builder` package.
+
+Step 2 is still worth running locally — it is the fast feedback loop, and CI cannot tell you a UI change looks wrong. But a green gate.yml is now real evidence about this repo's own code, which a green checkmark here never used to be.

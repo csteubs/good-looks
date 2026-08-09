@@ -155,7 +155,7 @@ should update the relevant entry in the same commit.
 - `main/services/replay-builder.ts` — the runner's replay-correlation brain, **extracted from `playwright-runner.ts` in Phase 5** so it's regression-testable without spawning Playwright: `captureMethod(step)`, `buildReplay(...)` (correlates reporter statuses + capture manifest → `RunReplay`), `enrichWithVisualDiffs(replay, threshold)` (Phase 3 diff pass). Depends only on artifact/baseline stores + `diffPngBuffers` + `describeStep` — no `child_process`/IPC — so a standalone check can drive it. `playwright-runner.ts` now imports these two functions instead of defining them (behavior identical).
 - **`runStep` is the single replay dispatch point** (`recorder-service.ts`). All four replay paths route through it. `cookie` steps CANNOT go through `buildReplayScript` — an httpOnly cookie is invisible to `document.cookie` — so they branch to `applyCookieStep`. Added deliberately as one dispatch point after the Auto-Heal bug, where a capability was wired into one replay path and silently missing from the other three: a new step kind now cannot be handled in some paths and missed in others. `withCaptureSuspended` is the same pattern one level up — one place that decides what a replay does to the SESSION, for the same reason.
 - **Testing (two systems, one command).** `npm run test:all` = the 15 standalone `check:*` scripts, then Vitest. `npm test` runs Vitest alone; `npm run test:watch` for watch mode.
-  - **Vitest** was added because Vite 8 was already a devDependency, so it reuses the toolchain rather than adding a second bundler. Config in `vitest.config.ts`, two projects: **`node`** (backend + pure renderer logic; `main/**/*.test.ts`, `mcp/**/*.test.ts`, `renderer/lib/**/*.test.ts`) and **`dom`** (jsdom; `renderer/**/*.test.tsx` + `main/**/*.dom.test.ts`).
+  - **Vitest** was added because Vite 8 was already a devDependency, so it reuses the toolchain rather than adding a second bundler. Config in `vitest.config.ts`, two projects: **`node`** (backend + pure renderer logic; `main/**/*.test.ts`, `mcp/**/*.test.ts`, `renderer/lib/**/*.test.ts`) and **`dom`** (jsdom; `renderer/**/*.test.tsx` + `renderer/dev/**/*.test.ts` + `main/**/*.dom.test.ts`). `renderer/dev/**/*.test.ts` is listed explicitly because the preview bridge is a `.ts` that needs a `window` but renders nothing — without it the file matches NEITHER project and is silently never run.
   - **The hard part is `@glaze/core/*`**, which resolves through the Glaze runtime's ESM loader hooks + tsconfig paths, neither of which exists under a runner. `backend` → the test stub (NEVER the real module — it talks to the native host and would touch real userData); `components`/`hooks`/`ipc` → the SDK's REAL prebuilt ESM bundles, so component tests exercise the actual design system. Those bundles sit outside the project root, so their bare imports (`react`, `react-dom`, `@tanstack/react-query`) are pinned to this project's copies — which also guarantees ONE React instance, since two produce "invalid hook call" errors that look like component bugs. To find the set if the SDK is upgraded: `grep -ohE 'from"[^".][^"]*"' <sdk>/components.js | sort -u`. `sonner` is STUBBED, not installed (it's the SDK's dependency, not this app's); the stub also makes toasts assertable.
   - **`.dom.test.ts` vs `.test.ts` matters:** the node project explicitly excludes `**/*.dom.test.ts`, or DOM tests match both globs and run a second time with no document, failing for reasons unrelated to the code.
   - **jsdom has no layout engine** — `getBoundingClientRect()` returns zeros, so the replayer's `visible()` (correct for a real browser) treats everything as hidden. `step-replayer.dom.test.ts` installs a nominal box; without it, visibility tests fail AND "hidden → passes" silently becomes a test that proves nothing.
@@ -215,7 +215,130 @@ Redesigned 2026-08-07 from one flat scroll into a sidebar of eight panes with se
 
 ### Build, test and preview tooling
 - `scripts/bootstrap-worktree.mjs` — `npm run bootstrap`. Symlinks a git worktree's `node_modules` at the main checkout's, so a fresh worktree can run lint/type-check/`test:all` immediately instead of paying a multi-minute install (or, as was the case before this, running none of them: a fresh worktree has no dependency tree at all). **Refuses when the two `package-lock.json` files differ** — a shared tree across branches with different dependencies means an install on one silently rewrites the other's, which surfaces days later as an unexplained version error on a branch nobody touched. `.gitignore` spells `node_modules` without a trailing slash so the symlinked form is still ignored.
-- **`shell/electron` branch** — the de-Glazed tree: stock Electron + Vite + esbuild, nothing outside `node_modules`, so `npm ci && lint && type-check && test:all && build` all run on a hosted CI runner, which this branch structurally cannot do. Branched from `a61598c` (the port's real merge base, established by comparing all 199 shared source files against each candidate), so `git diff main..shell/electron` is the port itself and the 12 commits of drift arrive by cherry-pick. It carries `.github/workflows/gate.yml` (the real gate on ubuntu; end-to-end + `electron-builder` on macOS), an `e2e/` suite that drives the actual app through Playwright's `_electron` support, and `renderer/dev/` — a `window.glazeAPI` stand-in over fixtures that runs the whole UI in an ordinary browser tab (`npm run dev:web`, `npm run build:preview`). See `docs/plans/testing-pipeline-and-preview-environments.md` for the phased plan and `docs/DECISIONS.md` (2026-08-07) for why.
+- **`shell/electron` branch** — the de-Glazed tree: stock Electron + Vite + esbuild, nothing outside `node_modules`, so `npm ci && lint && type-check && test:all && build` all run on a hosted CI runner, which this branch structurally cannot do. Branched from `a61598c` (the port's real merge base, established by comparing all 199 shared source files against each candidate), so `git diff main..shell/electron` is the port itself and the 12 commits of drift arrive by cherry-pick. It carries `.github/workflows/gate.yml` (the real gate on ubuntu; end-to-end + `electron-builder` on macOS) and an `e2e/` suite that drives the actual app through Playwright's `_electron` support. Its browser preview (`renderer/dev/`) has since been ported to `main` — see the next bullet. See `docs/plans/testing-pipeline-and-preview-environments.md` for the phased plan and `docs/DECISIONS.md` (2026-08-07) for why.
+- **The browser preview** — `npm run dev:web` runs the whole renderer in an ordinary browser tab against a fake backend, with no native shell and no build slot to take turns over. Four pieces: `preview.html` (the entry — its name is load-bearing, since the renderer build globs `*-window.html` and would otherwise ship it as a fourth window), `renderer/dev/preview-boot.ts` (installs the bridge BEFORE the app entry is imported, mounts the "fixture data, no backend" banner, and honours `?view=` / `?test=`), `renderer/dev/preview-bridge.ts` (a `window.glazeAPI` over ~50 typed handlers) and `renderer/dev/preview-fixtures.ts`. It is built by `vite.config.ts` under `--mode preview`, which swaps the three window entries for `preview.html`, sends the output to `build-preview/` so it can never overwrite the packaged renderer, switches `base` from `./` (file://) to `/` (served over http, deep paths), and adds an SPA fallback so any path serves `preview.html`. Under Glaze this was a second standalone config, because the SDK owned the app's build and this project had none of its own; the port gave the app a real Vite config, and a mode is all the difference that was left. **The router uses `createMemoryHistory()`**, so a URL path can never select a view; `?view=stats` / `?test=<id>` ask the router directly instead. Two things the native WebView provides that a tab does not are declared in `preview.html`: `color-scheme` (the app's `Text` resolves to `text-inherit`, so without it every label renders black on black) and an opaque backstop on `html` — behind body, never by overriding `--color-window-bg`, because every `bg-panel` surface depends on that compositing. Guarded by `preview-bridge.test.ts`. `npm run build:preview` emits a static bundle to `build-preview/`.
+
+### Theme layer — `renderer/theme/` (the indie redesign, Phase A)
+
+The bespoke design layer the redesign is built on. See `docs/REDESIGN.md` for the
+plan it implements; **A2 (this) landed 2026-08-08 and nothing consumes it yet** —
+the primitives (A3) and the shell (A4) are what start reading it. The app is
+unchanged on screen after this, deliberately, so that a regression in Phase B has
+exactly one candidate cause.
+
+- `renderer/theme/tokens.css` — the `--gl-*` custom properties, declared on
+  `:root`. Real declarations, not Tailwind theme keys or borrowed SDK names, and
+  that is the whole point: this repo has shipped `bg-muted` and the entire
+  `border-token-*` family emitting **no CSS at all** for months (DECISIONS
+  2026-08-06), because a class that does not exist and one that does are
+  indistinguishable in a `.tsx`. A name we declare ourselves is a name
+  `check:theme-tokens` can check. Dark only, and the absence of a `.light` block
+  is the decision rather than an omission. Carries two rules that are load-bearing
+  rather than cosmetic: **colour means outcome** (so selection is neutral white at
+  low alpha — `--gl-sel-bg`/`--gl-sel-ring` — never a status hue it would compete
+  with), and **AI is a treatment, not a colour** (`--gl-holo`, on borders and
+  small marks only, never a text fill). `--gl-status-w: 78px` is a layout
+  contract, not styling: it is why a column of status chips has one edge.
+- `renderer/theme/fonts.css` + `fonts/` — self-hosted Space Mono and Space
+  Grotesk, latin + latin-ext woff2, 92KB for all six files, SIL OFL 1.1 text
+  beside them. **No network `src` fallback**: the mockup pulls from
+  fonts.googleapis.com, which in a packaged app is an outbound request on every
+  launch against an egress posture of one opt-in webhook (DECISIONS 2026-08-04),
+  plus a blank-until-loaded flash and a hard failure offline. A missing file
+  falls through to the system font instead — legible, obviously wrong to a
+  designer, and sends nothing. **The 500 → 400 / 600 → 700 weight mapping lives
+  in the `font-weight` RANGE descriptors**, not at the call sites: Space Mono
+  ships only 400 and 700, the design leans on 500 and 600, and leaving the
+  browser to synthesise means the Glaze WebView and a browser preview disagree
+  about what the app looks like. Declaring the 400 file as `100 500` and the 700
+  file as `600 900` makes every request match a real face, so no synthesis
+  happens at all. Space Grotesk is a genuine variable font (`fvar`/`gvar`/`avar`
+  verified in the woff2) and needs none of that. `@font-face` is a declaration,
+  not a fetch — nothing loads until a screen actually uses it.
+- `renderer/theme/atmosphere.css` + `atmosphere.tsx` — the three global fixed
+  layers (grain, vignette, scanlines) and the motion floor. **Motion that reports
+  something is not decoration**: a running step must still pulse under `calm`,
+  so the two kinds are separated by `data-gl-motion="ambient"` rather than by
+  animation name (CSS cannot select on animation-name, and threading a flag
+  through every animation string gets missed on the one element nobody
+  re-tested). `!important` throughout because the redesign applies animation
+  shorthand inline, and a motion setting that loses to the thing it turns off is
+  worse than none. **`prefers-reduced-motion: reduce` forces `calm` as a FLOOR** —
+  the rule the mockup omits — clamped one-directionally so `still` survives it.
+  `resolveAtmo()` is the mechanism (via `useSyncExternalStore`, so the *first*
+  paint is already right — with an effect, the one frame a motion-sensitive user
+  sees is the animated one); the `@media` rule in the CSS is the backstop for the
+  window before React mounts. The layers are **portalled to `document.body`**,
+  because a `position: fixed` element inside an ancestor carrying `transform` or
+  `filter` positions against that ancestor — not hypothetical in a design built
+  on both. Grain is an inline `feTurbulence` data URI (~400 bytes) standing in
+  for the mockup's 4.2MB PNG plate; it was always going to look like noise at 3%
+  opacity, and this *is* noise.
+- The three stylesheets come in through `renderer/styles.css`, which all three
+  windows import — **above the `@source` lines**, because `@import` must precede
+  every other at-rule and the SDK's build prepends its own two framework imports
+  to that file. Below `@source` they would be dropped by any pipeline that does
+  not inline them first, which is a stylesheet that silently loses the theme.
+- `renderer/theme/tokens.ts` — the narrow set of tokens that a `var()` genuinely
+  cannot express, and deliberately small because every value in it is a second
+  copy. Three reasons a value qualifies: it gets **concatenated** (`StatusChip`
+  draws `tone + "55"` over `tone + "12"`, and CSS cannot append to the result of
+  `var()`), it gets **interpolated** (`Temp` mixes along a ramp, which is
+  arithmetic on a colour and belongs in a function a test can call), or it is a
+  **layout contract a check has to name** (`STATUS_W`). `toneSurface()` and
+  `insetRail()` are the only places those two derivations happen — `Btn tone="go"`
+  and `StatusChip` share them rather than each writing the hex out.
+  `check:theme-tokens` pins every value against its `tokens.css` declaration in
+  both directions, and separately pins that **no status hex is ever written into
+  a stylesheet**, which is what keeps that single route honest.
+- `renderer/theme/primitives/` + `primitives.css` — the fourteen presentational
+  components (`Atmosphere` is the fifteenth, from A2), each with its own test
+  file. The split between the two is not taste: everything identical on every
+  instance is a named class, and only per-instance derived values are inline,
+  because **an inline style is invisible to the source-level checks** and
+  anything they police needs a rule with a name to point at. The ones carrying a
+  real argument rather than a shape: `Temp` (the deviation ramp, §3.4 — dead
+  inside ±10%, and it falls to `off` rather than fabricating a median);
+  `StatusChip` (fixed width, and `running` takes the holo treatment because
+  running is the *absence* of an outcome, not one of them); `StepRow` (status as
+  an inset `box-shadow` rail that COMPOSES with the selection ring, so a row can
+  be selected and failing at once); `MenuItem` (the consequence line renders
+  unconditionally — the honest description of concurrency 8 is a failure mode
+  that looks like a flaky suite); `SiteIcon` (monogram by default, favicon
+  opt-in, because the mockup's per-row icon lookup is an egress path);
+  `CRT` (content never treated, z-610 above the overlays).
+- `renderer/dev/specimen.tsx` — every primitive in every state at
+  `/?view=specimen`, mounted INSTEAD OF the app. Part of the preview, never
+  shipped. It exists because nothing in the suite has ever *seen* one of these
+  rendered — jsdom has no layout engine and the dom project runs with
+  `css: false` — so without it the first look at a `StatusChip` would be inside a
+  Phase B screen, where a spacing mistake is indistinguishable from a mistake in
+  the screen. Measured there in a real engine: all seven chips exactly 78.00px
+  with one shared right edge, the ramp's dead band identical across three
+  samples, and the CRT at 610 with `filter: none` under a mounted scanline layer.
+- **Four source-level guards**, all for the same reason `check:text-color`
+  exists: the dom suite runs with `css: false`, so there is no cascade to ask,
+  and jsdom returns zeros from `getBoundingClientRect()` so a width assertion
+  would prove nothing while passing.
+  - `check:theme-tokens` — every `var(--gl-*)` read names a declared token; no
+    token declared twice or empty; all four sheets imported and ordered above
+    `@source`; every woff2 present *and really woff2* (a proxied download leaves
+    an HTML error page with the right extension); the overlay layers never take
+    the pointer (a full-viewport fixed layer that does makes the entire app
+    unclickable with nothing on screen to say why); and — when `build-preview/`
+    exists — that all of it survives into the **emitted** stylesheet.
+  - `check:status-width` — the chip reads `--gl-status-w`, nothing re-sizes it,
+    no call site passes an inline width, and `78px` appears in exactly one file.
+    The failure is one row at a time and invisible in isolation.
+  - `check:selection-neutral` — two tiers, from the palette's own token list: the
+    outcome hues and the AI accent may never appear on a selection, hover or
+    active state; `--gl-cyan` is declared "running / live / **focus**" so it is
+    allowed on a caret or focus ring but still never on a selection.
+  - `check:crt-untreated` — no filter, blend mode, opacity, shadow or background
+    image anywhere inside the bezel (the caption is exempt — it is chrome, not
+    evidence); the bezel's z-index is above `--gl-z-atmo`, asserted as a
+    RELATIONSHIP so that raising the overlays without raising the bezel fails;
+    and `crt.tsx` renders no overlay of its own.
 
 ### Components
 - `SplitView` (sidebar + primary; `storageKey="recorder"`), `Sidebar`/`SidebarList`/`SidebarListItem` (manual `selected`/`onClick` for route-based nav).

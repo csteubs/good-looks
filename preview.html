@@ -4,13 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!--
+      THE FILENAME IS LOAD-BEARING. The SDK's build discovers its windows with
+      `readdirSync(appRoot).filter(f => f.endsWith("-window.html"))`, so this
+      file is invisible to it and cannot become a fourth window in the packaged
+      app. Rename it to anything ending `-window.html` and the preview — fake
+      backend, fixture data and all — ships inside the real application.
+
       No Content-Security-Policy meta, unlike main-window.html.
 
       That policy exists because the real window runs alongside a preload and
       loads arbitrary untrusted sites in sibling windows. This page is a static
-      bundle on a static host with no backend, no preload and no page loading —
-      and its `connect-src 'self'` would block nothing that happens here while
-      making the file read as though it carried the app's real protections.
+      bundle with no backend, no preload and no page loading — and its
+      `connect-src 'self'` would block nothing that happens here while making
+      the file read as though it carried the app's real protections.
     -->
     <title>Good Looks! — UI preview</title>
     <script>
@@ -19,19 +25,55 @@
       }
     </script>
     <style>
+      /*
+        Two things the native WebView provides for free and a browser tab does
+        not. Both were found by opening this page: the app booted, and every
+        label rendered black on black.
+
+        1. `color-scheme`. The app's `Text` components resolve to
+           `text-inherit`, so the base colour comes from the UA default —
+           white in a dark-appearance WKWebView, black in a browser tab.
+           Declaring it here is what makes the text legible, and it follows
+           the `.dark` CLASS rather than the media query so that switching
+           theme in Settings (which toggles that class) is honoured too.
+
+        2. An opaque canvas. `--color-window-bg` is 40% black: the real window
+           is translucent and composites onto the native macOS material. A tab
+           has nothing behind it, so that 40% lands on the browser's white.
+           The backstop goes on `html`, BEHIND body — deliberately not by
+           overriding `--color-window-bg`, because every `bg-panel` surface in
+           this app is only visible thanks to that compositing (DECISIONS
+           2026-08-06). Make the window background opaque and the panels
+           silently flatten.
+
+        The custom property is namespaced. An earlier version of this file
+        called it `--background`, which the design system also defines — the
+        SDK's stylesheet loads after this one and silently won.
+      */
       :root {
-        --background: hsl(0 0% 100%);
+        color-scheme: light;
+        --preview-canvas: #ffffff;
       }
-      .dark {
-        --background: hsl(0 0% 7%);
+      :root.dark {
+        color-scheme: dark;
+        --preview-canvas: #0d0d0d;
       }
-      body {
-        background: var(--background);
+      html {
+        background: var(--preview-canvas);
       }
     </style>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="./renderer/dev/preview-boot.ts"></script>
+    <!--
+      ABSOLUTE, not "./". The renderer routes with the history API, so this
+      same document is served for `/stats` and `/test/<id>` too (see the SPA
+      fallback in vite.config.ts, under `--mode preview`). A relative src
+      resolves against the
+      CURRENT path, so on `/test/t-checkout` it would ask for
+      `/test/renderer/dev/preview-boot.ts` and 404 — a blank page on every deep
+      link, with the entry point as the only thing missing.
+    -->
+    <script type="module" src="/renderer/dev/preview-boot.ts"></script>
   </body>
 </html>

@@ -37,10 +37,10 @@ const root = process.cwd();
 /**
  * The colours `Text` accepts.
  *
- * Pinned here rather than imported, because the SDK is outside the repo and a
- * check that cannot run without it is a check that stops running. It IS
- * verified against the SDK below whenever the SDK is present, so the copy
- * cannot drift silently — the same shape as every other pinned constant here.
+ * Pinned here rather than imported, because this check is a plain script with
+ * no bundler and `renderer/ui` is TSX. It IS verified against the component
+ * below, so the copy cannot drift silently — the same shape as every other
+ * pinned constant here.
  */
 const TEXT_COLORS = [
   "primary",
@@ -60,11 +60,15 @@ const TEXT_COLORS = [
   "magenta",
 ];
 
-/** Where the SDK's own declaration lives, when this machine has one. */
-const SDK_TEXT_VARIANTS = [
-  join(root, "../../../sdk/current/@glaze/core/components/text-variants.d.ts"),
-  join(root, "../../../../../../sdk/current/@glaze/core/components/text-variants.d.ts"),
-];
+/** Where `Text`'s colour variants are declared.
+ *
+ *  This used to point at the SDK's `text-variants.d.ts`, outside the repo, and
+ *  skip the cross-check with a note when the SDK was absent. The port off Glaze
+ *  moved the component in-tree, so the file is now ALWAYS present and its
+ *  absence means someone moved it — which makes skipping the wrong response.
+ *  A missing source here fails, because the alternative is a check that quietly
+ *  stops cross-checking anything and still prints ok. */
+const TEXT_VARIANTS_SRC = join(root, "renderer/ui/primitives.tsx");
 
 let failures = 0;
 
@@ -77,30 +81,28 @@ function assert(condition: boolean, label: string): void {
   }
 }
 
-// ── The pinned union still matches the SDK ────────────────────────────
+// ── The pinned union still matches the component ──────────────────────
 
 {
-  const found = SDK_TEXT_VARIANTS.find((p) => {
-    try {
-      return statSync(p).isFile();
-    } catch {
-      return false;
-    }
-  });
-  if (!found) {
-    // Not a failure: a machine without the SDK can still run everything below,
-    // which is the part that catches real bugs.
-    console.log("note the SDK is not installed here, so the pinned union was not cross-checked");
-  } else {
-    const src = readFileSync(found, "utf-8");
-    const m = src.match(/color\?:\s*([^;]+);/);
-    assert(Boolean(m), "the SDK declares a colour union that this check can read");
+  let src = "";
+  try {
+    src = statSync(TEXT_VARIANTS_SRC).isFile() ? readFileSync(TEXT_VARIANTS_SRC, "utf-8") : "";
+  } catch {
+    src = "";
+  }
+  assert(src !== "", `Text's variants are readable at ${TEXT_VARIANTS_SRC}`);
+
+  if (src !== "") {
+    // The `color: { … }` block of `textVariants`' cva config. Non-greedy to the
+    // first closing brace at the same indent, which is how the block is written.
+    const m = src.match(/\n {4}color: \{\n([\s\S]*?)\n {4}\},/);
+    assert(Boolean(m), "the component declares a colour map this check can read");
     if (m) {
-      const declared = [...m[1].matchAll(/"([a-z-]+)"/g)].map((x) => x[1]).sort();
+      const declared = [...m[1].matchAll(/^\s{6}([a-z-]+):/gm)].map((x) => x[1]).sort();
       const pinned = [...TEXT_COLORS].sort();
       assert(
         JSON.stringify(declared) === JSON.stringify(pinned),
-        `the pinned union matches the SDK's (SDK: ${declared.join(",")})`,
+        `the pinned union matches the component's (component: ${declared.join(",")})`,
       );
     }
   }

@@ -5,9 +5,22 @@
 // to be what a change touched. These fixtures exist to put the interesting
 // states on screen without anyone having to record anything first: a passing
 // test, a failing one, one whose steps have diverged from its script, a hidden
-// one, tags, a heal waiting to be accepted.
+// one, tags, and a heal waiting to be accepted.
+//
+// EVERY export is annotated with the app's own type. That is not tidiness — it
+// is the only mechanism that catches a fixture answering the right channel with
+// the wrong shape, which crashes a view exactly as hard as no answer at all and
+// is far less obvious in review. Several of these shapes were wrong when this
+// file was first written against an older copy of the app.
 
-import type { RunRecord, TestRecord, Step } from "../lib/recorder-types";
+import type {
+  HealListEntry,
+  RecorderSettings,
+  RunRecord,
+  Step,
+  TestRecord,
+} from "../lib/recorder-types";
+import type { LlmConfig, LlmProviderStatus } from "../lib/llm-types";
 
 /** Fixed clock. `Date.now()` here would make "2 minutes ago" drift between the
  *  screenshot in a pull request and the page a reviewer opens an hour later,
@@ -20,8 +33,14 @@ const DAY = 24 * HOUR;
 /** Fills in the two fields every step carries but no fixture wants to repeat.
  *  Typed against the real `Step`, so a field renamed in recorder-types.ts
  *  fails `type-check` here rather than rendering a subtly wrong preview. */
-function steps(...items: Array<Omit<Partial<Step>, "id" | "timestamp"> & { type: Step["type"] }>): Step[] {
-  return items.map((item, i) => ({ id: `s${i + 1}`, timestamp: NOW - (items.length - i) * 1000, ...item }));
+function steps(
+  ...items: Array<Omit<Partial<Step>, "id" | "timestamp"> & { type: Step["type"] }>
+): Step[] {
+  return items.map((item, i) => ({
+    id: `s${i + 1}`,
+    timestamp: NOW - (items.length - i) * 1000,
+    ...item,
+  }));
 }
 
 export const TESTS: TestRecord[] = [
@@ -42,7 +61,12 @@ export const TESTS: TestRecord[] = [
       { type: "click", locator: { k: "role", role: "link", name: "Cart" } },
       { type: "fill", locator: { k: "label", v: "Email" }, value: "buyer@example.com" },
       { type: "click", locator: { k: "role", role: "button", name: "Place order" } },
-      { type: "assert", assert: "text", locator: { k: "testid", v: "confirmation" }, value: "Thank you" },
+      {
+        type: "assert",
+        assert: "text",
+        locator: { k: "testid", v: "confirmation" },
+        value: "Thank you",
+      },
     ),
   },
   {
@@ -107,6 +131,7 @@ export const RUNS: RunRecord[] = [
     logFile: "/preview/runs/r-1.log",
     logBytes: 4_812,
     runBrowser: "chromium",
+    speed: "medium",
     captureArtifacts: true,
     shotCount: 6,
     captureOverheadMs: 840,
@@ -126,6 +151,7 @@ export const RUNS: RunRecord[] = [
     logFile: "/preview/runs/r-2.log",
     logBytes: 9_233,
     runBrowser: "webkit",
+    speed: "slow",
     healedSteps: 1,
   },
   {
@@ -141,6 +167,7 @@ export const RUNS: RunRecord[] = [
     logFile: "/preview/runs/r-3.log",
     logBytes: 4_610,
     runBrowser: "chromium",
+    speed: "medium",
   },
 ];
 
@@ -159,44 +186,111 @@ export const RUN_LOG = [
   "  1 failed",
 ].join("\n");
 
-export const HEALS = [
+/** Typed as `HealListEntry[]` — the superset — so one array serves both
+ *  `heals:list` (`HealEntry[]`) and `heals:listAll` (`HealListEntry[]`).
+ *  `status: "pending"` is the state the Heals view exists to resolve, so it is
+ *  the one worth having on screen. */
+export const HEALS: HealListEntry[] = [
   {
     id: "h-1",
     testId: "t-login",
     testName: "Login — wrong password shows an error",
     stepId: "s4",
-    at: NOW - 30 * MINUTE,
-    from: { k: "testid", v: "signin" },
-    to: { k: "role", role: "button", name: "Sign in" },
-    status: "pending",
+    stepIndex: 3,
+    stepLabel: 'click "Sign in"',
+    source: "run",
     runId: "r-2",
+    at: NOW - 30 * MINUTE,
+    originalLocator: { k: "testid", v: "signin" },
+    appliedLocator: { k: "role", role: "button", name: "Sign in" },
+    candidates: [
+      {
+        locator: { k: "role", role: "button", name: "Sign in" },
+        description: 'role=button, name "Sign in"',
+        score: 0.91,
+        matchedPastRun: true,
+      },
+      {
+        locator: { k: "css", v: "form#login button[type=submit]" },
+        description: "the form's only submit button",
+        score: 0.64,
+        matchedPastRun: false,
+      },
+    ],
+    // Recorded but NOT written to the test: the default heal mode is "suggest",
+    // and a preview that showed heals landing silently would misrepresent it.
+    applied: false,
+    status: "pending",
   },
 ];
 
-export const SETTINGS = {
-  headless: false,
-  captureArtifacts: true,
-  retainRuns: 20,
-  retentionDays: 30,
-  a11yChecks: false,
-  browser: "chromium",
-  speed: "normal",
-  timeoutMs: 60_000,
-  recordLogs: true,
+/** The full settings record, because `RecorderSettings` has no optional fields
+ *  and the panes read straight off it. Values are the app's own defaults except
+ *  where a non-default makes a pane more interesting to look at. */
+export const SETTINGS: RecorderSettings = {
+  showUrlBar: true,
+  trainerPanelEnabled: false,
+  defaultRunSpeed: "medium",
+  defaultWindowSize: { width: 1280, height: 800 },
+  autoHealEnabled: true,
+  autoHealRetries: 3,
+  autoHealAttemptTimeoutMs: 4_000,
+  autoHealApply: "suggest",
+  defaultA11yChecks: false,
+  debugScreenshots: false,
+  defaultCaptureArtifacts: true,
+  defaultRecordLogs: true,
+  recordAllHeaders: false,
+  keepRunningAiDebugJobs: false,
+  defaultRunHeadless: false,
+  defaultRunBrowser: "chromium",
+  defaultTestTimeoutMs: 60_000,
+  alertWebhookEnabled: false,
+  batchOrder: [],
+  batchTestOptions: {},
+  defaultBatchConcurrency: 2,
+  artifactRetainedRuns: 10,
+  artifactRetentionDays: 30,
+  notifyOnRunIssues: false,
+  notifyOnBatchDone: true,
+  notifyOnAiDebugDone: false,
+  autoAcceptAiDebugFixes: false,
+  disabledAestheticEnhancements: [],
 };
 
-export const LLM_CONFIG = {
+export const LLM_CONFIG: LlmConfig = {
   provider: "ollama",
-  baseUrl: "http://127.0.0.1:11434",
   model: "qwen2.5-coder:7b",
+  baseUrls: { ollama: "http://127.0.0.1:11434" },
 };
 
-/** The preview has no backend, so no provider is reachable. Saying so plainly
- *  is better than pretending one is up: the footer's offline state is real UI
- *  that deserves to be visible here. */
-export const LLM_STATUS = {
-  provider: "ollama",
-  reachable: false,
-  models: [] as string[],
-  error: "No backend in preview mode — this is a UI preview, not a running app.",
-};
+/** `llm:detect` answers with one status PER PROVIDER, not one overall — the
+ *  AI pane renders a row for each.
+ *
+ *  The preview has no backend, so none is reachable. Saying so plainly is
+ *  better than pretending one is up: the pane's offline state is real UI that
+ *  deserves to be visible here. */
+export const LLM_STATUS: LlmProviderStatus[] = [
+  {
+    provider: "ollama",
+    reachable: false,
+    models: [],
+    baseUrl: "http://127.0.0.1:11434",
+    error: "No backend in preview mode — this is a UI preview, not a running app.",
+  },
+  {
+    provider: "lmstudio",
+    reachable: false,
+    models: [],
+    baseUrl: "http://127.0.0.1:1234",
+    error: "No backend in preview mode — this is a UI preview, not a running app.",
+  },
+  {
+    provider: "anthropic",
+    reachable: false,
+    models: [],
+    baseUrl: "https://api.anthropic.com",
+    hasKey: false,
+    error: "No backend in preview mode — this is a UI preview, not a running app.",
+  },
+];
