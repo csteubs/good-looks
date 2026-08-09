@@ -12,6 +12,8 @@
     "build": "node glaze.ts build",
     "dev": "node glaze.ts dev",
     "dev:renderer": "node glaze.ts dev:renderer",
+    "dev:web": "vite --config vite.config.preview.ts",
+    "build:preview": "vite build --config vite.config.preview.ts",
     "lint": "node glaze.ts lint",
     "type-check": "node glaze.ts type-check",
     "check:spec-parser": "tsx main/services/__tests__/spec-parser.check.ts",

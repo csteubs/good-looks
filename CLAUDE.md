@@ -31,8 +31,8 @@ main/recorder/       recording-session logic (script injection, step capture)
 main/windows/        BrowserWindow creation/config
 renderer/main/       primary views (home, recording/trainer, script view, ai-debug-panel, stats)
 renderer/settings/   settings window UI
-renderer/components/ reusable UI wrapping the @glaze/core design system
 renderer/lib/        shared frontend utilities (llm-prompts, etc.)
+renderer/dev/        the browser preview's fake backend (`npm run dev:web`) — never shipped
 shared/              the ONE pure core both the app and the MCP import (.mjs + hand-written
                      .d.mts). Pure only: no fs, no @glaze/core, no IPC, no process
 mcp/                 standalone MCP server exposing the test library to external MCP clients
@@ -46,6 +46,8 @@ docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated ration
 .github/             PR template, hygiene workflow, and the script it runs
 glaze.ts             thin wrapper that resolves the Glaze CLI relative to this folder's SDK install
 vitest.config.ts     test runner config (node + jsdom projects, @glaze/core aliasing)
+vite.config.preview.ts  standalone config for the browser preview ONLY (the SDK owns the app's)
+preview.html         browser-preview entry. NOT `*-window.html` on purpose — see the file
 *.test.ts(x)         Vitest tests, colocated with the code they cover
 main/services/__tests__/  standalone check:* scripts + the @glaze/core/backend stub
 renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
@@ -57,15 +59,16 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 - `npm run lint` / `npm run type-check` / `npm run test:all` — must pass before considering a change done
 - `npm run build` — runs the SDK's build pipeline (Vite + tsc). This only compiles; it does not package or launch the native app shell — that happens in the Glaze app (see "Making a change").
 - `npm run dev` / `npm run dev:renderer` — dev servers
+- `npm run dev:web` — **the browser preview**: the whole renderer in an ordinary tab at `http://localhost:5199`, against fixtures, with no native shell and no build slot to take turns over. The fastest way to see a UI change, and the only one an agent can drive. Open one view directly with `?view=stats|visual|batch|heals` or `?test=<id>` — the router uses memory history, so a URL PATH cannot select a view. `npm run build:preview` emits a static bundle to `build-preview/`. It does not replace step 3 of "Making a change": a preview has no backend, so it cannot catch a broken IPC handler, a window that fails to open, or native menu behaviour.
 - `npm test` (Vitest, one pass) / `npm run test:watch` / `npm run test:coverage`
 - `npm run test:checks` — the standalone `check:*` scripts; `npm run test:all` runs those **and** Vitest
 - `npm run check:repo-hygiene` — repo-level checks (no generated files committed, no absolute paths, no secrets, lockfile in sync). This is the only part of the gate CI can run.
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1774 Vitest tests and 38 checks as of 2026-08-09.
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1783 Vitest tests and 38 checks as of 2026-08-09.
 
-- **Vitest** (`vitest.config.ts`) has two projects. **`node`**: `main/**/*.test.ts`, `mcp/**/*.test.ts`, `renderer/lib/**/*.test.ts`. **`dom`** (jsdom): `renderer/**/*.test.tsx` plus `main/**/*.dom.test.ts` — that suffix is for BACKEND code needing a document (the injected replayer and Auto-Heal probe are evaluated for real). The node project explicitly excludes `*.dom.test.ts`; without that they match both globs and run again with no DOM, failing for unrelated reasons.
+- **Vitest** (`vitest.config.ts`) has two projects. **`node`**: `main/**/*.test.ts`, `mcp/**/*.test.ts`, `renderer/lib/**/*.test.ts`. **`dom`** (jsdom): `renderer/**/*.test.tsx`, `renderer/dev/**/*.test.ts`, plus `main/**/*.dom.test.ts` — that suffix is for BACKEND code needing a document (the injected replayer and Auto-Heal probe are evaluated for real). The node project explicitly excludes `*.dom.test.ts`; without that they match both globs and run again with no DOM, failing for unrelated reasons. **A `.ts` test under `renderer/` outside `lib/` or `dev/` matches NEITHER project and is silently never run** — that is why `renderer/dev/**/*.test.ts` is listed by hand.
 - **`check:*` scripts** predate Vitest and are kept, not migrated — they catch real bugs and a rewrite would risk that for tooling neatness. Plain assertions + a non-zero exit; no runner. Two are deliberately *source-level* (`check:ai-debug-scroll`, `check:scroll-layout`) because they guard layout contracts that jsdom cannot observe.
 - **Adding a check?** Anything importing `@glaze/core/backend` must be bundled with esbuild + `--alias:@glaze/core/backend=./main/services/__tests__/glaze-backend-stub.ts`; pure logic can run under `tsx`. **Bundled checks do NOT type-check — `npm run type-check` is the real gate for them.**
 

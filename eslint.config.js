@@ -54,6 +54,11 @@ const sdkConfig = sdkModule.default ?? sdkModule;
 
 export default [
   // Global ignore (a config object with only `ignores` applies repo-wide).
-  { ignores: [".claude/**"] },
+  //
+  // `build-preview/` is `npm run build:preview`'s output. The SDK's shared
+  // config already ignores `build/` and `dist/`, but not this one — and a
+  // minified bundle lints as ~800 `no-undef` errors on browser globals, which
+  // buries any real finding under a wall of noise from generated code.
+  { ignores: [".claude/**", "build-preview/**"] },
   ...(Array.isArray(sdkConfig) ? sdkConfig : [sdkConfig]),
 ];
