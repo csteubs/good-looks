@@ -21,7 +21,7 @@
 // verbatim below; don't shorten them without re-reading DECISIONS.md.
 
 import { useState } from "react";
-import { AlertDialog, Button, Input, Switch } from "@glaze/core/components";
+import { AlertDialog, Button, Input, Switch } from "@ui";
 
 import { useSettingsController } from "../settings-controller";
 import { SettingRow, useRowVisible } from "../setting-row";

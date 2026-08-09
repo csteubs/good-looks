@@ -68,7 +68,8 @@
     <!--
       ABSOLUTE, not "./". The renderer routes with the history API, so this
       same document is served for `/stats` and `/test/<id>` too (see the SPA
-      fallback in vite.config.preview.ts). A relative src resolves against the
+      fallback in vite.config.ts, under `--mode preview`). A relative src
+      resolves against the
       CURRENT path, so on `/test/t-checkout` it would ask for
       `/test/renderer/dev/preview-boot.ts` and 404 — a blank page on every deep
       link, with the entry point as the only thing missing.

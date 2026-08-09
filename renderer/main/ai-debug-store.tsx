@@ -15,7 +15,7 @@
 // AiDebugContext; only the open dialog subscribes to AiDebugContentContext.
 
 import * as React from "react";
-import { toast } from "@glaze/core/components";
+import { toast } from "@ui";
 
 import { api } from "../lib/api";
 import {

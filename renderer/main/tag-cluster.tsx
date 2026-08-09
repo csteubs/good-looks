@@ -19,7 +19,7 @@
 
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertDialog, Badge, Text, toast } from "@glaze/core/components";
+import { AlertDialog, Badge, Text, toast } from "@ui";
 import { Tag, X } from "lucide-react";
 
 import { api } from "../lib/api";

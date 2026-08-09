@@ -30,7 +30,7 @@
 // leaves the browser alone — see the note at the top of panel-dock.ts for why
 // the two must not be the same operation.
 
-import { BrowserWindow, logger, screen } from "@glaze/core/backend";
+import { BrowserWindow, logger, screen } from "@shell/backend";
 
 import {
   PANEL_WIDTH,
@@ -183,7 +183,10 @@ function follow(reason: string): void {
 /** Attach the follower to a training-browser window. */
 function attachFollower(win: BrowserWindow): void {
   for (const event of FOLLOW_EVENTS) {
-    win.on(event, () => {
+    // Same overload-vs-union situation as the navigation guards in
+    // recorder-service: every FOLLOW_EVENTS entry takes a zero-arg listener,
+    // so the cast is on dispatch only.
+    (win.on as (e: string, fn: () => void) => void)(event, () => {
       if (!seenEvents.has(event)) {
         seenEvents.add(event);
         // Answers, from the running app, whether this SDK streams drag events

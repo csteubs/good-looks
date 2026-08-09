@@ -10,7 +10,7 @@
 // completion is a renderer-store state (the LLM stream terminates in the
 // renderer's session map), so the backend has no independent way to see it.
 
-import { Notification, logger } from "@glaze/core/backend";
+import { Notification, logger } from "@shell/backend";
 
 export interface AiDebugOutcomeNotice {
   testName: string;

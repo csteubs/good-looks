@@ -24,8 +24,8 @@ vi.mock("../lib/api", () => ({
   api: { tests: { deleteTag: (tag: string) => deleteTag(tag) } },
 }));
 
-vi.mock("@glaze/core/components", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@glaze/core/components")>();
+vi.mock("@ui", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@ui")>();
   return {
     ...actual,
     toast: { success: (m: string) => success(m), error: vi.fn() },

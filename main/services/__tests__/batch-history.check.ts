@@ -1,7 +1,7 @@
 // Standalone regression check for batch-history persistence.
 //
-// Drives the REAL store against a throwaway userData dir (`@glaze/core/backend`
-// aliased to glaze-backend-stub.ts, whose app.getPath reads GLAZE_TEST_USERDATA).
+// Drives the REAL store against a throwaway userData dir (`@shell/backend`
+// aliased to shell-backend-stub.ts, whose app.getPath reads GLAZE_TEST_USERDATA).
 // What matters here and is easy to break:
 //   - save() UPSERTS by batchId — the runner calls it once per transition, so
 //     appending instead would leave dozens of records per batch;

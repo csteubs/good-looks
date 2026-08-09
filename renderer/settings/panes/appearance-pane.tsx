@@ -7,7 +7,7 @@
 // how the app LOOKS, which is the only thing they have in common with each
 // other and everything they have in common with the theme.
 
-import { Label, RadioGroup, RadioGroupItem, Switch } from "@glaze/core/components";
+import { Label, RadioGroup, RadioGroupItem, Switch } from "@ui";
 
 import { useSettingsController } from "../settings-controller";
 import { SettingRow } from "../setting-row";

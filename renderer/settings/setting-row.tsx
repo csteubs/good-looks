@@ -25,7 +25,7 @@
 
 import { createContext, useContext, useState } from "react";
 import type { ReactNode } from "react";
-import { Badge, Field, FieldContent, FieldDescription, FieldLabel } from "@glaze/core/components";
+import { Badge, Field, FieldContent, FieldDescription, FieldLabel } from "@ui";
 
 /** Ids of the rows a search matched, or `null` when no search is active.
  *  Filtering at the ROW rather than in each pane means a pane's JSX is the

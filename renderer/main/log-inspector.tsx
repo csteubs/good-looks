@@ -6,7 +6,7 @@
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Dialog, ScrollArea } from "@glaze/core/components";
+import { Button, Dialog, ScrollArea } from "@ui";
 import { Check, Copy } from "lucide-react";
 
 import { api } from "../lib/api";

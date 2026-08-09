@@ -17,7 +17,7 @@ import {
   SidebarList,
   SidebarListGroup,
   SidebarListItem,
-} from "@glaze/core/components";
+} from "@ui";
 import {
   Bandage,
   Bell,

@@ -17,7 +17,7 @@ import {
   ToolbarActions,
   ToolbarContent,
   ToolbarTitle,
-} from "@glaze/core/components";
+} from "@ui";
 import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, RotateCcw, Sparkles, Wand2, X } from "lucide-react";
 
 import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step, WaitDialogMode } from "../lib/recorder-types";

@@ -9,7 +9,7 @@
 // The pure half — ranking, keying, counting — lives in renderer/lib/a11y-format.
 // This file is only the pixels.
 
-import { Badge, Text } from "@glaze/core/components";
+import { Badge, Text } from "@ui";
 import { Accessibility } from "lucide-react";
 
 import { worstNewImpact } from "../lib/a11y-format";

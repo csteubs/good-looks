@@ -8,7 +8,7 @@
 // job is to say WHICH, in words, before it shows any number.
 
 import * as React from "react";
-import { Badge, Button, Text, Tooltip, TooltipContent, TooltipTrigger } from "@glaze/core/components";
+import { Badge, Button, Text, Tooltip, TooltipContent, TooltipTrigger } from "@ui";
 import { Activity, ChevronDown, ChevronRight, Wand2 } from "lucide-react";
 
 import { MIN_RUNS_FOR_VERDICT } from "../lib/recorder-types";

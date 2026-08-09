@@ -1552,7 +1552,7 @@ export interface BatchRecord extends BatchState {
 
 export type CookieAction = "set" | "delete" | "clearAll";
 
-/** Glaze/Chromium sameSite spelling (see @glaze/core/backend CookieSameSite).
+/** Glaze/Chromium sameSite spelling (see @shell/backend CookieSameSite).
  *  NOT the same vocabulary Playwright uses — see toPlaywrightSameSite. */
 export type CookieSameSite = "unspecified" | "no_restriction" | "lax" | "strict";
 

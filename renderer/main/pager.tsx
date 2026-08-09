@@ -6,7 +6,7 @@
 // list reads "page 1 of 1" not "of 0", and a page number that outlives its list
 // clamps to real rows instead of rendering an empty table.
 
-import { Button, Text } from "@glaze/core/components";
+import { Button, Text } from "@ui";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { clampPage, pageCount, pageRange } from "../lib/paginate";

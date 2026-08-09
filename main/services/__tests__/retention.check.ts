@@ -9,7 +9,7 @@ import { artifactStore } from "../artifact-store.js";
 import { recorderSettingsStore } from "../recorder-settings-store.js";
 
 // Both stores resolve `app.getPath("userData")` lazily per call (see
-// glaze-backend-stub.ts), so pointing them at a throwaway dir here — after the
+// shell-backend-stub.ts), so pointing them at a throwaway dir here — after the
 // imports — still lands every write inside it.
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-retention-check-"));
 process.env.GLAZE_TEST_USERDATA = userData;

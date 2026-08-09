@@ -1,0 +1,229 @@
+name: Gate
+
+# The real gate — lint, type-check, the full test suite, and the build — running
+# on a hosted runner. This is what the Glaze tree could not do: `@glaze/core`
+# resolved to the Glaze.app SDK install outside the repo, so every one of these
+# commands failed there for reasons unrelated to the change under review, and
+# the merge gate was a checkbox in the pull request template instead.
+#
+# This branch has no dependency outside node_modules, so all of it runs here.
+
+on:
+  push:
+    branches: [main, shell/electron]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same ref makes the in-flight run irrelevant. Without this,
+# a branch pushed three times in a minute holds three macOS runners.
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Ubuntu on purpose: macOS runner minutes bill at roughly ten times the Linux
+  # rate, and nothing in this job is platform-specific — there is no
+  # `process.platform` branch anywhere under main/, renderer/ or mcp/, and the
+  # one place that reasons about macOS path aliasing (import-service's
+  # /var -> /private/var realpath handling) is written to be correct on a
+  # platform where that aliasing does not exist.
+  #
+  # The macOS-specific paths are still covered: `package` below runs
+  # `npm run build` on macOS before packaging.
+  gate:
+    name: Lint, type-check, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # `npm ci` triggers the postinstall that fetches the Electron binary
+      # (~100 MB). setup-node's cache covers ~/.npm but not this, and it is the
+      # slowest step in the job by a wide margin.
+      - name: Cache Electron binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
+
+      - run: npm ci
+
+      # Run separately rather than chained with && so a failure names the step
+      # that failed in the UI instead of collapsing into one red block.
+      - run: npm run lint
+      - run: npm run type-check
+      - run: npm run test:all
+      - run: npm run build
+
+  # Are the two shells still the same application?
+  #
+  # No dependencies and no build — it reads two git trees and compares text, so
+  # it is the cheapest job here by a wide margin and worth running on every
+  # push. Drift between the branches is otherwise invisible: both are green,
+  # both apps run, and the only symptom is a feature that exists in one build
+  # and not the other.
+  drift:
+    name: Shell drift
+    runs-on: ubuntu-latest
+    steps:
+      # Full history, and both branches: the check compares trees, so a shallow
+      # clone of one ref has nothing to compare against.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the counterpart branch
+        run: git fetch origin main shell/electron --quiet || true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      # No `npm ci` — the script uses only node builtins and git, for the same
+      # reason the repo-hygiene workflow skips it.
+      - run: node .github/scripts/check-shell-drift.mjs
+
+  # The cheap preview: the whole UI as a static bundle, on fixtures. Under a
+  # second to build and it needs no Electron at all, so it runs on every pull
+  # request regardless of what the rest of the pipeline is doing.
+  preview:
+    name: Browser preview
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # --ignore-scripts skips the Electron binary download. Nothing in the
+      # preview build touches Electron, and fetching ~100 MB to run `vite
+      # build` for 400ms is most of this job's wall-clock.
+      - run: npm ci --ignore-scripts
+
+      - run: npm run build:preview
+
+      # Artifact names cannot contain a forward slash, and every ref that
+      # matters here has one: `shell/electron`, `claude/…`, and a pull
+      # request's own `17/merge`. GitHub's expression syntax has no replace(),
+      # so the substitution happens in the shell.
+      - name: Slug for this ref
+        id: slug
+        run: echo "value=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-preview-${{ steps.slug.outputs.value }}
+          path: build-preview/
+          retention-days: 7
+          if-no-files-found: error
+
+      # Publishing to a URL needs Pages turned on for the repository, which is
+      # a settings change nobody should discover through a red pipeline — so
+      # it is opt-in via a repository variable. Until then the artifact above
+      # is the deliverable: download, unzip, open preview.html.
+      #
+      # For a URL per pull request rather than one for main, publish into a
+      # gh-pages branch under pr-<number>/ instead; the official Pages actions
+      # deploy a single site per repository, so they cannot express that.
+      - name: Upload Pages artifact
+        if: vars.ENABLE_PAGES == 'true' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build-preview/
+
+  deploy-preview:
+    name: Publish preview
+    runs-on: ubuntu-latest
+    needs: preview
+    if: vars.ENABLE_PAGES == 'true' && github.ref == 'refs/heads/main'
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+  # macOS because the app is a macOS app: electron-builder targets it, and the
+  # end-to-end suite launches a real Electron process with real windows. This
+  # job is also where `npm run build` gets exercised on macOS, which is why the
+  # ubuntu job above is a safe place to run everything else.
+  package:
+    name: End-to-end and package
+    runs-on: macos-latest
+    needs: gate
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Cache Electron binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/Library/Caches/electron
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: electron-${{ runner.os }}-
+
+      - run: npm ci
+
+      - run: npm run build
+
+      # The only tests that boot the app: custom scheme, preload bridge, real
+      # windows. jsdom cannot reach any of it, so a break here is invisible to
+      # the ubuntu job however green it is.
+      - run: npx playwright test --config e2e/playwright.config.ts
+
+      # Traces and screenshots for the failures, which is the whole reason
+      # `trace: retain-on-failure` is set. Without this the report dies with
+      # the runner and a CI-only failure has to be reproduced blind.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+      - run: npx electron-builder --mac --dir
+
+      # `ditto` rather than handing the .app to upload-artifact directly: the
+      # bundle's Frameworks directory is a nest of symlinks, and the action
+      # dereferences them — which both breaks the bundle and multiplies its
+      # size. A ditto archive is also what macOS itself expects, so the
+      # download unzips into something Gatekeeper will treat normally.
+      - name: Archive the bundle
+        run: ditto -c -k --keepParent "dist/mac-arm64/Good Looks!.app" good-looks-mac-arm64.zip
+
+      # Same slash problem as the preview job — see the comment there.
+      - name: Slug for this ref
+        id: slug
+        run: echo "value=${GITHUB_REF_NAME//\//-}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: good-looks-${{ steps.slug.outputs.value }}-mac-arm64
+          path: good-looks-mac-arm64.zip
+          # A preview build is interesting while its pull request is open and
+          # noise afterwards.
+          retention-days: 7
+          if-no-files-found: error

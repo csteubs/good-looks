@@ -15,7 +15,7 @@ import {
   DropdownMenuTrigger,
   Input,
   Text,
-} from "@glaze/core/components";
+} from "@ui";
 import { Check, GripVertical, Loader2, MoreHorizontal, Pencil, Play, X } from "lucide-react";
 import type { RunStepStatus } from "./recorder-store";
 

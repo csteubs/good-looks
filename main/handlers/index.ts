@@ -86,7 +86,7 @@ import {
 import type { AiDebugSession, AssertKind, CookieSpec, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 
-import { ipcMain, logger } from "@glaze/core/backend";
+import { ipcMain, logger } from "@shell/backend";
 
 function asProvider(v: unknown): LlmProvider {
   if (v === "ollama" || v === "lmstudio" || v === "anthropic") return v;

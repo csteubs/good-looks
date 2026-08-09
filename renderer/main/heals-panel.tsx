@@ -19,7 +19,7 @@ import {
   ScrollArea,
   Text,
   toast,
-} from "@glaze/core/components";
+} from "@ui";
 import { Check, RotateCcw, Wand2 } from "lucide-react";
 
 import { api } from "../lib/api";

@@ -13,8 +13,8 @@
 // both require a URL, but the app stores cookies the way Chromium reports them
 // (domain + path), so a URL has to be reconstructed.
 
-import { logger } from "@glaze/core/backend";
-import type { Cookie, CookiesSetDetails } from "@glaze/core/backend";
+import { logger } from "@shell/backend";
+import type { Cookie, CookiesSetDetails } from "@shell/backend";
 
 import type { CookieSpec, Step } from "../recorder/types.js";
 

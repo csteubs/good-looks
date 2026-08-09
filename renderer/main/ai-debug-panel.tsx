@@ -4,7 +4,7 @@
 // the model returns a complete corrected spec — offers to apply it to the script.
 
 import * as React from "react";
-import { Button, Callout, Dialog, Field, ScrollArea, Text, Textarea, toast } from "@glaze/core/components";
+import { Button, Callout, Dialog, Field, ScrollArea, Text, Textarea, toast } from "@ui";
 import {
   ArrowDownToLine,
   Check,

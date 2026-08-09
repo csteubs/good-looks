@@ -11,7 +11,7 @@
 // That makes the "pruning deleted my baseline" bug structurally impossible here
 // rather than a rule someone has to remember.
 
-import { logger } from "@glaze/core/backend";
+import { logger } from "@shell/backend";
 
 import { artifactStore } from "./artifact-store.js";
 import type { RunReplay } from "./artifact-store.js";

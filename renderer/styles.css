@@ -1,18 +1,26 @@
 /*
- * Glaze framework styles (@import "@glaze/core/..." and @import "tailwindcss")
- * are automatically injected before this file during build and dev.
- * Add your custom styles and @source directives below.
+ * App styles. Under Glaze the framework injected its theme + tailwind imports
+ * before this file; the port declares them explicitly: Tailwind 4, the local
+ * design tokens (renderer/ui/tokens.css), and a theme bridge mapping tokens to
+ * Tailwind color utilities.
  */
+
+@import "tailwindcss";
+@import "./ui/tokens.css";
 
 /*
  * The indie redesign's theme layer (docs/REDESIGN.md §3).
  *
- * FIRST, AND ABOVE THE `@source` LINES. `@import` has to precede every other
- * at-rule except `@charset` and `@layer`, and the SDK's build PREPENDS its two
- * framework imports to this file — so these three have to sit at the top of
- * what we write for all five to end up contiguous. Below `@source` they would
- * be dropped by any pipeline that does not inline them first, which is a
- * stylesheet that silently loses the entire theme.
+ * ABOVE THE `@source` LINES. `@import` has to precede every other at-rule
+ * except `@charset` and `@layer`, so all six imports have to sit at the top of
+ * this file to end up contiguous. Below `@source` they would be dropped by any
+ * pipeline that does not inline them first, which is a stylesheet that silently
+ * loses the entire theme.
+ *
+ * (Under Glaze the first two lines above were PREPENDED by the SDK's build
+ * rather than written here, which is what the ordering rule was originally
+ * about. The port declares them explicitly; the rule is unchanged, there is
+ * just nothing invisible at the top of the file any more.)
  *
  * This is also the single entry point the whole theme reaches the app through —
  * all three windows import this file — which is what `check:theme-tokens`
@@ -26,7 +34,75 @@
 /* Tell Tailwind to scan all local renderer window files for class names */
 @source "./**/*.{ts,tsx}";
 @source not "./preload.ts";
-@source not "./dev/**/*";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  /* Sidebar row selection. Without this entry `bg-list-selection` is not a
+     colour Tailwind knows, so it emits no rule and the selected row looks
+     identical to every other one — silent, and invisible to every test that
+     does not assert on the class itself. */
+  --color-list-selection: var(--selection);
+}
+
+/* Custom variant so `dark:` utilities key off the .dark class the entry HTML
+ * and useTheme() maintain, not the OS media query alone. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    font-family:
+      -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    font-size: 13px;
+    color: var(--foreground);
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+    cursor: default;
+  }
+  input,
+  textarea,
+  [contenteditable] {
+    user-select: text;
+  }
+  ::selection {
+    background: var(--selection);
+  }
+}
+
+/* Window-drag region helper the views already use. */
+.drag-region {
+  -webkit-app-region: drag;
+}
+.drag-region button,
+.drag-region input,
+.drag-region a {
+  -webkit-app-region: no-drag;
+}
 
 /*
  * Newly-added step highlight.

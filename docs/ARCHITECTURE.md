@@ -216,7 +216,7 @@ Redesigned 2026-08-07 from one flat scroll into a sidebar of eight panes with se
 ### Build, test and preview tooling
 - `scripts/bootstrap-worktree.mjs` — `npm run bootstrap`. Symlinks a git worktree's `node_modules` at the main checkout's, so a fresh worktree can run lint/type-check/`test:all` immediately instead of paying a multi-minute install (or, as was the case before this, running none of them: a fresh worktree has no dependency tree at all). **Refuses when the two `package-lock.json` files differ** — a shared tree across branches with different dependencies means an install on one silently rewrites the other's, which surfaces days later as an unexplained version error on a branch nobody touched. `.gitignore` spells `node_modules` without a trailing slash so the symlinked form is still ignored.
 - **`shell/electron` branch** — the de-Glazed tree: stock Electron + Vite + esbuild, nothing outside `node_modules`, so `npm ci && lint && type-check && test:all && build` all run on a hosted CI runner, which this branch structurally cannot do. Branched from `a61598c` (the port's real merge base, established by comparing all 199 shared source files against each candidate), so `git diff main..shell/electron` is the port itself and the 12 commits of drift arrive by cherry-pick. It carries `.github/workflows/gate.yml` (the real gate on ubuntu; end-to-end + `electron-builder` on macOS) and an `e2e/` suite that drives the actual app through Playwright's `_electron` support. Its browser preview (`renderer/dev/`) has since been ported to `main` — see the next bullet. See `docs/plans/testing-pipeline-and-preview-environments.md` for the phased plan and `docs/DECISIONS.md` (2026-08-07) for why.
-- **The browser preview** — `npm run dev:web` runs the whole renderer in an ordinary browser tab against a fake backend, with no native shell and no build slot to take turns over. Four pieces: `preview.html` (the entry — its name is load-bearing, since the SDK's build globs `*-window.html` and would otherwise ship it as a fourth window), `renderer/dev/preview-boot.ts` (installs the bridge BEFORE the app entry is imported, mounts the "fixture data, no backend" banner, and honours `?view=` / `?test=`), `renderer/dev/preview-bridge.ts` (a `window.glazeAPI` over ~50 typed handlers) and `renderer/dev/preview-fixtures.ts`. `vite.config.preview.ts` is a standalone config — the app's real renderer is built by the SDK, which owns its own — and it reproduces exactly three things the SDK does: the two framework CSS imports prepended to `renderer/styles.css`, the `__APP_DISPLAY_NAME__` define, and the React + Tailwind plugin pair. **The router uses `createMemoryHistory()`**, so a URL path can never select a view; `?view=stats` / `?test=<id>` ask the router directly instead. Two things the native WebView provides that a tab does not are declared in `preview.html`: `color-scheme` (the app's `Text` resolves to `text-inherit`, so without it every label renders black on black) and an opaque backstop on `html` — behind body, never by overriding `--color-window-bg`, because every `bg-panel` surface depends on that compositing. Guarded by `preview-bridge.test.ts`. `npm run build:preview` emits a static bundle to `build-preview/`.
+- **The browser preview** — `npm run dev:web` runs the whole renderer in an ordinary browser tab against a fake backend, with no native shell and no build slot to take turns over. Four pieces: `preview.html` (the entry — its name is load-bearing, since the renderer build globs `*-window.html` and would otherwise ship it as a fourth window), `renderer/dev/preview-boot.ts` (installs the bridge BEFORE the app entry is imported, mounts the "fixture data, no backend" banner, and honours `?view=` / `?test=`), `renderer/dev/preview-bridge.ts` (a `window.glazeAPI` over ~50 typed handlers) and `renderer/dev/preview-fixtures.ts`. It is built by `vite.config.ts` under `--mode preview`, which swaps the three window entries for `preview.html`, sends the output to `build-preview/` so it can never overwrite the packaged renderer, switches `base` from `./` (file://) to `/` (served over http, deep paths), and adds an SPA fallback so any path serves `preview.html`. Under Glaze this was a second standalone config, because the SDK owned the app's build and this project had none of its own; the port gave the app a real Vite config, and a mode is all the difference that was left. **The router uses `createMemoryHistory()`**, so a URL path can never select a view; `?view=stats` / `?test=<id>` ask the router directly instead. Two things the native WebView provides that a tab does not are declared in `preview.html`: `color-scheme` (the app's `Text` resolves to `text-inherit`, so without it every label renders black on black) and an opaque backstop on `html` — behind body, never by overriding `--color-window-bg`, because every `bg-panel` surface depends on that compositing. Guarded by `preview-bridge.test.ts`. `npm run build:preview` emits a static bundle to `build-preview/`.
 
 ### Theme layer — `renderer/theme/` (the indie redesign, Phase A)
 
@@ -427,3 +427,63 @@ exactly one candidate cause.
 - **`Slider`'s `onValueCommit` is unreliable for a plain click (no drag) — commit on `onValueChange` instead.** `TestSpeedSlider` in `library-sidebar.tsx` originally persisted on `onValueCommit`; the thumb's local value visibly updated on click but the backend write never happened (no `tests:setSpeed` call, no `testStore.save` log line) because a single click never produces the drag gesture Radix's slide-end/pointerup handling expects. Fixed by calling the commit logic directly from `onValueChange`, guarded by a `useRef` so repeated same-value events don't re-fire — fine for a low-cardinality (3-stop) slider; a continuous-value slider would need a debounce instead.
 - App logs (`~/Library/Logs/app.glaze.macos.<appId>/glaze-*.log`, tail the most-recently-modified one) are the fastest way to confirm an IPC handler actually ran — `testStore.save()` logs `"Saved test record"` (not the channel name), so grep the log message text, not the IPC channel/handler name.
 
+
+---
+
+## The Electron shell (`main/shell/`) — added by the port off Glaze
+
+The only directory permitted to import `electron`. Everything else in `main/`
+goes through `@shell/backend`; `eslint.config.js` enforces it. See
+[../PORTING.md](../PORTING.md) for the migration record.
+
+### `main/shell/backend.ts`
+The adapter that replaced `@glaze/core/backend`. Re-exports Electron's `app`,
+`BrowserWindow`, `Menu`, `Notification`, `dialog`, `ipcMain`, `safeStorage`,
+`screen`, `globalShortcut`, and supplies the four things Electron has no direct
+equivalent for: the `logger`, a `BrowserWindow` wrapper that strips Glaze's
+`windowKey` option (so window-creation code was not rewritten), a no-op
+`initDevToolsButtonState`, and the `WebContentsNavigationEvent` type the
+recorder's navigation guards are written against. The wrapper is a function
+returning an instance rather than a subclass — Electron's `BrowserWindow` is
+native-backed and cannot be `extend`ed.
+
+### `main/shell/logger.ts`
+`logger.info(scope, message, meta?)`, matching the SDK's shape so ~40 call
+sites were untouched. Console plus an append-only file under
+`userData/logs/main.log`, because a packaged app has no terminal attached.
+File writes are best-effort and never throw.
+
+### `main/shell/host-handlers.ts`
+The IPC handlers the Glaze runtime used to register automatically, backing
+`window.glazeAPI.{dialog,shell,clipboard,nativeTheme,Menu}`. Under Electron
+nobody registers them unless we do, and a missing one surfaces as "No handler
+registered" the first time a menu or copy button is used — so the set is the
+full surface the renderer actually calls, enumerated by grep rather than guessed.
+`Menu:popup` is the important one: it converts the renderer's plain-data menu
+template into a real macOS menu and answers with the picked `commandId`, which
+is what keeps `Select` and `DropdownMenu` native. Also exports
+`forwardRendererConsole`, which pipes renderer errors into the main log — the
+port's first failure was a blank window with a completely clean log.
+
+### `main/shell/app-protocol.ts`
+Serves the built renderer over a custom `app://` scheme. Vite emits module
+scripts, which under `file://` get a null origin and are blocked by CORS; the
+symptom is a blank window. Registering a real scheme also gives the pages'
+CSP a meaningful `'self'`. Path containment is judged on the **real** path
+against the **real** build root, the same rule the import sandbox applies, so
+neither `..` in a URL nor a symlink inside the bundle can read the rest of
+the disk.
+
+## `renderer/ui/` — the app's component library
+
+Replaced `@glaze/core/components` (73 symbols across 36 files). Same symbol
+names and prop contracts, read off the SDK's `.d.ts` files, so consuming views
+only changed their import specifier to `@ui`.
+
+- `primitives.tsx` — Button, Badge, Input, Textarea, Label, Status, Text, Table family
+- `controls.tsx` — Radix form controls: Checkbox, Switch, RadioGroup, Slider, Tabs, SegmentedControl, Tooltip
+- `layout.tsx` — Toolbar family, the composite ScrollArea (auto-follow-bottom), Field family, Callout, EmptyState, Sidebar family, SplitView, ErrorBoundaryView
+- `overlays.tsx` — Dialog, AlertDialog, the Radix DOM context menu, Toaster/`toast`, and the DOM date picker
+- `native-menu.tsx` — **Select and DropdownMenu, still backed by real macOS menus.** Items render to `null`; the tree is walked into a plain-data template and handed to `Menu.popup`, which answers with a `commandId`. Options never enter the DOM, so assert the displayed value and cover persistence at the IPC layer — unchanged from the original.
+- `tokens.css` — design tokens (light/dark), bridged to Tailwind in `renderer/styles.css`
+- `use-theme.ts` — keeps `.dark` on `<html>` in sync with `nativeTheme`

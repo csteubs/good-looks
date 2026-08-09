@@ -8,7 +8,7 @@
 // Off by default (RecorderSettings.notifyOnRunIssues) and best-effort — a
 // notification failure must never affect the run it is reporting on.
 
-import { Notification, logger } from "@glaze/core/backend";
+import { Notification, logger } from "@shell/backend";
 
 export interface RunOutcomeNotice {
   testName: string;

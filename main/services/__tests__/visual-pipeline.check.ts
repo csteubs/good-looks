@@ -4,12 +4,12 @@
 //
 // It drives the REAL modules (buildReplay/enrichWithVisualDiffs, artifactStore,
 // baselineStore, visual-baseline-ops, annotationStore, visual-diff); only
-// `@glaze/core/backend` is aliased to a test stub (see glaze-backend-stub.ts)
+// `@shell/backend` is aliased to a test stub (see shell-backend-stub.ts)
 // so `app.getPath("userData")` points at a throwaway dir. Same convention as
 // spec-parser.check.ts: plain assertions + a non-zero exit on failure.
 //
 // Run (bundle with the alias, then node — tsx/plain node can't resolve
-// @glaze/core/backend, and esbuild+node needs no listen socket so it's
+// @shell/backend, and esbuild+node needs no listen socket so it's
 // sandbox-safe):
 //   npm run check:visual-pipeline
 

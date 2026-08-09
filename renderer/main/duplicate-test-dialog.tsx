@@ -12,7 +12,7 @@
 // (a stored password, a recorded session cookie), and what deliberately did not
 // (every run the original has ever had).
 
-import { Dialog, Text } from "@glaze/core/components";
+import { Dialog, Text } from "@ui";
 import { Copy } from "lucide-react";
 
 import { NOT_COPIED, type DuplicationWarning } from "../lib/duplicate-warnings";

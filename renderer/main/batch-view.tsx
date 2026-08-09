@@ -28,7 +28,7 @@ import {
   ToolbarDescription,
   ToolbarTitle,
   toast,
-} from "@glaze/core/components";
+} from "@ui";
 import {
   Check,
   CircleDashed,

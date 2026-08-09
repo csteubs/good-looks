@@ -20,7 +20,7 @@ import {
   Toolbar,
   ToolbarContent,
   ToolbarTitle,
-} from "@glaze/core/components";
+} from "@ui";
 import type { PaneId } from "../lib/settings-schema";
 import {
   DEFAULT_PANE_ID,

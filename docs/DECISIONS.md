@@ -16,6 +16,20 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-09 — Merging main into the Electron port: twelve conflicts, and the two that could have shipped a regression
+
+`shell/electron` branched at `main@8262136` and then both sides moved. Six commits landed on `main` — the redesign foundation, the fifteen primitives, and the favicon egress fix — while the branch ported the app off the Glaze SDK onto stock Electron. Twelve files conflicted. Most were mechanical; two were not, and both would have passed a careless resolution.
+
+**`library-sidebar.tsx` could have resurrected the egress bug.** The branch still carried the pre-#36 `Favicon`, which fetched `google.com/s2/favicons` for every test in the library on every sidebar render. Only the import line actually conflicted — git merged the post-fix `SiteIcon` body cleanly — so resolving the conflict toward the branch, which is the obvious instinct on a port branch, would have reinstated the third-party fetch while leaving the fix's own tests passing on the parts they cover. Resolution: `@ui` for the specifier, main's body, `FlaskConical` dropped.
+
+**`package.json` could have silently deleted five checks.** The branch predates `check:theme-tokens`, `check:status-width`, `check:selection-neutral`, `check:crt-untreated` and `check:renderer-egress` — including the one that exists specifically to stop the egress bug recurring. Taking the branch's script block wholesale drops all five, and the failure is invisible: `test:checks` just runs a shorter chain and still prints ok. What made it survivable is that the `test:checks` chain itself merged *cleanly* and already named all five, so a dropped definition would have failed as "missing script" rather than passing quietly. That is luck, not design, and worth knowing about the next time this merge happens.
+
+**The two preview implementations are one implementation.** Both sides added `renderer/dev/` independently, so all four files plus `preview.html` conflicted in full — 33 hunks. They are not divergent designs: `main`'s is the branch's own work, ported over on 2026-08-08 and developed further, with the same export surface plus `sdkChannels`. Took `main`'s wholesale rather than merging hunk by hunk.
+
+**`vite.config.preview.ts` is deleted, folded into `vite.config.ts` as `--mode preview`.** That file existed to reproduce what the SDK's build did — alias `@glaze/core/*` at the SDK install, prepend the two framework CSS imports, and pin every bare specifier so the design system and the app shared one React instance. The port makes all of that dead: the component library is `renderer/ui` now, in-tree and resolved by the app's own config. What survives is the part that was about being a browser rather than about being Glaze — the fixed port 5199, `base: "/"` instead of `"./"`, and the SPA fallback, without which every `?view=` deep link 404s. Those moved into the mode branch.
+
+**`check:text-color` lost its cross-check and got a better one.** It pins the 15 colours `Text` accepts and verified that pin against the SDK's `text-variants.d.ts`, skipping with a note when the SDK was absent. Post-port the SDK is *always* absent, so the arm was permanently dead while still printing ok — the exact failure mode the check exists to catch, one level up. Repointed at `renderer/ui/primitives.tsx`, which is in-tree and therefore always present, so a missing source is now a failure rather than a skip. The port's `Text` declares the same 15 colours, so the pinned union did not change.
+
 ### 2026-08-08 — Fifteen primitives, and the four contracts that only a source check can hold
 
 Phase A3 of [REDESIGN.md](REDESIGN.md). `renderer/theme/primitives/` — fourteen components plus A2's `Atmosphere`, each with its own test file, plus `tokens.ts`, a specimen page, and the three guards §8.3 asked for. Nothing consumes them yet; A5 and Phase B are what start.
@@ -541,6 +555,22 @@ One thing the move costs: `NumberInput` renders `unit` as `aria-hidden` decorati
 **Coverage:** 241 tests across the settings tree (118 pure schema tests in the node project; the rest per-component). Each pane is tested against a hand-built controller so a case reads as "headless is already on, and the user turns it off" rather than being re-derived through six async loads. The security assertions that used to live in `settings-view.test.tsx` — the webhook and API key being write-only — moved to the panes that now hold those controls; they did not go away. Verified failing-when-broken for the danger-row rule, the row filter, the reset patch's scope, the search auto-switch, the load helper's synchronous-throw guard, and the schema's one-pane-per-key invariant.
 
 **Also fixed:** `SidebarListItem` activates on **mouse-down**, not click — the same native-macOS idiom as Radix's `TabsTrigger`, and the same silent failure (`fireEvent.click` leaves the row untouched and the assertion reports "0 calls", which reads as a broken handler). Added to CLAUDE.md's environment gotchas. The sidebar also now sets `aria-current="page"` itself, since the SDK's `selected` only applies a background class and announced nothing.
+
+### 2026-08-07 — Guarding the two shells against silent drift
+
+**The problem is that drift is invisible.** `main` builds on the Glaze SDK, `shell/electron` on stock Electron; they are the same application. When a feature lands on one and not the other, both branches stay green, both apps run, and the only symptom is a feature that exists in one build and not the other — found whenever someone happens to use the other one. The trees reached 13 commits apart without anyone noticing, and **within an hour of being brought level a settings redesign put them apart again.** No process fixes that; a check does.
+
+**`check:shell-drift` compares the two trees modulo a declared seam.** Four rewrites are the entire sanctioned difference between their imports (`@glaze/core/backend`→`@shell/backend`, `components`/`hooks`→`@ui`, the two stub names), plus one more that has to collapse to a marker rather than rewrite: `@glaze/core/ipc`'s replacement is a *relative* path, so it is spelled differently depending on the importing file's depth. Any shared file differing after that is drift.
+
+Two lists carry the exceptions, and both are deliberately explicit. `SHELL_BOUNDARY` names the 10 files the shells genuinely cannot share — entry points, window creation, the preload, the token bridge — **each with a reason**, because "these differ legitimately" and "a feature landed on one side" look identical without one. `ONE_SIDED` names the paths expected on exactly one side: `main/shell/`, `renderer/ui/`, `renderer/dev/`.
+
+**It also reports exceptions that are no longer needed.** A boundary entry for a file that has stopped differing is not a failure, but it would hide real drift in that file from then on. That fired immediately: PR #19's rewrite made `settings-view.tsx` and `settings-window.ts` converge, and both were removed.
+
+**Rejected: failing when the counterpart branch is absent.** If the trees ever converge, the check exits 0 with a note. A guard that goes red because the problem it guards against was *solved* teaches people to ignore it.
+
+**The second guard is smaller and catches something worse.** `test:checks` is a hand-maintained `&&` chain of ~29 script names, and it is what `test:all` — the thing the pull-request template asks people to run — actually executes. A check defined but left out of that chain is **a test that passes by never running**, and nothing else notices: the suite is green, the script exists, its file is still in the tree being reviewed. The two branches had already drifted on the chain's contents. It now lives in `check-repo-hygiene`, which needs no SDK and so runs on both branches' CI today.
+
+It caught its own author within a minute: adding `check:shell-drift` to `package.json` failed it, because that check must *not* be in the chain — it needs both branches fetched, which only CI reliably has. The fix was to name it in an `OUTSIDE_CHAIN` map with that reason, which is the behaviour wanted: "I meant to leave that one out" has to be written down rather than assumed.
 
 ### 2026-08-07 — The testing bottleneck was never the test suite
 
@@ -2089,3 +2119,68 @@ So there is now an **"Accessibility" tab** on the test detail view
 - **Backend elements:** recording BrowserWindow management, executeJavaScript injection + poll-drain, local_storage (JSON + spec files), child_process (Playwright CLI), ipc_handlers, backend→renderer event push.
 - **Corrections/Lessons Learned:** `executeJavaScript` ephemeral-world + no backend `console-message` forced the DOM-attribute approach. Runner initially failed with "Cannot find module '@playwright/test'" because the built backend runs from `.glaze/build`; fixed by scanning candidate node_modules roots. `LiveAppEvaluate` runs in an isolated world where `window.glazeAPI` is undefined — drive the UI via clicks + native input-setter, not by calling `invoke` from evaluate.
 - **User Frustrations & Important Remarks:** None yet. First run of a test downloads ~80–150MB of browser; subsequent runs are fast.
+
+---
+
+## 2026-08-07 — Ported off the Glaze SDK onto stock Electron
+
+**Goal:** remove every Glaze dependency, simplify the build, and produce a
+distributable app. Full detail in [../PORTING.md](../PORTING.md); this entry
+records the decisions.
+
+- **Electron over Tauri.** The SDK mirrored Electron's API, so the backend port
+  was 15 symbols across 32 files, nearly all 1:1. Tauri would have meant
+  rewriting every Node service (runner, import, LLM, all stores) in Rust or
+  behind a sidecar — a rewrite, not a port. Cost: ~386 MB unpacked vs a few MB.
+
+- **One seam, lint-enforced.** App code imports `@shell/backend`, never
+  `electron`. Without the rule the adapter stops being a seam — the
+  `windowKey` strip, the logger and the navigation types get bypassed one
+  import at a time, and the backend stops being stubbable, which is what makes
+  it testable at all. Rejected: letting each file import Electron directly.
+
+- **`app://` scheme, not `file://`.** Vite emits `<script type="module"
+  crossorigin>`; from `file://` that has a null origin and is blocked by CORS.
+  The window opens, renders nothing, and the main process log is completely
+  clean — it cost real time to diagnose, which is also why renderer console
+  errors are now forwarded to the main log. Rejected: `webSecurity: false` —
+  unacceptable in a process that loads arbitrary untrusted sites.
+
+- **Select and DropdownMenu stayed native.** Electron's `Menu.popup` takes the
+  same plain-data template the SDK's did, so these keep rendering items to
+  `null` and driving a real macOS menu. That preserved the native behaviour AND
+  the existing tests, which stub `glazeAPI.Menu.popup`. Converting them to
+  Radix DOM menus would have invalidated those tests and put a DOM menu inside
+  a 560×480 settings window. The documented caveat is unchanged: options are
+  not in the DOM, so assert the displayed value.
+
+- **The date picker did change**, to a DOM `<input type="date">` — Electron has
+  no equivalent of `dialog.showDatePicker`. It is now keyboard-accessible and
+  testable, which the native one was not. One call site (`stats-view.tsx`).
+
+- **Rebuilt the design system rather than vendoring it.** 73 symbols on
+  `radix-ui` + `cva` + `tailwind-merge` — the SDK's own peer dependencies, all
+  already direct dependencies here. Same symbol names and prop contracts, so
+  the 36 consuming views only changed their import specifier. Vendoring
+  `@glaze/core` was rejected on licensing: it ships no LICENSE file and carries
+  Raycast copyright.
+
+- **App Store ruled out, Developer ID chosen.** `playwright install` downloads
+  and executes browser binaries at runtime — App Review 2.5.2 prohibits it
+  outright, and the App Sandbox separately blocks spawning executables signed
+  by someone else. A MAS build would mean shipping the recorder without the
+  runner. Developer ID + notarization has neither constraint.
+
+- **Corrections / lessons learned:** esbuild's ESM output needs a
+  `createRequire` banner or bundled CJS deps (pngjs) die on `Dynamic require of
+  "util"`; the banner must define only `require`, since adding
+  `__filename`/`__dirname` collides with `main/index.ts` and is a SyntaxError.
+  `asar` must stay off or the Playwright spawn gets a path that isn't real.
+  Spawns need `ELECTRON_RUN_AS_NODE=1` or `process.execPath` relaunches the app.
+  Electron types `webContents.on` as literal-keyed overloads, so iterating a
+  union of event names needs a cast at the dispatch.
+
+- **Not verified:** no end-to-end recording session was driven against a live
+  site in the ported build, and the packaged app's UI was not visually
+  inspected (only the dev build was). Visual fidelity of the rebuilt component
+  library against the original is an approximation, not a pixel match.

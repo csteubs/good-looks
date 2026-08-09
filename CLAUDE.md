@@ -1,8 +1,8 @@
 # CLAUDE.md
 
-Working rules for **Good Looks!** (a Playwright test recorder). This file, `docs/ARCHITECTURE.md`, and `docs/DECISIONS.md` are the three docs that matter; all three are versioned and hand-maintained in this repo.
+Working rules for **Good Looks!** (a Playwright test recorder). This file, `PORTING.md`, `docs/ARCHITECTURE.md`, and `docs/DECISIONS.md` are the docs that matter; all are versioned and hand-maintained in this repo.
 
-The codebase is developed here — from a terminal or editor in this folder — and changes land through branches and pull requests (see "Making a change"). The Glaze app is still the **build and launch host**: it is the only thing that can package the native shell, run the app, and show you the UI. It no longer *develops* the code.
+This is a standalone **Electron** app. It builds, runs and packages entirely from this folder with `npm` — no external SDK, no host application, and no requirement that the folder live at a particular path. **`PORTING.md` records what the migration off the Glaze SDK changed and why** — read it before assuming anything about the shell layer, the component library, or the build.
 
 ## What this app does
 
@@ -13,16 +13,18 @@ Records interactions on any website (clicks, typing, navigation, assertions) and
 
 ## Architecture
 
-- **Frontend** (React 19 + Vite, `renderer/`) renders in a macOS WebView.
-- **Backend** (Node.js, `main/`) calls native Swift host APIs through the Glaze SDK.
+- **Frontend** (React 19 + Vite, `renderer/`) renders in Electron renderer processes, served over a custom `app://` scheme. **Not `file://`** — Vite emits module scripts, which get a null origin under `file://` and are blocked by CORS. The symptom is a blank window and a clean log. See `main/shell/app-protocol.ts`.
+- **Backend** (Node.js, `main/`) is the Electron main process.
+- They talk over Electron IPC (handlers in `main/handlers/`, called from the renderer via `window.glazeAPI.*` exposed in `renderer/preload.ts`). The global keeps its historical name because every view, page-world helper and test stub addresses it.
+- **`main/shell/` is the only place that may import `electron`.** Everything else in `main/` goes through `@shell/backend`, which is where the logger, the `windowKey`-stripping BrowserWindow wrapper and the navigation-event types live. An ESLint rule enforces the boundary.
 - **The metrics DB** (`userData/recorder/metrics.db`, `node:sqlite`) is a **derived shadow** of the JSON stores and run artifacts — never a store of record. Three consequences, all load-bearing: it is rolled up **before** retention prunes (that is the whole point — after it, retention costs you pictures, not history); a failure to open, migrate or write it must **never** reach a run, so every method swallows its own errors and degrades to "no metrics"; and a schema change needs no migration, because dropping and replaying from disk gives the same answer. `node:sqlite` is imported **dynamically** — a static import would throw at module load on a runtime without it and take the backend down.
-- **`shared/`** holds logic the app AND the standalone MCP server both need. They can't share a `.ts` module — the app is compiled against `@glaze/core`, the MCP is plain `.mjs` with no build step — so these are `.mjs` with a hand-written `.d.mts` beside them, which keeps `type-check` a real gate over every TypeScript caller. **Pure only** (no `fs`, no `@glaze/core`, no IPC, no `process`); anything needing the filesystem stays on its own side and hands data in. Reach for this before transcribing a constant into `mcp/` — a copy is right the day it's written and silent forever after.
-- They talk over a JSON-RPC 2.0 IPC bridge (handlers registered in `main/handlers/`, called from the renderer via `window.glazeAPI.*` exposed in a preload script).
-- The SDK, `@glaze/core`, mirrors much of Electron's API surface. Treat Electron knowledge as a starting point only — verify each API/option is actually implemented here (see SDK reference below) rather than assuming parity.
+- **`shared/`** holds logic the app AND the standalone MCP server both need. They can't share a `.ts` module — the app is compiled and bundled, the MCP is plain `.mjs` with no build step — so these are `.mjs` with a hand-written `.d.mts` beside them, which keeps `type-check` a real gate over every TypeScript caller. **Pure only** (no `fs`, no shell import, no IPC, no `process`); anything needing the filesystem stays on its own side and hands data in. Reach for this before transcribing a constant into `mcp/` — a copy is right the day it's written and silent forever after.
 
 ## Directory map
 
 ```
+main/shell/         the Electron seam: backend adapter, logger, host IPC handlers,
+                    the app:// protocol. THE ONLY PLACE THAT IMPORTS `electron`.
 main/handlers/      IPC handler registration
 main/services/      business logic (recorder, playwright-runner, llm, spec-parser, visual-pipeline,
                     metrics-store — the derived metrics DB, rolled up before retention prunes)
@@ -32,13 +34,20 @@ main/windows/        BrowserWindow creation/config
 renderer/main/       primary views (home, recording/trainer, script view, ai-debug-panel, stats)
 renderer/settings/   settings window UI
 renderer/trainer/    the trainer window's own panel (runs the recorder store with no router)
-renderer/lib/        shared frontend utilities (llm-prompts, etc.)
+renderer/ui/         the app's component library (Radix + Tailwind + cva). Replaces the
+                     former SDK design system; same symbol names and prop contracts, so
+                     consuming views were not rewritten. Select/DropdownMenu are still
+                     backed by real macOS menus via Menu.popup.
+renderer/components/ reusable UI composed from renderer/ui
+renderer/lib/        shared frontend utilities (llm-prompts, host bridge types, etc.)
 renderer/theme/      the indie redesign's bespoke layer: --gl-* tokens, self-hosted fonts,
-                     the atmosphere overlays + reduced-motion floor. Ours, not the SDK's, so
-                     `check:theme-tokens` can catch a name that resolves to nothing
+                     the atmosphere overlays + reduced-motion floor. Distinct from
+                     renderer/ui: that is the component library the views import, this is
+                     the redesign's own token/treatment layer on top of it, declared by us
+                     so `check:theme-tokens` can catch a name that resolves to nothing
 renderer/dev/        the browser preview's fake backend (`npm run dev:web`) — never shipped
 shared/              the ONE pure core both the app and the MCP import (.mjs + hand-written
-                     .d.mts). Pure only: no fs, no @glaze/core, no IPC, no process
+                     .d.mts). Pure only: no fs, no @shell/backend, no IPC, no process
 mcp/                 standalone MCP server exposing the test library to external MCP clients
                      (list_tests, get_test, list_runs, get_run_log, run_test, run_batch,
                       get_visual_report, get_a11y_report, get_run_logs, list_heals,
@@ -48,12 +57,14 @@ mcp/                 standalone MCP server exposing the test library to external
                      — see mcp/README.md
 docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated rationale)
 .github/             PR template, hygiene workflow, and the script it runs
-glaze.ts             thin wrapper that resolves the Glaze CLI relative to this folder's SDK install
-vitest.config.ts     test runner config (node + jsdom projects, @glaze/core aliasing)
-vite.config.preview.ts  standalone config for the browser preview ONLY (the SDK owns the app's)
+vite.config.ts       renderer build (three windows). `--mode preview` builds the browser
+                     preview instead — preview.html + renderer/dev/, into build-preview/
+scripts/build-main.mjs   esbuild bundling for the main process + preload
+eslint.config.js     lint config, incl. the `electron`-import boundary rule
+vitest.config.ts     test runner config (node + jsdom projects)
 preview.html         browser-preview entry. NOT `*-window.html` on purpose — see the file
 *.test.ts(x)         Vitest tests, colocated with the code they cover
-main/services/__tests__/  standalone check:* scripts + the @glaze/core/backend stub
+main/services/__tests__/  standalone check:* scripts + the @shell/backend stub
 renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 ```
 
@@ -61,20 +72,21 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 
 - `npm install --include=dev` — install deps (plain `npm install` under `NODE_ENV=production` prunes devDeps)
 - `npm run lint` / `npm run type-check` / `npm run test:all` — must pass before considering a change done
-- `npm run build` — runs the SDK's build pipeline (Vite + tsc). This only compiles; it does not package or launch the native app shell — that happens in the Glaze app (see "Making a change").
-- `npm run dev` / `npm run dev:renderer` — dev servers
-- `npm run dev:web` — **the browser preview**: the whole renderer in an ordinary tab at `http://localhost:5199`, against fixtures, with no native shell and no build slot to take turns over. The fastest way to see a UI change, and the only one an agent can drive. Open one view directly with `?view=stats|visual|batch|heals` or `?test=<id>` — the router uses memory history, so a URL PATH cannot select a view. **`?view=specimen`** mounts `renderer/dev/specimen.tsx` INSTEAD of the app: every redesign primitive in every state, which is the only place they can be seen rendered (jsdom has no layout engine and the dom project runs with `css: false`). `npm run build:preview` emits a static bundle to `build-preview/`. It does not replace step 3 of "Making a change": a preview has no backend, so it cannot catch a broken IPC handler, a window that fails to open, or native menu behaviour.
+- `npm run build` — Vite (renderer) then esbuild (main + preload)
+- `npm run package` — build, then electron-builder → `dist/mac-arm64/Good Looks!.app`
+- `npm run dev` — Vite dev server + Electron, renderer hot-reloads
+- `npm run dev:web` — **the browser preview**: the whole renderer in an ordinary tab at `http://localhost:5199`, against fixtures, with no native shell. The fastest way to see a UI change, and the only one an agent can drive. Open one view directly with `?view=stats|visual|batch|heals` or `?test=<id>` — the router uses memory history, so a URL PATH cannot select a view. **`?view=specimen`** mounts `renderer/dev/specimen.tsx` INSTEAD of the app: every redesign primitive in every state, which is the only place they can be seen rendered (jsdom has no layout engine and the dom project runs with `css: false`). `npm run build:preview` emits a static bundle to `build-preview/`. It does not replace running the real app: a preview has no backend, so it cannot catch a broken IPC handler, a window that fails to open, or native menu behaviour.
 - `npm test` (Vitest, one pass) / `npm run test:watch` / `npm run test:coverage`
 - `npm run test:checks` — the standalone `check:*` scripts; `npm run test:all` runs those **and** Vitest
 - `npm run check:repo-hygiene` — repo-level checks (no generated files committed, no absolute paths, no secrets, lockfile in sync). This is the only part of the gate CI can run.
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1912 Vitest tests and 42 checks as of 2026-08-08.
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1912 Vitest tests across 97 files and 42 checks in the chain as of 2026-08-09 (44 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it; shell-drift needs both branches fetched, which only CI reliably has).
 
 - **Vitest** (`vitest.config.ts`) has two projects. **`node`**: `main/**/*.test.ts`, `mcp/**/*.test.ts`, `renderer/lib/**/*.test.ts`. **`dom`** (jsdom): `renderer/**/*.test.tsx`, `renderer/dev/**/*.test.ts`, plus `main/**/*.dom.test.ts` — that suffix is for BACKEND code needing a document (the injected replayer and Auto-Heal probe are evaluated for real). The node project explicitly excludes `*.dom.test.ts`; without that they match both globs and run again with no DOM, failing for unrelated reasons. **A `.ts` test under `renderer/` outside `lib/` or `dev/` matches NEITHER project and is silently never run** — that is why `renderer/dev/**/*.test.ts` is listed by hand.
 - **`check:*` scripts** predate Vitest and are kept, not migrated — they catch real bugs and a rewrite would risk that for tooling neatness. Plain assertions + a non-zero exit; no runner. Two are deliberately *source-level* (`check:ai-debug-scroll`, `check:scroll-layout`) because they guard layout contracts that jsdom cannot observe.
-- **Adding a check?** Anything importing `@glaze/core/backend` must be bundled with esbuild + `--alias:@glaze/core/backend=./main/services/__tests__/glaze-backend-stub.ts`; pure logic can run under `tsx`. **Bundled checks do NOT type-check — `npm run type-check` is the real gate for them.**
+- **Adding a check?** Anything importing `@shell/backend` must be bundled with esbuild + `--alias:@shell/backend=./main/services/__tests__/glaze-backend-stub.ts --external:electron`; pure logic can run under `tsx`. **Bundled checks do NOT type-check — `npm run type-check` is the real gate for them.**
 
 ### Conventions that matter
 
@@ -121,20 +133,16 @@ Importing clones or reads a folder of someone else's Playwright code and copies 
 
 ## Hard constraints
 
-- **Never edit or create files in `.glaze/`, `build/`, `node_modules/`, `@glaze/core`, or any `sdk/current/@glaze/core` path** — these are generated or protected; changes there are silently lost or break the build. Everything else in this repo is yours to maintain: application code in `main/`, `renderer/`, `mcp/`; config in `glaze.ts`, `package.json`, `tsconfig.json`, `vitest.config.ts`; and repo-level files (`README.md`, `CLAUDE.md`, `docs/`, `.github/`, `.gitignore`, `.gitattributes`).
-- `@glaze/core` resolves through this project's tsconfig path aliases and ESM loader hooks pointing at the Glaze SDK install — never `npm install @glaze/core`, and never run `glaze` as a global CLI install.
-- **Forbidden imports** (cause runtime breakage): `backendNativeBridge`, `@glaze/core/backend/internal`, `GlazeIPCServer`, `GlazeLifecycle`, `registerNativeApiHandlers`, `wireProtocolHandlers`. Use the public `@glaze/core/backend` exports instead (`dialog`, `shell`, `clipboard`, `Notification`, `Menu`, `Tray`, …). Don't suppress `no-restricted-imports` for these — if an API genuinely isn't exported, it isn't available here.
-- Don't install or configure Xcode, run `xcode-select --install`, or otherwise touch Xcode setup from this project.
-- Never touch the Glaze-managed `.npmrc` under `~/Library/Application Support/app.glaze.macos.main*/` or the `NPM_CONFIG_USERCONFIG` env var. Don't set `min-release-age`, `before`, `allow-git`, `registry`, or `ignore-scripts` in a project-level `.npmrc` here. If `npm install` rejects a package version as "too new," pin an older version in `package.json` instead of weakening that policy.
-- This folder must stay at its current path under `app.glaze.macos.main/apps/...` — `glaze.ts` and the tsconfig `@glaze/core/*` aliases resolve the SDK via paths relative to this location. Moving or copying it elsewhere breaks the build.
+- **Never edit generated output: `build/`, `dist/`, `node_modules/`.** Changes there are lost on the next build. Everything else is yours to maintain: application code in `main/`, `renderer/`, `mcp/`; config in `package.json`, `tsconfig.json`, `vite.config.ts`, `vitest.config.ts`, `eslint.config.js`, `scripts/`; and repo-level files (`README.md`, `CLAUDE.md`, `PORTING.md`, `docs/`, `.github/`, `.gitignore`).
+- **Only `main/shell/` may import `electron`.** Everything else in `main/` imports `@shell/backend`. Enforced by `no-restricted-imports` in `eslint.config.js` — don't suppress it. If an Electron API is genuinely needed, re-export it from the shim so there is still one seam.
+- **`asar` must stay `false`** in the electron-builder config. The runner spawns the Playwright CLI as a real child process, and a path inside an asar archive is not a real path on disk.
+- **Subprocess spawns must set `ELECTRON_RUN_AS_NODE=1`.** Under Electron `process.execPath` is the Electron binary; without the flag, spawning it launches a second copy of the app instead of running the CLI.
+- The three alias tables — `tsconfig.json` paths, `vitest.config.ts`, and `scripts/build-main.mjs` — must agree. `@shell/backend` in particular resolves to the **stub** under test and to Electron at build time; a mismatch means tests silently exercise the wrong module.
+- Don't install or configure Xcode, or run `xcode-select --install`, from this project.
 
-## SDK reference (for exact API signatures — don't guess from Electron docs)
+## Electron API reference
 
-- API reference index: `/Applications/Glaze.app/Contents/Resources/sdk/@glaze/core/GLAZE-SDK-API-REFERENCE/INDEX.md`
-- Symbol map (JSON): `/Applications/Glaze.app/Contents/Resources/sdk/@glaze/core/GLAZE-SDK-API-REFERENCE/symbols.json`
-- Symbol lines (ndjson, one symbol per line): `/Applications/Glaze.app/Contents/Resources/sdk/@glaze/core/GLAZE-SDK-API-REFERENCE/symbols.ndjson`
-
-These are read-only.
+Use the official Electron docs for exact signatures (<https://www.electronjs.org/docs/latest/api/app>). The local `node_modules/electron/electron.d.ts` is the authoritative version-matched source.
 
 ## Making a change
 
@@ -154,14 +162,16 @@ Branch names: `feat/…`, `fix/…`, `chore/…`, `docs/…`.
 npm run lint && npm run type-check && npm run test:all && npm run build
 ```
 
-**3. Verify in the Glaze app.** A terminal here cannot launch the native app or inspect the running UI — only the Glaze app can build the native shell, launch it, and preview it live. After any UI-affecting change, rebuild and launch there and confirm the change before calling it done. This is the step most easily skipped and the one that catches what tests cannot.
+**3. Run the app and look at it.** `npm run dev` (hot-reloading renderer) or `npm run package` for the real bundle. After any UI-affecting change, confirm it on screen before calling it done — this is the step most easily skipped and the one that catches what tests cannot. A renderer that throws during mount shows a blank window and a *clean* main log, so also check the log: renderer errors and warnings are forwarded there by `forwardRendererConsole`.
 
 **4. Update the docs in the same commit.** If the change adds a service, moves a boundary, or invalidates something in `docs/ARCHITECTURE.md`, fix that entry. If it involved a real decision — a trade-off, a rejected alternative, a non-obvious constraint — add an entry to `docs/DECISIONS.md`. These were kept current automatically until 2026-08-06; they now stay accurate only if changes carry them.
 
 **5. Open a pull request.** `.github/pull_request_template.md` carries the checklist, including the two security boundaries below.
 
-### What CI does and does not do
+### CI
 
-`.github/workflows/repo-hygiene.yml` runs on every push and pull request, but it checks only repo hygiene — no generated files committed, no absolute paths, no secrets, lockfile in sync.
+`.github/workflows/repo-hygiene.yml` runs on every push and pull request and checks repo hygiene — no generated files committed, no absolute paths, no secrets, lockfile in sync.
 
-It **cannot** run lint, type-check, the test suite, or the build: `@glaze/core` resolves to the Glaze.app SDK install outside this repo, which does not exist on a hosted runner. That is why step 2 is a local gate rather than something a green checkmark can vouch for. A self-hosted macOS runner with Glaze installed is the only route to the real suite in CI.
+**The rest of the gate now runs in CI too, and could not before.** Removing the SDK removed the reason: `@glaze/core` used to resolve to a Glaze.app install outside the repo, which no hosted runner has. Every dependency now comes from `npm install`, so `.github/workflows/gate.yml` runs `lint`, `type-check`, `test:all` and `build` on a stock `macos-latest` runner, plus the Playwright e2e run, the browser-preview build, and an `electron-builder` package.
+
+Step 2 is still worth running locally — it is the fast feedback loop, and CI cannot tell you a UI change looks wrong. But a green gate.yml is now real evidence about this repo's own code, which a green checkmark here never used to be.

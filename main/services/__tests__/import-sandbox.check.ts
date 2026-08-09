@@ -24,7 +24,7 @@
 //   • nothing is ever written outside the sandbox;
 //   • deleting an imported test takes its sandbox with it.
 //
-// Bundled with esbuild + the @glaze/core/backend stub — see package.json. Run:
+// Bundled with esbuild + the @shell/backend stub — see package.json. Run:
 //   npm run check:import-sandbox
 
 import * as fs from "fs";

@@ -19,7 +19,7 @@
 // Sorting is client-side over rows the query already capped and ordered by
 // severity, so the default view is "worst first" without a sort being chosen.
 
-import { Text } from "@glaze/core/components";
+import { Text } from "@ui";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import * as React from "react";
 

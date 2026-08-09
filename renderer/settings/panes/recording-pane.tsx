@@ -6,7 +6,7 @@
 // above "Capture screenshots by default" with nothing marking the change of
 // subject.
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from "@glaze/core/components";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from "@ui";
 
 import {
   DEFAULT_VIEWPORT_PRESET_ID,

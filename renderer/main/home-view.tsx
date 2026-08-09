@@ -1,5 +1,5 @@
-import { Toolbar, ToolbarContent, ToolbarTitle } from "@glaze/core/components";
-import { useTheme } from "@glaze/core/hooks";
+import { Toolbar, ToolbarContent, ToolbarTitle } from "@ui";
+import { useTheme } from "@ui";
 
 import { BlackHoleLoader } from "./black-hole-loader";
 import { useDisabledEnhancements } from "../lib/use-disabled-enhancements";

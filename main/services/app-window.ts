@@ -14,7 +14,7 @@
 // the auxiliary windows are additional views of the same session state, not
 // separate destinations that callers should have to choose between.
 
-import type { BrowserWindow } from "@glaze/core/backend";
+import type { BrowserWindow } from "@shell/backend";
 
 let mainWindow: BrowserWindow | null = null;
 

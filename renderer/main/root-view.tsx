@@ -1,8 +1,8 @@
 import { Outlet, useNavigate } from "@tanstack/react-router";
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { SplitView } from "@glaze/core/components";
-import { useTheme } from "@glaze/core/hooks";
+import { SplitView } from "@ui";
+import { useTheme } from "@ui";
 
 import { AiDebugChip } from "./ai-debug-chip";
 import { AiDebugHost } from "./ai-debug-panel";

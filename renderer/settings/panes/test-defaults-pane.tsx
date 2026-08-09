@@ -22,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
   Switch,
-} from "@glaze/core/components";
+} from "@ui";
 
 import { BROWSER_SF_SYMBOLS } from "../../lib/browser-icons";
 import type { RunBrowser, TestSpeed } from "../../lib/recorder-types";

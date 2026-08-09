@@ -6,7 +6,7 @@
 // twenty real runs. This module is the I/O half — run logs, replay models and
 // the heal journal — and does nothing but assemble.
 
-import { logger } from "@glaze/core/backend";
+import { logger } from "@shell/backend";
 
 import { artifactStore } from "./artifact-store.js";
 import { healJournalStore } from "./heal-journal-store.js";

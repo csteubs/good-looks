@@ -21,7 +21,7 @@ import * as path from "path";
 
 import { randomUUID } from "crypto";
 
-import { logger } from "@glaze/core/backend";
+import { logger } from "@shell/backend";
 
 import { importedSandboxDir, isInside } from "./import-service.js";
 import { getScriptsDir, testStore } from "./test-store.js";

@@ -17,8 +17,8 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { toast } from "@glaze/core/components";
-import type { NativeThemeInfo } from "@glaze/core/ipc";
+import { toast } from "@ui";
+import type { NativeThemeInfo } from "../lib/host-types";
 
 import { api } from "../lib/api";
 import type { LlmProvider, LlmProviderStatus } from "../lib/llm-types";

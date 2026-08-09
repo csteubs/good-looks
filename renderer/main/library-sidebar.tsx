@@ -19,7 +19,7 @@ import {
   Status,
   Text,
   toast,
-} from "@glaze/core/components";
+} from "@ui";
 import { Plus, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
 
 import { SiteIcon } from "../theme";

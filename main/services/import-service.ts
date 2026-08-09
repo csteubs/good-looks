@@ -11,7 +11,7 @@ import * as path from "path";
 import { promisify } from "util";
 import { randomUUID } from "crypto";
 
-import { dialog, logger } from "@glaze/core/backend";
+import { dialog, logger } from "@shell/backend";
 
 import type { TestRecord } from "../recorder/types.js";
 import { getScriptsDir, testStore } from "./test-store.js";

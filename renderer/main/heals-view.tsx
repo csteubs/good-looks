@@ -31,7 +31,7 @@ import {
   ToolbarDescription,
   ToolbarTitle,
   toast,
-} from "@glaze/core/components";
+} from "@ui";
 import { Check, RotateCcw, Trash2, Wand2 } from "lucide-react";
 
 import { api } from "../lib/api";

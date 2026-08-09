@@ -20,7 +20,7 @@ import {
   SelectValue,
   Status,
   Switch,
-} from "@glaze/core/components";
+} from "@ui";
 
 import { useSettingsController } from "../settings-controller";
 import { SettingRow } from "../setting-row";

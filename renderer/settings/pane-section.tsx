@@ -12,7 +12,7 @@
 
 import { Children, isValidElement } from "react";
 import type { ReactNode } from "react";
-import { FieldGroup, FieldSet } from "@glaze/core/components";
+import { FieldGroup, FieldSet } from "@ui";
 
 import { useMatchedIds } from "./setting-row";
 

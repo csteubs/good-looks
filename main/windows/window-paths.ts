@@ -1,4 +1,3 @@
-import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath, pathToFileURL } from "url";
 
@@ -6,8 +5,8 @@ import { fileURLToPath, pathToFileURL } from "url";
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDirPath = path.dirname(currentFilePath);
 
-// Backend is at build/main/index.js, HTML is at build/index.html
-// So we go up one level from build/main/ to build/
+// Backend is bundled to build/main/index.js; HTML entries are at build/.
+// So one level up from build/main/ is the build root.
 const BUILD_ROOT = path.resolve(currentDirPath, "..");
 
 /**
@@ -32,40 +31,28 @@ export function getWindowFileUrl(htmlFileName: string): string {
 }
 
 /**
- * Absolute path to the built preload script.
- *
- * The Vite build outputs the preload entry to `build/assets/preload.js` with a
- * stable (non-hashed) filename.  The native layer reads this path from
- * `webPreferences.preload` and injects the script into an isolated
- * WKContentWorld before page scripts run.
- *
- * In dev mode the backend runs via `tsx watch` (source directory), but the
- * preload must still be a built JS file because the native Swift host cannot
- * execute TypeScript.  A prior `npm run build` (or the Xcode build phase) is
- * expected to have produced the file.
+ * Absolute path to the built preload bundle (esbuild, CJS — see
+ * scripts/build-main.mjs). Electron injects it via webPreferences.preload,
+ * which must be a real file even in dev, so `npm run dev` builds it first.
  */
 export function getPreloadPath(): string {
   return path.join(BUILD_ROOT, "assets", "preload.js");
 }
 
 /**
- * Resolve the correct URL for a window, preferring the dev server when available.
+ * Resolve the correct URL for a window, preferring the dev server when one is
+ * running. scripts/dev.mjs passes its Vite server origin in GOOD_LOOKS_DEV_URL;
+ * a packaged or plain `electron .` launch has no env var and is served over the
+ * app:// scheme.
+ *
+ * NOT file:// — Vite emits module scripts, and a module script loaded from
+ * file:// has a null origin and is blocked by CORS, which presents as a blank
+ * window with a clean log. See shell/app-protocol.ts.
  */
 export async function getWindowUrl(htmlFileName: string): Promise<string> {
-  // .devserverhost is written to the project root by dev-server.js
-  // BUILD_ROOT is build/, so we go one level up to reach the project root
-  const devServerHostFile = path.join(BUILD_ROOT, "..", ".devserverhost");
-
-  if (fs.existsSync(devServerHostFile)) {
-    try {
-      const devServerHost = (await fs.promises.readFile(devServerHostFile, "utf-8")).trim();
-      if (devServerHost) {
-        return `${devServerHost}/${htmlFileName}`;
-      }
-    } catch {
-      // Fall back to the built file
-    }
+  const devUrl = process.env.GOOD_LOOKS_DEV_URL;
+  if (devUrl) {
+    return `${devUrl.replace(/\/$/, "")}/${htmlFileName}`;
   }
-
-  return getWindowFileUrl(htmlFileName);
+  return `app://bundle/${htmlFileName}`;
 }

@@ -6,7 +6,7 @@
 // belonged with the other per-test defaults. It has been moved there; this pane
 // is what was genuinely left over.
 
-import { Button, Switch } from "@glaze/core/components";
+import { Button, Switch } from "@ui";
 
 import { useSettingsController } from "../settings-controller";
 import { SettingRow } from "../setting-row";

@@ -9,7 +9,7 @@
 // The parameters unmount when Auto-Heal is off. They used to sit there
 // editable, writing settings that nothing would read.
 
-import { NumberInput, Switch } from "@glaze/core/components";
+import { NumberInput, Switch } from "@ui";
 
 import type { HealApplyMode } from "../../lib/recorder-types";
 import { clampHealRetries, clampHealTimeoutMs } from "../../lib/settings-schema";

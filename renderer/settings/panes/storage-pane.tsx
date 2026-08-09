@@ -6,7 +6,7 @@
 // space is this costing me" would ever find it. Here it is the first thing in
 // the pane, and it is what the Clean up button reports against.
 
-import { Button, NumberInput } from "@glaze/core/components";
+import { Button, NumberInput } from "@ui";
 
 import { clampRetainedRuns, clampRetentionDays, formatBytes } from "../../lib/settings-schema";
 import { useSettingsController } from "../settings-controller";

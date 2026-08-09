@@ -13,7 +13,7 @@
 // "only ever tried on chromium" is exactly the thing this panel should nudge
 // about, and hiding it entirely would make a one-engine suite look clean.
 
-import { Text } from "@glaze/core/components";
+import { Text } from "@ui";
 import { Columns3 } from "lucide-react";
 
 import type { DivergentStep } from "../../shared/step-insights.mjs";

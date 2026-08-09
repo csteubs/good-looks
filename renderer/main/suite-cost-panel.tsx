@@ -16,7 +16,7 @@
 // numbers would put an estimate and two measurements in the same sentence with
 // nothing saying which was which.
 
-import { Text } from "@glaze/core/components";
+import { Text } from "@ui";
 import { TrendingUp } from "lucide-react";
 
 import type { StepDurationRow } from "../../shared/metrics-query.mjs";

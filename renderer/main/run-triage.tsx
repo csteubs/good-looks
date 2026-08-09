@@ -19,7 +19,7 @@
 // evidence behind one would be untestable, and this is the one part of the
 // feature where being wrong is quiet. It is a plain disclosure instead.
 
-import { Text } from "@glaze/core/components";
+import { Text } from "@ui";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 

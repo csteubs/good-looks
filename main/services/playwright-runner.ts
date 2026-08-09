@@ -8,7 +8,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
 
-import { app, logger } from "@glaze/core/backend";
+import { app, logger } from "@shell/backend";
 
 import { sendToMain } from "./app-window.js";
 import { getScriptsDir, testStore } from "./test-store.js";
@@ -92,18 +92,16 @@ function browsersPath(): string {
 
 /** Locate the app's node_modules root and the @playwright/test CLI entry.
  *
- * The bundled backend runs from `.glaze/build/main`, but dependencies live in
- * `.glaze-sources/node_modules` (and, in dev, the backend runs straight from
- * source). Scan the likely roots and use whichever actually contains the
- * package. */
+ * The bundled backend runs from `build/main`, and dependencies live in the
+ * project root's `node_modules` — two levels up either way (build/main → root,
+ * or main/services → root when run from source). The extra candidate covers a
+ * packaged layout where the app contents sit one level deeper. */
 function resolvePlaywright(): { cliPath: string; nodeModules: string } {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const candidateRoots = [
-    // dev: main/services -> .glaze-sources/node_modules
+    // build/main -> approot/node_modules (also main/services -> root in dev)
     path.resolve(here, "..", "..", "node_modules"),
-    // prod: .glaze/build/main -> appDir/.glaze-sources/node_modules
-    path.resolve(here, "..", "..", "..", ".glaze-sources", "node_modules"),
-    // fallback: appDir/node_modules
+    // one deeper, for a packaged Resources/app/ layout
     path.resolve(here, "..", "..", "..", "node_modules"),
   ];
 
@@ -698,7 +696,14 @@ function runCli(
   processTimeoutMs: number = RUN_TIMEOUT_MS,
 ): Promise<number> {
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, [cliPath, ...args], { cwd, env });
+    // Under Electron, process.execPath is the Electron binary, not node.
+    // ELECTRON_RUN_AS_NODE makes that binary behave as plain node for the
+    // child, so the Playwright CLI runs exactly as it would under `node`.
+    // Without it this spawn would launch a second instance of the app.
+    const child = spawn(process.execPath, [cliPath, ...args], {
+      cwd,
+      env: { ...env, ELECTRON_RUN_AS_NODE: "1" },
+    });
     runs.set(runId, { child, testId: runId });
 
     const timer = setTimeout(() => {

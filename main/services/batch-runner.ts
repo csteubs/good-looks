@@ -36,7 +36,7 @@
 
 import { randomUUID } from "crypto";
 
-import { logger } from "@glaze/core/backend";
+import { logger } from "@shell/backend";
 
 import { sendToMain } from "./app-window.js";
 import { playwrightRunner } from "./playwright-runner.js";

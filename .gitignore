@@ -3,13 +3,16 @@
 # directories — so the trailing-slash form left it showing up as untracked.
 node_modules
 
-# Build output. `npm run build` publishes to ../.glaze/build, outside this repo,
-# and clears its staging dir afterwards — but an aborted build leaves it behind.
-# `build/` (no dot) is where the CURRENT SDK stages the renderer bundle; only
-# `.build/` was listed here, so a full build left ~1.4 MB of generated assets
-# untracked-but-not-ignored, one `git add -A` away from being committed.
-.build/
+# Build output. Vite's outDir and esbuild's bundles both land in build/, and
+# electron-builder packages from there into dist/. Neither is ever committed.
+#
+# `.build/` is the Glaze shell's staging dir, kept because this branch shares a
+# merge base with the Glaze tree: without it, checking out a Glaze-era commit
+# here leaves an aborted build's staging dir showing as untracked. On that side
+# a full build left ~1.4 MB of generated assets untracked-but-not-ignored, one
+# `git add -A` from being committed — which is why both spellings are listed.
 build/
+.build/
 dist/
 # `npm run build:preview` — the browser preview's own bundle, kept in its own
 # directory so it can never overwrite the renderer the packaged app loads.

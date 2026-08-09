@@ -151,6 +151,48 @@ if (!files.includes("package-lock.json")) {
   }
 }
 
+// ── 5. Every check:* script is actually in the test:checks chain ─────────────
+// `test:all` is what the pull-request template asks people to run, and it runs
+// `test:checks` — a hand-maintained `&&` chain of ~29 script names. A check
+// defined but left out of that chain is a test that passes by never running,
+// and nothing else in the repo would notice: the suite is green, the script
+// exists, and its file is still in the tree being reviewed.
+//
+// This is not hypothetical. The two shell branches had already drifted on the
+// chain's contents and ordering before anyone compared them.
+{
+  const pkg = JSON.parse(readFileSync("package.json", "utf8"));
+  const scripts = pkg.scripts ?? {};
+
+  // Checks deliberately outside the chain, each with the reason. Anything not
+  // named here MUST be in it — the point of this check is that "I meant to
+  // leave that one out" has to be written down rather than assumed.
+  const OUTSIDE_CHAIN = new Map([
+    ["check:repo-hygiene", "this file; CI runs it as its own step"],
+    ["check:shell-drift", "needs BOTH branches fetched, which only CI reliably has"],
+  ]);
+
+  const defined = Object.keys(scripts)
+    .filter((name) => name.startsWith("check:") && !OUTSIDE_CHAIN.has(name))
+    .sort();
+
+  const chain = (scripts["test:checks"] ?? "")
+    .split("&&")
+    .map((part) => part.trim().replace(/^npm run /, ""))
+    .filter(Boolean);
+
+  for (const name of defined) {
+    if (!chain.includes(name)) {
+      fail("test chain", `"${name}" is defined but test:checks never runs it`);
+    }
+  }
+  for (const name of chain) {
+    if (!scripts[name]) {
+      fail("test chain", `test:checks runs "${name}", which is not a defined script`);
+    }
+  }
+}
+
 // ── Report ───────────────────────────────────────────────────────────────────
 if (failures.length === 0) {
   console.log(`ok   repo hygiene — ${files.length} tracked files, no issues`);
@@ -169,6 +211,16 @@ for (const [check, details] of byCheck) {
   for (const detail of details) console.error(`    • ${detail}`);
   console.error("");
 }
-console.error("Fix by removing the file from git (`git rm --cached <path>`) and");
-console.error("adding it to .gitignore, or by correcting the offending line.\n");
+// Remediation depends on what failed. The file-oriented advice is actively
+// misleading for a manifest problem — "remove it from git" is not what a
+// missing entry in the test:checks chain needs.
+if (byCheck.has("test chain")) {
+  console.error("For `test chain`: add the script to the `test:checks` chain in package.json");
+  console.error("(or delete it, if it is genuinely obsolete). A check that is defined but");
+  console.error("never run is a test that passes by never executing.\n");
+}
+if ([...byCheck.keys()].some((check) => check !== "test chain")) {
+  console.error("Otherwise: remove the file from git (`git rm --cached <path>`) and add it");
+  console.error("to .gitignore, or correct the offending line.\n");
+}
 process.exit(1);

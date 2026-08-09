@@ -8,7 +8,7 @@
 
 import { randomUUID } from "crypto";
 
-import { logger } from "@glaze/core/backend";
+import { logger } from "@shell/backend";
 
 import { anthropicKeyStore } from "./anthropic-key-store.js";
 import { sendToMain } from "./app-window.js";
