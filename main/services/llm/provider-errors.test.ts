@@ -14,6 +14,7 @@ import {
   approxTokens,
   describeEmptyResponse,
   describeHttpFailure,
+  describeLmStudioAuthFailure,
   extractProviderMessage,
   isModelUnavailable,
   providerLabel,
@@ -141,6 +142,47 @@ describe("describeHttpFailure", () => {
     // The "where to fix it" half is the renderer's job now, so the backend
     // message no longer hard-codes a Settings path that only one UI has.
     expect(message).not.toMatch(/Settings/);
+  });
+
+  it("turns an LM Studio 401 into the setting that causes it", () => {
+    // LM Studio's own body only restates that a token is required, and its
+    // server log calls the rejected request an "Unexpected endpoint" — so
+    // neither source tells the user about the switch they flipped. The 401
+    // branch has to supply that, and it has to name both halves: the token
+    // lives in LM Studio, the field for it is in this app.
+    const { message, kind } = describeHttpFailure({
+      status: 401,
+      body: '{"error":{"message":"An LM Studio API token is required to make requests"}}',
+      provider: "lmstudio",
+      model: "qwen3-8b",
+      hasToken: false,
+    });
+    expect(kind).toBe("auth");
+    expect(message).toMatch(/requires an API token and none is saved/i);
+    expect(message).toMatch(/Developer → server settings/);
+    // Not "unauthorized (HTTP 401)", which is the status restated.
+    expect(message).not.toMatch(/unauthorized/i);
+  });
+
+  it("distinguishes a missing token from a rejected one", () => {
+    // Same status, different fix: paste a first token vs. replace a stale one.
+    // Collapsing them sends half of these users to do the wrong thing.
+    expect(describeLmStudioAuthFailure(false)).toMatch(/none is saved/i);
+    expect(describeLmStudioAuthFailure(true)).toMatch(/rejected the saved API token/i);
+    expect(describeLmStudioAuthFailure(false)).not.toMatch(/rejected/i);
+  });
+
+  it("leaves a non-LM-Studio local 401 on the generic wording", () => {
+    // Ollama has no token in this app, so pointing at a token field it does not
+    // have would be a confident lie about where the problem is.
+    const { message } = describeHttpFailure({
+      status: 401,
+      body: "",
+      provider: "ollama",
+      model: "llama3",
+    });
+    expect(message).toMatch(/unauthorized/i);
+    expect(message).not.toMatch(/API token/i);
   });
 
   it("still says something useful when the body is empty", () => {

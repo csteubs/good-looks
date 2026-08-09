@@ -43,6 +43,9 @@ vi.mock("../lib/api", () => ({
       setApiKey: async () => ({ hasKey: true }),
       clearApiKey: async () => ({ hasKey: false }),
       hasApiKey: async () => ({ hasKey: false }),
+      setLmStudioToken: async () => ({ hasToken: true }),
+      clearLmStudioToken: async () => ({ hasToken: false }),
+      hasLmStudioToken: async () => ({ hasToken: false }),
     },
     artifacts: {
       usage: async () => ({ bytes: 0, runs: 0, tests: 0 }),

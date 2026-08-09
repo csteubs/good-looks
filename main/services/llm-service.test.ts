@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { llmService } from "./llm-service.js";
 import { anthropicKeyStore } from "./anthropic-key-store.js";
+import { lmStudioTokenStore } from "./lm-studio-token-store.js";
 
 // Capture what the backend pushes to the renderer. Mocked at module level
 // because ES module exports are read-only — reassigning `sendToMain` on the
@@ -513,5 +514,172 @@ describe("chat() streaming", () => {
     expect(chunks.every((c) => c.payload.reasoning === undefined)).toBe(true);
     expect(chunks.map((c) => c.payload.delta).join("")).toBe("Hello world");
     expect(last(events)?.channel).toBe("llm:done");
+  });
+});
+
+// ── LM Studio's API token ───────────────────────────────────────────────────
+//
+// LM Studio's server can be set to require a bearer token, and with it on EVERY
+// route 401s — including GET /v1/models, the probe behind the connection dot.
+// That failure was indistinguishable from a misconfiguration: the app sent no
+// Authorization header at all, so the provider could not be connected to, and
+// the message ("LM Studio returned HTTP 401") named neither the cause nor the
+// fix. LM Studio's own log is worse than silent about it — it prints
+// "Unexpected endpoint or method. (GET /v1/models). Returning 200 anyway",
+// which reads as a wrong URL.
+//
+// Two properties, pinned separately: the token reaches every LM Studio route,
+// and a 401 says what to do about it on both sides.
+describe("LM Studio API token", () => {
+  /** Reject everything the way an authenticating LM Studio does, recording the
+   *  headers each route was called with. */
+  function unauthorizedFetch() {
+    const calls: Array<{ url: string; headers: Record<string, string> }> = [];
+    globalThis.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        headers: (init?.headers ?? {}) as Record<string, string>,
+      });
+      return {
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        json: async () => ({}),
+        text: async () =>
+          JSON.stringify({
+            error: { message: "An LM Studio API token is required to make requests" },
+          }),
+      };
+    }) as unknown as typeof fetch;
+    return calls;
+  }
+
+  /** Answer every route, recording headers — for the "is it sent?" cases. */
+  function recordingFetch(body: unknown) {
+    const calls: Array<{ url: string; headers: Record<string, string> }> = [];
+    globalThis.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        headers: (init?.headers ?? {}) as Record<string, string>,
+      });
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+        body: (async function* () {
+          yield new TextEncoder().encode("data: [DONE]\n");
+        })(),
+      };
+    }) as unknown as typeof fetch;
+    return calls;
+  }
+
+  it("sends the stored token as a bearer on the model list AND the load-state probe", async () => {
+    // Both, because LM Studio requires the token on every route: an
+    // Authorization header on /v1/models alone still loses the load badge to a
+    // 401, silently, since that probe swallows its own failures.
+    vi.spyOn(lmStudioTokenStore, "getToken").mockResolvedValue("lms-secret");
+    vi.spyOn(lmStudioTokenStore, "hasToken").mockResolvedValue(true);
+    const calls = recordingFetch({ data: [{ id: "qwen3-8b", state: "loaded" }] });
+
+    await llmService.status("lmstudio");
+
+    const v1 = calls.find((c) => c.url.includes("/v1/models"));
+    const v0 = calls.find((c) => c.url.includes("/api/v0/models"));
+    expect(v1?.headers.Authorization).toBe("Bearer lms-secret");
+    expect(v0?.headers.Authorization).toBe("Bearer lms-secret");
+  });
+
+  it("sends the token on chat requests too", async () => {
+    vi.spyOn(lmStudioTokenStore, "getToken").mockResolvedValue("lms-secret");
+    const calls = recordingFetch({});
+
+    await llmService.chat({
+      messages: [{ role: "user", content: "hi" }],
+      provider: "lmstudio",
+      model: "test-model",
+    });
+    for (let i = 0; i < 200; i++) {
+      if (calls.some((c) => c.url.includes("/v1/chat/completions"))) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+
+    const chat = calls.find((c) => c.url.includes("/v1/chat/completions"));
+    expect(chat?.headers.Authorization).toBe("Bearer lms-secret");
+  });
+
+  it("sends NO Authorization header when no token is stored", async () => {
+    // The default LM Studio configuration wants no credential. An empty bearer
+    // would turn a working server into the very 401 this feature exists for.
+    vi.spyOn(lmStudioTokenStore, "getToken").mockResolvedValue(null);
+    vi.spyOn(lmStudioTokenStore, "hasToken").mockResolvedValue(false);
+    const calls = recordingFetch({ data: [{ id: "qwen3-8b" }] });
+
+    await llmService.status("lmstudio");
+
+    // Assert the probe actually happened first: an empty `calls` would make the
+    // loop below pass without proving anything.
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) expect(c.headers.Authorization).toBeUndefined();
+  });
+
+  it("tells an unauthenticated user where the token comes from, not that the server is down", async () => {
+    vi.spyOn(lmStudioTokenStore, "getToken").mockResolvedValue(null);
+    vi.spyOn(lmStudioTokenStore, "hasToken").mockResolvedValue(false);
+    unauthorizedFetch();
+
+    const s = await llmService.status("lmstudio");
+
+    expect(s.reachable).toBe(false);
+    expect(s.hasToken).toBe(false);
+    expect(s.error).toMatch(/requires an API token and none is saved/i);
+    expect(s.error).toMatch(/Developer → server settings/);
+    // The server ANSWERED. "Make sure it is running" would send the user after
+    // the one thing that is already true.
+    expect(s.error).not.toMatch(/Make sure it is running/i);
+  });
+
+  it("says the SAVED token was rejected when there is one", async () => {
+    // Different fix: the token exists but is stale, so re-copy it rather than
+    // being told to paste a first one.
+    vi.spyOn(lmStudioTokenStore, "getToken").mockResolvedValue("stale-token");
+    vi.spyOn(lmStudioTokenStore, "hasToken").mockResolvedValue(true);
+    unauthorizedFetch();
+
+    const s = await llmService.status("lmstudio");
+
+    expect(s.reachable).toBe(false);
+    expect(s.hasToken).toBe(true);
+    expect(s.error).toMatch(/rejected the saved API token/i);
+  });
+
+  it("reports a chat 401 as auth with the same actionable sentence", async () => {
+    vi.spyOn(lmStudioTokenStore, "getToken").mockResolvedValue(null);
+    sentEvents.length = 0;
+    unauthorizedFetch();
+
+    await llmService.chat({
+      messages: [{ role: "user", content: "hi" }],
+      provider: "lmstudio",
+      model: "test-model",
+    });
+    for (let i = 0; i < 200; i++) {
+      if (sentEvents.some((e) => e.channel === "llm:error")) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+
+    const final = sentEvents[sentEvents.length - 1];
+    expect(final?.payload.kind).toBe("auth");
+    expect(String(final?.payload.message)).toMatch(/requires an API token and none is saved/i);
+  });
+
+  it("leaves hasToken undefined for providers that don't take one", async () => {
+    // `false` would invite a "no token saved" hint in a UI for Ollama, which has
+    // nowhere to put one.
+    okFetch({ models: [{ name: "llama3" }] });
+    const s = await llmService.status("ollama");
+    expect(s.hasToken).toBeUndefined();
   });
 });
