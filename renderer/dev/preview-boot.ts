@@ -74,7 +74,32 @@ async function openRequestedView(): Promise<void> {
   );
 }
 
+/** The primitive specimen — `/?view=specimen`.
+ *
+ *  Mounted INSTEAD OF the app, not alongside it. A3 lands fifteen presentational
+ *  components that no screen consumes yet, so there is nowhere in the running
+ *  app to look at one; booting the whole recorder around them would just put
+ *  chrome in the way of the thing being reviewed.
+ *
+ *  Dynamic import, like everything else here, so the specimen and the theme it
+ *  pulls in cost nothing on a normal preview load. */
+async function mountSpecimen(): Promise<void> {
+  const [React, ReactDOM, { Specimen }] = await Promise.all([
+    import("react"),
+    import("react-dom/client"),
+    import("./specimen"),
+  ]);
+  const root = document.getElementById("root");
+  if (!root) throw new Error("Root element not found");
+  ReactDOM.createRoot(root).render(React.createElement(Specimen));
+}
+
 async function boot(): Promise<void> {
+  if (new URLSearchParams(window.location.search).get("view") === "specimen") {
+    await mountSpecimen();
+    mountPreviewBanner();
+    return;
+  }
   await import("../main/index");
   mountPreviewBanner();
   await openRequestedView();

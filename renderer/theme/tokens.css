@@ -55,6 +55,12 @@
   --gl-tx-2: rgba(233, 237, 238, 0.72);
   --gl-tx-3: rgba(233, 237, 238, 0.54);
 
+  /* `Temp`'s resting colour, and a fourth step rather than a reuse of
+     `--gl-tx-2` on purpose: this one is the DEAD MIDDLE OF A RAMP (§3.4), the
+     colour a duration takes when it has nothing to report. It moves when the
+     ramp is retuned, and the secondary text colour must not move with it. */
+  --gl-temp-neutral: rgba(233, 237, 238, 0.62);
+
   /* ── Status ────────────────────────────────────────────────────────────
      COLOUR MEANS OUTCOME. Pass, running, flaky, fail — and nothing else. This
      is the load-bearing rule of the whole palette: the moment a colour is
