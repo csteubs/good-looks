@@ -24,6 +24,18 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
+import {
+  TONE,
+  INK,
+  SEL_BG,
+  SEL_RING,
+  STATUS_W,
+  LINE,
+  HOLO,
+  HOLO_SIZE,
+  HOLO_REST,
+} from "../../../renderer/theme/tokens.js";
+
 const root = process.cwd();
 const TOKENS_CSS = join(root, "renderer/theme/tokens.css");
 const STYLES_CSS = join(root, "renderer/styles.css");
@@ -83,7 +95,77 @@ assert(declared.size > 0, `tokens.css declares ${declared.size} tokens (zero her
   );
 }
 
-// ── Every reference resolves ──────────────────────────────────────────
+// ── tokens.ts agrees with tokens.css ──────────────────────────────────
+
+// The primitives need some of these values in JavaScript — `StatusChip`
+// concatenates `tone + "55"`, `Temp` interpolates along a ramp, and neither is
+// something `var()` can do. So a handful of colours are written twice, and this
+// is what makes that safe: the copies are compared, in both directions, and the
+// failure names which one moved.
+//
+// Without it the drift is silent and asymmetric — the CSS-styled half of a
+// screen shifts to the new hue while the JS-styled half keeps the old one, on
+// the same row, and it reads as a rendering bug rather than as two constants
+// disagreeing.
+{
+  const pairs: Array<[string, string, string]> = [
+    // [what it is, the JS value, the token it must equal]
+    ["TONE.phos", TONE.phos, "--gl-phos"],
+    ["TONE.cyan", TONE.cyan, "--gl-cyan"],
+    ["TONE.amber", TONE.amber, "--gl-amber"],
+    ["TONE.red", TONE.red, "--gl-red"],
+    ["TONE.violet", TONE.violet, "--gl-violet"],
+    ["INK.tx1", INK.tx1, "--gl-tx-1"],
+    ["INK.neutral", INK.neutral, "--gl-temp-neutral"],
+    ["SEL_BG", SEL_BG, "--gl-sel-bg"],
+    ["SEL_RING", SEL_RING, "--gl-sel-ring"],
+    ["STATUS_W", `${STATUS_W}px`, "--gl-status-w"],
+    ["LINE", LINE, "--gl-line"],
+    ["HOLO", HOLO, "--gl-holo"],
+    ["HOLO_SIZE", HOLO_SIZE, "--gl-holo-size"],
+    ["HOLO_REST", HOLO_REST, "--gl-holo-rest"],
+  ];
+
+  /** Whitespace and case are not part of a colour. Compare the value, not the
+   *  formatting — otherwise Prettier reflowing the gradient breaks the build. */
+  const norm = (v: string): string => v.replace(/\s+/g, "").toLowerCase();
+
+  /** The declared value of one token, with comments already gone. */
+  function valueOf(name: string): string | null {
+    const m = new RegExp(`^\\s*${name}\\s*:\\s*([^;]+);`, "m").exec(
+      tokensSrc.replace(/\/\*[\s\S]*?\*\//g, ""),
+    );
+    return m ? m[1] : null;
+  }
+
+  const mismatched: string[] = [];
+  for (const [label, jsValue, token] of pairs) {
+    const cssValue = valueOf(token);
+    if (cssValue === null) mismatched.push(`${label}: ${token} is not declared in tokens.css`);
+    else if (norm(cssValue) !== norm(jsValue)) {
+      mismatched.push(`${label}: JS has "${jsValue}", ${token} has "${cssValue.trim()}"`);
+    }
+  }
+  assert(
+    mismatched.length === 0,
+    mismatched.length === 0
+      ? `all ${pairs.length} values in tokens.ts match their tokens.css declaration`
+      : `tokens.ts and tokens.css disagree, so half of a screen would shift and half would not:\n     ${mismatched.join("\n     ")}`,
+  );
+
+  // Six-digit hex, enforced rather than assumed. `StatusChip` appends a
+  // two-digit alpha to every one of these; `#abc` + "55" is not a colour, it
+  // parses as nothing, and the chip loses its border with no error anywhere.
+  const short = Object.entries(TONE).filter(([, v]) => !/^#[0-9a-f]{6}$/i.test(v));
+  assert(
+    short.length === 0,
+    short.length === 0
+      ? "every TONE is a six-digit hex, so the tone+alpha suffix idiom is valid"
+      : `not six-digit hex, so tone + "55" silently produces no colour:\n     ${short
+          .map(([k, v]) => `${k}: ${v}`)
+          .join("\n     ")}`,
+  );
+}
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -94,6 +176,42 @@ function walk(dir: string, out: string[] = []): string[] {
   }
   return out;
 }
+
+// ── No status hue is ever written into a stylesheet ───────────────────
+
+// The tinted surfaces (`StatusChip`, `Btn tone="go"`) derive border and fill as
+// `tone + "55"` over `tone + "12"`, and CSS cannot append to the result of a
+// `var()`. So that derivation happens in ONE place — `toneSurface()` in
+// tokens.ts — and is applied inline.
+//
+// The tempting shortcut is to write the answer out in the stylesheet instead:
+// `border-color: #6bff9e55`. It renders identically today and is stale the
+// moment a hue is retuned, with nothing to report it — half a screen shifts and
+// half does not, on the same row, and it reads as a rendering bug rather than
+// as two copies of a colour disagreeing.
+{
+  const offenders: string[] = [];
+  for (const file of walk(join(root, "renderer")).filter((f) => f.endsWith(".css"))) {
+    if (file === TOKENS_CSS) continue; // where they are declared, by definition
+    const src = readFileSync(file, "utf-8").replace(/\/\*[\s\S]*?\*\//g, "");
+    for (const [name, hex] of Object.entries(TONE)) {
+      const at = src.toLowerCase().indexOf(hex.toLowerCase());
+      if (at !== -1) {
+        const line = src.slice(0, at).split("\n").length;
+        offenders.push(`${file.slice(root.length + 1)}:${line} — ${name} (${hex})`);
+      }
+    }
+  }
+  assert(
+    offenders.length === 0,
+    offenders.length === 0
+      ? "no stylesheet writes a status hue out; they all go through var() or toneSurface()"
+      : `a second copy of a status hue, which will go stale silently:\n     ${offenders.join("\n     ")}`,
+  );
+}
+
+// ── Every reference resolves ──────────────────────────────────────────
+
 
 {
   // `var(--gl-x)` and `var(--gl-x, fallback)`, wherever they appear — a .css
@@ -128,7 +246,7 @@ function walk(dir: string, out: string[] = []): string[] {
 // so that is the one edge to check.
 {
   const styles = readFileSync(STYLES_CSS, "utf-8");
-  for (const sheet of ["tokens.css", "fonts.css", "atmosphere.css"]) {
+  for (const sheet of ["tokens.css", "fonts.css", "atmosphere.css", "primitives.css"]) {
     assert(
       new RegExp(`@import\\s+"\\./theme/${sheet.replace(".", "\\.")}"`).test(styles),
       `renderer/styles.css imports theme/${sheet}`,

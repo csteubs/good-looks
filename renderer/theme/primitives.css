@@ -1,0 +1,613 @@
+/*
+ * The primitives' static structure.  docs/REDESIGN.md §3.3.
+ *
+ * WHAT LIVES HERE vs WHAT LIVES INLINE. Everything that is the same on every
+ * instance is a class in this file; only values DERIVED PER INSTANCE are inline
+ * styles on the element (a tone mixed along the `Temp` ramp, a chip's
+ * `tone + "55"` border, a gap's measured height). The split is not taste — an
+ * inline style is invisible to `check:selection-neutral` and
+ * `check:crt-untreated`, which read source, so anything those checks have to
+ * police belongs in a rule with a name they can point at.
+ *
+ * ZERO BORDER RADIUS, EVERYWHERE. Not stated per rule below; it is the default
+ * for every box here and the reason the SDK's controls could not simply be
+ * retinted — `cva` rounds them and there is no "no radius" variant to ask for.
+ *
+ * HAIRLINE BOXES ARE THE ONLY CONTAINER. No elevation, no shadow, except on
+ * true overlays. Depth is read from WHICH near-black a surface is, which is why
+ * tokens.css declares four of them and they are not interchangeable.
+ */
+
+/* ── Panel ────────────────────────────────────────────────────────────── */
+
+.gl-panel {
+  background: var(--gl-panel);
+  border: 1px solid var(--gl-line);
+  display: flex;
+  flex-direction: column;
+  min-height: 0; /* or a scrolling body cannot shrink inside a flex parent */
+}
+
+/* 32px, fixed. Every panel header in the app is the same height so that two
+   panels side by side have their bodies starting on the same line — the same
+   argument as `--gl-status-w`, one row up. */
+.gl-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  flex: 0 0 32px;
+  padding: 0 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid var(--gl-line-2);
+}
+
+.gl-panel-title {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+  white-space: nowrap;
+}
+
+/* The `id` subtitle: what this panel is ABOUT (a test id, a run id, a host).
+   Dim and truncating, because it is a reference rather than a heading — it
+   should be findable when looked for and invisible when not. */
+.gl-panel-id {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: var(--gl-tx-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.gl-panel-right {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.gl-panel-body {
+  min-height: 0;
+  overflow: auto;
+}
+
+/* ── Btn ──────────────────────────────────────────────────────────────── */
+
+.gl-btn {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid var(--gl-line);
+  background: transparent;
+  color: var(--gl-tx-1);
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gl-btn:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+/* `go` and `stop` carry NO COLOUR HERE. Their border and fill are the same
+   `tone + "55"` over `tone + "12"` derivation `StatusChip` uses, and deriving it
+   twice — once in CSS by writing the hex out, once in JS by concatenating — is
+   two mechanisms for one appearance, which is a drift waiting to happen. So
+   there is exactly one: `toneSurface()` in tokens.ts, applied inline.
+   `check:theme-tokens` pins that no status hex is ever written into a
+   stylesheet, which is what keeps it that way. */
+.gl-btn-ghost {
+  color: var(--gl-tx-2);
+}
+
+/* AI IS NOT A STATUS, SO IT GETS A TREATMENT RATHER THAN A COLOUR. The holo
+   gradient is drawn as the BORDER (a padded gradient background clipped to the
+   border box) and never as the text fill — `background-clip: text` at 10px
+   costs enough contrast to stop the label being readable, and 10px is the size
+   this button is. */
+.gl-btn-ai {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--gl-panel), var(--gl-panel)) padding-box,
+    var(--gl-holo) border-box;
+  background-size:
+    auto,
+    var(--gl-holo-size);
+  background-position:
+    0 0,
+    var(--gl-holo-rest) 0;
+  color: var(--gl-tx-1);
+}
+
+.gl-btn:not(:disabled):hover {
+  background-color: rgba(255, 255, 255, 0.055);
+}
+
+/* ── StatusChip ───────────────────────────────────────────────────────── */
+
+/* FIXED WIDTH. This is a layout contract, not a style: every status chip is
+   exactly `--gl-status-w` so a column of them has one edge. It degrades one row
+   at a time, which is why `check:status-width` exists. `display: grid` with
+   `place-items: center` rather than flex+text-align so that a chip whose label
+   overflows still centres on the same axis instead of ragging left. */
+.gl-status-chip {
+  width: var(--gl-status-w);
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--gl-line);
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Running is the one state drawn with the holo treatment rather than a hue.
+   It is not an exception to "colour means outcome" — running is not an outcome,
+   it is the absence of one yet, and giving it a status hue would make a row in
+   flight look like a row that had finished. */
+.gl-status-chip-running {
+  border-color: transparent;
+  color: var(--gl-tx-1);
+  background:
+    linear-gradient(var(--gl-panel), var(--gl-panel)) padding-box,
+    var(--gl-holo) border-box;
+  background-size:
+    auto,
+    var(--gl-holo-size);
+  background-position:
+    0 0,
+    var(--gl-holo-rest) 0;
+}
+
+/* Ambient, so `calm` stops it and a status pulse elsewhere does not. Marked
+   rather than named, per atmosphere.css. */
+@keyframes gl-holo-drift {
+  to {
+    background-position:
+      0 0,
+      138% 0;
+  }
+}
+
+.gl-status-chip-running[data-gl-motion="ambient"] {
+  animation: gl-holo-drift 5.5s linear infinite;
+}
+
+/* ── Segmented ────────────────────────────────────────────────────────── */
+
+.gl-segmented {
+  display: inline-flex;
+  border: 1px solid var(--gl-line);
+  height: 24px;
+}
+
+.gl-segmented-item {
+  appearance: none;
+  border: 0;
+  border-inline-start: 1px solid var(--gl-line-2);
+  background: transparent;
+  color: var(--gl-tx-3);
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  padding: 0 9px;
+  cursor: pointer;
+}
+
+.gl-segmented-item:first-child {
+  border-inline-start: 0;
+}
+
+/* SELECTION IS NEUTRAL. Never a status hue — it would compete with what the
+   colour is reporting, and on a control sitting beside a failing row the two
+   would be arguing. A lift plus a ring, no colour at all.
+   Pinned by `check:selection-neutral`. */
+.gl-segmented-item[aria-pressed="true"] {
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+  color: var(--gl-tx-1);
+}
+
+.gl-segmented-item:not([aria-pressed="true"]):hover {
+  color: var(--gl-tx-2);
+}
+
+/* ── Temp ─────────────────────────────────────────────────────────────── */
+
+.gl-temp {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  position: relative;
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  /* TABULAR FIGURES. A column of durations where the digits do not line up is
+     unreadable as a column, which is the only way this number is ever read. */
+  font-variant-numeric: tabular-nums;
+}
+
+.gl-temp-value {
+  color: var(--gl-temp-neutral);
+}
+
+.gl-temp-delta {
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.gl-temp-rule {
+  position: absolute;
+  inset-inline: 0;
+  bottom: -3px;
+  height: 1px;
+}
+
+.gl-temp-bar {
+  display: inline-block;
+  width: 28px;
+  height: 3px;
+  background: var(--gl-line);
+}
+
+.gl-temp-bar-fill {
+  display: block;
+  height: 100%;
+}
+
+/* ── TypeChip ─────────────────────────────────────────────────────────── */
+
+.gl-type-chip {
+  display: inline-grid;
+  place-items: center;
+  height: 15px;
+  padding: 0 5px;
+  border: 1px solid;
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* ── StepRow ──────────────────────────────────────────────────────────── */
+
+.gl-step-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  padding-block: 4px;
+  padding-inline-end: 8px;
+  border-bottom: 1px solid var(--gl-line-2);
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-2);
+}
+
+.gl-step-index {
+  flex: 0 0 22px;
+  text-align: end;
+  color: var(--gl-tx-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.gl-step-glyph {
+  flex: 0 0 auto;
+  color: var(--gl-tx-3);
+}
+
+/* Takes the slack, and truncates. The description is the only elastic cell in
+   the row — everything else has a fixed width so the columns line up down the
+   list, which is the whole reason a step list is scannable. */
+.gl-step-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--gl-tx-1);
+}
+
+.gl-step-temp {
+  flex: 0 0 auto;
+}
+
+.gl-step-right {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── Verdict ──────────────────────────────────────────────────────────── */
+
+.gl-verdict {
+  display: flex;
+  gap: 9px;
+  align-items: start;
+}
+
+.gl-verdict-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  /* The one round thing in the design, and it earns it: a 7px square reads as a
+     rendering artefact, a 7px circle reads as a bullet. */
+  border-radius: 50%;
+  margin-top: 5px;
+}
+
+.gl-verdict-body {
+  min-width: 0;
+}
+
+/* Sans and sentence case — the one place this design uses either. See the
+   component header for why prose does not get the label treatment. */
+.gl-verdict-text {
+  font-family: var(--gl-sans);
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--gl-tx-1);
+  margin: 0;
+}
+
+.gl-verdict-detail {
+  font-family: var(--gl-sans);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--gl-tx-3);
+  margin: 3px 0 0;
+}
+
+/* ── CRT ──────────────────────────────────────────────────────────────── */
+
+/* ABOVE the global atmosphere layers (--gl-z-atmo, 600). The overlays are fixed
+   and full-viewport, so anything below them is tinted by definition; lifting the
+   bezel out is the only way its content escapes.
+
+   DO NOT ADD A FILTER, BLEND MODE, GRADIENT OR TINT TO ANYTHING BELOW. A
+   screenshot the user is being asked to judge must read exactly as the browser
+   rendered it — an amber cast from our chrome is indistinguishable from an amber
+   cast in the page under test, and they would file the bug against their own
+   site. Pinned by `check:crt-untreated`. */
+.gl-crt {
+  position: relative;
+  z-index: 610;
+  margin: 0;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-black);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gl-crt-screen {
+  background: var(--gl-black);
+  min-height: 0;
+  overflow: auto;
+  position: relative;
+}
+
+.gl-crt-img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* The caption is chrome, not evidence, so it styles freely. */
+.gl-crt-caption {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+/* ── KeyValue ─────────────────────────────────────────────────────────── */
+
+.gl-kv {
+  display: grid;
+  /* Baseline, not centre. A 9.5px uppercase label centred against an 11px value
+     or a chip floats, and a column of floating labels reads as sloppy in a way
+     nobody can quite name. */
+  align-items: baseline;
+  row-gap: 5px;
+  column-gap: 10px;
+  margin: 0;
+}
+
+.gl-kv-label {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-kv-value {
+  margin: 0;
+  min-width: 0;
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── MenuItem ─────────────────────────────────────────────────────────── */
+
+.gl-menu-item {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  width: 100%;
+  text-align: start;
+  display: block;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+
+.gl-menu-item:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.gl-menu-item-label {
+  display: block;
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+}
+
+/* Sans, and sentence case. This is a clause, not a label — see verdict.tsx for
+   why prose does not get the letterspaced treatment. */
+.gl-menu-item-consequence {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--gl-tx-3);
+}
+
+/* Hover is the same inset rail motif as everything else, in neutral. Selection
+   and hover are NOT status hues — pinned by `check:selection-neutral`. */
+.gl-menu-item:not(:disabled):hover {
+  background: var(--gl-sel-bg);
+}
+
+.gl-menu-item[aria-current="true"] {
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+/* ── SiteIcon ─────────────────────────────────────────────────────────── */
+
+.gl-site-icon {
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+
+.gl-site-monogram {
+  display: inline-grid;
+  place-items: center;
+  font-family: var(--gl-mono);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  user-select: none;
+}
+
+/* ── InsertGap ────────────────────────────────────────────────────────── */
+
+/* A FIXED 16px FOOTPRINT, always. The rule inside is what changes.
+   Animating the element's own height would push every row below it down by 9px
+   on hover — moving the row you were aiming at out from under the cursor, which
+   is the single most irritating way a list can behave. */
+.gl-insert-gap {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 16px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.gl-insert-gap-rule {
+  display: block;
+  width: 100%;
+  height: 1px;
+  background: transparent;
+  transition: background 90ms ease-out;
+}
+
+/* 7px of visible dead space at rest is the hint that something lives here; a
+   control that only materialises under the pointer is one nobody discovers,
+   because it is absent from every screenshot and every first look. */
+.gl-insert-gap:hover .gl-insert-gap-rule {
+  background: var(--gl-line);
+}
+
+.gl-insert-gap[data-active="true"] .gl-insert-gap-rule {
+  background: var(--gl-cyan);
+}
+
+/* Keyboard users get the same affordance the pointer does. Without this the gap
+   is reachable by Tab and gives no sign of where focus landed. */
+.gl-insert-gap:focus-visible .gl-insert-gap-rule {
+  background: var(--gl-cyan);
+}
+
+/* ── TagStack ─────────────────────────────────────────────────────────── */
+
+.gl-tag-stack {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  font: inherit;
+  cursor: inherit;
+}
+
+button.gl-tag-stack {
+  cursor: pointer;
+}
+
+.gl-tag-mark {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 17px;
+  height: 15px;
+  border: 1px solid var(--gl-line);
+  /* Opaque, not translucent: these overlap, and a translucent mark shows the
+     one beneath it through its own initials. */
+  background: var(--gl-panel);
+  font-family: var(--gl-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-2);
+}
+
+.gl-tag-count {
+  margin-inline-start: 4px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: var(--gl-track-label);
+  color: var(--gl-tx-3);
+}

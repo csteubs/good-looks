@@ -1,8 +1,11 @@
 # The indie redesign — an implementation plan
 
-**Status: not built.** This is a design document for landing the "Good Looks
-indie redesign" in the app. Nothing described here exists yet. Where it says
-"would", it means would.
+**Status: Phase A in progress.** A1 (browser preview), A2 (tokens, fonts,
+atmosphere) and A3 (the fifteen primitives) are done — see the ✅ marks in §4 and
+§8.3. **A4 (shell) and A5 (retire the SDK on shared components) are next, and
+nothing in Phase B onwards exists yet.** The foundation is deliberately
+unconsumed: no screen reads the theme layer, so the app still looks exactly as it
+did. Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -334,9 +337,14 @@ weight RANGES rather than at the call sites, so no engine ever synthesises; and
 the grain plate is an inline `feTurbulence` data URI (~400 bytes) instead of the
 mockup's 4.2MB PNG. See DECISIONS 2026-08-08.
 
-**A3. Primitives.** The fifteen in §3.3, each with its own test file. No screen
-consumes them yet. This is the PR where the visual contract gets pinned: fixed
-status width, selection-is-not-status, CRT-content-is-untreated.
+**A3. Primitives.** ✅ **Done, 2026-08-08.** The fifteen in §3.3, each with its
+own test file. No screen consumes them yet. This is the PR where the visual
+contract got pinned: fixed status width, selection-is-not-status,
+CRT-content-is-untreated — all three as `check:*` scripts, plus a fourth
+(no status hex may be written into a stylesheet) that fell out of building
+`StatusChip` and `Btn` on one shared derivation. Also lands `renderer/theme/tokens.ts`
+(the narrow set a `var()` cannot express) and `renderer/dev/specimen.tsx`, every
+primitive in every state at `/?view=specimen`. See DECISIONS 2026-08-08.
 
 **A4. Shell.** Top strip (wordmark, breadcrumb, ⌘K affordance, job ticker slot,
 settings gear), the rail restyle over `SplitView`, the views nav pinned to the
@@ -712,9 +720,9 @@ which exists for exactly this reason.
 | Check | Pins |
 |---|---|
 | `check:theme-tokens` ✅ | **Shipped in A2.** Every `--gl-*` referenced in `renderer/` is declared in `tokens.css` — the direct answer to the `bg-muted` / `border-token-border` class of bug — and it runs against the *emitted* stylesheet as well as source whenever `build-preview/` exists. Grew four things while being written, each guarding a silent failure: no token declared twice or empty; all three theme sheets imported *above* the `@source` lines (below them a pipeline drops them and the stylesheet loses the theme); every woff2 present **and really woff2** (a proxied download leaves an HTML error page with the right extension); and the overlay layers never taking the pointer — a full-viewport fixed layer that does makes the entire app unclickable with nothing on screen to say why. |
-| `check:status-width` | Every status chip uses `STATUS_W`. A ragged status column is the exact thing the fixed width exists to prevent, and it degrades one row at a time. |
-| `check:selection-neutral` | No selection treatment uses a status hue. Encodes "colour means outcome" so the next contributor inherits the rule. |
-| `check:crt-untreated` | No scanline, grain, vignette or tint style is applied inside a `CRT`. Evidence must read as the browser rendered it; a screenshot the user is asked to judge must not be tinted by chrome. |
+| `check:status-width` ✅ | **Shipped in A3.** Every status chip uses `STATUS_W`. A ragged status column is the exact thing the fixed width exists to prevent, and it degrades one row at a time. Also pins that `78px` is written down in exactly one file — a second copy will not be changed with the first. |
+| `check:selection-neutral` ✅ | **Shipped in A3.** No selection treatment uses a status hue. Two tiers, from the palette's own token list: the outcome hues and violet are banned from any selection, hover or active state; `--gl-cyan` is declared "running / live / **focus**", so it is allowed on a caret or focus ring but never on a selection. |
+| `check:crt-untreated` ✅ | **Shipped in A3.** No scanline, grain, vignette, filter, blend mode or shadow inside a `CRT` (the caption is exempt — it is chrome, not evidence). The z-index is asserted as a RELATIONSHIP to `--gl-z-atmo`, not as the number 610, so raising the overlays without raising the bezel fails. |
 
 Plus one extension: **`check:text-color` widens** from `Text`'s colour to the
 retired-SDK surfaces, or is retired itself as those surfaces stop using `Text`.

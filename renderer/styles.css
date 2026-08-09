@@ -21,6 +21,7 @@
 @import "./theme/tokens.css";
 @import "./theme/fonts.css";
 @import "./theme/atmosphere.css";
+@import "./theme/primitives.css";
 
 /* Tell Tailwind to scan all local renderer window files for class names */
 @source "./**/*.{ts,tsx}";

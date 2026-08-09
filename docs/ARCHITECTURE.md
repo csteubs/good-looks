@@ -279,17 +279,66 @@ exactly one candidate cause.
   every other at-rule and the SDK's build prepends its own two framework imports
   to that file. Below `@source` they would be dropped by any pipeline that does
   not inline them first, which is a stylesheet that silently loses the theme.
-- `check:theme-tokens` (`main/services/__tests__/theme-tokens.check.ts`) is the
-  guard, source-level for the same reason `check:text-color` is: the dom suite
-  runs with `css: false`, so there is no cascade to ask. Pins that every
-  `var(--gl-*)` read names a declared token, that no token is declared twice or
-  empty, that all three sheets are imported and correctly ordered, that every
-  woff2 the CSS names is present *and is really woff2* (a proxied download leaves
-  an HTML error page with the right extension), that the overlay layers never
-  take the pointer (a full-viewport fixed layer that does makes the entire app
-  unclickable with nothing on screen to say why), and — when `build-preview/`
-  exists — that all of it survives into the **emitted** stylesheet. `Atmosphere`
-  and `resolveAtmo` are covered by `renderer/theme/atmosphere.test.tsx`.
+- `renderer/theme/tokens.ts` — the narrow set of tokens that a `var()` genuinely
+  cannot express, and deliberately small because every value in it is a second
+  copy. Three reasons a value qualifies: it gets **concatenated** (`StatusChip`
+  draws `tone + "55"` over `tone + "12"`, and CSS cannot append to the result of
+  `var()`), it gets **interpolated** (`Temp` mixes along a ramp, which is
+  arithmetic on a colour and belongs in a function a test can call), or it is a
+  **layout contract a check has to name** (`STATUS_W`). `toneSurface()` and
+  `insetRail()` are the only places those two derivations happen — `Btn tone="go"`
+  and `StatusChip` share them rather than each writing the hex out.
+  `check:theme-tokens` pins every value against its `tokens.css` declaration in
+  both directions, and separately pins that **no status hex is ever written into
+  a stylesheet**, which is what keeps that single route honest.
+- `renderer/theme/primitives/` + `primitives.css` — the fourteen presentational
+  components (`Atmosphere` is the fifteenth, from A2), each with its own test
+  file. The split between the two is not taste: everything identical on every
+  instance is a named class, and only per-instance derived values are inline,
+  because **an inline style is invisible to the source-level checks** and
+  anything they police needs a rule with a name to point at. The ones carrying a
+  real argument rather than a shape: `Temp` (the deviation ramp, §3.4 — dead
+  inside ±10%, and it falls to `off` rather than fabricating a median);
+  `StatusChip` (fixed width, and `running` takes the holo treatment because
+  running is the *absence* of an outcome, not one of them); `StepRow` (status as
+  an inset `box-shadow` rail that COMPOSES with the selection ring, so a row can
+  be selected and failing at once); `MenuItem` (the consequence line renders
+  unconditionally — the honest description of concurrency 8 is a failure mode
+  that looks like a flaky suite); `SiteIcon` (monogram by default, favicon
+  opt-in, because the mockup's per-row icon lookup is an egress path);
+  `CRT` (content never treated, z-610 above the overlays).
+- `renderer/dev/specimen.tsx` — every primitive in every state at
+  `/?view=specimen`, mounted INSTEAD OF the app. Part of the preview, never
+  shipped. It exists because nothing in the suite has ever *seen* one of these
+  rendered — jsdom has no layout engine and the dom project runs with
+  `css: false` — so without it the first look at a `StatusChip` would be inside a
+  Phase B screen, where a spacing mistake is indistinguishable from a mistake in
+  the screen. Measured there in a real engine: all seven chips exactly 78.00px
+  with one shared right edge, the ramp's dead band identical across three
+  samples, and the CRT at 610 with `filter: none` under a mounted scanline layer.
+- **Four source-level guards**, all for the same reason `check:text-color`
+  exists: the dom suite runs with `css: false`, so there is no cascade to ask,
+  and jsdom returns zeros from `getBoundingClientRect()` so a width assertion
+  would prove nothing while passing.
+  - `check:theme-tokens` — every `var(--gl-*)` read names a declared token; no
+    token declared twice or empty; all four sheets imported and ordered above
+    `@source`; every woff2 present *and really woff2* (a proxied download leaves
+    an HTML error page with the right extension); the overlay layers never take
+    the pointer (a full-viewport fixed layer that does makes the entire app
+    unclickable with nothing on screen to say why); and — when `build-preview/`
+    exists — that all of it survives into the **emitted** stylesheet.
+  - `check:status-width` — the chip reads `--gl-status-w`, nothing re-sizes it,
+    no call site passes an inline width, and `78px` appears in exactly one file.
+    The failure is one row at a time and invisible in isolation.
+  - `check:selection-neutral` — two tiers, from the palette's own token list: the
+    outcome hues and the AI accent may never appear on a selection, hover or
+    active state; `--gl-cyan` is declared "running / live / **focus**" so it is
+    allowed on a caret or focus ring but still never on a selection.
+  - `check:crt-untreated` — no filter, blend mode, opacity, shadow or background
+    image anywhere inside the bezel (the caption is exempt — it is chrome, not
+    evidence); the bezel's z-index is above `--gl-z-atmo`, asserted as a
+    RELATIONSHIP so that raising the overlays without raising the bezel fails;
+    and `crt.tsx` renders no overlay of its own.
 
 ### Components
 - `SplitView` (sidebar + primary; `storageKey="recorder"`), `Sidebar`/`SidebarList`/`SidebarListItem` (manual `selected`/`onClick` for route-based nav).
