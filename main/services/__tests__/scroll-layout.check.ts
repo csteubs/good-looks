@@ -131,6 +131,36 @@ for (const rel of VIEWS) {
     !/<ScrollArea/.test(flake),
     "flake-panel.tsx: no nested ScrollArea — expanding a row must grow the panel, not scroll within it",
   );
+
+  // Home's hero pane: centred content that must scroll rather than clip.
+  //
+  // It shipped as `absolute inset-0 … overflow-hidden`, which at a 720px window
+  // cut off the last line of the intro copy with no way to reach it — the pane
+  // could not scroll and the document behind it was already exactly viewport
+  // height, so neither surface had anywhere to go.
+  //
+  // Two properties, and the second is the one that looks optional and is not.
+  // `min-h-full` on the inner column is a FLOOR: short content still centres,
+  // and tall content grows past it so `justify-center` has no free space left
+  // to distribute — which is what stops a too-tall hero being centred half
+  // off-screen with its top unreachable. Drop it and the overflow silently
+  // becomes uncentred-and-clipped again, which no rendered test in this repo
+  // can observe (jsdom has no layout engine).
+  const home = readFileSync(resolve(here, "../../../renderer/main/home-view.tsx"), "utf8");
+  const heroPane = home.match(/className="absolute inset-0[^"]*"/)?.[0] ?? "";
+  assert(heroPane !== "", "home-view.tsx: found the full-height hero pane");
+  assert(
+    !/\boverflow-hidden\b/.test(heroPane),
+    "home-view.tsx: the hero pane must not be overflow-hidden — it clips its own copy at short window heights",
+  );
+  assert(
+    /\boverflow-y-auto\b/.test(heroPane),
+    "home-view.tsx: the hero pane must scroll (overflow-y-auto), so content taller than the window stays reachable",
+  );
+  assert(
+    /className="flex min-h-full flex-col[^"]*justify-center/.test(home),
+    "home-view.tsx: the centred column needs `min-h-full` with `justify-center` — without the floor, overflowing content centres off-screen instead of scrolling",
+  );
 }
 
 if (failures > 0) {

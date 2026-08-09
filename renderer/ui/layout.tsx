@@ -19,6 +19,13 @@ export interface ToolbarProps extends React.HTMLAttributes<HTMLDivElement> {
   disableLayoutTransition?: boolean;
 }
 
+/** Left padding that clears a pinned `SplitView.SidebarToggle`.
+ *
+ *  The button is 28px wide at `left-2` (8px), so it ends at 36px; this is that
+ *  plus an 8px gap. Written as one constant because the two values have to
+ *  agree and nothing else would notice if they stopped. */
+const TOGGLE_INSET = "pl-11";
+
 export function Toolbar({
   children,
   className,
@@ -28,14 +35,24 @@ export function Toolbar({
   disableLayoutTransition: _dlt,
   ...props
 }: ToolbarProps) {
+  // Reserve room for the pinned sidebar toggle when one is actually mounted in
+  // this pane. `inset="none"` opts out.
+  //
+  // This replaced a `window-controls-inset` class that was REFERENCED HERE AND
+  // DEFINED NOWHERE — the SDK supplied the rule, the port did not carry it, and
+  // the class silently became a no-op. The symptom was the toggle drawn on top
+  // of the first letter of every view title, on every screen in the main
+  // window. Guarded by `check:scroll-layout`.
+  const split = useSplitViewOptional();
+  const needsToggleInset = inset !== "none" && position === "top" && !!split?.hasPinnedToggle;
   return (
     <div
       data-toolbar
+      data-toggle-inset={needsToggleInset ? "" : undefined}
       className={cn(
         "drag-region sticky z-20 flex min-h-13 shrink-0 flex-col justify-center gap-1 border-b border-border/50 bg-background/80 px-4 py-2 backdrop-blur",
         position === "top" ? "top-0" : "bottom-0 border-t border-b-0",
-        // Clear the macOS traffic lights when this toolbar owns the top edge.
-        inset !== "none" && position === "top" && "window-controls-inset",
+        needsToggleInset && TOGGLE_INSET,
         className,
       )}
       {...props}
@@ -644,7 +661,13 @@ export function Sidebar({
   return (
     <div className={cn("flex h-full min-h-0 flex-col bg-muted/30", className)}>
       {toolbar ?? (
-        <div className="drag-region window-controls-inset flex min-h-13 shrink-0 items-center justify-end gap-1 px-3 pt-1">
+        // No traffic-light inset: the main window keeps Electron's default
+        // native title bar (`main/index.ts` sets no `titleBarStyle`), so the
+        // window controls sit ABOVE the web content and never overlap this row.
+        // A `window-controls-inset` class used to be here and resolved to
+        // nothing — if this window ever goes frameless, add a real rule rather
+        // than another name that only looks like one.
+        <div className="drag-region flex min-h-13 shrink-0 items-center justify-end gap-1 px-3 pt-1">
           {actions}
         </div>
       )}
@@ -887,6 +910,16 @@ type SplitViewContextValue = {
   toggleSidebar: () => void;
   inspectorCollapsed: boolean;
   toggleInspector: () => void;
+  /** True while a pinned `SplitView.SidebarToggle` is mounted in this pane.
+   *
+   *  The pinned toggle is absolutely positioned over the top-left of the
+   *  primary pane, so whatever the view draws there — in practice always a
+   *  `Toolbar` title — renders UNDERNEATH it. Toolbar reads this to reserve the
+   *  space. It has to be observed rather than assumed: the settings window runs
+   *  the same SplitView and the same Toolbar with NO toggle, and indenting its
+   *  title by 44px for a button that is not there is the same bug mirrored. */
+  hasPinnedToggle: boolean;
+  registerPinnedToggle: () => () => void;
 };
 const SplitViewContext = React.createContext<SplitViewContextValue | null>(null);
 
@@ -894,6 +927,12 @@ export function useSplitView(): SplitViewContextValue {
   const ctx = React.useContext(SplitViewContext);
   if (!ctx) throw new Error("useSplitView must be used within a SplitView");
   return ctx;
+}
+
+/** Non-throwing read, for chrome that may legitimately render outside a
+ *  SplitView. `useSplitView` throws by design; a Toolbar must not. */
+function useSplitViewOptional(): SplitViewContextValue | null {
+  return React.useContext(SplitViewContext);
 }
 
 function readStored(key: string | undefined, suffix: string): number | boolean | null {
@@ -1051,9 +1090,32 @@ function SplitViewRoot({
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleSidebar, toggleInspector, inspector]);
 
+  // Counted, not a boolean: StrictMode mounts effects twice, and a bare
+  // `setHasToggle(false)` on the first cleanup would clear a flag the second
+  // mount had just set.
+  const [pinnedToggles, setPinnedToggles] = React.useState(0);
+  const registerPinnedToggle = React.useCallback(() => {
+    setPinnedToggles((n) => n + 1);
+    return () => setPinnedToggles((n) => n - 1);
+  }, []);
+
   const ctx = React.useMemo<SplitViewContextValue>(
-    () => ({ sidebarCollapsed, toggleSidebar, inspectorCollapsed, toggleInspector }),
-    [sidebarCollapsed, toggleSidebar, inspectorCollapsed, toggleInspector],
+    () => ({
+      sidebarCollapsed,
+      toggleSidebar,
+      inspectorCollapsed,
+      toggleInspector,
+      hasPinnedToggle: pinnedToggles > 0,
+      registerPinnedToggle,
+    }),
+    [
+      sidebarCollapsed,
+      toggleSidebar,
+      inspectorCollapsed,
+      toggleInspector,
+      pinnedToggles,
+      registerPinnedToggle,
+    ],
   );
 
   return (
@@ -1124,7 +1186,11 @@ const SidebarToggle = React.forwardRef<HTMLButtonElement, ToggleButtonProps>(fun
   { "aria-label": ariaLabel = "Toggle sidebar", children, pinned: _pinned, className, ...props },
   ref,
 ) {
-  const { sidebarCollapsed, toggleSidebar } = useSplitView();
+  const { sidebarCollapsed, toggleSidebar, registerPinnedToggle } = useSplitView();
+  // Tell the pane a pinned toggle is here, so its Toolbar can reserve the
+  // space this button occupies. Without it the button lands on top of the
+  // title — see `TOGGLE_INSET`.
+  React.useEffect(() => registerPinnedToggle(), [registerPinnedToggle]);
   return (
     <Button
       ref={ref}
