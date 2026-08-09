@@ -31,7 +31,11 @@ main/recorder/       recording-session logic (script injection, step capture)
 main/windows/        BrowserWindow creation/config
 renderer/main/       primary views (home, recording/trainer, script view, ai-debug-panel, stats)
 renderer/settings/   settings window UI
+renderer/trainer/    the trainer window's own panel (runs the recorder store with no router)
 renderer/lib/        shared frontend utilities (llm-prompts, etc.)
+renderer/theme/      the indie redesign's bespoke layer: --gl-* tokens, self-hosted fonts,
+                     the atmosphere overlays + reduced-motion floor. Ours, not the SDK's, so
+                     `check:theme-tokens` can catch a name that resolves to nothing
 renderer/dev/        the browser preview's fake backend (`npm run dev:web`) — never shipped
 shared/              the ONE pure core both the app and the MCP import (.mjs + hand-written
                      .d.mts). Pure only: no fs, no @glaze/core, no IPC, no process
@@ -66,7 +70,7 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1783 Vitest tests and 38 checks as of 2026-08-09.
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1797 Vitest tests and 39 checks as of 2026-08-08.
 
 - **Vitest** (`vitest.config.ts`) has two projects. **`node`**: `main/**/*.test.ts`, `mcp/**/*.test.ts`, `renderer/lib/**/*.test.ts`. **`dom`** (jsdom): `renderer/**/*.test.tsx`, `renderer/dev/**/*.test.ts`, plus `main/**/*.dom.test.ts` — that suffix is for BACKEND code needing a document (the injected replayer and Auto-Heal probe are evaluated for real). The node project explicitly excludes `*.dom.test.ts`; without that they match both globs and run again with no DOM, failing for unrelated reasons. **A `.ts` test under `renderer/` outside `lib/` or `dev/` matches NEITHER project and is silently never run** — that is why `renderer/dev/**/*.test.ts` is listed by hand.
 - **`check:*` scripts** predate Vitest and are kept, not migrated — they catch real bugs and a rewrite would risk that for tooling neatness. Plain assertions + a non-zero exit; no runner. Two are deliberately *source-level* (`check:ai-debug-scroll`, `check:scroll-layout`) because they guard layout contracts that jsdom cannot observe.
@@ -91,7 +95,7 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 - **Radix-backed `Tooltip` cannot be opened in jsdom.** Its trigger tracks pointers with APIs jsdom doesn't implement, so `pointerEnter`/`pointerMove`/`focus` all leave the content unmounted and the assertion reports as "unable to find the text" — which reads as wrong copy rather than an undrivable control. Same shape as the `Select` below: export the copy and assert it directly, and make sure the same string is reachable without hover (Stability puts it in the expanded row).
 - **The SDK's `Select` is native-menu-backed**: its options never enter the DOM, so a selection cannot be driven in jsdom. Assert the displayed value and cover persistence at the IPC layer instead.
 - An ambiguous `findBy*` (matching 2+ elements) retries until timeout, which reports as "never rendered" rather than "your query was ambiguous".
-- **`type-check` does not check SDK component props.** `<Text color="totally-not-a-color">` compiles clean on this tree — verified by compiling exactly that. `cva` falls through to the variant default when handed an unknown key, so a misspelt colour or variant renders as ordinary text and nothing throws. `add-step-dialog.tsx` shipped `color="danger"` this way and the invalid-property warning rendered in default foreground for its whole life. `check:text-color` guards `Text`'s colour; every other component prop is still unchecked here.
+- **`type-check` does not check SDK component props.** `<Text color="totally-not-a-color">` compiles clean on this tree — verified by compiling exactly that. `cva` falls through to the variant default when handed an unknown key, so a misspelt colour or variant renders as ordinary text and nothing throws. `add-step-dialog.tsx` shipped `color="danger"` this way and the invalid-property warning rendered in default foreground for its whole life. `check:text-color` guards `Text`'s colour; every other component prop is still unchecked here. This is the reason the redesign's theme layer declares its own `--gl-*` tokens rather than borrowing names: a custom property we declare is one `check:theme-tokens` can prove resolves, and an SDK class or prop is not.
 - This project targets **ES2020**: no `Array.prototype.at`.
 
 ## The capture boundary is a security boundary

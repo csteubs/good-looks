@@ -218,6 +218,79 @@ Redesigned 2026-08-07 from one flat scroll into a sidebar of eight panes with se
 - **`shell/electron` branch** — the de-Glazed tree: stock Electron + Vite + esbuild, nothing outside `node_modules`, so `npm ci && lint && type-check && test:all && build` all run on a hosted CI runner, which this branch structurally cannot do. Branched from `a61598c` (the port's real merge base, established by comparing all 199 shared source files against each candidate), so `git diff main..shell/electron` is the port itself and the 12 commits of drift arrive by cherry-pick. It carries `.github/workflows/gate.yml` (the real gate on ubuntu; end-to-end + `electron-builder` on macOS) and an `e2e/` suite that drives the actual app through Playwright's `_electron` support. Its browser preview (`renderer/dev/`) has since been ported to `main` — see the next bullet. See `docs/plans/testing-pipeline-and-preview-environments.md` for the phased plan and `docs/DECISIONS.md` (2026-08-07) for why.
 - **The browser preview** — `npm run dev:web` runs the whole renderer in an ordinary browser tab against a fake backend, with no native shell and no build slot to take turns over. Four pieces: `preview.html` (the entry — its name is load-bearing, since the SDK's build globs `*-window.html` and would otherwise ship it as a fourth window), `renderer/dev/preview-boot.ts` (installs the bridge BEFORE the app entry is imported, mounts the "fixture data, no backend" banner, and honours `?view=` / `?test=`), `renderer/dev/preview-bridge.ts` (a `window.glazeAPI` over ~50 typed handlers) and `renderer/dev/preview-fixtures.ts`. `vite.config.preview.ts` is a standalone config — the app's real renderer is built by the SDK, which owns its own — and it reproduces exactly three things the SDK does: the two framework CSS imports prepended to `renderer/styles.css`, the `__APP_DISPLAY_NAME__` define, and the React + Tailwind plugin pair. **The router uses `createMemoryHistory()`**, so a URL path can never select a view; `?view=stats` / `?test=<id>` ask the router directly instead. Two things the native WebView provides that a tab does not are declared in `preview.html`: `color-scheme` (the app's `Text` resolves to `text-inherit`, so without it every label renders black on black) and an opaque backstop on `html` — behind body, never by overriding `--color-window-bg`, because every `bg-panel` surface depends on that compositing. Guarded by `preview-bridge.test.ts`. `npm run build:preview` emits a static bundle to `build-preview/`.
 
+### Theme layer — `renderer/theme/` (the indie redesign, Phase A)
+
+The bespoke design layer the redesign is built on. See `docs/REDESIGN.md` for the
+plan it implements; **A2 (this) landed 2026-08-08 and nothing consumes it yet** —
+the primitives (A3) and the shell (A4) are what start reading it. The app is
+unchanged on screen after this, deliberately, so that a regression in Phase B has
+exactly one candidate cause.
+
+- `renderer/theme/tokens.css` — the `--gl-*` custom properties, declared on
+  `:root`. Real declarations, not Tailwind theme keys or borrowed SDK names, and
+  that is the whole point: this repo has shipped `bg-muted` and the entire
+  `border-token-*` family emitting **no CSS at all** for months (DECISIONS
+  2026-08-06), because a class that does not exist and one that does are
+  indistinguishable in a `.tsx`. A name we declare ourselves is a name
+  `check:theme-tokens` can check. Dark only, and the absence of a `.light` block
+  is the decision rather than an omission. Carries two rules that are load-bearing
+  rather than cosmetic: **colour means outcome** (so selection is neutral white at
+  low alpha — `--gl-sel-bg`/`--gl-sel-ring` — never a status hue it would compete
+  with), and **AI is a treatment, not a colour** (`--gl-holo`, on borders and
+  small marks only, never a text fill). `--gl-status-w: 78px` is a layout
+  contract, not styling: it is why a column of status chips has one edge.
+- `renderer/theme/fonts.css` + `fonts/` — self-hosted Space Mono and Space
+  Grotesk, latin + latin-ext woff2, 92KB for all six files, SIL OFL 1.1 text
+  beside them. **No network `src` fallback**: the mockup pulls from
+  fonts.googleapis.com, which in a packaged app is an outbound request on every
+  launch against an egress posture of one opt-in webhook (DECISIONS 2026-08-04),
+  plus a blank-until-loaded flash and a hard failure offline. A missing file
+  falls through to the system font instead — legible, obviously wrong to a
+  designer, and sends nothing. **The 500 → 400 / 600 → 700 weight mapping lives
+  in the `font-weight` RANGE descriptors**, not at the call sites: Space Mono
+  ships only 400 and 700, the design leans on 500 and 600, and leaving the
+  browser to synthesise means the Glaze WebView and a browser preview disagree
+  about what the app looks like. Declaring the 400 file as `100 500` and the 700
+  file as `600 900` makes every request match a real face, so no synthesis
+  happens at all. Space Grotesk is a genuine variable font (`fvar`/`gvar`/`avar`
+  verified in the woff2) and needs none of that. `@font-face` is a declaration,
+  not a fetch — nothing loads until a screen actually uses it.
+- `renderer/theme/atmosphere.css` + `atmosphere.tsx` — the three global fixed
+  layers (grain, vignette, scanlines) and the motion floor. **Motion that reports
+  something is not decoration**: a running step must still pulse under `calm`,
+  so the two kinds are separated by `data-gl-motion="ambient"` rather than by
+  animation name (CSS cannot select on animation-name, and threading a flag
+  through every animation string gets missed on the one element nobody
+  re-tested). `!important` throughout because the redesign applies animation
+  shorthand inline, and a motion setting that loses to the thing it turns off is
+  worse than none. **`prefers-reduced-motion: reduce` forces `calm` as a FLOOR** —
+  the rule the mockup omits — clamped one-directionally so `still` survives it.
+  `resolveAtmo()` is the mechanism (via `useSyncExternalStore`, so the *first*
+  paint is already right — with an effect, the one frame a motion-sensitive user
+  sees is the animated one); the `@media` rule in the CSS is the backstop for the
+  window before React mounts. The layers are **portalled to `document.body`**,
+  because a `position: fixed` element inside an ancestor carrying `transform` or
+  `filter` positions against that ancestor — not hypothetical in a design built
+  on both. Grain is an inline `feTurbulence` data URI (~400 bytes) standing in
+  for the mockup's 4.2MB PNG plate; it was always going to look like noise at 3%
+  opacity, and this *is* noise.
+- The three stylesheets come in through `renderer/styles.css`, which all three
+  windows import — **above the `@source` lines**, because `@import` must precede
+  every other at-rule and the SDK's build prepends its own two framework imports
+  to that file. Below `@source` they would be dropped by any pipeline that does
+  not inline them first, which is a stylesheet that silently loses the theme.
+- `check:theme-tokens` (`main/services/__tests__/theme-tokens.check.ts`) is the
+  guard, source-level for the same reason `check:text-color` is: the dom suite
+  runs with `css: false`, so there is no cascade to ask. Pins that every
+  `var(--gl-*)` read names a declared token, that no token is declared twice or
+  empty, that all three sheets are imported and correctly ordered, that every
+  woff2 the CSS names is present *and is really woff2* (a proxied download leaves
+  an HTML error page with the right extension), that the overlay layers never
+  take the pointer (a full-viewport fixed layer that does makes the entire app
+  unclickable with nothing on screen to say why), and — when `build-preview/`
+  exists — that all of it survives into the **emitted** stylesheet. `Atmosphere`
+  and `resolveAtmo` are covered by `renderer/theme/atmosphere.test.tsx`.
+
 ### Components
 - `SplitView` (sidebar + primary; `storageKey="recorder"`), `Sidebar`/`SidebarList`/`SidebarListItem` (manual `selected`/`onClick` for route-based nav).
 - `Toolbar`/`ToolbarContent`/`ToolbarActions`, `Dialog` (props mode: New recording, Rename), `AlertDialog` (delete), `Field`+`Input`.

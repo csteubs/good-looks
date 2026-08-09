@@ -1,0 +1,127 @@
+/*
+ * The indie redesign's design tokens.  docs/REDESIGN.md §3.1.
+ *
+ * WHY THESE ARE REAL DECLARATIONS ON `:root`, and not Tailwind theme keys or
+ * SDK tokens borrowed by name.
+ *
+ * This repo has been bitten twice by the same bug: `bg-muted` and the whole
+ * `border-token-*` family emitted NO CSS AT ALL and styled nothing for months
+ * (DECISIONS 2026-08-06). A class that does not exist and a class that does are
+ * indistinguishable in a `.tsx`, `type-check` does not check SDK component
+ * props, and the symptom is a surface that looks slightly wrong rather than
+ * anything that throws.
+ *
+ * A `var(--gl-x)` read against a name declared right here has a different
+ * failure mode: it is a string in one file, checkable against the declarations
+ * in another. That is what `npm run check:theme-tokens` does, and it is the
+ * whole reason the redesign gets its own token layer instead of reusing the
+ * design system's.
+ *
+ * NOTHING CONSUMES THESE YET. A2 lands the vocabulary; A3 (primitives) and A4
+ * (shell) are what start reading it. The app is byte-for-byte unchanged on
+ * screen after this file arrives — which is the point, because it means a
+ * regression in Phase B has exactly one candidate cause.
+ *
+ * DARK ONLY, and stated (REDESIGN §0). There is no light variant of these and
+ * there is not going to be one: the palette is near-black with phosphor
+ * accents, and a light reading of the CRT treatment does not exist. So there is
+ * no `.light` block below — its absence is the decision, not an omission.
+ */
+
+:root {
+  /* ── Surfaces ──────────────────────────────────────────────────────────
+     Four near-blacks, and they are NOT interchangeable. The design reads
+     depth from which black a surface is, since there is no elevation and no
+     shadow anywhere except on true overlays. `--gl-black` is the only true
+     #000: consoles and the backing behind a captured frame, where anything
+     lighter would read as part of the evidence. */
+  --gl-ink: #08090a;
+  --gl-panel: #0d1012;
+  --gl-rail: #0a0c0d;
+  --gl-black: #000000;
+
+  /* ── Hairlines ─────────────────────────────────────────────────────────
+     The only container the design has. 1px, no radius, no shadow. Two
+     weights, because a nested box drawn at the same strength as its parent
+     reads as a table rather than a box inside a box. */
+  --gl-line: rgba(255, 255, 255, 0.08);
+  --gl-line-2: rgba(255, 255, 255, 0.055);
+
+  /* ── Text ──────────────────────────────────────────────────────────────
+     Three steps, all the same hue. Dimming is how this design says
+     "secondary"; it never changes colour to do it, because colour is spoken
+     for (see below). */
+  --gl-tx-1: #e9edee;
+  --gl-tx-2: rgba(233, 237, 238, 0.72);
+  --gl-tx-3: rgba(233, 237, 238, 0.54);
+
+  /* ── Status ────────────────────────────────────────────────────────────
+     COLOUR MEANS OUTCOME. Pass, running, flaky, fail — and nothing else. This
+     is the load-bearing rule of the whole palette: the moment a colour is
+     spent on something that is not a result, every other coloured thing on
+     screen gets harder to read at a glance.
+     `--gl-violet` is the one exception and it is not a status: it marks
+     AI-adjacent chrome, which is why it is listed apart from the four. */
+  --gl-phos: #6bff9e;
+  --gl-cyan: #35e0ff;
+  --gl-amber: #ffb43d;
+  --gl-red: #ff4d61;
+  --gl-violet: #b98cff;
+
+  /* ── Selection ─────────────────────────────────────────────────────────
+     The direct consequence of the rule above. A selected row is NEVER blue,
+     green, or any status hue — it would compete with what the colour is
+     reporting, and on a row that is both selected and failing the two would
+     be arguing. So selection is drawn in neutral white at low alpha: a lift
+     plus a ring, no hue at all.
+
+     Guarded by `check:selection-neutral` once the primitives land (A3): the
+     rule survives this file only if something enforces it on the next
+     contributor, who will reasonably reach for the accent colour. */
+  --gl-sel-bg: rgba(255, 255, 255, 0.055);
+  --gl-sel-ring: rgba(255, 255, 255, 0.16);
+
+  /* ── AI ────────────────────────────────────────────────────────────────
+     AI IS NOT A STATUS, SO IT GETS A TREATMENT RATHER THAN A COLOUR — the
+     holo gradient, on borders and small marks only.
+
+     Never on a text fill. `background-clip: text` at 10px costs enough
+     contrast that the label stops being readable, and this app puts AI marks
+     on 9.5px uppercase labels. The gradient is 300% wide and parked at 38% at
+     rest so that the visible slice is the green→cyan end; animating
+     `background-position` is what makes it move, which is why the size and
+     rest position are tokens rather than magic numbers at the call site. */
+  --gl-holo: linear-gradient(100deg, #6bff9e, #35e0ff, #8f9bff, #ff7ad1, #ffd36b, #6bff9e);
+  --gl-holo-size: 300% 100%;
+  --gl-holo-rest: 38%;
+
+  /* ── Layout contracts ──────────────────────────────────────────────────
+     Not styling. `--gl-status-w` is why a column of status chips has ONE
+     edge instead of a ragged one, and it degrades a single row at a time —
+     which is exactly the kind of thing nobody notices in review. Guarded by
+     `check:status-width` when the chip lands (A3).
+
+     `--gl-z-atmo` is the global overlay's stacking floor. The `CRT` primitive
+     deliberately sits ABOVE it (610), because a screenshot the user is being
+     asked to judge must not be tinted by our own chrome. */
+  --gl-status-w: 78px;
+  --gl-z-atmo: 600;
+
+  /* ── Typography ────────────────────────────────────────────────────────
+     Space Mono + Space Grotesk (REDESIGN §3.2). The mockup names IBM Plex in
+     every inline style and switches typeface by CSS substring match; the
+     shipped pairing is Space, fixed, so the resolved answer goes straight
+     into two tokens and the switch does not ship at all.
+
+     Self-hosted — see fonts.css for what is loaded and why there is no
+     network fallback.
+
+     `--gl-track-label` is the uppercase-label tracking. The mockup carries a
+     conditional here (.22em normally, .12em whenever the Space pairing is
+     active, because Space Mono is a wide face and letterspacing it at .22em
+     pushes a 78px chip past its column). With the typeface fixed there is
+     only one branch, so it is baked rather than carried. */
+  --gl-mono: "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --gl-sans: "Space Grotesk", -apple-system, BlinkMacSystemFont, sans-serif;
+  --gl-track-label: 0.12em;
+}
