@@ -143,7 +143,17 @@ export default defineConfig({
           // *.dom.test.ts covers BACKEND code that produces DOM-executing
           // scripts (the injected replayer / capture helpers) — not React, but
           // it genuinely needs a document to run against.
-          include: ["renderer/**/*.test.tsx", "main/**/*.dom.test.ts"],
+          //
+          // `renderer/dev/**/*.test.ts` is listed explicitly because the
+          // preview bridge is a .ts, not a .tsx: it installs itself on `window`
+          // and so needs jsdom, but it renders nothing. Without this line it
+          // matches NEITHER project's globs and simply never runs — a test file
+          // that is silently not executed, which is worse than not having it.
+          include: [
+            "renderer/**/*.test.tsx",
+            "renderer/dev/**/*.test.ts",
+            "main/**/*.dom.test.ts",
+          ],
           setupFiles: [path.resolve(here, "renderer/__tests__/setup.ts")],
           // The design system ships CSS the components import; jsdom can't parse
           // it and doesn't need it for behavior assertions.

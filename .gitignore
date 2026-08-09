@@ -11,6 +11,9 @@ node_modules
 .build/
 build/
 dist/
+# `npm run build:preview` — the browser preview's own bundle, kept in its own
+# directory so it can never overwrite the renderer the packaged app loads.
+build-preview/
 
 # Test and coverage output.
 # `coverage-summary.json` embeds absolute paths from the machine that ran it,
