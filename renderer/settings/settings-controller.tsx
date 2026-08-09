@@ -52,6 +52,8 @@ export interface SettingsController {
   llmStatus: LlmProviderStatus | null;
   baseUrl: string;
   hasApiKey: boolean;
+  /** Whether an LM Studio API token is stored. Only meaningful for LM Studio. */
+  hasLmStudioToken: boolean;
   testing: boolean;
   savingKey: boolean;
   defaultUrlFor: (p: LlmProvider) => string;
@@ -60,6 +62,8 @@ export interface SettingsController {
   changeProvider: (value: string) => Promise<void>;
   saveApiKey: (key: string) => Promise<void>;
   clearApiKey: () => Promise<void>;
+  saveLmStudioToken: (token: string) => Promise<void>;
+  clearLmStudioToken: () => Promise<void>;
   testConnection: () => Promise<void>;
   changeModel: (value: string) => Promise<void>;
 
@@ -109,6 +113,7 @@ export function useSettingsControllerState(): SettingsController {
   const [testing, setTesting] = useState(false);
   const [baseUrl, setBaseUrl] = useState<string>("");
   const [hasApiKey, setHasApiKey] = useState(false);
+  const [hasLmStudioToken, setHasLmStudioToken] = useState(false);
   const [savingKey, setSavingKey] = useState(false);
   const autoFetchInflight = useRef(0);
 
@@ -159,6 +164,10 @@ export function useSettingsControllerState(): SettingsController {
     load(
       () => api.llm.hasApiKey(),
       ({ hasKey }) => setHasApiKey(hasKey),
+    );
+    load(
+      () => api.llm.hasLmStudioToken(),
+      ({ hasToken }) => setHasLmStudioToken(hasToken),
     );
     load(
       () => api.recorder.getSettings(),
@@ -282,6 +291,54 @@ export function useSettingsControllerState(): SettingsController {
       toast.success("API key removed.");
     } catch (error) {
       toast.error(`Failed to remove API key: ${error}`);
+    }
+  }, []);
+
+  // Saving a token has to re-probe explicitly: the auto-probe effect below is
+  // keyed on provider + base URL, and neither of those changed — so without
+  // this the model list stays empty after the one action that unblocks it.
+  const saveLmStudioToken = useCallback(
+    async (raw: string) => {
+      const token = raw.trim();
+      if (!token) return;
+      setSavingKey(true);
+      try {
+        await api.llm.setLmStudioToken(token);
+        setHasLmStudioToken(true);
+        const status = await api.llm.status("lmstudio");
+        setLlmStatus(status);
+        if (status.reachable) {
+          const nextModel = status.models.some((m) => m.id === model)
+            ? model
+            : (status.models[0]?.id ?? null);
+          setModel(nextModel);
+          await api.llm.setConfig({ model: nextModel });
+        }
+        toast.success(
+          status.reachable
+            ? "Connected to LM Studio."
+            : (status.error ?? "Saved, but not reachable."),
+        );
+      } catch (error) {
+        toast.error(`Failed to save API token: ${error}`);
+      } finally {
+        setSavingKey(false);
+      }
+    },
+    [model],
+  );
+
+  const clearLmStudioToken = useCallback(async () => {
+    try {
+      await api.llm.clearLmStudioToken();
+      setHasLmStudioToken(false);
+      // Re-probe rather than blanking the status: without a token the server may
+      // well be reachable (authentication off is the default), and showing
+      // "Offline" for a server that answers is the same lie in reverse.
+      setLlmStatus(await api.llm.status("lmstudio"));
+      toast.success("API token removed.");
+    } catch (error) {
+      toast.error(`Failed to remove API token: ${error}`);
     }
   }, []);
 
@@ -462,6 +519,7 @@ export function useSettingsControllerState(): SettingsController {
     llmStatus,
     baseUrl,
     hasApiKey,
+    hasLmStudioToken,
     testing,
     savingKey,
     defaultUrlFor,
@@ -470,6 +528,8 @@ export function useSettingsControllerState(): SettingsController {
     changeProvider,
     saveApiKey,
     clearApiKey,
+    saveLmStudioToken,
+    clearLmStudioToken,
     testConnection,
     changeModel,
     webhookStatus,

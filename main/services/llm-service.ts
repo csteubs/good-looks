@@ -13,10 +13,12 @@ import { logger } from "@shell/backend";
 import { anthropicKeyStore } from "./anthropic-key-store.js";
 import { sendToMain } from "./app-window.js";
 import { llmConfigStore } from "./llm-config-store.js";
+import { lmStudioTokenStore } from "./lm-studio-token-store.js";
 import {
   ProviderError,
   describeEmptyResponse,
   describeHttpFailure,
+  describeLmStudioAuthFailure,
   providerLabel,
 } from "./llm/provider-errors.js";
 import type {
@@ -62,6 +64,22 @@ function toAnthropicPayload(messages: LlmMessage[]): {
     .filter((m) => m.role !== "system")
     .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
   return { system, messages: rest };
+}
+
+/**
+ * Auth headers for a local provider, if it needs any.
+ *
+ * LM Studio's server can require a bearer token, and when it does it requires
+ * one on EVERY route — the model list and the load-state probe as much as chat.
+ * So this is applied at all three call sites rather than only where a
+ * credential feels like it belongs. No token stored = no header, which is the
+ * correct request for the default (unauthenticated) configuration; sending an
+ * empty bearer instead would turn a working server into a 401.
+ */
+async function localAuthHeaders(provider: LlmProvider): Promise<Record<string, string>> {
+  if (provider !== "lmstudio") return {};
+  const token = await lmStudioTokenStore.getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
 function baseUrlFor(provider: LlmProvider): string {
@@ -111,13 +129,24 @@ async function fetchModels(provider: LlmProvider, base: string): Promise<LlmMode
       .map((name) => ({ id: name, label: name }));
   }
   // LM Studio (OpenAI-compatible)
+  const headers = await localAuthHeaders(provider);
   const res = await fetch(`${base}/v1/models`, {
+    headers,
     signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
   });
+  // A 401 here is authentication, not absence: the server is up and answering.
+  // Reported as a ProviderError so status() keeps this sentence instead of
+  // replacing it with "make sure it is running", which is already true.
+  if (res.status === 401 || res.status === 403) {
+    throw new ProviderError(
+      describeLmStudioAuthFailure(Boolean(headers.Authorization)),
+      "auth",
+    );
+  }
   if (!res.ok) throw new Error(`LM Studio returned HTTP ${res.status}`);
   const data = (await res.json()) as { data?: Array<{ id?: string }> };
   const ids = (data.data ?? []).map((m) => (m.id ?? "").trim()).filter(Boolean);
-  const loaded = await fetchLmStudioLoadState(base);
+  const loaded = await fetchLmStudioLoadState(base, headers);
   return ids.map((id) => (loaded.has(id) ? { id, label: id, loaded: loaded.get(id) } : { id, label: id }));
 }
 
@@ -136,10 +165,14 @@ async function fetchModels(provider: LlmProvider, base: string): Promise<LlmMode
  * sitting on the port, then costs a missing badge — never an empty model list
  * or a false "not connected".
  */
-async function fetchLmStudioLoadState(base: string): Promise<Map<string, boolean>> {
+async function fetchLmStudioLoadState(
+  base: string,
+  headers: Record<string, string>,
+): Promise<Map<string, boolean>> {
   const states = new Map<string, boolean>();
   try {
     const res = await fetch(`${base}/api/v0/models`, {
+      headers,
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
     });
     if (!res.ok) return states;
@@ -177,6 +210,9 @@ async function runChat(
   activeRequests.set(requestId, controller);
   try {
     let res: Response;
+    // Kept so the 401 branch can say whether a token was actually sent, rather
+    // than re-reading the store and possibly answering about a different one.
+    let authHeaders: Record<string, string> = {};
     if (provider === "anthropic") {
       const key = await anthropicKeyStore.getKey();
       if (!key) {
@@ -202,9 +238,10 @@ async function runChat(
         signal: controller.signal,
       });
     } else {
+      authHeaders = await localAuthHeaders(provider);
       res = await fetch(`${base}/v1/chat/completions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders },
         body: JSON.stringify({
           model,
           messages: params.messages,
@@ -218,7 +255,13 @@ async function runChat(
       // The provider's own body is JSON meant for a client, not a person —
       // decode it into one actionable sentence rather than pasting it through.
       const text = await res.text().catch(() => "");
-      const failure = describeHttpFailure({ status: res.status, body: text, provider, model });
+      const failure = describeHttpFailure({
+        status: res.status,
+        body: text,
+        provider,
+        model,
+        hasToken: Boolean(authHeaders.Authorization),
+      });
       throw new ProviderError(failure.message, failure.kind);
     }
 
@@ -411,16 +454,26 @@ export const llmService = {
         return { provider, reachable: false, models: [], baseUrl: base, hasKey: true, error };
       }
     }
+    // Only LM Studio has a token in this app; reported so Settings can show
+    // whether one is stored without a second round trip.
+    const hasToken = provider === "lmstudio" ? await lmStudioTokenStore.hasToken() : undefined;
     try {
       const models = await fetchModels(provider, base);
-      return { provider, reachable: true, models, baseUrl: base };
+      return { provider, reachable: true, models, baseUrl: base, hasToken };
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
-      const unreachable = /abort|timeout|ECONNREFUSED|fetch failed|network/i.test(raw);
+      // A ProviderError has already been decoded into the actionable sentence —
+      // same reasoning as in runChat: an authentication failure means the server
+      // IS running, so it must not be overwritten with "make sure it is
+      // running", and matching on text would let the provider's own wording
+      // trigger that.
+      const decoded = err instanceof ProviderError ? err : null;
+      const unreachable =
+        !decoded && /abort|timeout|ECONNREFUSED|fetch failed|network/i.test(raw);
       const error = unreachable
         ? `Could not reach ${providerLabel(provider)} at ${base}. Make sure it is running.`
         : raw;
-      return { provider, reachable: false, models: [], baseUrl: base, error };
+      return { provider, reachable: false, models: [], baseUrl: base, error, hasToken };
     }
   },
 
