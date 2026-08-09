@@ -396,6 +396,11 @@ export const api = {
     setApiKey: (key: string) => ipc().invoke<{ hasKey: boolean }>("llm:setApiKey", { key }),
     clearApiKey: () => ipc().invoke<{ hasKey: boolean }>("llm:clearApiKey"),
     hasApiKey: () => ipc().invoke<{ hasKey: boolean }>("llm:hasApiKey"),
+    // LM Studio API token (token stays backend-side, same as the Anthropic key).
+    setLmStudioToken: (token: string) =>
+      ipc().invoke<{ hasToken: boolean }>("llm:setLmStudioToken", { token }),
+    clearLmStudioToken: () => ipc().invoke<{ hasToken: boolean }>("llm:clearLmStudioToken"),
+    hasLmStudioToken: () => ipc().invoke<{ hasToken: boolean }>("llm:hasLmStudioToken"),
   },
   /** Persisted AI debug sessions. The stream itself never survives a restart —
    *  only its output does; see main/services/ai-debug-store.ts. */

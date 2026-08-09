@@ -22,6 +22,8 @@ export interface LlmProviderStatus {
   baseUrl: string;
   error?: string;
   hasKey?: boolean;
+  /** LM Studio only — see main/services/llm/types.ts. */
+  hasToken?: boolean;
 }
 
 export interface LlmConfig {

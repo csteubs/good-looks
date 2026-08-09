@@ -39,6 +39,7 @@ import { llmConfigStore } from "../services/llm-config-store.js";
 import { aiDebugStore } from "../services/ai-debug-store.js";
 import { recorderDebugStore } from "../services/recorder-debug-store.js";
 import { anthropicKeyStore } from "../services/anthropic-key-store.js";
+import { lmStudioTokenStore } from "../services/lm-studio-token-store.js";
 import {
   clampTestTimeoutMs,
   isTestTimeoutMs,
@@ -836,6 +837,21 @@ export function registerHandlers(): void {
     return { hasKey: false };
   });
   ipcMain.handle("llm:hasApiKey", async () => ({ hasKey: await anthropicKeyStore.hasKey() }));
+
+  // LM Studio API token — same contract as the Anthropic key: write-only from
+  // the renderer, which can read back only whether one is stored.
+  ipcMain.handle("llm:setLmStudioToken", async (_e, params: { token?: unknown }) => {
+    const token = typeof params?.token === "string" ? params.token : "";
+    await lmStudioTokenStore.setToken(token);
+    return { hasToken: true };
+  });
+  ipcMain.handle("llm:clearLmStudioToken", async () => {
+    await lmStudioTokenStore.clear();
+    return { hasToken: false };
+  });
+  ipcMain.handle("llm:hasLmStudioToken", async () => ({
+    hasToken: await lmStudioTokenStore.hasToken(),
+  }));
 
   // ── AI debug sessions (minimized "Debug with AI" jobs) ──────────────
   // Persisted so a diagnosis survives a restart. The job itself cannot — see

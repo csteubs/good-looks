@@ -41,6 +41,9 @@ export interface LlmProviderStatus {
   error?: string;
   /** For key-based providers (Anthropic): whether an API key is stored. */
   hasKey?: boolean;
+  /** For LM Studio: whether an API token is stored. `undefined` for every other
+   *  provider — none of them take one, so "no token" would be misleading. */
+  hasToken?: boolean;
 }
 
 /** Persisted user selection. */

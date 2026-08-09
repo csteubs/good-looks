@@ -114,6 +114,25 @@ function modelHint(provider: LlmProvider, model: string): string {
   return "Pick a different model.";
 }
 
+/** What to do about an LM Studio 401/403.
+ *
+ *  Worth its own sentence rather than "unauthorized (HTTP 401)", because the
+ *  cause is a SETTING in LM Studio that most users don't know they turned on,
+ *  and LM Studio's own log actively misdirects: a rejected request is logged as
+ *  "Unexpected endpoint or method. (GET /v1/models). Returning 200 anyway",
+ *  which sends people to check the URL — the one thing that is correct.
+ *
+ *  `hasToken` splits the two fixes: nothing saved yet (paste one, or turn the
+ *  setting off) versus a saved token the server refused (it's stale or wrong).
+ *  Both name where the token lives on each side, since the halves are in
+ *  different applications. */
+export function describeLmStudioAuthFailure(hasToken: boolean | undefined): string {
+  const where = "LM Studio (Developer → server settings)";
+  return hasToken
+    ? `LM Studio rejected the saved API token. Copy the current token from ${where} into Settings → AI, or turn authentication off there.`
+    : `LM Studio requires an API token and none is saved. Paste the token from ${where} into Settings → AI, or turn authentication off there.`;
+}
+
 /** Build the message shown in the AI panel for a non-2xx chat response, with
  *  the kind that decides which fix-it hint the renderer offers. Returned
  *  together so the two can never be derived from each other and drift. */
@@ -122,8 +141,10 @@ export function describeHttpFailure(opts: {
   body: string;
   provider: LlmProvider;
   model: string;
+  /** Whether an LM Studio API token is stored — decides which 401 fix to give. */
+  hasToken?: boolean;
 }): { message: string; kind: LlmErrorKind } {
-  const { status, body, provider, model } = opts;
+  const { status, body, provider, model, hasToken } = opts;
   const label = providerLabel(provider);
   const detail = extractProviderMessage(body);
 
@@ -133,7 +154,9 @@ export function describeHttpFailure(opts: {
       message:
         provider === "anthropic"
           ? "Claude rejected the API key."
-          : `${label} rejected the request as unauthorized (HTTP ${status}).${detail ? ` ${detail}` : ""}`,
+          : provider === "lmstudio"
+            ? describeLmStudioAuthFailure(hasToken)
+            : `${label} rejected the request as unauthorized (HTTP ${status}).${detail ? ` ${detail}` : ""}`,
     };
   }
 

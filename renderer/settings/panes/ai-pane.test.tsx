@@ -175,6 +175,90 @@ describe("the API key is write-only", () => {
   });
 });
 
+describe("LM Studio API token", () => {
+  // The token only exists because LM Studio can be configured to require one,
+  // in which case every request 401s and the provider is simply unusable. The
+  // field is therefore LM-Studio-only: Ollama has no such setting, and offering
+  // a credential field for it would invite people to invent a problem.
+  it("offers the token field only on LM Studio", () => {
+    const lms = renderPane(<AiPane />, { controller: makeController({ provider: "lmstudio" }) });
+    expect(screen.getByLabelText(/api token/i)).toBeTruthy();
+    lms.unmount();
+
+    renderPane(<AiPane />, { controller: makeController({ provider: "ollama" }) });
+    expect(screen.queryByLabelText(/api token/i)).toBeNull();
+  });
+
+  it("is absent on Claude, which uses the API key field instead", () => {
+    renderPane(<AiPane />, { controller: makeController({ provider: "anthropic" }) });
+    expect(screen.queryByLabelText(/api token/i)).toBeNull();
+    expect(screen.getByLabelText(/api key/i)).toBeTruthy();
+  });
+
+  it("saves the token and clears the field afterwards", async () => {
+    // Same reasoning as the Anthropic key: the backend never hands it back, so
+    // this input is the only place a copy could linger for the session.
+    const controller = makeController({ provider: "lmstudio" });
+    renderPane(<AiPane />, { controller });
+    const field = screen.getByLabelText(/api token/i) as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "lms-SECRET" } });
+    fireEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(controller.saveLmStudioToken).toHaveBeenCalledWith("lms-SECRET"));
+    await waitFor(() => expect(field.value).toBe(""));
+  });
+
+  it("never renders a stored token, and masks what is typed", () => {
+    const controller = makeController({ provider: "lmstudio", hasLmStudioToken: true });
+    renderPane(<AiPane />, { controller });
+    const field = screen.getByLabelText(/api token/i) as HTMLInputElement;
+    expect(field.value).toBe("");
+    expect(field.type).toBe("password");
+  });
+
+  it("refuses to save an empty or whitespace token", () => {
+    const controller = makeController({ provider: "lmstudio" });
+    renderPane(<AiPane />, { controller });
+    const save = screen.getByRole("button", { name: /^save$/i }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText(/api token/i), { target: { value: "  " } });
+    expect(save.disabled).toBe(true);
+  });
+
+  it("offers Clear only once a token is stored, and clears it", async () => {
+    const { unmount } = renderPane(<AiPane />, {
+      controller: makeController({ provider: "lmstudio" }),
+    });
+    expect(screen.queryByRole("button", { name: /clear/i })).toBeNull();
+    unmount();
+
+    const controller = makeController({ provider: "lmstudio", hasLmStudioToken: true });
+    renderPane(<AiPane />, { controller });
+    fireEvent.click(screen.getByRole("button", { name: /clear/i }));
+    await waitFor(() => expect(controller.clearLmStudioToken).toHaveBeenCalledTimes(1));
+  });
+
+  it("surfaces the backend's auth message on the server row rather than a bare Offline", () => {
+    // The whole point of the decoded 401 is that it reaches a human. The row
+    // shows `llmStatus.error` in place of the default-URL summary, so a status
+    // dot alone would strand the one sentence that says what to do.
+    const controller = makeController({
+      provider: "lmstudio",
+      llmStatus: {
+        provider: "lmstudio",
+        reachable: false,
+        models: [],
+        baseUrl: "http://127.0.0.1:1234",
+        hasToken: false,
+        error: "LM Studio requires an API token and none is saved. Paste the token from LM Studio (Developer → server settings) into Settings → AI, or turn authentication off there.",
+      },
+    });
+    renderPane(<AiPane />, { controller });
+    expect(screen.getByText(/requires an API token and none is saved/i)).toBeTruthy();
+  });
+});
+
 describe("model picker", () => {
   it("is absent until a provider is reachable", () => {
     renderPane(<AiPane />);
