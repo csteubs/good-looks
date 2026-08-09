@@ -11,7 +11,15 @@ import { cn } from "./cn";
 /* ── Button ─────────────────────────────────────────────────────────── */
 
 export const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  // `cursor-pointer` is explicit because nothing supplies it: `body` sets
+  // `cursor: default` app-wide, and Tailwind v4's preflight sets it on
+  // `button` as well, so a Button drawn without it gives the user no hover
+  // feedback at all — the control reads as decoration. The app's own theme
+  // layer already makes this the house rule (`.gl-btn`, `.gl-menu-item`,
+  // `button.gl-tag-stack` in renderer/theme/primitives.css); this brings the
+  // ported component library in line with it. Disabled buttons keep the arrow
+  // via `disabled:pointer-events-none`, which suppresses the cursor too.
+  "inline-flex cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-md font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       variant: {

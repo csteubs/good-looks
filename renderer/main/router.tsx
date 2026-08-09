@@ -22,8 +22,10 @@ const rootRoute = createRootRouteWithContext<{
   errorComponent: ErrorBoundaryView,
   notFoundComponent: () => {
     return (
+      // Same removed overlay as in root-view.tsx, for the same reason: the main
+      // window has a native title bar, and a full-width `fixed` drag strip here
+      // only steals clicks from whatever sits under the top 52px.
       <div className="flex flex-col items-center justify-center h-screen">
-        <div className="drag-region fixed top-0 left-0 right-0 h-13" />
         <p className="text-secondary">Route not found</p>
       </div>
     );
