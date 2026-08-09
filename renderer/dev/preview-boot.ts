@@ -56,7 +56,12 @@ function mountPreviewBanner(): void {
  *  job. So the preview asks the router directly instead of fighting it:
  *
  *      /?view=stats            /?view=visual      /?view=batch
- *      /?view=heals            /?test=t-checkout
+ *      /?view=heals            /?view=branches    /?test=t-checkout
+ *
+ *  `branches` is reachable here even though the branch switcher cannot work in
+ *  a browser: what it shows is the view's UNAVAILABLE state, which is a real
+ *  screen someone has to be able to look at. The sidebar row stays hidden, so
+ *  this is the only way to reach it.
  *
  *  Unknown values are ignored rather than throwing — landing on home with a
  *  typo'd parameter is a better failure than a blank page. */
@@ -70,7 +75,7 @@ async function openRequestedView(): Promise<void> {
   await router.navigate(
     testId
       ? { to: "/test/$id", params: { id: testId } }
-      : { to: `/${view}` as "/stats" | "/visual" | "/batch" | "/heals" },
+      : { to: `/${view}` as "/stats" | "/visual" | "/batch" | "/heals" | "/branches" },
   );
 }
 

@@ -5,6 +5,7 @@ import {
   createRouter,
 } from "@tanstack/react-router";
 import { BatchView } from "./batch-view";
+import { BranchesView } from "./branches-view";
 import { HomeView } from "./home-view";
 import { RootView } from "./root-view";
 import { HealsView } from "./heals-view";
@@ -83,6 +84,18 @@ const healsRoute = createRoute({
   },
 });
 
+/** The branch switcher. Registered unconditionally — the route is cheap and the
+ *  view explains itself when the feature is unavailable — while the SIDEBAR
+ *  entry is what's conditional, so there is no dead end to navigate into. */
+const branchesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/branches",
+  component: BranchesView,
+  staticData: {
+    title: "Branches",
+  },
+});
+
 const routeTree = rootRoute.addChildren([
   homeRoute,
   testRoute,
@@ -90,6 +103,7 @@ const routeTree = rootRoute.addChildren([
   visualRoute,
   batchRoute,
   healsRoute,
+  branchesRoute,
 ]);
 
 const queryClient = new QueryClient();
