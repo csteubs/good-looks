@@ -3,10 +3,13 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider, Toaster } from "@ui";
 import { initLogging } from "../lib/logging";
+import { startTypeface } from "../lib/typeface";
 import { SettingsView } from "./settings-view";
 import "../styles.css";
 
 initLogging();
+// Each window is its own document, so each one applies the typeface itself.
+startTypeface();
 
 const queryClient = new QueryClient({
   defaultOptions: {

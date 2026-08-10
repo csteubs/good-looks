@@ -317,6 +317,39 @@ export function isRunBrowser(v: unknown): v is RunBrowser {
   return typeof v === "string" && (RUN_BROWSERS as string[]).includes(v);
 }
 
+/** How big the app's own interface is drawn, as a zoom factor.
+ *
+ *  A CLOSED SET, and the validator below is membership rather than a range
+ *  clamp — on purpose. This number is handed to `webContents.setZoomFactor`
+ *  for every app window (see `main/services/ui-scale.ts`), and a `0`, a `NaN`
+ *  or a `1e9` arriving through `recorder:setSettings` does not degrade, it
+ *  makes every window unreadable — INCLUDING the Settings window, which is the
+ *  only place the value can be changed back. A clamp would still accept a
+ *  garbage type and round it into range; four allowed values cannot be wedged. */
+export type UiScale = 0.9 | 1 | 1.1 | 1.25;
+
+export const UI_SCALES: UiScale[] = [0.9, 1, 1.1, 1.25];
+
+export function isUiScale(v: unknown): v is UiScale {
+  return typeof v === "number" && (UI_SCALES as number[]).includes(v);
+}
+
+/** Which typeface pairing the interface is set in.
+ *
+ *  A NAME, never a font family. The name is what crosses IPC and what is
+ *  stored; the families themselves live in `renderer/theme/tokens.css` and are
+ *  selected by a `data-gl-typeface` attribute. A free-text family would be a
+ *  string from an IPC caller landing inside a `font-family` declaration, and
+ *  there is no useful way to validate one — an enum of three has nothing to
+ *  validate against a stylesheet at all. */
+export type UiTypeface = "space" | "system" | "classic";
+
+export const UI_TYPEFACES: UiTypeface[] = ["space", "system", "classic"];
+
+export function isUiTypeface(v: unknown): v is UiTypeface {
+  return typeof v === "string" && (UI_TYPEFACES as string[]).includes(v);
+}
+
 export interface TestRecord {
   id: string;
   name: string;
@@ -1600,6 +1633,22 @@ export interface RecorderSettings {
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];
+  /** How big the app's interface is drawn (default 1 = 100%).
+   *
+   *  A ZOOM FACTOR AND NOT A FONT SIZE, which is the whole design of this
+   *  setting: the theme is tuned in whole pixels (9.5px labels inside 24px
+   *  controls inside a 34px strip), so growing the text alone overflows the
+   *  chrome around it in about a dozen places. Zoom scales both together and
+   *  the proportions survive. Applied to the app's own windows only — never to
+   *  the training browser. See `main/services/ui-scale.ts`. */
+  uiScale: UiScale;
+  /** Which typeface pairing the interface is set in (default "space").
+   *
+   *  "space" is the bundled Space Mono / Space Grotesk pairing the redesign was
+   *  drawn in; "system" and "classic" are faces macOS already has. Nothing here
+   *  is fetched — see the header of `renderer/theme/fonts.css` for why this app
+   *  does not load fonts over the network. */
+  uiTypeface: UiTypeface;
 }
 
 /** What a successful Auto-Heal is allowed to do to the stored test. */

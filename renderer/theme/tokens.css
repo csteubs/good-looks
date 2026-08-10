@@ -147,18 +147,74 @@
   /* ── Typography ────────────────────────────────────────────────────────
      Space Mono + Space Grotesk (REDESIGN §3.2). The mockup names IBM Plex in
      every inline style and switches typeface by CSS substring match; the
-     shipped pairing is Space, fixed, so the resolved answer goes straight
-     into two tokens and the switch does not ship at all.
+     resolved Space answer lives here, in two tokens, and is what the app is
+     drawn in unless the user picks otherwise in Settings → Appearance.
 
      Self-hosted — see fonts.css for what is loaded and why there is no
-     network fallback.
+     network fallback. The alternatives below load nothing at all: they name
+     faces macOS already has.
 
-     `--gl-track-label` is the uppercase-label tracking. The mockup carries a
-     conditional here (.22em normally, .12em whenever the Space pairing is
-     active, because Space Mono is a wide face and letterspacing it at .22em
-     pushes a 78px chip past its column). With the typeface fixed there is
-     only one branch, so it is baked rather than carried. */
+     `--gl-track-label` is the uppercase-label tracking, and it is the reason
+     the alternatives are a token override rather than a font-family swap at
+     the call sites. The mockup carries a conditional here — .22em normally,
+     .12em whenever the Space pairing is active, because Space Mono is a wide
+     face and letterspacing it at .22em pushes a 78px chip past its column.
+     That branch was baked to .12em while the typeface was fixed; making the
+     typeface choosable reopens exactly the condition it describes, so it comes
+     back, in the one place every label reads it from. */
   --gl-mono: "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --gl-sans: "Space Grotesk", -apple-system, BlinkMacSystemFont, sans-serif;
   --gl-track-label: 0.12em;
+}
+
+/* ── The other two typefaces ───────────────────────────────────────────────
+   Selected by `data-gl-typeface` on the document element, written by
+   `renderer/lib/typeface.ts` from the stored setting. The attribute is
+   ABSENT for the default: `:root` above already says Space, so the untouched
+   app needs no attribute at all and cannot be caught mid-boot in a state where
+   the theme has no fonts.
+
+   Both fall back to .22em tracking — the mockup's own value for anything that
+   is not Space Mono. Neither of these faces is unusually wide, and at .12em a
+   9.5px uppercase label in SF Mono reads as a word rather than as a label.
+
+   These are the ONLY two alternatives, and the list is closed on purpose. What
+   crosses IPC is the name "system" or "classic", never a font family: a family
+   string from a caller would land inside a `font-family` declaration with
+   nothing meaningful to validate it against. */
+
+:root[data-gl-typeface="system"] {
+  --gl-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --gl-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --gl-track-label: 0.22em;
+}
+
+:root[data-gl-typeface="classic"] {
+  --gl-mono: Menlo, Monaco, "Courier New", monospace;
+  --gl-sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --gl-track-label: 0.22em;
+}
+
+/* Body text follows the choice too — but only once one has been made.
+ *
+ * The theme layer sets `font-family` on the elements it draws, which is the
+ * whole main window; what it does NOT set is the text inside the component
+ * library — a Settings row's label and description, a dialog's body copy. That
+ * inherits from `body`, which `renderer/styles.css` puts in the system stack.
+ * Leaving it there would mean picking "Classic" reskins the Settings window's
+ * legends and leaves its labels in SF, half-changed, which reads as a bug.
+ *
+ * SCOPED TO THE TWO ALTERNATIVES ON PURPOSE, and this asymmetry is the point
+ * rather than an oversight. "Space" means the app as designed, and the app as
+ * designed has system-font body copy — a `:root` rule here would silently
+ * restyle every dialog and settings row for everyone who never opens this
+ * setting, which is a redesign, not a preference. So the default is left byte
+ * for byte where it was, and choosing something else is what opts into
+ * applying it everywhere.
+ *
+ * Unlayered, so it beats the `@layer base` declaration it overrides without
+ * needing to out-specify it. */
+:root[data-gl-typeface="system"] body,
+:root[data-gl-typeface="classic"] body {
+  font-family: var(--gl-sans);
 }

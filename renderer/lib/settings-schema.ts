@@ -161,6 +161,24 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
   // went, so the search has to be able to reach it by the name of the thing
   // that is gone.
   { id: "theme", pane: "appearance", label: "Theme", keywords: "dark light auto system appearance colour color" },
+  // Keywords cover the words someone reaches for when the app is too small to
+  // read — "zoom", "scale", "bigger", "accessibility" — and not just the label.
+  // Whoever needs this setting most is the person least able to browse for it.
+  {
+    id: "ui-scale",
+    pane: "appearance",
+    label: "Font size",
+    keywords: "font text type size zoom scale bigger larger smaller legibility accessibility",
+    key: "uiScale",
+  },
+  {
+    id: "ui-typeface",
+    pane: "appearance",
+    label: "Typeface",
+    keywords:
+      "font family typeface mono monospace space grotesk sf pro menlo helvetica system classic",
+    key: "uiTypeface",
+  },
   // Both flourishes write the same key — it's one array of disabled ids, not a
   // field each. `paneKeys` dedupes, so the pane counts them as one setting and
   // "reset section" restores the whole array in a single write.
@@ -492,6 +510,8 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   defaultA11yChecks: false,
   debugScreenshots: false,
   disabledAestheticEnhancements: [],
+  uiScale: 1,
+  uiTypeface: "space",
 };
 
 /** Structural equality for the three shapes a setting value actually takes:

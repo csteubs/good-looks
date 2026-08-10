@@ -7,8 +7,16 @@
 // how the app LOOKS, which is the only thing they have in common with each
 // other and everything they have in common with the theme.
 
-import { Switch, Text } from "@ui";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch, Text } from "@ui";
+import { Segmented } from "../../theme";
 
+import { applyTypeface, asTypeface } from "../../lib/typeface";
+import {
+  UI_SCALE_LABELS,
+  UI_SCALES,
+  UI_TYPEFACE_LABELS,
+  UI_TYPEFACES,
+} from "../../lib/recorder-types";
 import { useSettingsController } from "../settings-controller";
 import { SettingRow } from "../setting-row";
 import { PaneSection } from "../pane-section";
@@ -54,6 +62,72 @@ export function AppearancePane() {
           <Text variant="small" color="secondary">
             Dark
           </Text>
+        </SettingRow>
+      </PaneSection>
+
+      {/* TYPOGRAPHY. Two settings that both answer "how is this app set", kept
+       *  above the flourishes because they change every screen rather than one.
+       *
+       *  ONE OF THESE CANNOT BE SEEN IN THE BROWSER PREVIEW. Font size is a
+       *  zoom factor applied by the main process to each window's webContents,
+       *  and `npm run dev:web` has no main process — the control saves and the
+       *  preview does not resize. That is not a bug in the pane; it has to be
+       *  checked in `npm run dev`. Typeface works in both. */}
+      <PaneSection title="Typography">
+        {/* SEGMENTED RATHER THAN A SELECT, and not only for looks. The SDK's
+         *  Select is backed by a real macOS menu, so its options never enter
+         *  the DOM (CLAUDE.md) — a test can still reach them, by answering the
+         *  `glazeAPI.Menu.popup` promise itself, but that is scaffolding a
+         *  reader has to understand before they can trust the assertion.
+         *  Segmented renders ordinary `<button aria-pressed>` elements, so the
+         *  control that decides whether the app is legible is one a plain
+         *  click drives — here, and for whoever is debugging it later. */}
+        <SettingRow
+          id="ui-scale"
+          label="Font size"
+          summary="How big the app is drawn. Text and the controls around it grow together."
+          details="This is a zoom, not a type size: the interface is laid out in whole pixels — 9.5px labels inside 24px controls — so growing the text on its own would push it out of the chrome around it rather than making it easier to read. It applies to this app's own windows only. The browser you record in is never scaled, because its size decides what the site under test renders and what a click lands on."
+        >
+          <Segmented
+            label="Font size"
+            value={String(settings.uiScale ?? 1)}
+            options={UI_SCALES.map((s) => ({
+              value: String(s),
+              label: UI_SCALE_LABELS[String(s)] ?? String(s),
+            }))}
+            onChange={(v) => void save({ uiScale: Number(v) as (typeof UI_SCALES)[number] })}
+          />
+        </SettingRow>
+
+        <SettingRow
+          id="ui-typeface"
+          label="Typeface"
+          summary="Which pair of faces the interface is set in."
+          details="Space Mono and Space Grotesk ship inside the app and are what it was designed in. The other two are faces macOS already has, so choosing them loads nothing and fetches nothing — this app never requests a font over the network. Uppercase labels are letterspaced more in the system and classic pairings, because Space Mono is a wide face and the tighter spacing was chosen for it."
+        >
+          <Select
+            value={asTypeface(settings.uiTypeface)}
+            onValueChange={(v) => {
+              const next = asTypeface(v);
+              // Applied here as well as saved. This window does not receive the
+              // backend's appearance push — only the main window and the
+              // trainer panel do — so without this line the one window the user
+              // is looking at is the one that would not change.
+              applyTypeface(next);
+              void save({ uiTypeface: next });
+            }}
+          >
+            <SelectTrigger id="ui-typeface" className="w-56">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {UI_TYPEFACES.map((t) => (
+                <SelectItem key={t} value={t}>
+                  {UI_TYPEFACE_LABELS[t]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </SettingRow>
       </PaneSection>
 

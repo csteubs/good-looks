@@ -32,6 +32,7 @@ import {
   restoreRunNotice,
 } from "../services/run-notice-ops.js";
 import { sendToMain } from "../services/app-window.js";
+import { applyUiScaleToAllWindows } from "../services/ui-scale.js";
 import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
 import { duplicateTest } from "../services/duplicate-test.js";
@@ -251,6 +252,19 @@ export function registerHandlers(): void {
       // Bring the debug watcher into line immediately. Deferring to the next
       // launch would make the toggle look broken to the person who just used it.
       syncRequestWatcher();
+      // The same argument, twice more, for the two appearance settings.
+      //
+      // Zoom is applied here in the backend because that is the only place it
+      // exists; the typeface is a renderer concern, so it goes out as a push.
+      // Both are broadcast unconditionally rather than only when the value
+      // changed — the patch is a partial and comparing it against the previous
+      // settings to decide would be more code than re-applying an identical
+      // number, which costs nothing.
+      applyUiScaleToAllWindows();
+      sendToMain("settings:appearanceChanged", {
+        uiScale: next.uiScale,
+        uiTypeface: next.uiTypeface,
+      });
       return next;
     },
   );

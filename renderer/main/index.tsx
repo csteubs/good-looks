@@ -6,8 +6,11 @@ import "../styles.css";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider, Toaster } from "@ui";
 import { initLogging } from "../lib/logging";
+import { startTypeface } from "../lib/typeface";
 
 initLogging();
+// Each window is its own document, so each one applies the typeface itself.
+startTypeface();
 
 // The main window is deliberately untitled — no `document.title` here. A page
 // title becomes the window's title bar, and the app's name is already in the
