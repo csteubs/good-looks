@@ -16,6 +16,22 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — A batch that partly passed stops looking like one that never ran
+
+**Every finished batch with a failure in it was red.** Three tests where two failed and one passed, and three tests where all three failed, produced the same chip in the same colour. Those are different situations: the first is a suite with a problem in it, the second is usually a suite that is not running at all — a bad base URL, a dead fixture, an expired login — and the second is the one you want to stop and look at before reading any individual failure. The tone is the only thing carrying that distinction, because both chips say "N failed".
+
+**`mixed` is amber, and amber already meant this.** `TONE.amber` is documented as "flaky / healed / caution" and is what Heals, the flake panel and the Stats category board already use for "needs a look". Adding a fifth hue for partial batches would have been a new vocabulary word for a meaning the palette already had.
+
+**The rule deliberately does NOT match `rowStatus`, which stays worst-first.** They look like the same roll-up and are not. A ROW is one test fanned across engines: failing on webkit makes it a broken test no matter how chromium did, so worst-first is right and a "partly passed" test would be a lie. A BATCH is a set of independent tests, where the mix is the information. Applying one rule to both was considered and rejected — it would have made a genuinely failing test look survivable to gain consistency with a screen it does not share a meaning with.
+
+**Skipped tests are excluded from the verdict entirely.** A skipped test reported nothing, so it can neither make a batch mixed nor keep it clean. Counting a skip as a non-pass would take every tag-filtered suite amber, which is the fastest way to teach people the colour means nothing.
+
+**A stopped batch gets no verdict at all — not even a mixed one.** It is untinted, as it was before. Tests after the stop never ran, so the counts are a partial sample; tinting them amber reports a mixed RESULT for a run that has none. Same reasoning that keeps `running` out of the tone set in `StatusChip`.
+
+**The verdict chip was added to the finished-batch panel, which had no colour at all.** The outcome lived in the panel's heading text alone, so the single moment the view most needs a signal — the batch finishing — was the one place it had none. The words stay two tokens long (`2 failed`, not `2 failed · 1 passed`) because `StatusChip` is fixed at `--gl-status-w` and does not grow: a longer label is a clipped chip, and jsdom cannot see that. `check:status-width` caught the literal `78px` being copied into a comment in the new module during this work, which is exactly the drift it exists for.
+
+**The preview could not show any of this, so it got fixtures.** `batch:list` answered `[]`, which meant the Previous batches panel and the finished-batch panel above it had never been visible in `npm run dev:web` at all — and those are the two surfaces where the tone IS the signal. `BATCHES` now carries one record per verdict, with the mixed one at 2 failed / 1 passed, since that is the case an all-red reading gets wrong.
+
 ### 2026-08-10 — Findings you can wave off, and a warning that knows when to come back
 
 **Three banners, one missing verb.** The Visual screen reported visual changes and accessibility issues; the test detail screen reported that a test's steps and its script disagree. Between them they offered exactly one exit — "Accept all for this run", on the accessibility banner alone. Everything else was permanent.
