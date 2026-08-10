@@ -206,6 +206,16 @@ jobs:
 
       - run: npx electron-builder --mac --dir
 
+      # electron-builder reports a dependency tree it could not walk and then
+      # exits 0, so its own exit code is not evidence that the bundle is whole.
+      # This asks the .app directly whether every runtime dependency resolves
+      # inside it. The failure that motivated it cannot happen on this runner —
+      # `npm ci` above is a real install — which is the point of running it
+      # here anyway: this is the one place the assertion is checked against a
+      # bundle that is supposed to pass, so a guard that had started rejecting
+      # good builds would show up as a red gate rather than as a local mystery.
+      - run: npm run verify:package
+
       # `ditto` rather than handing the .app to upload-artifact directly: the
       # bundle's Frameworks directory is a nest of symlinks, and the action
       # dereferences them — which both breaks the bundle and multiplies its
