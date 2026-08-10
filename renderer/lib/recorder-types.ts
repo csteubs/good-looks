@@ -289,6 +289,46 @@ export const RUN_BROWSER_LABELS: Record<RunBrowser, string> = {
   webkit: "WebKit",
 };
 
+/** How big the app's own interface is drawn, as a zoom factor (mirror of main
+ *  types). The backend validates by membership in this exact set before the
+ *  number reaches `setZoomFactor` — see `main/recorder/types.ts`. */
+export type UiScale = 0.9 | 1 | 1.1 | 1.25;
+
+export const UI_SCALES: UiScale[] = [0.9, 1, 1.1, 1.25];
+
+/** Labels for the size picker.
+ *
+ *  DELIBERATELY NOT PERCENTAGES. "110%" invites the reading that this is a
+ *  precise typographic setting; it is a zoom factor, and what the user is
+ *  choosing is how big the app is. Four words say that and survive the value
+ *  set changing. */
+export const UI_SCALE_LABELS: Record<string, string> = {
+  "0.9": "Small",
+  "1": "Default",
+  "1.1": "Large",
+  "1.25": "Larger",
+};
+
+/** Which typeface pairing the interface is set in (mirror of main types). */
+export type UiTypeface = "space" | "system" | "classic";
+
+export const UI_TYPEFACES: UiTypeface[] = ["space", "system", "classic"];
+
+/** Labels for the typeface picker.
+ *
+ *  THE FACES, NOT THE PAIRING NAMES. "Space", "System" and "Classic" are what
+ *  the values are called in the store and in settings search; they are not what
+ *  someone choosing a typeface wants to read, because "System" alone says
+ *  nothing about what they are about to get. Second names are dropped where the
+ *  family is unambiguous ("Grotesk", "Helvetica") so the longest label still
+ *  fits the trigger — a picker whose current value reads "Space — Space Mono /
+ *  Space Gr…" tells you less than one that fits. */
+export const UI_TYPEFACE_LABELS: Record<UiTypeface, string> = {
+  space: "Space Mono / Grotesk",
+  system: "SF Mono / SF Pro",
+  classic: "Menlo / Helvetica",
+};
+
 export interface TestRecord {
   id: string;
   name: string;
@@ -777,6 +817,14 @@ export interface RecorderSettings {
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];
+  /** How big the app's interface is drawn (default 1 = 100%). A zoom factor
+   *  applied to the app's own windows in the main process — not a font size,
+   *  and never applied to the training browser. */
+  uiScale: UiScale;
+  /** Which typeface pairing the interface is set in (default "space"). Read by
+   *  `lib/typeface.ts`, which writes it to `data-gl-typeface` on the document
+   *  element; the families themselves live in `renderer/theme/tokens.css`. */
+  uiTypeface: UiTypeface;
 }
 
 /** A single alternative locator the Auto-Heal engine found for a failed step.

@@ -22,6 +22,7 @@ import { registerHandlers } from "./handlers/index.js";
 import { getPreloadPath, getWindowUrl } from "./windows/window-paths.js";
 import { openSettingsWindow } from "./windows/settings-window.js";
 import { sendToMain, setMainWindow } from "./services/app-window.js";
+import { attachUiScale, scaled } from "./services/ui-scale.js";
 import {
   captureWindows,
   DEBUG_CAPTURE_ACCELERATOR,
@@ -109,10 +110,18 @@ async function createMainWindow() {
   // If a future toolbar needs more room, this is the number that moves — but
   // `check:narrow-layout` pins it against the measured requirement, so a wider
   // toolbar fails there rather than silently overflowing here.
-  const minWindowWidth = 960;
-  const minWindowHeight = 456;
-  const windowWidth = 1000;
-  const windowHeight = 700;
+  //
+  // These four are CSS PIXELS, and `scaled()` turns each into the physical
+  // points a window is sized in. At 100% that is the identity and these are the
+  // numbers they always were; above it, a floor left unscaled would be a
+  // smaller viewport than the measurement above describes — 960 points is 768
+  // CSS pixels at 125%, under the ~928 the toolbar needs — so the guarantee
+  // would quietly lapse at the setting someone turns up in order to read the
+  // app. See services/ui-scale.ts.
+  const minWindowWidth = scaled(960);
+  const minWindowHeight = scaled(456);
+  const windowWidth = scaled(1000);
+  const windowHeight = scaled(700);
 
   // No title. The app's name is already in the menu bar and the Dock, and the
   // window's own chrome draws the view it is showing — a title bar repeating
@@ -153,6 +162,11 @@ async function createMainWindow() {
   // some page or library sets `document.title` — refusing the event is what
   // makes "no title" a property of the window rather than of one HTML file.
   mainWindow.on("page-title-updated", (event) => event.preventDefault());
+
+  // Draw at the user's chosen interface scale, before the first paint and
+  // after every reload — and keep the layout floor above expressed in the CSS
+  // pixels it was measured in. See services/ui-scale.ts.
+  attachUiScale(mainWindow, { width: 960, height: 456 });
 
   forwardRendererConsole(mainWindow, "main");
 

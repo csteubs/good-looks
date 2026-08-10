@@ -276,6 +276,59 @@ describe("recorder:setSettings — persistence and validation", () => {
     expect(s.defaultRunBrowser).toBe("webkit");
   });
 
+  // ── The appearance settings ─────────────────────────────────────────
+  //
+  // `uiScale` is the one setting in this file whose bad values are not merely
+  // ignored downstream: it is handed to `webContents.setZoomFactor` for every
+  // app window, so a `0` or a `1e9` that got through would draw the whole app —
+  // INCLUDING the Settings window that is the only way to change it back — at a
+  // size from which nothing can be read or clicked. There is no recovery path
+  // in the UI, which is why the validator is membership in a set of four and
+  // not a clamp, and why these cases are pinned by name.
+
+  it("round-trips a scale it recognises", async () => {
+    await invokeHandler("recorder:setSettings", { uiScale: 1.25 });
+    const s = await invokeHandler<{ uiScale: number }>("recorder:getSettings");
+    expect(s.uiScale).toBe(1.25);
+  });
+
+  it("refuses a scale that would make the app unusable", async () => {
+    await invokeHandler("recorder:setSettings", { uiScale: 1.1 });
+    for (const bad of [0, -1, NaN, 1e9, Infinity, "large", "1.25", null, {}, []]) {
+      await invokeHandler("recorder:setSettings", { uiScale: bad });
+      const s = await invokeHandler<{ uiScale: number }>("recorder:getSettings");
+      expect(s.uiScale, String(bad)).toBe(1.1);
+    }
+  });
+
+  it("refuses a scale that is merely between two it allows", async () => {
+    // The separate case because it is the one a range clamp would accept: 1.05
+    // is in bounds and would round to something plausible. The set is closed so
+    // the pane and the store cannot disagree about what a size means.
+    await invokeHandler("recorder:setSettings", { uiScale: 1 });
+    await invokeHandler("recorder:setSettings", { uiScale: 1.05 });
+    const s = await invokeHandler<{ uiScale: number }>("recorder:getSettings");
+    expect(s.uiScale).toBe(1);
+  });
+
+  it("round-trips a typeface it recognises", async () => {
+    await invokeHandler("recorder:setSettings", { uiTypeface: "classic" });
+    const s = await invokeHandler<{ uiTypeface: string }>("recorder:getSettings");
+    expect(s.uiTypeface).toBe("classic");
+  });
+
+  it("refuses a typeface that is not one of the three", async () => {
+    // The string is written into a `data-` attribute the stylesheet selects on.
+    // A rejected value is invisible either way — an unmatched selector styles
+    // nothing — so the refusal has to happen here, where it can be seen.
+    await invokeHandler("recorder:setSettings", { uiTypeface: "system" });
+    for (const bad of ["comic sans", 'space"] {}', "Space", "", 42, null, ["space"]]) {
+      await invokeHandler("recorder:setSettings", { uiTypeface: bad });
+      const s = await invokeHandler<{ uiTypeface: string }>("recorder:getSettings");
+      expect(s.uiTypeface, String(bad)).toBe("system");
+    }
+  });
+
   it("a partial update preserves the other settings", async () => {
     // Every feature writes settings independently; a merge bug here would drop
     // unrelated preferences on each save.

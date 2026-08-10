@@ -436,6 +436,11 @@ export const SETTINGS: RecorderSettings = {
   notifyOnAiDebugDone: false,
   autoAcceptAiDebugFixes: false,
   disabledAestheticEnhancements: [],
+  // Both at their defaults. `uiScale` does nothing in the preview — there is no
+  // main process to zoom a webContents — but it has to be present and valid or
+  // the Appearance pane renders its size control with no segment selected.
+  uiScale: 1,
+  uiTypeface: "space",
 };
 
 export const LLM_CONFIG: LlmConfig = {
