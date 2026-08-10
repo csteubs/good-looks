@@ -23,6 +23,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { AiDebugSession, AiDebugStatus } from "../lib/recorder-types";
 import { toneFor } from "../lib/ai-debug-status";
+import { TONE } from "../theme";
 import { AiDebugChip } from "./ai-debug-chip";
 import {
   AiDebugProvider,
@@ -201,6 +202,63 @@ beforeEach(() => {
 
 // ── The run panel's icon ─────────────────────────────────────────────
 
+describe("the status→colour contract itself (B9)", () => {
+  // THE MAPPING, PINNED BY VALUE. Before B9 the colour was a Tailwind string and
+  // the only thing a test could assert was the LABEL — a different claim
+  // entirely. A wrong colour with a right label passed every check in this repo.
+  // `toneFor` now returns the palette tone as data, so the contract REDESIGN §B9
+  // specifies is checkable rather than merely written down.
+  const EXPECTED: Record<AiDebugStatus, { tone: keyof typeof TONE; was: string }> = {
+    // was → is. The right-hand column is the pre-redesign contract this had to
+    // land on exactly; it is here so the diff is legible to someone who
+    // remembers the old colours rather than the new token names.
+    idle: { tone: "cyan", was: "blue" },
+    streaming: { tone: "amber", was: "orange" },
+    done: { tone: "phos", was: "green" },
+    error: { tone: "red", was: "red" },
+    cancelled: { tone: "cyan", was: "blue" },
+    interrupted: { tone: "cyan", was: "blue" },
+  };
+
+  it.each(Object.keys(EXPECTED) as AiDebugStatus[])("%s keeps its meaning", (status) => {
+    expect(toneFor(status).tone).toBe(EXPECTED[status].tone);
+  });
+
+  it("keeps the four meanings in four DIFFERENT colours", () => {
+    // The catastrophic failure is not one wrong hue, it is two states
+    // collapsing onto one — at which point "thinking" and "finished" become
+    // indistinguishable and the icon stops carrying information at all. A
+    // per-status assertion cannot see that; this can.
+    const distinct = new Set(
+      (["idle", "streaming", "done", "error"] as AiDebugStatus[]).map((st) => toneFor(st).tone),
+    );
+    expect(distinct.size).toBe(4);
+  });
+
+  it("gives every status a class, a tone, and a label that are all distinct concerns", () => {
+    for (const status of ALL_STATUSES) {
+      const t = toneFor(status);
+      // Semantic class name, never a colour name: retuning which hue "thinking"
+      // takes must not turn the class into a lie.
+      expect(t.className, status).toMatch(/^gl-ai-/);
+      for (const hue of ["cyan", "amber", "phos", "red", "violet"]) {
+        expect(t.className, status).not.toContain(hue);
+      }
+      expect(t.label.length, status).toBeGreaterThan(0);
+    }
+  });
+
+  it("keeps busy and ready pointing at exactly one status each", () => {
+    // These two drive behaviour, not just colour: `busy` animates the pulse and
+    // `ready` is what the global chip sorts on so a finished answer can never
+    // hide behind a still-running job.
+    const busy = ALL_STATUSES.filter((st) => toneFor(st).busy);
+    const ready = ALL_STATUSES.filter((st) => toneFor(st).ready);
+    expect(busy).toEqual(["streaming"]);
+    expect(ready).toEqual(["done"]);
+  });
+});
+
 describe("the run panel icon, per status", () => {
   it("shows every status with its own colour and label", async () => {
     for (const status of ALL_STATUSES) {
@@ -234,17 +292,17 @@ describe("the run panel icon, as a session progresses", () => {
 
     openSessionFor("t1");
     await waitFor(() => expect(screen.getByLabelText(toneFor("idle").label)).toBeTruthy());
-    expect(iconClassOf(toneFor("idle").label)).toContain("text-accent");
+    expect(iconClassOf(toneFor("idle").label)).toContain(toneFor("idle").className);
 
     await act(async () => {
       await store.startStream(runSessionKey("t1"), [{ role: "user", content: "hi" }]);
     });
     await waitFor(() => expect(screen.getByLabelText(toneFor("streaming").label)).toBeTruthy());
-    expect(iconClassOf(toneFor("streaming").label)).toContain("text-support-orange");
+    expect(iconClassOf(toneFor("streaming").label)).toContain(toneFor("streaming").className);
 
     emit("llm:done", { requestId: "req-1" });
     await waitFor(() => expect(screen.getByLabelText(toneFor("done").label)).toBeTruthy());
-    expect(iconClassOf(toneFor("done").label)).toContain("text-support-green");
+    expect(iconClassOf(toneFor("done").label)).toContain(toneFor("done").className);
   });
 
   it("goes back to orange when a finished session is asked for more data", async () => {
@@ -278,11 +336,11 @@ describe("the run panel icon, as a session progresses", () => {
       ]);
     });
     await waitFor(() => expect(screen.getByLabelText(toneFor("streaming").label)).toBeTruthy());
-    expect(iconClassOf(toneFor("streaming").label)).toContain("text-support-orange");
+    expect(iconClassOf(toneFor("streaming").label)).toContain(toneFor("streaming").className);
 
     emit("llm:done", { requestId: "req-1" });
     await waitFor(() => expect(screen.getByLabelText(toneFor("done").label)).toBeTruthy());
-    expect(iconClassOf(toneFor("done").label)).toContain("text-support-green");
+    expect(iconClassOf(toneFor("done").label)).toContain(toneFor("done").className);
   });
 
   it("turns red when the request fails, without a reload", async () => {
@@ -300,7 +358,7 @@ describe("the run panel icon, as a session progresses", () => {
 
     emit("llm:error", { requestId: "req-1", message: "boom", kind: "provider" });
     await waitFor(() => expect(screen.getByLabelText(toneFor("error").label)).toBeTruthy());
-    expect(iconClassOf(toneFor("error").label)).toContain("text-support-red");
+    expect(iconClassOf(toneFor("error").label)).toContain(toneFor("error").className);
   });
 
   it("goes back to blue when a session is discarded", async () => {
@@ -650,7 +708,7 @@ describe("applying a suggested fix", () => {
     renderFinishedSession();
     await waitFor(() => expect(store.sessions).toHaveLength(1));
     const before = iconClassOf(toneFor("done").label);
-    expect(before).toContain("text-support-green");
+    expect(before).toContain(toneFor("done").className);
 
     // What the view does after writing the script: hand the session the newly
     // current script so a later diff is computed against what is really there.
@@ -672,7 +730,7 @@ describe("applying a suggested fix", () => {
     );
     await waitFor(() => expect(store.sessions).toHaveLength(1));
     const before = iconClassOf(toneFor("streaming").label);
-    expect(before).toContain("text-support-orange");
+    expect(before).toContain(toneFor("streaming").className);
 
     act(() => store.attachContext(runSessionKey("t1"), freshContext("// corrected")));
 
@@ -733,7 +791,7 @@ describe("the run panel icon, alongside a triage verdict", () => {
     // pass against a panel where triage rendered nothing at all.
     await screen.findByText(/503 response/);
 
-    expect(iconClassOf(toneFor("done").label)).toContain("text-support-green");
+    expect(iconClassOf(toneFor("done").label)).toContain(toneFor("done").className);
   });
 
   // What this pins is the RENDERED result of a failed triage query: the icon
@@ -753,7 +811,7 @@ describe("the run panel icon, alongside a triage verdict", () => {
     );
 
     await waitFor(() => expect(screen.getByLabelText(toneFor("error").label)).toBeTruthy());
-    expect(iconClassOf(toneFor("error").label)).toContain("text-support-red");
+    expect(iconClassOf(toneFor("error").label)).toContain(toneFor("error").className);
     expect(screen.queryByText(/metrics unavailable/)).toBeNull();
     expect(screen.queryByText(/Likely the/)).toBeNull();
   });

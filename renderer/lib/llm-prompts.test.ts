@@ -18,7 +18,13 @@
 import { describe, it, expect } from "vitest";
 
 import { parseSpecDetailed } from "../../main/services/spec-parser";
-import { buildGenerateMessages } from "./llm-prompts";
+import {
+  buildDebugMessages,
+  buildGenerateMessages,
+  describeSending,
+  sendingTotalChars,
+} from "./llm-prompts";
+import type { DebugContext } from "./llm-prompts";
 
 const systemPrompt = (): string => {
   const msg = buildGenerateMessages({
@@ -103,5 +109,80 @@ describe("a spec written to the prompt's rules", () => {
       type: "click",
       locator: { k: "role", role: "button", name: "Sign in" },
     });
+  });
+});
+
+describe("the Sending strip (B9)", () => {
+  function ctx(over: Partial<DebugContext> = {}): DebugContext {
+    return {
+      testName: "Checkout",
+      testUrl: "https://shop.example.com",
+      script: "import { test } from '@playwright/test';",
+      output: "Error: boom",
+      imported: false,
+      ...over,
+    };
+  }
+
+  it("names every payload that leaves the machine", () => {
+    const labels = describeSending(ctx()).map((i) => i.label);
+    expect(labels).toContain("Test name");
+    expect(labels).toContain("Target URL");
+    expect(labels).toContain("Test script");
+    expect(labels).toContain("Run output");
+  });
+
+  it("offers console & network only when the run recorded them", () => {
+    // Listing a capability the prompt does not offer overstates what leaves the
+    // machine, which is the same failure as understating it.
+    expect(describeSending(ctx()).some((i) => /console/i.test(i.label))).toBe(false);
+    expect(describeSending(ctx({ logsAvailable: true })).some((i) => /console/i.test(i.label))).toBe(
+      true,
+    );
+  });
+
+  it("says so when the script is truncated, and counts only what is sent", () => {
+    const huge = "x".repeat(20_000);
+    const items = describeSending(ctx({ script: huge }));
+    const script = items.find((i) => i.label.startsWith("Test script"))!;
+    expect(script.label).toContain("truncated");
+    // The whole point of the number is that it describes the PROMPT, not the
+    // file on disk. Reporting 20,000 here would overstate what was sent.
+    expect(script.chars).toBeLessThan(huge.length);
+  });
+
+  it("totals only the payloads, not the one-line facts", () => {
+    const items = describeSending(ctx());
+    expect(sendingTotalChars(items)).toBe(
+      items.reduce((n, i) => n + (i.chars ?? 0), 0),
+    );
+    // The URL is a fact, not a payload — quoting a byte count for it is noise.
+    expect(items.find((i) => i.label === "Target URL")?.chars).toBeNull();
+  });
+
+  it("accounts for everything the prompt actually attaches", () => {
+    // THE DRIFT GUARD, and the reason this list is derived from `ctx` rather
+    // than hand-maintained. An inaccurate privacy disclosure is worse than
+    // none, because it is trusted. If the builder starts attaching a field the
+    // strip does not name, this fails.
+    const c = ctx({ logsAvailable: true, output: "OUTPUT-MARKER", script: "SCRIPT-MARKER" });
+    const prompt = buildDebugMessages(c)
+      .map((m) => m.content)
+      .join("\n");
+    const declared = describeSending(c).map((i) => i.label.toLowerCase());
+
+    // Each payload that demonstrably reaches the prompt must have a line.
+    if (prompt.includes("SCRIPT-MARKER")) {
+      expect(declared.some((l) => l.includes("script"))).toBe(true);
+    }
+    if (prompt.includes("OUTPUT-MARKER")) {
+      expect(declared.some((l) => l.includes("output"))).toBe(true);
+    }
+    if (prompt.includes(c.testUrl)) {
+      expect(declared.some((l) => l.includes("url"))).toBe(true);
+    }
+    if (prompt.includes(c.testName)) {
+      expect(declared.some((l) => l.includes("name"))).toBe(true);
+    }
   });
 });

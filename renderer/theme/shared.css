@@ -520,3 +520,79 @@
   color: var(--gl-tx-1);
   box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
 }
+
+/* ── AI debug status ───────────────────────────────────────────────────
+   The colour of a minimized AI job's icon, which IS the contract of the
+   feature: a wrong colour here is silent — the panel works perfectly while the
+   icon lies, and the user walks away from a finished answer or waits on a dead
+   one (CLAUDE.md, and REDESIGN §B9 which specifies the mapping).
+
+   NAMED FOR MEANING, NOT FOR HUE. `.gl-ai-busy`, never `.gl-ai-amber`:
+   retuning which colour "thinking" takes must not turn a class name into a lie,
+   and this is the one place in the app where a name that lies about its meaning
+   IS the bug. The tone each resolves to is asserted against `TONE` in
+   `ai-debug-status.ts`'s own tests, so the two cannot drift.
+
+   AI is not a status in this palette — it gets the holo treatment elsewhere —
+   but a JOB has real states, and these four are them. */
+.gl-ai-ready {
+  color: var(--gl-cyan);
+}
+
+.gl-ai-busy {
+  color: var(--gl-amber);
+}
+
+.gl-ai-done {
+  color: var(--gl-phos);
+}
+
+.gl-ai-failed {
+  color: var(--gl-red);
+}
+
+/* ── The "Sending" strip ───────────────────────────────────────────────
+   What leaves this machine when a prompt is sent, itemised. In `shared.css`
+   rather than a screen's own section because the AI panel is reachable from
+   the run panel, the trainer and the global chip — it belongs to no one
+   screen. Bordered and on `--gl-panel` so it reads as a block to be read
+   rather than as more of the paragraph above it, exactly like `.gl-setting-risk`
+   and for the same reason. */
+.gl-sending {
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  padding: 8px 10px;
+}
+
+.gl-sending-list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gl-sending-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-2);
+}
+
+.gl-sending-size {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-sending-total {
+  margin: 7px 0 0;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-3);
+}

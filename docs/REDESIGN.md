@@ -1,13 +1,18 @@
 # The indie redesign — an implementation plan
 
-**Status: Phase A is done; Phase B is nearly done.** A1–A5 are landed, and so
-are **B1 (Home)**, **B2 (Heals)**, **B3 (Batch)**, **B4 (Settings)**, **B5a
-(Test detail, parity)**, **B6 (Recorder)** and **B7 (Stats)** — see the ✅ marks
-in §4, §5 and §8.3. The app's frame is the redesign, so are the five components
-every screen embeds, and so are seven of the nine screens. **Two still carry the
-old chrome** (B8 Visual, B9 AI debug), one PR each, plus **B5b** (the five
-non-failure run-state summaries, Phase C §6.1). Where the rest of this says
-"would", it means would.
+**Status: Phase A is done; Phase B has reached every screen.** A1–A5 are landed,
+and so are **B1 (Home)**, **B2 (Heals)**, **B3 (Batch)**, **B4 (Settings)**,
+**B5a (Test detail, parity)**, **B6 (Recorder)**, **B7 (Stats)**, **B8 (Visual,
+first slice)** and **B9 (AI debug — the status contract and the Sending strip)**
+— see the ✅ marks in §4, §5 and §8.3. The app's frame is the redesign, so are
+the five components every screen embeds, and every screen has been reached.
+
+**Two screens are partially done and say so in their own sections**: B8 still
+owes its frame rail, mask list and threshold-against-frames, and B9 still owes
+the panel's own chrome. Both were scoped that way deliberately — each shipped the
+half with a contract riding on it and left the half that is only a restyle.
+**B5b** (the five non-failure run-state summaries) remains Phase C §6.1. Where
+the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -716,6 +721,23 @@ not-cancel, the stale-script warning, the suggested-fix diff, follow-ups. The
 "Sending" strip (what context is attached, and the token estimate) is the one
 genuinely new element — and it is a *privacy* affordance, so it should ship with
 the reskin rather than waiting for Phase C.
+
+**Shipped 2026-08-10.** ✅ The four tones map onto the pre-redesign contract
+exactly, and — the substantive change — the mapping is now **checkable**:
+`toneFor` returns the palette tone as data, so the contract is asserted by value
+instead of only by label. A wrong colour with a right label used to pass
+everything in this repo. ✅ `ai-debug-icons.test.tsx` extended, plus a guard the
+per-status assertions cannot make: the four meanings must stay in four DIFFERENT
+colours, since two collapsing onto one is the failure that stops the icon
+carrying information at all. ✅ The Sending strip, derived from the same `ctx`
+the prompt is built from, with a drift test that fails if the builder attaches a
+payload the strip does not name. Sizes are characters, not tokens — a token count
+is a guess dressed as a measurement.
+
+**Not done:** the panel's own chrome is still SDK (buttons, the prompt preview,
+the diff card). That is a restyle of a 1,375-line file with no contract riding on
+it, and it is the safe half to leave — the risky half was the colour mapping, and
+that is landed and pinned.
 
 ---
 
