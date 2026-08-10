@@ -140,26 +140,49 @@ for (const rel of VIEWS) {
   // height, so neither surface had anywhere to go.
   //
   // Two properties, and the second is the one that looks optional and is not.
-  // `min-h-full` on the inner column is a FLOOR: short content still centres,
-  // and tall content grows past it so `justify-center` has no free space left
-  // to distribute — which is what stops a too-tall hero being centred half
-  // off-screen with its top unreachable. Drop it and the overflow silently
-  // becomes uncentred-and-clipped again, which no rendered test in this repo
-  // can observe (jsdom has no layout engine).
+  // `min-height: 100%` on the inner column is a FLOOR: short content still
+  // centres, and tall content grows past it so `justify-content: center` has no
+  // free space left to distribute — which is what stops a too-tall hero being
+  // centred half off-screen with its top unreachable. Drop it and the overflow
+  // silently becomes uncentred-and-clipped again, which no rendered test in
+  // this repo can observe (jsdom has no layout engine).
+  //
+  // THE PROPERTIES MOVED, THE CONTRACT DID NOT. B1 reskinned this screen, so
+  // the two rules are named classes in `renderer/theme/screens.css` rather than
+  // Tailwind utilities in the markup. This reads them there — and still checks
+  // the view USES both names, because a rule nothing carries is a guard that
+  // passes over a screen it no longer describes.
   const home = readFileSync(resolve(here, "../../../renderer/main/home-view.tsx"), "utf8");
-  const heroPane = home.match(/className="absolute inset-0[^"]*"/)?.[0] ?? "";
-  assert(heroPane !== "", "home-view.tsx: found the full-height hero pane");
+  const screens = readFileSync(resolve(here, "../../../renderer/theme/screens.css"), "utf8");
+
+  /** One rule's body, comments already stripped. */
+  function ruleBody(css: string, selector: string): string {
+    const m = new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`).exec(
+      css.replace(/\/\*[\s\S]*?\*\//g, ""),
+    );
+    return m ? m[1] : "";
+  }
+
+  const pane = ruleBody(screens, ".gl-home");
+  const col = ruleBody(screens, ".gl-home-col");
+
+  assert(pane !== "", "screens.css: found the .gl-home hero pane rule");
+  assert(col !== "", "screens.css: found the .gl-home-col centred column rule");
   assert(
-    !/\boverflow-hidden\b/.test(heroPane),
-    "home-view.tsx: the hero pane must not be overflow-hidden — it clips its own copy at short window heights",
+    home.includes('className="gl-home"') && home.includes('className="gl-home-col"'),
+    "home-view.tsx: still carries both class names — a rule the view does not use guards nothing",
   );
   assert(
-    /\boverflow-y-auto\b/.test(heroPane),
-    "home-view.tsx: the hero pane must scroll (overflow-y-auto), so content taller than the window stays reachable",
+    !/overflow\s*:\s*hidden/.test(pane),
+    ".gl-home: not overflow-hidden — it clips its own copy at short window heights",
   );
   assert(
-    /className="flex min-h-full flex-col[^"]*justify-center/.test(home),
-    "home-view.tsx: the centred column needs `min-h-full` with `justify-center` — without the floor, overflowing content centres off-screen instead of scrolling",
+    /overflow-y\s*:\s*auto/.test(pane),
+    ".gl-home: scrolls (overflow-y: auto), so content taller than the window stays reachable",
+  );
+  assert(
+    /min-height\s*:\s*100%/.test(col) && /justify-content\s*:\s*center/.test(col),
+    ".gl-home-col: `min-height: 100%` with `justify-content: center` — without the floor, overflowing content centres off-screen instead of scrolling",
   );
 }
 
