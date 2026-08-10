@@ -51,7 +51,7 @@ import { api } from "../lib/api";
 import type { AssertKind, PickedElement, RawStep, WaitDialogMode } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
 import { useRecorder } from "../main/recorder-store";
-import { CursorGap, StepRow } from "../main/step-row";
+import { CursorGap, INSERT_HERE, StepRow } from "../main/step-row";
 import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "../main/add-step-dialog";
 import { GenerateStepsDialog } from "../main/generate-steps-dialog";
 import { RefineSelectorDialog } from "../main/refine-selector-dialog";
@@ -153,6 +153,7 @@ export function TrainerPanelView() {
     stepsLoaded,
     liveSteps,
     newStepIds,
+    lastAddedStepId,
     pause,
     resume,
     stop,
@@ -211,6 +212,10 @@ export function TrainerPanelView() {
   // not received yet inserts at the wrong position, and the insert cursor the
   // backend sent means nothing without the rows it points between.
   const controlsDisabled = !state.pageReady || !stepsLoaded || running;
+
+  // See the mirror of this in recording-view.tsx: follow the bottom only while
+  // the bottom is where the next captured step will actually land.
+  const cursorAtEnd = state.cursor >= liveSteps.length;
 
   // Dock state is owned by the backend (it moves real windows), so the button
   // reflects what actually happened rather than an optimistic local guess —
@@ -380,8 +385,12 @@ export function TrainerPanelView() {
         ) : running ? (
           <Status variant="loading">{state.replaying ? "Replaying" : "Running"}</Status>
         ) : (
+          // "Recording", not "Editing", for a session continuing an existing
+          // test — capture is live in both, and the chip that says so is the
+          // wrong place to carry that distinction. The Save Test button below
+          // already does. See the mirror of this in recording-view.tsx.
           <Status variant={state.paused ? "warning" : "error"}>
-            {state.paused ? "Paused" : state.editing ? "Editing" : "Recording"}
+            {state.paused ? "Paused" : "Recording"}
           </Status>
         )}
         <Badge color="secondary">{liveSteps.length}</Badge>
@@ -455,7 +464,11 @@ export function TrainerPanelView() {
         </div>
       ) : null}
 
-      <ScrollArea className="min-h-0 flex-1" autoScrollToBottom autoScrollDeps={[liveSteps.length]}>
+      <ScrollArea
+        className="min-h-0 flex-1"
+        autoScrollToBottom={cursorAtEnd}
+        autoScrollDeps={[liveSteps.length]}
+      >
         <div className="flex flex-col p-2">
           {liveSteps.length === 0 ? (
             <Text variant="small" color="secondary" className="px-1 py-2">
@@ -467,6 +480,7 @@ export function TrainerPanelView() {
                 active={state.cursor === 0}
                 onClick={() => setCursor(0)}
                 disabled={controlsDisabled}
+                label={INSERT_HERE}
               />
               {liveSteps.map((s, i) => (
                 <React.Fragment key={s.id}>
@@ -482,6 +496,7 @@ export function TrainerPanelView() {
                     runStatus={replayStepStatus[i]}
                     replayFlash={replayFlash[i]}
                     isNew={newStepIds.has(s.id)}
+                    justAdded={s.id === lastAddedStepId}
                     indent={stepDepths[i]}
                     drag={
                       controlsDisabled
@@ -499,6 +514,7 @@ export function TrainerPanelView() {
                     active={state.cursor === i + 1}
                     onClick={() => setCursor(i + 1)}
                     disabled={controlsDisabled}
+                    label={i + 1 === liveSteps.length ? undefined : INSERT_HERE}
                   />
                 </React.Fragment>
               ))}

@@ -24,6 +24,7 @@ import { TooltipProvider } from "@ui";
 
 import type { ContextAction, RecorderState, Step, StepType } from "../lib/recorder-types";
 import { DOCK_TOOLTIP, TrainerPanelView } from "./trainer-panel-view";
+import { INSERT_HERE } from "../main/step-row";
 import { viewportNarrowedNotice } from "../main/viewport-narrowed-notice";
 import { toastTexts, clearToastCalls } from "../__tests__/sonner-stub";
 
@@ -590,5 +591,92 @@ describe("a replay started in the OTHER trainer window", () => {
 
     expect(screen.getByText("Recording")).toBeTruthy();
     expect(screen.getByLabelText("Add step").hasAttribute("disabled")).toBe(false);
+  });
+});
+
+describe("continuing an existing test: where a captured step goes", () => {
+  // The report this was written against: "I only see the Paused and Editing
+  // options in the trainer window, and it doesn't appear to record any manual
+  // page interaction." Capture was live the whole time. What was true is that
+  // the insert cursor sits where the browser is — just past the navigation for
+  // a continued test — so a captured step landed at the TOP of the list while
+  // this panel scrolled to the bottom, unhighlighted, with a chip reading
+  // "Editing" beside it.
+
+  /** Four steps and a cursor just past the navigation, as `initialCursor` sets
+   *  it: the ordinary state of a session opened on an existing test. */
+  function continuedSession(over: Record<string, unknown> = {}) {
+    setStore({
+      state: state({ editing: true, cursor: 1 }),
+      liveSteps: [
+        step("s0", { type: "goto", url: "https://example.com" }),
+        step("s1", { type: "click", locator: { k: "text", v: "One" } }),
+        step("s2", { type: "click", locator: { k: "text", v: "Two" } }),
+        step("s3", { type: "click", locator: { k: "text", v: "Three" } }),
+      ],
+      ...over,
+    });
+  }
+
+  it("says Recording, because capture is live", () => {
+    // "Editing" here said the opposite of what was true, on the one indicator
+    // whose entire job is whether the trainer is listening.
+    continuedSession();
+    renderPanel();
+    expect(screen.getByText("Recording")).toBeTruthy();
+    expect(screen.queryByText("Editing")).toBe(null);
+  });
+
+  it("names the insert point when it is not at the end of the list", () => {
+    continuedSession();
+    renderPanel();
+    expect(screen.getByText(INSERT_HERE)).toBeTruthy();
+  });
+
+  it("says nothing at the end of the list, where steps appear under the last row", () => {
+    continuedSession({ state: state({ editing: true, cursor: 4 }) });
+    renderPanel();
+    expect(screen.queryByText(INSERT_HERE)).toBe(null);
+  });
+
+  it("scrolls the arriving step into view", () => {
+    // The half of the fix jsdom CAN see. Without it the row that changed is
+    // off-screen at the top of the list while the view follows the bottom,
+    // which is indistinguishable from nothing having been recorded.
+    const scrolled: Element[] = [];
+    const spy = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(function (this: Element) {
+        scrolled.push(this);
+      });
+    try {
+      continuedSession({
+        liveSteps: [
+          step("s0", { type: "goto", url: "https://example.com" }),
+          step("new", { type: "click", locator: { k: "text", v: "Just captured" } }),
+          step("s1", { type: "click", locator: { k: "text", v: "One" } }),
+          step("s2", { type: "click", locator: { k: "text", v: "Two" } }),
+        ],
+        lastAddedStepId: "new",
+      });
+      renderPanel();
+      expect(
+        scrolled.some((el) => el.getAttribute("data-just-added") === "true"),
+        "the arriving row scrolled itself into view",
+      ).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("scrolls nothing when no step has arrived", () => {
+    const spy = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+    try {
+      continuedSession({ lastAddedStepId: null });
+      renderPanel();
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

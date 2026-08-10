@@ -22,7 +22,7 @@ import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, Pi
 import { computeStepDepths, describeStep } from "../lib/describe-step";
 import { locatorToPrompt } from "../lib/llm-prompts";
 import { useRecorder, type ReplayRun } from "./recorder-store";
-import { CursorGap, StepRow } from "./step-row";
+import { CursorGap, INSERT_HERE, StepRow } from "./step-row";
 import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "./add-step-dialog";
 import { stepSessionKey, useAiDebug } from "./ai-debug-store";
 import { parseSessionKey } from "../lib/ai-debug-sessions";
@@ -455,6 +455,7 @@ export function RecordingView() {
     stepsLoaded,
     liveSteps,
     newStepIds,
+    lastAddedStepId,
     pause,
     resume,
     stop,
@@ -653,6 +654,12 @@ export function RecordingView() {
   // backend sent means nothing without the rows it points between.
   const controlsDisabled = !state.pageReady || !stepsLoaded || running;
 
+  // Whether the next captured step will land under the last row. True for the
+  // whole of an ordinary new recording, and that is why "scroll to the bottom"
+  // looked like the right rule for years — it is, right up until the session is
+  // a continued test, where the cursor opens mid-list.
+  const cursorAtEnd = state.cursor >= liveSteps.length;
+
   // Drag-to-reorder bookkeeping.
   const [dragId, setDragId] = React.useState<string | null>(null);
   const [overIndex, setOverIndex] = React.useState<number | null>(null);
@@ -765,8 +772,15 @@ export function RecordingView() {
         ) : state.paused ? (
           <StatusChip>Paused</StatusChip>
         ) : (
+          // "Recording" WHETHER OR NOT this session is continuing an existing
+          // test, and that is a fix rather than a simplification. It used to
+          // read "Editing" for a continued session — while capture was fully
+          // live — so the one indicator whose job is to say whether the trainer
+          // is listening said it was not. Reported as "it doesn't record any
+          // manual page interaction". That this is an existing test is said
+          // twice already, by the title above and by "Save Test" beside it.
           <StatusChip running animated>
-            {state.editing ? "Editing" : "Recording"}
+            Recording
           </StatusChip>
         )}
         <span className="gl-mono-value min-w-0 truncate">{state.url}</span>
@@ -872,7 +886,18 @@ export function RecordingView() {
         </div>
       ) : null}
 
-      <ScrollArea className="min-h-0 flex-1" autoScrollToBottom autoScrollDeps={[liveSteps.length]}>
+      <ScrollArea
+        className="min-h-0 flex-1"
+        // Follow the bottom only while the bottom IS the insert point. A
+        // continued test opens its cursor just past the navigation, so a
+        // captured step lands mid-list — and a view that jumps to the end on
+        // every capture scrolls away from the one row that changed, which is
+        // indistinguishable from nothing having been recorded. When the cursor
+        // is elsewhere the arriving row scrolls itself into view instead
+        // (StepRow's `justAdded`), and these two must never both be on.
+        autoScrollToBottom={cursorAtEnd}
+        autoScrollDeps={[liveSteps.length]}
+      >
         <div className="flex flex-col p-3">
           {liveSteps.length === 0 ? (
             <div className="flex flex-col items-start gap-2 px-2 py-1">
@@ -885,7 +910,12 @@ export function RecordingView() {
             </div>
           ) : (
             <>
-              <CursorGap active={state.cursor === 0} onClick={() => setCursor(0)} disabled={controlsDisabled} />
+              <CursorGap
+                active={state.cursor === 0}
+                onClick={() => setCursor(0)}
+                disabled={controlsDisabled}
+                label={INSERT_HERE}
+              />
               {liveSteps.map((s, i) => (
                 <React.Fragment key={s.id}>
                   <StepRow
@@ -900,6 +930,7 @@ export function RecordingView() {
                     runStatus={replayStepStatus[i]}
                     replayFlash={replayFlash[i]}
                     isNew={newStepIds.has(s.id)}
+                    justAdded={s.id === lastAddedStepId}
                     indent={stepDepths[i]}
                     drag={controlsDisabled ? undefined : {
                       onDragStart: () => setDragId(s.id),
@@ -909,7 +940,12 @@ export function RecordingView() {
                       isOver: overIndex === i && dragId !== null && dragId !== s.id,
                     }}
                   />
-                  <CursorGap active={state.cursor === i + 1} onClick={() => setCursor(i + 1)} disabled={controlsDisabled} />
+                  <CursorGap
+                    active={state.cursor === i + 1}
+                    onClick={() => setCursor(i + 1)}
+                    disabled={controlsDisabled}
+                    label={i + 1 === liveSteps.length ? undefined : INSERT_HERE}
+                  />
                 </React.Fragment>
               ))}
             </>

@@ -14,6 +14,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 import type { RecorderState, Step, StepType } from "../lib/recorder-types";
 import { RecordingView } from "./recording-view";
+import { INSERT_HERE } from "./step-row";
 import { withAiDebug } from "../__tests__/ai-debug-harness";
 import { toastCalls, toastTexts, clearToastCalls } from "../__tests__/sonner-stub";
 
@@ -609,5 +610,79 @@ describe("the training viewport narrowing is not allowed to be silent", () => {
     // on its own — mounting the view is not evidence anything narrowed.
     render(withAiDebug(<RecordingView />));
     expect(toastTexts().some((x) => x.title.includes("Training viewport narrowed"))).toBe(false);
+  });
+});
+
+describe("continuing an existing test: where a captured step goes", () => {
+  // Mirror of the block in trainer-panel-view.test.tsx, and it has to be a
+  // mirror: the two trainers are two renderings of one step list, so a fix
+  // present in only one of them is a bug that appears or not depending on
+  // which window the user happens to be looking at.
+  //
+  // The report: "I only see the Paused and Editing options in the trainer
+  // window, and it doesn't appear to record any manual page interaction."
+  // Capture was live throughout. The insert cursor sits where the browser is —
+  // just past the navigation for a continued test — so a captured step landed
+  // near the TOP of the list while the view scrolled to the bottom.
+
+  function continuedSession(over: Record<string, unknown> = {}) {
+    setStore({
+      state: state({ editing: true, cursor: 1 }),
+      liveSteps: [
+        step("s0", { type: "goto", url: "https://example.com" }),
+        step("s1", { type: "click", locator: { k: "text", v: "One" } }),
+        step("s2", { type: "click", locator: { k: "text", v: "Two" } }),
+        step("s3", { type: "click", locator: { k: "text", v: "Three" } }),
+      ],
+      ...over,
+    });
+  }
+
+  it("says Recording, because capture is live", () => {
+    continuedSession();
+    render(withAiDebug(<RecordingView />));
+    expect(screen.getByText("Recording")).toBeTruthy();
+    // "Editing recording" is the view's TITLE and stays — that is the right
+    // place for the distinction. The status chip is not.
+    expect(screen.queryByText("Editing")).toBe(null);
+  });
+
+  it("names the insert point when it is not at the end of the list", () => {
+    continuedSession();
+    render(withAiDebug(<RecordingView />));
+    expect(screen.getAllByText(INSERT_HERE).length).toBeGreaterThan(0);
+  });
+
+  it("says nothing at the end of the list, where steps appear under the last row", () => {
+    continuedSession({ state: state({ editing: true, cursor: 4 }) });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.queryByText(INSERT_HERE)).toBe(null);
+  });
+
+  it("scrolls the arriving step into view", () => {
+    const scrolled: Element[] = [];
+    const spy = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(function (this: Element) {
+        scrolled.push(this);
+      });
+    try {
+      continuedSession({
+        liveSteps: [
+          step("s0", { type: "goto", url: "https://example.com" }),
+          step("new", { type: "click", locator: { k: "text", v: "Just captured" } }),
+          step("s1", { type: "click", locator: { k: "text", v: "One" } }),
+          step("s2", { type: "click", locator: { k: "text", v: "Two" } }),
+        ],
+        lastAddedStepId: "new",
+      });
+      render(withAiDebug(<RecordingView />));
+      expect(
+        scrolled.some((el) => el.getAttribute("data-just-added") === "true"),
+        "the arriving row scrolled itself into view",
+      ).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

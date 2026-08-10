@@ -91,7 +91,30 @@ export interface PreviewDiagnostics {
  *  this module is never bundled into the app (see the header, and the
  *  deliberate `preview.html` filename). */
 function recorderPreview(): boolean {
-  return new URLSearchParams(window.location.search).get("view") === "recorder";
+  const view = new URLSearchParams(window.location.search).get("view");
+  return view === "recorder" || view === "recorder-editing";
+}
+
+/** `?view=recorder-editing` — a session CONTINUING an existing test.
+ *
+ *  Its own address because it is a different screen in the ways that matter,
+ *  and none of them are reachable from `?view=recorder`: the insert cursor
+ *  opens just past the navigation rather than at the end, so the step list
+ *  carries the labelled cursor mid-list and the footer offers "Save Test"
+ *  instead of "Generate Test". That is the state the trainer is in whenever
+ *  anyone re-trains a test, and it had no address at all. */
+function editingPreview(): boolean {
+  return new URLSearchParams(window.location.search).get("view") === "recorder-editing";
+}
+
+/** Where the insert cursor sits in the preview's session — mirroring
+ *  `initialCursor`: the end of the list for a new recording, just past the
+ *  `goto` for one continuing an existing test. */
+function previewCursor(): number {
+  const steps = TESTS[0].steps;
+  if (!editingPreview()) return steps.length;
+  const nav = steps.findIndex((s) => s.type === "goto");
+  return nav === -1 ? Math.min(1, steps.length) : Math.min(nav + 1, steps.length);
 }
 
 /** Mutable copies, so the preview behaves like an app with state: renaming a
@@ -715,9 +738,9 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
             testId: TESTS[0].id,
             url: TESTS[0].url,
             name: TESTS[0].name,
-            editing: false,
+            editing: editingPreview(),
             assertSoft: false,
-            cursor: TESTS[0].steps.length,
+            cursor: previewCursor(),
             refineMode: false,
             replaying: false,
             pageReady: true,

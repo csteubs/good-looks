@@ -525,6 +525,42 @@ function clampCursor(index: number): number {
 }
 
 /**
+ * Move the insert cursor past a step a replay just got through.
+ *
+ * THE RULE, and it is the same one `initialCursor` encodes: the cursor marks
+ * WHERE THE BROWSER IS. Opening a session executes the initial navigation, so
+ * the cursor opens just past the `goto`. A replay executes more than that, and
+ * until now nothing said so — the cursor stayed pinned at the front for the
+ * whole session.
+ *
+ * That is what made continuing an existing test produce a wrong test rather
+ * than merely a surprising one. The user's flow is "replay to reach the state I
+ * want to extend, then act": with the cursor frozen at 1, a step recorded in
+ * the END state was spliced in BEFORE the steps that reach that state. Nothing
+ * errors, every step is present, and the order is wrong until the test runs —
+ * the same failure mode, and the same silence, as the end-of-list cursor this
+ * replaced.
+ *
+ * ONLY ON THE WAY THROUGH. A step that failed does not advance the cursor: the
+ * page state after a failure is unknown, and leaving the cursor at the failed
+ * index puts the next recorded step exactly where the flow broke, which is
+ * where the user is about to work. Skipped steps (disabled, or a conditional
+ * block whose condition was false) DO advance it — the replay is past them, and
+ * "how far the replay got" is the whole question this answers.
+ *
+ * Broadcast on change so both trainers' cursor rules move as the run proceeds;
+ * silent when nothing moved, so a replay of already-passed steps is not a
+ * stream of identical pushes.
+ */
+function cursorPastReplayed(index: number): void {
+  if (!session) return;
+  const next = clampCursor(index + 1);
+  if (next === session.cursor) return;
+  session.cursor = next;
+  broadcastState();
+}
+
+/**
  * Given the index of an `if`/`endif` step, return its matching partner index
  * (respecting nested blocks), or -1 if the step isn't a block delimiter or the
  * block is unbalanced.
@@ -1603,6 +1639,9 @@ export const recorderService = {
         };
         if (!ok) logger.info("recorder", "replayStep failed", { stepId, error });
         this.persistDebug(entry);
+        // One rule for every replay, single step included: the browser is now
+        // past this step, so the insert cursor is too.
+        if (ok) cursorPastReplayed(idx);
         sendToMain("recorder:replayStep", { index: idx, status: "end", ok });
         return entry;
       } catch (err) {
@@ -1651,6 +1690,7 @@ export const recorderService = {
           // A disabled step is skipped — log why and continue without running it.
           if (step.disabled) {
             logger.info("recorder", "Step skipped — disabled", { stepIndex: i });
+            cursorPastReplayed(i);
             continue;
           }
           try {
@@ -1686,10 +1726,15 @@ export const recorderService = {
                 const end = matchingBlockIndex(session.steps, i);
                 if (end > i) i = end;
               }
+              cursorPastReplayed(i);
               continue;
             }
-            if (step.type === "endif") continue;
+            if (step.type === "endif") {
+              cursorPastReplayed(i);
+              continue;
+            }
             if (ok) {
+              cursorPastReplayed(i);
               return { ok: true, stoppedAtIndex: i };
             }
             // Step failed — stop here so the user can iterate.
@@ -1742,6 +1787,7 @@ export const recorderService = {
           // A disabled step is skipped — log why and move on without running it.
           if (step.disabled) {
             logger.info("recorder", "Step skipped — disabled", { stepIndex: i });
+            cursorPastReplayed(i);
             continue;
           }
           sendToMain("recorder:replayStep", { index: i, status: "begin", ok: true });
@@ -1786,12 +1832,14 @@ export const recorderService = {
           if (step.type === "if" && met === false) {
             const end = matchingBlockIndex(session.steps, i);
             if (end > i) i = end;
+            cursorPastReplayed(i);
             continue;
           }
           // A soft assertion reports failure but doesn't stop the run.
           if (!ok && !step.soft) {
             return { ok: false, failedAtIndex: i, error };
           }
+          cursorPastReplayed(i);
         }
         return { ok: true, failedAtIndex: -1 };
       } catch (err) {
@@ -1849,6 +1897,7 @@ export const recorderService = {
               error: "Skipped — disabled",
               logs: [{ i: 0, t: Date.now(), level: "info", m: "Step skipped — disabled" }],
             });
+            cursorPastReplayed(i);
             await sleep(REPLAY_STEP_DELAY_MS);
             continue;
           }
@@ -1886,10 +1935,12 @@ export const recorderService = {
               const end = matchingBlockIndex(session.steps, i);
               if (end > i) i = end;
             }
+            cursorPastReplayed(i);
             await sleep(REPLAY_STEP_DELAY_MS);
             continue;
           }
           if (step.type === "endif") {
+            cursorPastReplayed(i);
             await sleep(REPLAY_STEP_DELAY_MS);
             continue;
           }
@@ -1935,6 +1986,7 @@ export const recorderService = {
             sendToMain("recorder:replayLog", { phase: "done", ran, passed, failedAtIndex: i });
             return { ok: false, ranCount: ran, passedCount: passed, failedAtIndex: i, error };
           }
+          cursorPastReplayed(i);
           await sleep(REPLAY_STEP_DELAY_MS);
         }
         sendToMain("recorder:replayLog", { phase: "done", ran, passed, failedAtIndex: -1 });
