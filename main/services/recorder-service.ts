@@ -245,10 +245,21 @@ function recordHeal(
 }
 
 /** Run the Auto-Heal engine for a failed step, then (if candidates were found)
- *  re-run the step with the best candidate to see if it succeeds. Pushes a
- *  `recorder:healSuggestion` event to the renderer so the Console can surface
- *  the candidates as a menu. Returns the heal result and whether the re-run
- *  with the applied locator succeeded (so the caller can count it as passed).
+ *  re-run the step with the best candidate to see if it succeeds. Returns the
+ *  heal result and whether the re-run with the applied locator succeeded (so the
+ *  caller can count it as passed).
+ *
+ *  HOW THE HEAL REACHES THE USER. Through the RETURN VALUE, and only there.
+ *  This used to also push a `recorder:healSuggestion` event "so the Console can
+ *  surface the candidates as a menu"; nothing ever subscribed to it, and it was
+ *  removed on 2026-08-09. Of the four callers only `replayFromCurrent` streams
+ *  its `heal` onward (on the `recorder:replayLog` step event, which is what the
+ *  Console actually renders) — the other three keep `okWithHeal` and drop the
+ *  candidates. So for a single-step preview, `replayAll` and `replayFromStart`
+ *  the candidates live in the JOURNAL (`recordHeal` → the Heals view) and
+ *  nowhere on screen at the moment they are found. That is a missing feature,
+ *  not a missing push: reviving a channel no window listens on would not have
+ *  put them anywhere either.
  *
  *  Whether success also rewrites the STORED step is governed by the
  *  `autoHealApply` setting; either way the heal is written to the journal.
@@ -309,14 +320,13 @@ async function tryHeal(
       // Journaled either way — the whole point is that a heal leaves a trace,
       // and under "suggest" the entry is also how the user applies it later.
       recordHeal(step, stepIndex, heal, best, apply);
-      sendToMain("recorder:healSuggestion", heal);
       return { heal, okWithHeal: true, healedLogs: rerun.logs };
     }
   } catch (err) {
     logger.info("recorder", "Auto-Heal re-run threw", { stepId: step.id, error: String(err) });
   }
-  // Best candidate didn't auto-succeed — surface all candidates for the user.
-  sendToMain("recorder:healSuggestion", heal);
+  // Best candidate didn't auto-succeed — hand the candidates back for the
+  // caller to surface. See the note on this function for where they end up.
   return { heal, okWithHeal: false };
 }
 
@@ -488,7 +498,13 @@ function currentState(): RecorderState {
     replaying: session?.replaying ?? false,
     pageReady: session?.pageReady ?? false,
     loading: !!session && !session.pageReady && !session.loadFailed,
-    loadFailed: session?.loadFailed ?? false,
+    // No `loadFailed` here. `Session.loadFailed` above is real and gates
+    // `loading`, but it could never be OBSERVED through this snapshot: the one
+    // path that sets it nulls the session before the next broadcast, so the
+    // field went out as false every time, and the dialog gated on it never
+    // opened. Removed 2026-08-09 rather than left as a field that reads like a
+    // usable signal. A failed load is announced by `recorder:loadFailed`, which
+    // now has a listener — see `renderer/main/load-failed-dialog.tsx`.
   };
 }
 

@@ -847,8 +847,6 @@ export interface RecorderState {
   pageReady: boolean;
   /** true while the training browser window is opening but hasn't shown yet. */
   loading: boolean;
-  /** set when the training window failed to open within the timeout. */
-  loadFailed: boolean;
 }
 
 // ── Batch (suite) runs ────────────────────────────────────────────────

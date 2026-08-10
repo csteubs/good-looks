@@ -8,6 +8,7 @@ import { AiDebugChip } from "./ai-debug-chip";
 import { AiDebugHost } from "./ai-debug-panel";
 import { AiDebugProvider } from "./ai-debug-store";
 import { LibrarySidebar } from "./library-sidebar";
+import { LoadFailedDialog } from "./load-failed-dialog";
 import { RecorderProvider, useRecorder } from "./recorder-store";
 import { RecordingView } from "./recording-view";
 
@@ -55,6 +56,14 @@ export function RootView() {
     [navigate, qc],
   );
 
+  // Same reasoning as `onFinished`, and the same router. The dialog this serves
+  // used to reach Stats by assigning `window.location.hash = "#/stats"`, which
+  // could not work: this router runs on MEMORY history, so a URL fragment
+  // selects nothing. It went unnoticed because the dialog never opened.
+  const onCheckStats = React.useCallback(() => {
+    navigate({ to: "/stats" });
+  }, [navigate]);
+
   return (
     // No window-drag overlay across the top edge. There used to be a
     // `drag-region fixed left-0 right-0 top-0 h-13` div here, from the days when
@@ -95,6 +104,13 @@ export function RootView() {
           <RootShell />
           <AiDebugHost />
           <AiDebugChip />
+          {/* Outside RootShell on purpose. A failed load tears the session down
+              before it announces itself, so `state.recording` is already false
+              and RootShell has swapped RecordingView back out for the Outlet —
+              anything hosted in there is unmounted exactly when this needs to
+              appear. That is the bug this component exists to fix; putting it
+              back inside would silently reintroduce it. */}
+          <LoadFailedDialog onCheckStats={onCheckStats} />
         </AiDebugProvider>
       </RecorderProvider>
     </div>

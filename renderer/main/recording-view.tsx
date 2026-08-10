@@ -1023,37 +1023,11 @@ export function RecordingView() {
         </div>
       ) : null}
 
-      {/* Load-failed error dialog: the training window didn't open within the
-          10s timeout. The failure is logged to Stats; prompt the user to try
-          again or check the run history for details. */}
-      <Dialog
-        open={state.loadFailed}
-        onOpenChange={() => {
-          /* non-dismissible until the user acknowledges via the button */
-        }}
-        title="Couldn't open the training browser"
-        description="The training window couldn't open. This can happen on a slow network, a redirect loop, or if the site is unreachable."
-        confirmLabel="Try again"
-        confirmVariant="accent"
-        onConfirm={() => {
-          // Reset by navigating away and back — the user can click Edit in
-          // Trainer / New recording again.
-          stop();
-        }}
-        destructiveAction={{
-          label: "Check Stats",
-          onClick: () => {
-            stop();
-            // Navigate to Stats via the router (the sidebar handles this).
-            window.location.hash = "#/stats";
-          },
-        }}
-      >
-        <Text variant="small" color="secondary">
-          The failure has been logged to Stats → Run history. You can try
-          again, or check the logs for more details.
-        </Text>
-      </Dialog>
+      {/* The load-failed dialog used to be here, gated on `state.loadFailed`.
+          It has moved to `load-failed-dialog.tsx`, mounted from RootView and
+          driven by the `recorder:loadFailed` push — this component is unmounted
+          by the time a failed load reports itself, and that field never arrives
+          true. See the note at the top of that file. */}
 
       {/* Exit confirmation: shown only when there are unsaved training edits
           (live steps). Two options: discard the edits (close without saving) or
