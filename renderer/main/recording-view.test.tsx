@@ -229,6 +229,79 @@ describe("recording state", () => {
   });
 });
 
+describe("the session-state chip", () => {
+  // NONE OF THESE STATES IS AN OUTCOME, so none takes a status hue. That is a
+  // real change rather than a restyle: `Recording` was the SDK's `error`
+  // variant — RED, the colour this palette spends on a failed run — on the one
+  // screen where nothing has run yet.
+  const chip = () => document.querySelector('[data-gl="status-chip"]') as HTMLElement | null;
+
+  it("draws Recording as in-flight, not as an outcome", () => {
+    render(withAiDebug(<RecordingView />));
+    expect(chip()?.textContent).toBe("Recording");
+    expect(chip()?.dataset.tone).toBe("running");
+  });
+
+  it("never paints a session state in a status colour", () => {
+    // The rule, stated once over every state this row can be in. `running` is
+    // the holo treatment, and `neutral` is the absence of one — a hue here
+    // would be claiming a result.
+    for (const over of [
+      {},
+      { paused: true },
+      { replaying: true },
+      { pageReady: false },
+      { editing: true },
+    ]) {
+      const { unmount } = render(withAiDebug(<RecordingView />));
+      const tone = chip()?.dataset.tone;
+      expect(["running", "neutral"], JSON.stringify(over)).toContain(tone);
+      unmount();
+      setStore({ state: state(over) });
+    }
+  });
+
+  it("draws Paused as neutral — real, but not live and not a result", () => {
+    setStore({ state: state({ paused: true }) });
+    render(withAiDebug(<RecordingView />));
+    expect(chip()?.textContent).toBe("Paused");
+    expect(chip()?.dataset.tone).toBe("neutral");
+  });
+});
+
+describe("the hard/soft assertion choice", () => {
+  it("can be driven by a plain click", () => {
+    // WORTH ITS OWN TEST because it could not be done before B6. This was the
+    // SDK's `SegmentedControl`, a Radix control that activates on pointer-down
+    // — `fireEvent.click` left it untouched and the assertion then reported
+    // "0 calls", which reads as a dead handler rather than the wrong event
+    // (CLAUDE.md). The theme's `Segmented` is plain buttons with
+    // `aria-pressed`, so the choice is finally assertable at this level
+    // instead of only at the IPC layer.
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: "Soft" }));
+    expect(screen.getByRole("button", { name: "Soft" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Hard" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("re-arms an active assertion with the new strictness", () => {
+    // The choice only reaches the backend while an assertion is being picked —
+    // otherwise it is a local default the next pick will use. Pinning the live
+    // case because that is the one where getting it wrong records a hard
+    // assertion the user asked to be soft.
+    setStore({ state: state({ assertMode: "visible" }) });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: "Soft" }));
+    expect(actions.setAssert).toHaveBeenCalledWith("visible", true);
+  });
+
+  it("reports the current choice through aria-pressed", () => {
+    render(withAiDebug(<RecordingView />));
+    expect(screen.getByRole("button", { name: "Hard" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Soft" }).getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
 describe("the step list", () => {
   it("renders captured steps", () => {
     setStore({

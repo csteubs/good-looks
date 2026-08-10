@@ -2143,40 +2143,6 @@
  * are a real surface rather than an implementation detail. Both are scoped
  * under a `gl-*` ancestor so nothing outside this screen is touched.
  */
-.gl-detail-tabs [role="tablist"] {
-  height: 26px;
-  border-radius: 0;
-  border: 1px solid var(--gl-line);
-  background: var(--gl-panel);
-  padding: 0;
-}
-
-.gl-detail-tabs [role="tab"] {
-  border-radius: 0;
-  padding-inline: 10px;
-  font-family: var(--gl-mono);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: var(--gl-track-label);
-  text-transform: uppercase;
-  color: var(--gl-tx-3);
-  box-shadow: none;
-}
-
-.gl-detail-tabs [role="tab"]:hover {
-  color: var(--gl-tx-2);
-}
-
-/* The selected tab is NEUTRAL, like every other selection in this design —
-   white at low alpha plus a ring, no hue. A tab strip is the one place it is
-   tempting to reach for the accent, and it sits directly above a step list
-   whose rails are reporting outcomes. */
-.gl-detail-tabs [role="tab"][data-state="active"] {
-  background: var(--gl-sel-bg);
-  color: var(--gl-tx-1);
-  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
-}
-
 .gl-run-options [role="checkbox"] {
   border-radius: 1px;
   border-color: var(--gl-line);
@@ -2219,5 +2185,81 @@
    does share is the hairline, so the two read as the same kind of edge. */
 .gl-detail-head {
   flex: 0 0 auto;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* ── Trainer / recorder (B6) ───────────────────────────────────────────── */
+
+.gl-trainer-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* Wraps, because this row holds up to seven controls and the trainer is the
+   narrowest surface in the app — it sits beside a real browser window. Wrapping
+   is what stops the trailing pair (Add step / AI steps) being pushed out of the
+   viewport with no horizontal scroll to reach them. */
+.gl-trainer-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* "Click an element in the browser…" — cyan, which the palette declares as
+   "running / live / focus". The app is genuinely waiting on the user here; this
+   is the same licence the insert caret has, and it is why `check:selection-
+   neutral` draws its line at SELECTION rather than at the colour itself. */
+.gl-trainer-prompt {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-cyan);
+}
+
+.gl-trainer-refine {
+  align-items: center;
+  flex: 0 0 auto;
+  border-inline: 0;
+  border-top: 0;
+}
+
+/* The trainer's three-tab console. Its own rule rather than the run panel's,
+   because they are different things wearing the same clothes: this one holds
+   Console / Step details / Cookies and never expands, since the trainer's whole
+   value is the step list staying visible while you work in the browser beside
+   it. The auto-scroll checkbox borrows `.gl-run-option` — same
+   label-wrapping-a-checkbox shape, and a second copy would eventually
+   disagree. */
+.gl-trainer-console {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 224px;
+  min-height: 0;
+  background: var(--gl-ink);
+  border-top: 1px solid var(--gl-line);
+}
+
+.gl-trainer-console-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+}
+
+.gl-trainer-console-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 5px 12px;
   border-bottom: 1px solid var(--gl-line);
 }

@@ -16,6 +16,18 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — The trainer stops being red, and the tab strip becomes shared furniture
+
+**B6 of the redesign (REDESIGN §B6), the reskin half.** The inline composer, the `ToolTile`s and the assertion bottom sheet stay in Phase C — those are behaviour changes, and the plan says so. Three decisions here.
+
+**"Recording" was red, and it should never have been.** The SDK's `Status variant="error"` drew it, which in this palette is the colour spent on a failed run — on the one screen in the app where nothing has run yet and nothing can fail. Recording, Editing, Replaying and Running are all IN FLIGHT, which is precisely what `StatusChip`'s holo `running` treatment means: a treatment says "this is not a result". Paused and the two loading states go neutral — real, not live, not outcomes. That leaves the four in-flight states distinguished by their WORD rather than their colour, which is the split the palette explicitly asks for and which the word was already carrying anyway.
+
+**Hard/Soft moved off the SDK's `SegmentedControl`, and the reason is testability rather than looks.** That one is Radix-backed and activates on pointer-down — the documented trap in this repo where `fireEvent.click` leaves the control untouched and the assertion then reports "0 calls", reading as a dead handler rather than the wrong event. The theme's `Segmented` is plain buttons with `aria-pressed`, so the choice is assertable at the component level for the first time; before this, the only place hard-vs-soft could be pinned was the IPC layer. Two tests now cover it, including the live case where the strictness has to re-arm an assertion already being picked — the one where being wrong records a hard assertion the user asked to be soft.
+
+**The tab strip moved to `shared.css`.** It was `.gl-detail-tabs` in `screens.css`, written for the test-detail screen; the trainer's Console/Step details/Cookies is the second consumer, and the four-stylesheet split's own rule is that a rule a second screen wants is by definition not one screen's own. It is still targeted by `role` + `data-state` — the documented exception, same as the settings switch — and still scoped under an opted-in `gl-*` ancestor.
+
+**Also: the trainer had no address in the browser preview.** `RootShell` swaps the whole outlet for `RecordingView` only while `state.recording`, and nothing in a browser tab can make that true — there is no training window to record. So a fifth of this app's UI could not be looked at outside a packaged build on a Mac, which is the same gap B4 found for Settings and B5a found for a finished run. `?view=recorder` reports a live session over a fixture test's steps. `pageReady: true` is part of that and not a detail: the view renders a "Loading page…" chip and disables every control until it is, so a half-seeded state would show the trainer's inert shell and nothing else — which is why there is a test for it.
+
 ### 2026-08-10 — A bad merge nested a whole screen's CSS inside a tab, and nothing caught it
 
 **A defect I introduced and shipped**, found while starting B6. Recording it because the interesting part is not the mistake — it is that five independent guards had nothing to say about it.

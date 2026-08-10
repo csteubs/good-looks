@@ -336,3 +336,58 @@ describe("the scripted run", () => {
     expect(lastReported).toBe(failed[0].index);
   });
 });
+
+describe("the trainer route", () => {
+  // `RootShell` swaps the whole outlet for `RecordingView` only while
+  // `state.recording`, and nothing in a browser tab can make that true — there
+  // is no training window to record. So the trainer, a fifth of this app's UI,
+  // had no address in the preview at all before B6.
+  type Ipc = { invoke<T>(c: string, p?: unknown): Promise<T> };
+  const ipc = () => (window as unknown as { glazeAPI: { glaze: { ipc: Ipc } } }).glazeAPI.glaze.ipc;
+
+  function withView(view: string | null, fn: () => Promise<void>) {
+    const original = window.location.search;
+    // jsdom allows replaceState, which is enough — the bridge reads
+    // `location.search` on every call rather than capturing it once.
+    window.history.replaceState({}, "", view === null ? "/" : `/?view=${view}`);
+    return fn().finally(() => window.history.replaceState({}, "", original || "/"));
+  }
+
+  it("reports an idle recorder by default", async () => {
+    installPreviewBridge();
+    await withView(null, async () => {
+      const state = await ipc().invoke<{ recording: boolean }>("recorder:getState");
+      expect(state.recording).toBe(false);
+    });
+  });
+
+  it("reports a live session under ?view=recorder", async () => {
+    installPreviewBridge();
+    await withView("recorder", async () => {
+      const state = await ipc().invoke<{ recording: boolean; pageReady: boolean; url: string | null }>(
+        "recorder:getState",
+      );
+      expect(state.recording).toBe(true);
+      // `pageReady` matters as much as `recording`: the view renders a
+      // "Loading page…" chip and disables every control until it is true, so a
+      // half-seeded state would show the trainer's inert shell and nothing else.
+      expect(state.pageReady).toBe(true);
+      expect(state.url).toBeTruthy();
+    });
+  });
+
+  it("gives that session real steps to render", async () => {
+    installPreviewBridge();
+    await withView("recorder", async () => {
+      const steps = await ipc().invoke<unknown[]>("recorder:getSteps");
+      expect(steps.length).toBeGreaterThan(0);
+    });
+  });
+
+  it("leaves the step list empty when the flag is off", async () => {
+    installPreviewBridge();
+    await withView(null, async () => {
+      expect(await ipc().invoke<unknown[]>("recorder:getSteps")).toHaveLength(0);
+    });
+  });
+});
