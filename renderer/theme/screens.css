@@ -231,3 +231,163 @@
   justify-content: center;
   gap: 10px;
 }
+
+/* ── Heals (B2) ───────────────────────────────────────────────────────── */
+
+/*
+ * Two panels side by side: the journal, and what one heal changed.
+ *
+ * The journal is a FIXED 330px rather than a fraction, and the reason is the
+ * detail pane: it carries two locators, a candidate list and a run reference,
+ * all of which are long single lines that wrap into unreadable ribbons when the
+ * column narrows. A percentage split gives that space away on a small window
+ * exactly when it is scarcest. The journal's own rows are built to be terse
+ * enough to live at 330px forever.
+ */
+.gl-heals {
+  display: flex;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  padding: 10px;
+}
+
+.gl-heals-journal {
+  flex: 0 0 330px;
+  min-width: 0;
+}
+
+.gl-heals-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The BODY fills what the header leaves, in both panels.
+ *
+ * Not `Panel`'s own `flex` prop, and the difference matters: that prop sets
+ * `flex: 1 1 auto` INLINE on the section as well as the body, and an inline
+ * style beats `.gl-heals-journal`'s fixed 330px — the journal silently grew to
+ * half the window, which looks like a plausible layout rather than a bug. */
+.gl-heals-journal > .gl-panel-body,
+.gl-heals-detail > .gl-panel-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.gl-heals-row {
+  display: flex;
+  align-items: center;
+  /* 10px rather than the 8 used elsewhere: at 330px the step label truncates
+     right up against the timestamp, and two mono strings a hair apart read as
+     one collided string rather than as two columns. */
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--gl-line-2);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.gl-heals-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* SELECTION IS NEUTRAL. This list is a column of status chips reporting four
+   different outcomes; a selected row drawn in any of those hues would be a
+   fifth claim competing with the four real ones on the same line. */
+.gl-heals-row[data-selected] {
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-heals-row:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-heals-row-icon {
+  flex: 0 0 auto;
+  display: flex;
+  color: var(--gl-violet);
+}
+
+.gl-heals-row-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.gl-heals-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 1px;
+}
+
+.gl-heals-row-step {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-heals-row-test {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The row's time sits BELOW the status chip rather than beside it: at 330px
+   there is not room for both on one line without the chip losing its fixed
+   width, and the chip's one edge down the column is the contract. */
+.gl-heals-row-meta {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.gl-heals-row-when {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.gl-heals-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px;
+}
+
+.gl-heals-section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* Centred copy where a pane's content would be. Used for both empty states —
+   "nothing has been healed" and "nothing is selected" — which are different
+   sentences about different things and deliberately look the same: neither is
+   an error, and both are answered by doing something elsewhere on the screen. */
+.gl-heals-empty {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}

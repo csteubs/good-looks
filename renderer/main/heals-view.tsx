@@ -19,21 +19,10 @@
 
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertDialog,
-  Badge,
-  Button,
-  ScrollArea,
-  Text,
-  Toolbar,
-  ToolbarActions,
-  ToolbarContent,
-  ToolbarDescription,
-  ToolbarTitle,
-  toast,
-} from "@ui";
+import { AlertDialog, ScrollArea, toast } from "@ui";
 import { Check, RotateCcw, Trash2, Wand2 } from "lucide-react";
 
+import { Btn, Panel, StatusChip, TONE, insetRail } from "../theme";
 import { api } from "../lib/api";
 import { clampPage, pageSlice, PAGE_SIZE } from "../lib/paginate";
 import { formatLocator } from "./refine-selector-dialog";
@@ -47,6 +36,35 @@ function fmtWhen(ms: number): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+/** How a heal's four states map onto the palette, in one place.
+ *
+ *  ONLY TWO OF THE FOUR ARE OUTCOMES, and the mapping says so. `Accepted` is a
+ *  result (you approved the change), `Applied` is the one that should catch
+ *  your eye (the stored test has ALREADY changed and nobody has looked at it —
+ *  amber is caution, which is exactly what that is). `Suggested` takes cyan:
+ *  the palette calls it "running / live / focus", and a suggestion is the open
+ *  item waiting on you rather than a verdict. `Reverted` gets no tone at all —
+ *  it is settled and there is nothing to report.
+ *
+ *  Two states sharing "no hue" is fine and deliberate: `StatusChip`'s width is
+ *  fixed so these read as a column, and THE WORD is what reports the state. */
+function statusChip(entry: HealListEntry): React.ReactElement {
+  if (entry.status === "accepted") return <StatusChip tone="phos">Accepted</StatusChip>;
+  if (entry.status === "reverted") return <StatusChip>Reverted</StatusChip>;
+  if (entry.applied) {
+    return (
+      <StatusChip tone="amber" title="Auto-Heal already changed the stored test">
+        Applied
+      </StatusChip>
+    );
+  }
+  return (
+    <StatusChip tone="cyan" title="Recorded only — the stored test is unchanged">
+      Suggested
+    </StatusChip>
+  );
 }
 
 /** One row in the list. Deliberately terse — the detail pane carries the rest,
@@ -65,31 +83,30 @@ function HealRow({
       type="button"
       onClick={onSelect}
       aria-current={selected ? "true" : undefined}
-      className={`flex w-full items-center gap-2 border-b border-separator px-3 py-2 text-left ${
-        selected ? "bg-accent-10 ring-1 ring-inset ring-accent" : "hover:bg-control-subtle"
-      }`}
+      // `data-selected` is what the stylesheet selects on, and it is the
+      // attribute `check:selection-neutral` reads to prove no selection in this
+      // app is drawn in a status hue — which matters more here than anywhere:
+      // this list is a column of chips reporting four different outcomes.
+      data-selected={selected ? "" : undefined}
+      className="gl-heals-row"
     >
-      <Wand2 className="size-3.5 shrink-0 text-tertiary" />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Text variant="small" className="truncate font-medium">
+      {/* Violet: Auto-Heal is AI-adjacent machinery, and what it did is
+          reported by the chip rather than by this glyph. */}
+      <span className="gl-heals-row-icon">
+        <Wand2 aria-hidden="true" />
+      </span>
+      <span className="gl-heals-row-text">
+        <span className="gl-heals-row-step">
           {entry.stepLabel || `Step ${entry.stepIndex + 1}`}
-        </Text>
-        <Text variant="small" color="tertiary" className="truncate">
-          {/* A heal outlives the test it came from, so say so rather than
-              rendering a bare uuid. */}
-          {entry.testName ?? "(deleted test)"}
-        </Text>
-      </div>
-      {entry.status === "pending" ? (
-        <Badge color={entry.applied ? "orange" : "blue"}>
-          {entry.applied ? "Applied" : "Suggested"}
-        </Badge>
-      ) : (
-        <Badge color={entry.status === "accepted" ? "green" : "secondary"}>{entry.status}</Badge>
-      )}
-      <Text variant="small" color="tertiary" className="shrink-0 tabular-nums">
-        {fmtWhen(entry.at)}
-      </Text>
+        </span>
+        {/* A heal outlives the test it came from, so say so rather than
+            rendering a bare uuid. */}
+        <span className="gl-heals-row-test">{entry.testName ?? "(deleted test)"}</span>
+      </span>
+      <span className="gl-heals-row-meta">
+        {statusChip(entry)}
+        <span className="gl-heals-row-when">{fmtWhen(entry.at)}</span>
+      </span>
     </button>
   );
 }
@@ -137,72 +154,82 @@ function HealDetail({
 
   return (
     <ScrollArea className="min-h-0 flex-1">
-      <div className="flex flex-col gap-4 p-4 pb-8">
-        <div className="flex flex-col gap-1">
-          <Text weight="medium">{entry.stepLabel || `Step ${entry.stepIndex + 1}`}</Text>
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary">
+      <div className="gl-heals-detail-body">
+        {/* THE WARNING THE DESIGN ADDS, and it is only shown where it is true.
+            "Succeeded" is doing the work in that sentence: it is about a heal
+            that has ALREADY been applied to the stored test and passed, which
+            is the case with no other signal — a mis-heal usually succeeds,
+            because clicking the wrong button rarely throws. On a suggestion
+            nothing has been applied and the sentence would be noise, which is
+            how a warning becomes something people click past. */}
+        {!settled && entry.applied ? (
+          <p className="gl-notice" style={{ boxShadow: insetRail(TONE.amber) }}>
+            Auto-Heal has already changed this step. A heal that succeeded is not the same as a
+            heal that was right — read both locators before you keep it.
+          </p>
+        ) : null}
+
+        <div className="gl-heals-section">
+          <span className="gl-section-title">
+            {entry.stepLabel || `Step ${entry.stepIndex + 1}`}
+          </span>
+          <div className="gl-heal-head">
+            <span className="gl-chip">
               {entry.source === "run" ? "During a run" : "In the trainer"}
-            </Badge>
-            {entry.applied ? (
-              <Badge color="orange">Applied to the test</Badge>
-            ) : (
-              <Badge color="blue">Suggestion only</Badge>
-            )}
-            {entry.status === "accepted" ? <Badge color="green">Accepted</Badge> : null}
-            {entry.status === "reverted" ? <Badge variant="secondary">Reverted</Badge> : null}
-            <Text variant="small" color="tertiary">
-              {fmtWhen(entry.at)}
-            </Text>
+            </span>
+            {statusChip(entry)}
+            <span className="gl-heal-when">{fmtWhen(entry.at)}</span>
           </div>
-          <Text variant="small" color="secondary">
+          <span className="gl-note">
             {entry.testName ?? "The test this came from has been deleted."}
-          </Text>
+          </span>
         </div>
 
-        <div className="flex flex-col gap-1">
-          <Text variant="small" className="font-medium">
-            Locator
-          </Text>
-          {entry.originalLocator ? (
-            <div className="flex items-center gap-2">
-              <span className="w-14 shrink-0 text-small text-tertiary">was</span>
-              <code className="min-w-0 truncate font-mono text-xs text-tertiary line-through">
-                {formatLocator(entry.originalLocator)}
+        <div className="gl-heals-section">
+          <span className="gl-section-title">Locator</span>
+          <div className="gl-heal-locs">
+            {entry.originalLocator ? (
+              <div className="gl-heal-loc">
+                <span className="gl-heal-loc-key">was</span>
+                <code className="gl-mono-value gl-heal-was">
+                  {formatLocator(entry.originalLocator)}
+                </code>
+              </div>
+            ) : null}
+            <div className="gl-heal-loc">
+              <span className="gl-heal-loc-key">now</span>
+              <code className="gl-mono-value gl-heal-now">
+                {formatLocator(entry.appliedLocator)}
               </code>
             </div>
-          ) : null}
-          <div className="flex items-center gap-2">
-            <span className="w-14 shrink-0 text-small text-tertiary">now</span>
-            <code className="min-w-0 truncate font-mono text-xs text-primary">
-              {formatLocator(entry.appliedLocator)}
-            </code>
           </div>
         </div>
 
         {/* One action row whether or not the heal is settled: accept/revert are
             the review decision, Delete is about the record itself, so it sits
             apart rather than reading as a third way to answer the question. */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="gl-heal-actions">
           {!settled ? (
             <>
-              <Button size="small" disabled={busy} onClick={() => onAccept()}>
-                <Check className="size-4" />
+              {/* `go` on the affirmative one only — two lit buttons on a row is
+                  the design smell `Btn` documents. */}
+              <Btn tone="go" disabled={busy} onClick={() => onAccept()}>
+                <Check aria-hidden="true" />
                 {entry.applied ? "Keep" : "Apply"}
-              </Button>
-              <Button size="small" variant="secondary" disabled={busy} onClick={onRevert}>
-                <RotateCcw className="size-4" />
+              </Btn>
+              <Btn tone="ghost" disabled={busy} onClick={onRevert}>
+                <RotateCcw aria-hidden="true" />
                 {entry.applied ? "Revert" : "Dismiss"}
-              </Button>
+              </Btn>
             </>
           ) : null}
           <div className="flex-1" />
           <AlertDialog
             trigger={
-              <Button size="small" variant="ghost" disabled={busy}>
-                <Trash2 className="size-4" />
+              <Btn tone="ghost" disabled={busy}>
+                <Trash2 aria-hidden="true" />
                 Delete
-              </Button>
+              </Btn>
             }
             title="Delete this heal record?"
             description={deleteWarning(entry)}
@@ -213,29 +240,20 @@ function HealDetail({
         </div>
 
         {alternatives.length > 0 ? (
-          <div className="flex flex-col gap-1">
-            <Text variant="small" className="font-medium">
-              Other candidates
-            </Text>
-            <Text variant="small" color="tertiary">
+          <div className="gl-heals-section">
+            <span className="gl-section-title">Other candidates</span>
+            <p className="gl-note">
               What the engine also found, best-first. Worth a look when the applied one is
               fragile.
-            </Text>
+            </p>
             {alternatives.map((c, i) => (
-              <div key={i} className="flex items-center gap-2 pt-1">
-                <code className="min-w-0 flex-1 truncate font-mono text-xs text-secondary">
-                  {formatLocator(c.locator)}
-                </code>
-                {c.matchedPastRun ? <Badge variant="secondary">seen before</Badge> : null}
+              <div key={i} className="gl-heal-alt">
+                <code className="gl-mono-value flex-1">{formatLocator(c.locator)}</code>
+                {c.matchedPastRun ? <span className="gl-chip">seen before</span> : null}
                 {!settled ? (
-                  <Button
-                    size="small"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() => onAccept(c.locator)}
-                  >
+                  <Btn tone="ghost" disabled={busy} onClick={() => onAccept(c.locator)}>
                     Use this
-                  </Button>
+                  </Btn>
                 ) : null}
               </div>
             ))}
@@ -307,51 +325,49 @@ export function HealsView() {
   const pending = entries.filter((e) => e.status === "pending").length;
   const settledCount = entries.length - pending;
 
-  return (
-    <div className="flex h-full flex-col">
-      <Toolbar>
-        <ToolbarContent>
-          <ToolbarTitle>Heals</ToolbarTitle>
-          <ToolbarDescription>
-            {entries.length} {entries.length === 1 ? "heal" : "heals"} recorded
-            {pending > 0 ? ` · ${pending} needing review` : ""}
-          </ToolbarDescription>
-        </ToolbarContent>
-        {/* Only settled heals can be swept in bulk. Offering "clear everything"
-            would let one click delete the undo for changes already made to
-            tests, which is the one thing this journal exists to prevent. */}
-        {settledCount > 0 ? (
-          <ToolbarActions>
-            <AlertDialog
-              trigger={
-                <Button variant="glass" size="small" disabled={clearSettled.isPending}>
-                  <Trash2 className="size-4" />
-                  Clear history
-                </Button>
-              }
-              title={`Delete ${settledCount} settled heal${settledCount === 1 ? "" : "s"}?`}
-              description="This removes every heal you've already accepted or reverted, across all tests. Heals still needing review are kept, and no test is changed."
-              confirmLabel="Delete"
-              confirmVariant="destructive"
-              onConfirm={() => clearSettled.mutate()}
-            />
-          </ToolbarActions>
-        ) : null}
-      </Toolbar>
+  const clearHistory =
+    settledCount > 0 ? (
+      // Only settled heals can be swept in bulk. Offering "clear everything"
+      // would let one click delete the undo for changes already made to tests,
+      // which is the one thing this journal exists to prevent.
+      <AlertDialog
+        trigger={
+          <Btn tone="ghost" disabled={clearSettled.isPending}>
+            <Trash2 aria-hidden="true" />
+            Clear history
+          </Btn>
+        }
+        title={`Delete ${settledCount} settled heal${settledCount === 1 ? "" : "s"}?`}
+        description="This removes every heal you've already accepted or reverted, across all tests. Heals still needing review are kept, and no test is changed."
+        confirmLabel="Delete"
+        confirmVariant="destructive"
+        onConfirm={() => clearSettled.mutate()}
+      />
+    ) : undefined;
 
-      {entries.length === 0 ? (
-        <div className="flex flex-1 items-center justify-center p-8">
-          <Text variant="small" color="tertiary">
+  // THE TOOLBAR IS GONE, and its two jobs moved rather than being dropped. The
+  // top strip's breadcrumb already says HEALS, so a title bar under it was the
+  // screen's name twice; the count belongs to the journal it counts, and
+  // "Clear history" belongs to the list it clears. What is left is two panels
+  // and no chrome above them.
+  return (
+    <div className="gl-heals">
+      <Panel
+        title="Journal"
+        id={`${entries.length} ${entries.length === 1 ? "heal" : "heals"} recorded${
+          pending > 0 ? ` · ${pending} needing review` : ""
+        }`}
+        right={clearHistory}
+        className="gl-heals-journal"
+      >
+        {entries.length === 0 ? (
+          <p className="gl-heals-empty gl-note">
             {heals.isLoading
               ? "Loading…"
               : "No heals yet. Auto-Heal records every locator it changes here, with a way to put it back."}
-          </Text>
-        </div>
-      ) : (
-        <div className="flex min-h-0 flex-1">
-          {/* List — fixed width so the detail pane gets the room, matching how
-              the Visual view splits its run list from its viewer. */}
-          <div className="flex w-80 shrink-0 flex-col border-r border-separator">
+          </p>
+        ) : (
+          <>
             <ScrollArea className="min-h-0 flex-1">
               <div className="flex flex-col">
                 {visible.map((entry) => (
@@ -365,27 +381,29 @@ export function HealsView() {
               </div>
             </ScrollArea>
             <Pager page={safePage} total={entries.length} onPage={setPage} label="heals" />
-          </div>
+          </>
+        )}
+      </Panel>
 
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {selected ? (
-              <HealDetail
-                entry={selected}
-                busy={accept.isPending || revert.isPending || remove.isPending}
-                onAccept={(locator) => accept.mutate({ id: selected.id, locator })}
-                onRevert={() => revert.mutate(selected.id)}
-                onDelete={() => remove.mutate(selected.id)}
-              />
-            ) : (
-              <div className="flex flex-1 items-center justify-center p-8">
-                <Text variant="small" color="tertiary">
-                  Select a heal to see what changed.
-                </Text>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <Panel
+        title="What changed"
+        // The panel is ABOUT a heal, and the `id` slot is where this design puts
+        // what a panel is about — dim, truncating, findable when looked for.
+        id={selected ? (selected.testName ?? "(deleted test)") : undefined}
+        className="gl-heals-detail"
+      >
+        {selected ? (
+          <HealDetail
+            entry={selected}
+            busy={accept.isPending || revert.isPending || remove.isPending}
+            onAccept={(locator) => accept.mutate({ id: selected.id, locator })}
+            onRevert={() => revert.mutate(selected.id)}
+            onDelete={() => remove.mutate(selected.id)}
+          />
+        ) : (
+          <p className="gl-heals-empty gl-note">Select a heal to see what changed.</p>
+        )}
+      </Panel>
     </div>
   );
 }
