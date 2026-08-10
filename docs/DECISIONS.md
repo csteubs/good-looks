@@ -86,6 +86,57 @@ Glaze app's agent, which no longer works on this codebase.
 
 **Verified by breaking it.** The nav-outside-the-scroller assertion and both halves of the click/mouseDown pair were reverted deliberately and confirmed red (3 and 4 failures respectively) before being put back.
 
+### 2026-08-09 — The sidebar's run dot: a stale colour, and a scale wide enough to describe three browsers
+
+**The stale dot.** A test that failed, was re-run and passed kept a red dot in
+the sidebar until the window was reopened. Nothing about the run or its record
+was wrong — the dot is drawn from the shared `["runs"]` React Query cache, and
+nothing invalidated it. The `runs:changed` push has existed since run history
+did, but its only subscribers were `StatsView` and `VisualView`, both ROUTE
+components: on any other route nobody was listening. So the failure needed the
+user to be looking at the sidebar (i.e. not at Stats) — exactly the case the dot
+exists for. It is also the quietest possible failure: the run panel one pane
+over showed the pass at the same moment, so the app looked like it disagreed
+with itself, and the dot is the half people trust.
+
+The subscription moved to `RecorderProvider`, which is mounted for the whole
+session in both windows. Subscribing to `runs:changed` rather than to
+`runner:done` was deliberate: it also covers history being deleted from Stats
+and records written by a batch, and it fires after the record is on disk, so the
+refetch cannot race the write.
+
+**The scale.** A dot with two colours cannot describe a batch run across
+chromium, firefox and webkit. Two of three passing and none of three passing
+both came out red, which is the same signal for "one engine is broken" and "the
+test is broken" — and the first one you can often ship around. `run-verdict.ts`
+grades the whole cohort instead: green, green-yellow (passed, but leaning on
+more than three Auto-Heal substitutions), yellow-orange (a third or less
+failed), orange-red (more than a third, not all), red (all).
+
+Three decisions inside that:
+
+- **Cohort, not last run.** A three-browser batch writes three records; the
+  newest is whichever browser finished last. Read alone it reports the batch
+  green when webkit passed and the other two failed. The verdict widens the
+  newest run to its `batchId` siblings.
+- **Ratio, not "1 of 3".** The browser set is the user's to choose, so a cohort
+  can be two runs or four. `failed * 3 <= total` is the yellow-orange band,
+  which at the size people actually run is exactly one browser of three, and it
+  keeps an ordinary single failing run at plain red rather than turning every
+  failure into a blend.
+- **Nothing is sticky.** The brief asked for the colour to reset the instant a
+  later run passes, from anywhere in the app, and to go red again on a failing
+  reproduction attempt. Both fall out of recomputing from the newest cohort
+  every time; a remembered "was failing" flag would need a clearing rule for
+  every path that can run a test, and the one that got missed would be a dot
+  stuck on a colour with no way back.
+
+The three blends are declared as tokens (`--support-green-yellow`,
+`--support-yellow-orange`, `--support-orange-red`) mixed from the existing four
+status colours, for the reason the rest of this repo declares its own tokens: a
+`bg-` class Tailwind has no key for emits nothing and throws nothing, and a
+verdict dot with no background is a verdict that silently disappeared.
+
 ### 2026-08-09 — Radio buttons touched their own labels, because `Label` was typography only
 
 **Symptom:** in Settings → AI, the AI provider options read as `◯Ollama ◉LM Studio ◯Claude` — each circle jammed against its text, close enough to look like an overlap. Appearance → Theme (Auto / Light / Dark) had it too; the panes were built the same way and both shipped it.
