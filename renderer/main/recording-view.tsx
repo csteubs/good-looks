@@ -5,9 +5,6 @@ import {
   Checkbox,
   Dialog,
   ScrollArea,
-  SegmentedControl,
-  SegmentedControlItem,
-  Status,
   Tabs,
   TabsContent,
   TabsRoot,
@@ -20,6 +17,7 @@ import {
 } from "@ui";
 import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, RotateCcw, Sparkles, Wand2, X } from "lucide-react";
 
+import { Btn, Segmented, StatusChip, TONE } from "../theme";
 import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step, WaitDialogMode } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
 import { locatorToPrompt } from "../lib/llm-prompts";
@@ -254,16 +252,16 @@ function DebugPanel({
   const logCount = consoleSteps.reduce((n, s) => n + s.logs.length, 0);
 
   return (
-    <div className="flex h-56 flex-col border-t border-separator">
+    <div className="gl-trainer-console">
       <TabsRoot value={tab} onValueChange={onTabChange} className="flex min-h-0 flex-1 flex-col">
-        <div className="flex items-center justify-between gap-2 px-3 pt-2">
+        <div className="gl-tabs gl-trainer-console-head">
           <Tabs variant="filled" size="small">
             <TabsTrigger value="console">Console</TabsTrigger>
             <TabsTrigger value="steps">Step details</TabsTrigger>
             <TabsTrigger value="cookies">Cookies</TabsTrigger>
           </Tabs>
           {tab === "console" ? (
-            <label className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 pr-1 text-[11px] text-secondary">
+            <label className="gl-run-option shrink-0">
               <Checkbox
                 checked={autoScroll}
                 onCheckedChange={(v) => onAutoScrollChange(v === true)}
@@ -282,8 +280,13 @@ function DebugPanel({
 
         {/* Console: live run output. */}
         <TabsContent value="console" className="flex min-h-0 flex-1 flex-col">
-          <div className="flex items-center gap-2 border-b border-separator px-3 py-1.5">
-            {replayRun?.running ? <Loader2 className="size-3.5 shrink-0 animate-spin text-accent" /> : null}
+          <div className="gl-trainer-console-bar">
+            {replayRun?.running ? (
+              // Cyan — "running / live / focus", the token's own definition. It
+              // was the SDK accent, which is a different blue that means
+              // nothing in this palette.
+              <Loader2 className="size-3.5 shrink-0 animate-spin" style={{ color: TONE.cyan }} />
+            ) : null}
             <Text variant="small" color="secondary" className="min-w-0 truncate">
               {!replayRun
                 ? "No run yet — click “Replay from current step”."
@@ -714,8 +717,12 @@ export function RecordingView() {
           <ToolbarTitle>{state.editing ? "Editing recording" : "Recording"}</ToolbarTitle>
         </ToolbarContent>
         <ToolbarActions>
-          <Button
-            variant="destructive"
+          {/* `go`, not `stop`. This button ENDS the recording, which reads as
+              destructive, but what it does is produce the test — the affirmative
+              action the whole session exists for. The SDK variant it replaces
+              was `destructive`, i.e. red, which in this palette means FAILED. */}
+          <Btn
+            tone="go"
             onClick={() => {
               // No recorded steps = nothing to lose: save/exit directly without
               // the confirmation warning. Otherwise open the warning so the
@@ -728,48 +735,56 @@ export function RecordingView() {
             }}
           >
             {state.editing ? "Save Test" : "Generate Test"}
-          </Button>
+          </Btn>
         </ToolbarActions>
       </Toolbar>
 
-      <div className="flex items-center gap-3 border-b border-separator px-4 py-3">
+      {/* NONE OF THESE STATES IS AN OUTCOME, so none of them takes a status
+          hue. That is a real change: `Recording` was the SDK's `error` variant,
+          i.e. RED — the colour this palette spends on a failed run — on the one
+          screen where nothing has run yet. Recording, Replaying and Running are
+          all IN FLIGHT, which is exactly what `StatusChip`'s `running` treatment
+          means ("a treatment says this is not a result"); the word is what
+          separates them, and the word is the primary signal anyway. Paused and
+          the two loading states are neutral: real, not results, not live. */}
+      <div className="gl-trainer-status">
         {!state.pageReady ? (
-          <Status variant="warning">Loading page…</Status>
+          <StatusChip>Loading page…</StatusChip>
         ) : !stepsLoaded ? (
           // Disabled controls with a "Recording" badge reads as the trainer
           // being broken. Name the wait instead.
-          <Status variant="warning">Loading steps…</Status>
+          <StatusChip>Loading steps…</StatusChip>
         ) : running ? (
           // "Replaying" rather than "Running" when the backend says a replay
           // owns the window: it is the state that explains why capture is off
           // and why the controls are inert, and it is the one the user just
           // caused. "Running" stays for a real Playwright run.
-          <Status variant="loading">{state.replaying ? "Replaying" : "Running"}</Status>
+          <StatusChip running animated>
+            {state.replaying ? "Replaying" : "Running"}
+          </StatusChip>
+        ) : state.paused ? (
+          <StatusChip>Paused</StatusChip>
         ) : (
-          <Status variant={state.paused ? "warning" : "error"}>
-            {state.paused ? "Paused" : state.editing ? "Editing" : "Recording"}
-          </Status>
+          <StatusChip running animated>
+            {state.editing ? "Editing" : "Recording"}
+          </StatusChip>
         )}
-        <Text variant="small" color="secondary" truncate className="min-w-0">
-          {state.url}
-        </Text>
+        <span className="gl-mono-value min-w-0 truncate">{state.url}</span>
         <div className="ml-auto shrink-0">
           {controlsDisabled ? null : state.paused ? (
-            <Button size="small" onClick={resume}>
-              <Play className="size-4" /> Resume
-            </Button>
+            <Btn onClick={resume}>
+              <Play className="size-3.5" /> Resume
+            </Btn>
           ) : (
-            <Button size="small" onClick={pause}>
-              <Pause className="size-4" /> Pause
-            </Button>
+            <Btn onClick={pause}>
+              <Pause className="size-3.5" /> Pause
+            </Btn>
           )}
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-separator px-4 py-2">
-        <Button
-          size="small"
-          variant="muted"
+      <div className="gl-trainer-tools">
+        <Btn
           onClick={onReplayFromCurrent}
           disabled={controlsDisabled}
           aria-label="Replay from the current step"
@@ -779,88 +794,81 @@ export function RecordingView() {
               wear a different glyph in the two trainers. Here a text label
               disambiguates it from Pause/Resume; in the panel nothing does. */}
           <RotateCcw className="size-3.5" /> Replay from current step
-        </Button>
-        {replayStatus ? (
-          <Text variant="small" color="secondary" className="shrink-0">
-            {replayStatus}
-          </Text>
-        ) : null}
-        <Button
-          size="small"
-          variant="muted"
+        </Btn>
+        {replayStatus ? <span className="gl-note shrink-0">{replayStatus}</span> : null}
+        <Btn
           onClick={openAssertMenu}
           disabled={controlsDisabled}
           title="Add an assertion step by picking an element in the browser"
         >
           {state.assertMode ? ASSERT_LABEL[state.assertMode] : "New Assertion"}
           <ChevronDown className="size-3.5" />
-        </Button>
-        <SegmentedControl
-          size="small"
+        </Btn>
+        {/* The theme's `Segmented`, which is plain buttons with `aria-pressed`
+            rather than a Radix control: `fireEvent.click` works on it, so the
+            hard/soft choice can be driven in a test instead of asserted at the
+            IPC layer. Its active item is neutral, like every selection here. */}
+        <Segmented
+          label="Assertion strictness"
           value={soft ? "soft" : "hard"}
-          onValueChange={onSoftChange}
-          disabled={controlsDisabled}
-        >
-          <SegmentedControlItem
-            value="hard"
-            title="Hard — a failed assertion stops the test run immediately. Use for conditions the test depends on."
-          >
-            Hard
-          </SegmentedControlItem>
-          <SegmentedControlItem
-            value="soft"
-            title="Soft — a failed assertion is reported but the run continues. Use for non-critical checks."
-          >
-            Soft
-          </SegmentedControlItem>
-        </SegmentedControl>
+          onChange={(v) => onSoftChange(v)}
+          options={[
+            {
+              value: "hard",
+              label: "Hard",
+              disabled: controlsDisabled,
+              title:
+                "Hard — a failed assertion stops the test run immediately. Use for conditions the test depends on.",
+            },
+            {
+              value: "soft",
+              label: "Soft",
+              disabled: controlsDisabled,
+              title:
+                "Soft — a failed assertion is reported but the run continues. Use for non-critical checks.",
+            },
+          ]}
+        />
         {state.assertMode ? (
           <>
-            <Text variant="small" color="blue" className="shrink-0">
-              Click an element in the browser…
-            </Text>
-            <Button
-              iconOnly
-              variant="transparent"
-              size="small"
+            {/* CYAN, not the SDK's blue. The palette declares cyan as
+                "running / live / focus", and this line is exactly that: the app
+                is waiting on the user to click something in the other window. */}
+            <span className="gl-trainer-prompt shrink-0">Click an element in the browser…</span>
+            <button
+              type="button"
+              className="gl-icon-btn"
               onClick={() => setAssert(null)}
               aria-label="Cancel assertion"
             >
-              <X className="size-4" />
-            </Button>
+              <X className="size-3.5" />
+            </button>
           </>
         ) : null}
 
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          <Button
-            size="small"
-            variant="muted"
-            onClick={openAddStepMenu}
-            disabled={controlsDisabled}
-          >
+          <Btn onClick={openAddStepMenu} disabled={controlsDisabled}>
             <Plus className="size-3.5" /> Add step
-          </Button>
-          <Button
-            size="small"
-            variant="muted"
-            onClick={() => setAiOpen(true)}
-            disabled={controlsDisabled}
-          >
+          </Btn>
+          {/* `ai`, the holo border. AI is not an outcome, so it gets a
+              treatment rather than a colour — and this is the one button in the
+              row that hands the job to a model. */}
+          <Btn tone="ai" onClick={() => setAiOpen(true)} disabled={controlsDisabled}>
             <Wand2 className="size-3.5" /> AI steps
-          </Button>
+          </Btn>
         </div>
       </div>
 
       {state.refineMode ? (
-        <div className="flex items-center gap-2 border-b border-separator bg-accent/5 px-4 py-2">
-          <Crosshair className="size-4 text-accent" />
-          <Text variant="small" color="blue" className="min-w-0">
+        <div className="gl-notice gl-trainer-refine">
+          <Crosshair className="size-4 shrink-0" style={{ color: TONE.cyan }} />
+          <span className="min-w-0">
             Refine selector active — hover a component in the browser and click it to capture its
             selector. The page won’t respond to clicks.
-          </Text>
-          <Button size="small" variant="transparent" className="ml-auto" onClick={endRefine}>
-            <X className="size-4" /> Cancel
-          </Button>
+          </span>
+          <Btn className="ml-auto shrink-0" onClick={endRefine}>
+            <X className="size-3.5" /> Cancel
+          </Btn>
         </div>
       ) : null}
 

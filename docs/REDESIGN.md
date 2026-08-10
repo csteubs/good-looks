@@ -1,12 +1,13 @@
 # The indie redesign — an implementation plan
 
-**Status: Phase A is done; Phase B is in progress.** A1–A5 are landed, and so
+**Status: Phase A is done; Phase B is nearly done.** A1–A5 are landed, and so
 are **B1 (Home)**, **B2 (Heals)**, **B3 (Batch)**, **B4 (Settings)**, **B5a
-(Test detail, parity)** and **B7 (Stats)** — see the ✅ marks in §4, §5 and §8.3.
-The app's frame is the redesign, so are the five components every screen embeds,
-and so are six of the nine screens. **Three still carry the old chrome** (B6,
-B8, B9), one PR each, plus **B5b** (the five non-failure run-state summaries,
-Phase C §6.1). Where the rest of this says "would", it means would.
+(Test detail, parity)**, **B6 (Recorder)** and **B7 (Stats)** — see the ✅ marks
+in §4, §5 and §8.3. The app's frame is the redesign, so are the five components
+every screen embeds, and so are seven of the nine screens. **Two still carry the
+old chrome** (B8 Visual, B9 AI debug), one PR each, plus **B5b** (the five
+non-failure run-state summaries, Phase C §6.1). Where the rest of this says
+"would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -581,7 +582,7 @@ had no way to be looked at outside a packaged build on a Mac. The preview bridge
 gained a push bus and a scripted, fixture-determined run; `?test=t-login` is now
 a stable address for the failed console path.
 
-### B6. Recorder — `recording-view.tsx` + `cookies-panel.tsx` + `add-step-dialog.tsx`
+### B6. Recorder — `recording-view.tsx` + `cookies-panel.tsx` + `add-step-dialog.tsx` ✅ **Reskin done, 2026-08-10**
 
 1,084 lines. The redesign's version is close to what exists (status row, tools,
 step list, three-tab console) with three changes:
@@ -597,6 +598,29 @@ step list, three-tab console) with three changes:
 Retiring `add-step-dialog.tsx` for an inline composer removes 1,170 lines and a
 modal. Worth doing, but it is a behaviour change — keep it in Phase C (§6.2) and
 reskin the existing dialog in B6.
+
+**Shipped 2026-08-10, the reskin half.** ✅ The session-state chip, the tools
+row, the refine banner and the three-tab console are on the theme layer. Two
+things in it are more than restyling. The state chip: `Recording` was the SDK's
+`error` variant — RED, the colour this palette spends on a failed run — on the
+one screen where nothing has run yet; Recording / Editing / Replaying / Running
+now take the holo `running` treatment and Paused goes neutral, because none of
+them is an outcome. And Hard/Soft moved to the theme's `Segmented`, which is
+plain buttons with `aria-pressed` rather than a pointer-down Radix control, so
+the choice is assertable in a test for the first time.
+
+Still Phase C, and deliberately: the four **`ToolTile`s**, the **inline composer**
+that replaces the 1,170-line add-step modal, the **assertion bottom sheet**, and
+`InsertGap` between every pair of steps (the existing `CursorGap` already covers
+the cursor half of that). The tab strip's rules moved from `.gl-detail-tabs` to
+`.gl-tabs` in `shared.css` when this screen became their second consumer —
+that is the rule the four-stylesheet split states, applied.
+
+One thing B6 needed that the plan did not anticipate: **the trainer had no
+address in the browser preview.** `RootShell` swaps the outlet for
+`RecordingView` only while `state.recording`, and nothing in a tab can make that
+true, so a fifth of the app's UI could not be looked at outside a packaged
+build. `?view=recorder` reports a live session over a fixture test's steps.
 
 ### B7. Stats — `stats-view.tsx` + `flake-panel.tsx` + `suite-cost-panel.tsx` + `step-health-panel.tsx` + `divergence-panel.tsx`
 

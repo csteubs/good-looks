@@ -689,7 +689,7 @@ export function TestDetailView() {
         const value = tab === "steps" && !showSteps ? "script" : (tab ?? (showSteps ? "steps" : "script"));
         return (
           <TabsRoot value={value} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
-            <div className="gl-detail-tabs">
+            <div className="gl-tabs gl-detail-tabs">
               <Tabs variant="filled" size="large">
                 {showSteps ? <TabsTrigger value="steps">Steps ({test.steps.length})</TabsTrigger> : null}
                 <TabsTrigger value="script">Script</TabsTrigger>

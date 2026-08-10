@@ -16,6 +16,36 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — The trainer stops being red, and the tab strip becomes shared furniture
+
+**B6 of the redesign (REDESIGN §B6), the reskin half.** The inline composer, the `ToolTile`s and the assertion bottom sheet stay in Phase C — those are behaviour changes, and the plan says so. Three decisions here.
+
+**"Recording" was red, and it should never have been.** The SDK's `Status variant="error"` drew it, which in this palette is the colour spent on a failed run — on the one screen in the app where nothing has run yet and nothing can fail. Recording, Editing, Replaying and Running are all IN FLIGHT, which is precisely what `StatusChip`'s holo `running` treatment means: a treatment says "this is not a result". Paused and the two loading states go neutral — real, not live, not outcomes. That leaves the four in-flight states distinguished by their WORD rather than their colour, which is the split the palette explicitly asks for and which the word was already carrying anyway.
+
+**Hard/Soft moved off the SDK's `SegmentedControl`, and the reason is testability rather than looks.** That one is Radix-backed and activates on pointer-down — the documented trap in this repo where `fireEvent.click` leaves the control untouched and the assertion then reports "0 calls", reading as a dead handler rather than the wrong event. The theme's `Segmented` is plain buttons with `aria-pressed`, so the choice is assertable at the component level for the first time; before this, the only place hard-vs-soft could be pinned was the IPC layer. Two tests now cover it, including the live case where the strictness has to re-arm an assertion already being picked — the one where being wrong records a hard assertion the user asked to be soft.
+
+**The tab strip moved to `shared.css`.** It was `.gl-detail-tabs` in `screens.css`, written for the test-detail screen; the trainer's Console/Step details/Cookies is the second consumer, and the four-stylesheet split's own rule is that a rule a second screen wants is by definition not one screen's own. It is still targeted by `role` + `data-state` — the documented exception, same as the settings switch — and still scoped under an opted-in `gl-*` ancestor.
+
+**Also: the trainer had no address in the browser preview.** `RootShell` swaps the whole outlet for `RecordingView` only while `state.recording`, and nothing in a browser tab can make that true — there is no training window to record. So a fifth of this app's UI could not be looked at outside a packaged build on a Mac, which is the same gap B4 found for Settings and B5a found for a finished run. `?view=recorder` reports a live session over a fixture test's steps. `pageReady: true` is part of that and not a detail: the view renders a "Loading page…" chip and disables every control until it is, so a half-seeded state would show the trainer's inert shell and nothing else — which is why there is a test for it.
+
+### 2026-08-10 — A bad merge nested a whole screen's CSS inside a tab, and nothing caught it
+
+**A defect I introduced and shipped**, found while starting B6. Recording it because the interesting part is not the mistake — it is that five independent guards had nothing to say about it.
+
+**What happened.** Resolving B5a's conflict with B7 (Stats), `screens.css` had two conflict hunks whose boundaries fell *inside* CSS rules. I resolved both by keeping each side in turn, which is right for an append and wrong here: the concatenation left `.gl-detail-tabs [role="tab"] {` open, dropped the entire Stats section inside it, and — because `.gl-stats-label` and that tab rule declare almost the same six properties — spliced their bodies together so convincingly that the result read as ordinary code.
+
+**Why everything passed.** The merged tree was green on `lint`, `type-check`, 50 checks, 2,195 tests and `build`, and I merged it on that evidence.
+
+- **It is valid CSS.** Nesting is supported, so the build succeeded and emitted a stylesheet.
+- **`check:renderer-classes` passed**, and this is the instructive one. Its oracle asks whether a selector containing the class appears in the emitted sheet. `.gl-stats-head` *did* appear — nested, applying to a `.gl-stats-head` inside a tab, which never exists. The audit was answering "is this name in the file" when the question is "does this name paint".
+- **Nothing else can see CSS at all.** jsdom runs with `css: false`, so no component test has a cascade to ask; lint and type-check see strings.
+
+The only symptom was the Stats screen rendering unstyled — which reads as "the reskin didn't land", not as a merge artifact. I found it by accident, exactly as the three prior instances of this bug family were found.
+
+**The fix, and the guard.** `screens.css` was rebuilt from the two clean parents rather than hand-patched: both sides' sections are pure appends over an identical 926-line base, so reconstructing is exact where repairing a splice is guesswork. The new assertion is that **no theme stylesheet nests a style rule inside another style rule** — at-rule nesting (`@media`, `@supports`, `@keyframes`) is fine and used, so the walk tracks which kind of block it is inside rather than banning depth. Verified against the broken file: it names the rule and the line.
+
+**The lesson worth keeping is about the oracle, not the merge.** An audit that matches text in the output can only prove a name is *present*. Presence and effect are different questions, and the gap between them is exactly where a valid-but-inert stylesheet lives. That is also why the guard is source-level: the emitted sheet has already flattened the nesting away, so the only place the mistake is visible is the file somebody wrote.
+
 ### 2026-08-10 — Step health and the run history page at 25
 
 Step health rendered every row the query returned — 200 of them on a suite with real history, each two lines tall with six numeric columns. A table nobody can reach the bottom of is one nobody reads the top of either, so it paged, and the run history moved to the same size while it was in hand.

@@ -472,3 +472,51 @@
   line-height: 1.5;
   color: var(--gl-tx-2);
 }
+
+/* ── Tab strip ─────────────────────────────────────────────────────────
+   Every tab bar in the app: the test detail screen's Steps/Script/… and the
+   trainer's Console/Step details/Cookies. It lives HERE and not in
+   `screens.css` because a rule a SECOND screen wants is by definition not one
+   screen's own — that is the entire split between these two files, and it is
+   why this moved out of `.gl-detail-tabs` in B6.
+
+   TARGETED BY ROLE, the documented exception (see the settings switch and the
+   run-option checkbox). `Tabs` is a Radix primitive inside `@ui` styled with
+   Tailwind strings this file has no handle on, and threading a class prop
+   through every trigger would be a worse trade than one selector. `role` and
+   `data-state` are the primitive's public contract — what every test in this
+   repo already drives it through. Scoped under `.gl-tabs`, so nothing outside
+   an opted-in strip is touched. */
+.gl-tabs [role="tablist"] {
+  height: 26px;
+  border-radius: 0;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  padding: 0;
+}
+
+.gl-tabs [role="tab"] {
+  border-radius: 0;
+  padding-inline: 10px;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  box-shadow: none;
+}
+
+.gl-tabs [role="tab"]:hover {
+  color: var(--gl-tx-2);
+}
+
+/* The selected tab is NEUTRAL, like every other selection in this design —
+   white at low alpha plus a ring, no hue. A tab strip is the one place it is
+   tempting to reach for the accent, and it sits directly above a step list
+   whose rails are reporting outcomes. */
+.gl-tabs [role="tab"][data-state="active"] {
+  background: var(--gl-sel-bg);
+  color: var(--gl-tx-1);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}

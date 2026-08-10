@@ -75,6 +75,16 @@ export interface PreviewDiagnostics {
   calls: string[];
 }
 
+/** Is the preview being asked to show the TRAINER?
+ *
+ *  Read from the URL each time rather than captured once, so the same bridge
+ *  answers correctly no matter when a view asks. Dev-only by construction —
+ *  this module is never bundled into the app (see the header, and the
+ *  deliberate `preview.html` filename). */
+function recorderPreview(): boolean {
+  return new URLSearchParams(window.location.search).get("view") === "recorder";
+}
+
 /** Mutable copies, so the preview behaves like an app with state: renaming a
  *  test or deleting a tag persists for the session. Reloading resets it, which
  *  is the right amount of persistence for a preview. */
@@ -530,10 +540,36 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     // ── Recorder ─────────────────────────────────────────────────────────
     // Nothing can actually record here; reporting an idle recorder is honest
     // and keeps the trainer's entry points in their normal state.
-    "recorder:getSteps": () => [],
+    //
+    // `?view=recorder` IS THE EXCEPTION, and it exists for the same reason
+    // `?view=settings` does: `RootShell` swaps the whole outlet for
+    // `RecordingView` only while `state.recording`, and nothing in a browser
+    // tab can make that true — there is no training window to record. So the
+    // trainer, which is a fifth of this app's UI, had no address at all. The
+    // flag reports a recorder mid-session over a fixture test's steps; it does
+    // NOT pretend to capture, and the banner still says so.
+    "recorder:getSteps": () => (recorderPreview() ? structuredClone(TESTS[0].steps) : []),
     "recorder:getDebugLogs": () => [],
     "recorder:listCookies": () => [],
-    "recorder:getState": (): RecorderState => ({
+    "recorder:getState": (): RecorderState =>
+      recorderPreview()
+        ? {
+            recording: true,
+            paused: false,
+            assertMode: null,
+            stepCount: TESTS[0].steps.length,
+            testId: TESTS[0].id,
+            url: TESTS[0].url,
+            name: TESTS[0].name,
+            editing: false,
+            assertSoft: false,
+            cursor: TESTS[0].steps.length,
+            refineMode: false,
+            replaying: false,
+            pageReady: true,
+            loading: false,
+          }
+        : {
       recording: false,
       paused: false,
       assertMode: null,
@@ -548,7 +584,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       replaying: false,
       pageReady: false,
       loading: false,
-    }),
+          },
 
     // ── Batch ────────────────────────────────────────────────────────────
     "batch:list": (): BatchRecord[] => [],
