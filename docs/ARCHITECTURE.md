@@ -421,7 +421,15 @@ The nine screens inside the shell are still the old chrome until Phase B.
     an unstyled div, which is `bg-muted` again in our namespace. Both passes use
     the same oracle (`.foo` OR `\:foo`, since a class may legitimately be used
     only behind a variant), and the second carries a liveness assertion so a
-    renamed prefix cannot leave it auditing nothing and reporting a clean pass. `check:theme-tokens` below covers `--gl-*`
+    renamed prefix cannot leave it auditing nothing and reporting a clean pass.
+    **A third pass, source-level, asserts no theme stylesheet nests a style
+    rule inside another style rule.** Both passes above ask whether a name is
+    PRESENT in the emitted sheet, and presence is not effect: a bad merge
+    nested the whole Stats section inside `.gl-detail-tabs [role="tab"]`,
+    which is valid CSS, built clean, emitted every `.gl-stats-*` selector —
+    and applied none of them (DECISIONS 2026-08-10). At-rule nesting
+    (`@media`, `@supports`, `@keyframes`) is legitimate and used, so the walk
+    tracks the kind of block it is inside rather than banning depth. `check:theme-tokens` below covers `--gl-*`
     only — the redesign's own layer — which is why it did not see the twenty-
     eight SDK class names and fourteen custom properties the port left dangling
     (DECISIONS 2026-08-09). It also pins, by value, that `text-secondary` is the

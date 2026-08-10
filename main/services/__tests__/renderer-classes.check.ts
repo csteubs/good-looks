@@ -213,6 +213,74 @@ assert(
   assert(seen > 50, `found ${seen} gl-* class uses to judge (a small number means the pattern rotted)`);
 }
 
+// ── 1c. No style rule nested inside another style rule ────────────────
+//
+// THIS IS THE HOLE THAT SHIPPED A DEAD SCREEN. A bad three-way merge spliced
+// the Stats section INSIDE `.gl-detail-tabs [role="tab"] { … }`, so every
+// `.gl-stats-*` rule became a descendant of a tab. Nothing caught it:
+//
+//   • It is VALID CSS. Nesting is supported, so the build succeeded.
+//   • The audit above passed, because it asks whether a selector containing
+//     the class appears in the emitted sheet — and it did, nested.
+//   • The type-checker, lint and 2,195 tests have no opinion about CSS at all.
+//
+// The only symptom was a screen rendering unstyled, which reads as "the reskin
+// was not applied" rather than as a merge artifact.
+//
+// So: in THIS project's stylesheets, a style rule never nests inside another
+// style rule. Nesting under an AT-rule is fine and used — `@media`,
+// `@supports`, `@keyframes`, `@font-face` — so the walk below tracks which kind
+// of block it is inside rather than banning depth outright.
+{
+  /** Block kinds, innermost last. `true` means "this block is a style rule". */
+  function nestedRuleIn(src: string): { line: number; selector: string } | null {
+    const clean = stripComments(src);
+    const stack: boolean[] = [];
+    let buf = "";
+    let line = 1;
+    for (const ch of clean) {
+      if (ch === "\n") line++;
+      if (ch === "{") {
+        const head = buf.trim();
+        const isAtRule = head.startsWith("@");
+        // A style rule opening while already inside a style rule is the bug.
+        if (!isAtRule && stack.length > 0 && stack[stack.length - 1]) {
+          return { line, selector: head.slice(0, 60) };
+        }
+        stack.push(!isAtRule);
+        buf = "";
+        continue;
+      }
+      if (ch === "}") {
+        stack.pop();
+        buf = "";
+        continue;
+      }
+      if (ch === ";") {
+        buf = "";
+        continue;
+      }
+      buf += ch;
+    }
+    return null;
+  }
+
+  let audited = 0;
+  const nested: string[] = [];
+  for (const file of cssFiles) {
+    if (!file.includes("/theme/")) continue;
+    audited++;
+    const hit = nestedRuleIn(readFileSync(file, "utf-8"));
+    if (hit) nested.push(`${relative(root, file)}:${hit.line} — \`${hit.selector}\` opens inside another rule`);
+  }
+  assert(audited > 0, `found ${audited} theme stylesheets to audit (zero means the path filter rotted)`);
+  for (const n of nested) console.error(`     ${n}`);
+  assert(
+    nested.length === 0,
+    "no theme stylesheet nests a style rule inside another style rule (a bad merge does this, it stays valid CSS, and the nested rules silently apply to nothing)",
+  );
+}
+
 // ── 2. Custom properties ───────────────────────────────────────────────
 
 const declared = new Set<string>();

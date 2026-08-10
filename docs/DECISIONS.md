@@ -16,6 +16,24 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — A bad merge nested a whole screen's CSS inside a tab, and nothing caught it
+
+**A defect I introduced and shipped**, found while starting B6. Recording it because the interesting part is not the mistake — it is that five independent guards had nothing to say about it.
+
+**What happened.** Resolving B5a's conflict with B7 (Stats), `screens.css` had two conflict hunks whose boundaries fell *inside* CSS rules. I resolved both by keeping each side in turn, which is right for an append and wrong here: the concatenation left `.gl-detail-tabs [role="tab"] {` open, dropped the entire Stats section inside it, and — because `.gl-stats-label` and that tab rule declare almost the same six properties — spliced their bodies together so convincingly that the result read as ordinary code.
+
+**Why everything passed.** The merged tree was green on `lint`, `type-check`, 50 checks, 2,195 tests and `build`, and I merged it on that evidence.
+
+- **It is valid CSS.** Nesting is supported, so the build succeeded and emitted a stylesheet.
+- **`check:renderer-classes` passed**, and this is the instructive one. Its oracle asks whether a selector containing the class appears in the emitted sheet. `.gl-stats-head` *did* appear — nested, applying to a `.gl-stats-head` inside a tab, which never exists. The audit was answering "is this name in the file" when the question is "does this name paint".
+- **Nothing else can see CSS at all.** jsdom runs with `css: false`, so no component test has a cascade to ask; lint and type-check see strings.
+
+The only symptom was the Stats screen rendering unstyled — which reads as "the reskin didn't land", not as a merge artifact. I found it by accident, exactly as the three prior instances of this bug family were found.
+
+**The fix, and the guard.** `screens.css` was rebuilt from the two clean parents rather than hand-patched: both sides' sections are pure appends over an identical 926-line base, so reconstructing is exact where repairing a splice is guesswork. The new assertion is that **no theme stylesheet nests a style rule inside another style rule** — at-rule nesting (`@media`, `@supports`, `@keyframes`) is fine and used, so the walk tracks which kind of block it is inside rather than banning depth. Verified against the broken file: it names the rule and the line.
+
+**The lesson worth keeping is about the oracle, not the merge.** An audit that matches text in the output can only prove a name is *present*. Presence and effect are different questions, and the gap between them is exactly where a valid-but-inert stylesheet lives. That is also why the guard is source-level: the emitted sheet has already flattened the nesting away, so the only place the mistake is visible is the file somebody wrote.
+
 ### 2026-08-10 — Test detail: status becomes a rail, the log becomes a drawer, and the preview learns to finish a run
 
 **B5a of the redesign (REDESIGN §B5), the fifth reskinned screen and the most-visited one.** Parity only — the five non-failure run-state summaries are B5b. Four decisions.
