@@ -670,6 +670,17 @@ function CapacityNotice({
 
 // ── Full-run debug dialog ────────────────────────────────────────────
 
+/** The follow-up send control's hover label, and its accessible name.
+ *
+ *  Exported because it is the ONLY name that control has: it is icon-only, so
+ *  there is no visible text for a test to find, and the hover label itself
+ *  cannot be opened under jsdom. Asserting this constant is what keeps the two
+ *  in step — see the composer below for why they must be the same string.
+ *
+ *  Names the key too, because the composer sends on Enter and a control with no
+ *  label was the only place that was written down. */
+export const SEND_FOLLOW_UP_LABEL = "Send follow-up (Enter)";
+
 export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
   const store = useAiDebug();
   const { content, reasoning } = useAiDebugContent(sessionKey);
@@ -1029,10 +1040,25 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
           ) : (
             <>
               {status === "done" && content && !readOnly ? (
-                <div className="flex items-end gap-2">
+                <div className="relative">
+                  {/* Send lives INSIDE the box, as a bare icon.
+                      `pr-10` on the textarea is what makes that safe — it
+                      reserves the icon's column so a long line runs out of room
+                      before it runs underneath the glyph. Without it the overlap
+                      is invisible until someone types enough to reach it.
+
+                      A raw <button>, not `@ui`'s Button: every variant of that
+                      carries chrome this deliberately has none of —
+                      `transparent` still paints `hover:bg-muted/70`. The cost of
+                      opting out is that `cursor-pointer` has to be asked for by
+                      hand, because `body` AND Tailwind's preflight both set
+                      `cursor: default` on buttons (the bug behind
+                      check:clickable-chrome). Disabled gets the arrow back
+                      rather than `pointer-events-none`, so the hover label still
+                      answers "why can't I send?". */}
                   <Textarea
                     size="medium"
-                    className="flex-1 min-h-0 resize-none"
+                    className="min-h-0 resize-none pr-10"
                     placeholder="The model asked for more info — add details here and send a follow-up."
                     value={draft.followUp}
                     onChange={(e) => setDraft({ followUp: e.target.value })}
@@ -1043,14 +1069,16 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                       }
                     }}
                   />
-                  <Button
-                    size="small"
-                    variant="accent"
+                  <button
+                    type="button"
+                    aria-label={SEND_FOLLOW_UP_LABEL}
+                    title={SEND_FOLLOW_UP_LABEL}
                     disabled={!draft.followUp.trim() || status !== "done"}
                     onClick={() => void sendFollowUp()}
+                    className="absolute bottom-1.5 right-1.5 cursor-pointer rounded-sm p-0.5 text-accent outline-none transition-opacity hover:opacity-75 focus-visible:ring-2 focus-visible:ring-focus-ring disabled:cursor-default disabled:text-tertiary disabled:opacity-50"
                   >
-                    <Send className="size-3.5" /> Send
-                  </Button>
+                    <Send className="size-5" />
+                  </button>
                 </div>
               ) : null}
               {/* Both halves are needed and they do different jobs.

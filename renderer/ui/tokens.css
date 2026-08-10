@@ -29,6 +29,71 @@
   --warning: hsl(38 92% 46%);
   --selection: hsl(211 100% 50% / 0.14);
   --overlay: hsl(240 6% 10% / 0.32);
+
+  /* ── SDK-compatibility names ──────────────────────────────────────────
+     The 36 ported views were deliberately not rewritten (PORTING.md), so they
+     still address the SDK's vocabulary: a text RAMP (`text-primary/secondary/
+     tertiary`), a STATUS family (`support-*`), named SURFACES (`panel`,
+     `well`, `control-subtle`), and Radix numeric steps (`blue-9`, `red-9`).
+     None of those names came across with the component library, so every one
+     of them styled NOTHING — see the block in styles.css for what that looked
+     like on screen and why nothing caught it.
+
+     Defined in terms of the semantic tokens above rather than as fresh
+     literals, so light/dark keeps flipping in one place and these can never
+     drift away from the palette they are supposed to be part of. */
+
+  /* Status. `support-*` is the SDK's spelling of the same four outcomes the
+     redesign calls --gl-phos/red/amber (renderer/theme/tokens.css). Both
+     vocabularies are live during the redesign; these are the one the ported
+     views speak. */
+  --support-green: var(--success);
+  --support-red: var(--destructive);
+  --support-orange: var(--warning);
+  --support-yellow: hsl(48 92% 42%);
+  /* Alpha steps, spelled the SDK's way (`-10` = 10%). Used as row tints behind
+     text, so they are mixed toward transparent rather than toward the
+     background — a tint over a selected row has to let the selection show. */
+  --support-green-10: color-mix(in srgb, var(--support-green) 10%, transparent);
+  --support-red-10: color-mix(in srgb, var(--support-red) 10%, transparent);
+  --support-green-40: color-mix(in srgb, var(--support-green) 40%, transparent);
+  --support-red-40: color-mix(in srgb, var(--support-red) 40%, transparent);
+  --accent-10: color-mix(in srgb, var(--accent) 10%, transparent);
+
+  /* Surfaces and lines. */
+  --panel: var(--card);
+  --well: hsl(240 5% 97%);
+  --separator: var(--border);
+  --control-subtle: var(--muted);
+  --fill-secondary: var(--secondary);
+  --background-secondary: var(--muted);
+  --on-accent: var(--accent-foreground);
+  --focus-ring: var(--ring);
+  --border-primary: hsl(240 5% 70%);
+  --blue-9: var(--accent);
+  --red-9: var(--destructive);
+
+  /* The text ramp. `--text-tertiary` is a THIRD step, not a re-spelling of
+     secondary: the views use all three on one surface and the hierarchy is the
+     whole point of having them. */
+  --text-primary: var(--foreground);
+  --text-secondary: var(--muted-foreground);
+  --text-tertiary: color-mix(in srgb, var(--muted-foreground) 75%, transparent);
+
+  /* Syntax highlighting for the Script view. Purpose-built for code, and
+     deliberately NOT the status colours: a keyword tinted the same green as a
+     passing step makes colour stop meaning outcome. */
+  --color-token-primary: hsl(280 60% 45%);
+  --color-token-secondary: hsl(211 80% 45%);
+  --color-token-string: hsl(142 55% 33%);
+  --color-token-highlight: hsl(28 85% 42%);
+  --color-token-tertiary: color-mix(in srgb, var(--muted-foreground) 85%, transparent);
+  /* Read by script-view's overlay and visual-view's image ring under exactly
+     these names. */
+  --color-text-primary: var(--text-primary);
+  --color-border-separator: var(--separator);
+  --color-positive-subtle: color-mix(in srgb, var(--success) 12%, transparent);
+  --color-negative-subtle: color-mix(in srgb, var(--destructive) 12%, transparent);
 }
 
 .dark {
@@ -53,4 +118,21 @@
   --warning: hsl(38 92% 54%);
   --selection: hsl(211 100% 55% / 0.22);
   --overlay: hsl(240 8% 4% / 0.5);
+
+  /* Only the SDK-compat names carrying a LITERAL need a dark value. The rest
+     point at a semantic token and re-resolve on their own: a custom property is
+     substituted against the element's own cascade, so `--support-green:
+     var(--success)` declared on :root already yields the dark `--success` for
+     anything inside `.dark`. Repeating them here would be four more places to
+     forget. */
+  --support-yellow: hsl(48 95% 60%);
+  --well: hsl(240 6% 9%);
+  --border-primary: hsl(240 5% 46%);
+
+  /* Code colours lift in dark — the light set is tuned against white and goes
+     muddy on a near-black panel. */
+  --color-token-primary: hsl(280 85% 78%);
+  --color-token-secondary: hsl(200 90% 70%);
+  --color-token-string: hsl(142 75% 68%);
+  --color-token-highlight: hsl(35 95% 65%);
 }

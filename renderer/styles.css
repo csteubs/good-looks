@@ -49,7 +49,20 @@
   --color-ring: var(--ring);
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
-  --color-secondary: var(--secondary);
+  /* NO `--color-secondary` here, deliberately, and it must not come back.
+   *
+   * Tailwind derives a whole utility FAMILY from one colour key, and this app
+   * needs the two halves of that family to be different colours: `bg-secondary`
+   * wants the secondary SURFACE, `text-secondary` wants the middle step of the
+   * text ramp. With the key present, Tailwind emitted
+   * `.text-secondary{color:var(--secondary)}` — a panel fill used as text
+   * colour, 1.4:1 against the background, illegible across 62 call sites and
+   * looking for all the world like a deliberately dim label.
+   *
+   * The nine surface call sites now say `fill-secondary` (same value, own key),
+   * which leaves `text-secondary` free for the `@utility` below. Overriding it
+   * in the cascade instead was tried and does NOT work: a theme-generated
+   * utility beats a same-named `@utility`, so the rule simply never applied. */
   --color-secondary-foreground: var(--secondary-foreground);
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
@@ -60,6 +73,96 @@
      identical to every other one — silent, and invisible to every test that
      does not assert on the class itself. */
   --color-list-selection: var(--selection);
+
+  /* ── The rest of the SDK's colour vocabulary ──────────────────────────
+     The entry above was the FIRST of these to be noticed, one class at a time.
+     There were twenty-eight more, and they are here now because they were
+     found together rather than one accidental discovery at a time.
+     `renderer/ui/tokens.css` says what they mean; this block is what makes
+     Tailwind emit `bg-`/`text-`/`border-`/`ring-` utilities for them.
+
+     What the gap actually looked like, since none of it threw:
+       - `bg-support-green` / `bg-support-red` are the Stats pass/fail chart.
+         With no rule the bars had a height and no background, so the chart was
+         an empty box with correct axis labels under it — 677 runs of data,
+         nothing drawn, and the legend swatches invisible for the same reason.
+       - `text-support-*` is every status glyph in the app, including the
+         AI-debug icon whose colour CLAUDE.md calls "the whole contract of a
+         minimized job".
+       - `bg-panel`, `bg-well`, `bg-control-subtle`, `border-separator` are the
+         surfaces those panels are made of. A missing background inherits the
+         one behind it, so panels merely looked flat rather than broken.
+     A class that does not exist and one that does are indistinguishable in a
+     `.tsx`, which is why `check:renderer-classes` now compares every class in
+     the renderer against the stylesheet Tailwind actually emits. */
+  --color-support-green: var(--support-green);
+  --color-support-red: var(--support-red);
+  --color-support-orange: var(--support-orange);
+  --color-support-yellow: var(--support-yellow);
+  --color-support-green-10: var(--support-green-10);
+  --color-support-red-10: var(--support-red-10);
+  --color-accent-10: var(--accent-10);
+  --color-panel: var(--panel);
+  --color-well: var(--well);
+  --color-separator: var(--separator);
+  --color-control-subtle: var(--control-subtle);
+  --color-fill-secondary: var(--fill-secondary);
+  --color-background-secondary: var(--background-secondary);
+  --color-on-accent: var(--on-accent);
+  --color-focus-ring: var(--focus-ring);
+  --color-blue-9: var(--blue-9);
+  --color-red-9: var(--red-9);
+}
+
+/* Type scale, as a NON-inline `@theme` on purpose.
+ *
+ * `@theme inline` substitutes a token's value into the utility and emits no
+ * custom property. That is fine for colours nothing reads by hand, but
+ * script-view.tsx sets `lineHeight: "var(--text-mono--line-height)"` in an
+ * inline style — it needs the variable to actually exist at runtime, which only
+ * a plain `@theme` block gives. Declaring `--text-mono` here produces both: the
+ * `text-mono` utility AND the pair of custom properties that file reads. */
+@theme {
+  --text-small: 12px;
+  --text-small--line-height: 1.4;
+  --text-mono: 13px;
+  --text-mono--line-height: 18px;
+}
+
+/* Utilities Tailwind cannot generate from a colour token.
+ *
+ * `text-secondary` is the reason this block exists rather than three more
+ * `--color-*` entries. `--color-secondary` already exists and has to stay: it
+ * is the SURFACE colour behind `bg-secondary`. Tailwind derives every utility
+ * family from one key, so it was also emitting `.text-secondary{color:var(--secondary)}`
+ * — a dark grey panel fill used as TEXT COLOUR, on a dark grey panel. It
+ * resolved, so nothing looked missing; it was simply illegible, at 1.4:1
+ * against the background, across 62 call sites. `text-primary` and
+ * `text-tertiary` had no rule at all and so inherited the foreground, which
+ * left "tertiary" text rendering BRIGHTER than "secondary" text and inverted
+ * the hierarchy the three names exist to express.
+ *
+ * `@utility` rather than plain CSS because five call sites use `hover:text-primary`;
+ * an unlayered rule would win the cascade but would not come with variants. */
+@utility text-primary {
+  color: var(--text-primary);
+}
+@utility text-secondary {
+  color: var(--text-secondary);
+}
+@utility text-tertiary {
+  color: var(--text-tertiary);
+}
+@utility border-primary {
+  border-color: var(--border-primary);
+}
+/* Size AND family: most call sites are a bare `<pre className="text-small-mono">`
+   with no `font-mono` beside it, so the family has to come from here or the
+   run output panel renders proportional. */
+@utility text-small-mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-small);
+  line-height: var(--text-small--line-height);
 }
 
 /* Custom variant so `dark:` utilities key off the .dark class the entry HTML
@@ -140,15 +243,15 @@
 @keyframes step-new-pulse {
   0%,
   100% {
-    outline-color: var(--color-support-green);
+    outline-color: var(--support-green);
   }
   50% {
-    outline-color: var(--color-support-green-40);
+    outline-color: var(--support-green-40);
   }
 }
 
 .step-new {
-  outline: 1px solid var(--color-support-green);
+  outline: 1px solid var(--support-green);
   outline-offset: -1px;
   animation: step-new-pulse 2s ease-in-out infinite;
 }
@@ -185,36 +288,36 @@
  */
 @keyframes step-replay-pass {
   0% {
-    outline-color: var(--color-support-green);
+    outline-color: var(--support-green);
   }
   70% {
-    outline-color: var(--color-support-green);
+    outline-color: var(--support-green);
   }
   100% {
-    outline-color: var(--color-support-green-40);
+    outline-color: var(--support-green-40);
   }
 }
 
 @keyframes step-replay-fail {
   0% {
-    outline-color: var(--color-support-red);
+    outline-color: var(--support-red);
   }
   70% {
-    outline-color: var(--color-support-red);
+    outline-color: var(--support-red);
   }
   100% {
-    outline-color: var(--color-support-red-40);
+    outline-color: var(--support-red-40);
   }
 }
 
 .step-replay-pass {
-  outline: 1px solid var(--color-support-green);
+  outline: 1px solid var(--support-green);
   outline-offset: -1px;
   animation: step-replay-pass 2.5s ease-out 1 forwards;
 }
 
 .step-replay-fail {
-  outline: 1px solid var(--color-support-red);
+  outline: 1px solid var(--support-red);
   outline-offset: -1px;
   animation: step-replay-fail 2.5s ease-out 1 forwards;
 }

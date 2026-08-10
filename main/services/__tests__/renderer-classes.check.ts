@@ -1,0 +1,223 @@
+// Every class the renderer uses actually produces CSS, and every custom
+// property it reads is actually declared.
+//
+// ── WHY THIS EXISTS ────────────────────────────────────────────────────
+// This repo has now shipped the same bug three times.
+//
+//   1. `bg-muted` styled nothing for months (DECISIONS 2026-08-06).
+//   2. The whole `border-token-*` family, likewise (same entry).
+//   3. The port: twenty-eight class names and fourteen custom properties came
+//      across from the SDK's vocabulary with nothing on the other end. The
+//      Stats pass/fail chart drew no bars over 677 runs of data. The Script
+//      view had no syntax highlighting at all. The "this step is new" and
+//      "this step just ran" outlines never drew, because `outline: 1px solid
+//      var(--undeclared)` is invalid at computed-value time and drops the whole
+//      shorthand. And `text-secondary` — 62 call sites — resolved to a PANEL
+//      FILL, giving 1.4:1 contrast that read as a deliberately dim label.
+//
+// All three were found by accident, by a person looking at the screen. Nothing
+// else can find them: an unknown class is not an error, it emits no rule, the
+// element keeps whatever it inherited, and the result looks like a design
+// choice rather than a defect. `lint` sees a string. `type-check` sees a
+// string. jsdom has no cascade to ask (the dom suite runs with `css: false`),
+// so no component test can tell a class that works from one that does not.
+//
+// ── HOW ────────────────────────────────────────────────────────────────
+// THE ORACLE IS THE STYLESHEET TAILWIND ACTUALLY EMITS. Not a list of expected
+// names, and not a reimplementation of Tailwind's resolution rules — either
+// would be a second source of truth that can agree with the code while both are
+// wrong. This builds the renderer and asks the output.
+//
+// Run with: npm run check:renderer-classes
+
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
+
+const root = process.cwd();
+const RENDERER = join(root, "renderer");
+
+let failures = 0;
+
+function assert(condition: boolean, label: string): void {
+  if (!condition) {
+    failures++;
+    console.error(`FAIL ${label}`);
+  } else {
+    console.log(`ok   ${label}`);
+  }
+}
+
+// ── Sources ────────────────────────────────────────────────────────────
+
+function walk(dir: string, match: RegExp, out: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!/node_modules|__tests__/.test(p)) walk(p, match, out);
+    } else if (match.test(entry.name) && !/\.test\./.test(entry.name)) {
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+/** Strip comments before scanning.
+ *
+ *  Not cosmetic: `renderer/theme/tokens.css` explains itself with `var(--gl-x)`
+ *  as a stand-in name, and a checker that reads prose reports a token nobody
+ *  wrote. A check with a false positive in it gets an allowlist, and an
+ *  allowlist is how a check stops being read. */
+function stripComments(src: string): string {
+  return src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
+}
+
+const tsFiles = walk(RENDERER, /\.(ts|tsx)$/);
+const cssFiles = walk(RENDERER, /\.css$/);
+
+// ── Build, and read what Tailwind emitted ──────────────────────────────
+
+const outDir = mkdtempSync(join(tmpdir(), "glaze-renderer-classes-"));
+let css = "";
+try {
+  execFileSync(
+    "npx",
+    ["vite", "build", "--logLevel", "error", "--outDir", outDir, "--emptyOutDir"],
+    { cwd: root, stdio: ["ignore", "ignore", "pipe"], encoding: "utf-8" },
+  );
+  const assets = join(outDir, "assets");
+  const sheets = readdirSync(assets).filter((f) => f.endsWith(".css"));
+  // Built into a FRESH directory every run. Vite hashes filenames and does not
+  // clear stale ones, so auditing a reused `build/` can read a stylesheet from
+  // an older run — which during this investigation reported a fix as not having
+  // worked when it had.
+  assert(sheets.length === 1, `exactly one stylesheet was emitted (got ${sheets.length})`);
+  css = sheets.map((f) => readFileSync(join(assets, f), "utf-8")).join("\n");
+  assert(css.length > 0, "the emitted stylesheet is not empty");
+} catch (err) {
+  console.error("FAIL could not build the renderer to audit its CSS");
+  console.error(String(err));
+  process.exit(1);
+} finally {
+  rmSync(outDir, { recursive: true, force: true });
+}
+
+// ── 1. Classes ─────────────────────────────────────────────────────────
+
+/** A class is "emitted" if it appears in a selector — bare (`.bg-panel`) or
+ *  behind escaped variant prefixes (`.focus-visible\:ring-focus-ring`). A class
+ *  used ONLY with a variant is perfectly fine, so anchoring on `.` alone would
+ *  report working code. */
+const emitted = new Map<string, boolean>();
+function isEmitted(cls: string): boolean {
+  const hit = emitted.get(cls);
+  if (hit !== undefined) return hit;
+  const escaped = cls.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const found = new RegExp(`(?:\\.|\\\\:)${escaped}(?![a-zA-Z0-9_-])`).test(css);
+  emitted.set(cls, found);
+  return found;
+}
+
+/** Colour- and type-bearing utility prefixes — the families where a missing
+ *  token is invisible. `(?<![\w-])` is load-bearing: without it `text-bottom`
+ *  matches inside `align-text-bottom`, which is a real class. */
+const UTILITY =
+  /(?<![\w-])(?:bg|text|border|ring|fill|stroke|outline|divide|placeholder|accent|caret|shadow|from|to|via|decoration)(?:-[trblxyse])?-[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?![\w-])/g;
+
+/** Corroboration that a string literal is a class list at all, so a CSS
+ *  property name in `transition-[border-color,box-shadow]` or a sentence in a
+ *  prompt is not mistaken for one. */
+const LOOKS_LIKE_CLASSES =
+  /(?<![\w-])(?:flex|grid|rounded|absolute|relative|inline-flex|truncate|shrink-0|w-full|h-full|min-w-0|items-center|justify-between|overflow-hidden|whitespace-pre-wrap|px-\d|py-\d|p-\d|gap-\d|size-\d|mt-\d|ml-\d)(?![\w-])/;
+
+const missingClasses = new Map<string, string[]>();
+for (const file of tsFiles) {
+  const src = stripComments(readFileSync(file, "utf-8"));
+  for (const m of src.matchAll(/"([^"\n]*)"|'([^'\n]*)'|`([^`]*)`/g)) {
+    let literal = m[1] ?? m[2] ?? m[3] ?? "";
+    // Arbitrary values carry raw CSS (`transition-[border-color,box-shadow]`,
+    // `text-[var(--color-token-string)]`). Their INSIDES are not class names.
+    literal = literal.replace(/\[[^\]]*\]/g, "[]");
+    const tokens = [...literal.matchAll(UTILITY)].map((x) => x[0]);
+    if (tokens.length === 0) continue;
+    if (!tokens.some(isEmitted) && !LOOKS_LIKE_CLASSES.test(literal)) continue;
+    for (const token of tokens) {
+      if (isEmitted(token)) continue;
+      const line = src.slice(0, m.index).split("\n").length;
+      const where = `${relative(root, file)}:${line}`;
+      const list = missingClasses.get(token) ?? [];
+      if (list.length < 3) list.push(where);
+      missingClasses.set(token, list);
+    }
+  }
+}
+
+for (const [cls, where] of missingClasses) {
+  console.error(`     ${cls} — used at ${where.join(", ")} but no rule is emitted`);
+}
+assert(
+  missingClasses.size === 0,
+  `every utility class the renderer uses produces CSS (${missingClasses.size} do not)`,
+);
+
+// ── 2. Custom properties ───────────────────────────────────────────────
+
+const declared = new Set<string>();
+for (const file of [...cssFiles]) {
+  for (const m of stripComments(readFileSync(file, "utf-8")).matchAll(
+    /(--[a-zA-Z0-9_-]+)\s*:/g,
+  )) {
+    declared.add(m[1]);
+  }
+}
+// Tailwind's own theme variables (`--color-*`, `--text-*`, `--font-*`, the
+// default palette) are declared by the framework, not by us — take them from
+// the emitted stylesheet rather than hard-coding a list.
+for (const m of css.matchAll(/(--[a-zA-Z0-9_-]+)\s*:/g)) declared.add(m[1]);
+
+const missingProps = new Map<string, string[]>();
+for (const file of [...cssFiles, ...tsFiles]) {
+  const src = stripComments(readFileSync(file, "utf-8"));
+  for (const m of src.matchAll(/var\(\s*(--[a-zA-Z0-9_-]+)\s*([,)])/g)) {
+    // A `var()` WITH a fallback still renders something, so it is not a defect
+    // — only a bare read of an undeclared name is.
+    if (m[2] === ",") continue;
+    if (declared.has(m[1])) continue;
+    const line = src.slice(0, m.index).split("\n").length;
+    const where = `${relative(root, file)}:${line}`;
+    const list = missingProps.get(m[1]) ?? [];
+    if (list.length < 3) list.push(where);
+    missingProps.set(m[1], list);
+  }
+}
+
+for (const [prop, where] of missingProps) {
+  console.error(`     ${prop} — read at ${where.join(", ")} but never declared`);
+}
+assert(
+  missingProps.size === 0,
+  `every custom property the renderer reads is declared (${missingProps.size} are not)`,
+);
+
+// ── 3. The specific collision that caused the worst of it ──────────────
+//
+// `text-secondary` resolving to `var(--secondary)` — the secondary SURFACE —
+// is what made 62 labels illegible while looking intentional. It came back the
+// moment `--color-secondary` existed as a theme key, because Tailwind derives
+// `bg-*` and `text-*` from the same one. Pinned by VALUE rather than by the
+// key's absence, so it fails whatever route the wrong colour arrives by.
+const textSecondary = css.match(/\.text-secondary\{([^}]*)\}/);
+assert(textSecondary !== null, "`text-secondary` emits a rule");
+assert(
+  textSecondary !== null && !/var\(--secondary\)/.test(textSecondary[1]),
+  "`text-secondary` is the text ramp, not the secondary surface colour",
+);
+
+// ── Result ─────────────────────────────────────────────────────────────
+
+if (failures > 0) {
+  console.error(`\n${failures} check(s) failed.`);
+  process.exit(1);
+}
+console.log("\nrenderer classes: all good.");

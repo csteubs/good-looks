@@ -167,14 +167,54 @@ function writeIfChanged(filePath: string, content: string): void {
   }
 }
 
-function ensureModuleResolution(scriptsDir: string, nodeModules: string): void {
-  // Specs import "@playwright/test"; a node_modules symlink next to them lets
-  // Node resolve it even though they live under userData.
+/**
+ * Point `<scriptsDir>/node_modules` at the SAME tree the Playwright CLI came
+ * from. Specs live under userData and import "@playwright/test"; this symlink
+ * is how Node resolves that.
+ *
+ * REPAIRS a link that points elsewhere — it does not merely create a missing
+ * one, and that distinction is the whole bug this function shipped with.
+ *
+ * The scripts directory outlives the build that created the link. Adopting a
+ * legacy Glaze data directory (`main/shell/user-data.ts`) inherits that
+ * install's `scripts/node_modules`, which still points into the SDK's own tree.
+ * Two failure modes, both silent, and the app hit each in turn:
+ *
+ *  - **The old tree is still on disk.** The CLI runs from OUR node_modules
+ *    while the spec resolves a SECOND copy of @playwright/test through the
+ *    link. Playwright compares module identity, not version, so every run dies
+ *    at collection with "Playwright Test did not expect test() to be called
+ *    here" followed by "No tests found" — no step ever executes, and nothing in
+ *    the message points at a symlink.
+ *  - **The old tree is gone.** The link dangles. `fs.existsSync` FOLLOWS
+ *    symlinks, so it answers false for a dangling one; the old code read that
+ *    as "no link here", called `symlinkSync`, got EEXIST because the path is
+ *    occupied, logged a warning and carried on with the broken link still in
+ *    place. Runs then survived only on the NODE_PATH fallback, which ESM
+ *    imports (the capture fixture is `.mjs`) do not consult.
+ *
+ * Hence `lstat` rather than `existsSync`: the question is what the link IS, not
+ * what it points at. A real directory is left alone — that is someone's own
+ * install, not ours to delete.
+ */
+export function ensureModuleResolution(scriptsDir: string, nodeModules: string): void {
   const link = path.join(scriptsDir, "node_modules");
   try {
-    if (!fs.existsSync(link)) {
-      fs.symlinkSync(nodeModules, link, "dir");
+    const entry = fs.lstatSync(link, { throwIfNoEntry: false });
+    if (entry) {
+      if (!entry.isSymbolicLink()) return;
+      // Resolve against the link's own directory so a relative target compares
+      // correctly. Deliberately NOT realpath: that throws on a dangling link,
+      // which is precisely the case that has to be repaired.
+      const target = path.resolve(scriptsDir, fs.readlinkSync(link));
+      if (target === path.resolve(nodeModules)) return;
+      logger.info("runner", "Repointing a stale node_modules link beside the specs", {
+        from: target,
+        to: nodeModules,
+      });
+      fs.unlinkSync(link);
     }
+    fs.symlinkSync(nodeModules, link, "dir");
   } catch (err) {
     logger.warn("runner", "Could not symlink node_modules; relying on NODE_PATH", {
       err: String(err),

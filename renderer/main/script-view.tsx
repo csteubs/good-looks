@@ -385,7 +385,7 @@ export function ScriptEditor({
               lineHeight: "var(--text-mono--line-height)",
               paddingLeft: CODE_PAD_X,
               paddingRight: CODE_PAD_X,
-              color: "var(--color-text-primary, rgb(var(--color-text-primary-rgb) / 1))",
+              color: "var(--color-text-primary)",
             }}
             aria-hidden
           >

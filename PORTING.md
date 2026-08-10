@@ -75,6 +75,16 @@ bridged to Tailwind in [renderer/styles.css](renderer/styles.css). **The visual
 result is an approximation of the original design system, not a pixel match** —
 this is the part of the port most worth your eye.
 
+**Not rewriting the views had a cost that took until 2026-08-09 to find.** They
+still address the SDK's *vocabulary* — the `text-primary/secondary/tertiary`
+ramp, the `support-*` status family, `bg-panel`, `bg-well`, `blue-9` — and 28 of
+those names, plus 14 custom properties, had nothing on the other end. They
+styled nothing, silently: the Stats chart drew no bars, the Script view had no
+syntax highlighting, and `text-secondary` resolved to a panel *fill* used as
+text colour at 1.4:1. All of it is declared now, and `check:renderer-classes`
+builds the renderer and asks the emitted stylesheet whether every class the
+renderer uses actually produces a rule. See DECISIONS 2026-08-09.
+
 ## Licensing note
 
 `@glaze/core` ships with no LICENSE file and carries Raycast copyright. Nothing
@@ -161,5 +171,8 @@ recorder without the runner. Developer ID has none of these constraints.
 - **No end-to-end recording session was driven.** The trainer window, capture
   script injection, step drain and spec generation are covered by the test
   suite but were not exercised against a live website in the ported build.
-  This is the first thing to try manually.
+  This is the first thing to try manually. (Partly closed on 2026-08-09: a
+  recorded test was RUN end-to-end against a live site in the dev build, with
+  capture, console/network recording and accessibility checks on. Recording
+  itself — the trainer window and step capture — is still undriven here.)
 - Visual fidelity of the rebuilt component library against the original.
