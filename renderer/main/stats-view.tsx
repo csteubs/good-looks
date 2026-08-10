@@ -42,7 +42,7 @@ import { LogInspector } from "./log-inspector";
 import { Pager } from "./pager";
 import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS, TEST_SPEED_LABELS } from "../lib/recorder-types";
-import { pageSlice } from "../lib/paginate";
+import { DENSE_PAGE_SIZE, pageSlice } from "../lib/paginate";
 import {
   NO_FILTERS,
   filtersActive,
@@ -771,7 +771,7 @@ export function StatsView() {
                         </tr>
                       </thead>
                       <tbody>
-                        {pageSlice(filteredRuns, runsPage).map((r) => {
+                        {pageSlice(filteredRuns, runsPage, DENSE_PAGE_SIZE).map((r) => {
                           const isBaseline = r.kind === "baseline-update";
                           return (
                             <tr
@@ -933,6 +933,7 @@ export function StatsView() {
                     total={filteredRuns.length}
                     onPage={setRunsPage}
                     label="runs"
+                    size={DENSE_PAGE_SIZE}
                   />
                   </div>
                 </div>

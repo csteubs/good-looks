@@ -16,6 +16,16 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — Step health and the run history page at 25
+
+Step health rendered every row the query returned — 200 of them on a suite with real history, each two lines tall with six numeric columns. A table nobody can reach the bottom of is one nobody reads the top of either, so it paged, and the run history moved to the same size while it was in hand.
+
+**A second constant rather than lowering `PAGE_SIZE`.** `DENSE_PAGE_SIZE` is 25; `PAGE_SIZE` stays 50 for the raw-log search results and the Heals list. Those are one-line rows and are *scanned* — halving them just doubles the clicking. The two dense tables are read.
+
+**Sort first, then page.** The obvious inversion — page the received rows, sort what's on screen — renders identically on page 1 and is wrong everywhere: clicking "Heals" would rank 25 rows out of 200 while the header claims to have ranked the suite, and the worst step in it stays invisible. `metrics-panels.test.tsx` pins it with a row that only surfaces if the sort saw all 200, and the mutation was run to confirm that test fails against the page-then-sort version. Changing the sort also returns to page 1, because every row has moved and the old page number no longer refers to anything.
+
+**`Pager` had to learn a `size`.** It computes its own counts from `PAGE_SIZE` rather than receiving them, so a caller slicing at 25 while the pager counts in 50 reports "page 1 of 4" over 8 real pages and buries half the rows behind a Next button that disables early — no error, no empty state, just rows that are not there. The prop defaults to `PAGE_SIZE` so the existing call sites are unchanged, and `check:paginate` now pins the dense size independently of the components.
+
 ### 2026-08-10 — Test detail: status becomes a rail, the log becomes a drawer, and the preview learns to finish a run
 
 **B5a of the redesign (REDESIGN §B5), the fifth reskinned screen and the most-visited one.** Parity only — the five non-failure run-state summaries are B5b. Four decisions.
