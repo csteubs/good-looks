@@ -16,6 +16,18 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-09 — Radio buttons touched their own labels, because `Label` was typography only
+
+**Symptom:** in Settings → AI, the AI provider options read as `◯Ollama ◉LM Studio ◯Claude` — each circle jammed against its text, close enough to look like an overlap. Appearance → Theme (Auto / Light / Dark) had it too; the panes were built the same way and both shipped it.
+
+**The port dropped a layout rule from a component whose name suggests it has none.** `Label` is used two ways: pointing at a control with `htmlFor`, and *wrapping* one — `<Label><RadioGroupItem/>Ollama</Label>`, which is the shape every radio row in Settings uses. Only the second needs the element to be a flex box with a gap, and the ported `Label` carried nothing but typography, so the radio and its text became adjacent inline boxes with no space at all between them. Fixed on `Label` (`inline-flex items-center gap-2`) rather than on the two panes, because the next pane to wrap a control would have inherited the bug.
+
+- **`inline-flex`, not `flex`.** The upstream is `flex`; `inline-flex` keeps a label from stretching to its container's width in the non-wrapping usages (`FieldLabel`), which is a change this fix has no reason to make. Callers that want block behaviour still win — `setting-row.tsx` already passes `flex flex-wrap items-center gap-2`, and tailwind-merge collapses the display group to the caller's choice rather than emitting both. Pinned by a test, since the two classes silently coexisting is exactly how this would come back.
+- **`RadioGroup` went `gap-3` → `gap-4` in the same change.** With the intra-option gap fixed at 8px, a 12px gap between options is barely larger — the text of one option still reads as attached to the next option's circle. The invariant, and what the test asserts, is *between > within*, not either number.
+- **`RadioGroupItem` gained `shrink-0`.** It is now a flex item beside text; `Checkbox` already had it. Without it a long option label squashes the circle into an ellipse, which is the same bug wearing a different shape.
+- **Asserted on class names, and that is not laziness.** The dom project runs with `css: false`, so Tailwind emits no values into jsdom and `getComputedStyle(...).gap` reads `""` for the broken and fixed markup alike — a spacing assertion there passes vacuously forever. `check:renderer-classes` is the half that proves the names emit real rules; `renderer/ui/label-gap.test.tsx` is the half that proves they are applied. Neither alone would have caught this.
+- **Why no test caught it:** the pane tests find each option by accessible name, and the accessible name is correct whether or not there is a pixel between the circle and the word.
+
 ### 2026-08-09 — Two more pushes nobody was listening to, and a check so there is never a third
 
 **Follow-up to the entry below**, which fixed `trainerPanel:viewportNarrowed` and noted two other unsubscribed channels as a deferred cleanup. Sweeping them properly turned up something the first pass got wrong.
