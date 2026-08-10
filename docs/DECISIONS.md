@@ -16,6 +16,14 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — `Btn`'s icons get a size, and the fix is not on the screen that reported it
+
+Reported as "the trash icons are too large on Heals". They are, but nothing about the Heals view causes it: **`.gl-btn` never sized its `svg` children at all**, so every icon in every `Btn` in the app was rendering at lucide's 24px default next to a 10px letterspaced label in a 30px box. Measured in the preview — Apply's check, Dismiss's rotate and Delete's trash all came back at exactly 24px.
+
+**Trash2 is where it gets reported because Trash2 is the heaviest shape at that size**, not because Heals is special. Fixing it locally would have left the same defect on every other screen and added a second mechanism for a size that should have exactly one. The rule goes on the primitive.
+
+**13px, matching `.gl-icon-btn`** — the icon-only sibling of this button. Picking a fresh number would have made two buttons that sit next to each other disagree about what an icon is.
+
 ### 2026-08-10 — The home screen's three numbers become three doors
 
 **A count is a question, and the app already had the answer one click away.** "16 heals to review" is only ever read as *which sixteen* — and B1 had put that number on the first screen anyone sees while leaving it inert, so the reading ended at the rail, hunting for the entry that means the same thing. Each readout now navigates to the view that explains it: Tests → Batch, Green · 7d → Stats, Heals to review → Heals.
