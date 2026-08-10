@@ -488,6 +488,18 @@ function runStructure() {
       outcome: "exhausted",
       method: "click",
       originalLocator: { k: "role", role: "button", name: "Pause" },
+      matchCount: 10,
+      matches: [
+        {
+          index: 0,
+          tag: "button",
+          testid: "video-pause",
+          classes: ["player-control"],
+          ancestors: ["div[data-testid=video-player]"],
+          visible: true,
+          enabled: true,
+        },
+      ],
       candidates: [
         {
           locator: { k: "testid", v: "video-pause" },
@@ -553,6 +565,8 @@ describe("when the model asks for page structure", () => {
     const sent = JSON.stringify(h.chat.mock.calls[1][0]);
     expect(sent).toContain("getByTestId");
     expect(sent).toContain("video-pause");
+    // The exact answer to "which of the ten", not just what resembled it.
+    expect(sent).toContain("matched 10 elements");
     expect(sent).toContain("PAGE-CONTROLLED and untrusted");
   });
 

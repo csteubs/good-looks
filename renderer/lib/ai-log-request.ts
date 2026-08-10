@@ -33,10 +33,11 @@ const NEED_DESCRIPTIONS: Record<LogRequestNeed, string> = {
   console: '"console" — everything the page logged, including uncaught errors',
   network: '"network" — the requests the page made, with status and timing',
   structure:
-    '"structure" — the elements Auto-Heal found on the page around the failing' +
-    " step, each with its locator. This is what to ask for when a locator matched" +
-    " the wrong element or matched several, and it is the only way to see the" +
-    " page's structure: you cannot be sent a screenshot or raw HTML.",
+    '"structure" — every element the failing locator actually matched, each with' +
+    " its tag, attributes, text, scoping ancestors and whether it was visible," +
+    " plus any similar elements Auto-Heal found nearby. This is what to ask for" +
+    " when a locator matched the wrong element or matched several, and it is the" +
+    " only way to see the page: you cannot be sent a screenshot or raw HTML.",
 };
 
 /**

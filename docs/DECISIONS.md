@@ -16,6 +16,76 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — What the locator actually matched, and one artifact with two consumers
+
+The `structure` request shipped answering an *approximate* question. Auto-Heal's
+probe ranks what RESEMBLES the element the step wanted, which is the right
+answer for a stale locator and the wrong one for an ambiguous one: asked "which
+of the ten Pause buttons", it replies with what looks most like a Pause button.
+So the fixture now also records what the failing locator LITERALLY resolved to.
+
+**Recorded for every resolve failure, not just the ambiguous ones.** "Matched 0"
+and "matched 10" are opposite diagnoses — one is fixed by a different locator,
+the other by a narrower one — and the count is the only thing that separates
+them. One `evaluateAll` covers both, so there was no reason to gate it on
+parsing Playwright's error text.
+
+**`evaluateAll`, not `all()` plus a per-element evaluate.** One round trip
+instead of N, and it does not enforce strictness — which is the point, since the
+locator being described is one that just failed *for* being ambiguous.
+
+**Two records, one join, and both halves of it are load-bearing.** Either file
+can exist without the other: a locator that was ambiguous and then healed leaves
+matches and no heal failure, and a run from before this existed leaves the
+reverse. `buildStepStructures` unions them on step index, and neither side
+invents the other's fields — a match-only record reports no `outcome`, because
+claiming "no similar element was found" would describe a probe that never ran.
+
+**The collection moved inside the function that deletes the directory.**
+`collectRunMatches` was originally a sibling call before `collectRunHeals`, with
+a comment explaining that the order mattered. It mattered a great deal:
+`collectRunHeals` removes the scratch dir on every path out of it, including the
+early ones, so a single statement reordered would have written nothing, forever,
+with no error. A comment is not a mechanism. The function that owns the
+directory's lifetime now owns the read, and the ordering cannot be got wrong.
+
+**The renderer reads both lists defensively even though the type requires them.**
+This arrives over IPC, where a type is a promise rather than a check. The cost of
+being wrong is not a missing section — it is a throw inside the payload builder,
+which takes the whole answer down with it. Found the honest way: an integration
+fixture without the new field crashed the panel.
+
+**`get_step_matches` is the same artifact, second consumer** — and the reason
+`check:run-logs` now asserts parity between the two readers. The MCP server is
+plain `.mjs` and cannot import the app's compiled TypeScript, so the join is
+implemented twice. Neither side would throw when they drift: the app would show
+a card missing half its evidence while the MCP answered a model with the other
+half. The check writes the files once and asserts both readers agree, field for
+field. Reverting one line of the MCP's copy turns it red, which is the whole
+point of writing it. `mcp/artifacts.mjs` gained a hand-written `.d.mts` so the
+TypeScript caller keeps `type-check` as a real gate over it, per the pairing
+CLAUDE.md describes for `shared/`.
+
+**The descriptor is built inside the page, and so is tested inside a fake one.**
+`heal-fixture.test.ts` grew a small object graph — elements with parents,
+attributes and rects — rather than a canned `evaluateAll` result. The ancestor
+walk and the class splitting are the only logic in this change that runs in the
+browser, and handing the test a fixed answer would have exercised the plumbing
+around code that had never executed.
+
+**What it steers the model toward is part of the payload, deliberately.** The
+reflex fix for an ambiguous locator is `.first()`, which picks by DOM order and
+breaks the next time the page reorders. The scoping ancestors that make a real
+fix possible are right there in the list, so the payload names the alternative
+rather than leaving the model to reach for the reflex.
+
+**Still gated on Auto-Heal.** The record is written by the heal fixture, which is
+only installed when Auto-Heal is on for the test — so a run with it off has no
+structure to offer, and the panel's "how to get this next time" copy says so.
+Patching locators from the capture fixture instead would make it independent of
+that setting at the cost of a second patching layer over the same prototype;
+not worth it while the two settings are both one toggle away.
+
 ### 2026-08-10 — The AI can ask what the page looked like, and the protocol that lets it ask finally ships
 
 A model debugging a failed run was shown the spec and the run output. For a

@@ -81,8 +81,8 @@ import {
   isValidVariableName,
   MAX_BATCH_TEST_OPTIONS,
   normalizeDatasets,
+  buildStepStructures,
   normalizeStep,
-  normalizeStepStructures,
   normalizeTags,
   normalizeVariables,
   RUN_BROWSERS,
@@ -1231,7 +1231,10 @@ export function registerHandlers(): void {
   ipcMain.handle(
     "artifacts:getStructure",
     async (_e, params: { testId: string; runId: string }) =>
-      normalizeStepStructures(artifactStore.readHealFailures(params.testId, params.runId)),
+      buildStepStructures(
+        artifactStore.readHealFailures(params.testId, params.runId),
+        artifactStore.readStepMatches(params.testId, params.runId),
+      ),
   );
   ipcMain.handle(
     "artifacts:hasStructure",

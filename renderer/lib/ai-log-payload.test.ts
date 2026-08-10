@@ -16,7 +16,7 @@ import {
   approxTokens,
   buildLogPayload,
 } from "./ai-log-payload";
-import type { ConsoleEntry, NetworkEntry, RunLogs, StepStructure } from "./recorder-types";
+import type { ConsoleEntry, NetworkEntry, RunLogs, StepMatch, StepStructure } from "./recorder-types";
 
 function c(over: Partial<ConsoleEntry> = {}): ConsoleEntry {
   return { step: 0, ts: 0, type: "log", text: "hello", url: "", line: 0, ...over };
@@ -222,6 +222,7 @@ function struct(over: Partial<StepStructure> = {}): StepStructure {
     outcome: "exhausted",
     method: "click",
     originalLocator: { k: "role", role: "button", name: "Pause" },
+    matches: [],
     candidates: [
       {
         locator: { k: "testid", v: "video-pause" },
@@ -305,5 +306,89 @@ describe("page structure", () => {
     // user's script.
     const out = buildLogPayload({ structure: [struct()] }, ["structure"]);
     expect(out.text).toContain("PAGE-CONTROLLED");
+  });
+});
+
+describe("what the locator actually matched", () => {
+  function match(over: Partial<StepMatch> = {}): StepMatch {
+    return {
+      index: 0,
+      tag: "button",
+      testid: "video-pause",
+      classes: ["player-control"],
+      ancestors: ["div[data-testid=video-player]", "main"],
+      visible: true,
+      enabled: true,
+      rect: { x: 412, y: 388, w: 32, h: 32 },
+      ...over,
+    };
+  }
+
+  it("answers 'which of the ten' with ten distinguishable lines", () => {
+    // The failure this whole need exists for. Playwright says "resolved to 10
+    // elements" and nothing about what they are, so the diagnosis stops at
+    // "it is ambiguous" — true, and useless to anyone who cannot see the page.
+    const out = buildLogPayload(
+      {
+        structure: [
+          struct({
+            matchCount: 10,
+            matches: [
+              match({ index: 0 }),
+              match({ index: 1, testid: undefined, text: "Pause", ancestors: ["section#playlist"], enabled: false }),
+            ],
+          }),
+        ],
+      },
+      ["structure"],
+    );
+    expect(out.text).toContain("matched 10 elements");
+    expect(out.text).toContain('data-testid="video-pause"');
+    expect(out.text).toContain("inside div[data-testid=video-player] < main");
+    expect(out.text).toContain("disabled");
+    // Eight were not listed; saying so is what stops the two shown from
+    // reading as the whole set.
+    expect(out.text).toContain("8 further matches not listed");
+  });
+
+  it("distinguishes matching nothing from matching many", () => {
+    // Opposite diagnoses, and only one of them is fixed by narrowing.
+    const out = buildLogPayload(
+      { structure: [struct({ matchCount: 0, matches: [], outcome: undefined, candidates: [] })] },
+      ["structure"],
+    );
+    expect(out.text).toContain("matched 0 elements");
+    expect(out.text).toContain("resolved to no elements at all");
+  });
+
+  it("does not claim a heal outcome for a step that only has matches", () => {
+    // A locator that was ambiguous and then healed leaves a match record and
+    // no heal failure. Reporting "no similar element was found" there would be
+    // a statement about a probe that never ran.
+    const out = buildLogPayload(
+      { structure: [struct({ matchCount: 2, matches: [match()], outcome: undefined, candidates: [] })] },
+      ["structure"],
+    );
+    expect(out.text).not.toContain("no similar element was found");
+  });
+
+  it("steers the fix toward scoping rather than .nth()", () => {
+    // The reflex fix for an ambiguous locator is .first(), which picks by DOM
+    // order and breaks the next time the page reorders — so the payload has to
+    // name the alternative, since the ancestors that make it possible are
+    // right there in the list.
+    const out = buildLogPayload({ structure: [struct({ matches: [match()] })] }, ["structure"]);
+    expect(out.text).toContain("scoping to an ancestor");
+    expect(out.text).toMatch(/\.nth\(\)/);
+  });
+
+  it("counts matched elements in what the card reports", () => {
+    // The card tells the user how much page data is about to leave the
+    // machine, not which file it came from.
+    const out = buildLogPayload(
+      { structure: [struct({ matches: [match(), match({ index: 1 })] })] },
+      ["structure"],
+    );
+    expect(out.structureCandidates).toBe(3); // two matches + one heal candidate
   });
 });

@@ -777,15 +777,35 @@ export interface HealCandidate {
   matchedPastRun: boolean;
 }
 
-/** One failing step's page structure, as recorded by run-time Auto-Heal.
- *  Mirror of main/recorder/types.ts StepStructure — already rebuilt from
- *  page-authored input by `normalizeStepStructures` before it crosses IPC. */
+/** One element a failing locator resolved to. Mirror of main/recorder/types.ts
+ *  StepMatch. */
+export interface StepMatch {
+  index: number;
+  tag: string;
+  id?: string;
+  testid?: string;
+  ariaLabel?: string;
+  text?: string;
+  classes: string[];
+  ancestors: string[];
+  visible: boolean;
+  enabled: boolean;
+  rect?: { x: number; y: number; w: number; h: number };
+}
+
+/** One failing step's page structure. Mirror of main/recorder/types.ts
+ *  StepStructure — already rebuilt from page-authored input by
+ *  `buildStepStructures` before it crosses IPC. `matches` is what the locator
+ *  literally resolved to; `candidates` is what Auto-Heal thought resembled the
+ *  element we wanted. */
 export interface StepStructure {
   stepIndex: number;
   stepLabel: string;
-  outcome: "exhausted" | "no-candidates";
   method?: string;
   originalLocator?: Locator;
+  matchCount?: number;
+  matches: StepMatch[];
+  outcome?: "exhausted" | "no-candidates";
   candidates: HealCandidate[];
 }
 

@@ -22,13 +22,16 @@
 //   npm run check:step-ingest
 
 import {
+  buildStepStructures,
   MAX_STRUCTURE_CANDIDATES,
+  MAX_STRUCTURE_MATCHES,
   MAX_STRUCTURE_STEPS,
   MAX_STEPS_PER_DRAIN,
   normalizePickedElement,
   normalizeRawStep,
   normalizeRawSteps,
   normalizeStep,
+  normalizeStepMatches,
   normalizeStepStructures,
 } from "../../recorder/types.js";
 import { generateSpec } from "../script-generator.js";
@@ -565,6 +568,88 @@ function main(): void {
     );
     assertEqual(normalizeStepStructures("nope"), [], "a non-array is rejected");
     assertEqual(normalizeStepStructures([null, 4, "x"]), [], "non-object entries are rejected");
+  }
+
+  // ── 10. What the locator actually matched is page text, verbatim ─────────
+  //
+  // The most directly page-authored data in the app: these fields ARE the
+  // site's DOM — its text, ids and class names, read straight off the elements
+  // and sent to a model whose answer is one click from the user's script.
+  {
+    const sets = normalizeStepMatches([
+      {
+        stepIndex: 4,
+        stepLabel: "Click button",
+        method: "click",
+        matchCount: 10,
+        originalLocator: { k: "role", role: "button", name: "Pause" },
+        matches: [
+          { index: 0, tag: "button", testid: "go", text: "Pause", classes: ["a", "b"], ancestors: ["main"], visible: true, enabled: true, rect: { x: 1, y: 2, w: 3, h: 4 } },
+          { tag: "", text: "no tag" },
+          { index: 2, tag: "button", rect: { x: 1, y: 2, w: 3 } },
+        ],
+        extra: NODE_CODE,
+      },
+    ]);
+    assertEqual(sets.length, 1, "a match set normalizes");
+    assert(!("extra" in (sets[0] as unknown as Record<string, unknown>)), "an unknown key does not survive");
+    assertEqual(sets[0].matchCount, 10, "the true match count is kept");
+    // A blank tag is not an element description. Dropped rather than defaulted:
+    // an empty line among the matches is one the model counts as a choice.
+    assertEqual(sets[0].matches.length, 2, "a descriptor with no tag is dropped");
+    assertEqual(sets[0].matches[1].rect, undefined, "a partial rect is dropped whole, not half-kept");
+    // Defaults follow the DOM: `disabled` is the property that exists, so a
+    // missing field must not tell the model an element cannot be clicked.
+    assertEqual(sets[0].matches[1].enabled, true, "a missing enabled flag reads as enabled");
+    assertEqual(sets[0].matches[1].visible, false, "a missing visible flag reads as not visible");
+
+    const flood = normalizeStepMatches([
+      {
+        matchCount: 9999,
+        matches: Array.from({ length: MAX_STRUCTURE_MATCHES + 20 }, () => ({
+          tag: "div",
+          text: "x".repeat(5000),
+          classes: Array.from({ length: 50 }, (_, i) => "c" + i),
+          ancestors: Array.from({ length: 50 }, (_, i) => "a" + i),
+        })),
+      },
+    ]);
+    assertEqual(flood[0].matches.length, MAX_STRUCTURE_MATCHES, "the match list is capped");
+    assert(flood[0].matches[0].text!.length <= 200, "a long text is truncated");
+    assertEqual(flood[0].matches[0].classes.length, 3, "the class list is capped");
+    assertEqual(flood[0].matches[0].ancestors.length, 3, "the ancestor list is capped");
+    assertEqual(normalizeStepMatches("nope"), [], "a non-array is rejected");
+  }
+
+  // ── 11. The two records join on the step they describe ───────────────────
+  //
+  // Either can exist without the other: a locator that was ambiguous and then
+  // HEALED leaves matches and no heal failure, and a run from before matches
+  // existed leaves the reverse.
+  {
+    const merged = buildStepStructures(
+      [{ stepIndex: 4, stepLabel: "Click button", outcome: "exhausted", candidates: [{ locator: { k: "css", v: "#a" }, score: 0.5 }] }],
+      [{ stepIndex: 4, stepLabel: "Click button", matchCount: 10, matches: [{ tag: "button" }] }],
+    );
+    assertEqual(merged.length, 1, "one record per step, not one per file");
+    assertEqual(merged[0].matches.length, 1, "the matches survive the join");
+    assertEqual(merged[0].candidates.length, 1, "the heal candidates survive the join");
+    assertEqual(merged[0].outcome, "exhausted", "the heal outcome survives the join");
+
+    const healOnly = buildStepStructures([{ stepIndex: 1, outcome: "no-candidates" }], []);
+    assertEqual(healOnly.length, 1, "a heal failure with no match record still reports");
+    assertEqual(healOnly[0].matches.length, 0, "…with no matches invented for it");
+
+    const matchOnly = buildStepStructures([], [{ stepIndex: 2, matches: [{ tag: "button" }] }]);
+    assertEqual(matchOnly.length, 1, "a match record with no heal failure still reports");
+    assertEqual(matchOnly[0].outcome, undefined, "…and claims no heal outcome it does not have");
+
+    const many = buildStepStructures(
+      [],
+      Array.from({ length: MAX_STRUCTURE_STEPS + 5 }, (_, i) => ({ stepIndex: i, matches: [] })),
+    );
+    assertEqual(many.length, MAX_STRUCTURE_STEPS, "the joined list is capped");
+    assertEqual(many[0].stepIndex, 0, "…in step order");
   }
 
   if (failures > 0) {

@@ -450,8 +450,9 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     }),
     "artifacts:hasLogs": () => ({ hasLogs: true }),
     /** The ambiguous-locator case the structure request exists for: one failed
-     *  step whose locator matched several buttons, and the elements Auto-Heal
-     *  ranked as the alternatives. */
+     *  step whose locator matched several buttons — the elements it LITERALLY
+     *  matched, and the ones Auto-Heal ranked as alternatives. Three of ten are
+     *  listed so the preview shows the "further matches not listed" line too. */
     "artifacts:getStructure": (): StepStructure[] => [
       {
         stepIndex: 4,
@@ -459,6 +460,40 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
         outcome: "exhausted",
         method: "click",
         originalLocator: { k: "role", role: "button", name: "Pause" },
+        matchCount: 10,
+        matches: [
+          {
+            index: 0,
+            tag: "button",
+            classes: ["player-control", "player-control--pause"],
+            ancestors: ["div[data-testid=video-player]", "main"],
+            ariaLabel: "Pause",
+            testid: "video-pause",
+            visible: true,
+            enabled: true,
+            rect: { x: 412, y: 388, w: 32, h: 32 },
+          },
+          {
+            index: 1,
+            tag: "button",
+            classes: ["controls__btn"],
+            ancestors: ["section#playlist"],
+            text: "Pause",
+            visible: true,
+            enabled: false,
+            rect: { x: 96, y: 640, w: 64, h: 24 },
+          },
+          {
+            index: 2,
+            tag: "button",
+            classes: ["sr-only"],
+            ancestors: ["nav"],
+            ariaLabel: "Pause",
+            visible: false,
+            enabled: true,
+            rect: { x: 0, y: 0, w: 0, h: 0 },
+          },
+        ],
         candidates: [
           {
             locator: { k: "testid", v: "video-pause" },
