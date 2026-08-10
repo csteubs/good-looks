@@ -113,6 +113,12 @@
   --gl-status-w: 78px;
   --gl-z-atmo: 600;
 
+  /* Popovers sit above the app and BELOW the atmosphere, which is inert
+     (`pointer-events: none`) and only tints. A menu that went above it would be
+     the one surface in the app not wearing the same grain as everything else,
+     which reads as a rendering glitch rather than as depth. */
+  --gl-z-menu: 400;
+
   /* The texture's warmth, and DELIBERATELY NOT `--gl-amber`.
      The design fixes `texture: ember` — "warm orange suspended in black" — and
      a wash of the amber token behind a screen would be the largest coloured

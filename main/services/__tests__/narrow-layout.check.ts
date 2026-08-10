@@ -92,17 +92,31 @@ const MEASURED_REQUIREMENT = 928;
   );
 
   const batch = read("../../../renderer/main/batch-view.tsx");
-  // Every other cell in a batch row is shrink-0, so the flexible cell absorbs
-  // the entire squeeze. With `min-w-0` that bottoms out at width:0 and the test
-  // name disappears entirely rather than truncating.
+  const screens = read("../../../renderer/theme/screens.css");
+
+  // Every other cell in a batch row is fixed-width, so the flexible cell absorbs
+  // the entire squeeze. Without a floor that bottoms out at width:0 and the test
+  // name disappears entirely rather than truncating — a row with no name at all,
+  // which makes the checkbox beside it meaningless.
+  //
+  // THE PROPERTY MOVED, THE CONTRACT DID NOT. B3 reskinned this screen, so the
+  // floor is a named rule in `renderer/theme/screens.css` rather than a Tailwind
+  // class in the markup. This reads it there, and still checks the view carries
+  // the class — a rule nothing uses is a guard that passes over a row it no
+  // longer describes.
+  const nameRule = screens.replace(/\/\*[\s\S]*?\*\//g, "").match(/\.gl-batch-name\s*\{([^}]*)\}/);
+  assert(nameRule !== null, "screens.css: found the .gl-batch-name rule");
   assert(
-    !/className="min-w-0 flex-1 truncate text-left text-small font-medium/.test(batch),
-    "batch-view.tsx: the row's test-name cell no longer uses a bare `min-w-0` basis — it collapsed to width:0 and the row lost its name",
+    /className="gl-batch-name"/.test(batch),
+    "batch-view.tsx: the row's test-name cell still carries `gl-batch-name`",
   );
-  const namedFloor = batch.match(/className="min-w-\d+ basis-\d+ grow truncate text-left/);
   assert(
-    namedFloor !== null,
-    "batch-view.tsx: the row's test-name cell carries a min-width floor so it truncates instead of vanishing",
+    nameRule !== null && /min-width:\s*(\d+)px/.test(nameRule[1]),
+    ".gl-batch-name: carries a min-width floor so the name truncates instead of vanishing",
+  );
+  assert(
+    nameRule !== null && !/min-width:\s*0\b/.test(nameRule[1]),
+    ".gl-batch-name: the floor is not zero — `min-width: 0` is the bug, not the fix",
   );
 }
 

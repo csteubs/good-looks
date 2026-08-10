@@ -391,3 +391,351 @@
   padding: 24px;
   text-align: center;
 }
+
+/* ── Batch (B3) ───────────────────────────────────────────────────────── */
+
+/*
+ * FIXED COLUMNS, and that is the whole idea of this screen's row.
+ *
+ * The row this replaces sized every cell to its own content, so the engines of
+ * one test sat under the tags of the next and nothing lined up down the list.
+ * A batch checklist is read DOWN — "which of these are headed?", "which have
+ * three engines?" — and a column you have to re-find on every row cannot be
+ * read that way at all.
+ *
+ * So every cell but the name is `flex: 0 0 <n>px`, and the name is the one that
+ * gives. It keeps a floor (`min-width`) for a reason this repo has already paid
+ * for: as the only flexible cell in a row of fixed furniture, `min-width: 0`
+ * let it shrink to LITERALLY ZERO, and a row with no name at all is worse than
+ * a truncated one — the checkbox beside it stops meaning anything.
+ */
+.gl-batch {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 10px;
+  gap: 10px;
+}
+
+.gl-batch-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The header cluster: two cells in one bordered box, at control height. Boxed
+   together because they are one question — "how should this batch run?" — and
+   two loose checkboxes in a toolbar read as two unrelated ones. */
+.gl-batch-cluster {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--gl-line);
+  flex: 0 0 auto;
+}
+
+.gl-batch-cluster-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 24px;
+  cursor: pointer;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.gl-batch-cluster-cell + .gl-batch-cluster-cell {
+  border-inline-start: 1px solid var(--gl-line);
+}
+
+.gl-batch-cluster-cell:hover {
+  color: var(--gl-tx-2);
+}
+
+.gl-batch-cluster-cell[data-on] {
+  color: var(--gl-tx-1);
+  background: var(--gl-sel-bg);
+}
+
+.gl-batch-note {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-3);
+  margin-inline-start: auto;
+}
+
+/* ── The checklist ────────────────────────────────────────────────────── */
+
+.gl-batch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--gl-line-2);
+}
+
+.gl-batch-row:last-child {
+  border-bottom: 0;
+}
+
+.gl-batch-row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Running is the ABSENCE of an outcome, so the row in flight takes the same
+   treatment `StatusChip` gives it: a mark, not one of the four result hues.
+   Cyan is the palette's "running / live", and this is a live row. */
+.gl-batch-row[data-running] {
+  box-shadow: inset 2px 0 0 var(--gl-cyan);
+}
+
+.gl-batch-row[data-dragging] {
+  opacity: 0.5;
+}
+
+.gl-batch-row[data-drop-target] {
+  border-top: 1px solid var(--gl-cyan);
+}
+
+.gl-batch-grip {
+  flex: 0 0 14px;
+  display: flex;
+  color: var(--gl-tx-3);
+  cursor: grab;
+  opacity: 0;
+}
+
+.gl-batch-row:hover .gl-batch-grip {
+  opacity: 1;
+}
+
+.gl-batch-grip[data-locked] {
+  cursor: default;
+  opacity: 0.2;
+}
+
+.gl-batch-grip svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* The one cell that gives, with a floor — see the header. */
+.gl-batch-name {
+  flex: 1 1 auto;
+  min-width: 96px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: start;
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-batch-name:hover {
+  text-decoration: underline;
+}
+
+.gl-batch-tags {
+  flex: 0 0 118px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.gl-batch-engines {
+  flex: 0 0 84px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* `CR` / `FF` / `WK`, not icons.
+ *
+ * Three logos at 14px are three coloured blobs — recognisable if you already
+ * know them and meaningless if you do not — and they cannot carry a per-engine
+ * RESULT, which is the thing this cell has to say when one row runs three
+ * engines and one of them failed. Two letters can be tinted.
+ *
+ * An engine that is OFF stays visible at low contrast rather than being
+ * hidden: an engine you cannot see is one you cannot add back. */
+.gl-batch-engine {
+  flex: 0 0 auto;
+  min-width: 24px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--gl-tx-3);
+  opacity: 0.4;
+  cursor: pointer;
+}
+
+.gl-batch-engine[aria-pressed="true"] {
+  opacity: 1;
+  color: var(--gl-tx-1);
+  border-color: var(--gl-line);
+  background: var(--gl-sel-bg);
+}
+
+.gl-batch-engine:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.gl-batch-engine:disabled {
+  cursor: default;
+}
+
+.gl-batch-engine:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+/* HEADED IS AMBER, and it is the one place on this row where a hue is spent on
+   a setting rather than a result. It earns it: a headed batch opens a real
+   window per test and takes focus as each launches, so the machine stops being
+   usable — which is caution, which is what amber means here. Headless is the
+   quiet default and says so by being quiet. */
+.gl-batch-window {
+  flex: 0 0 72px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--gl-line);
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-batch-window:disabled {
+  cursor: default;
+}
+
+.gl-batch-window:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-batch-time {
+  flex: 0 0 46px;
+  text-align: end;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  color: var(--gl-tx-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 82px, not the chip's own 78: the cell has to hold its width when the row has
+   no status yet, or every column to its left shifts as results arrive. */
+.gl-batch-status {
+  flex: 0 0 82px;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.gl-batch-status[data-clickable] {
+  cursor: pointer;
+}
+
+/* ── History, and its drawer ──────────────────────────────────────────── */
+
+.gl-batch-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--gl-line-2);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-2);
+}
+
+.gl-batch-history-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.gl-batch-history-row[data-selected] {
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-batch-history-caret {
+  flex: 0 0 10px;
+  color: var(--gl-tx-3);
+}
+
+.gl-batch-history-when {
+  flex: 0 0 118px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.gl-batch-history-what {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The drawer: what that batch actually ran, and under what settings. Indented
+   so it reads as belonging to the row above rather than as the next row. */
+.gl-batch-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 10px 28px;
+  border-bottom: 1px solid var(--gl-line-2);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.gl-batch-drawer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gl-batch-drawer-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
