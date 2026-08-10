@@ -23,7 +23,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { TooltipProvider } from "@ui";
 
 import type { ContextAction, RecorderState, Step, StepType } from "../lib/recorder-types";
-import { TrainerPanelView } from "./trainer-panel-view";
+import { DOCK_TOOLTIP, TrainerPanelView } from "./trainer-panel-view";
 
 function step(id: string, partial: Partial<Step> & { type: StepType }): Step {
   return { id, timestamp: 0, ...partial } as Step;
@@ -81,12 +81,17 @@ const listeners: Record<string, ((payload: unknown) => void)[]> = {};
 
 const dock = vi.fn(async () => ({ docked: true }));
 const undock = vi.fn(async () => ({ docked: false }));
+/** What the backend answers when the panel asks how it opened. Docked is the
+ *  ordinary case; a test that cares sets this before rendering. */
+let dockState: { docked: boolean; reason: string | null } = { docked: true, reason: null };
+const getState = vi.fn(async () => dockState);
 
 vi.mock("../lib/api", () => ({
   api: {
     trainerPanel: {
       dock: (...args: unknown[]) => dock(...(args as [])),
       undock: (...args: unknown[]) => undock(...(args as [])),
+      getState: (...args: unknown[]) => getState(...(args as [])),
     },
     recorder: { listCookies: async () => [], getSettings: async () => ({}) },
     llm: {
@@ -169,6 +174,7 @@ function ctx(over: Partial<ContextAction> = {}): ContextAction {
 beforeEach(() => {
   vi.clearAllMocks();
   for (const key of Object.keys(listeners)) delete listeners[key];
+  dockState = { docked: true, reason: null };
   setStore();
 });
 
@@ -392,6 +398,51 @@ describe("dock control", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /dock panel to the browser/i })).toBeTruthy(),
     );
+  });
+
+  it("asks how it opened, because the answer predates this window", async () => {
+    // The panel that opens UNDOCKED is the one that cannot be told: the backend
+    // decides before this renderer exists, so its `trainerPanel:undocked` push
+    // goes nowhere and the button keeps its optimistic "docked" default. It then
+    // reads "Undock" beside a panel that is not docked, and pressing it calls
+    // undock() on an already-undocked panel — a control that does nothing, on
+    // the exact arrangement the user wants fixed.
+    dockState = { docked: false, reason: "no-room" };
+    renderPanel();
+    await waitFor(() => expect(getState).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /dock panel to the browser/i })).toBeTruthy(),
+    );
+  });
+
+  it("does not let a slow answer undo a push that overtook it", async () => {
+    // The ask is answered in the backend before it resolves here, so a dock
+    // change that happens in between is the NEWER fact. A reply that overwrote
+    // it would roll the button back to a state that is no longer true — and
+    // only on the timings where the IPC round trip is slow, which is the shape
+    // of bug that never reproduces for the person who has to fix it.
+    let answer: (s: { docked: boolean; reason: string | null }) => void = () => {};
+    getState.mockImplementationOnce(
+      () => new Promise<{ docked: boolean; reason: string | null }>((resolve) => { answer = resolve; }),
+    );
+    renderPanel();
+    emit("trainerPanel:undocked", { reason: "no-room" });
+    answer({ docked: true, reason: null });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /dock panel to the browser/i })).toBeTruthy(),
+    );
+  });
+
+  it("says WHY it could not dock, not just that it did not", async () => {
+    // The tooltip cannot be opened in jsdom (Radix tracks pointers with APIs
+    // jsdom lacks), so the copy is asserted at its source. It has to be
+    // distinct: "no room on this display at this window size" is a thing the
+    // user can act on — pick a smaller size, or move to a bigger screen —
+    // and an undocked panel with no explanation is indistinguishable from the
+    // feature being broken.
+    expect(DOCK_TOOLTIP.noRoom).not.toBe(DOCK_TOOLTIP.undocked);
+    expect(DOCK_TOOLTIP.noRoom).toMatch(/room/i);
   });
 
   it("re-docks after the backend reports a successful dock", async () => {

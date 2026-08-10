@@ -70,6 +70,11 @@ export const api = {
   trainerPanel: {
     dock: () => ipc().invoke<{ docked: boolean }>("trainerPanel:dock"),
     undock: () => ipc().invoke<{ docked: boolean }>("trainerPanel:undock"),
+    /** The current state, for a panel that just mounted. The push announcing a
+     *  refused dock is sent before this window's page exists, so a panel that
+     *  opened undocked can only find out by asking. */
+    getState: () =>
+      ipc().invoke<{ docked: boolean; reason: string | null }>("trainerPanel:getState"),
   },
   recorder: {
     start: (
