@@ -256,10 +256,14 @@ export function Textarea({
 
 /* ── Label ──────────────────────────────────────────────────────────── */
 
+// inline-flex + gap, because a Label most often WRAPS its control
+// (`<Label><RadioGroupItem/>Ollama</Label>`) rather than pointing at one with
+// htmlFor. Without it the radio and its text render flush against each other
+// and visibly touch — see DECISIONS 2026-08-09.
 export function Label({ className, ...props }: React.ComponentProps<typeof LabelPrimitive.Root>) {
   return (
     <LabelPrimitive.Root
-      className={cn("text-[13px] font-medium text-foreground select-none", className)}
+      className={cn("inline-flex items-center gap-2 text-[13px] font-medium text-foreground select-none", className)}
       {...props}
     />
   );
