@@ -15,7 +15,7 @@ import {
 import { Check, GripVertical, Loader2, MoreHorizontal, Pencil, Play, X } from "lucide-react";
 import type { RunStepStatus } from "./recorder-store";
 
-import { TONE, TypeChip } from "../theme";
+import { SEL_BG, SEL_RING, TONE, TypeChip, insetRail } from "../theme";
 import { describeStep } from "../lib/describe-step";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "../lib/recorder-types";
 import { clampViewportAxis } from "../lib/viewport-presets";
@@ -232,18 +232,36 @@ export function StepRow({
     setTimeout(() => setReplay({ status: "idle" }), 2500);
   }
 
-  // Run highlight takes precedence over the per-row replay flash and hover.
-  const runFlash =
+  // STATUS IS A RAIL, NOT A BACKGROUND (B5a). It used to be a tinted fill plus a
+  // ring — `bg-support-red/15 ring-1 ring-inset ring-support-red/40` and
+  // friends — which is three problems at once in this palette. A filled row is
+  // the largest coloured surface on the screen, so a list with four failures
+  // reads as mostly-red before a word of it is scanned; a ring draws on all four
+  // sides, so a column of rows becomes a stack of boxes rather than a list; and
+  // the fill sat under the description, which is the text the colour is
+  // actually about. The rail is 2px on the leading edge, same motif as every
+  // other status in this design, and it leaves the row's own surface alone.
+  //
+  // An inset SHADOW rather than a border, for the reason stated everywhere else
+  // this appears: a border participates in layout, so a list where some rows
+  // have one and some do not jumps by 2px per run status — which happens live,
+  // step by step, while a run is in flight.
+  const runRail =
     runStatus === "running"
-      ? "bg-accent-10 ring-1 ring-inset ring-accent"
+      ? TONE.cyan
       : runStatus === "passed"
-        ? "bg-support-green-10"
+        ? TONE.phos
         : runStatus === "failed"
-          ? "bg-support-red/15 ring-1 ring-inset ring-support-red/40"
-          : "";
+          ? TONE.red
+          : null;
 
-  const flash = runFlash
-    ? runFlash
+  // The replay flash keeps a fill, and that is deliberate rather than an
+  // oversight: it is a 2.5s ANSWER to something the user just clicked, not a
+  // persistent property of the row, and it has to be visible without them
+  // hunting for a 2px edge. Run status is the opposite — it lands on every row
+  // at once and stays.
+  const flash = runRail
+    ? ""
     : replay.status === "ok"
       ? "bg-support-green-10"
       : replay.status === "fail"
@@ -276,11 +294,30 @@ export function StepRow({
       data-new-step={isNew ? "true" : undefined}
       data-replay-flash={replayFlash}
       className={`group flex items-center gap-2 rounded-md px-2 py-1 ${flash} ${outlineClass} ${
-        selected && !runStatus ? "ring-1 ring-inset ring-accent" : ""
-      } ${drag?.isOver ? "border-t-2 border-accent" : ""} ${
-        drag?.isDragging ? "opacity-50" : ""
-      } ${onSelect ? "cursor-pointer" : ""}`}
-      style={indent ? { marginLeft: indent * 20 } : undefined}
+        drag?.isOver ? "border-t-2 border-accent" : ""
+      } ${drag?.isDragging ? "opacity-50" : ""} ${onSelect ? "cursor-pointer" : ""}`}
+      // SELECTION IS NEUTRAL, and that is the palette's load-bearing rule rather
+      // than a preference: colour means outcome here, so a selected row drawn in
+      // the accent would be competing with what the status rail beside it is
+      // reporting — and on a row that is both selected and failing the two would
+      // be arguing. White at low alpha, no hue. `check:selection-neutral` pins
+      // it, because the next person to touch this will reasonably reach for the
+      // accent colour.
+      //
+      // Both the rail and the selection lift are box-shadows, so they compose in
+      // one declaration instead of one replacing the other. Order matters: the
+      // rail is listed first so it paints over the selection fill's edge.
+      style={{
+        ...(indent ? { marginLeft: indent * 20 } : null),
+        boxShadow:
+          [
+            runRail ? insetRail(runRail) : null,
+            selected ? `inset 0 0 0 1px ${SEL_RING}` : null,
+          ]
+            .filter(Boolean)
+            .join(", ") || undefined,
+        background: selected ? SEL_BG : undefined,
+      }}
       onDragEnter={drag ? () => drag.onDragEnter() : undefined}
       onDragOver={drag ? (e) => e.preventDefault() : undefined}
       onDrop={drag ? (e) => e.preventDefault() : undefined}

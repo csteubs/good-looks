@@ -3,7 +3,6 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   AlertDialog,
-  Button,
   Callout,
   Checkbox,
   Dialog,
@@ -23,7 +22,6 @@ import {
   TabsContent,
   TabsRoot,
   TabsTrigger,
-  Text,
   Toolbar,
   ToolbarActions,
   ToolbarContent,
@@ -32,6 +30,7 @@ import {
 } from "@ui";
 import { ChevronDown, Pencil, TriangleAlert, Trash2 } from "lucide-react";
 
+import { Btn } from "../theme";
 import { api } from "../lib/api";
 import { useRecorder } from "./recorder-store";
 import {
@@ -400,8 +399,12 @@ export function TestDetailView() {
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <Toolbar className="pt-2">
+    <div className="gl-detail flex h-full flex-col">
+      {/* `Toolbar` is kept — it owns the drag region and the `no-drag` islands
+          inside it, which are window behaviour rather than styling, and
+          `check:clickable-chrome` is about exactly that. What changes is what is
+          drawn in it. */}
+      <Toolbar className="gl-detail-head pt-2">
         <ToolbarContent>
           {editingName ? (
             <Input
@@ -441,10 +444,13 @@ export function TestDetailView() {
         <ToolbarActions>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="glass">
+              {/* `Btn` rather than the SDK `Button`, but still inside Radix's
+                  `DropdownMenu`: that one is native-menu-backed here, and the
+                  trigger is the only part of it that is real DOM. */}
+              <Btn>
                 Edit Test
                 <ChevronDown className="size-3.5" />
-              </Button>
+              </Btn>
             </DropdownMenuTrigger>
             <DropdownMenuContent side="bottom" align="end">
               <DropdownMenuItem onSelect={() => {
@@ -475,9 +481,9 @@ export function TestDetailView() {
           ) : null}
           <AlertDialog
             trigger={
-              <Button iconOnly variant="glass" size="large" aria-label="Delete test">
-                <Trash2 className="size-5" />
-              </Button>
+              <button type="button" className="gl-icon-btn" aria-label="Delete test">
+                <Trash2 className="size-4" />
+              </button>
             }
             title="Delete this test?"
             description="This removes the recording and its generated script. This can't be undone."
@@ -498,10 +504,15 @@ export function TestDetailView() {
             }}
             disabled={runInfo?.running}
           >
+            {/* `.gl-input` on a Select trigger: it is a control that reports a
+                value and opens a NATIVE menu, so its box should read as a field
+                rather than as a button. The menu itself is drawn by AppKit and
+                never enters the DOM — nothing here can style it, which is also
+                why the engine choice is asserted at the IPC layer. */}
             <SelectTrigger
               variant="filled"
               size="small"
-              className="w-32"
+              className="gl-input w-32"
               aria-label="Browser engine for this test's runs"
             >
               {/* No icon of ours here: SelectValue already draws the selected
@@ -517,14 +528,14 @@ export function TestDetailView() {
               ))}
             </SelectContent>
           </Select>
-          <label className="flex select-none items-center gap-1.5 pr-1 text-small text-secondary">
+          <label className="gl-run-option gl-detail-timeout">
             <span className="whitespace-nowrap">Timeout</span>
             <Input
               type="number"
               min={5}
               max={1800}
               step={1}
-              className="h-7 w-16 px-1.5 text-small"
+              className="gl-input w-16"
               value={testTimeoutSec ?? ""}
               placeholder={String(
                 Math.round((settingsQuery.data?.defaultTestTimeoutMs ?? 60_000) / 1000),
@@ -547,30 +558,15 @@ export function TestDetailView() {
                 });
               }}
             />
-            <span className="text-tertiary">s</span>
+            <span className="gl-detail-unit">s</span>
           </label>
-          {/* The gang of four: a compact 2×2 block until the run-options row
-              gets its real design pass.
-
-              Columns are `auto`, NOT `grid-cols-2`. Tailwind's `grid-cols-2` is
-              `repeat(2, minmax(0, 1fr))`, and that `0` floor lets a column
-              shrink below the width of its own text. These labels are
-              `overflow: visible`, so they do not clip or ellipsise when that
-              happens — they paint straight across the neighbouring column. At
-              860px the columns were 48px wide holding text that needed 96px,
-              two labels deep, which read as the four options printed on top of
-              each other.
-
-              `auto` resolves to `minmax(min-content, max-content)`: the floor
-              becomes the longest unbreakable WORD rather than zero. The labels
-              still wrap to two lines when the toolbar is tight — which was
-              always fine to read — they just can no longer be squeezed narrower
-              than a word and spill. `max-content` was tried first and is wrong:
-              it forbids wrapping outright, which pushed the toolbar's own
-              minimum to 1085px, i.e. wider than this window's 1000px DEFAULT,
-              trading a rare overlap for a guaranteed one. */}
-          <div className="grid grid-cols-[auto_auto] gap-x-3 gap-y-1">
-            <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+          {/* The gang of four, a compact 2×2 block. The column-track rule that
+              keeps it from overlapping itself at narrow widths moved into
+              `.gl-run-options` (screens.css) in B5a — the reasoning is written
+              out there, and `check:narrow-layout` reads it from the stylesheet
+              rather than from a Tailwind class here. */}
+          <div className="gl-run-options">
+            <label className="gl-run-option">
               <Checkbox
                 checked={runHeadless}
                 onCheckedChange={(v) => {
@@ -585,7 +581,7 @@ export function TestDetailView() {
               />
               Run headless
             </label>
-            <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+            <label className="gl-run-option">
               {/* Independent of "Run headless". Headless Chromium renders to an
                   offscreen surface, so page.screenshot() works exactly the same —
                   it's how visual regression testing is normally done. Headless is
@@ -606,7 +602,7 @@ export function TestDetailView() {
               />
               Capture screenshots
             </label>
-            <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+            <label className="gl-run-option">
               {/* Separate from screenshots on purpose: this writes page console
                   output and request URLs to disk. Off by default, and the model
                   can only ASK for the result — it is never attached automatically. */}
@@ -624,7 +620,7 @@ export function TestDetailView() {
               />
               Record console &amp; network
             </label>
-            <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+            <label className="gl-run-option">
               <Checkbox
                 checked={a11yChecks}
                 onCheckedChange={(v) => {
@@ -640,14 +636,18 @@ export function TestDetailView() {
               Check accessibility
             </label>
           </div>
+          {/* `stop` and `go`, and this is the one place on the screen that earns
+              a hue: pressing it causes the thing the colour means. Everything
+              else in this toolbar is `ghost` for the same reason — a screen
+              where every button is lit spends the whole palette on chrome. */}
           {runInfo?.running ? (
-            <Button variant="destructive" onClick={() => stopRun(id)}>
+            <Btn tone="stop" onClick={() => stopRun(id)}>
               Stop
-            </Button>
+            </Btn>
           ) : (
-            <Button variant="accent" onClick={() => run(id, captureArtifacts, runHeadless, runBrowser)}>
+            <Btn tone="go" onClick={() => run(id, captureArtifacts, runHeadless, runBrowser)}>
               Run test
-            </Button>
+            </Btn>
           )}
         </ToolbarActions>
       </Toolbar>
@@ -689,7 +689,7 @@ export function TestDetailView() {
         const value = tab === "steps" && !showSteps ? "script" : (tab ?? (showSteps ? "steps" : "script"));
         return (
           <TabsRoot value={value} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
-            <div className="px-4 pt-2">
+            <div className="gl-detail-tabs">
               <Tabs variant="filled" size="large">
                 {showSteps ? <TabsTrigger value="steps">Steps ({test.steps.length})</TabsTrigger> : null}
                 <TabsTrigger value="script">Script</TabsTrigger>
@@ -737,33 +737,25 @@ export function TestDetailView() {
               </ScrollArea>
             </TabsContent>
             <TabsContent value="script" className="flex min-h-0 flex-1 flex-col">
-              <div className="flex items-center justify-end gap-2 border-b border-separator px-4 py-2">
+              <div className="gl-detail-script-bar">
                 {editingScript ? (
                   <>
-                    <Button size="small" variant="glass" onClick={() => setEditingScript(false)}>
-                      Cancel
-                    </Button>
-                    <Button size="small" variant="accent" onClick={saveScript}>
+                    <Btn onClick={() => setEditingScript(false)}>Cancel</Btn>
+                    <Btn tone="go" onClick={saveScript}>
                       Save
-                    </Button>
+                    </Btn>
                   </>
                 ) : (
                   <>
-                    {test.scriptEdited ? (
-                      <Text variant="small" color="secondary">
-                        Edited manually
-                      </Text>
-                    ) : null}
-                    <Button
-                      size="small"
-                      variant="glass"
+                    {test.scriptEdited ? <span className="gl-chip">Edited manually</span> : null}
+                    <Btn
                       onClick={() => {
                         setScriptDraft(scriptQuery.data ?? "");
                         setEditingScript(true);
                       }}
                     >
                       Edit script
-                    </Button>
+                    </Btn>
                   </>
                 )}
               </div>

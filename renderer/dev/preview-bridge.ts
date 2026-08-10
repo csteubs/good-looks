@@ -580,13 +580,122 @@ function defaultFor(channel: string): unknown {
   return null;
 }
 
+/**
+ * A run that actually finishes.
+ *
+ * WHY THIS IS SCRIPTED RATHER THAN INSTANT. The screens this feeds are about
+ * a run in PROGRESS as much as a run that is over: steps go cyan one at a time,
+ * the log grows, and the verdict chip flips from the holo "Running" treatment to
+ * a tone. Resolving the whole thing in one tick would render the end state and
+ * nothing else, which is exactly the half that was already reachable.
+ *
+ * The outcome comes from the FIXTURE, not from a coin flip. `t-login`'s stored
+ * run failed, so its preview run fails at the same step — which is what makes
+ * `?test=t-login` a stable address for "show me the failed path", and it is the
+ * only reason the failed console path can be reviewed at all outside a Mac.
+ * Math.random() here would mean a screenshot you cannot ask for twice.
+ *
+ * Nothing real happens: no browser, no Playwright, no file written. The banner
+ * says so, permanently.
+ */
+function startFakeRun(
+  payload: Payload,
+  state: ReturnType<typeof seed>,
+  emit: (channel: string, value: unknown) => void,
+): { runId: string } {
+  // `api.ts` sends `{ id, headed, ... }` — the key is `id`, not `testId`, and
+  // the store keys its run map by the TEST id, so the two have to agree or the
+  // panel watches a run nobody is reporting on.
+  const runId = String(payload?.id ?? "preview-run");
+  const test = state.tests.find((t) => t.id === runId);
+  const steps = test?.steps ?? [];
+  // Which step fails, or -1 for a clean run. Read from the fixture's own run
+  // history so the preview agrees with the sidebar's status dot.
+  const stored = state.runs.find((r) => r.testId === runId);
+  const failAt =
+    stored && stored.status !== "passed" ? Math.min(steps.length - 1, Math.max(0, steps.length - 2)) : -1;
+
+  const TICK = 260;
+  let at = 0;
+  const later = (fn: () => void) => {
+    at += TICK;
+    setTimeout(fn, at);
+  };
+
+  emit("runner:output", { runId, chunk: `Running ${steps.length} steps…\n` });
+  for (let i = 0; i < steps.length; i++) {
+    const index = i;
+    later(() => emit("runner:step", { runId, index, status: "begin", ok: true }));
+    later(() => {
+      const ok = index !== failAt;
+      emit("runner:step", { runId, index, status: "end", ok });
+      emit("runner:output", {
+        runId,
+        chunk: ok
+          ? `  ok ${index + 1} — ${test?.name ?? "step"}\n`
+          : `  ✘ ${index + 1} — ${test?.name ?? "step"}\n\n` +
+            `    Error: Timeout 5000ms exceeded waiting for locator\n` +
+            `    at ${test?.url ?? "about:blank"}\n`,
+      });
+    });
+    // Everything after the failing step is never attempted, exactly as
+    // Playwright would leave it — the rows stay unmarked rather than going
+    // green, which is the difference between "these passed" and "these did not
+    // run".
+    if (index === failAt) break;
+  }
+  later(() =>
+    emit("runner:done", {
+      runId,
+      code: failAt === -1 ? 0 : 1,
+      recordId: stored?.id,
+    }),
+  );
+  return { runId };
+}
+
 export function installPreviewBridge(): PreviewDiagnostics {
   const state = seed();
   const handlers = { ...buildHandlers(state), ...SDK_CHANNELS };
   const diagnostics: PreviewDiagnostics = { misses: {}, calls: [] };
 
+  // ── Push ────────────────────────────────────────────────────────────────
+  //
+  // `on` USED TO BE A NO-OP, and that quietly bounded what the preview could
+  // show to whatever a view renders before anything happens to it. Everything
+  // in this app that has a *result* arrives by push: a run's output, its
+  // per-step status, its exit code. So "Run test" started a run that could
+  // never finish, and the run panel — the whole subject of the test detail
+  // screen — was only ever reachable in its Running state. A reskin of the
+  // FAILED path could not be looked at at all.
+  //
+  // A map of channel → listeners, and `emit` below. Deliberately tiny: this is
+  // not an IPC implementation, it is enough of one that a scripted run can
+  // report what it did.
+  //
+  // THE LISTENER SIGNATURE IS `(event, payload)`, NOT `(payload)`, and getting
+  // that wrong is silent in exactly the way this file's header warns about.
+  // `api.on` unwraps with `cb(args[1] as T)` — the real preload hands Electron's
+  // IpcRendererEvent first — so a bus that emitted the payload alone would call
+  // every subscriber with `undefined` and render nothing, with no error and no
+  // miss recorded. The first version of this did that; the run simply never
+  // finished. The `null` below stands in for the event nobody reads.
+  const listeners = new Map<string, Set<(...args: unknown[]) => void>>();
+  const subscribe = (channel: string, fn: (...args: unknown[]) => void) => {
+    const set = listeners.get(channel) ?? new Set();
+    set.add(fn);
+    listeners.set(channel, set);
+    return () => {
+      set.delete(fn);
+    };
+  };
+  const emit = (channel: string, payload: unknown) => {
+    for (const fn of listeners.get(channel) ?? []) fn(null, payload);
+  };
+
   const invoke = async (channel: string, ...args: unknown[]): Promise<unknown> => {
     diagnostics.calls.push(channel);
+    if (channel === "runner:run") return startFakeRun(args[0] as Payload, state, emit);
     const handler = handlers[channel];
     if (handler) return handler(args[0] as Payload);
 
@@ -606,7 +715,7 @@ export function installPreviewBridge(): PreviewDiagnostics {
       ipc: {
         invoke,
         send: () => {},
-        on: noopSubscribe,
+        on: (channel: string, fn: (...args: unknown[]) => void) => subscribe(channel, fn),
         once: noopSubscribe,
         onNotification: noopSubscribe,
         stream: async (channel: string) => invoke(channel),

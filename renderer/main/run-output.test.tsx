@@ -7,7 +7,7 @@
 // or to keep waiting on one that already failed.
 
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 
 import { toneFor } from "../lib/ai-debug-status";
 import type { AiDebugStatus } from "../lib/recorder-types";
@@ -92,5 +92,63 @@ describe("the AI debug icon", () => {
     render(<RunOutput info={info({ code: 1 })} onDebug={onDebug} aiStatus="done" />);
     screen.getByLabelText(toneFor("done").label).click();
     expect(onDebug).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the verdict chip", () => {
+  // One shape, one width, the palette's tones — `StatusChip`, not the SDK
+  // `Status` badge this replaced. The width is the point: a chip sized to its
+  // own word gives a column of runs a ragged edge, which fails one row at a
+  // time and looks fine in isolation.
+  const chip = () => document.querySelector('[data-gl="status-chip"]') as HTMLElement | null;
+
+  it("reports a pass in the pass tone", () => {
+    render(<RunOutput info={info({ code: 0 })} />);
+    expect(chip()?.dataset.tone).toBe("phos");
+    expect(chip()?.textContent).toBe("Passed");
+  });
+
+  it("reports a failure in the fail tone", () => {
+    render(<RunOutput info={info({ code: 1 })} />);
+    expect(chip()?.dataset.tone).toBe("red");
+    expect(chip()?.textContent).toBe("Failed");
+  });
+
+  it("shows a run still in flight as running, which is NOT one of the tones", () => {
+    // Running is the absence of an outcome. Give it a status hue and a run
+    // still in flight looks like one that finished and reported something —
+    // which is the single most misleading thing this panel could do.
+    render(<RunOutput info={info({ running: true, code: null })} />);
+    expect(chip()?.dataset.tone).toBe("running");
+    for (const tone of ["phos", "red", "amber", "cyan"]) {
+      expect(chip()?.dataset.tone).not.toBe(tone);
+    }
+  });
+});
+
+describe("the log drawer", () => {
+  const expander = () => screen.getByRole("button", { name: /the run output/i });
+  const panel = () => document.querySelector('[data-gl="run-panel"]') as HTMLElement;
+
+  it("starts collapsed", () => {
+    render(<RunOutput info={info()} />);
+    expect(expander().getAttribute("aria-expanded")).toBe("false");
+    expect(panel().className).not.toContain("gl-run-panel-expanded");
+  });
+
+  it("expands to take the pane", () => {
+    // 224px is about eight lines of console: enough to see that something
+    // failed, never enough to read the stack that says why.
+    render(<RunOutput info={info()} />);
+    fireEvent.click(expander());
+    expect(expander().getAttribute("aria-expanded")).toBe("true");
+    expect(panel().className).toContain("gl-run-panel-expanded");
+  });
+
+  it("offers the control even when there is nothing to expand yet", () => {
+    // Deliberately not gated on the output being long. A control that appears
+    // only once the log happens to overflow is one nobody learns is there.
+    render(<RunOutput info={info({ lines: [], running: true, code: null })} />);
+    expect(expander()).toBeTruthy();
   });
 });

@@ -126,3 +126,47 @@ describe("the triage line", () => {
     expect(screen.getByText(VERDICT_LABEL.runner)).toBeTruthy();
   });
 });
+
+describe("the verdict dot", () => {
+  // COLOUR MEANS OUTCOME, and two of the four verdicts are not one. The whole
+  // point of this block is the pair that must stay NEUTRAL: "evidence both
+  // ways" and "not enough evidence" are the classifier declining to call it,
+  // and a coloured dot would have the component assert what the reasoning
+  // behind it refused to.
+  const dot = () => document.querySelector('[data-gl="verdict"]') as HTMLElement | null;
+
+  async function renderVerdict(verdict: TriageResult["verdict"]) {
+    h.triage = async () => result({ verdict });
+    render(<RunTriage runId={`run-${verdict}`} />);
+    await screen.findByText(new RegExp(VERDICT_LABEL[verdict], "i"));
+    return dot()!;
+  }
+
+  it("marks a site verdict amber — caution, go and look there", async () => {
+    expect((await renderVerdict("site")).dataset.tone).toBe("amber");
+  });
+
+  it("marks a runner verdict red — the failure is in the test you wrote", async () => {
+    expect((await renderVerdict("runner")).dataset.tone).toBe("red");
+  });
+
+  it("leaves a mixed verdict without a tone", async () => {
+    expect((await renderVerdict("mixed")).dataset.tone).toBe("neutral");
+  });
+
+  it("leaves an unknown verdict without a tone", async () => {
+    expect((await renderVerdict("unknown")).dataset.tone).toBe("neutral");
+  });
+
+  it("never marks a triage verdict as a pass", async () => {
+    // The run has already failed. A green dot anywhere on this panel reads as
+    // a pass no matter what the sentence beside it says.
+    for (const verdict of ["site", "runner", "mixed", "unknown"] as const) {
+      h.triage = async () => result({ verdict });
+      const { unmount } = render(<RunTriage runId={`pass-check-${verdict}`} />);
+      await screen.findByText(new RegExp(VERDICT_LABEL[verdict], "i"));
+      expect(dot()?.dataset.tone, verdict).not.toBe("phos");
+      unmount();
+    }
+  });
+});

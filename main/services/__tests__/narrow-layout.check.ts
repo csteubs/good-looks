@@ -76,23 +76,48 @@ const MEASURED_REQUIREMENT = 928;
 // ── 2. The grids ──────────────────────────────────────────────────────────
 {
   const detail = read("../../../renderer/main/test-detail-view.tsx");
-  // Tailwind's `grid-cols-<n>` is `repeat(n, minmax(0, 1fr))`. The 0 floor is
-  // the whole bug: it lets a column shrink under its own text, and these labels
-  // are overflow:visible, so the text spills across its neighbour rather than
-  // clipping. `auto` == minmax(min-content, max-content) — it still wraps, it
-  // just cannot go under a word.
-  const runOptions = detail.match(/<div className="grid grid-cols-\[[^\]]*\][^"]*gap-x-3[^"]*"/);
+  const screens = read("../../../renderer/theme/screens.css");
+
+  // MOVED INTO screens.css IN B5a, and this check moved with it — same shape as
+  // `.gl-home` (B1) and `.gl-batch-name` (B3). Two assertions rather than one,
+  // because a rule that resolves and a view that uses it are separate facts:
+  // renaming the class in the .tsx leaves this rule perfect and unreferenced,
+  // and it would still pass a check that only read the stylesheet.
+  const runOptions = screens.match(/\.gl-run-options\s*\{([^}]*)\}/);
+  assert(runOptions !== null, "screens.css: found the .gl-run-options rule");
   assert(
-    runOptions !== null,
-    "test-detail-view.tsx: the run-options block uses explicit grid tracks, not `grid-cols-<n>` (whose minmax(0,1fr) lets a column shrink below its own text)",
+    /className="gl-run-options"/.test(detail),
+    "test-detail-view.tsx: the run-options block still carries `gl-run-options`",
   );
+  if (runOptions) {
+    const body = runOptions[1];
+    // The 0 floor in `minmax(0, 1fr)` is the whole bug: it lets a column shrink
+    // under its own text, and these labels are overflow:visible, so the text
+    // spills across its neighbour rather than clipping. `auto` ==
+    // minmax(min-content, max-content) — it still wraps, it just cannot go
+    // under a word.
+    const tracks = body.match(/grid-template-columns:\s*([^;]+);/);
+    assert(tracks !== null, ".gl-run-options: declares its column tracks explicitly");
+    if (tracks) {
+      assert(
+        /\bauto\b/.test(tracks[1]) && !/1fr/.test(tracks[1]),
+        `.gl-run-options: tracks are content-sized, not \`1fr\` (got "${tracks[1].trim()}") — a fractional track floors at zero and lets a label paint across its neighbour`,
+      );
+      // `max-content` forbids wrapping outright, which pushed the toolbar's own
+      // minimum past this window's DEFAULT width — a rare overlap traded for a
+      // guaranteed one.
+      assert(
+        !/max-content/.test(tracks[1]),
+        ".gl-run-options: tracks are not `max-content`, which forbids wrapping and pushes the toolbar wider than the default window",
+      );
+    }
+  }
   assert(
-    !/grid grid-cols-2 gap-x-3/.test(detail),
-    "test-detail-view.tsx: the run-options block has not reverted to `grid-cols-2`",
+    !/grid-cols-2|grid-cols-\[/.test(detail),
+    "test-detail-view.tsx: the run-options block has not gone back to a Tailwind grid utility",
   );
 
   const batch = read("../../../renderer/main/batch-view.tsx");
-  const screens = read("../../../renderer/theme/screens.css");
 
   // Every other cell in a batch row is fixed-width, so the flexible cell absorbs
   // the entire squeeze. Without a floor that bottoms out at width:0 and the test

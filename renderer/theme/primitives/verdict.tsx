@@ -18,17 +18,32 @@ import { TONE } from "../tokens";
 import type { ToneName } from "../tokens";
 
 export interface VerdictProps {
-  tone: ToneName;
+  /**
+   * Which outcome this reports. OMIT FOR A NEUTRAL DOT, same contract as
+   * `StatusChip`'s optional tone and for the same reason: some verdicts are
+   * real statements that are not outcomes. "Evidence both ways" and "not enough
+   * evidence" are precisely the cases where no call was made, and giving either
+   * a hue would be the component asserting something the classifier refused to.
+   */
+  tone?: ToneName;
   /** The claim, in a sentence. */
   children: React.ReactNode;
   /** Optional second line — the evidence behind the claim. */
   detail?: React.ReactNode;
 }
 
+/** The neutral dot. `--gl-tx-3`, i.e. the same dimming everything else in this
+ *  design uses to say "secondary" — never a hue. */
+const NEUTRAL_DOT = "var(--gl-tx-3)";
+
 export function Verdict({ tone, children, detail }: VerdictProps): React.ReactElement {
   return (
-    <div className="gl-verdict" data-gl="verdict" data-tone={tone}>
-      <span className="gl-verdict-dot" style={{ background: TONE[tone] }} aria-hidden />
+    <div className="gl-verdict" data-gl="verdict" data-tone={tone ?? "neutral"}>
+      <span
+        className="gl-verdict-dot"
+        style={{ background: tone ? TONE[tone] : NEUTRAL_DOT }}
+        aria-hidden
+      />
       <div className="gl-verdict-body">
         <p className="gl-verdict-text">{children}</p>
         {detail !== undefined ? <p className="gl-verdict-detail">{detail}</p> : null}
