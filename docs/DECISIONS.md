@@ -16,6 +16,30 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — The five components every screen embeds leave the SDK, and a check so they stay left
+
+**A5 of the redesign (REDESIGN §4), landing right behind A4.** `step-row.tsx`, `pager.tsx`, `tag-cluster.tsx`, `log-inspector.tsx` and `heals-panel.tsx` are the components every screen embeds. Doing them BEFORE the screens is the whole point: it means each Phase B PR has one review question — "does this screen still do everything it did?" — instead of two, with a button swap and a layout change tangled in the same diff.
+
+**A third stylesheet, split by scope rather than by taste.** `primitives.css` is what a screen is built out of, `shell.css` is what a screen sits inside, `shared.css` is what a screen embeds. The five components stay in `renderer/main/` because each is wired to queries and IPC the theme layer must not know about; what moves is their chrome.
+
+**Two chip rules, and the distinction is not cosmetic.** `.gl-chip` is neutral and `.gl-chip-tone` takes its border, fill and text from `toneSurface()`, and which one a label gets is decided by a single question: does it report an OUTCOME? "Applied to the test" and "Accepted" do, so they are toned. "During a run", "soft", "disabled", "seen before" do not — they are facts about how something is configured or where it happened — so they are neutral. Get that backwards and every configured step reads as a verdict.
+
+- **Neither is a `StatusChip`, deliberately.** That one is fixed at `--gl-status-w` so a COLUMN of them has one edge; these are inline labels in a wrapping row whose lengths differ by design, and forcing "Applied to the test" into 78px would truncate it to satisfy a contract it is not part of.
+- **The SDK `Badge` this replaced mapped `assert` onto GREEN** — the pass hue — on every assertion in every step list, so a list of steps read as a list of results. `TypeChip`'s palette is separate from the status palette for exactly this reason, and there is now a test that fails if a type chip is ever drawn in a tone.
+
+**The tag delete stopped turning red on hover.** It did, and under this palette that is wrong: an outcome hue on a hover state reads as the row reporting something, which is precisely what `check:selection-neutral` bans. The destructive fact belongs where it can be stated rather than implied — the confirm dialog already names how many tests lose the tag and that it cannot be undone, and ITS confirm button is the red one. The X brightens instead.
+
+**The step row keeps its own structure, and that is not a shortcut.** It carries drag-to-reorder, inline editing, per-step replay, the run-status flash and the `.step-new` outline; folding all of that into the `StepRow` primitive is the step list's own reskin (§B5/§B6), and doing it here would have made A5 a layout change to the most-used component in the app. What left is the SDK: badges → `TypeChip`, buttons → `.gl-icon-btn`, `Text` → `.gl-mono-value`, `Input` → `.gl-input`. The status glyph now takes the palette's tones, and `running` is `--gl-cyan` where it used to be the SDK accent — a different blue that means nothing here.
+
+**`check:sdk-retired` is the point of the PR, not an extra.** The failure it guards is not a bug, it is erosion: a Phase B PR touching one of these files needs a button, `Button` is one import away and is what eighty other files still use, and the result compiles, renders, passes every test and looks *almost* right. A rounded control among square ones is invisible to jsdom (the dom suite runs with `css: false`), invisible to type-check, and invisible to a reviewer reading a 400-line reskin diff one import line at a time.
+
+- **It asserts the mirror as well, because the obvious version passes vacuously.** `pager.tsx` now imports NOTHING from `@ui`, so "imports only keep-list symbols" says nothing about it whatsoever — a file that rendered plain unstyled markup would pass. So every retired surface must also be shown to read the theme layer.
+- **The parser is proved before it is trusted.** A regex that stops matching harvests nothing and an empty set trivially has no offenders, so the check first asserts it can still see the imports in a file that definitely has some, by name and count. Same failure mode `check:push-consumers` was written against.
+- **The keep-list is four families with reasons, and its size is asserted.** There is no way to enforce that a reason exists, so the next best thing is to notice the list growing: the fix for a red run must not become "add the symbol to KEEP", which is indistinguishable from the bug. Anything beyond Dialog / ScrollArea / the native-menu families / toast wants an entry here rather than a line there.
+- **Verified by breaking it**: putting a `Button` back into `pager.tsx` goes red and names the file and the symbol.
+
+**`check:text-color` stays as it is** (REDESIGN §8.3 asks for a decision per PR). These five surfaces no longer render `Text`, but forty-odd files still do, and its subject is not gone until they are.
+
 ### 2026-08-10 — The shell lands, and the light theme goes with it
 
 **A4 of the redesign (REDESIGN §4).** The foundation had been sitting unconsumed since 2026-08-08 — tokens, fonts, atmosphere and fifteen primitives, none of it reachable from the app. This is the PR where the app starts looking like the design, and where the two-theme world ends.

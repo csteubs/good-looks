@@ -1,0 +1,474 @@
+/*
+ * The chrome for the components every screen embeds.  docs/REDESIGN.md §4 (A5).
+ *
+ * THE THIRD OF THREE, and the split is by scope rather than by taste:
+ *
+ *   primitives.css  the fifteen components a screen is BUILT OUT OF
+ *   shell.css       the frame a screen sits INSIDE — one instance per window
+ *   shared.css      the handful of components every screen EMBEDS
+ *
+ * The five here — the pager, the log inspector's console, the tag cluster, the
+ * heal row and the step row's furniture — are composed in `renderer/main/`,
+ * because each is wired to queries and IPC that the theme layer must not know
+ * about. What they must NOT keep is the SDK's `Button`/`Text`/`Badge`, which
+ * are rounded by `cva` default with no "no radius" variant to ask for. Doing
+ * them here, before Phase B, is what keeps each screen's reskin about layout
+ * instead of about swapping buttons.
+ *
+ * Same house rules as the other two: constants are named classes, only
+ * per-instance derived values go inline, zero radius, a hairline is the only
+ * container.
+ */
+
+/* ── Chips ────────────────────────────────────────────────────────────
+   Two of them, and the difference is whether the label reports an OUTCOME.
+
+   `.gl-chip` is neutral: a fact about a row that is not a result — "soft",
+   "disabled", "seen before", "During a run". `.gl-chip-tone` takes its border,
+   fill and text from `toneSurface()` inline, which is the one place that
+   derivation happens (tokens.ts); writing the hex here would be a second
+   mechanism for one appearance.
+
+   NEITHER IS A `StatusChip`. That one is fixed at `--gl-status-w` so a COLUMN
+   of them has one edge, and these are inline labels in a wrapping row whose
+   lengths differ by design. A fixed width there would truncate "Applied to the
+   test" to fit a contract it is not part of. */
+.gl-chip,
+.gl-chip-tone {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  border: 1px solid var(--gl-line);
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.gl-chip {
+  color: var(--gl-tx-3);
+}
+
+/* ── Small icon control ───────────────────────────────────────────────
+   The per-row buttons: replay, edit, utilities, delete. Same size as the
+   strip's `.gl-chrome-btn` and deliberately not the same class — these live
+   inside a row that reveals them on hover, and a shared rule would mean a
+   change for one surface silently retuning the other. */
+.gl-icon-btn {
+  height: 22px;
+  min-width: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--gl-tx-3);
+  /* `body` sets `cursor: default` app-wide and Tailwind's preflight sets it on
+     `button` too, so without this a control has no hover affordance at all.
+     Guarded by `check:clickable-chrome`. */
+  cursor: pointer;
+}
+
+.gl-icon-btn:hover:not(:disabled) {
+  color: var(--gl-tx-1);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.gl-icon-btn:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-icon-btn:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.gl-icon-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ── Text ─────────────────────────────────────────────────────────────
+   Three roles, and they are the reason `Text` can leave: a section heading, a
+   sentence of explanation, and a monospaced value. The design's rule is that
+   anything SCANNED is mono and anything READ is sans, so `.gl-note` is the one
+   of the three that is not mono. */
+.gl-section-title {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+}
+
+.gl-note {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gl-tx-3);
+}
+
+.gl-mono-value {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Step-row furniture ───────────────────────────────────────────────
+   The app's step row (renderer/main/step-row.tsx) is not the theme's `StepRow`
+   primitive yet — it carries drag-to-reorder, inline editing, per-step replay
+   and the run-status flash, and folding all of that into the primitive belongs
+   with the step list's own reskin (REDESIGN §B5/§B6). What it stops carrying
+   here is the SDK's Button/Text/Badge.
+
+   `.gl-row-index` rather than the primitive's `.gl-step-index`: that one takes
+   its font from `.gl-step-row`, and a class whose appearance depends on an
+   ancestor it does not have is the kind of borrowing that looks fine until the
+   ancestor changes. */
+.gl-row-index {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-3);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  width: 22px;
+}
+
+/* The one-field inline editor a step row opens over its description. Mono and
+   the same size as the text it replaces, so committing an edit does not make
+   the row jump — a field that is taller than the line it edits reflows the
+   whole list on every click. There is no `Input` primitive in the theme
+   because there is nothing else asking for one yet: the trainer's composer
+   (REDESIGN §6.2) is what will need a real one, and inventing it here would
+   mean designing it against a single call site. */
+.gl-input {
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-ink);
+  color: var(--gl-tx-1);
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+}
+
+.gl-input:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+/* The insert cursor between two rows. A caret rather than a selection, which is
+   why `--gl-cyan` is allowed here — the palette declares it "running / live /
+   focus", and `check:selection-neutral` draws exactly that line. */
+.gl-cursor-gap {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 8px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.gl-cursor-gap:disabled {
+  cursor: default;
+}
+
+.gl-cursor-gap-rule {
+  width: 100%;
+  height: 1px;
+  background: transparent;
+}
+
+.gl-cursor-gap:hover:not(:disabled) .gl-cursor-gap-rule {
+  background: var(--gl-line);
+}
+
+.gl-cursor-gap[data-active] .gl-cursor-gap-rule {
+  background: var(--gl-cyan);
+}
+
+/* ── Pager ────────────────────────────────────────────────────────────── */
+
+.gl-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-top: 1px solid var(--gl-line);
+}
+
+.gl-pager-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* `tabular-nums`, because the page counter is read while it changes and
+   proportional digits make it jump sideways as it does. */
+.gl-pager-count,
+.gl-pager-page {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.gl-pager-page {
+  color: var(--gl-tx-2);
+}
+
+/* ── Console ──────────────────────────────────────────────────────────
+   Raw log output. `--gl-black`, the only true #000 in the palette, and it is
+   reserved for exactly this and the backing behind a captured frame: anything
+   lighter reads as a surface the app drew rather than as output it captured. */
+.gl-console {
+  background: var(--gl-black);
+  border: 1px solid var(--gl-line);
+  padding: 10px;
+  margin: 0;
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--gl-tx-2);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* ── Tag cluster ──────────────────────────────────────────────────────── */
+
+.gl-tag-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+}
+
+.gl-tag-row-icon {
+  flex: 0 0 auto;
+  display: flex;
+  color: var(--gl-tx-3);
+}
+
+.gl-tag-row-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* A `<span>` wrapper rather than one button, because the delete affordance is
+   a button in its own right and a button inside a button is invalid markup
+   that swallows the inner click. */
+.gl-tag {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--gl-line);
+  flex: 0 0 auto;
+}
+
+.gl-tag[data-disabled] {
+  opacity: 0.5;
+}
+
+.gl-tag-btn {
+  padding: 2px 7px;
+  border: 0;
+  background: transparent;
+  color: var(--gl-tx-2);
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gl-tag-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--gl-tx-1);
+}
+
+.gl-tag-btn:disabled {
+  cursor: default;
+}
+
+/* SELECTION IS NEUTRAL — the filter that is ON is not reporting an outcome,
+   and a coloured one would compete with every status chip on the screen.
+   `check:selection-neutral` reads this rule by its `[aria-pressed=` selector. */
+.gl-tag-btn[aria-pressed="true"] {
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+  color: var(--gl-tx-1);
+}
+
+.gl-tag-btn:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-tag-sep {
+  width: 1px;
+  flex: 0 0 auto;
+  background: var(--gl-line);
+}
+
+/* Visible at rest rather than revealed on hover: on a pill this small a
+   hover-only X is undiscoverable, and it is the entire affordance.
+ *
+ * IT DOES NOT GO RED ON HOVER, and the version this replaces did. Under this
+ * palette an outcome hue on a hover state reads as a result — the row claiming
+ * something about itself — which is the whole reason `check:selection-neutral`
+ * bans it. The destructive fact belongs where it can be stated rather than
+ * implied: the confirm dialog says how many tests lose the tag and that it
+ * cannot be undone, and ITS confirm button is the red one. */
+.gl-tag-del {
+  display: flex;
+  align-items: center;
+  padding: 0 5px;
+  border: 0;
+  background: transparent;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-tag-del:hover:not(:disabled) {
+  color: var(--gl-tx-1);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.gl-tag-del:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.gl-tag-del svg {
+  width: 10px;
+  height: 10px;
+}
+
+/* ── Heal row ─────────────────────────────────────────────────────────── */
+
+.gl-heal-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+}
+
+.gl-heal-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.gl-heal-head-icon {
+  display: flex;
+  flex: 0 0 auto;
+  color: var(--gl-violet);
+}
+
+.gl-heal-head-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.gl-heal-title {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-heal-when {
+  margin-inline-start: auto;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-heal-locs {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gl-heal-loc {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+/* `was` / `now`, in a fixed column so the two locators start on the same x —
+   the whole point of this block is comparing them, and a ragged left edge is
+   what makes two similar strings hard to diff by eye. */
+.gl-heal-loc-key {
+  flex: 0 0 34px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-heal-was {
+  text-decoration: line-through;
+  color: var(--gl-tx-3);
+}
+
+.gl-heal-now {
+  color: var(--gl-tx-1);
+}
+
+.gl-heal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.gl-heal-alt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The amber block: "a heal that succeeded is not the same as a heal that was
+   right." An inset rail rather than a filled banner — the same motif every
+   other status in this design uses, so a warning does not need a shape of its
+   own to be read as one. */
+.gl-notice {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gl-tx-2);
+}

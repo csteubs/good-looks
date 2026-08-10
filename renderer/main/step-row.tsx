@@ -5,42 +5,31 @@
 
 import * as React from "react";
 import {
-  Badge,
-  Button,
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-  Input,
-  Text,
 } from "@ui";
 import { Check, GripVertical, Loader2, MoreHorizontal, Pencil, Play, X } from "lucide-react";
 import type { RunStepStatus } from "./recorder-store";
 
+import { TONE, TypeChip } from "../theme";
 import { describeStep } from "../lib/describe-step";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "../lib/recorder-types";
 import { clampViewportAxis } from "../lib/viewport-presets";
-import type { Step, StepType } from "../lib/recorder-types";
+import type { Step } from "../lib/recorder-types";
 
-function badgeColor(type: StepType): "green" | "blue" | "secondary" | "purple" | "yellow" {
-  if (type === "if" || type === "endif") return "purple";
-  if (type === "assert") return "green";
-  // A pseudo-state step gets its own colour because it is the one kind whose
-  // effect is invisible in the step list AFTER it: it changes what the next
-  // assertion measures without changing the page.
-  if (type === "state") return "yellow";
-  // Environment/setup steps share a colour: navigation, viewport, waits, cookies.
-  if (type === "goto" || type === "viewport" || type === "wait" || type === "cookie") return "blue";
-  return "secondary";
-}
-
-/** Compact badge label — logic delimiters read better than the raw type name. */
-function badgeLabel(type: StepType): string {
-  if (type === "endif") return "end if";
-  return type;
-}
+/* `badgeColor` and `badgeLabel` were here, and `TypeChip` replaces both.
+ *
+ * They mapped a step type onto one of the SDK's five badge colours and
+ * shortened two names. The theme's chip owns the same two jobs from one map, and
+ * its palette is DELIBERATELY NOT the status palette: a step's type is not an
+ * outcome — an `assert` step is not "failing" because assertions are what fail —
+ * so the type colours are desaturated categories while the four status hues stay
+ * reserved for results. The old mapping used `green` for `assert`, which is the
+ * pass colour, on every assertion in every list. */
 
 /**
  * Parse a hand-typed `WIDTHxHEIGHT` into a viewport patch, or null.
@@ -139,14 +128,11 @@ export function CursorGap({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="group/gap flex h-2 w-full items-center px-2 disabled:cursor-default"
+      className="gl-cursor-gap"
+      data-active={active ? "" : undefined}
       aria-label="Move insert point here"
     >
-      <span
-        className={`h-0.5 w-full rounded-full ${
-          active ? "bg-accent" : disabled ? "bg-transparent" : "bg-transparent group-hover/gap:bg-separator"
-        }`}
-      />
+      <span className="gl-cursor-gap-rule" aria-hidden="true" />
     </button>
   );
 }
@@ -319,32 +305,30 @@ export function StepRow({
         </span>
       ) : null}
 
-      <Text variant="small-mono" color="tertiary" className="w-6 shrink-0 text-right tabular-nums">
-        {index + 1}
-      </Text>
-      <Badge color={badgeColor(step.type)} className="shrink-0">
-        {badgeLabel(step.type)}
-      </Badge>
-      {step.soft ? (
-        <Badge color="secondary" className="shrink-0">
-          soft
-        </Badge>
-      ) : null}
+      {/* 1-based, and tabular so a column of them does not shimmy as it
+          scrolls. A reader counts from one, and a failure report that says
+          "step 0" costs someone a minute. */}
+      <span className="gl-row-index shrink-0">{index + 1}</span>
+      <TypeChip type={step.type} />
+      {/* Neutral chips, all three: soft / continue-on-fail / disabled are facts
+          about how the step is CONFIGURED, not results, and giving any of them
+          a status hue would make every configured step look like a verdict. */}
+      {step.soft ? <span className="gl-chip">soft</span> : null}
       {step.continueOnFailure ? (
-        <Badge color="secondary" className="shrink-0" title="Continue on Failure — swallow this step's error and keep running">
+        <span className="gl-chip" title="Continue on Failure — swallow this step's error and keep running">
           continue on fail
-        </Badge>
+        </span>
       ) : null}
       {step.disabled ? (
-        <Badge color="secondary" className="shrink-0" title="Disabled — skipped during runs and commented out in the spec">
+        <span className="gl-chip" title="Disabled — skipped during runs and commented out in the spec">
           disabled
-        </Badge>
+        </span>
       ) : null}
 
       {editing && field ? (
-        <Input
+        <input
+          type="text"
           autoFocus
-          size="small"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commitEdit}
@@ -352,29 +336,45 @@ export function StepRow({
             if (e.key === "Enter") commitEdit();
             if (e.key === "Escape") setEditing(false);
           }}
-          className="min-w-0 flex-1"
+          className="gl-input flex-1"
           aria-label={`Edit ${field.label}`}
         />
       ) : (
-        <Text
-          variant="small-mono"
-          className={`min-w-0 flex-1 truncate ${runStatus === "failed" ? "text-support-red" : ""}`}
+        <span
+          className="gl-mono-value flex-1"
+          // The failing row's description is the one place a status hue belongs
+          // on this text: it IS the outcome, on the row that has it.
+          style={runStatus === "failed" ? { color: TONE.red } : undefined}
           title={replay.error || describeStep(step)}
         >
           {describeStep(step)}
-        </Text>
+        </span>
       )}
 
       {!editing ? (
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
           {runStatus ? (
-            <span className="shrink-0" aria-label={`Step ${runStatus}`}>
+            <span
+              className="flex shrink-0 items-center [&_svg]:size-3.5"
+              aria-label={`Step ${runStatus}`}
+              // COLOUR MEANS OUTCOME, and this is the one place on the row that
+              // is reporting one. `running` is cyan rather than the SDK accent,
+              // which is the token the palette declares for "running / live".
+              style={{
+                color:
+                  runStatus === "running"
+                    ? TONE.cyan
+                    : runStatus === "passed"
+                      ? TONE.phos
+                      : TONE.red,
+              }}
+            >
               {runStatus === "running" ? (
-                <Loader2 className="size-3.5 animate-spin text-accent" />
+                <Loader2 className="animate-spin" aria-hidden="true" />
               ) : runStatus === "passed" ? (
-                <Check className="size-3.5 text-support-green" />
+                <Check aria-hidden="true" />
               ) : (
-                <X className="size-4 text-support-red" />
+                <X aria-hidden="true" />
               )}
             </span>
           ) : null}
@@ -391,37 +391,40 @@ export function StepRow({
           step.type !== "goto" &&
           step.type !== "endif" &&
           !(step.type === "state" && step.elementState === "press") ? (
-            <Button
-              iconOnly
-              variant="transparent"
-              size="small"
-              className="opacity-0 group-hover:opacity-100"
+            <button
+              type="button"
+              className="gl-icon-btn opacity-0 group-hover:opacity-100"
               onClick={doReplay}
               disabled={replay.status === "running"}
               aria-label="Replay step"
+              style={
+                replay.status === "ok"
+                  ? { color: TONE.phos }
+                  : replay.status === "fail"
+                    ? { color: TONE.red }
+                    : undefined
+              }
             >
               {replay.status === "running" ? (
-                <Loader2 className="size-3.5 animate-spin" />
+                <Loader2 className="animate-spin" aria-hidden="true" />
               ) : replay.status === "ok" ? (
-                <Check className="size-3.5 text-support-green" />
+                <Check aria-hidden="true" />
               ) : replay.status === "fail" ? (
-                <X className="size-3.5 text-support-red" />
+                <X aria-hidden="true" />
               ) : (
-                <Play className="size-3.5" />
+                <Play aria-hidden="true" />
               )}
-            </Button>
+            </button>
           ) : null}
           {field ? (
-            <Button
-              iconOnly
-              variant="transparent"
-              size="small"
-              className="opacity-0 group-hover:opacity-100"
+            <button
+              type="button"
+              className="gl-icon-btn opacity-0 group-hover:opacity-100"
               onClick={beginEdit}
               aria-label="Edit step"
             >
-              <Pencil className="size-3.5" />
-            </Button>
+              <Pencil aria-hidden="true" />
+            </button>
           ) : null}
           {(() => {
             // "Test step utilities" submenu: groups per-step tools beneath the
@@ -434,16 +437,14 @@ export function StepRow({
             return (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button
-                    iconOnly
-                    variant="transparent"
-                    size="small"
-                    className="opacity-0 group-hover:opacity-100"
+                  <button
+                    type="button"
+                    className="gl-icon-btn opacity-0 group-hover:opacity-100"
                     aria-label="Step utilities"
                     title="Step utilities"
                   >
-                    <MoreHorizontal className="size-3.5" />
-                  </Button>
+                    <MoreHorizontal aria-hidden="true" />
+                  </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="bottom" align="end">
                   {canRefine ? (
@@ -473,16 +474,14 @@ export function StepRow({
             );
           })()}
           {onDelete ? (
-            <Button
-              iconOnly
-              variant="transparent"
-              size="small"
-              className="opacity-0 group-hover:opacity-100"
+            <button
+              type="button"
+              className="gl-icon-btn opacity-0 group-hover:opacity-100"
               onClick={onDelete}
               aria-label="Delete step"
             >
-              <X className="size-3.5" />
-            </Button>
+              <X aria-hidden="true" />
+            </button>
           ) : null}
         </div>
       ) : null}

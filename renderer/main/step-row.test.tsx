@@ -10,7 +10,16 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 
 import type { Step, StepType } from "../lib/recorder-types";
+import { TONE, hexToRgb } from "../theme";
 import { StepRow } from "./step-row";
+
+/** jsdom normalises an inline `color` to `rgb(r, g, b)`, so a hex assertion
+ *  never matches what reads back. (`box-shadow` is NOT normalised — see
+ *  CLAUDE.md; that difference has cost time here before.) */
+function rgb(hex: string): string {
+  const c = hexToRgb(hex);
+  return `rgb(${c![0]}, ${c![1]}, ${c![2]})`;
+}
 
 function step(partial: Partial<Step> & { type: StepType }): Step {
   return { id: "s1", timestamp: 0, ...partial } as Step;
@@ -59,7 +68,44 @@ describe("rendering", () => {
   });
 });
 
+describe("the type chip is not a verdict", () => {
+  it("draws the step type with the theme's chip", () => {
+    // The SDK `Badge` this replaced mapped `assert` onto its GREEN colour —
+    // the pass hue — on every assertion in every list, so a step list read as
+    // a list of results. `TypeChip`'s palette is deliberately separate from
+    // the status palette: a step's type is not an outcome.
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "assert", locator: LOCATOR })} />,
+    );
+    const chip = container.querySelector('[data-gl="type-chip"]') as HTMLElement;
+    expect(chip).not.toBeNull();
+    expect(chip.dataset.type).toBe("assert");
+    for (const [name, hex] of Object.entries(TONE)) {
+      expect(chip.style.color, name).not.toBe(rgb(hex));
+    }
+  });
+});
+
 describe("run status", () => {
+  it("colours the glyph with the tone the palette declares for it", () => {
+    // COLOUR MEANS OUTCOME, and this glyph is the one thing on the row
+    // reporting one. `running` is cyan — the token's own definition is
+    // "running / live / focus" — and it used to be the SDK's accent, which is
+    // a different blue that means nothing in this palette.
+    for (const [status, hex] of [
+      ["running", TONE.cyan],
+      ["passed", TONE.phos],
+      ["failed", TONE.red],
+    ] as const) {
+      const { container } = render(
+        <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} runStatus={status} />,
+      );
+      const glyph = container.querySelector(`[aria-label="Step ${status}"]`) as HTMLElement;
+      expect(glyph, status).not.toBeNull();
+      expect(glyph.style.color, status).toBe(rgb(hex));
+    }
+  });
+
   it("marks a passed step", () => {
     const { container } = render(
       <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} runStatus="passed" />,

@@ -154,6 +154,30 @@ describe("TagCluster deletion confirmation", () => {
   });
 });
 
+describe("TagCluster selection is neutral", () => {
+  it("announces the active filter with aria-pressed, which is what the stylesheet selects on", async () => {
+    // One source of truth: there is no separate `active` class that could
+    // disagree with what a screen reader is told — and `[aria-pressed=` is the
+    // selector `check:selection-neutral` reads to prove the active filter is
+    // not drawn in a status hue. A filter that looked like a verdict would
+    // compete with every result on the screen it is filtering.
+    renderCluster([test_("a", "Alpha", ["smoke"])], "smoke");
+    const active = await screen.findByRole("button", { name: /^smoke · 1/ });
+    expect(active.getAttribute("aria-pressed")).toBe("true");
+    const all = screen.getByRole("button", { name: /^All · 1/ });
+    expect(all.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("puts no colour of its own on the chosen chip", async () => {
+    // The treatment lives in the stylesheet (neutral white at low alpha), so
+    // an inline colour here would be a second mechanism — and the one the
+    // check cannot see.
+    renderCluster([test_("a", "Alpha", ["smoke"])], "smoke");
+    const active = await screen.findByRole("button", { name: /^smoke · 1/ });
+    expect(active.getAttribute("style")).toBeNull();
+  });
+});
+
 describe("TagCluster rendering", () => {
   it("renders nothing when no test is tagged", () => {
     // An "All · 3" chip on its own filters nothing and just takes up room.
