@@ -68,6 +68,8 @@ export type { CRTProps } from "./primitives/crt";
 export { KeyValue } from "./primitives/key-value";
 export type { KeyValueProps, KeyValueRow } from "./primitives/key-value";
 export { MenuItem } from "./primitives/menu-item";
+export { Menu } from "./primitives/menu";
+export type { MenuProps } from "./primitives/menu";
 export type { MenuItemProps } from "./primitives/menu-item";
 export { SiteIcon, monogramLetters, monogramHue } from "./primitives/site-icon";
 export type { SiteIconProps } from "./primitives/site-icon";

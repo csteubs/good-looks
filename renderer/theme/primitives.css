@@ -462,6 +462,83 @@
 
 /* ── MenuItem ─────────────────────────────────────────────────────────── */
 
+/* ── Menu (the box MenuItem goes in) ──────────────────────────────────── */
+
+.gl-menu-root {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 auto;
+}
+
+/* The `▾` box the design draws. Same 24px as the strip's chrome buttons so a
+   toolbar row of mixed controls has one height. */
+.gl-menu-trigger {
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  border: 1px solid var(--gl-line);
+  background: transparent;
+  color: var(--gl-tx-2);
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gl-menu-trigger:hover:not(:disabled) {
+  color: var(--gl-tx-1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.gl-menu-trigger:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-menu-trigger:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.gl-menu-trigger-value {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: start;
+}
+
+.gl-menu-trigger-caret {
+  flex: 0 0 auto;
+  color: var(--gl-tx-3);
+}
+
+/* The popover. THE ONE PLACE THIS DESIGN ALLOWS A SHADOW: hairlines are the
+   only container everywhere else, but a true overlay has to separate itself
+   from whatever it is covering, and a 1px line over a similar near-black does
+   not. `--gl-z-menu` keeps it under the atmosphere layers, which are inert. */
+.gl-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  /* Anchored to the trigger's LEADING edge, so the menu opens INTO the pane.
+     End-anchoring puts a 268px popover to the left of a control that is itself
+     near the left edge, which in this app means over the rail — a menu covering the
+     navigation is a menu you dismiss by accident. */
+  inset-inline-start: 0;
+  z-index: var(--gl-z-menu);
+  min-width: 268px;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+}
+
 .gl-menu-item {
   appearance: none;
   border: 0;

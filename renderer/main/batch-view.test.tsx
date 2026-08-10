@@ -23,6 +23,10 @@ import type {
 } from "../lib/recorder-types";
 // Safe above the vi.mock calls below: Vitest hoists vi.mock above imports, so
 // the mocks are registered before this module is evaluated.
+import {
+  BATCH_CONCURRENCY_CHOICES,
+  batchConcurrencyConsequence,
+} from "../lib/batch-parallel";
 import { BatchView } from "./batch-view";
 
 // ── Mocks ────────────────────────────────────────────────────────────
@@ -610,7 +614,7 @@ describe("BatchView parallel runs", () => {
   it("defaults to off, and runs one at a time", async () => {
     renderView();
     await rowNames();
-    const trigger = screen.getByRole("combobox", { name: /how many tests to run at once/i });
+    const trigger = screen.getByRole("button", { name: /how many tests to run at once/i });
     await waitFor(() => expect(trigger.textContent).toContain("Off"));
 
     fireEvent.click(runButton());
@@ -623,7 +627,7 @@ describe("BatchView parallel runs", () => {
     settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 2 };
     renderView();
     await rowNames();
-    const trigger = screen.getByRole("combobox", { name: /how many tests to run at once/i });
+    const trigger = screen.getByRole("button", { name: /how many tests to run at once/i });
     await waitFor(() => expect(trigger.textContent).toContain("2 at once"));
 
     fireEvent.click(runButton());
@@ -645,12 +649,75 @@ describe("BatchView parallel runs", () => {
     settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 16 };
     renderView();
     await rowNames();
-    const trigger = screen.getByRole("combobox", { name: /how many tests to run at once/i });
+    const trigger = screen.getByRole("button", { name: /how many tests to run at once/i });
     await waitFor(() => expect(trigger.textContent).toContain("All at once"));
 
     fireEvent.click(runButton());
     await waitFor(() => expect(batchRun).toHaveBeenCalled());
     expect(runOpts()?.concurrency).toBe(3);
+  });
+});
+
+describe("BatchView concurrency menu", () => {
+  // THIS IS THE COVERAGE §8.2 PROMISED. The picker was the SDK's `Select`,
+  // which is backed by a real macOS menu — its options never enter the DOM, so
+  // for its whole life the only thing testable here was the displayed value and
+  // what reached IPC. The redesign draws its own menu, because a native menu
+  // item is a string and the whole point is the SECOND line. So for the first
+  // time the choice can be made the way a user makes it.
+  it("opens, lists every choice, and applies the one that is picked", async () => {
+    renderView();
+    await rowNames();
+    const trigger = screen.getByRole("button", { name: /how many tests to run at once/i });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    const items = screen.getAllByRole("menuitem").map((i) => i.textContent ?? "");
+    expect(items).toHaveLength(BATCH_CONCURRENCY_CHOICES.length);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: /4 at once/ }));
+    // Closes on choosing — a menu that stays open reads as though the choice
+    // did not take.
+    await waitFor(() => expect(screen.queryByRole("menuitem")).toBeNull());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /how many tests to run at once/i }).textContent,
+      ).toContain("4 at once"),
+    );
+  });
+
+  it("states the cost of every choice, in the menu, while choosing", async () => {
+    // The reason this menu exists at all. "8" cannot say that a laptop will
+    // thrash and report failures it caused — a failure that looks exactly like
+    // a flaky suite from the run report. The copy is not a tooltip and not a
+    // disclosure: it renders unconditionally.
+    renderView();
+    await rowNames();
+    fireEvent.click(screen.getByRole("button", { name: /how many tests to run at once/i }));
+    for (const choice of BATCH_CONCURRENCY_CHOICES) {
+      expect(screen.getByText(batchConcurrencyConsequence(choice)), String(choice)).toBeTruthy();
+    }
+  });
+
+  it("closes on Escape without applying anything", async () => {
+    renderView();
+    await rowNames();
+    const trigger = screen.getByRole("button", { name: /how many tests to run at once/i });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menuitem")).toBeNull());
+    expect(trigger.textContent).toContain("Off");
+  });
+
+  it("closes on a pointer-down elsewhere", async () => {
+    // `pointerdown`, not `click`: a click fires after the pointer comes back up,
+    // so a menu that closes on click is still covering the thing being pressed.
+    renderView();
+    await rowNames();
+    fireEvent.click(screen.getByRole("button", { name: /how many tests to run at once/i }));
+    fireEvent.pointerDown(document.body);
+    await waitFor(() => expect(screen.queryByRole("menuitem")).toBeNull());
   });
 });
 

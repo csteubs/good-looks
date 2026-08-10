@@ -1,10 +1,11 @@
 # The indie redesign — an implementation plan
 
 **Status: Phase A is done; Phase B is in progress.** A1–A5 are landed, and so
-are **B1 (Home)** and **B2 (Heals)** — see the ✅ marks in §4, §5 and §8.3. The
-app's frame is the redesign, so are the five components every screen embeds, and
-so are two of the nine screens. **Seven still carry the old chrome** (B3–B9),
-one PR each. Where the rest of this says "would", it means would.
+are **B1 (Home)**, **B2 (Heals)** and **B3 (Batch)** — see the ✅ marks in §4, §5
+and §8.3. The app's frame is the redesign, so are the five components every
+screen embeds, and so are three of the nine screens. **Six still carry the old
+chrome** (B4–B9), one PR each. Where the rest of this says "would", it means
+would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -461,9 +462,9 @@ See DECISIONS 2026-08-10.
 | — | Amber warning block: "A heal that succeeded is not the same as a heal that was right" |
 | Candidates list | Same, with a `use` affordance per row |
 
-### B3. Batch — `batch-view.tsx` + `tag-cluster.tsx`
+### B3. Batch — `batch-view.tsx` + `tag-cluster.tsx` ✅ **Done, 2026-08-10**
 
-887 lines. The redesign keeps the information architecture the current view
+905 lines. The redesign keeps the information architecture the current view
 already has (per-row engines and headedness landed 2026-08-07) and restyles it.
 
 | Today | Redesign |
@@ -475,8 +476,19 @@ already has (per-row engines and headedness landed 2026-08-07) and restyles it.
 | Headless + screenshots | One bordered two-cell cluster at header height |
 | History rows | Same rows, now expandable — drawer shows the batch's own per-test results and the settings it ran under |
 
-New in B3: the concurrency menu copy, the history drawer. Both are presentation
-over data the app already stores (`batch-history-store`).
+New in B3: the concurrency menu copy, the history drawer.
+
+**One correction to the line above, found in the building: the history drawer is
+NOT all presentation over stored data.** `BatchRecord.results` carries every
+test, its engine, duration and outcome — none of which was visible for a past
+batch before — but there is no `captureArtifacts` and no `concurrency` on the
+record, so "the settings it ran under" has nothing behind it. The drawer ships
+with what exists; making the other half real is a backend field plus a decision
+about records written before it, which is not a reskin.
+
+Also landed: **`Menu`**, the box `MenuItem` always implied. The SDK `Select`
+stays native everywhere else — but a native menu item is a string, and the whole
+point here is the second line. See DECISIONS 2026-08-10.
 
 ### B4. Settings — `settings-view.tsx`, `settings-nav.tsx`, `setting-row.tsx`, 8 panes
 
