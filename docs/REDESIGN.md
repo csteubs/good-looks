@@ -1,10 +1,10 @@
 # The indie redesign — an implementation plan
 
-**Status: Phase A is done; Phase B has started.** A1–A5 are landed, and **B1
-(Home) is the first reskinned screen** — see the ✅ marks in §4, §5 and §8.3. The
+**Status: Phase A is done; Phase B is in progress.** A1–A5 are landed, and so
+are **B1 (Home)** and **B2 (Heals)** — see the ✅ marks in §4, §5 and §8.3. The
 app's frame is the redesign, so are the five components every screen embeds, and
-so is Home. **Eight screens still carry the old chrome** (B2–B9), one PR each.
-Where the rest of this says "would", it means would.
+so are two of the nine screens. **Seven still carry the old chrome** (B3–B9),
+one PR each. Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -436,9 +436,22 @@ and the photograph drops into one `background-image` when it arrives.
 `--gl-ember` is its own token and deliberately not `--gl-amber` — a texture is
 not a status. See DECISIONS 2026-08-10.
 
-### B2. Heals — `heals-view.tsx` + `heals-panel.tsx`
+### B2. Heals — `heals-view.tsx` + `heals-panel.tsx` ✅ **Done, 2026-08-10**
 
-395 lines, two-pane, well covered.
+395 lines, two-pane, well covered. (`heals-panel.tsx` came earlier, with A5.)
+
+The first screen where the fixed status width does real work — this list is the
+only column in the app reporting four genuinely different states — and **only
+two of the four take a hue**: `Accepted` is an outcome and `Applied` is the one
+that should catch the eye, while `Suggested` is the open item (cyan) and
+`Reverted` is settled with nothing to report. Two neutral chips is deliberate:
+the width is fixed so they read as a column, and the WORD reports the state.
+
+The toolbar went with the reskin — the strip's breadcrumb already says HEALS, so
+the count moved to the journal panel's `id` slot and "Clear history" to its
+`right` slot. The was/now block, the candidate rows and the amber notice are the
+`.gl-heal-*` classes A5 already built, found in `shared.css` rather than copied.
+See DECISIONS 2026-08-10.
 
 | Today | Redesign |
 |---|---|

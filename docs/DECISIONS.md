@@ -16,6 +16,25 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — Heals is two panels and four words, and only two of the words are coloured
+
+**B2 of the redesign (REDESIGN §5), the second reskinned screen.** A journal and a detail, both `Panel`s, with the four heal states finally drawn as `StatusChip`s at the fixed status width — which is the first place in the app where that contract does any work, because this list is the only one where a column of chips reports four genuinely different things.
+
+**Only two of the four take a hue, and the mapping is the decision.** `Accepted` is an outcome — you approved the change — so it is phosphor. `Applied` is the one that should catch your eye: the stored test has ALREADY been changed and nobody has looked at it, which is caution, which is amber. `Suggested` takes cyan, the palette's "running / live / **focus**": a suggestion is the open item waiting on you rather than a verdict. `Reverted` takes no tone at all, because it is settled and there is nothing left to report.
+
+- **Two states sharing "no hue" is deliberate, not a gap.** `StatusChip`'s width is fixed so these read as a column, and the chip's own header says it: THE WORD reports the state. Inventing a fifth colour so every row is lit would spend the palette on chrome and leave the two that matter competing with two that do not.
+- **Pinned on `data-tone`, not on colour.** The dom project runs with `css: false`, so a computed-style assertion reads `""` for all four and would pass against a column drawn entirely in green.
+
+**The toolbar is gone and its two jobs moved.** The top strip's breadcrumb already says HEALS, so a title bar under it was the screen's name twice. The count went into the journal panel's `id` slot — it counts the journal — and "Clear history" into its `right` slot, because it clears that list. What is left is two panels and no chrome above them, which is what the design draws.
+
+**The 330px journal is set in CSS, and `Panel`'s `flex` prop is why.** That prop writes `flex: 1 1 auto` INLINE on the section as well as the body, and an inline style beats the class — so the journal quietly grew to half the window. It did not look broken; it looked like a layout somebody had chosen, which is the worst kind of wrong. The body still needs to fill what the header leaves, so that half is a descendant rule instead.
+
+**A5's `.gl-heal-*` classes carried straight over, and that is the `shared.css` rule paying off.** The was/now block, the candidate rows and the amber notice were built for the per-test Heals *panel*; the *view* wants exactly the same three things, found them already there, and grew no copy. This is the case screens.css's header describes in the other direction: a rule a second screen wants belongs in `shared.css`, and here the move had already been made.
+
+**The amber warning is shown only where its sentence is true.** "A heal that succeeded is not the same as a heal that was right" is about a heal that was APPLIED and passed — the case with no other signal, because a mis-heal usually succeeds (clicking the wrong button rarely throws). On a suggestion nothing has been applied and the sentence is noise, which is precisely how a warning becomes something people learn to click past.
+
+**One test changed its strings, and none was deleted.** "Suggestion only" / "Applied to the test" became "Suggested" / "Applied" — the design's four words, and short because the chip is a fixed width and a chip that sizes to its own sentence is what breaks the column. The test's subject is unchanged (does the screen say whether the stored test was altered?), and it gained a sibling that pins all four tones at once.
+
 ### 2026-08-10 — Home is the first reskinned screen, and the first number the app shows had better be true
 
 **B1 of the redesign (REDESIGN §5), and the start of Phase B.** One screen, same purpose, new chrome — plus the three things the design adds: the plate, the wordmark treatment, and three readouts.
