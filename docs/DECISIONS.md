@@ -16,6 +16,22 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — The home screen's three numbers become three doors
+
+**A count is a question, and the app already had the answer one click away.** "16 heals to review" is only ever read as *which sixteen* — and B1 had put that number on the first screen anyone sees while leaving it inert, so the reading ended at the rail, hunting for the entry that means the same thing. Each readout now navigates to the view that explains it: Tests → Batch, Green · 7d → Stats, Heals to review → Heals.
+
+**Tests goes to Batch, not to the library.** The rail already lists every test one click away, so the count adds nothing as a way to *find* one. What "22 tests" suggests is something to DO with twenty-two tests, and running them together is the only action the number itself implies.
+
+**One table, `STAT_DESTINATIONS`, because this mapping is expected to move.** What the home screen surfaces will change as the app does, and a readout wired to the wrong view fails in the quietest way available — it still renders, still presses, and simply lands you somewhere else, which reads as a confusing app rather than as a bug. Keeping the pairing in one `as const` means the destination is a route literal TanStack Router type-checks: a path that stops existing is a `type-check` failure rather than a dead click. Verified by pointing one at `/bogus` and watching `tsc` name every registered route.
+
+**`<button>`, not a div with an `onClick`, and the test asserts the ELEMENT.** The two render identically, and only one of them is in tab order, responds to Enter and Space, announces a role, and takes a focus ring. A mouse-click test passes over either — so `home-view.test.tsx` pins `tagName === "BUTTON"` and `type="button"` alongside the route, because that tag *is* the keyboard behaviour. Confirmed by swapping the button back to a div: ten assertions fail, and the click test is not among them.
+
+**The accessible name carries the destination, because the visible text cannot.** "22 Tests" read aloud is a fact, not a control — a button whose whole name is a statistic gives no reason to press it. The name is `"Tests: 22, opens the Batch view"`: label first, so the readout identifies itself before reading a number that means nothing without it.
+
+**They stay pressable while the value is still "—".** Gating on a resolved query, or on a non-zero count, is the easy version and it teaches people the control is not there — an empty library is exactly when someone presses "0 tests" looking for what to do next. Pinned in both directions: the em-dash case and a genuine zero.
+
+**The readouts are separately asserted to reach three DIFFERENT views**, by clicking all three and comparing what the router was handed. A copy-paste that points two of them at one route passes every per-readout assertion — each really does navigate, and really does land somewhere that works.
+
 ### 2026-08-10 — Findings you can wave off, and a warning that knows when to come back
 
 **Three banners, one missing verb.** The Visual screen reported visual changes and accessibility issues; the test detail screen reported that a test's steps and its script disagree. Between them they offered exactly one exit — "Accept all for this run", on the accessibility banner alone. Everything else was permanent.
