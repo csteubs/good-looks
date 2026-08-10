@@ -324,6 +324,78 @@ function makeStep(type: StepType, partial: Partial<Step>): Step {
   } as Step;
 }
 
+/** The action methods a locator can be chained to that this parser models.
+ *  Shared by the inline `page.getBy…().click()` branch and the
+ *  locator-in-a-variable branch, so a method added to one is not missing from
+ *  the other. */
+const LOCATOR_ACTIONS = [
+  "click",
+  "fill",
+  "selectOption",
+  "check",
+  "uncheck",
+  "press",
+  "waitFor",
+  "hover",
+  "focus",
+] as const;
+
+const LOCATOR_ACTION_RE = LOCATOR_ACTIONS.join("|");
+
+/**
+ * Build the step a `<locator>.<action>(args)` call means. Returns null when the
+ * call has no counterpart in the step model — only `waitFor({ state: "detached" })`
+ * today — which the caller reports as a skip rather than emitting a step that
+ * would regenerate as something else.
+ */
+function locatorActionStep(locator: Locator, action: string, argsStr: string): Step | null {
+  // Until pseudo-states existed, `.hover()` fell through to the unclassified
+  // branch and counted as a SKIP — which set `stepsDiverged` permanently on any
+  // imported test that hovered.
+  if (action === "hover" || action === "focus") {
+    return makeStep("state", { locator, elementState: action });
+  }
+  if (action === "waitFor") {
+    // `.waitFor({ state: … })` is a conditional wait with a native API, so it
+    // needs no marker. The state is the whole meaning of the call: parsing it
+    // as a plain wait (which is what happened before conditional waits existed)
+    // turned every wait-for-hidden back into a wait-for-VISIBLE on the next
+    // regeneration.
+    const stateM = argsStr.match(/\bstate\s*:\s*['"`](visible|hidden|attached|detached)['"`]/);
+    const timeoutMs = parseTimeoutOption(argsStr);
+    // `detached` has no counterpart in the step model. Modeling it as a plain
+    // wait would regenerate as a wait-for-VISIBLE — the very inversion this
+    // branch exists to stop — so it is reported as unclassified instead.
+    if (stateM?.[1] === "detached") return null;
+    const waitUntil: WaitUntilKind | undefined =
+      stateM?.[1] === "hidden"
+        ? "hidden"
+        : stateM?.[1] === "attached"
+          ? "exists"
+          : stateM?.[1] === "visible"
+            ? "visible"
+            : undefined;
+    return makeStep("wait", {
+      locator,
+      ...(waitUntil ? { waitUntil } : {}),
+      ...(waitUntil && timeoutMs !== null ? { timeoutMs } : {}),
+    });
+  }
+  const typeMap: Record<string, StepType> = {
+    click: "click",
+    fill: "fill",
+    selectOption: "select",
+    check: "check",
+    uncheck: "uncheck",
+    press: "press",
+  };
+  const value = parseValueArg(argsStr);
+  return makeStep(typeMap[action], {
+    locator,
+    ...(value !== null ? { value: unescapeLit(value) } : {}),
+  });
+}
+
 /**
  * Find the index of the matching close paren for the open paren at `openIdx`,
  * skipping nested parens. Returns -1 if unbalanced.
@@ -383,8 +455,16 @@ function parseCondition(raw: string): Partial<Step> | null {
 }
 
 /** Parse the body of a single test callback into steps, plus a count of
- *  statements that looked like actions but couldn't be classified. */
-function parseBody(body: string): { steps: Step[]; skipped: number } {
+ *  statements that looked like actions but couldn't be classified.
+ *
+ *  `vars` carries the locators bound to `const` names earlier in the same body
+ *  (see the declaration branch below). Nested calls — the try/catch and
+ *  disabled-comment branches — are handed the caller's map so a statement
+ *  wrapped in one can still resolve a variable declared outside it. */
+function parseBody(
+  body: string,
+  vars: Map<string, Locator> = new Map(),
+): { steps: Step[]; skipped: number } {
   const steps: Step[] = [];
   let skipped = 0;
   // Depth of recognized `if (...) {` blocks awaiting their closing `}` → endif.
@@ -446,7 +526,7 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
       if (nl < 0) nl = src.length;
       const stmt = src.slice(stmtStart, nl).trim();
       if (stmt) {
-        const innerResult = parseBody(stmt);
+        const innerResult = parseBody(stmt, vars);
         if (innerResult.steps.length > 0) {
           const s = innerResult.steps[0];
           s.disabled = true;
@@ -480,7 +560,7 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
         continue;
       }
       const inner = src.slice(braceOpen + 1, braceClose);
-      const innerResult = parseBody(inner);
+      const innerResult = parseBody(inner, vars);
       if (innerResult.steps.length > 0) {
         // The wrapper always encloses a single statement; tag it and push.
         const s = innerResult.steps[0];
@@ -543,6 +623,48 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
       // Also swallow the trailing semicolon so the next iteration starts clean.
       const after = src.slice(close + 1).match(/^\s*;/);
       i = close + 1 + (after ? after[0].length : 0);
+      continue;
+    }
+
+    // const <name> = page.getByRole(…); — a locator bound to a variable and
+    // used further down (`await submit.click()`). This app never generates that
+    // shape, but a model asked for a readable spec writes it constantly, and
+    // before this branch existed BOTH halves vanished without a trace: the
+    // declaration hit the locator branch below, which found no chained action
+    // and counted a skip, and the later use started with neither `page.` nor a
+    // builder call, so no branch claimed it and the scan walked it character by
+    // character — no step AND no skip. A prompt-generated spec came back with
+    // its `goto` and nothing else, and nothing on screen said why.
+    //
+    // Only a BARE builder call is recorded. A refined chain (`.first()`,
+    // `.filter(…)`) is deliberately left unregistered and counted as a skip:
+    // storing the base locator would drop the refinement and regenerate a
+    // selector that matches the wrong element, which is worse than reporting
+    // the divergence the user can see.
+    const locVarM = rest.match(
+      new RegExp(
+        `^[\\s;]*const\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*(?:page\\.)?(?:getByTestId|getByRole|getByLabel|getByPlaceholder|getByText|locator)\\s*\\(`,
+      ),
+    );
+    if (locVarM) {
+      const openIdx = i + locVarM[0].length - 1;
+      const close = matchParen(src, openIdx);
+      if (close < 0) break;
+      const parsed = parseLocator(src.slice(i, close + 1));
+      // End of the declaration statement: its `;`, or the line's end when the
+      // model omitted one. Everything between the builder's close paren and
+      // there is a refinement chain we don't model.
+      const semi = src.indexOf(";", close + 1);
+      const nl = src.indexOf("\n", close + 1);
+      const stmtEnd =
+        semi >= 0 && (nl < 0 || semi < nl) ? semi + 1 : nl < 0 ? src.length : nl;
+      const tail = src.slice(close + 1, stmtEnd).replace(/[\s;]/g, "");
+      if (parsed && tail === "") {
+        vars.set(locVarM[1], parsed.locator);
+      } else {
+        skipped++;
+      }
+      i = stmtEnd;
       continue;
     }
 
@@ -792,7 +914,10 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
         continue;
       }
 
-      const locParse = parseLocator(inner);
+      // `expect(submit)` — the subject is a locator held in a variable, which
+      // reads exactly like `expect(page.getByRole(…))` once resolved.
+      const varLocator = vars.get(inner);
+      const locParse = varLocator ? { locator: varLocator } : parseLocator(inner);
       if (locParse) {
         const base = { locator: locParse.locator, ...(soft ? { soft: true } : {}) };
 
@@ -902,6 +1027,12 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
         }
         // Locator resolved but the assert method isn't one we round-trip.
         skipped++;
+      } else {
+        // The subject is neither `page`, a locator, nor a locator variable —
+        // `expect(userLocation).toBeDefined()` over a plain JS value. There is
+        // no step for it, and staying silent here made a prompt-generated spec
+        // report a step count that matched nothing in the file.
+        skipped++;
       }
       i = close + 1;
       continue;
@@ -921,78 +1052,15 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
       const parsed = parseLocator(src.slice(i, locClose + 1));
       if (parsed) {
         const after = src.slice(locClose + 1);
-        const actionM = after.match(
-          /^\s*\.(click|fill|selectOption|check|uncheck|press|waitFor|hover|focus)\s*\(/,
-        );
+        const actionM = after.match(new RegExp(`^\\s*\\.(${LOCATOR_ACTION_RE})\\s*\\(`));
         if (actionM) {
           const action = actionM[1];
           const aOpen = locClose + 1 + after.indexOf("(", actionM[0].length - 1);
           const aClose = matchParen(src, aOpen);
           if (aClose >= 0) {
-            const typeMap: Record<string, StepType> = {
-              click: "click",
-              fill: "fill",
-              selectOption: "select",
-              check: "check",
-              uncheck: "uncheck",
-              press: "press",
-              waitFor: "wait",
-              hover: "state",
-              focus: "state",
-            };
-            const argsStr = src.slice(aOpen + 1, aClose);
-            // Until pseudo-states existed, `.hover()` fell through to the
-            // unclassified branch below and counted as a SKIP — which set
-            // `stepsDiverged` permanently on any imported test that hovered.
-            if (action === "hover" || action === "focus") {
-              steps.push(
-                makeStep("state", { locator: parsed.locator, elementState: action }),
-              );
-              i = aClose + 1;
-              continue;
-            }
-            if (action === "waitFor") {
-              // `.waitFor({ state: … })` is a conditional wait with a native
-              // API, so it needs no marker. The state is the whole meaning of
-              // the call: parsing it as a plain wait (which is what happened
-              // before conditional waits existed) turned every wait-for-hidden
-              // back into a wait-for-VISIBLE on the next regeneration.
-              const stateM = argsStr.match(/\bstate\s*:\s*['"`](visible|hidden|attached|detached)['"`]/);
-              const timeoutMs = parseTimeoutOption(argsStr);
-              // `detached` has no counterpart in the step model. Modeling it as
-              // a plain wait would regenerate as a wait-for-VISIBLE — the very
-              // inversion this branch exists to stop — so it is reported as
-              // unclassified instead, which surfaces as stepsDiverged.
-              if (stateM?.[1] === "detached") {
-                skipped++;
-                i = aClose + 1;
-                continue;
-              }
-              const waitUntil: WaitUntilKind | undefined =
-                stateM?.[1] === "hidden"
-                  ? "hidden"
-                  : stateM?.[1] === "attached"
-                    ? "exists"
-                    : stateM?.[1] === "visible"
-                      ? "visible"
-                      : undefined;
-              steps.push(
-                makeStep("wait", {
-                  locator: parsed.locator,
-                  ...(waitUntil ? { waitUntil } : {}),
-                  ...(waitUntil && timeoutMs !== null ? { timeoutMs } : {}),
-                }),
-              );
-              i = aClose + 1;
-              continue;
-            }
-            const value = parseValueArg(argsStr);
-            steps.push(
-              makeStep(typeMap[action], {
-                locator: parsed.locator,
-                ...(value !== null ? { value: unescapeLit(value) } : {}),
-              }),
-            );
+            const step = locatorActionStep(parsed.locator, action, src.slice(aOpen + 1, aClose));
+            if (step) steps.push(step);
+            else skipped++;
             i = aClose + 1;
             continue;
           }
@@ -1003,6 +1071,29 @@ function parseBody(body: string): { steps: Step[]; skipped: number } {
       }
       // Couldn't classify — skip past the locator's close paren to avoid a loop.
       i = locClose + 1;
+      continue;
+    }
+
+    // <name>.<action>(...) — acting on a locator held in a variable. Only a
+    // name declared by the branch above resolves; anything else is a method
+    // call on something we have no locator for, and it is COUNTED rather than
+    // walked past, because a click that leaves no trace at all is the failure
+    // `skipped` exists to surface. `page.` is excluded so the generic fallback
+    // below keeps ownership of the legacy `page.click(selector)` API.
+    const varActionM = rest.match(
+      new RegExp(`^[\\s;]*(?:await\\s+|return\\s+)?([A-Za-z_$][\\w$]*)\\s*\\.(${LOCATOR_ACTION_RE})\\s*\\(`),
+    );
+    if (varActionM && varActionM[1] !== "page") {
+      const aOpen = i + varActionM[0].length - 1;
+      const aClose = matchParen(src, aOpen);
+      if (aClose < 0) break;
+      const locator = vars.get(varActionM[1]);
+      const step = locator
+        ? locatorActionStep(locator, varActionM[2], src.slice(aOpen + 1, aClose))
+        : null;
+      if (step) steps.push(step);
+      else skipped++;
+      i = aClose + 1;
       continue;
     }
 
@@ -1058,7 +1149,15 @@ function extractTestBodies(src: string): string[] {
   let m: RegExpExecArray | null;
   while ((m = testRe.exec(clean)) !== null) {
     // Skip test.skip / test.fixme / test.describe — they don't run steps.
-    if (/test\.(skip|fixme|describe|beforeEach|beforeAll|afterEach|afterAll)\b/.test(m[0])) {
+    //
+    // `test.step` is in the list for the opposite reason: its body DOES run
+    // steps, but it sits INSIDE a `test(...)` body that was already extracted,
+    // and the scan loop walks straight through the wrapper. Matching it here
+    // extracted the same statements a second time, so every spec built out of
+    // `await test.step("…", async () => { … })` — the shape a model reaches for
+    // whenever it is also writing readable comments — came back with each of
+    // its steps duplicated.
+    if (/test\.(skip|fixme|describe|step|beforeEach|beforeAll|afterEach|afterAll)\b/.test(m[0])) {
       continue;
     }
     // Find the callback body. The callback is an arrow or function expression
