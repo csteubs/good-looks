@@ -31,6 +31,7 @@ import type {
   LiveCookie,
   RunBrowser,
   RunComparison,
+  RunNoticeKind,
   RunReplay,
   RunReplaySummary,
   VisualMask,
@@ -164,6 +165,11 @@ export const api = {
         steps,
         regenerate: opts?.regenerate === true,
       }),
+    /** Silence the "steps and script disagree" banner. The record stays
+     *  diverged — this only says the user has seen it, until the next
+     *  divergence is established. Pass `false` to bring the banner back. */
+    dismissDiverged: (id: string, dismissed = true) =>
+      ipc().invoke<TestRecord>("tests:dismissDiverged", { id, dismissed }),
     createFromPrompt: (params: {
       name: string;
       url: string;
@@ -345,6 +351,13 @@ export const api = {
     list: () => ipc().invoke<RunReplaySummary[]>("artifacts:list"),
     getReplay: (testId: string, runId: string) =>
       ipc().invoke<RunReplay | null>("artifacts:getReplay", { testId, runId }),
+    /** Wave off one of a run's findings banners. Unlike the accept calls, this
+     *  changes nothing about the finding or about future runs — it records that
+     *  the user has seen it, on this run only. */
+    dismissNotice: (testId: string, runId: string, kind: RunNoticeKind) =>
+      ipc().invoke<RunReplay | null>("artifacts:dismissNotice", { testId, runId, kind }),
+    restoreNotice: (testId: string, runId: string, kind: RunNoticeKind) =>
+      ipc().invoke<RunReplay | null>("artifacts:restoreNotice", { testId, runId, kind }),
     readShot: (testId: string, runId: string, file: string) =>
       ipc().invoke<string | null>("artifacts:readShot", { testId, runId, file }),
     /** Recorded console + network for one run (null when it recorded none).

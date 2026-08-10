@@ -26,6 +26,11 @@ import { artifactStore } from "../services/artifact-store.js";
 import { baselineStore } from "../services/baseline-store.js";
 import { acceptRunBaseline, acceptStepBaseline } from "../services/visual-baseline-ops.js";
 import { acceptRunA11y, acceptStepA11y, resetA11yBaseline } from "../services/a11y-baseline-ops.js";
+import {
+  dismissRunNotice,
+  isRunNoticeKind,
+  restoreRunNotice,
+} from "../services/run-notice-ops.js";
 import { sendToMain } from "../services/app-window.js";
 import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
@@ -655,6 +660,12 @@ export function registerHandlers(): void {
         rec.steps = steps;
         rec.stepsDiverged = skipped > 0;
         rec.stepsDivergedReason = skipped > 0 ? "parse" : undefined;
+        // This is the event the dismissal is scoped to: an applied script (an
+        // AI-debug fix, typically) whose statements don't all come back as
+        // steps. The user acknowledged the LAST divergence, not this one, so
+        // re-arm the warning. Clearing it on the `skipped === 0` branch too
+        // keeps a stale `true` from silencing the next real one.
+        rec.stepsDivergedDismissed = undefined;
         if (skipped > 0) {
           logger.warn("handlers", "Script has statements the parser couldn't map to steps", {
             id: rec.id,
@@ -672,6 +683,24 @@ export function registerHandlers(): void {
     testStore.save(rec);
     return rec;
   });
+
+  /** Wave off the "steps and script disagree" warning for this test. Note what
+   *  it does NOT do: `stepsDiverged` stays true, because the two really are out
+   *  of sync and everything else that reads it (the run comparison, the MCP)
+   *  must keep saying so. This only silences the banner, and only until the next
+   *  divergence is established. */
+  ipcMain.handle(
+    "tests:dismissDiverged",
+    async (_e, params: { id: string; dismissed?: unknown }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      // `=== false` is the only way to un-dismiss; anything else dismisses.
+      rec.stepsDivergedDismissed = params?.dismissed === false ? undefined : true;
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return rec;
+    },
+  );
 
   // Update the steps of a saved test directly (no trainer browser). Used by the
   // "Edit Steps" mode: add / rearrange / remove steps in the detail view, then
@@ -708,6 +737,7 @@ export function registerHandlers(): void {
         rec.scriptPath = testStore.regenerateScript(rec);
         rec.stepsDiverged = false;
         rec.stepsDivergedReason = undefined;
+        rec.stepsDivergedDismissed = undefined;
         // The spec is generated from these steps again, so "edited manually" is
         // no longer true — leaving it set would keep asking about edits that no
         // longer exist, and would block the next step edit from applying.
@@ -715,6 +745,10 @@ export function registerHandlers(): void {
       } else {
         rec.stepsDiverged = true;
         rec.stepsDivergedReason = "unapplied";
+        // A fresh save that the script won't carry is a fresh divergence, even
+        // if one was already dismissed: the previous acknowledgement was about
+        // different edits.
+        rec.stepsDivergedDismissed = undefined;
       }
       rec.updatedAt = Date.now();
       testStore.save(rec);
@@ -1352,6 +1386,30 @@ export function registerHandlers(): void {
     if (result) sendToMain("runs:changed", {});
     return result;
   });
+  // ── Findings banners: dismiss / restore ──────────────────────────────────
+  //
+  // The counterpart to the two accept handlers above. Accepting resolves a
+  // finding and changes what every future run reports; dismissing says "seen"
+  // about this run only. Conflating them would mean the only way to clear a
+  // banner is to sign off on findings you may not have looked at.
+  ipcMain.handle(
+    "artifacts:dismissNotice",
+    async (_e, params: { testId: string; runId: string; kind: unknown }) => {
+      if (!isRunNoticeKind(params?.kind)) return null;
+      const result = dismissRunNotice(params.testId, params.runId, params.kind);
+      if (result) sendToMain("runs:changed", {});
+      return result;
+    },
+  );
+  ipcMain.handle(
+    "artifacts:restoreNotice",
+    async (_e, params: { testId: string; runId: string; kind: unknown }) => {
+      if (!isRunNoticeKind(params?.kind)) return null;
+      const result = restoreRunNotice(params.testId, params.runId, params.kind);
+      if (result) sendToMain("runs:changed", {});
+      return result;
+    },
+  );
   /** Forget everything accepted for a test — the way back from an over-eager
    *  "accept run", which is otherwise irreversible. */
   ipcMain.handle("a11y:resetBaseline", async (_e, params: { testId: string }) =>

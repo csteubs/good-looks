@@ -55,6 +55,7 @@ import type {
   RunLogs,
   StepStructure,
   RunRecord,
+  RunNoticeKind,
   RunReplay,
   RunReplaySummary,
   SecretStatus,
@@ -294,6 +295,14 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       if (test && Array.isArray(p?.steps)) test.steps = p.steps as typeof test.steps;
       return test;
     },
+    /** The divergence banner's dismiss control. Mutates the fixture in place so
+     *  the preview shows what the app does — the banner goes and stays gone —
+     *  rather than a click that appears to do nothing. */
+    "tests:dismissDiverged": (p) => {
+      const test = findTest(p?.id);
+      if (test) test.stepsDivergedDismissed = p?.dismissed === false ? undefined : true;
+      return test;
+    },
     "tests:setTags": (p) => {
       const test = findTest(p?.id);
       if (test && Array.isArray(p?.tags)) test.tags = p.tags as string[];
@@ -472,6 +481,62 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       typeof p?.file === "string" && p.file.includes(".diff.")
         ? VISUAL_FRAMES.diff
         : VISUAL_FRAMES.current,
+    /** Accepting, as opposed to dismissing. Patching the replay the way the
+     *  backend does is what makes the two visibly different in the preview: an
+     *  accept clears the FINDINGS (the diffs become matches, the violations
+     *  become accepted) and the banner goes because there is nothing left to
+     *  report; a dismiss leaves every finding on the steps. */
+    "visual:acceptRun": (): RunReplay => {
+      for (const step of REPLAY.steps) {
+        if (!step.screenshot) continue;
+        step.diff = { state: "match", ratio: 0, threshold: REPLAY.visualThreshold };
+      }
+      return REPLAY;
+    },
+    "visual:acceptStep": (p): RunReplay => {
+      const step = REPLAY.steps.find((s) => s.stepId === p?.stepId);
+      if (step?.screenshot) {
+        step.diff = { state: "match", ratio: 0, threshold: REPLAY.visualThreshold };
+      }
+      return REPLAY;
+    },
+    "a11y:acceptRun": (): RunReplay => {
+      for (const step of REPLAY.steps) {
+        if (!step.a11y) continue;
+        step.a11y = {
+          violations: step.a11y.violations,
+          newKeys: [],
+          acceptedCount: step.a11y.newKeys.length + step.a11y.acceptedCount,
+        };
+      }
+      return REPLAY;
+    },
+    "a11y:acceptStep": (p): RunReplay => {
+      const step = REPLAY.steps.find((s) => s.stepId === p?.stepId);
+      if (step?.a11y) {
+        step.a11y = {
+          violations: step.a11y.violations,
+          newKeys: [],
+          acceptedCount: step.a11y.newKeys.length + step.a11y.acceptedCount,
+        };
+      }
+      return REPLAY;
+    },
+    /** Dismissing a findings banner. Mutates REPLAY so the banner stays gone
+     *  across run selection — which is the whole difference between this and a
+     *  local flag, and therefore the thing the preview has to reproduce. */
+    "artifacts:dismissNotice": (p): RunReplay => {
+      const kind: RunNoticeKind | null =
+        p?.kind === "visual" || p?.kind === "a11y" ? p.kind : null;
+      if (kind) {
+        REPLAY.dismissedNotices = [...new Set<RunNoticeKind>([...(REPLAY.dismissedNotices ?? []), kind])];
+      }
+      return REPLAY;
+    },
+    "artifacts:restoreNotice": (p): RunReplay => {
+      REPLAY.dismissedNotices = (REPLAY.dismissedNotices ?? []).filter((k) => k !== p?.kind);
+      return REPLAY;
+    },
     "visual:baselineShot": (): string => VISUAL_FRAMES.baseline,
     /** `RunLogs`, not a line array: the panel reads `console` and `network`
      *  separately and reports what was dropped. */

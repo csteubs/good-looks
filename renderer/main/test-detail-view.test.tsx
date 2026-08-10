@@ -44,6 +44,13 @@ const updateSteps = vi.fn(
 // the AI-apply path override this to model that; everything else keeps the
 // inert default.
 const updateScript = vi.fn(async (_id: string, _source: string) => ({}) as TestRecord);
+/** Models the real handler: it SAVES the flag and hands back the stored record,
+ *  which is what keeps the banner down after the view reconciles. A mock that
+ *  returned a bare object would let a purely optimistic implementation pass. */
+const dismissDiverged = vi.fn(async (_id: string) => {
+  test_ = { ...(test_ as TestRecord), stepsDivergedDismissed: true };
+  return test_;
+});
 
 vi.mock("./recorder-store", () => ({
   // Mirrors the real store's contract: calling run() bumps runEpoch, which the
@@ -81,6 +88,7 @@ vi.mock("../lib/api", () => ({
       rename: async () => ({}) as TestRecord,
       updateScript: (...a: Parameters<typeof updateScript>) => updateScript(...a),
       updateSteps: (...a: Parameters<typeof updateSteps>) => updateSteps(...a),
+      dismissDiverged: (...a: Parameters<typeof dismissDiverged>) => dismissDiverged(...a),
     },
     recorder: { getSettings: async () => settings as RecorderSettings },
     runs: {
@@ -482,6 +490,28 @@ describe("diverged steps warning", () => {
     renderView();
     expect(await screen.findByText(/saved without regenerating/i)).toBeTruthy();
     expect(screen.queryByText(/couldn't be parsed back into steps/i)).toBeNull();
+  });
+
+  it("can be waved off, and says so to the backend", async () => {
+    test_ = record({ stepsDiverged: true });
+    renderView();
+    await screen.findByText(/may not reflect the script/i);
+    fireEvent.click(screen.getByLabelText("Dismiss this warning"));
+    // Both halves matter. The banner has to go NOW — the click is an
+    // acknowledgement, and one that leaves the warning up reads as broken — and
+    // it has to be recorded, or it comes back on the next visit.
+    await waitFor(() => expect(screen.queryByText(/may not reflect the script/i)).toBeNull());
+    expect(dismissDiverged).toHaveBeenCalledWith("t1");
+  });
+
+  it("stays quiet for a divergence already dismissed", async () => {
+    // The persisted half: the record is STILL diverged, and that is correct —
+    // everything else that reads the flag must keep saying so. Only the banner
+    // is silenced.
+    test_ = record({ stepsDiverged: true, stepsDivergedDismissed: true });
+    renderView();
+    await screen.findByText("Checkout");
+    expect(screen.queryByText(/may not reflect the script/i)).toBeNull();
   });
 
   it("doesn't tell an imported test to regenerate, which it can never do", async () => {

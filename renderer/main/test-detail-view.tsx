@@ -27,6 +27,7 @@ import {
   ToolbarContent,
   ToolbarDescription,
   ToolbarTitle,
+  toast,
 } from "@ui";
 import { ChevronDown, Pencil, TriangleAlert, Trash2 } from "lucide-react";
 
@@ -388,6 +389,29 @@ export function TestDetailView() {
     qc.invalidateQueries({ queryKey: ["script", id] });
   };
 
+  /** Silence the divergence banner. Optimistic on purpose: this is a "yes, I
+   *  know" click, and a banner that lingers until a round trip reads as a
+   *  control that didn't work. The invalidate below reconciles. */
+  const dismissDiverged = () => {
+    qc.setQueryData(["test", id], (prev: TestRecord | null | undefined) =>
+      prev ? { ...prev, stepsDivergedDismissed: true } : prev,
+    );
+    api.tests
+      .dismissDiverged(id)
+      // Take the saved record rather than invalidating: a refetch would land a
+      // moment later and is indistinguishable from the optimistic value, right
+      // up until the write failed — in which case the banner would reappear
+      // with no explanation. The catch below is the only path that restores it.
+      .then((rec) => {
+        if (rec) qc.setQueryData(["test", id], rec);
+      })
+      .catch(() => {
+        // Put it back rather than leaving the user believing it was recorded.
+        qc.invalidateQueries({ queryKey: ["test", id] });
+        toast.error("Couldn't dismiss the warning.");
+      });
+  };
+
   const saveScript = async () => {
     await api.tests.updateScript(id, scriptDraft);
     qc.invalidateQueries({ queryKey: ["script", id] });
@@ -673,9 +697,20 @@ export function TestDetailView() {
         </ToolbarActions>
       </Toolbar>
 
-      {test.stepsDiverged ? (
+      {/* Dismissible, and the dismissal is persisted rather than held here: the
+          record stays diverged (everything else that reads the flag must keep
+          saying so), the user has simply acknowledged it. The backend re-arms
+          the banner when divergence is established AFRESH — an applied script
+          that won't fully parse back into steps, or a step edit saved without
+          regenerating — so a new problem is never hidden by an old dismissal. */}
+      {test.stepsDiverged && !test.stepsDivergedDismissed ? (
         <div className="px-4 pt-2">
-          <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+          <Callout
+            color="yellow"
+            icon={<TriangleAlert className="size-4" />}
+            onDismiss={dismissDiverged}
+            dismissLabel="Dismiss this warning"
+          >
             <Callout.Text>{divergedMessage(test)}</Callout.Text>
           </Callout>
         </div>

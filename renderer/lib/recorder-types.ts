@@ -307,6 +307,10 @@ export interface TestRecord {
    *  `"unapplied"`: edited steps were saved but the script wasn't regenerated
    *  from them. Absent on older records — read that as `"parse"`. */
   stepsDivergedReason?: "parse" | "unapplied";
+  /** true when the user dismissed the divergence banner (mirrors main
+   *  TestRecord). Cleared backend-side whenever divergence is established
+   *  afresh, so the banner returns for a NEW divergence only. */
+  stepsDivergedDismissed?: boolean;
   /** Per-test screenshot-capture preference (mirrors main TestRecord). */
   recordLogs?: boolean;
   captureArtifacts?: boolean;
@@ -558,8 +562,15 @@ export interface RunReplay {
   finishedAt: number;
   failedIndex: number | null;
   visualThreshold?: number;
+  /** Findings banners the user has waved off for THIS run (mirrors main
+   *  RunReplay). Persisted with the run, so it survives selecting another. */
+  dismissedNotices?: RunNoticeKind[];
   steps: ReplayStep[];
 }
+
+/** The two non-failing findings a run reports, each of which the user can
+ *  either accept (resolve for good) or dismiss (acknowledge for this run). */
+export type RunNoticeKind = "visual" | "a11y";
 
 export interface RunReplaySummary {
   testId: string;

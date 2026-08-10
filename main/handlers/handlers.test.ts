@@ -653,6 +653,105 @@ describe("tests:updateSteps — steps, script, and whether they agree", () => {
   });
 });
 
+// Silencing the divergence warning, and — the part that carries the risk —
+// knowing when to stop silencing it.
+//
+// A dismissal that outlived the divergence it acknowledged would hide the NEXT
+// one, and the next one is the case the warning exists for: an applied AI-debug
+// fix whose script doesn't come back as steps, so the Steps tab is quietly
+// describing something other than what runs. That failure is completely silent
+// on screen, which is why it is pinned here rather than left to the renderer.
+describe("tests:dismissDiverged — silencing the warning, and re-arming it", () => {
+  /** A spec with a statement the parser cannot classify, which is what makes a
+   *  re-parse report `skipped > 0` and set the "parse" divergence. */
+  const UNPARSEABLE =
+    "import { test } from '@playwright/test';\n" +
+    "test('t', async ({ page }) => {\n" +
+    "  await page.goto('https://example.com');\n" +
+    "  await page.evaluate(() => window.scrollBy(0, 500));\n" +
+    "});\n";
+
+  it("records the dismissal without pretending the test agrees with its script", async () => {
+    const rec = seedTest("t-dismiss", { stepsDiverged: true, stepsDivergedReason: "parse" });
+    const updated = await invokeHandler<TestRecord>("tests:dismissDiverged", { id: rec.id });
+
+    expect(updated.stepsDivergedDismissed).toBe(true);
+    // The distinction the whole feature rests on: the two really ARE out of
+    // sync, and everything else reading the flag — the run comparison, the MCP
+    // — must keep saying so. Only the banner is silenced.
+    expect(updated.stepsDiverged).toBe(true);
+    expect(testStore.get(rec.id)?.stepsDivergedDismissed).toBe(true);
+  });
+
+  it("comes back for a divergence the user hasn't seen", async () => {
+    const rec = seedTest("t-dismiss-rearm", {
+      stepsDiverged: true,
+      stepsDivergedReason: "parse",
+      stepsDivergedDismissed: true,
+    });
+
+    // The AI-debug apply path: a new script that won't fully parse back.
+    const updated = await invokeHandler<TestRecord>("tests:updateScript", {
+      id: rec.id,
+      source: UNPARSEABLE,
+    });
+
+    expect(updated.stepsDiverged).toBe(true);
+    expect(updated.stepsDivergedReason).toBe("parse");
+    expect(updated.stepsDivergedDismissed).toBeUndefined();
+  });
+
+  it("comes back when saved steps are left out of the script", async () => {
+    const rec = seedTest("t-dismiss-unapplied", {
+      scriptEdited: true,
+      stepsDiverged: true,
+      stepsDivergedReason: "unapplied",
+      stepsDivergedDismissed: true,
+    });
+    testStore.writeScript(rec.id, "// hand-written\n");
+
+    const updated = await invokeHandler<TestRecord>("tests:updateSteps", {
+      id: rec.id,
+      steps: [{ id: "s1", timestamp: 1, type: "goto", url: "https://new.test/" } as Step],
+    });
+
+    // Same rule, other cause: these are different edits from the ones that were
+    // acknowledged, so the user has not seen this divergence either.
+    expect(updated.stepsDiverged).toBe(true);
+    expect(updated.stepsDivergedDismissed).toBeUndefined();
+  });
+
+  it("clears the dismissal when the divergence is resolved", async () => {
+    // Nothing to acknowledge any more. Leaving a stale `true` on the record is
+    // how the next real divergence gets silenced by a click made months ago.
+    const rec = seedTest("t-dismiss-resolved", {
+      stepsDiverged: true,
+      stepsDivergedReason: "unapplied",
+      stepsDivergedDismissed: true,
+    });
+
+    const updated = await invokeHandler<TestRecord>("tests:updateSteps", {
+      id: rec.id,
+      steps: [{ id: "s1", timestamp: 1, type: "goto", url: "https://resolved.test/" } as Step],
+    });
+
+    expect(updated.stepsDiverged).toBe(false);
+    expect(updated.stepsDivergedDismissed).toBeUndefined();
+  });
+
+  it("takes `dismissed: false` as the way back", async () => {
+    const rec = seedTest("t-dismiss-undo", {
+      stepsDiverged: true,
+      stepsDivergedDismissed: true,
+    });
+    const updated = await invokeHandler<TestRecord>("tests:dismissDiverged", {
+      id: rec.id,
+      dismissed: false,
+    });
+    expect(updated.stepsDivergedDismissed).toBeUndefined();
+  });
+});
+
 // The handler does one thing the service deliberately does not: carry the
 // encrypted secret values across, and tell redaction about the new test id.
 // Both are invisible when wrong. A copy missing its secrets fails on its first
