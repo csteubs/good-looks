@@ -529,6 +529,20 @@
   color: var(--gl-tx-3);
 }
 
+/* The stacking floor for a MODAL — the Radix Dialog/AlertDialog overlay and
+   content wear it (see renderer/ui/overlays.tsx).
+
+   A class rather than a Tailwind `z-*` because the number it needs to beat is
+   one the THEME introduced: `.gl-crt` sits at 610 to escape the atmosphere
+   overlays, and a dialog at Tailwind's `z-50` opened on the Visual screen was
+   drawn UNDERNEATH the bezel — the description clipped mid-sentence, the
+   confirm button behind a screenshot. Nothing catches that: the dialog mounts,
+   the a11y tree reports its buttons, and every test passes while the user
+   cannot read or press them. */
+.gl-z-modal {
+  z-index: var(--gl-z-modal);
+}
+
 /* The popover. THE ONE PLACE THIS DESIGN ALLOWS A SHADOW: hairlines are the
    only container everywhere else, but a true overlay has to separate itself
    from whatever it is covering, and a 1px line over a similar near-black does

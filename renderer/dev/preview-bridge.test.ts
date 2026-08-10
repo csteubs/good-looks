@@ -27,9 +27,15 @@ import { handledChannels, installPreviewBridge, sdkChannels } from "./preview-br
 // silently reading nothing.
 import API_SOURCE from "../lib/api.ts?raw";
 
-/** Every `"namespace:verb"` string literal api.ts hands to `ipc().invoke`. */
+/** Every `"namespace:verb"` string literal api.ts hands to `ipc().invoke`.
+ *
+ *  DIGITS ARE PART OF A NAMESPACE. The pattern was `[a-zA-Z]+` on both sides,
+ *  which silently excluded the entire `a11y:` family — so every a11y channel
+ *  counted as "not real", and a preview handler for one would be reported as
+ *  INVENTED while a missing one went unnoticed. A guard against silent drift
+ *  that is itself blind to a namespace is worse than none. */
 function channelsInApi(): string[] {
-  const found = API_SOURCE.match(/"[a-zA-Z]+:[a-zA-Z]+"/g) ?? [];
+  const found = API_SOURCE.match(/"[a-zA-Z][a-zA-Z0-9]*:[a-zA-Z][a-zA-Z0-9]*"/g) ?? [];
   return [...new Set(found.map((s) => s.slice(1, -1)))].sort();
 }
 

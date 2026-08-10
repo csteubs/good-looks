@@ -50,6 +50,7 @@ import type {
   Annotation,
   ReplayStep,
   ReplayStepStatus,
+  RunNoticeKind,
   RunReplay,
   RunReplaySummary,
   VisualDiff,
@@ -1024,6 +1025,47 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
       toast.success("Screenshot pinned as new baseline. Logged in Stats.");
     },
   });
+  const acceptVisualRun = useMutation({
+    mutationFn: () => api.visual.acceptRun(summary.testId, summary.runId),
+    onSuccess: (replay) => {
+      patchReplay(replay);
+      // Every step is pinned, so hide every per-step accept button at once —
+      // the buttons are keyed off this set and the replay's diffs now read
+      // "match", which would otherwise leave them offering a no-op.
+      setAcceptedSteps(new Set(steps.map((s) => s.stepId)));
+      toast.success("Every screenshot in this run pinned as the new baseline. Logged in Stats.");
+    },
+  });
+
+  // Waving a banner off, as opposed to signing off on what it reports. The
+  // undo is not a nicety: dismissing is one click on a control that sits beside
+  // an irreversible one, and without a way back the two read as equally
+  // dangerous.
+  const restoreNotice = useMutation({
+    mutationFn: (kind: RunNoticeKind) =>
+      api.artifacts.restoreNotice(summary.testId, summary.runId, kind),
+    onSuccess: (replay) => patchReplay(replay),
+  });
+  const dismissNotice = useMutation({
+    mutationFn: (kind: RunNoticeKind) =>
+      api.artifacts.dismissNotice(summary.testId, summary.runId, kind),
+    onSuccess: (replay, kind) => {
+      patchReplay(replay);
+      toast.success(
+        kind === "visual"
+          ? "Visual changes dismissed for this run."
+          : "Accessibility issues dismissed for this run.",
+        {
+          description: "Nothing was accepted — the findings are still on the run's steps.",
+          action: {
+            label: "Undo",
+            onClick: () => restoreNotice.mutate(kind),
+          },
+        },
+      );
+    },
+    onError: (err) => toast.error(`Couldn't dismiss: ${err}`),
+  });
 
   if (replayQuery.isLoading) {
     return (
@@ -1049,6 +1091,10 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   const stepMasks = allMasks.filter((m) => m.stepId === null || m.stepId === step.stepId);
   const changedCount = steps.filter((s) => s.diff?.state === "changed").length;
   const a11yCount = countA11ySteps(steps);
+  // Read off the replay, not component state: the banner has to stay gone after
+  // the user selects another run and comes back, which is where a local flag
+  // would quietly reset.
+  const dismissed = new Set(replay.dismissedNotices ?? []);
   const canDiff = Boolean(step.diff?.diffFile);
   const hasBaselineView =
     step.diff !== undefined && step.diff.state !== "unable" && Boolean(step.screenshot);
@@ -1172,16 +1218,40 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         </div>
       ) : null}
 
-      {/* Visual-change banner */}
-      {changedCount > 0 ? (
+      {/* Visual-change banner.
+          Two exits, and they mean different things — which is the reason both
+          are here. "Accept all" REPINS every baseline and changes what every
+          later run compares against; dismissing changes nothing but the banner.
+          Offering only the first would have made signing off blind the cheapest
+          way to clear the screen. */}
+      {changedCount > 0 && !dismissed.has("visual") ? (
         <div className="px-4 pt-3">
           <Callout
             color="orange"
             icon={<Eye className="size-4" />}
+            onDismiss={() => dismissNotice.mutate("visual")}
+            dismissLabel="Dismiss visual changes for this run"
           >
-            Visual change detected in {changedCount} {changedCount === 1 ? "step" : "steps"} (over{" "}
-            {fmtPct((replay.visualThreshold ?? 0) / 100)} threshold). Use the per-step "Accept New
-            Baseline" button to re-pin a step.
+            <div className="flex flex-wrap items-center gap-2">
+              <span>
+                Visual change detected in {changedCount} {changedCount === 1 ? "step" : "steps"}{" "}
+                (over {fmtPct((replay.visualThreshold ?? 0) / 100)} threshold). Use the per-step
+                "Accept New Baseline" button to re-pin a step.
+              </span>
+              <AlertDialog
+                trigger={
+                  <Button size="small" variant="glass" disabled={acceptVisualRun.isPending}>
+                    <Stamp className="size-3.5" />
+                    Accept all for this run
+                  </Button>
+                }
+                title="Pin every screenshot in this run as the new baseline?"
+                description="Every step's current screenshot replaces its baseline, including steps that matched. Later runs are compared against these frames, so anything wrong in them becomes the expected result."
+                confirmLabel="Accept all"
+                confirmVariant="accent"
+                onConfirm={() => acceptVisualRun.mutate()}
+              />
+            </div>
           </Callout>
         </div>
       ) : null}
@@ -1189,9 +1259,14 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
       {/* Accessibility, as its own callout rather than folded into the visual
           one: they are different kinds of finding, and a run can easily have
           one without the other. Never affects the run's pass/fail. */}
-      {a11yCount > 0 ? (
+      {a11yCount > 0 && !dismissed.has("a11y") ? (
         <div className="px-4 pt-3">
-          <Callout color="orange" icon={<Accessibility className="size-4" />}>
+          <Callout
+            color="orange"
+            icon={<Accessibility className="size-4" />}
+            onDismiss={() => dismissNotice.mutate("a11y")}
+            dismissLabel="Dismiss accessibility issues for this run"
+          >
             <div className="flex flex-wrap items-center gap-2">
               <span>
                 {a11yCount} {a11yCount === 1 ? "step has" : "steps have"} accessibility issues that

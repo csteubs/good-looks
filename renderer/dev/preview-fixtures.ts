@@ -252,6 +252,22 @@ export const REPLAY: RunReplay = {
       status: "passed",
       screenshot: "2.png",
       diff: { state: "new-baseline" },
+      // The only accessibility finding in the fixture, and it is here so the
+      // a11y banner has an address: it is a SEPARATE callout from the visual
+      // one with its own accept and its own dismiss, and with no step reporting
+      // violations the preview rendered neither of them.
+      a11y: {
+        violations: [
+          {
+            id: "color-contrast",
+            impact: "serious",
+            help: "Elements must meet minimum colour contrast ratio thresholds",
+            nodes: [".cart-subtotal", ".promo-code-hint"],
+          },
+        ],
+        newKeys: ["color-contrast|.cart-subtotal", "color-contrast|.promo-code-hint"],
+        acceptedCount: 0,
+      },
     },
     {
       index: 3,
@@ -284,7 +300,10 @@ export const REPLAY_SUMMARIES: RunReplaySummary[] = [
     stepCount: REPLAY.steps.length,
     failedIndex: REPLAY.failedIndex,
     changedSteps: REPLAY.steps.filter((s) => s.diff?.state === "changed").length,
-    a11yNewSteps: 0,
+    // Derived, not hard-coded: the summary marker and the banner are two
+    // readings of the same fact, and a fixture where they disagree teaches the
+    // preview to lie about exactly the thing this screen reports.
+    a11yNewSteps: REPLAY.steps.filter((s) => (s.a11y?.newKeys.length ?? 0) > 0).length,
   },
 ];
 

@@ -13,8 +13,10 @@
 // run-selection behavior, where the failure mode is a blank pane.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+
+import { clearToastCalls, toastCalls } from "../__tests__/sonner-stub";
 
 import type { RunReplaySummary, VisualDiff } from "../lib/recorder-types";
 import { DiffBadge, VisualView } from "./visual-view";
@@ -25,12 +27,38 @@ let replays: RunReplaySummary[] = [];
 let replayDetail: unknown = null;
 let shot: string | null = null;
 
+// The four exits from a findings banner. Each returns the replay the way the
+// real handler does — patched, so the view re-renders from the same object the
+// backend would hand back rather than from a local guess.
+const acceptVisualRun = vi.fn(async () => {
+  const r = replayDetail as { steps: { screenshot?: string | null; diff?: unknown }[] };
+  for (const s of r.steps) if (s.screenshot) s.diff = { state: "match", ratio: 0, threshold: 0.2 };
+  return replayDetail;
+});
+const acceptA11yRun = vi.fn(async () => {
+  const r = replayDetail as { steps: { a11y?: { violations: unknown[]; newKeys: string[]; acceptedCount: number } }[] };
+  for (const s of r.steps) if (s.a11y) s.a11y = { ...s.a11y, newKeys: [], acceptedCount: 1 };
+  return replayDetail;
+});
+const dismissNotice = vi.fn(async (_testId: string, _runId: string, kind: string) => {
+  const r = replayDetail as { dismissedNotices?: string[] };
+  r.dismissedNotices = [...new Set([...(r.dismissedNotices ?? []), kind])];
+  return replayDetail;
+});
+const restoreNotice = vi.fn(async (_testId: string, _runId: string, kind: string) => {
+  const r = replayDetail as { dismissedNotices?: string[] };
+  r.dismissedNotices = (r.dismissedNotices ?? []).filter((k) => k !== kind);
+  return replayDetail;
+});
+
 vi.mock("../lib/api", () => ({
   api: {
     artifacts: {
       list: async () => replays,
       getReplay: async () => replayDetail,
       readShot: async () => shot,
+      dismissNotice: (...a: Parameters<typeof dismissNotice>) => dismissNotice(...a),
+      restoreNotice: (...a: Parameters<typeof restoreNotice>) => restoreNotice(...a),
     },
     runs: { list: async () => [] },
     visual: {
@@ -42,8 +70,13 @@ vi.mock("../lib/api", () => ({
       baselineShot: async () => null,
       clearBaseline: async () => null,
       acceptStep: async () => null,
+      acceptRun: (...a: unknown[]) => acceptVisualRun(...(a as [])),
       getElementSteps: async () => [],
       setElementStep: async () => [],
+    },
+    a11y: {
+      acceptStep: async () => null,
+      acceptRun: (...a: unknown[]) => acceptA11yRun(...(a as [])),
     },
     annotations: { list: async () => [], upsert: async () => ({}) },
     runner: { compareRuns: async () => null, replayRun: async () => ({ runId: "r" }) },
@@ -199,6 +232,152 @@ describe("VisualView run selection", () => {
     renderVisual();
     await screen.findByText("Checkout");
     expect(screen.queryByLabelText("accessibility issues")).toBeNull();
+  });
+});
+
+// Accepting and dismissing are NOT two words for the same button, and the whole
+// point of these tests is that the screen keeps them apart. Accepting re-pins a
+// baseline or pins violations onto the test record — it changes what every later
+// run reports. Dismissing changes one run's banner and nothing else. Before this
+// there was no dismiss at all, so the cheapest way to clear a nagging screen was
+// to accept findings you had not looked at.
+describe("clearing a run's findings banners", () => {
+  beforeEach(() => {
+    // Not optional here: half these tests assert a mock was NOT called, and
+    // without a reset they pass or fail on the previous test's clicks.
+    vi.clearAllMocks();
+    replays = [summary({ runId: "r1", stepCount: 2, changedSteps: 1, a11yNewSteps: 1 })];
+    replayDetail = {
+      testId: "t1",
+      runId: "r1",
+      testName: "Checkout",
+      status: "passed",
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_001_000,
+      failedIndex: null,
+      visualThreshold: 0.2,
+      steps: [
+        {
+          index: 0,
+          stepId: "s1",
+          label: "goto example.com",
+          type: "goto",
+          status: "passed",
+          screenshot: "0.png",
+          diff: { state: "changed", ratio: 0.04, threshold: 0.2, diffFile: "0.diff.png" },
+        },
+        {
+          index: 1,
+          stepId: "s2",
+          label: "click Cart",
+          type: "click",
+          status: "passed",
+          screenshot: "1.png",
+          diff: { state: "match", ratio: 0, threshold: 0.2 },
+          a11y: {
+            violations: [
+              { id: "color-contrast", impact: "serious", help: "Contrast", nodes: [".total"] },
+            ],
+            newKeys: ["color-contrast|.total"],
+            acceptedCount: 0,
+          },
+        },
+      ],
+    };
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+  });
+
+  afterEach(() => {
+    replayDetail = null;
+    shot = null;
+  });
+
+  /** Press an AlertDialog trigger, then its confirm button. Two clicks, because
+   *  both accepts are destructive enough to be asked about. */
+  async function confirmFrom(triggerName: RegExp) {
+    const triggers = await screen.findAllByRole("button", { name: triggerName });
+    fireEvent.click(triggers[0]);
+    const confirm = await screen.findByRole("button", { name: "Accept all" });
+    fireEvent.click(confirm);
+  }
+
+  it("offers a run-wide accept for VISUAL changes, not just per-step", async () => {
+    // The gap this closes: accessibility had "Accept all for this run" from the
+    // start and visual did not, so re-pinning a twenty-step run meant twenty
+    // clicks — and the two banners taught contradictory mental models.
+    renderVisual();
+    await screen.findByText(/Visual change detected/);
+    await confirmFrom(/Accept all for this run/);
+    await waitFor(() => expect(acceptVisualRun).toHaveBeenCalledWith("t1", "r1"));
+    // The banner goes because the FINDINGS went, which is what makes accept
+    // different from dismiss: nothing is left to report.
+    await waitFor(() => expect(screen.queryByText(/Visual change detected/)).toBeNull());
+  });
+
+  it("dismisses the visual banner without touching a single baseline", async () => {
+    renderVisual();
+    await screen.findByText(/Visual change detected/);
+    fireEvent.click(screen.getByLabelText("Dismiss visual changes for this run"));
+    await waitFor(() => expect(screen.queryByText(/Visual change detected/)).toBeNull());
+    expect(dismissNotice).toHaveBeenCalledWith("t1", "r1", "visual");
+    // The one assertion that separates this from the accept above. If dismiss
+    // ever grew into "accept quietly", this is what would notice.
+    expect(acceptVisualRun).not.toHaveBeenCalled();
+    const steps = (replayDetail as { steps: { diff?: { state: string } }[] }).steps;
+    expect(steps[0].diff?.state).toBe("changed");
+  });
+
+  it("dismisses the accessibility banner without accepting the violations", async () => {
+    renderVisual();
+    await screen.findByText(/accessibility issues that/);
+    fireEvent.click(screen.getByLabelText("Dismiss accessibility issues for this run"));
+    await waitFor(() => expect(screen.queryByText(/accessibility issues that/)).toBeNull());
+    expect(dismissNotice).toHaveBeenCalledWith("t1", "r1", "a11y");
+    expect(acceptA11yRun).not.toHaveBeenCalled();
+    const steps = (replayDetail as { steps: { a11y?: { newKeys: string[] } }[] }).steps;
+    expect(steps[1].a11y?.newKeys).toEqual(["color-contrast|.total"]);
+  });
+
+  it("dismisses one banner without silencing the other", async () => {
+    // They are separate findings and a run can have either. Sharing one flag
+    // would hide an accessibility regression because someone waved off a pixel
+    // diff, which is the worst version of this feature.
+    renderVisual();
+    await screen.findByText(/Visual change detected/);
+    fireEvent.click(screen.getByLabelText("Dismiss visual changes for this run"));
+    await waitFor(() => expect(screen.queryByText(/Visual change detected/)).toBeNull());
+    expect(screen.getByText(/accessibility issues that/)).toBeTruthy();
+  });
+
+  it("keeps a banner dismissed on the replay, not in component state", async () => {
+    // A dismissal held in the component comes back the moment the user selects
+    // another run and returns — which is not a dismissal. Seeded on the replay
+    // here, exactly as a re-read from disk would deliver it.
+    (replayDetail as { dismissedNotices: string[] }).dismissedNotices = ["visual", "a11y"];
+    renderVisual();
+    await screen.findByText("Checkout");
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("not ready");
+    });
+    expect(screen.queryByText(/Visual change detected/)).toBeNull();
+    expect(screen.queryByText(/accessibility issues that/)).toBeNull();
+  });
+
+  it("offers a way back from a dismissal", async () => {
+    // Dismiss sits one click away and beside an irreversible control; without an
+    // undo the two read as equally dangerous and the user uses neither.
+    clearToastCalls();
+    renderVisual();
+    await screen.findByText(/Visual change detected/);
+    fireEvent.click(screen.getByLabelText("Dismiss visual changes for this run"));
+    await waitFor(() => expect(dismissNotice).toHaveBeenCalled());
+    const undo = toastCalls
+      .map((c) => (c.options as { action?: { label: string; onClick: () => void } } | undefined))
+      .find((o) => o?.action?.label === "Undo");
+    expect(undo).toBeTruthy();
+    act(() => undo!.action!.onClick());
+    await waitFor(() => expect(restoreNotice).toHaveBeenCalledWith("t1", "r1", "visual"));
+    expect(await screen.findByText(/Visual change detected/)).toBeTruthy();
   });
 });
 

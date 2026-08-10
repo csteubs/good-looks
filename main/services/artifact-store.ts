@@ -188,8 +188,18 @@ export interface RunReplay {
   failedIndex: number | null;
   /** threshold (percent, 0–100) this run's visual diffs used, when captured. */
   visualThreshold?: number;
+  /** Which of the replay screen's findings banners the user has dismissed.
+   *  Lives on the replay rather than in renderer state because a dismissal that
+   *  comes back when you click away is not a dismissal. Safe to pin to the run:
+   *  a run's findings never change after it finishes, and a re-run writes a new
+   *  replay that starts undismissed. */
+  dismissedNotices?: RunNoticeKind[];
   steps: ReplayStep[];
 }
+
+/** The two findings a run reports that don't fail it, and that the user can
+ *  therefore either resolve (accept) or wave off (dismiss). */
+export type RunNoticeKind = "visual" | "a11y";
 
 /** Lightweight summary for the replay run list (from each run's replay.json). */
 export interface RunReplaySummary {

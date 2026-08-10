@@ -119,6 +119,14 @@
      which reads as a rendering glitch rather than as depth. */
   --gl-z-menu: 400;
 
+  /* Modals go ABOVE everything, including the CRT bezel at 610.
+     This is not a taste call. A dialog is a question the app is refusing to
+     continue past, and on the Visual screen the bezel was drawn over the top of
+     one — the copy was cut off mid-sentence and the confirm button was behind a
+     screenshot. Radix's own `z-50` cannot reach past a 610 the theme introduced,
+     so the theme has to say where a modal belongs. */
+  --gl-z-modal: 700;
+
   /* The texture's warmth, and DELIBERATELY NOT `--gl-amber`.
      The design fixes `texture: ember` — "warm orange suspended in black" — and
      a wash of the amber token behind a screen would be the largest coloured

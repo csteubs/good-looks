@@ -353,6 +353,15 @@ export interface TestRecord {
    *  run — is missing those edits. Absent on records written before the reason
    *  was tracked; treat that as `"parse"`, the only cause that existed then. */
   stepsDivergedReason?: "parse" | "unapplied";
+  /** true when the user has waved the divergence warning off. Kept on the record
+   *  rather than in renderer state so it survives leaving the test — a warning
+   *  you can only silence until you click away is one you learn to read past.
+   *
+   *  Cleared whenever divergence is ESTABLISHED AFRESH — an apply whose script
+   *  won't fully parse back into steps, or a step edit saved without
+   *  regenerating. So the banner returns for a new divergence and stays gone for
+   *  the one already acknowledged, which is the whole distinction. */
+  stepsDivergedDismissed?: boolean;
   /** Visual-diff sensitivity for capture runs (Phase 3): the percent of pixels
    *  (0–100) allowed to change vs the pinned baseline before a step is flagged
    *  "visual change detected". Absent → DEFAULT_VISUAL_THRESHOLD. */

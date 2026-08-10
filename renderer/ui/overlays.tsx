@@ -33,7 +33,7 @@ export const dialogSizeClass: Record<DialogSize, string> = {
  *  all (the trainer panel is 360 DIP wide, so the box is 296px and the content
  *  264px), and a copy of them in the test would drift silently. */
 export const dialogPanelClass =
-  "fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-[calc(100vw-4rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4 shadow-2xl outline-none";
+  "gl-z-modal fixed left-1/2 top-1/2 flex max-h-[85vh] w-[calc(100vw-4rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4 shadow-2xl outline-none";
 
 /* ── Dialog ─────────────────────────────────────────────────────────── */
 
@@ -59,7 +59,7 @@ export function DialogOverlay({
   return (
     <DialogPrimitive.Overlay
       className={cn(
-        "fixed inset-0 z-50 bg-[var(--overlay)] data-[state=open]:animate-in data-[state=open]:fade-in-0",
+        "gl-z-modal fixed inset-0 bg-[var(--overlay)] data-[state=open]:animate-in data-[state=open]:fade-in-0",
         className,
       )}
       {...props}
@@ -305,7 +305,7 @@ export function AlertDialogOverlay({
   className,
   ...props
 }: React.ComponentProps<typeof AlertDialogPrimitive.Overlay>) {
-  return <AlertDialogPrimitive.Overlay className={cn("fixed inset-0 z-50 bg-[var(--overlay)]", className)} {...props} />;
+  return <AlertDialogPrimitive.Overlay className={cn("gl-z-modal fixed inset-0 bg-[var(--overlay)]", className)} {...props} />;
 }
 
 export function AlertDialogContent({
@@ -319,7 +319,7 @@ export function AlertDialogContent({
       <AlertDialogOverlay />
       <AlertDialogPrimitive.Content
         className={cn(
-          "fixed left-1/2 top-1/2 z-50 flex w-[calc(100vw-4rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4 text-center shadow-2xl outline-none",
+          "gl-z-modal fixed left-1/2 top-1/2 flex w-[calc(100vw-4rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4 text-center shadow-2xl outline-none",
           dialogSizeClass[size],
           className,
         )}

@@ -37,6 +37,10 @@ export const DUPLICATED_FIELDS = [
   "sourceRoot",
   "stepsDiverged",
   "stepsDivergedReason",
+  // Rides along with the divergence it acknowledges. Dropping it would warn the
+  // user again about the exact state they just signed off on, on a copy they
+  // made deliberately.
+  "stepsDivergedDismissed",
   "visualThreshold",
   "visualMasks",
   "visualElementSteps",
