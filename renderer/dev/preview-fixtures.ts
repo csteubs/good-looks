@@ -14,6 +14,8 @@
 // file was first written against an older copy of the app.
 
 import type {
+  BatchRecord,
+  BatchTestResult,
   HealListEntry,
   RecorderSettings,
   RunRecord,
@@ -477,5 +479,92 @@ export const LLM_STATUS: LlmProviderStatus[] = [
     baseUrl: "https://api.anthropic.com",
     hasKey: false,
     error: "No backend in preview mode — this is a UI preview, not a running app.",
+  },
+];
+
+/** Past batches, one per verdict.
+ *
+ *  FOUR RECORDS BECAUSE THERE ARE FOUR VERDICTS, and three of them are only
+ *  distinguishable by colour. A batch that finished with some passes and some
+ *  failures is amber; one where NOTHING passed is red; a clean one is
+ *  phosphor; a stopped one is untinted, because it never produced a verdict at
+ *  all. `batch:list` used to answer `[]`, which meant the Previous batches
+ *  panel — and the finished-batch panel above it — could not be seen in the
+ *  preview at all, and those are precisely the surfaces where the tone is the
+ *  whole signal.
+ *
+ *  The counts are deliberately awkward on the mixed record (2 failed, 1
+ *  passed): that is the case where an all-red reading is most tempting and
+ *  most wrong. */
+const batchResults = (
+  outcomes: Array<[testId: string, testName: string, status: BatchTestResult["status"]]>,
+): BatchTestResult[] =>
+  outcomes.map(([testId, testName, status]) => ({
+    testId,
+    testName,
+    status,
+    browser: "chromium",
+    startedAt: NOW - 10 * MINUTE,
+    finishedAt: NOW - 9 * MINUTE,
+    durationMs: 41_000,
+    ...(status === "failed" ? { exitCode: 1 } : null),
+  }));
+
+export const BATCHES: BatchRecord[] = [
+  {
+    batchId: "b-mixed",
+    running: false,
+    startedAt: NOW - 2 * HOUR,
+    finishedAt: NOW - 2 * HOUR + 3 * MINUTE,
+    currentIndex: -1,
+    stopped: false,
+    results: batchResults([
+      ["t-checkout", "Checkout — happy path", "failed"],
+      ["t-login", "Login — wrong password shows an error", "failed"],
+      ["t-search", "Search returns results", "passed"],
+    ]),
+    summary: { total: 3, passed: 1, failed: 2, skipped: 0, ok: false, durationMs: 182_000 },
+  },
+  {
+    batchId: "b-total",
+    running: false,
+    startedAt: NOW - 5 * HOUR,
+    finishedAt: NOW - 5 * HOUR + 1 * MINUTE,
+    currentIndex: -1,
+    stopped: false,
+    results: batchResults([
+      ["t-checkout", "Checkout — happy path", "failed"],
+      ["t-login", "Login — wrong password shows an error", "failed"],
+      ["t-search", "Search returns results", "failed"],
+    ]),
+    summary: { total: 3, passed: 0, failed: 3, skipped: 0, ok: false, durationMs: 61_000 },
+  },
+  {
+    batchId: "b-clean",
+    running: false,
+    startedAt: NOW - 1 * DAY,
+    finishedAt: NOW - 1 * DAY + 4 * MINUTE,
+    currentIndex: -1,
+    stopped: false,
+    results: batchResults([
+      ["t-checkout", "Checkout — happy path", "passed"],
+      ["t-login", "Login — wrong password shows an error", "passed"],
+      ["t-search", "Search returns results", "passed"],
+    ]),
+    summary: { total: 3, passed: 3, failed: 0, skipped: 0, ok: true, durationMs: 240_000 },
+  },
+  {
+    batchId: "b-stopped",
+    running: false,
+    startedAt: NOW - 2 * DAY,
+    finishedAt: NOW - 2 * DAY + 1 * MINUTE,
+    currentIndex: -1,
+    stopped: true,
+    results: batchResults([
+      ["t-checkout", "Checkout — happy path", "failed"],
+      ["t-login", "Login — wrong password shows an error", "passed"],
+      ["t-search", "Search returns results", "pending"],
+    ]),
+    summary: { total: 3, passed: 1, failed: 1, skipped: 0, ok: false, durationMs: 52_000 },
   },
 ];

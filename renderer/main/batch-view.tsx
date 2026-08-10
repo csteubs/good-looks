@@ -47,6 +47,12 @@ import {
   toggleRowBrowser,
   type RowOptionsMap,
 } from "../lib/batch-run-plan";
+import {
+  batchOutcome,
+  batchOutcomeLabel,
+  batchOutcomeTitle,
+  batchOutcomeTone,
+} from "../lib/batch-outcome";
 import type {
   BatchRecord,
   BatchState,
@@ -727,7 +733,18 @@ export function BatchView() {
               </Panel>
 
               {shown && !running && summary ? (
-                <Panel title={shown.stopped ? "Batch stopped" : summary.failed > 0 ? "Batch finished with failures" : "Batch passed"} pad>
+                <Panel
+                  title={batchOutcomeTitle(batchOutcome(shown))}
+                  // The verdict was previously carried by the heading ALONE, so
+                  // the one moment the view most needs a colour — the batch
+                  // finishing — was the one place it had none.
+                  right={
+                    <StatusChip tone={batchOutcomeTone(batchOutcome(shown)) ?? undefined}>
+                      {batchOutcomeLabel(shown)}
+                    </StatusChip>
+                  }
+                  pad
+                >
                   <p className="gl-note">
                     {fmtDateTime(shown.startedAt)} · {summary.passed} passed · {summary.failed}{" "}
                     failed · {summary.skipped} skipped · {fmtDuration(summary.durationMs)} total.
@@ -800,13 +817,13 @@ export function BatchView() {
                             {fmtDuration(b.summary.durationMs)}
                           </span>
                           <span className="gl-batch-status">
-                            {b.stopped ? (
-                              <StatusChip>Stopped</StatusChip>
-                            ) : b.summary.failed > 0 ? (
-                              <StatusChip tone="red">{b.summary.failed} failed</StatusChip>
-                            ) : (
-                              <StatusChip tone="phos">{b.summary.passed} passed</StatusChip>
-                            )}
+                            {/* Amber vs red is what tells a suite with a
+                                problem in it apart from a suite that never ran
+                                — scanning history, that is the difference
+                                between one bad test and a broken base URL. */}
+                            <StatusChip tone={batchOutcomeTone(batchOutcome(b)) ?? undefined}>
+                              {batchOutcomeLabel(b)}
+                            </StatusChip>
                           </span>
                         </button>
                         {/* The drawer. Presentation over data `batch-history-store`

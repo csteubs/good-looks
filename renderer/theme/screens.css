@@ -189,6 +189,11 @@
   background: var(--gl-panel);
 }
 
+/* A `<button>`, because each readout navigates to the view that explains it.
+   The reset is the price of that: a button carries a UA border, background,
+   font and centre alignment, and every one of them fights the row above.
+   `border: 0` here is safe — the divider below is a more specific selector and
+   still wins. */
 .gl-home-stat {
   display: flex;
   flex-direction: column;
@@ -196,10 +201,27 @@
   gap: 4px;
   padding: 10px 18px;
   min-width: 104px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
 }
 
 .gl-home-stat + .gl-home-stat {
   border-inline-start: 1px solid var(--gl-line-2);
+}
+
+/* Neutral, like the tiles in Stats: these three sit inside one frame, and a
+   hover that tinted one of them would read as a status rather than as a
+   pointer under it. */
+.gl-home-stat:hover {
+  background: var(--gl-sel-bg);
+}
+
+.gl-home-stat:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
 }
 
 /* Tabular, because these three sit in a row and a proportional digit makes the

@@ -100,6 +100,18 @@
   white-space: nowrap;
 }
 
+/* LUCIDE DEFAULTS TO 24px AND NOTHING HERE WAS OVERRIDING IT. A 24px glyph next
+   to a 10px letterspaced label in a 30px box reads as an icon with a caption,
+   and the heavier shapes (Trash2 especially) read as plainly broken. 13px is
+   `.gl-icon-btn`'s size — the icon-only sibling of this button — so the two
+   agree. `flex-shrink: 0` because the label is `nowrap` and a narrow row would
+   otherwise take its space out of the glyph and letterbox it. */
+.gl-btn svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
 .gl-btn:disabled {
   cursor: default;
   opacity: 0.42;
