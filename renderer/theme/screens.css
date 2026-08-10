@@ -924,215 +924,6 @@
   background: var(--gl-tx-1);
 }
 
-/* ── Test detail (B5a) ─────────────────────────────────────────────────── */
-
-/*
- * The run panel. A fixed strip at the bottom of the screen, and an EXPANDED
- * state that hands it the whole pane.
- *
- * 224px is about eight lines of console, which is enough to see that something
- * failed and never enough to read the stack that says why. Before B5a that was
- * the only size it had, so diagnosing a failure meant scrolling a viewport the
- * size of a business card while the step list above it sat idle. The expanded
- * state is `flex: 1 1 auto` rather than a height: the panel's siblings give up
- * their space, so the log grows to whatever the window actually has instead of
- * to a number written here.
- */
-.gl-run-panel {
-  display: flex;
-  flex-direction: column;
-  flex: 0 0 224px;
-  min-height: 0;
-  background: var(--gl-ink);
-  border-top: 1px solid var(--gl-line);
-}
-
-.gl-run-panel-expanded {
-  flex: 1 1 auto;
-}
-
-.gl-run-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 0 0 auto;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--gl-line);
-}
-
-/* Pushed to the trailing edge, so the expand control is in the same place
-   whether or not the AI sparkle and the copy button are showing. */
-.gl-run-expand {
-  margin-inline-start: auto;
-}
-
-/* The log fills the scroller rather than sitting in it as a card: the panel
-   already draws a border on every side, and a second box at the same weight
-   one pixel inside it reads as a table rather than as depth. */
-.gl-run-log {
-  border: 0;
-  min-height: 100%;
-  padding: 8px 12px;
-}
-
-/*
- * The triage line. It sits between the verdict chip and the log, which is the
- * order the question is actually asked in: what happened, why, then the proof.
- */
-.gl-triage {
-  flex: 0 0 auto;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--gl-line);
-}
-
-/* Inline after the claim, not on its own line. A confidence figure is a
-   qualifier on the sentence it follows, and a reader who has to look elsewhere
-   for it reads the verdict as unqualified. */
-.gl-triage-confidence {
-  margin-inline-start: 8px;
-  font-family: var(--gl-mono);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: var(--gl-track-label);
-  text-transform: uppercase;
-  color: var(--gl-tx-3);
-}
-
-.gl-triage-more {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 4px;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  font-family: var(--gl-mono);
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: var(--gl-track-label);
-  text-transform: uppercase;
-  color: var(--gl-tx-3);
-  cursor: pointer;
-}
-
-.gl-triage-more:hover {
-  color: var(--gl-tx-1);
-}
-
-.gl-triage-more:focus-visible {
-  outline: 1px solid var(--gl-cyan);
-  outline-offset: 2px;
-}
-
-.gl-triage-rest {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  margin-top: 5px;
-}
-
-/* Sans, like the verdict it belongs to. These are sentences. */
-.gl-triage-line {
-  margin: 0;
-  font-family: var(--gl-sans);
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--gl-tx-2);
-}
-
-.gl-triage-limit {
-  color: var(--gl-tx-3);
-}
-
-/* The suggested next step, which is what most readers act on — so it is the
-   one line here at full strength and it is never behind the disclosure. */
-.gl-triage-next {
-  margin: 6px 0 0;
-  font-family: var(--gl-sans);
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--gl-tx-1);
-}
-
-/*
- * The run-options block: the gang of four, 2×2.
- *
- * THE TRACK SIZING IS A LAYOUT CONTRACT, NOT A STYLE, and it is why this rule
- * exists instead of a `grid-cols-2` utility. Tailwind's `grid-cols-2` is
- * `repeat(2, minmax(0, 1fr))`, and that `0` floor lets a column shrink below the
- * width of its own text. These labels are `overflow: visible`, so they do not
- * clip or ellipsise when that happens — they paint straight across the
- * neighbouring column. At 860px the columns were 48px wide holding text that
- * needed 96px, two labels deep, which read as the four options printed on top of
- * each other.
- *
- * `auto` resolves to `minmax(min-content, max-content)`: the floor becomes the
- * longest unbreakable WORD rather than zero. The labels still wrap to two lines
- * when the toolbar is tight — always fine to read — they just cannot be squeezed
- * narrower than a word and spill. `max-content` was tried first and is wrong: it
- * forbids wrapping outright, which pushed the toolbar's own minimum to 1085px,
- * wider than this window's 1000px DEFAULT — trading a rare overlap for a
- * guaranteed one.
- *
- * Guarded by `check:narrow-layout`, which reads the tracks from HERE.
- */
-.gl-run-options {
-  display: grid;
-  grid-template-columns: auto auto;
-  column-gap: 12px;
-  row-gap: 4px;
-}
-
-.gl-run-option {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-inline-end: 4px;
-  font-family: var(--gl-sans);
-  font-size: 11px;
-  color: var(--gl-tx-2);
-  user-select: none;
-  cursor: pointer;
-}
-
-.gl-detail-tabs {
-  flex: 0 0 auto;
-  padding: 8px 12px 0;
-}
-
-.gl-detail-script-bar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  flex: 0 0 auto;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--gl-line);
-}
-
-/*
- * The tab strip and the run-option checkboxes.
- *
- * BOTH TARGETED BY ROLE, which is the same exception the settings switch takes
- * (see the note there). `Tabs` and `Checkbox` are Radix primitives inside
- * `@ui`, styled with Tailwind strings this file has no stable handle on, and
- * threading a class prop through every call site would be a worse trade than
- * one selector. `role` + `data-state` are the primitives' public contract —
- * they are what every test in this repo already drives them through — so they
- * are a real surface rather than an implementation detail. Both are scoped
- * under a `gl-*` ancestor so nothing outside this screen is touched.
- */
-.gl-detail-tabs [role="tablist"] {
-  height: 26px;
-  border-radius: 0;
-  border: 1px solid var(--gl-line);
-  background: var(--gl-panel);
-  padding: 0;
-}
-
-.gl-detail-tabs [role="tab"] {
-  border-radius: 0;
-  padding-inline: 10px;
 /* ── Stats (B7) ───────────────────────────────────────────────────────
    The run history screen: KPI tiles, the pass/fail chart, the table
    treatment, the log-search field, and the Stability / suite-cost /
@@ -1226,68 +1017,6 @@
   font-weight: 700;
   letter-spacing: var(--gl-track-label);
   text-transform: uppercase;
-  color: var(--gl-tx-3);
-  box-shadow: none;
-}
-
-.gl-detail-tabs [role="tab"]:hover {
-  color: var(--gl-tx-2);
-}
-
-/* The selected tab is NEUTRAL, like every other selection in this design —
-   white at low alpha plus a ring, no hue. A tab strip is the one place it is
-   tempting to reach for the accent, and it sits directly above a step list
-   whose rails are reporting outcomes. */
-.gl-detail-tabs [role="tab"][data-state="active"] {
-  background: var(--gl-sel-bg);
-  color: var(--gl-tx-1);
-  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
-}
-
-.gl-run-options [role="checkbox"] {
-  border-radius: 1px;
-  border-color: var(--gl-line);
-  background: var(--gl-ink);
-  box-shadow: none;
-}
-
-/* Checked is neutral too, and legible: the box fills white and its glyph goes
-   dark, rather than taking the SDK's accent. `--gl-tx-1` and not pure white so
-   it sits on the same ramp as the label beside it. */
-.gl-run-options [role="checkbox"][data-state="checked"] {
-  border-color: var(--gl-tx-1);
-  background: var(--gl-tx-1);
-  color: var(--gl-ink);
-}
-
-/* The timeout field's row. `cursor: pointer` is inherited from `.gl-run-option`
-   and wrong here — that class is written for a label wrapping a checkbox, where
-   the whole row is the hit target; this one wraps a text field, and a pointer
-   cursor over a number input says "click me to toggle something". */
-.gl-detail-timeout {
-  cursor: default;
-}
-
-.gl-detail-unit {
-  color: var(--gl-tx-3);
-}
-
-/* The screen's own column. `min-height: 0` is what lets the run panel's
-   expanded state actually take space instead of pushing the log off the bottom
-   of the window — the same failure `check:scroll-layout` exists for, one level
-   up. */
-.gl-detail {
-  min-height: 0;
-  background: var(--gl-ink);
-}
-
-/* The toolbar band. Not `--gl-strip-h`: this one holds two lines of title plus a
-   row of controls, so matching the top strip's height would crush it. What it
-   does share is the hairline, so the two read as the same kind of edge. */
-.gl-detail-head {
-  flex: 0 0 auto;
-  border-bottom: 1px solid var(--gl-line);
-}
   color: var(--gl-tx-2);
   white-space: nowrap;
 }
@@ -2216,3 +1945,279 @@
   }
 }
 
+/* ── Test detail (B5a) ─────────────────────────────────────────────────── */
+
+/*
+ * The run panel. A fixed strip at the bottom of the screen, and an EXPANDED
+ * state that hands it the whole pane.
+ *
+ * 224px is about eight lines of console, which is enough to see that something
+ * failed and never enough to read the stack that says why. Before B5a that was
+ * the only size it had, so diagnosing a failure meant scrolling a viewport the
+ * size of a business card while the step list above it sat idle. The expanded
+ * state is `flex: 1 1 auto` rather than a height: the panel's siblings give up
+ * their space, so the log grows to whatever the window actually has instead of
+ * to a number written here.
+ */
+.gl-run-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 224px;
+  min-height: 0;
+  background: var(--gl-ink);
+  border-top: 1px solid var(--gl-line);
+}
+
+.gl-run-panel-expanded {
+  flex: 1 1 auto;
+}
+
+.gl-run-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* Pushed to the trailing edge, so the expand control is in the same place
+   whether or not the AI sparkle and the copy button are showing. */
+.gl-run-expand {
+  margin-inline-start: auto;
+}
+
+/* The log fills the scroller rather than sitting in it as a card: the panel
+   already draws a border on every side, and a second box at the same weight
+   one pixel inside it reads as a table rather than as depth. */
+.gl-run-log {
+  border: 0;
+  min-height: 100%;
+  padding: 8px 12px;
+}
+
+/*
+ * The triage line. It sits between the verdict chip and the log, which is the
+ * order the question is actually asked in: what happened, why, then the proof.
+ */
+.gl-triage {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* Inline after the claim, not on its own line. A confidence figure is a
+   qualifier on the sentence it follows, and a reader who has to look elsewhere
+   for it reads the verdict as unqualified. */
+.gl-triage-confidence {
+  margin-inline-start: 8px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-triage-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-triage-more:hover {
+  color: var(--gl-tx-1);
+}
+
+.gl-triage-more:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+.gl-triage-rest {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 5px;
+}
+
+/* Sans, like the verdict it belongs to. These are sentences. */
+.gl-triage-line {
+  margin: 0;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gl-tx-2);
+}
+
+.gl-triage-limit {
+  color: var(--gl-tx-3);
+}
+
+/* The suggested next step, which is what most readers act on — so it is the
+   one line here at full strength and it is never behind the disclosure. */
+.gl-triage-next {
+  margin: 6px 0 0;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gl-tx-1);
+}
+
+/*
+ * The run-options block: the gang of four, 2×2.
+ *
+ * THE TRACK SIZING IS A LAYOUT CONTRACT, NOT A STYLE, and it is why this rule
+ * exists instead of a `grid-cols-2` utility. Tailwind's `grid-cols-2` is
+ * `repeat(2, minmax(0, 1fr))`, and that `0` floor lets a column shrink below the
+ * width of its own text. These labels are `overflow: visible`, so they do not
+ * clip or ellipsise when that happens — they paint straight across the
+ * neighbouring column. At 860px the columns were 48px wide holding text that
+ * needed 96px, two labels deep, which read as the four options printed on top of
+ * each other.
+ *
+ * `auto` resolves to `minmax(min-content, max-content)`: the floor becomes the
+ * longest unbreakable WORD rather than zero. The labels still wrap to two lines
+ * when the toolbar is tight — always fine to read — they just cannot be squeezed
+ * narrower than a word and spill. `max-content` was tried first and is wrong: it
+ * forbids wrapping outright, which pushed the toolbar's own minimum to 1085px,
+ * wider than this window's 1000px DEFAULT — trading a rare overlap for a
+ * guaranteed one.
+ *
+ * Guarded by `check:narrow-layout`, which reads the tracks from HERE.
+ */
+.gl-run-options {
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: 12px;
+  row-gap: 4px;
+}
+
+.gl-run-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-inline-end: 4px;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-2);
+  user-select: none;
+  cursor: pointer;
+}
+
+.gl-detail-tabs {
+  flex: 0 0 auto;
+  padding: 8px 12px 0;
+}
+
+.gl-detail-script-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/*
+ * The tab strip and the run-option checkboxes.
+ *
+ * BOTH TARGETED BY ROLE, which is the same exception the settings switch takes
+ * (see the note there). `Tabs` and `Checkbox` are Radix primitives inside
+ * `@ui`, styled with Tailwind strings this file has no stable handle on, and
+ * threading a class prop through every call site would be a worse trade than
+ * one selector. `role` + `data-state` are the primitives' public contract —
+ * they are what every test in this repo already drives them through — so they
+ * are a real surface rather than an implementation detail. Both are scoped
+ * under a `gl-*` ancestor so nothing outside this screen is touched.
+ */
+.gl-detail-tabs [role="tablist"] {
+  height: 26px;
+  border-radius: 0;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  padding: 0;
+}
+
+.gl-detail-tabs [role="tab"] {
+  border-radius: 0;
+  padding-inline: 10px;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  box-shadow: none;
+}
+
+.gl-detail-tabs [role="tab"]:hover {
+  color: var(--gl-tx-2);
+}
+
+/* The selected tab is NEUTRAL, like every other selection in this design —
+   white at low alpha plus a ring, no hue. A tab strip is the one place it is
+   tempting to reach for the accent, and it sits directly above a step list
+   whose rails are reporting outcomes. */
+.gl-detail-tabs [role="tab"][data-state="active"] {
+  background: var(--gl-sel-bg);
+  color: var(--gl-tx-1);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-run-options [role="checkbox"] {
+  border-radius: 1px;
+  border-color: var(--gl-line);
+  background: var(--gl-ink);
+  box-shadow: none;
+}
+
+/* Checked is neutral too, and legible: the box fills white and its glyph goes
+   dark, rather than taking the SDK's accent. `--gl-tx-1` and not pure white so
+   it sits on the same ramp as the label beside it. */
+.gl-run-options [role="checkbox"][data-state="checked"] {
+  border-color: var(--gl-tx-1);
+  background: var(--gl-tx-1);
+  color: var(--gl-ink);
+}
+
+/* The timeout field's row. `cursor: pointer` is inherited from `.gl-run-option`
+   and wrong here — that class is written for a label wrapping a checkbox, where
+   the whole row is the hit target; this one wraps a text field, and a pointer
+   cursor over a number input says "click me to toggle something". */
+.gl-detail-timeout {
+  cursor: default;
+}
+
+.gl-detail-unit {
+  color: var(--gl-tx-3);
+}
+
+/* The screen's own column. `min-height: 0` is what lets the run panel's
+   expanded state actually take space instead of pushing the log off the bottom
+   of the window — the same failure `check:scroll-layout` exists for, one level
+   up. */
+.gl-detail {
+  min-height: 0;
+  background: var(--gl-ink);
+}
+
+/* The toolbar band. Not `--gl-strip-h`: this one holds two lines of title plus a
+   row of controls, so matching the top strip's height would crush it. What it
+   does share is the hairline, so the two read as the same kind of edge. */
+.gl-detail-head {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--gl-line);
+}
