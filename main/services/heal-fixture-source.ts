@@ -110,6 +110,111 @@ function flush() {
   }
 }
 
+// What the failing locator ACTUALLY matched, flushed separately from the heals.
+const matchSets = [];
+
+function flushMatches() {
+  if (!HEAL_DIR || matchSets.length === 0) return;
+  try {
+    fs.mkdirSync(HEAL_DIR, { recursive: true });
+    fs.writeFileSync(path.join(HEAL_DIR, "matches.json"), JSON.stringify(matchSets, null, 2));
+  } catch (err) {
+    process.stderr.write("[glaze-heal] could not write matches.json: " + String(err) + "\\n");
+  }
+}
+
+/** Elements to describe per failing step. The point of this record is to be
+ *  PICKED FROM, and a list longer than this is one nobody reads — the model
+ *  least of all. The true count is reported separately, so a cap never reads
+ *  as "that was all of them". */
+const MAX_MATCHES = 20;
+
+/**
+ * Describe every element the failing locator resolved to.
+ *
+ * This is the exact answer to the one failure the run output cannot explain.
+ * Playwright's strict-mode error says a locator "resolved to 10 elements" and
+ * nothing whatsoever about what those elements ARE, so the diagnosis stops at
+ * "it is ambiguous" — correct, and not actionable by anyone who cannot look at
+ * the page. Auto-Heal's candidate ranking is a different question (what
+ * RESEMBLES the element we wanted); this is the literal set that matched.
+ *
+ * Recorded for every resolve failure, not just the ambiguous ones: "matched 0"
+ * and "matched 10" are opposite diagnoses and the count is what separates them.
+ *
+ * evaluateAll() rather than all() + a per-element evaluate: one round trip
+ * instead of N, and it does not enforce strictness — which matters, because the
+ * locator being described is one that just failed FOR being ambiguous.
+ *
+ * Best-effort throughout. Every caller rethrows the original error immediately
+ * after; nothing here may change what the run does.
+ */
+async function recordMatches(loc, entry, method) {
+  try {
+    const found = await loc.evaluateAll(function (els) {
+      const LANDMARKS = ["main", "nav", "header", "footer", "aside", "section", "form", "dialog"];
+      function label(el) {
+        let out = el.tagName.toLowerCase();
+        if (el.id) out += "#" + el.id;
+        const tid = el.getAttribute("data-testid");
+        if (tid) out += "[data-testid=" + tid + "]";
+        return out;
+      }
+      const items = els.slice(0, 20).map(function (el, i) {
+        // Ancestors that could SCOPE a locator — a testid, an id, or a
+        // landmark. The whole chain would be noise; these are the handles a
+        // fix can actually be written against, which is why the payload can
+        // suggest .getByTestId(x).getByRole(y) from them.
+        const ancestors = [];
+        let p = el.parentElement;
+        while (p && ancestors.length < 3) {
+          if (p.getAttribute("data-testid") || p.id || LANDMARKS.indexOf(p.tagName.toLowerCase()) >= 0) {
+            ancestors.push(label(p));
+          }
+          p = p.parentElement;
+        }
+        const r = el.getBoundingClientRect();
+        const cls =
+          typeof el.className === "string" && el.className.trim()
+            ? el.className.trim().split(/\\s+/).slice(0, 3)
+            : [];
+        return {
+          index: i,
+          tag: el.tagName.toLowerCase(),
+          id: el.id || "",
+          testid: el.getAttribute("data-testid") || "",
+          ariaLabel: el.getAttribute("aria-label") || "",
+          text: (el.textContent || "").trim().slice(0, 120),
+          classes: cls,
+          ancestors: ancestors,
+          // Not offsetParent: an element in a fixed-position container has none
+          // and is perfectly visible. A zero-area box is the honest test, and
+          // "the one you wanted is the only visible match" is a real answer.
+          visible: !!(r.width > 0 && r.height > 0),
+          enabled: !el.disabled,
+          rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
+        };
+      });
+      return { total: els.length, items: items };
+    });
+    if (!found) return;
+    matchSets.push({
+      stepId: entry.stepId,
+      stepIndex: entry.stepIndex,
+      stepLabel: entry.stepLabel,
+      method: method,
+      originalLocator: entry.locator,
+      matchCount: found.total,
+      matches: (found.items || []).slice(0, MAX_MATCHES),
+      at: Date.now(),
+    });
+    flushMatches();
+  } catch (e) {
+    // Describing the page is a diagnostic aid. A failure here must not become
+    // a second failure on top of the one already being reported.
+  }
+}
+
 /**
  * Record an attempt that did NOT heal.
  *
@@ -187,6 +292,12 @@ export function installHealing(page) {
         // Nothing recorded for this locator, or a failure healing can't
         // address: rethrow untouched so the run fails exactly as it would have.
         if (!entry || !entry.probe || !isResolveFailure(err)) throw err;
+
+        // Before anything is healed. A successful heal changes the page (it
+        // clicks something), and what matched at the moment of failure is the
+        // thing being described — recording it afterwards would describe the
+        // page the heal left behind.
+        await recordMatches(this, entry, method);
 
         let candidates = [];
         try {

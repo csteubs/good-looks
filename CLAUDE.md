@@ -56,7 +56,7 @@ mcp/                 standalone MCP server exposing the test library to external
                       get_visual_report, get_a11y_report, get_run_logs, list_heals,
                       list_batches, compare_runs, triage_run, get_step_health,
                       get_suite_cost, get_browser_matrix, get_flake_report,
-                      capture_app, get_screenshot)
+                      get_step_matches, capture_app, get_screenshot)
                      — see mcp/README.md
 docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated rationale)
 .github/             PR template, hygiene workflow, and the script it runs

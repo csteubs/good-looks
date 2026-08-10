@@ -28,6 +28,150 @@ Glaze app's agent, which no longer works on this codebase.
 
 **Which immediately broke the compare-mode switch, and that is worth recording.** The switch was `z-10`, laid over the frame. Against a bezel at 610 it rendered behind and vanished — the compare-mode switch, invisible, on the compare screen. Caught by looking at the screenshot, not by any test, and the fix is a stacking rule with the reasoning attached. The CRT's actual rule is that nothing may be drawn INSIDE the screen; a control sitting above the bezel's border is outside it, so lifting the chrome to 620 respects the constraint rather than working around it.
 
+### 2026-08-10 — What the locator actually matched, and one artifact with two consumers
+
+The `structure` request shipped answering an *approximate* question. Auto-Heal's
+probe ranks what RESEMBLES the element the step wanted, which is the right
+answer for a stale locator and the wrong one for an ambiguous one: asked "which
+of the ten Pause buttons", it replies with what looks most like a Pause button.
+So the fixture now also records what the failing locator LITERALLY resolved to.
+
+**Recorded for every resolve failure, not just the ambiguous ones.** "Matched 0"
+and "matched 10" are opposite diagnoses — one is fixed by a different locator,
+the other by a narrower one — and the count is the only thing that separates
+them. One `evaluateAll` covers both, so there was no reason to gate it on
+parsing Playwright's error text.
+
+**`evaluateAll`, not `all()` plus a per-element evaluate.** One round trip
+instead of N, and it does not enforce strictness — which is the point, since the
+locator being described is one that just failed *for* being ambiguous.
+
+**Two records, one join, and both halves of it are load-bearing.** Either file
+can exist without the other: a locator that was ambiguous and then healed leaves
+matches and no heal failure, and a run from before this existed leaves the
+reverse. `buildStepStructures` unions them on step index, and neither side
+invents the other's fields — a match-only record reports no `outcome`, because
+claiming "no similar element was found" would describe a probe that never ran.
+
+**The collection moved inside the function that deletes the directory.**
+`collectRunMatches` was originally a sibling call before `collectRunHeals`, with
+a comment explaining that the order mattered. It mattered a great deal:
+`collectRunHeals` removes the scratch dir on every path out of it, including the
+early ones, so a single statement reordered would have written nothing, forever,
+with no error. A comment is not a mechanism. The function that owns the
+directory's lifetime now owns the read, and the ordering cannot be got wrong.
+
+**The renderer reads both lists defensively even though the type requires them.**
+This arrives over IPC, where a type is a promise rather than a check. The cost of
+being wrong is not a missing section — it is a throw inside the payload builder,
+which takes the whole answer down with it. Found the honest way: an integration
+fixture without the new field crashed the panel.
+
+**`get_step_matches` is the same artifact, second consumer** — and the reason
+`check:run-logs` now asserts parity between the two readers. The MCP server is
+plain `.mjs` and cannot import the app's compiled TypeScript, so the join is
+implemented twice. Neither side would throw when they drift: the app would show
+a card missing half its evidence while the MCP answered a model with the other
+half. The check writes the files once and asserts both readers agree, field for
+field. Reverting one line of the MCP's copy turns it red, which is the whole
+point of writing it. `mcp/artifacts.mjs` gained a hand-written `.d.mts` so the
+TypeScript caller keeps `type-check` as a real gate over it, per the pairing
+CLAUDE.md describes for `shared/`.
+
+**The descriptor is built inside the page, and so is tested inside a fake one.**
+`heal-fixture.test.ts` grew a small object graph — elements with parents,
+attributes and rects — rather than a canned `evaluateAll` result. The ancestor
+walk and the class splitting are the only logic in this change that runs in the
+browser, and handing the test a fixed answer would have exercised the plumbing
+around code that had never executed.
+
+**What it steers the model toward is part of the payload, deliberately.** The
+reflex fix for an ambiguous locator is `.first()`, which picks by DOM order and
+breaks the next time the page reorders. The scoping ancestors that make a real
+fix possible are right there in the list, so the payload names the alternative
+rather than leaving the model to reach for the reflex.
+
+**Still gated on Auto-Heal.** The record is written by the heal fixture, which is
+only installed when Auto-Heal is on for the test — so a run with it off has no
+structure to offer, and the panel's "how to get this next time" copy says so.
+Patching locators from the capture fixture instead would make it independent of
+that setting at the cost of a second patching layer over the same prototype;
+not worth it while the two settings are both one toggle away.
+
+### 2026-08-10 — The AI can ask what the page looked like, and the protocol that lets it ask finally ships
+
+A model debugging a failed run was shown the spec and the run output. For a
+strict-mode violation that is not enough and cannot be made enough: "resolved to
+10 elements" says how many matched and nothing about what they are, so the model
+can name the problem exactly and still not name the fix. What it did instead was
+ask — in prose — for a screenshot or the page's HTML, an ask nothing in the app
+could act on, which left the user to type the page's structure back in by hand.
+
+**The answer was already on disk.** Run-time Auto-Heal writes `heal-failures.json`
+for every step it could not rescue, and the heal fixture's `isResolveFailure`
+already matches `strict mode violation` — so an ambiguous locator was *already*
+sending the probe into the live page to walk the DOM and rank the elements it
+found. The candidates were persisted, read by nothing but the metrics roll-up,
+and never offered to the thing that was asking for exactly them. So this adds no
+capture: `need:"structure"` is a file read, on the same path `console` and
+`network` already take.
+
+**Text, not pixels — and that is not a compromise.** The obvious reading of "the
+model wants a screenshot" is to send it one, which means multimodal message
+content across three providers, a per-model capability check, and a 4B local
+model asked to map a region of an image back to a DOM node it cannot query. What
+the model actually needs is not a picture but an *addressable* answer, so the
+payload renders every candidate through `locatorToPrompt`: a ranked list of
+locators to pick from. A picture would have to be translated back into one of
+these before it was worth anything.
+
+**`LOG_REQUEST_PROTOCOL` became `logRequestProtocol(available)`.** Console
+recording and Auto-Heal are independent settings, so a run can have either, both
+or neither — a const string describing all three values would advertise data the
+app cannot produce, and the cost of that lands on the user as a round trip to be
+told no. Same reason the panel splits availability by SOURCE rather than
+answering with one boolean: a request for console *and* structure when only
+structure exists sends the half it has, and builds the section headers from what
+was actually fetched. `Console (0 recorded):` over an empty fence is not a
+neutral omission — it is a claim that the page was silent.
+
+**The protocol had never once reached a model.** `logsAvailable` was computed in
+`test-detail-view.tsx`, threaded through `AiDebugRunContext`, used by the panel
+to decide what the card should say — and never passed to `buildDebugMessages`,
+so the branch appending the instructions was dead for the entire life of the
+feature. Everything downstream worked: the strict parser, the card, the payload
+builder, the fulfilment cap, the decline state. All of it waiting on a block no
+model had been told how to write. It is worth being precise about why this
+survived: the unit tests called the prompt builder directly with the flag set,
+which proves the builder appends the protocol and says nothing about whether
+anything passes the flag. The regression test added here asserts on what is
+actually SENT to `llm:chat`. A feature whose only failure mode is "the model
+didn't do the thing" is indistinguishable from a bad model, which is why nobody
+went looking.
+
+**Rejected: giving the local model MCP tools.** The MCP server already exposes
+run data, so making the in-app model an MCP client sounds like the general
+version of this change. It is the wrong shape twice. It removes the approval
+gate — the whole design of `ai-log-request` is that a false positive must never
+ship page text to a hosted provider on the strength of a sentence, and a tool
+loop fetches whatever it asks for, whenever. And tool-calling at 4B is not
+reliable, which is a large part of why the protocol is a strict fenced block in
+the first place. The external path is unchanged and is where MCP belongs; the
+same artifact can be exposed there without any of this.
+
+**The probe's output is page-authored, and is now prompt input.** Everything in
+`heal-failures.json` — descriptions, accessible names, testids — was chosen by
+the site, because the probe runs inside it. Reading it off disk rather than off
+`data-pw-queue` changes nothing: `writeHealFailures` persists the fixture's JSON
+verbatim. So it goes through `normalizeStepStructures` in `main/recorder/types.ts`
+with the other boundary rebuilds, in the handler, at the last point before it can
+reach a UI or a prompt — the same place `readLogs` redacts secrets. Two details
+worth the lines they cost: it REBUILDS rather than spreads, so a field added to
+`HealFailure` later cannot ride into a prompt untouched; and an out-of-range
+score is dropped to zero rather than clamped to 1, because the payload presents
+these as ranked and a made-up 1 would sort an attacker's candidate to the top of
+a list the model is reading as "best match first".
+
 ### 2026-08-10 — The trainer stops being red, and the tab strip becomes shared furniture
 
 **B6 of the redesign (REDESIGN §B6), the reskin half.** The inline composer, the `ToolTile`s and the assertion bottom sheet stay in Phase C — those are behaviour changes, and the plan says so. Three decisions here.

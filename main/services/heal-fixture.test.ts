@@ -17,7 +17,7 @@
 //   3. Not healing what wasn't recorded. A locator with no map entry must not
 //      be "healed" into something arbitrary.
 
-import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import { describe, expect, it, beforeAll, beforeEach, afterAll } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -40,11 +40,30 @@ let healDir: string;
  *  through the first test's closure (and its probe results). That cost a
  *  confusing round of debugging here; keeping the class local makes it
  *  impossible. */
+/** Enough of an Element for the fixture's page-side describe function to walk.
+ *  Deliberately a real object graph rather than a stub return value: the
+ *  descriptor builder runs INSIDE the page, so it is the one part of this
+ *  fixture no other test can reach, and handing it a canned answer would test
+ *  the plumbing around logic that had never run. */
+interface FakeElement {
+  tagName: string;
+  id: string;
+  className: string;
+  textContent: string;
+  disabled: boolean;
+  attrs: Record<string, string>;
+  parentElement: FakeElement | null;
+  getAttribute(name: string): string | null;
+  getBoundingClientRect(): { x: number; y: number; width: number; height: number };
+}
+
 interface FakePage {
   failures: Map<string, string>;
   performed: string[];
   probeResult: { locator: Locator }[];
   evaluatedProbes: string[];
+  /** what a failing locator resolves to, for `evaluateAll` */
+  matchElements: FakeElement[];
   evaluate(source: string): Promise<unknown>;
   getByTestId(v: string): { click(): Promise<string>; fill(v: string): Promise<string> };
   getByLabel(v: string): { click(): Promise<string>; fill(v: string): Promise<string> };
@@ -65,6 +84,7 @@ function makePage(): FakePage {
     performed: [] as string[],
     probeResult: [] as { locator: Locator }[],
     evaluatedProbes: [] as string[],
+    matchElements: [] as FakeElement[],
   } as FakePage;
 
   function act(desc: string, what: string): string {
@@ -81,6 +101,9 @@ function makePage(): FakePage {
     }
     async fill(value: string): Promise<string> {
       return act(this.desc, `fill:${value}`);
+    }
+    async evaluateAll<T>(fn: (els: FakeElement[]) => T): Promise<T> {
+      return fn(page.matchElements);
     }
   }
 
@@ -379,5 +402,134 @@ describe("installHealing", () => {
 
     const result = await page.getByLabel("Email").fill("a@b.com");
     expect(result).toBe("testid=email-input:fill:a@b.com");
+  });
+});
+
+// ── What the locator actually matched ────────────────────────────────
+// Playwright's strict-mode error says a locator "resolved to 10 elements" and
+// nothing about what those elements ARE, so a model — or a person reading the
+// log — can say the locator is ambiguous and cannot say which match was meant.
+// This is the record that answers it, and it is written from inside the page.
+
+function el(over: Partial<FakeElement> = {}): FakeElement {
+  const e: FakeElement = {
+    tagName: "BUTTON",
+    id: "",
+    className: "",
+    textContent: "",
+    disabled: false,
+    attrs: {},
+    parentElement: null,
+    getAttribute: (name: string) => e.attrs[name] ?? null,
+    getBoundingClientRect: () => ({ x: 10, y: 20, width: 30, height: 40 }),
+    ...over,
+  };
+  // Re-bound after the spread: an `over` that replaces `attrs` would otherwise
+  // leave getAttribute closed over the original empty object.
+  e.getAttribute = (name: string) => e.attrs[name] ?? null;
+  return e;
+}
+
+function readMatches(): Record<string, unknown>[] {
+  return JSON.parse(fs.readFileSync(path.join(healDir, "matches.json"), "utf-8"));
+}
+
+describe("recording what the failing locator matched", () => {
+  beforeEach(() => {
+    fs.rmSync(path.join(healDir, "matches.json"), { force: true });
+  });
+
+  it("describes every matched element, with what would tell them apart", async () => {
+    const player = el({ tagName: "DIV", attrs: { "data-testid": "video-player" } });
+    const mod = await loadFixture({ "role|button|Pause": entry({ locator: { k: "role", role: "button", name: "Pause" } }) });
+    const page = makePage();
+    page.failures.set("role=button/Pause", "strict mode violation: resolved to 10 elements");
+    page.matchElements = [
+      el({ className: "player-control pause", attrs: { "data-testid": "video-pause", "aria-label": "Pause" }, parentElement: player }),
+      el({ textContent: "  Pause  ", disabled: true }),
+    ];
+    mod.installHealing(page);
+
+    await expect(page.getByRole("button", { name: "Pause" }).click()).rejects.toThrow(/strict mode/);
+
+    const written = readMatches();
+    expect(written).toHaveLength(1);
+    expect(written[0].matchCount).toBe(2);
+    const matches = written[0].matches as Record<string, unknown>[];
+    expect(matches[0].testid).toBe("video-pause");
+    expect(matches[0].ariaLabel).toBe("Pause");
+    expect(matches[0].classes).toEqual(["player-control", "pause"]);
+    // The scoping handle: this is what a fix is actually written from, and it
+    // is the difference between a real answer and .first().
+    expect(matches[0].ancestors).toEqual(["div[data-testid=video-player]"]);
+    expect(matches[1].text).toBe("Pause");
+    expect(matches[1].enabled).toBe(false);
+  });
+
+  it("records the TRUE count even when the list is capped", async () => {
+    // A capped list that does not say so reads as the whole set, which is how
+    // a model concludes the element it wants is not on the page.
+    const mod = await loadFixture({ "testid|submit": entry() });
+    const page = makePage();
+    page.failures.set("testid=submit", "strict mode violation: resolved to 40 elements");
+    page.matchElements = Array.from({ length: 40 }, () => el());
+    mod.installHealing(page);
+
+    await expect(page.getByTestId("submit").click()).rejects.toThrow();
+
+    const written = readMatches();
+    expect(written[0].matchCount).toBe(40);
+    expect((written[0].matches as unknown[]).length).toBeLessThanOrEqual(20);
+  });
+
+  it("records the matches BEFORE a heal changes the page", async () => {
+    // A heal clicks something. What matched at the moment of failure is the
+    // thing being described, so recording afterwards would describe the page
+    // the heal left behind — and this path succeeds, so nothing else would
+    // ever notice.
+    const mod = await loadFixture({ "testid|submit": entry() });
+    const page = makePage();
+    page.failures.set("testid=submit", "strict mode violation: resolved to 2 elements");
+    page.matchElements = [el({ id: "a" }), el({ id: "b" })];
+    page.probeResult = [{ locator: { k: "testid", v: "submit-v2" } }];
+    mod.installHealing(page);
+
+    const result = await page.getByTestId("submit").click();
+    expect(result).toBe("testid=submit-v2:click");
+    // Healed, so heal-failures records nothing — and the ambiguity is still
+    // the most useful thing anyone could learn about this run.
+    expect(readMatches()[0].matchCount).toBe(2);
+  });
+
+  it("never turns a page it cannot describe into a second failure", async () => {
+    // Diagnostics are best-effort. A locator whose evaluateAll throws must
+    // leave the run exactly as it was: same error out, heal still attempted.
+    const mod = await loadFixture({ "testid|submit": entry() });
+    const page = makePage();
+    page.failures.set("testid=submit", "Timeout 30000ms exceeded waiting for locator");
+    Object.defineProperty(page.matchElements, "slice", {
+      value: () => {
+        throw new Error("page is hostile");
+      },
+    });
+    page.probeResult = [{ locator: { k: "testid", v: "submit-v2" } }];
+    mod.installHealing(page);
+
+    const result = await page.getByTestId("submit").click();
+    expect(result).toBe("testid=submit-v2:click");
+    expect(fs.existsSync(path.join(healDir, "matches.json"))).toBe(false);
+  });
+
+  it("records nothing for a failure healing never engaged", async () => {
+    // No map entry means no step identity, so there is nothing to key a
+    // record to — and an unrecorded locator must not be described either.
+    const mod = await loadFixture({});
+    const page = makePage();
+    page.failures.set("testid=unknown", "strict mode violation: resolved to 3 elements");
+    page.matchElements = [el(), el(), el()];
+    mod.installHealing(page);
+
+    await expect(page.getByTestId("unknown").click()).rejects.toThrow(/strict mode/);
+    expect(fs.existsSync(path.join(healDir, "matches.json"))).toBe(false);
   });
 });

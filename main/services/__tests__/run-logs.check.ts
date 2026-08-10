@@ -19,6 +19,8 @@ process.env.GLAZE_TEST_USERDATA = userData;
 
 const { artifactStore } = await import("../artifact-store.js");
 const { setSecretSnapshotForTesting, REDACTED } = await import("../secret-redaction.js");
+const { readStepStructures } = await import("../../../mcp/artifacts.mjs");
+const { buildStepStructures } = await import("../../recorder/types.js");
 
 let failures = 0;
 
@@ -170,6 +172,103 @@ write("network.json", {
   assert(
     logs?.headersFiltered === false,
     "headersFiltered:false is honoured — it means every header was recorded",
+  );
+}
+
+// ── The page-structure record, and its two readers ───────────────────
+//
+// Written once by the run, read by the app (buildStepStructures, over IPC) and
+// by the MCP server (readStepStructures, a separate .mjs reimplementation —
+// the app's is compiled TypeScript the MCP cannot import). Two readers of one
+// artifact is exactly where a format drifts, and neither side would throw: the
+// app would show a card missing half its evidence while the MCP answered a
+// model with the other half.
+{
+  const matchSet = {
+    stepId: "s1",
+    stepIndex: 4,
+    stepLabel: "Click button",
+    method: "click",
+    originalLocator: { k: "role", role: "button", name: "Pause" },
+    matchCount: 10,
+    matches: [
+      {
+        index: 0,
+        tag: "button",
+        testid: "video-pause",
+        classes: ["player-control"],
+        ancestors: ["div[data-testid=video-player]"],
+        visible: true,
+        enabled: true,
+      },
+    ],
+  };
+  const healFailure = {
+    outcome: "exhausted",
+    stepId: "s1",
+    stepIndex: 4,
+    stepLabel: "Click button",
+    method: "click",
+    originalLocator: { k: "role", role: "button", name: "Pause" },
+    candidates: [
+      { locator: { k: "testid", v: "video-pause" }, description: "button", score: 0.9, matchedPastRun: true },
+    ],
+  };
+
+  assert(
+    artifactStore.hasHealFailures(TEST_ID, RUN_ID) === false,
+    "a run with neither file reports no page structure",
+  );
+  assert(readStepStructures(userData, TEST_ID, RUN_ID) === null, "…and the MCP reader agrees");
+
+  artifactStore.writeStepMatches(TEST_ID, RUN_ID, [matchSet]);
+  artifactStore.writeHealFailures(TEST_ID, RUN_ID, [healFailure as never]);
+
+  assert(artifactStore.hasHealFailures(TEST_ID, RUN_ID) === true, "either file counts as recorded");
+
+  const app = buildStepStructures(
+    artifactStore.readHealFailures(TEST_ID, RUN_ID),
+    artifactStore.readStepMatches(TEST_ID, RUN_ID),
+  );
+  const mcp = readStepStructures(userData, TEST_ID, RUN_ID) ?? [];
+
+  assert(app.length === 1 && mcp.length === 1, "both readers join the two files into ONE step");
+  assert(
+    app[0].matchCount === 10 && mcp[0].matchCount === 10,
+    "both carry the true match count — a capped list that stays silent reads as the whole set",
+  );
+  assert(
+    app[0].matches.length === 1 && mcp[0].matches.length === 1,
+    "both carry what the locator actually matched",
+  );
+  assert(
+    app[0].candidates.length === 1 && mcp[0].candidates.length === 1,
+    "both carry what Auto-Heal ranked beside it",
+  );
+  assert(
+    app[0].outcome === "exhausted" && mcp[0].outcome === "exhausted",
+    "both carry the heal outcome",
+  );
+  assert(
+    app[0].matches[0].testid === "video-pause" && mcp[0].matches[0].testid === "video-pause",
+    "the field names agree across the two implementations",
+  );
+
+  // Either file alone is a complete answer to a different question: a locator
+  // that was ambiguous and then HEALED writes matches and no heal failure.
+  fs.rmSync(path.join(runDir(), "heal-failures.json"), { force: true });
+  const matchOnlyApp = buildStepStructures(
+    artifactStore.readHealFailures(TEST_ID, RUN_ID),
+    artifactStore.readStepMatches(TEST_ID, RUN_ID),
+  );
+  const matchOnlyMcp = readStepStructures(userData, TEST_ID, RUN_ID) ?? [];
+  assert(
+    matchOnlyApp.length === 1 && matchOnlyMcp.length === 1,
+    "a match record with no heal failure still reports, on both sides",
+  );
+  assert(
+    matchOnlyApp[0].outcome === undefined && matchOnlyMcp[0].outcome === undefined,
+    "…and neither invents a heal outcome for it",
   );
 }
 

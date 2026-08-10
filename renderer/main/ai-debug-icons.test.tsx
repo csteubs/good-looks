@@ -247,6 +247,44 @@ describe("the run panel icon, as a session progresses", () => {
     expect(iconClassOf(toneFor("done").label)).toContain("text-support-green");
   });
 
+  it("goes back to orange when a finished session is asked for more data", async () => {
+    // The request-protocol path (`need: console|network|structure`): the
+    // answer arrives, the model ends it by asking for data, the user approves,
+    // and a SECOND stream starts on a session that is already green. If the
+    // icon stayed green it would advertise a finished answer while the model
+    // is still working — and this is exactly when a user minimizes, because
+    // they have just clicked "Send this data" and have nothing to read yet.
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <TestPanel testId="t1" />
+      </AiDebugProvider>,
+    );
+    await waitFor(() => expect(store.hydrated).toBe(true));
+
+    openSessionFor("t1");
+    await act(async () => {
+      await store.startStream(runSessionKey("t1"), [{ role: "user", content: "hi" }]);
+    });
+    emit("llm:done", { requestId: "req-1" });
+    await waitFor(() => expect(screen.getByLabelText(toneFor("done").label)).toBeTruthy());
+
+    // What sendLogPayload does: the whole thread, plus the approved payload.
+    await act(async () => {
+      await store.startStream(runSessionKey("t1"), [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: "which element did you mean?" },
+        { role: "user", content: "Page structure (1 failing step): …" },
+      ]);
+    });
+    await waitFor(() => expect(screen.getByLabelText(toneFor("streaming").label)).toBeTruthy());
+    expect(iconClassOf(toneFor("streaming").label)).toContain("text-support-orange");
+
+    emit("llm:done", { requestId: "req-1" });
+    await waitFor(() => expect(screen.getByLabelText(toneFor("done").label)).toBeTruthy());
+    expect(iconClassOf(toneFor("done").label)).toContain("text-support-green");
+  });
+
   it("turns red when the request fails, without a reload", async () => {
     render(
       <AiDebugProvider>

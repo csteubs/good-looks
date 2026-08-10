@@ -4,7 +4,7 @@
 
 import type { LlmMessage } from "./llm-types";
 import type { Locator, TestSpeed } from "./recorder-types";
-import { LOG_REQUEST_PROTOCOL } from "./ai-log-request";
+import { logRequestProtocol, type LogRequestNeed } from "./ai-log-request";
 // The runner's own table, not a copy of it. The model is told what the run
 // ACTUALLY did, so a stale number here is the app confidently stating a wrong
 // fact to something reasoning from it — quieter than the MCP's copy was, and
@@ -54,6 +54,10 @@ export interface DebugContext {
    *  told it may ask for them — offering data that doesn't exist wastes a round
    *  trip and teaches the model to ask for things nobody can supply. */
   logsAvailable?: boolean;
+  /** Whether this run recorded the page structure Auto-Heal probed for. Same
+   *  rule as logsAvailable, and separately true: Auto-Heal and console
+   *  recording are independent settings, so either can be the only one on. */
+  structureAvailable?: boolean;
 }
 
 export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
@@ -83,10 +87,16 @@ export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
       : null,
   ].filter((line): line is string => line !== null);
 
+  const available: LogRequestNeed[] = [
+    ...(ctx.logsAvailable ? (["console", "network"] as const) : []),
+    ...(ctx.structureAvailable ? (["structure"] as const) : []),
+  ];
+  const protocol = logRequestProtocol(available);
+
   return [
     {
       role: "system",
-      content: ctx.logsAvailable ? `${SYSTEM_PROMPT}\n\n${LOG_REQUEST_PROTOCOL}` : SYSTEM_PROMPT,
+      content: protocol ? `${SYSTEM_PROMPT}\n\n${protocol}` : SYSTEM_PROMPT,
     },
     {
       role: "user",

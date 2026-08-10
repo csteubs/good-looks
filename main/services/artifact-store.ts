@@ -562,6 +562,49 @@ export const artifactStore = {
     );
   },
 
+  /** Whether this run recorded anything about the page around a failing step —
+   *  either file. Asked before offering the data to a model, so an unavailable
+   *  request can be answered without reading and normalizing to find it empty.
+   *
+   *  Either alone is a complete answer to a different question, so this is an
+   *  OR: a step whose ambiguous locator then healed writes matches and no heal
+   *  failure, and a run from before matches existed writes the reverse. */
+  hasHealFailures(testId: string, runId: string): boolean {
+    const dir = this.runDir(testId, runId);
+    return (
+      fs.existsSync(path.join(dir, "heal-failures.json")) ||
+      fs.existsSync(path.join(dir, "step-matches.json"))
+    );
+  },
+
+  /** Persist what each failing locator actually resolved to. Its own file for
+   *  the same reason heal-failures.json is: unbounded in a way a per-step
+   *  manifest entry is not. */
+  writeStepMatches(testId: string, runId: string, sets: unknown[]): void {
+    if (sets.length === 0) return;
+    const dir = this.ensureRunDir(testId, runId);
+    fs.writeFileSync(
+      path.join(dir, "step-matches.json"),
+      JSON.stringify({ testId, runId, entries: sets }, null, 2),
+    );
+  },
+
+  /** Read what each failing locator resolved to, or an empty list. Returned
+   *  RAW: every field is page-authored, and the rebuild belongs at the IPC
+   *  edge with the other boundary normalizers, not here. */
+  readStepMatches(testId: string, runId: string): unknown[] {
+    try {
+      const raw = fs.readFileSync(
+        path.join(this.runDir(testId, runId), "step-matches.json"),
+        "utf-8",
+      );
+      const parsed = JSON.parse(raw) as { entries?: unknown[] };
+      return Array.isArray(parsed.entries) ? parsed.entries : [];
+    } catch {
+      return [];
+    }
+  },
+
   /** Read a run's failed heal attempts, or an empty list. */
   readHealFailures(testId: string, runId: string): HealFailure[] {
     try {
