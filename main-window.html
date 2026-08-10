@@ -7,7 +7,9 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:*; style-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:*; img-src 'self' data: blob: https: http://localhost:* http://127.0.0.1:*; font-src 'self' data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; media-src 'self' data: blob: https:; worker-src 'self' blob:; frame-src 'self' blob: data:"
     />
-    <title>App</title>
+    <!-- Empty on purpose: a page title becomes the window's title bar. See
+         main/index.ts (page-title-updated is refused) and check:app-identity. -->
+    <title></title>
     <!--
       DARK ONLY, AND UNCONDITIONALLY (docs/REDESIGN.md §0).
 
