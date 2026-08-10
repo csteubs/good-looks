@@ -60,6 +60,10 @@ docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated ration
 vite.config.ts       renderer build (three windows). `--mode preview` builds the browser
                      preview instead — preview.html + renderer/dev/, into build-preview/
 scripts/build-main.mjs   esbuild bundling for the main process + preload
+scripts/verify-package.mjs  the two guards around `npm run package`: refuse a symlinked
+                     node_modules before the build, and re-ask the finished .app whether
+                     every runtime dependency is resolvable inside it. electron-builder
+                     reports the failure and exits 0, so the exit code cannot be trusted
 scripts/switch-branch.mjs  the branch switcher's build half: checks a branch out into
                      its own worktree under userData, builds it, prints where. Runs
                      standalone (`node scripts/switch-branch.mjs --repo . --branch main
@@ -78,7 +82,7 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 - `npm install --include=dev` — install deps (plain `npm install` under `NODE_ENV=production` prunes devDeps)
 - `npm run lint` / `npm run type-check` / `npm run test:all` — must pass before considering a change done
 - `npm run build` — Vite (renderer) then esbuild (main + preload)
-- `npm run package` — build, then electron-builder → `dist/mac-arm64/Good Looks!.app`
+- `npm run package` — build, then electron-builder → `dist/mac-arm64/Good Looks!.app`. Guarded on both sides by `scripts/verify-package.mjs`: it refuses to start when `node_modules` is a symlink, and re-checks the finished bundle for the whole runtime dependency closure. **Needs a real install in a worktree** — see the gotcha below
 - `npm run dev` — Vite dev server + Electron, renderer hot-reloads
 - `npm run dev:web` — **the browser preview**: the whole renderer in an ordinary tab at `http://localhost:5199`, against fixtures, with no native shell. The fastest way to see a UI change, and the only one an agent can drive. Open one view directly with `?view=stats|visual|batch|heals` or `?test=<id>` — the router uses memory history, so a URL PATH cannot select a view. **`?view=specimen`** mounts `renderer/dev/specimen.tsx` INSTEAD of the app: every redesign primitive in every state, which is the only place they can be seen rendered (jsdom has no layout engine and the dom project runs with `css: false`). `npm run build:preview` emits a static bundle to `build-preview/`. It does not replace running the real app: a preview has no backend, so it cannot catch a broken IPC handler, a window that fails to open, or native menu behaviour.
 - `npm test` (Vitest, one pass) / `npm run test:watch` / `npm run test:coverage`
@@ -87,7 +91,7 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1992 Vitest tests across 103 files and 46 checks in the chain as of 2026-08-09 (48 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 1992 Vitest tests across 103 files and 47 checks in the chain as of 2026-08-09 (49 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **`check:shell-drift` has retired itself.** It guarded the Glaze tree and the Electron tree against drifting apart, and on 2026-08-09 they became one: `main` carries no `@glaze/*` dependency, and the stale `shell/electron` branch was deleted (preserved as the tag `archive/shell-electron`). The script was written to expect exactly this — with no counterpart ref it prints `nothing to compare` and exits 0, deliberately rather than failing, because a guard that goes red because its problem was *solved* trains people to ignore it. Leave it wired up: it costs nothing and it is what would notice a second shell reappearing.
 
@@ -111,6 +115,7 @@ renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
 - **Radix `TabsTrigger` activates on pointer-down/focus, not a bare `click`** — `fireEvent.click` leaves the tab unchanged and assertions silently run against the previous tab.
 - **`SidebarListItem` activates on `mouseDown`**, same idiom, same silent failure: `fireEvent.click` doesn't fire its `onClick`, and the assertion then reports "0 calls", which reads as a broken handler rather than the wrong event. Use `fireEvent.mouseDown`.
 - **A fresh worktree needs `npm run bootstrap` before anything else.** Without it there is no `node_modules`, and the first `vitest` run CREATES an empty one for its own cache (`node_modules/.vite`) — which then makes `bootstrap` report "already present — nothing to do" and leaves you permanently broken. `vitest.config.ts` then points every React alias into a tree with no React, and every component test fails at import reading like a missing dependency; `type-check` degrades separately, reporting `Property 'children' does not exist` on SDK components across files you never touched. Fix: `rm -rf node_modules && npm run bootstrap`.
+- **`npm run package` needs a REAL install in the worktree — a bootstrapped symlink is not enough, and this is true even when the dependencies are identical.** Everything that resolves modules the way Node does is happy with the link (lint, type-check, `test:all`, `build`, `dev`); electron-builder is the one thing that reads `node_modules` itself, and through a symlink it finds the direct dependencies and nothing below them. It prints `cannot find path for dependency` for ~80 transitive packages and **exits 0**. The bundle then carries `@playwright/test` without `playwright`/`playwright-core`, so the app launches perfectly and **every test run fails** — the runner spawns the Playwright CLI out of the bundled tree. Fix: `rm node_modules && npm install --include=dev` (that removes the link, not the tree it points at). `npm run package` now refuses up front and re-checks the finished bundle; see `scripts/verify-package.mjs` and `check:package-integrity`.
 - **Radix-backed `Tooltip` cannot be opened in jsdom.** Its trigger tracks pointers with APIs jsdom doesn't implement, so `pointerEnter`/`pointerMove`/`focus` all leave the content unmounted and the assertion reports as "unable to find the text" — which reads as wrong copy rather than an undrivable control. Same shape as the `Select` below: export the copy and assert it directly, and make sure the same string is reachable without hover (Stability puts it in the expanded row).
 - **The SDK's `Select` is native-menu-backed**: its options never enter the DOM, so a selection cannot be driven in jsdom. Assert the displayed value and cover persistence at the IPC layer instead.
 - An ambiguous `findBy*` (matching 2+ elements) retries until timeout, which reports as "never rendered" rather than "your query was ambiguous".

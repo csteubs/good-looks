@@ -21,6 +21,27 @@
  * rewrites the other's node_modules — the kind of failure that surfaces days
  * later as an inexplicable version error on a branch nobody touched. It says so
  * and tells you to install instead.
+ *
+ * ── What the link is NOT good enough for: `npm run package` ────────────────
+ * Everything that resolves modules the way Node does is fine with a symlinked
+ * tree — lint, type-check, `test:all`, `npm run build`, `npm run dev`. There is
+ * exactly one exception, and it fails silently, so it is worth stating here
+ * rather than leaving to be rediscovered.
+ *
+ * **electron-builder collects dependencies by reading `node_modules` itself**,
+ * and through the link it finds the direct dependencies and nothing beneath
+ * them. It prints `cannot find path for dependency` with ~80 transitive names
+ * and then EXITS 0. The .app that comes out has `@playwright/test` and no
+ * `playwright` or `playwright-core`, so it launches perfectly and every test run
+ * fails — the app spawns the Playwright CLI out of its own bundled tree.
+ *
+ * So packaging needs a real install in the worktree, whether or not this
+ * branch's dependencies differ from the main checkout's:
+ *
+ *   rm node_modules && npm install --include=dev
+ *
+ * `npm run package` refuses up front rather than trusting anyone to remember
+ * (`scripts/verify-package.mjs`, guarded by `check:package-integrity`).
  */
 
 import { execFileSync } from "node:child_process";
@@ -93,6 +114,9 @@ function main() {
   console.log(`ok   linked node_modules -> ${relative}`);
   console.log("     The lockfiles match, so this is the same tree the main checkout resolves.");
   console.log("     If you change dependencies on this branch, replace the link with a real install.");
+  console.log("     So does `npm run package`, even with identical dependencies: electron-builder");
+  console.log("     cannot walk a symlinked tree and would ship an app that fails every test run.");
+  console.log("     `rm node_modules && npm install --include=dev` when you need to package.");
 }
 
 main();

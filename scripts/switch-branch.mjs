@@ -33,6 +33,17 @@
  * point and tells a human to install; this one cannot, because there is no
  * human at a prompt, so the divergent case just costs an `npm ci`.
  *
+ * **The symlink is safe HERE, and it is worth saying why**, because the same
+ * shortcut in bootstrap-worktree silently breaks `npm run package`: electron-
+ * builder reads `node_modules` itself and cannot follow the link, so it ships
+ * the direct dependencies and none of the ~175 packages below them, then exits
+ * 0 (see `scripts/verify-package.mjs`). Nothing on this path packages. This
+ * runs `npm run build` — Vite and esbuild, which resolve modules the way Node
+ * does — and the app it launches then resolves the Playwright CLI out of the
+ * linked tree at runtime, which works for the same reason (`fs.existsSync`
+ * follows symlinks). Adding a real install here would cost minutes per switch
+ * and buy nothing.
+ *
  * ── Output ────────────────────────────────────────────────────────────────
  * Structured events on stdout, one JSON object per line behind a sentinel, so
  * the caller can read progress without parsing build chatter. Everything the
