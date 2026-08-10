@@ -82,6 +82,7 @@ import {
   MAX_BATCH_TEST_OPTIONS,
   normalizeDatasets,
   normalizeStep,
+  normalizeStepStructures,
   normalizeTags,
   normalizeVariables,
   RUN_BROWSERS,
@@ -1219,6 +1220,23 @@ export function registerHandlers(): void {
     "artifacts:hasLogs",
     async (_e, params: { testId: string; runId: string }) => ({
       hasLogs: artifactStore.hasLogs(params.testId, params.runId),
+    }),
+  );
+
+  // The page structure run-time Auto-Heal recorded around the steps it could
+  // not rescue. Every string in it was authored by the site, so it is rebuilt
+  // by `normalizeStepStructures` here rather than anywhere further in: this is
+  // the last point before it can reach a UI or an LLM prompt, the same place
+  // `artifacts:getLogs` redacts secrets.
+  ipcMain.handle(
+    "artifacts:getStructure",
+    async (_e, params: { testId: string; runId: string }) =>
+      normalizeStepStructures(artifactStore.readHealFailures(params.testId, params.runId)),
+  );
+  ipcMain.handle(
+    "artifacts:hasStructure",
+    async (_e, params: { testId: string; runId: string }) => ({
+      hasStructure: artifactStore.hasHealFailures(params.testId, params.runId),
     }),
   );
 

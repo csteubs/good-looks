@@ -58,6 +58,9 @@ export interface AiDebugRunContext {
   /** Whether that run actually recorded console/network. Drives whether the
    *  model is even told it may ask. */
   logsAvailable?: boolean;
+  /** Whether that run recorded any Auto-Heal failure, which is where the page
+   *  structure comes from. Independent of logsAvailable — different setting. */
+  structureAvailable?: boolean;
   onApplyScript?: (source: string) => Promise<void>;
 }
 

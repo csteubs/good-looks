@@ -16,6 +16,80 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — The AI can ask what the page looked like, and the protocol that lets it ask finally ships
+
+A model debugging a failed run was shown the spec and the run output. For a
+strict-mode violation that is not enough and cannot be made enough: "resolved to
+10 elements" says how many matched and nothing about what they are, so the model
+can name the problem exactly and still not name the fix. What it did instead was
+ask — in prose — for a screenshot or the page's HTML, an ask nothing in the app
+could act on, which left the user to type the page's structure back in by hand.
+
+**The answer was already on disk.** Run-time Auto-Heal writes `heal-failures.json`
+for every step it could not rescue, and the heal fixture's `isResolveFailure`
+already matches `strict mode violation` — so an ambiguous locator was *already*
+sending the probe into the live page to walk the DOM and rank the elements it
+found. The candidates were persisted, read by nothing but the metrics roll-up,
+and never offered to the thing that was asking for exactly them. So this adds no
+capture: `need:"structure"` is a file read, on the same path `console` and
+`network` already take.
+
+**Text, not pixels — and that is not a compromise.** The obvious reading of "the
+model wants a screenshot" is to send it one, which means multimodal message
+content across three providers, a per-model capability check, and a 4B local
+model asked to map a region of an image back to a DOM node it cannot query. What
+the model actually needs is not a picture but an *addressable* answer, so the
+payload renders every candidate through `locatorToPrompt`: a ranked list of
+locators to pick from. A picture would have to be translated back into one of
+these before it was worth anything.
+
+**`LOG_REQUEST_PROTOCOL` became `logRequestProtocol(available)`.** Console
+recording and Auto-Heal are independent settings, so a run can have either, both
+or neither — a const string describing all three values would advertise data the
+app cannot produce, and the cost of that lands on the user as a round trip to be
+told no. Same reason the panel splits availability by SOURCE rather than
+answering with one boolean: a request for console *and* structure when only
+structure exists sends the half it has, and builds the section headers from what
+was actually fetched. `Console (0 recorded):` over an empty fence is not a
+neutral omission — it is a claim that the page was silent.
+
+**The protocol had never once reached a model.** `logsAvailable` was computed in
+`test-detail-view.tsx`, threaded through `AiDebugRunContext`, used by the panel
+to decide what the card should say — and never passed to `buildDebugMessages`,
+so the branch appending the instructions was dead for the entire life of the
+feature. Everything downstream worked: the strict parser, the card, the payload
+builder, the fulfilment cap, the decline state. All of it waiting on a block no
+model had been told how to write. It is worth being precise about why this
+survived: the unit tests called the prompt builder directly with the flag set,
+which proves the builder appends the protocol and says nothing about whether
+anything passes the flag. The regression test added here asserts on what is
+actually SENT to `llm:chat`. A feature whose only failure mode is "the model
+didn't do the thing" is indistinguishable from a bad model, which is why nobody
+went looking.
+
+**Rejected: giving the local model MCP tools.** The MCP server already exposes
+run data, so making the in-app model an MCP client sounds like the general
+version of this change. It is the wrong shape twice. It removes the approval
+gate — the whole design of `ai-log-request` is that a false positive must never
+ship page text to a hosted provider on the strength of a sentence, and a tool
+loop fetches whatever it asks for, whenever. And tool-calling at 4B is not
+reliable, which is a large part of why the protocol is a strict fenced block in
+the first place. The external path is unchanged and is where MCP belongs; the
+same artifact can be exposed there without any of this.
+
+**The probe's output is page-authored, and is now prompt input.** Everything in
+`heal-failures.json` — descriptions, accessible names, testids — was chosen by
+the site, because the probe runs inside it. Reading it off disk rather than off
+`data-pw-queue` changes nothing: `writeHealFailures` persists the fixture's JSON
+verbatim. So it goes through `normalizeStepStructures` in `main/recorder/types.ts`
+with the other boundary rebuilds, in the handler, at the last point before it can
+reach a UI or a prompt — the same place `readLogs` redacts secrets. Two details
+worth the lines they cost: it REBUILDS rather than spreads, so a field added to
+`HealFailure` later cannot ride into a prompt untouched; and an out-of-range
+score is dropped to zero rather than clamped to 1, because the payload presents
+these as ranked and a made-up 1 would sort an attacker's candidate to the top of
+a list the model is reading as "best match first".
+
 ### 2026-08-10 — Test detail: status becomes a rail, the log becomes a drawer, and the preview learns to finish a run
 
 **B5a of the redesign (REDESIGN §B5), the fifth reskinned screen and the most-visited one.** Parity only — the five non-failure run-state summaries are B5b. Four decisions.

@@ -562,6 +562,13 @@ export const artifactStore = {
     );
   },
 
+  /** Whether this run recorded any failed heal attempt. Asked before offering
+   *  the data to a model, so an unavailable request can be answered without
+   *  reading and normalizing a file to discover it is empty. */
+  hasHealFailures(testId: string, runId: string): boolean {
+    return fs.existsSync(path.join(this.runDir(testId, runId), "heal-failures.json"));
+  },
+
   /** Read a run's failed heal attempts, or an empty list. */
   readHealFailures(testId: string, runId: string): HealFailure[] {
     try {

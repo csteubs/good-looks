@@ -50,6 +50,7 @@ import type {
   FlakeReport,
   RecorderState,
   RunLogs,
+  StepStructure,
   RunRecord,
   SecretStatus,
   TestRecord,
@@ -448,6 +449,33 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       headersFiltered: true,
     }),
     "artifacts:hasLogs": () => ({ hasLogs: true }),
+    /** The ambiguous-locator case the structure request exists for: one failed
+     *  step whose locator matched several buttons, and the elements Auto-Heal
+     *  ranked as the alternatives. */
+    "artifacts:getStructure": (): StepStructure[] => [
+      {
+        stepIndex: 4,
+        stepLabel: "Click button “Pause”",
+        outcome: "exhausted",
+        method: "click",
+        originalLocator: { k: "role", role: "button", name: "Pause" },
+        candidates: [
+          {
+            locator: { k: "testid", v: "video-pause" },
+            description: "button.player-control inside [data-testid=video-player]",
+            score: 0.92,
+            matchedPastRun: true,
+          },
+          {
+            locator: { k: "css", v: "header .controls button:nth-child(2)" },
+            description: "button.controls__btn inside header",
+            score: 0.41,
+            matchedPastRun: false,
+          },
+        ],
+      },
+    ],
+    "artifacts:hasStructure": () => ({ hasStructure: true }),
     "artifacts:usage": (): ArtifactUsage => ({
       bytes: 18_400_000,
       runs: state.runs.length,
@@ -654,6 +682,40 @@ function startFakeRun(
   return { runId };
 }
 
+/**
+ * A canned AI diagnosis, streamed a chunk at a time.
+ *
+ * The reply ENDS IN A REQUEST BLOCK on purpose. The debug panel's most
+ * intricate surface is what happens after the model asks for more data — the
+ * card, the fetch, the review, the two-step send — and none of it is reachable
+ * without a reply that actually contains the block. Every other way to see it
+ * needs a local model installed and cooperating, which no agent and no
+ * non-Mac reviewer has.
+ *
+ * `structure` rather than `console`, because that is the ask this fixture was
+ * added for: a locator that matched several elements, which the model cannot
+ * resolve without being shown the page.
+ */
+function startFakeChat(emit: (channel: string, value: unknown) => void): { requestId: string } {
+  const requestId = "preview-llm-1";
+  const reply =
+    "The click failed because getByRole(\"button\", { name: \"Pause\" }) matched 10 " +
+    "elements, so Playwright refused to guess which one you meant. I can see that " +
+    "it is ambiguous, but not which of the ten is the video player's pause " +
+    "button.\n\n```glaze-request\n" +
+    '{"need": ["structure"], "why": "to see which elements matched and pick the right one"}' +
+    "\n```";
+  // Chunked, so the preview shows the streaming path rather than a reply that
+  // appears whole. The request block is only parsed once `llm:done` lands —
+  // a half-streamed fence is not a request.
+  const chunks = reply.match(/[\s\S]{1,40}/g) ?? [reply];
+  chunks.forEach((delta, i) => {
+    setTimeout(() => emit("llm:chunk", { requestId, delta }), 120 * (i + 1));
+  });
+  setTimeout(() => emit("llm:done", { requestId }), 120 * (chunks.length + 1));
+  return { requestId };
+}
+
 export function installPreviewBridge(): PreviewDiagnostics {
   const state = seed();
   const handlers = { ...buildHandlers(state), ...SDK_CHANNELS };
@@ -696,6 +758,7 @@ export function installPreviewBridge(): PreviewDiagnostics {
   const invoke = async (channel: string, ...args: unknown[]): Promise<unknown> => {
     diagnostics.calls.push(channel);
     if (channel === "runner:run") return startFakeRun(args[0] as Payload, state, emit);
+    if (channel === "llm:chat") return startFakeChat(emit);
     const handler = handlers[channel];
     if (handler) return handler(args[0] as Payload);
 

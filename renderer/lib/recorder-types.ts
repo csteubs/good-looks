@@ -777,6 +777,18 @@ export interface HealCandidate {
   matchedPastRun: boolean;
 }
 
+/** One failing step's page structure, as recorded by run-time Auto-Heal.
+ *  Mirror of main/recorder/types.ts StepStructure — already rebuilt from
+ *  page-authored input by `normalizeStepStructures` before it crosses IPC. */
+export interface StepStructure {
+  stepIndex: number;
+  stepLabel: string;
+  outcome: "exhausted" | "no-candidates";
+  method?: string;
+  originalLocator?: Locator;
+  candidates: HealCandidate[];
+}
+
 /** Result of a heal attempt for a single failed step. Mirror of backend
  *  HealResult, with an added `autoApplied` flag from the push event. */
 export interface HealSuggestion {

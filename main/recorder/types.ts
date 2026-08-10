@@ -910,6 +910,86 @@ export function normalizePickedElement(input: unknown): PickedElement | null {
   };
 }
 
+/** One failing step's page structure, as recorded by run-time Auto-Heal and
+ *  rebuilt for a prompt. The renderer mirror is in renderer/lib/recorder-types.ts. */
+export interface StepStructure {
+  stepIndex: number;
+  stepLabel: string;
+  outcome: "exhausted" | "no-candidates";
+  /** the Locator action that failed (`click`, `fill`, …) */
+  method?: string;
+  originalLocator?: Locator;
+  candidates: HealCandidate[];
+}
+
+/** Failing steps whose Auto-Heal candidates are worth showing, capped. Each
+ *  entry describes real elements, so this is where the per-step budget is
+ *  spent — see MAX_STRUCTURE_CANDIDATES. */
+export const MAX_STRUCTURE_STEPS = 10;
+export const MAX_STRUCTURE_CANDIDATES = 20;
+
+/**
+ * Rebuild the page structure Auto-Heal recorded for the steps it could not
+ * rescue (`heal-failures.json`).
+ *
+ * This is the same boundary as the step queue, one remove further out. The
+ * probe runs INSIDE the page and its `description` and `locator` fields are
+ * built from whatever the site's DOM says — so a hostile page picks every
+ * string here. They are read off disk rather than off `data-pw-queue`, which
+ * changes nothing: `writeHealFailures` persists the fixture's JSON verbatim,
+ * and what it persists is page-authored.
+ *
+ * Rebuilt, not filtered, per the rule the other normalizers in this file
+ * follow: spreading the input would carry every unknown key into a prompt the
+ * moment someone adds a field to HealFailure.
+ */
+export function normalizeStepStructures(input: unknown): StepStructure[] {
+  if (!Array.isArray(input)) return [];
+  const out: StepStructure[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const f = raw as Record<string, unknown>;
+    const outcome = oneOf(f.outcome, ["exhausted", "no-candidates"] as const);
+    if (!outcome) continue;
+    const candidates: HealCandidate[] = [];
+    if (Array.isArray(f.candidates)) {
+      for (const c of f.candidates) {
+        if (!c || typeof c !== "object") continue;
+        const cand = c as Record<string, unknown>;
+        const locator = normalizeLocator(cand.locator);
+        if (!locator) continue;
+        candidates.push({
+          locator,
+          description: str(cand.description) ?? "",
+          // A score outside 0–1 is not a score. Dropped to 0 rather than
+          // clamped: a made-up 1 would sort a hostile candidate to the top of
+          // a list the model reads as ranked.
+          score:
+            typeof cand.score === "number" && Number.isFinite(cand.score) &&
+            cand.score >= 0 && cand.score <= 1
+              ? cand.score
+              : 0,
+          matchedPastRun: cand.matchedPastRun === true,
+        });
+        if (candidates.length >= MAX_STRUCTURE_CANDIDATES) break;
+      }
+    }
+    const entry: StepStructure = {
+      stepIndex: int(f.stepIndex, 0, 100_000) ?? 0,
+      stepLabel: str(f.stepLabel) ?? "",
+      outcome,
+      candidates,
+    };
+    const method = str(f.method);
+    if (method !== undefined) entry.method = method;
+    const originalLocator = normalizeLocator(f.originalLocator);
+    if (originalLocator !== undefined) entry.originalLocator = originalLocator;
+    out.push(entry);
+    if (out.length >= MAX_STRUCTURE_STEPS) break;
+  }
+  return out;
+}
+
 /** Every usable step from one drain of the capture queue, capped. */
 export function normalizeRawSteps(input: unknown): RawStep[] {
   if (!Array.isArray(input)) return [];

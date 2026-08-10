@@ -277,6 +277,17 @@ export function TestDetailView() {
     enabled: Boolean(recordId),
   });
 
+  // Whether the run left any Auto-Heal failure behind — the source of the page
+  // structure the model can ask for. Asked per run for the same reason as the
+  // logs above: the Auto-Heal setting can be flipped after a run, and what
+  // matters is what THIS run wrote.
+  const structureQuery = useQuery({
+    queryKey: ["run-structure-available", id, recordId],
+    queryFn: () =>
+      recordId ? api.artifacts.hasStructure(id, recordId) : Promise.resolve({ hasStructure: false }),
+    enabled: Boolean(recordId),
+  });
+
   // Write an edited step list back. `regenerate` is what the save-time question
   // resolves to; it's ignored for a test whose script is generated from steps
   // anyway, and refused backend-side for an imported one.
@@ -327,9 +338,19 @@ export function TestDetailView() {
       failedStepIndex,
       recordId,
       logsAvailable: Boolean(logsQuery.data?.hasLogs),
+      structureAvailable: Boolean(structureQuery.data?.hasStructure),
       onApplyScript: applyScript,
     };
-  }, [test, script, runOutput, failedStepIndex, applyScript, recordId, logsQuery.data?.hasLogs]);
+  }, [
+    test,
+    script,
+    runOutput,
+    failedStepIndex,
+    applyScript,
+    recordId,
+    logsQuery.data?.hasLogs,
+    structureQuery.data?.hasStructure,
+  ]);
 
   // Keep a live session's context fresh (the script or run output can change
   // under it) and re-ground one restored from disk, which has no context at all

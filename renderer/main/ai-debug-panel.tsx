@@ -30,6 +30,7 @@ import {
   parseLogRequest,
   stripLogRequest,
   type LogRequest,
+  type LogRequestNeed,
 } from "../lib/ai-log-request";
 import { diffLines, diffSummary, type DiffLine } from "../lib/line-diff";
 import { friendlyError } from "../lib/llm-errors";
@@ -548,7 +549,8 @@ function LogRequestCard({
   request,
   payload,
   fulfilled,
-  logsMissing,
+  unavailableNeed,
+  availableNeed,
   onFetch,
   onSend,
   onDecline,
@@ -556,7 +558,10 @@ function LogRequestCard({
   request: LogRequest;
   payload: LogPayload | null;
   fulfilled: boolean;
-  logsMissing: boolean;
+  /** Requested needs this run has nothing to answer with. */
+  unavailableNeed: LogRequestNeed[];
+  /** Requested needs that can be sent. Empty means the whole ask is a no. */
+  availableNeed: LogRequestNeed[];
   onFetch: () => void;
   onSend: () => void;
   onDecline: () => void;
@@ -571,16 +576,15 @@ function LogRequestCard({
     );
   }
 
-  // Recording is off by default, so this is the common first-time case and it
-  // needs to say what to DO — reporting "no logs" would read as "the page was
-  // silent", which is a different and misleading thing.
-  if (logsMissing) {
+  // Neither source records by default, so this is the common first-time case
+  // and it needs to say what to DO — reporting "no logs" would read as "the
+  // page was silent", which is a different and misleading thing.
+  if (availableNeed.length === 0) {
     return (
       <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
         <Callout.Text>
-          The model asked for {describeNeed(request.need)}, but this run didn&apos;t record it. Turn
-          on &ldquo;Record console &amp; network&rdquo; in the toolbar and run the test again to
-          give the model this data.
+          The model asked for {describeNeed(request.need)}, but this run didn&apos;t record it.{" "}
+          <MissingHint need={unavailableNeed} />
         </Callout.Text>
       </Callout>
     );
@@ -600,14 +604,31 @@ function LogRequestCard({
         </div>
       </div>
 
+      {unavailableNeed.length > 0 ? (
+        <Text variant="small" color="secondary">
+          This run has no {describeNeed(unavailableNeed)} — only{" "}
+          {describeNeed(availableNeed)} can be sent.
+        </Text>
+      ) : null}
+
       {payload ? (
         <>
           <Text variant="small" color="secondary">
-            {payload.consoleCount} console {payload.consoleCount === 1 ? "entry" : "entries"} (
-            {payload.consoleErrors} errors/warnings) · {payload.networkCount}{" "}
-            {payload.networkCount === 1 ? "request" : "requests"} ({payload.networkFailures} failed)
-            · about {payload.approxTokens.toLocaleString()} tokens
-            {payload.omitted > 0 ? ` · ${payload.omitted} not included` : ""}
+            {[
+              availableNeed.includes("console")
+                ? `${payload.consoleCount} console ${payload.consoleCount === 1 ? "entry" : "entries"} (${payload.consoleErrors} errors/warnings)`
+                : null,
+              availableNeed.includes("network")
+                ? `${payload.networkCount} ${payload.networkCount === 1 ? "request" : "requests"} (${payload.networkFailures} failed)`
+                : null,
+              availableNeed.includes("structure")
+                ? `${payload.structureCandidates} ${payload.structureCandidates === 1 ? "element" : "elements"} across ${payload.structureSteps} ${payload.structureSteps === 1 ? "step" : "steps"}`
+                : null,
+              `about ${payload.approxTokens.toLocaleString()} tokens`,
+              payload.omitted > 0 ? `${payload.omitted} not included` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </Text>
           <button
             type="button"
@@ -641,6 +662,30 @@ function LogRequestCard({
         )}
       </div>
     </div>
+  );
+}
+
+/** What to turn on to have this data next time. Each source has its own switch
+ *  in a different place, so naming the wrong one sends the user hunting through
+ *  Settings for a toggle that would not have helped. */
+function MissingHint({ need }: { need: LogRequestNeed[] }) {
+  const wantsLogs = need.some((n) => n === "console" || n === "network");
+  const wantsStructure = need.includes("structure");
+  return (
+    <>
+      {wantsLogs ? (
+        <>
+          Turn on “Record console &amp; network” in the toolbar and run the test again to give the
+          model this data.{" "}
+        </>
+      ) : null}
+      {wantsStructure ? (
+        <>
+          The page structure comes from Auto-Heal, which records what it found whenever it
+          can&apos;t rescue a step — turn on Auto-Heal in Settings and run the test again.
+        </>
+      ) : null}
+    </>
   );
 }
 
@@ -709,6 +754,7 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
   // it. Payload stays null until then — fetching is itself a decision.
   const [logPayload, setLogPayload] = React.useState<LogPayload | null>(null);
   const [logsMissing, setLogsMissing] = React.useState(false);
+  const [structureMissing, setStructureMissing] = React.useState(false);
   const { modelName, models, confirmModel, currentModel } = useModelPicker(open);
   const disabledEnhancements = useDisabledEnhancements();
   const thinkingGifEnabled = !disabledEnhancements.has("aiThinkingGif");
@@ -730,6 +776,14 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
             imported: runCtx.imported,
             speed: runCtx.speed,
             failedStepIndex: runCtx.failedStepIndex,
+            // Without these the protocol is never appended and the model has
+            // no way to ask for anything — it falls back to requesting logs,
+            // screenshots and HTML in prose, which nothing can act on. They
+            // were computed and passed into this panel but never reached the
+            // prompt builder, so the request block was unreachable in the app
+            // while its parser, card and fulfilment cap all worked.
+            logsAvailable: runCtx.logsAvailable,
+            structureAvailable: runCtx.structureAvailable,
           })
         : [],
     [runCtx],
@@ -834,22 +888,58 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
   const showLogRequest = Boolean(logRequest) && !declined && !atFulfilmentCap;
   // Known up front when the run recorded nothing: make the user click "show me"
   // only to be told there is nothing to show would be a pointless round trip.
-  const noLogsRecorded = logsMissing || runCtx?.logsAvailable === false || !runCtx?.recordId;
+  //
+  // Split by SOURCE rather than answered with one boolean, because the two are
+  // independent settings: a run can have Auto-Heal data and no console
+  // recording, or the reverse. A single flag would refuse a request for
+  // structure because the console wasn't recorded, which is a "no" to a
+  // question nobody asked.
+  const noRun = !runCtx?.recordId;
+  const requested = React.useMemo(() => logRequest?.need ?? [], [logRequest]);
+  const logsUnavailable = noRun || logsMissing || runCtx?.logsAvailable === false;
+  const structureUnavailable = noRun || structureMissing || runCtx?.structureAvailable === false;
+  const unavailableNeed = React.useMemo(
+    () =>
+      requested.filter((n) => (n === "structure" ? structureUnavailable : logsUnavailable)),
+    [requested, structureUnavailable, logsUnavailable],
+  );
+  const availableNeed = React.useMemo(
+    () => requested.filter((n) => !unavailableNeed.includes(n)),
+    [requested, unavailableNeed],
+  );
 
   const fetchLogPayload = React.useCallback(async () => {
-    if (!logRequest || !runCtx?.recordId || !session) return;
-    try {
-      const logs = await api.artifacts.getLogs(session.testId, runCtx.recordId);
-      if (!logs) {
-        setLogsMissing(true);
-        return;
-      }
-      setLogsMissing(false);
-      setLogPayload(buildLogPayload(logs, logRequest.need));
-    } catch {
-      setLogsMissing(true);
-    }
-  }, [logRequest, runCtx?.recordId, session]);
+    if (!logRequest || !runCtx?.recordId || !session || availableNeed.length === 0) return;
+    const wantLogs = availableNeed.some((n) => n === "console" || n === "network");
+    const wantStructure = availableNeed.includes("structure");
+    // Each source fails on its own. One throw used to abandon the whole
+    // payload, which with two sources would throw away data the user can have
+    // because data they can't happened to be asked for in the same breath.
+    const logs = wantLogs
+      ? await api.artifacts
+          .getLogs(session.testId, runCtx.recordId)
+          .catch(() => null)
+      : null;
+    const structure = wantStructure
+      ? await api.artifacts
+          .getStructure(session.testId, runCtx.recordId)
+          .catch(() => null)
+      : null;
+    if (wantLogs && !logs) setLogsMissing(true);
+    if (wantStructure && (!structure || structure.length === 0)) setStructureMissing(true);
+    if ((wantLogs && !logs) && (!wantStructure || !structure || structure.length === 0)) return;
+    setLogPayload(
+      buildLogPayload(
+        { logs, structure },
+        // Built for what was actually FETCHED, not what was asked for: a
+        // section header promising console output above an empty fence reads
+        // as "the page logged nothing", which is a different claim.
+        availableNeed.filter((n) =>
+          n === "structure" ? Boolean(structure && structure.length > 0) : Boolean(logs),
+        ),
+      ),
+    );
+  }, [logRequest, runCtx?.recordId, session, availableNeed]);
 
   const sendLogPayload = React.useCallback(async () => {
     if (!logPayload || !logRequest) return;
@@ -1136,7 +1226,8 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                         request={logRequest}
                         payload={logPayload}
                         fulfilled={alreadySent}
-                        logsMissing={noLogsRecorded}
+                        unavailableNeed={unavailableNeed}
+                        availableNeed={availableNeed}
                         onFetch={() => void fetchLogPayload()}
                         onSend={() => void sendLogPayload()}
                         onDecline={declineLogRequest}

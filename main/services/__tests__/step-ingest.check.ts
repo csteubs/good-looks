@@ -22,11 +22,14 @@
 //   npm run check:step-ingest
 
 import {
+  MAX_STRUCTURE_CANDIDATES,
+  MAX_STRUCTURE_STEPS,
   MAX_STEPS_PER_DRAIN,
   normalizePickedElement,
   normalizeRawStep,
   normalizeRawSteps,
   normalizeStep,
+  normalizeStepStructures,
 } from "../../recorder/types.js";
 import { generateSpec } from "../script-generator.js";
 import type { Step, TestRecord } from "../../recorder/types.js";
@@ -494,6 +497,74 @@ function main(): void {
     assertEqual(picked?.css, { color: "red" }, "a non-string css value is dropped");
     assert(!("extra" in (picked ?? {})), "an unknown key does not survive");
     assertEqual(normalizePickedElement("nope"), null, "a non-object picked element is rejected");
+  }
+
+  // ── 9. Auto-Heal's record of the page is normalized too ──────────────────
+  //
+  // A THIRD reader of page-authored data, and the least obvious one: the probe
+  // runs inside the page, so every description and locator it reports is
+  // chosen by the site. It is read back off disk rather than off the queue
+  // attribute, which changes nothing — writeHealFailures persists the
+  // fixture's JSON verbatim. It now feeds an LLM prompt whose answer the user
+  // can apply to their script with one click.
+  {
+    const entries = normalizeStepStructures([
+      {
+        stepIndex: 4,
+        stepLabel: "Click button",
+        outcome: "exhausted",
+        method: "click",
+        originalLocator: { k: "role", role: "button", name: "Pause" },
+        candidates: [
+          { locator: { k: "testid", v: "go" }, description: "button#go", score: 0.9, matchedPastRun: true },
+          { locator: { k: "evil", v: "x" }, description: "nope", score: 1, matchedPastRun: true },
+        ],
+        extra: NODE_CODE,
+      },
+      { outcome: "not-a-real-outcome", stepIndex: 0 },
+    ]) as unknown as Record<string, unknown>[];
+
+    assertEqual(entries.length, 1, "an entry with an unknown outcome is rejected");
+    assert(!("extra" in (entries[0] ?? {})), "an unknown key does not survive");
+    assertEqual(
+      (entries[0]?.candidates as unknown[])?.length,
+      1,
+      "a candidate with an unknown locator kind is dropped",
+    );
+
+    // A score is what the payload sorts and labels as ranking. A made-up 1
+    // would put a hostile candidate at the top of a list the model reads as
+    // "best match first", so an out-of-range one is zeroed, not clamped.
+    const scored = normalizeStepStructures([
+      {
+        outcome: "exhausted",
+        candidates: [
+          { locator: { k: "css", v: "#a" }, score: 99 },
+          { locator: { k: "css", v: "#b" }, score: "1" },
+        ],
+      },
+    ]);
+    assertEqual(scored[0].candidates[0].score, 0, "an out-of-range score is dropped to zero");
+    assertEqual(scored[0].candidates[1].score, 0, "a string score is dropped to zero");
+
+    // Unbounded on the page's side: a site with thousands of similar elements
+    // must not become a prompt with thousands of lines.
+    const flood = normalizeStepStructures(
+      Array.from({ length: MAX_STRUCTURE_STEPS + 5 }, () => ({
+        outcome: "exhausted",
+        candidates: Array.from({ length: MAX_STRUCTURE_CANDIDATES + 10 }, () => ({
+          locator: { k: "css", v: "#x" },
+        })),
+      })),
+    );
+    assertEqual(flood.length, MAX_STRUCTURE_STEPS, "the step list is capped");
+    assertEqual(
+      flood[0].candidates.length,
+      MAX_STRUCTURE_CANDIDATES,
+      "the candidate list is capped per step",
+    );
+    assertEqual(normalizeStepStructures("nope"), [], "a non-array is rejected");
+    assertEqual(normalizeStepStructures([null, 4, "x"]), [], "non-object entries are rejected");
   }
 
   if (failures > 0) {

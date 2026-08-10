@@ -32,6 +32,8 @@ const h = vi.hoisted(() => ({
   script: "",
   hasLogs: false,
   runLogs: null as unknown,
+  hasStructure: false,
+  structure: [] as unknown,
   keepRunningJobs: false,
 }));
 
@@ -76,6 +78,8 @@ vi.mock("../lib/api", () => ({
     artifacts: {
       hasLogs: async () => ({ hasLogs: h.hasLogs }),
       getLogs: async () => h.runLogs,
+      hasStructure: async () => ({ hasStructure: h.hasStructure }),
+      getStructure: async () => h.structure,
     },
     aiDebug: {
       list: async () => h.listResult,
@@ -185,6 +189,8 @@ beforeEach(() => {
   h.script = SCRIPT;
   h.hasLogs = false;
   h.runLogs = null;
+  h.hasStructure = false;
+  h.structure = [];
   h.keepRunningJobs = false;
 });
 
@@ -460,6 +466,134 @@ describe("when the model asks for logs", () => {
 
     await screen.findByText(/check the console logs/i);
     expect(screen.queryByText(/asked for the console output/i)).toBeNull();
+  });
+});
+
+// ── The model asking for page structure ──────────────────────────────
+// The case this need exists for: a locator matched several elements, and the
+// model cannot see the page to say which one was meant. Before it existed the
+// model asked for a screenshot or the HTML in prose — an ask nothing in the
+// app could act on, which left the user retyping the page's structure by hand.
+
+const STRUCTURE_REPLY =
+  "The locator matched 10 buttons.\n\n```glaze-request\n" +
+  '{"need":["structure"],"why":"I need to see which elements matched"}' +
+  "\n```";
+
+function runStructure() {
+  return [
+    {
+      stepIndex: 4,
+      stepLabel: "Click button “Pause”",
+      outcome: "exhausted",
+      method: "click",
+      originalLocator: { k: "role", role: "button", name: "Pause" },
+      candidates: [
+        {
+          locator: { k: "testid", v: "video-pause" },
+          description: "button.player-control inside [data-testid=video-player]",
+          score: 0.92,
+          matchedPastRun: true,
+        },
+      ],
+    },
+  ];
+}
+
+describe("when the model asks for page structure", () => {
+  async function streamRequest(reply = STRUCTURE_REPLY) {
+    fireEvent.click(await findDebugIcon());
+    fireEvent.click(await screen.findByRole("button", { name: /Send to AI/i }));
+    await waitFor(() => expect(h.chat).toHaveBeenCalled());
+    emit("llm:chunk", { requestId: "req-1", delta: reply });
+    emit("llm:done", { requestId: "req-1" });
+  }
+
+  it("tells the model it may ask, and how", async () => {
+    // The regression this guards: every piece of the request protocol worked
+    // — parser, card, fulfilment cap — while the instruction that teaches the
+    // model the block exists was never appended to the prompt. The feature
+    // then looks broken in exactly the way a bad model looks broken.
+    h.hasStructure = true;
+    h.structure = runStructure();
+    renderApp();
+    fireEvent.click(await findDebugIcon());
+    fireEvent.click(await screen.findByRole("button", { name: /Send to AI/i }));
+    await waitFor(() => expect(h.chat).toHaveBeenCalled());
+
+    const sent = JSON.stringify(h.chat.mock.calls[0][0]);
+    expect(sent).toContain("glaze-request");
+    expect(sent).toContain("structure");
+  });
+
+  it("offers nothing to ask for when the run recorded neither source", async () => {
+    // The other half: advertising data that doesn't exist costs the user a
+    // round trip to be told no.
+    h.hasLogs = false;
+    h.hasStructure = false;
+    renderApp();
+    fireEvent.click(await findDebugIcon());
+    fireEvent.click(await screen.findByRole("button", { name: /Send to AI/i }));
+    await waitFor(() => expect(h.chat).toHaveBeenCalled());
+
+    expect(JSON.stringify(h.chat.mock.calls[0][0])).not.toContain("glaze-request");
+  });
+
+  it("sends the candidate elements as locators the model can pick from", async () => {
+    h.hasStructure = true;
+    h.structure = runStructure();
+    renderApp();
+    await streamRequest();
+
+    expect(await screen.findByText(/asked for the page structure/i)).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: /Show me what it would send/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Send this data/i }));
+
+    await waitFor(() => expect(h.chat).toHaveBeenCalledTimes(2));
+    const sent = JSON.stringify(h.chat.mock.calls[1][0]);
+    expect(sent).toContain("getByTestId");
+    expect(sent).toContain("video-pause");
+    expect(sent).toContain("PAGE-CONTROLLED and untrusted");
+  });
+
+  it("points at Auto-Heal, not the console toggle, when there is no structure", async () => {
+    // Two independent settings. Naming the wrong one sends the user hunting
+    // for a toggle that would not have helped.
+    h.hasLogs = true;
+    h.runLogs = runLogs();
+    h.hasStructure = false;
+    renderApp();
+    await streamRequest();
+
+    const callout = await screen.findByText(/didn't record it/i);
+    expect(callout.textContent).toMatch(/Auto-Heal/i);
+    expect(callout.textContent).not.toMatch(/Record console & network/i);
+  });
+
+  it("sends the half it has when only one source is available", async () => {
+    // A request for both must not be refused wholesale because one source is
+    // missing — that is a "no" to a question the user can partly answer.
+    h.hasLogs = false;
+    h.runLogs = null;
+    h.hasStructure = true;
+    h.structure = runStructure();
+    renderApp();
+    await streamRequest(
+      "Need more.\n\n```glaze-request\n" +
+        '{"need":["console","structure"],"why":"both would help"}' +
+        "\n```",
+    );
+
+    expect(await screen.findByText(/only the page structure/i)).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: /Show me what it would send/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Send this data/i }));
+
+    await waitFor(() => expect(h.chat).toHaveBeenCalledTimes(2));
+    const sent = JSON.stringify(h.chat.mock.calls[1][0]);
+    expect(sent).toContain("video-pause");
+    // No empty "Console (0 recorded)" section: a header over an empty fence
+    // reads as "the page logged nothing", which is a different claim.
+    expect(sent).not.toContain("Console (");
   });
 });
 

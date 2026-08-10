@@ -10,8 +10,9 @@
 import { describe, it, expect } from "vitest";
 
 import {
-  LOG_REQUEST_PROTOCOL,
+  ALL_NEEDS,
   describeNeed,
+  logRequestProtocol,
   parseLogRequest,
   stripLogRequest,
 } from "./ai-log-request";
@@ -135,11 +136,43 @@ describe("the protocol text", () => {
   it("describes the exact format the parser accepts", () => {
     // Prompt and parser drifting apart would mean a model that follows
     // instructions perfectly and is never heard.
-    const example = LOG_REQUEST_PROTOCOL.slice(LOG_REQUEST_PROTOCOL.indexOf("```glaze-request"));
+    const text = logRequestProtocol(ALL_NEEDS);
+    const example = text.slice(text.indexOf("```glaze-request"));
     expect(parseLogRequest(example)).toEqual({
-      need: ["console", "network"],
+      need: ALL_NEEDS,
       why: "one short sentence",
     });
+  });
+
+  it("advertises only the needs this run can actually answer", () => {
+    // Offering data that doesn't exist costs the user a round trip to find
+    // out, and teaches the model to ask for things nobody can supply.
+    const logsOnly = logRequestProtocol(["console", "network"]);
+    expect(logsOnly).toContain('"console"');
+    expect(logsOnly).not.toContain('"structure"');
+
+    const structureOnly = logRequestProtocol(["structure"]);
+    expect(structureOnly).toContain('"structure"');
+    expect(structureOnly).not.toContain('"console"');
+    // And its example must still parse — a subset that emits a block naming a
+    // need the app cannot answer would be worse than not offering one.
+    const example = structureOnly.slice(structureOnly.indexOf("```glaze-request"));
+    expect(parseLogRequest(example)?.need).toEqual(["structure"]);
+  });
+
+  it("is empty when the run recorded nothing", () => {
+    // The caller appends it unconditionally, so an empty string is what keeps
+    // a bare "```glaze-request" instruction out of a prompt nothing can honour.
+    expect(logRequestProtocol([])).toBe("");
+  });
+
+  it("tells the model to stop asking for screenshots and HTML in prose", () => {
+    // The failure this whole need exists for: the system prompt's fallback
+    // invites a prose ask, and the model spent its answer asking the user to
+    // paste in a screenshot by hand.
+    const text = logRequestProtocol(ALL_NEEDS);
+    expect(text).toContain("REPLACES asking in prose");
+    expect(text).toContain("screenshot");
   });
 });
 
@@ -148,5 +181,9 @@ describe("describeNeed", () => {
     expect(describeNeed(["console"])).toBe("the console output");
     expect(describeNeed(["network"])).toBe("the network activity");
     expect(describeNeed(["console", "network"])).toBe("the console output and network activity");
+    expect(describeNeed(["structure"])).toBe("the page structure around the failing step");
+    expect(describeNeed(["console", "network", "structure"])).toBe(
+      "the console output, network activity and page structure around the failing step",
+    );
   });
 });

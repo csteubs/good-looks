@@ -14,6 +14,7 @@ import type {
   AiDebugSession,
   DebugEntry,
   RunLogs,
+  StepStructure,
   LogSearchResult,
   Locator,
   RawStep,
@@ -352,6 +353,12 @@ export const api = {
       ipc().invoke<RunLogs | null>("artifacts:getLogs", { testId, runId }),
     hasLogs: (testId: string, runId: string) =>
       ipc().invoke<{ hasLogs: boolean }>("artifacts:hasLogs", { testId, runId }),
+    /** The page structure Auto-Heal recorded around steps it could not rescue.
+     *  Rebuilt from page-authored input backend-side before this returns. */
+    getStructure: (testId: string, runId: string) =>
+      ipc().invoke<StepStructure[]>("artifacts:getStructure", { testId, runId }),
+    hasStructure: (testId: string, runId: string) =>
+      ipc().invoke<{ hasStructure: boolean }>("artifacts:hasStructure", { testId, runId }),
     usage: () => ipc().invoke<ArtifactUsage>("artifacts:usage"),
     pruneNow: () => ipc().invoke<RetentionResult>("artifacts:pruneNow"),
   },
