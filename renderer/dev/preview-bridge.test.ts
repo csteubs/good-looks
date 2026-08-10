@@ -111,7 +111,11 @@ describe("preview bridge behaviour", () => {
     expect(typeof (api.glaze as { ipc: { invoke: unknown } }).ipc.invoke).toBe("function");
     expect(typeof api.clipboard.writeText).toBe("function");
     expect(typeof api.Menu.popup).toBe("function");
-    expect(typeof api.nativeTheme.getInfo).toBe("function");
+    // `nativeTheme` was here and is deliberately gone with the light theme
+    // (REDESIGN §0, A4): the preload no longer exposes it, so a preview that
+    // still stubbed it would be answering a call the real app cannot make —
+    // which is precisely the drift this whole file exists to catch.
+    expect("nativeTheme" in api).toBe(false);
     expect(diagnostics.misses).toEqual({});
   });
 

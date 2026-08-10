@@ -246,7 +246,13 @@ function walk(dir: string, out: string[] = []): string[] {
 // so that is the one edge to check.
 {
   const styles = readFileSync(STYLES_CSS, "utf-8");
-  for (const sheet of ["tokens.css", "fonts.css", "atmosphere.css", "primitives.css"]) {
+  for (const sheet of [
+    "tokens.css",
+    "fonts.css",
+    "atmosphere.css",
+    "primitives.css",
+    "shell.css",
+  ]) {
     assert(
       new RegExp(`@import\\s+"\\./theme/${sheet.replace(".", "\\.")}"`).test(styles),
       `renderer/styles.css imports theme/${sheet}`,

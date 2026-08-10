@@ -1,11 +1,12 @@
 # The indie redesign — an implementation plan
 
 **Status: Phase A in progress.** A1 (browser preview), A2 (tokens, fonts,
-atmosphere) and A3 (the fifteen primitives) are done — see the ✅ marks in §4 and
-§8.3. **A4 (shell) and A5 (retire the SDK on shared components) are next, and
-nothing in Phase B onwards exists yet.** The foundation is deliberately
-unconsumed: no screen reads the theme layer, so the app still looks exactly as it
-did. Where the rest of this says "would", it means would.
+atmosphere), A3 (the fifteen primitives) and A4 (the shell) are done — see the ✅
+marks in §4 and §8.3. **A5 (retire the SDK on shared components) is next, and
+nothing in Phase B onwards exists yet.** A4 is where the foundation stopped being
+unconsumed: the app's frame — top strip, rail, atmosphere — is the redesign, and
+the nine screens inside it are still the old chrome. Where the rest of this says
+"would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -355,10 +356,25 @@ CRT-content-is-untreated — all three as `check:*` scripts, plus a fourth
 (the narrow set a `var()` cannot express) and `renderer/dev/specimen.tsx`, every
 primitive in every state at `/?view=specimen`. See DECISIONS 2026-08-08.
 
-**A4. Shell.** Top strip (wordmark, breadcrumb, ⌘K affordance, job ticker slot,
-settings gear), the rail restyle over `SplitView`, the views nav pinned to the
-bottom, the rail handle. Retire `useTheme()` and the light theme; Appearance pane
-becomes "Dark only for now".
+**A4. Shell.** ✅ **Done, 2026-08-10.** `renderer/theme/shell/` (`TopStrip`,
+`ChromeButton`, the `Rail` family) + `shell.css`, wired up by
+`renderer/main/app-strip.tsx`; the rail restyle over `SplitView`, the views nav
+pinned to the bottom, the rail handle. `<Atmosphere />` finally mounts.
+`useTheme()` and the light theme are gone — with the `nativeTheme:*` IPC, the
+preload bridge and the `nativeTheme:updated` push, since nothing called them any
+more — and the Appearance pane reads "Dark only for now".
+
+Four things resolved in the building. The strip is a new `header` SLOT on
+`SplitView` rather than a sibling above it, because the rail handle reads that
+context and hoisting the collapse state out would take `storageKey` persistence
+and ⌃⌘S with it; the pinned `SidebarToggle` retires with it, which gives every
+view title its 44px back. **The ⌘K and job-ticker slots render nothing** — an
+affordance for a feature that does not exist teaches a shortcut that answers with
+silence, so §6.7 and §6.8 land in props that are already there. The breadcrumb
+takes `recording` explicitly, because the trainer replaces the outlet without
+navigating and a router-derived trail would name the wrong screen. And the views
+nav moving out of the scroller is a bug fix, not a restyle: `mt-auto` pinned it
+to the bottom only while the library was short. See DECISIONS 2026-08-10.
 
 **A5. Retire the SDK on the shared surfaces.** `step-row.tsx`, `pager.tsx`,
 `tag-cluster.tsx`, `log-inspector.tsx`, `heals-panel.tsx` — the components every

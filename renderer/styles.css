@@ -30,6 +30,7 @@
 @import "./theme/fonts.css";
 @import "./theme/atmosphere.css";
 @import "./theme/primitives.css";
+@import "./theme/shell.css";
 
 /* Tell Tailwind to scan all local renderer window files for class names */
 @source "./**/*.{ts,tsx}";

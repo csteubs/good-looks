@@ -51,11 +51,6 @@ export interface MessageBoxResult {
   checkboxChecked?: boolean;
 }
 
-export interface NativeThemeInfo {
-  shouldUseDarkColors: boolean;
-  themeSource: "system" | "light" | "dark";
-}
-
 /** One entry in a native popup menu template. Picking an item resolves the
  *  popup with its commandId; a submenu nests more items. */
 export interface PopupMenuItem {

@@ -7,7 +7,7 @@
 // how the app LOOKS, which is the only thing they have in common with each
 // other and everything they have in common with the theme.
 
-import { Label, RadioGroup, RadioGroupItem, Switch } from "@ui";
+import { Switch, Text } from "@ui";
 
 import { useSettingsController } from "../settings-controller";
 import { SettingRow } from "../setting-row";
@@ -20,7 +20,7 @@ const AI_THINKING_GIF = "aiThinkingGif";
 const HOME_BLACK_HOLE = "homeBlackHole";
 
 export function AppearancePane() {
-  const { settings, save, themeSource, setTheme } = useSettingsController();
+  const { settings, save } = useSettingsController();
   const disabled = settings.disabledAestheticEnhancements ?? [];
 
   const toggleEnhancement = (id: string, enabled: boolean) => {
@@ -31,21 +31,29 @@ export function AppearancePane() {
   return (
     <>
       <PaneSection>
-        <SettingRow id="theme" label="Theme" summary="Follow the system, or pin one.">
-          <RadioGroup id="theme" value={themeSource} onValueChange={setTheme} orientation="horizontal">
-            <Label>
-              <RadioGroupItem value="system" />
-              Auto
-            </Label>
-            <Label>
-              <RadioGroupItem value="light" />
-              Light
-            </Label>
-            <Label>
-              <RadioGroupItem value="dark" />
-              Dark
-            </Label>
-          </RadioGroup>
+        {/* THE CONTROL IS GONE AND THE ROW STAYS, deliberately.
+         *
+         * The app is dark only now (REDESIGN §0): the palette is near-black
+         * with phosphor accents, a light variant is a second design rather
+         * than a token swap, and the CRT treatment has no light reading. What
+         * shipped before was Auto / Light / Dark, so someone who had pinned
+         * Light will notice — and a row that answers "where did the theme
+         * setting go?" is worth more than the space it costs. It also carries
+         * the honest tense: "for now" is a statement about this release, not a
+         * promise about the next one.
+         *
+         * Deleting the row entirely was the alternative and it loses that: the
+         * setting would simply be absent, which reads as a bug in a window
+         * whose whole job is to enumerate what can be changed. */}
+        <SettingRow
+          id="theme"
+          label="Theme"
+          summary="Dark only for now."
+          details="The redesign is built on a near-black palette with phosphor accents and two texture layers. A light variant is a different design rather than a swap of colour values — the screenshot bezel in particular has no light reading — so rather than ship a worse version of the same idea there is one theme, and it is this one."
+        >
+          <Text variant="small" color="secondary">
+            Dark
+          </Text>
         </SettingRow>
       </PaneSection>
 

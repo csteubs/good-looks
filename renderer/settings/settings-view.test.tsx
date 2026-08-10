@@ -64,10 +64,6 @@ beforeEach(() => {
   settings = { ...SETTINGS_DEFAULTS, batchOrder: [] };
   (window as unknown as { glazeAPI: Record<string, unknown> }).glazeAPI = {
     glaze: { ipc: { invoke: closeSettings } },
-    nativeTheme: {
-      getInfo: vi.fn(async () => ({ themeSource: "system", shouldUseDarkColors: false })),
-      setThemeSource: vi.fn(async () => {}),
-    },
   };
 });
 

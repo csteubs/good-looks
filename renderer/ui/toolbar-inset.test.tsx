@@ -18,7 +18,7 @@
 // never produce real values here and a `paddingLeft` assertion would read
 // "0px" in both the fixed and the broken case — passing vacuously forever.
 
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { SplitView, Toolbar, ToolbarContent, ToolbarTitle } from "./index";
@@ -81,6 +81,25 @@ describe("Toolbar inset for the pinned sidebar toggle", () => {
     expect(toolbarEl().hasAttribute("data-toggle-inset")).toBe(false);
   });
 
+  it('does not reserve space for a toggle that is not floating over the pane (pinned={false})', () => {
+    // `pinned` was accepted and IGNORED until the redesign's shell had
+    // somewhere better to put this button (the top strip's leading slot, in
+    // flow). The registration has to follow the position: a toggle that is not
+    // overlapping the pane needs no space reserved, and an unconditional
+    // register would leave every title in the app indented for a button that
+    // moved.
+    render(
+      <SplitView sidebar={<div>library</div>} storageKey="test-unpinned">
+        <SplitView.SidebarToggle aria-label="Toggle sidebar" pinned={false} />
+        <Toolbar>{title}</Toolbar>
+      </SplitView>,
+    );
+
+    expect(screen.getByLabelText("Toggle sidebar")).toBeTruthy();
+    expect(toolbarEl().hasAttribute("data-toggle-inset")).toBe(false);
+    expect(screen.getByLabelText("Toggle sidebar").className).not.toContain("absolute");
+  });
+
   it("drops the inset again when the toggle unmounts", () => {
     // Guards the registration counter: a toggle that goes away must give the
     // space back, or a view that hides its toggle keeps a 44px hole.
@@ -98,5 +117,54 @@ describe("Toolbar inset for the pinned sidebar toggle", () => {
       </SplitView>,
     );
     expect(toolbarEl().hasAttribute("data-toggle-inset")).toBe(false);
+  });
+});
+
+describe("SplitView header slot", () => {
+  it("spans the panes rather than sitting inside one", () => {
+    // The redesign's top strip runs across the whole window — wordmark over
+    // the rail, breadcrumb over the content — so it cannot be a child of the
+    // primary pane. Rendering it as a SIBLING above the SplitView would put it
+    // outside the context, where its rail handle (`useSplitView`) throws.
+    const { container } = render(
+      <SplitView header={<div data-testid="strip">strip</div>} sidebar={<div>library</div>}>
+        <div>content</div>
+      </SplitView>,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    const strip = screen.getByTestId("strip");
+    // Direct child of the root, and first: the panes are in their own row below.
+    expect(strip.parentElement).toBe(root);
+    expect(root.firstElementChild).toBe(strip);
+    expect(strip.contains(screen.getByText("library"))).toBe(false);
+    expect(strip.contains(screen.getByText("content"))).toBe(false);
+  });
+
+  it("gives the header the SplitView context", () => {
+    // The whole reason it is a slot. A toggle in the header collapses the rail
+    // and outlives it.
+    render(
+      <SplitView
+        header={<SplitView.SidebarToggle aria-label="Toggle sidebar" pinned={false} />}
+        sidebar={<div>library</div>}
+        storageKey="test-header-ctx"
+      >
+        <div>content</div>
+      </SplitView>,
+    );
+    expect(screen.getByText("library")).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Toggle sidebar"));
+    expect(screen.queryByText("library")).toBeNull();
+    expect(screen.getByLabelText("Toggle sidebar")).toBeTruthy();
+  });
+
+  it("renders nothing extra when no header is passed", () => {
+    const { container } = render(
+      <SplitView sidebar={<div>library</div>}>
+        <div>content</div>
+      </SplitView>,
+    );
+    const root = container.firstElementChild as HTMLElement;
+    expect(root.children).toHaveLength(1);
   });
 });

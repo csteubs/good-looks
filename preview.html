@@ -19,10 +19,12 @@
       the file read as though it carried the app's real protections.
     -->
     <title>Good Looks! — UI preview</title>
+    <!-- Dark unconditionally, exactly as the three real windows do it — the
+         app has one theme now (REDESIGN §0). A preview that followed the
+         reviewer's OS would render a light variant of a design that has none,
+         which is the one way this page could lie about what shipped. -->
     <script>
-      if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
-        document.documentElement.classList.add("dark");
-      }
+      document.documentElement.classList.add("dark");
     </script>
     <style>
       /*
@@ -33,9 +35,11 @@
         1. `color-scheme`. The app's `Text` components resolve to
            `text-inherit`, so the base colour comes from the UA default —
            white in a dark-appearance WKWebView, black in a browser tab.
-           Declaring it here is what makes the text legible, and it follows
-           the `.dark` CLASS rather than the media query so that switching
-           theme in Settings (which toggles that class) is honoured too.
+           Declaring it here is what makes the text legible. It is still keyed
+           off the `.dark` CLASS rather than the media query: the class is now
+           set unconditionally above, so the light branch below is unreachable
+           in practice and kept only so that `html` is never left with no
+           canvas at all if that script does not run.
 
         2. An opaque canvas. `--color-window-bg` is 40% black: the real window
            is translucent and composites onto the native macOS material. A tab

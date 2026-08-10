@@ -113,6 +113,15 @@
   --gl-status-w: 78px;
   --gl-z-atmo: 600;
 
+  /* The top strip's height, and the rail header's — they are the same band
+     across the top of the window, drawn as two elements on either side of the
+     rail's hairline, and they read as one only while they agree. Written once
+     for that reason. 34px because the chrome inside it is 24px controls with
+     5px of air, and because it stays clear of the 32px panel header it sits
+     above without matching it (two identical bands stacked read as one tall
+     one). See shell.css. */
+  --gl-strip-h: 34px;
+
   /* ── Typography ────────────────────────────────────────────────────────
      Space Mono + Space Grotesk (REDESIGN §3.2). The mockup names IBM Plex in
      every inline style and switches typeface by CSS substring match; the

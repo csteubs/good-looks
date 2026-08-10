@@ -41,7 +41,9 @@ renderer/ui/         the app's component library (Radix + Tailwind + cva). Repla
 renderer/components/ reusable UI composed from renderer/ui
 renderer/lib/        shared frontend utilities (llm-prompts, host bridge types, etc.)
 renderer/theme/      the indie redesign's bespoke layer: --gl-* tokens, self-hosted fonts,
-                     the atmosphere overlays + reduced-motion floor. Distinct from
+                     the atmosphere overlays + reduced-motion floor, primitives/ (the
+                     fifteen components a screen is built from) and shell/ (the top
+                     strip + rail the app's FRAME is drawn from). Distinct from
                      renderer/ui: that is the component library the views import, this is
                      the redesign's own token/treatment layer on top of it, declared by us
                      so `check:theme-tokens` can catch a name that resolves to nothing

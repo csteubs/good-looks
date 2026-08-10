@@ -146,6 +146,10 @@ export interface SettingIndexEntry {
 
 export const SETTING_INDEX: readonly SettingIndexEntry[] = [
   // Appearance
+  // Still indexed, and the keywords still name what someone would search for.
+  // "light" and "auto" especially: the row exists to answer where that control
+  // went, so the search has to be able to reach it by the name of the thing
+  // that is gone.
   { id: "theme", pane: "appearance", label: "Theme", keywords: "dark light auto system appearance colour color" },
   // Both flourishes write the same key — it's one array of disabled ids, not a
   // field each. `paneKeys` dedupes, so the pane counts them as one setting and
