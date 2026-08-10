@@ -16,6 +16,18 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-09 — The AI debug follow-up send moved inside the textarea, and is a raw button on purpose
+
+Small change, three decisions in it that all read as sloppiness later if they are not written down.
+
+**It is a raw `<button>`, not `@ui`'s `Button`.** The brief was an icon with no border and no button styling, and every `Button` variant carries chrome — including the one that sounds like it does not: `transparent` still paints `hover:bg-muted/70`. Opting out has a cost that is easy to miss, and this repo has already paid it once: `body` and Tailwind v4's preflight *both* set `cursor: default` on buttons, so a hand-rolled button gives no hover affordance unless it asks for `cursor-pointer` itself. That is the bug `check:clickable-chrome` exists for (#44), and it does not cover elements outside `buttonVariants`.
+
+**Disabled keeps the arrow rather than `pointer-events-none`.** `Button` disables with `pointer-events-none`, which is tidier and also suppresses the `title` — so the one state where the user needs to be told why nothing happens becomes the one state that cannot tell them. `disabled:cursor-default` instead, and the hover label survives.
+
+**The hover label is a `title`, not a Tooltip.** Not a style preference: Radix's tooltip cannot be opened under jsdom (it needs pointer APIs jsdom lacks), so a Tooltip here would be untestable, and this control has *no visible text* — the label is its only accessible name. `SEND_FOLLOW_UP_LABEL` is exported and used for both `aria-label` and `title`, which is what stops the two drifting into a control that reads one way to a screen reader and another to a mouse. It names the Enter shortcut too, because the composer has always sent on Enter and nothing said so anywhere.
+
+**`pr-10` on the textarea is load-bearing**, and is the one part of this that jsdom cannot check: it reserves the icon's column so a long line runs out of room before it runs underneath the glyph. There is no layout engine in the dom suite, so the test asserts the class as a proxy and says so.
+
 ### 2026-08-09 — Every run failed on a symlink the port inherited, and a third of the design system was never wired up
 
 Two unrelated-looking faults, one shared cause: **adopting the Glaze data directory also adopted things inside it that referred to Glaze.**

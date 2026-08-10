@@ -16,7 +16,7 @@ import type { RunInfo } from "./recorder-store";
 import { toneFor } from "../lib/ai-debug-status";
 import { hashScript } from "../lib/ai-debug-sessions";
 import { AiDebugChip } from "./ai-debug-chip";
-import { AiDebugHost } from "./ai-debug-panel";
+import { AiDebugHost, SEND_FOLLOW_UP_LABEL } from "./ai-debug-panel";
 import { AiDebugProvider } from "./ai-debug-store";
 import { TestDetailView } from "./test-detail-view";
 
@@ -744,5 +744,73 @@ describe("keep-running-jobs (experimental, off by default)", () => {
 
     await waitFor(() => expect(h.cancel).toHaveBeenCalledWith("req-1"));
     expect(screen.queryByRole("button", { name: /^AI debug —/ })).toBeNull();
+  });
+});
+
+describe("the follow-up composer", () => {
+  // The send control sits INSIDE the textarea and is icon-only, which removes
+  // the two things a test would normally hold it by: there is no visible label,
+  // and there is no separate box whose position could be asserted. What is left
+  // is the accessible name — so these pin that, and pin that the hover label
+  // says the same thing, because a silent disagreement between them is a
+  // control that reads one way to a screen reader and another to a mouse.
+  async function reachTheComposer() {
+    renderApp();
+    fireEvent.click(await findDebugIcon());
+    fireEvent.click(await screen.findByRole("button", { name: /Send to AI/i }));
+    await waitFor(() => expect(h.chat).toHaveBeenCalled());
+    emit("llm:chunk", { requestId: "req-1", delta: "What does the selector match?" });
+    emit("llm:done", { requestId: "req-1" });
+    return (await screen.findByRole("button", {
+      name: SEND_FOLLOW_UP_LABEL,
+    })) as HTMLButtonElement;
+  }
+
+  it("is an icon whose hover label and accessible name are the same string", async () => {
+    const send = await reachTheComposer();
+
+    // No text node of its own: the whole point of the change. `textContent`
+    // rather than a class assertion, because a stray label would be the actual
+    // regression and would survive any amount of correct styling.
+    expect(send.textContent?.trim()).toBe("");
+    expect(send.getAttribute("title")).toBe(SEND_FOLLOW_UP_LABEL);
+  });
+
+  it("stays disabled until there is something to send, then sends it", async () => {
+    const send = await reachTheComposer();
+    expect(send.disabled).toBe(true);
+
+    // Whitespace is not something to send. Without this the button enables on a
+    // stray newline and posts an empty follow-up.
+    const box = screen.getByPlaceholderText(/add details here and send a follow-up/i);
+    fireEvent.change(box, { target: { value: "   " } });
+    expect(send.disabled).toBe(true);
+
+    fireEvent.change(box, { target: { value: "It matches two rows." } });
+    expect(send.disabled).toBe(false);
+
+    h.chat.mockClear();
+    fireEvent.click(send);
+    await waitFor(() => expect(h.chat).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps the arrow cursor and the hover label while disabled", async () => {
+    // `pointer-events-none` would have been the shorter way to disable it, and
+    // it suppresses the title too — leaving the one state where the user needs
+    // to be told why it will not send as the one state that cannot say so.
+    const send = await reachTheComposer();
+    expect(send.disabled).toBe(true);
+    expect(send.className).toContain("disabled:cursor-default");
+    expect(send.className).not.toContain("pointer-events-none");
+  });
+
+  it("reserves the icon's column in the textarea", async () => {
+    await reachTheComposer();
+    // jsdom has no layout engine, so the overlap this prevents cannot be
+    // measured here — the padding class is the only available proxy. Worth
+    // asserting anyway: text sliding under the icon only appears once someone
+    // types a long enough line, so nothing else would notice it going missing.
+    const box = screen.getByPlaceholderText(/add details here and send a follow-up/i);
+    expect(box.className).toContain("pr-10");
   });
 });
