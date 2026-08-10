@@ -21,8 +21,9 @@ import { ChromeButton, Rail, RailEmpty, RailGroup, RailRow, SiteIcon } from "../
 import { api } from "../lib/api";
 import { aggregateStatus, type SessionLike } from "../lib/ai-debug-sessions";
 import { toneFor } from "../lib/ai-debug-status";
+import { verdictsByTest, type RunVerdictTone } from "../lib/run-verdict";
 import type { LlmProvider } from "../lib/llm-types";
-import type { RunRecord, TestRecord } from "../lib/recorder-types";
+import type { TestRecord } from "../lib/recorder-types";
 import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/duplicate-warnings";
 import { useAiDebug } from "./ai-debug-store";
@@ -240,17 +241,19 @@ function AiConnectionFooter() {
  *  minimized job stays findable from the LIST of tests, not just from inside
  *  the one test the user happens to have open. The dot is the latest run's
  *  verdict — the sidebar answers "which of my tests are broken?" at a glance
- *  instead of one detail-view visit per test. */
+ *  instead of one detail-view visit per test — on the five-way green→red scale
+ *  in lib/run-verdict.ts, so a three-browser batch that lost one browser reads
+ *  differently from one that lost all three. */
 function RowIndicators({
   sessions,
-  lastRun,
+  verdict,
 }: {
   sessions: SessionLike[];
-  lastRun: RunRecord | undefined;
+  verdict: RunVerdictTone | undefined;
 }) {
   const agg = aggregateStatus(sessions);
   const tone = agg === null ? null : toneFor(agg);
-  if (!tone && !lastRun) return null;
+  if (!tone && !verdict) return null;
   return (
     <span className="flex shrink-0 items-center gap-1.5">
       {tone ? (
@@ -260,14 +263,12 @@ function RowIndicators({
           className={`size-3.5 ${tone.className} ${tone.busy ? "animate-pulse" : ""}`}
         />
       ) : null}
-      {lastRun ? (
+      {verdict ? (
         <span
           role="img"
-          aria-label={lastRun.status === "passed" ? "Last run passed" : "Last run failed"}
-          title={lastRun.status === "passed" ? "Last run passed" : "Last run failed"}
-          className={`size-2 rounded-full ${
-            lastRun.status === "passed" ? "bg-support-green" : "bg-support-red"
-          }`}
+          aria-label={verdict.label}
+          title={verdict.label}
+          className={`size-2 rounded-full ${verdict.className}`}
         />
       ) : null}
     </span>
@@ -305,17 +306,15 @@ export function LibrarySidebar() {
     staleTime: Infinity,
   }).data?.available === true;
   // Shares the ["runs"] cache with Stats and the detail view, so the per-row
-  // verdict dots are usually free. One pass to keep the newest run per test —
-  // runs:list makes no ordering promise worth leaning on.
+  // verdict dots are usually free. The cache is invalidated by RecorderProvider
+  // when a run finishes — without that the dot here keeps showing the verdict
+  // the list had when the sidebar mounted, which is the exact failure of a
+  // re-run that fixed the test and left the dot red.
   const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
-  const lastRunByTest = React.useMemo(() => {
-    const m = new Map<string, RunRecord>();
-    for (const r of runsQuery.data ?? []) {
-      const prev = m.get(r.testId);
-      if (!prev || r.startedAt > prev.startedAt) m.set(r.testId, r);
-    }
-    return m;
-  }, [runsQuery.data]);
+  const verdictByTest = React.useMemo(
+    () => verdictsByTest(runsQuery.data ?? []),
+    [runsQuery.data],
+  );
   // AI-debug sessions grouped per test, for the row sparkle.
   const { sessions } = useAiDebug();
   const sessionsByTest = React.useMemo(() => {
@@ -476,7 +475,7 @@ export function LibrarySidebar() {
                   accessory={
                     <RowIndicators
                       sessions={sessionsByTest.get(t.id) ?? []}
-                      lastRun={lastRunByTest.get(t.id)}
+                      verdict={verdictByTest.get(t.id)}
                     />
                   }
                   onClick={() => navigate({ to: "/test/$id", params: { id: t.id } })}

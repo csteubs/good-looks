@@ -241,6 +241,36 @@ describe("LibrarySidebar — run verdict dots", () => {
     expect(screen.queryByLabelText("Last run passed")).toBeNull();
   });
 
+  it("blends the dot across a three-browser batch instead of flattening it", async () => {
+    // Two of three browsers passing is a different fact from all three
+    // failing, and the dot is the only place the difference is visible from
+    // the library. Both the CLASS and the label are pinned: jsdom has no
+    // cascade to ask, so the class is the colour, and the label is the part a
+    // screen reader gets.
+    runRecords = [
+      run({ id: "r-c", batchId: "b1", runBrowser: "chromium", status: "passed", startedAt: 10 }),
+      run({ id: "r-f", batchId: "b1", runBrowser: "firefox", status: "passed", startedAt: 11 }),
+      run({ id: "r-w", batchId: "b1", runBrowser: "webkit", status: "failed", startedAt: 12 }),
+    ];
+    renderSidebar();
+    await screen.findByText("Login");
+    const dot = await screen.findByLabelText("2 of 3 runs passed");
+    expect(dot.className).toContain("bg-support-yellow-orange");
+    expect(dot.className).not.toContain("bg-support-red");
+  });
+
+  it("marks a passing batch that leaned on Auto-Heal", async () => {
+    runRecords = [
+      run({ id: "r-c", batchId: "b1", status: "passed", startedAt: 10, healedSteps: 2 }),
+      run({ id: "r-f", batchId: "b1", status: "passed", startedAt: 11, healedSteps: 2 }),
+      run({ id: "r-w", batchId: "b1", status: "passed", startedAt: 12, healedSteps: 0 }),
+    ];
+    renderSidebar();
+    await screen.findByText("Login");
+    const dot = await screen.findByLabelText("All 3 runs passed — 4 steps auto-healed");
+    expect(dot.className).toContain("bg-support-green-yellow");
+  });
+
   it("shows no dot for a test that has never run", async () => {
     runRecords = [run({ id: "r-x", testId: "someone-else", startedAt: 50 })];
     renderSidebar();

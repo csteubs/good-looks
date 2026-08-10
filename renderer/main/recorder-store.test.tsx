@@ -287,6 +287,31 @@ describe("run output", () => {
     expect(text("run-running")).toBe("false");
     expect(text("run-code")).toBe("0");
   });
+
+  it("refetches the run history when the backend says it changed", () => {
+    // The bug this pins: a failing test re-run until it passed kept a RED dot
+    // in the sidebar. Nothing was broken about the run or the record — the
+    // ["runs"] cache the dot is drawn from simply had no reason to refetch, so
+    // it kept serving the list from when the window opened. The `runs:changed`
+    // push existed the whole time; its only subscribers were two ROUTE
+    // components, so on every other route nobody was listening. Entirely
+    // silent: the run panel right next to it showed the pass.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    render(
+      <QueryClientProvider client={qc}>
+        <RecorderProvider>
+          <Probe />
+        </RecorderProvider>
+      </QueryClientProvider>,
+    );
+    invalidate.mockClear();
+
+    emit("runs:changed", {});
+
+    const keys = invalidate.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+    expect(keys).toContain(JSON.stringify(["runs"]));
+  });
 });
 
 describe("replay console assembly", () => {
