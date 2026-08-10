@@ -734,10 +734,14 @@ the prompt is built from, with a drift test that fails if the builder attaches a
 payload the strip does not name. Sizes are characters, not tokens — a token count
 is a guess dressed as a measurement.
 
-**Not done:** the panel's own chrome is still SDK (buttons, the prompt preview,
-the diff card). That is a restyle of a 1,375-line file with no contract riding on
-it, and it is the safe half to leave — the risky half was the colour mapping, and
-that is landed and pinned.
+✅ **And the panel's chrome, in a follow-up the same day.** Ten icon-only SDK
+buttons became `.gl-icon-btn` — the SDK was spending two different greys
+(`muted`/`transparent`) on one job. "Send to AI" and "Send this data" take
+`tone="ai"`, the holo border, because AI is not an outcome and because that is
+the button which actually sends the payload the strip above it just itemised.
+The prompt preview and code blocks became `.gl-console` on `--gl-black`: a
+prompt is evidence of what was sent, the same category as run output and a
+captured frame, and it should not look like our chrome.
 
 ---
 
