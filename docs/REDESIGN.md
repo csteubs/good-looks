@@ -1,12 +1,10 @@
 # The indie redesign — an implementation plan
 
-**Status: Phase A is done.** A1 (browser preview), A2 (tokens, fonts,
-atmosphere), A3 (the fifteen primitives), A4 (the shell) and A5 (the SDK off the
-shared components) are all landed — see the ✅ marks in §4 and §8.3. **Phase B is
-next and nothing in it exists yet.** A4 is where the foundation stopped being
-unconsumed: the app's frame — top strip, rail, atmosphere — is the redesign, and
-so are the five components every screen embeds. The nine screens themselves are
-still the old chrome. Where the rest of this says "would", it means would.
+**Status: Phase A is done; Phase B has started.** A1–A5 are landed, and **B1
+(Home) is the first reskinned screen** — see the ✅ marks in §4, §5 and §8.3. The
+app's frame is the redesign, so are the five components every screen embeds, and
+so is Home. **Eight screens still carry the old chrome** (B2–B9), one PR each.
+Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -406,7 +404,7 @@ answer, updated only where a query genuinely changed.
 Ordered by risk-adjusted value: the screens with the most existing test coverage
 and the least new layout go first, so the pattern is proven before the hard ones.
 
-### B1. Home — `home-view.tsx`
+### B1. Home — `home-view.tsx` ✅ **Done, 2026-08-10**
 
 Smallest screen, and the `BlackHole` loader already exists in the tree.
 
@@ -417,8 +415,26 @@ Smallest screen, and the `BlackHole` loader already exists in the tree.
 | — | Three stat readouts (tests / green last 7d / heals to review) |
 | Buttons | `Btn go` "Run a test", `Btn ghost` "Generate from prompt" |
 
-New: the texture plate, the stat row (data already available from existing
-queries), the wordmark treatment.
+Landed with `renderer/theme/screens.css` (the fourth stylesheet — what one
+screen IS) and four decisions worth carrying into B2–B9:
+
+- **A number nothing supports renders as `—`, never `0`.** "0% green" with no
+  runs in the window is a claim about a week that did not happen. Both
+  directions are pinned, because over-correcting hides a suite that really is
+  all red.
+- **The readouts share the app's own query keys**, so they cost nothing and can
+  never disagree with the screen you click through to.
+- **`Btn go` reads "Record a test"**, not the mockup's "Run a test": nothing is
+  selected on Home, so "run" has no object.
+- **`echo` is ghosting in one ink**, not red/cyan fringing — that would spend
+  two status hues on decoration at the largest type size in the product. Drawn
+  as pseudo-elements so the wordmark is announced once.
+
+**The texture plate shipped without its art.** `acid-25.jpg` is still not in the
+repo (open question 6); the radial falloff and an ember wash carry the plate,
+and the photograph drops into one `background-image` when it arrives.
+`--gl-ember` is its own token and deliberately not `--gl-amber` — a texture is
+not a status. See DECISIONS 2026-08-10.
 
 ### B2. Heals — `heals-view.tsx` + `heals-panel.tsx`
 
@@ -833,8 +849,9 @@ Not blocking, but each will need an answer before the PR it affects.
    `renderer/theme/` and the undocumented `renderer/trainer/` were added, and the
    test counts refreshed.
 6. **The `ember` texture plate needs source art** (§3.5). `acid-25.jpg` is in the
-   mockup zip, which is not checked in. Blocks B1's full-bleed plate, nothing
-   earlier — the three global overlay layers do not depend on it.
+   mockup zip, which is not checked in. **No longer blocking**: B1 shipped the
+   plate without it — the radial falloff plus an ember wash — and the photograph
+   is now a one-rule addition rather than a prerequisite. Still worth supplying.
 
 ---
 

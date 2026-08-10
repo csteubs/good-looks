@@ -113,6 +113,14 @@
   --gl-status-w: 78px;
   --gl-z-atmo: 600;
 
+  /* The texture's warmth, and DELIBERATELY NOT `--gl-amber`.
+     The design fixes `texture: ember` — "warm orange suspended in black" — and
+     a wash of the amber token behind a screen would be the largest coloured
+     surface in the app claiming "flaky / healed / caution". A texture is not a
+     status, so it gets a colour that cannot be mistaken for one. Used at single
+     digit alpha, behind everything. */
+  --gl-ember: #d1541a;
+
   /* The top strip's height, and the rail header's — they are the same band
      across the top of the window, drawn as two elements on either side of the
      rail's hairline, and they read as one only while they agree. Written once

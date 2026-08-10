@@ -1,0 +1,233 @@
+/*
+ * The screens' own chrome.  docs/REDESIGN.md §5 (Phase B).
+ *
+ * THE FOURTH AND LAST OF THE THEME'S STYLESHEETS, and the split stays the same
+ * one: by scope.
+ *
+ *   primitives.css  what a screen is BUILT OUT OF   (§3.3, A3)
+ *   shell.css       what a screen SITS INSIDE       (A4)
+ *   shared.css      what a screen EMBEDS            (A5)
+ *   screens.css     what one screen IS              (Phase B)
+ *
+ * It grows one section per screen as Phase B lands, and each section is only
+ * ever read by that screen. Rules that turn out to be wanted by a second screen
+ * belong in `shared.css` instead — that move is the signal a component is being
+ * born, and doing it late is much cheaper than inventing a component early.
+ *
+ * Same house rules as the other three: constants are named classes and only
+ * per-instance derived values go inline, zero border radius, a hairline is the
+ * only container.
+ */
+
+/* ── Home (B1) ────────────────────────────────────────────────────────── */
+
+.gl-home {
+  position: relative;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/*
+ * The plate: a full-bleed ground with the light falling off towards the edges.
+ *
+ * THE PHOTOGRAPHIC TEXTURE IS NOT IN THIS REPO. The design fixes `texture` at
+ * `ember` — "warm orange suspended in black" — and the plate behind it is
+ * `acid-25.jpg`, which lives in the mockup zip and has never been checked in
+ * (REDESIGN §3.5, and open question 6, which names this as the one thing
+ * blocking B1). What is here is the part that does not need it: the radial
+ * falloff, which is the plate's actual job, and an ember wash for the warmth.
+ * When the art arrives it is one `background-image` on this rule, and the two
+ * gradients stay underneath it.
+ *
+ * `--gl-ember` IS NOT `--gl-amber`, and the distinction is load-bearing rather
+ * than pedantic. Amber means flaky / healed / caution; a wash of it behind the
+ * home screen would be the largest coloured surface in the app claiming a
+ * status, on the one screen with no status vocabulary to interpret it. The
+ * texture gets its own token so that reading is impossible.
+ *
+ * `pointer-events: none` because it covers the whole pane and the column above
+ * it is where every control lives — a decorative ground that eats clicks is the
+ * bug `check:clickable-chrome` exists for, one layer down.
+ */
+.gl-home-plate {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(80% 55% at 50% 34%, color-mix(in srgb, var(--gl-ember) 9%, transparent) 0%, transparent 68%),
+    radial-gradient(120% 85% at 50% 38%, transparent 30%, rgba(0, 0, 0, 0.62) 100%);
+}
+
+/* `min-height: 100%` is a FLOOR, not a cap, and that is what keeps
+   `justify-content: center` honest: short content centres in a column exactly
+   the pane's height, and taller content grows past it, leaves `center` no free
+   space to distribute, and starts at the top and scrolls instead of being
+   centred half off-screen. The pane this replaced shipped `overflow: hidden`
+   and cut its own last line off at a 720px window. */
+.gl-home-col {
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  padding: 40px 24px;
+  text-align: center;
+}
+
+/* ── The wordmark, and the glitch ─────────────────────────────────────── */
+
+.gl-home-mark {
+  position: relative;
+  margin: 0;
+  font-family: var(--gl-mono);
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  /* The tracking adds a full space of air after the last letter, which pushes
+     the mark visually off-centre to the left. Pulling it back by the same
+     amount is what makes it look centred rather than measure centred. */
+  text-indent: 0.2em;
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+  line-height: 1.1;
+}
+
+/*
+ * `echo` — the glitch treatment, fixed as the design's default (REDESIGN §0).
+ *
+ * GHOSTING, NOT CHROMATIC ABERRATION, and the name is the reason: an echo is
+ * the same signal arriving twice. The offset copies are drawn in the SAME ink
+ * at low alpha, because the obvious alternative — red and cyan fringes — would
+ * spend two status hues on decoration, on the app's own name, at the largest
+ * type size in the product. Colour means outcome here, and the wordmark reports
+ * nothing.
+ *
+ * `content: attr(data-text)` rather than duplicated markup: a second and third
+ * copy of "GOOD LOOKS!" in the DOM is read out three times by a screen reader,
+ * and pseudo-element content is not.
+ */
+:root[data-glitch="echo"] .gl-home-mark::before,
+:root[data-glitch="echo"] .gl-home-mark::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  text-indent: inherit;
+  pointer-events: none;
+}
+
+:root[data-glitch="echo"] .gl-home-mark::before {
+  color: rgba(233, 237, 238, 0.22);
+  transform: translate(-1.5px, 0);
+  animation: gl-echo-a 5.5s steps(1, end) infinite;
+}
+
+:root[data-glitch="echo"] .gl-home-mark::after {
+  color: rgba(233, 237, 238, 0.14);
+  transform: translate(1.5px, 0);
+  animation: gl-echo-b 5.5s steps(1, end) infinite;
+}
+
+/* Both ghosts sit still for most of the cycle and jump for a sixth of a second.
+   A continuously-moving wordmark is a thing you have to look away from; one
+   that twitches every five seconds is a thing you notice once. `steps(1, end)`
+   rather than an ease, because an echo snaps — an interpolated one reads as a
+   drop shadow sliding around. */
+@keyframes gl-echo-a {
+  0%,
+  92% {
+    transform: translate(-1.5px, 0);
+  }
+  94% {
+    transform: translate(-4px, 1px);
+  }
+  96% {
+    transform: translate(-1px, -1px);
+  }
+  98%,
+  100% {
+    transform: translate(-1.5px, 0);
+  }
+}
+
+@keyframes gl-echo-b {
+  0%,
+  92% {
+    transform: translate(1.5px, 0);
+  }
+  94% {
+    transform: translate(4px, -1px);
+  }
+  96% {
+    transform: translate(1px, 1px);
+  }
+  98%,
+  100% {
+    transform: translate(1.5px, 0);
+  }
+}
+
+.gl-home-copy {
+  max-width: 44ch;
+  margin: 0;
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--gl-tx-2);
+}
+
+/* ── The three readouts ───────────────────────────────────────────────── */
+
+/* One hairline box split into three, rather than three boxes: the numbers are
+   read across, and three separate frames make them look like three unrelated
+   facts. */
+.gl-home-stats {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+}
+
+.gl-home-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 18px;
+  min-width: 104px;
+}
+
+.gl-home-stat + .gl-home-stat {
+  border-inline-start: 1px solid var(--gl-line-2);
+}
+
+/* Tabular, because these three sit in a row and a proportional digit makes the
+   column edges disagree with each other. */
+.gl-home-stat-value {
+  font-family: var(--gl-mono);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--gl-tx-1);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.gl-home-stat-label {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
