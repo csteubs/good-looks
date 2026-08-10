@@ -223,3 +223,116 @@ describe("preview bridge behaviour", () => {
     expect(byPayload?.id).toBe(first.id);
   });
 });
+
+describe("push events", () => {
+  // `on` WAS A NO-OP, and that quietly bounded what the preview could show to
+  // whatever a view renders before anything happens to it. Everything in this
+  // app with a *result* arrives by push, so "Run test" started a run that could
+  // never finish and the run panel was only reachable in its Running state.
+  type Ipc = {
+    invoke<T>(c: string, p?: unknown): Promise<T>;
+    on(c: string, fn: (...args: unknown[]) => void): () => void;
+  };
+  const ipc = () =>
+    (window as unknown as { glazeAPI: { glaze: { ipc: Ipc } } }).glazeAPI.glaze.ipc;
+
+  /** Collect every payload pushed on `channel`, unwrapped the way api.ts does. */
+  function collect(channel: string): unknown[] {
+    const seen: unknown[] = [];
+    // `args[1]`, exactly as `api.on` reads it — the real preload hands
+    // Electron's IpcRendererEvent first. A bus that emitted the payload alone
+    // would call every subscriber with `undefined`: nothing renders, nothing
+    // throws, and no miss is recorded. That is the bug this line pins, and it
+    // is the one the first version of the bus actually had.
+    ipc().on(channel, (...args: unknown[]) => seen.push(args[1]));
+    return seen;
+  }
+
+  it("delivers a payload the way api.on unwraps it", async () => {
+    installPreviewBridge();
+    const out = collect("runner:output");
+    await ipc().invoke("runner:run", { id: "t-login", headed: false });
+    expect(out.length).toBeGreaterThan(0);
+    expect(out[0]).toMatchObject({ runId: "t-login" });
+  });
+
+  it("stops delivering after unsubscribe", async () => {
+    installPreviewBridge();
+    const seen: unknown[] = [];
+    const off = ipc().on("runner:output", (...args: unknown[]) => seen.push(args[1]));
+    off();
+    await ipc().invoke("runner:run", { id: "t-login", headed: false });
+    expect(seen).toHaveLength(0);
+  });
+
+  it("keys the run by the TEST id api.ts sends", async () => {
+    // api.ts sends `{ id }`, not `{ testId }`, and the store keys its run map
+    // by the test id. Read the wrong key and the panel watches a run nobody is
+    // reporting on — which renders as a run that never finishes.
+    installPreviewBridge();
+    const { runId } = await ipc().invoke<{ runId: string }>("runner:run", {
+      id: "t-login",
+      headed: false,
+    });
+    expect(runId).toBe("t-login");
+  });
+});
+
+describe("the scripted run", () => {
+  type Ipc = {
+    invoke<T>(c: string, p?: unknown): Promise<T>;
+    on(c: string, fn: (...args: unknown[]) => void): () => void;
+  };
+  const ipc = () =>
+    (window as unknown as { glazeAPI: { glaze: { ipc: Ipc } } }).glazeAPI.glaze.ipc;
+
+  /** Run a fixture test to completion, collecting every step event and the
+   *  exit code. The script is timer-driven so the steps arrive in order rather
+   *  than all at once — which is the half of the screen that was already
+   *  reachable without it. */
+  async function runToCompletion(id: string) {
+    const steps: { index: number; status: string; ok: boolean }[] = [];
+    let code: number | null = null;
+    ipc().on("runner:step", (...a: unknown[]) => steps.push(a[1] as never));
+    const done = new Promise<void>((resolve) => {
+      ipc().on("runner:done", (...a: unknown[]) => {
+        code = (a[1] as { code: number }).code;
+        resolve();
+      });
+    });
+    await ipc().invoke("runner:run", { id, headed: false });
+    await done;
+    return { steps, code };
+  }
+
+  it("finishes, rather than running forever", async () => {
+    installPreviewBridge();
+    const { code } = await runToCompletion("t-login");
+    expect(code).not.toBeNull();
+  });
+
+  it("fails the test whose fixture history failed", async () => {
+    // THE OUTCOME COMES FROM THE FIXTURE, not a coin flip. That is what makes
+    // `?test=t-login` a stable address for "show me the failed path" — a
+    // random outcome would mean a screenshot nobody can ask for twice.
+    installPreviewBridge();
+    expect((await runToCompletion("t-login")).code).toBe(1);
+  });
+
+  it("passes the test whose fixture history passed", async () => {
+    installPreviewBridge();
+    expect((await runToCompletion("t-checkout")).code).toBe(0);
+  });
+
+  it("leaves the steps after a failure unreported, as Playwright would", async () => {
+    // Not marked passed, not marked failed — never attempted. A run that
+    // greened everything after the failing step would be claiming those steps
+    // ran, which is the one thing a step list must not lie about.
+    installPreviewBridge();
+    const { steps } = await runToCompletion("t-login");
+    const failed = steps.filter((s) => s.status === "end" && !s.ok);
+    expect(failed).toHaveLength(1);
+    const lastReported = Math.max(...steps.map((s) => s.index));
+    expect(lastReported).toBe(failed[0].index);
+  });
+});

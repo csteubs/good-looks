@@ -19,10 +19,11 @@
 // evidence behind one would be untestable, and this is the one part of the
 // feature where being wrong is quiet. It is a plain disclosure instead.
 
-import { Text } from "@ui";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { Verdict } from "../theme";
+import type { ToneName } from "../theme";
 import { api } from "../lib/api";
 import type { TriageResult, TriageVerdict } from "../../shared/triage.mjs";
 
@@ -38,11 +39,26 @@ export const VERDICT_LABEL: Record<TriageVerdict, string> = {
   unknown: "Not enough evidence",
 };
 
-const VERDICT_CLASS: Record<TriageVerdict, string> = {
-  site: "text-warning",
-  runner: "text-accent",
-  mixed: "text-secondary",
-  unknown: "text-tertiary",
+/**
+ * The dot beside each verdict, and TWO OF THE FOUR HAVE NO TONE AT ALL.
+ *
+ * `site` is amber and `runner` is red because those are calls: caution, go and
+ * look at the site; or the failure is in the test you wrote. But "evidence both
+ * ways" and "not enough evidence" are the classifier declining to call it, and
+ * painting either one a colour would have this component assert something the
+ * reasoning behind it refused to. `Verdict` draws a neutral dot for `undefined`
+ * — the same contract `StatusChip` uses for a state that is real but is not a
+ * result.
+ *
+ * Not phos/red for site/runner as "their fault / our fault" either: the run has
+ * already failed, and a green dot anywhere on a failed run's panel reads as a
+ * pass no matter what the sentence next to it says.
+ */
+const VERDICT_TONE: Record<TriageVerdict, ToneName | undefined> = {
+  site: "amber",
+  runner: "red",
+  mixed: undefined,
+  unknown: undefined,
 };
 
 /** Shown next to the verdict. Rounded to whole percent — the underlying number
@@ -87,57 +103,54 @@ export function RunTriage({ runId }: { runId?: string }) {
   const more = result.evidence.length + result.limits.length - (strongest ? 1 : 0);
 
   return (
-    <div className="border-b border-separator px-4 py-2">
-      <div className="flex items-center gap-2">
-        <Text variant="small-strong" className={VERDICT_CLASS[result.verdict]}>
-          {VERDICT_LABEL[result.verdict]}
-        </Text>
+    <div className="gl-triage">
+      {/* The `Verdict` primitive, which is exactly this shape: a tone dot, a
+          claim in a sentence, and the evidence under it. Sans and prose rather
+          than the design's usual mono uppercase — .12em tracking on a full
+          clause is genuinely slower to read, and this is the line on the screen
+          most likely to be READ rather than scanned. */}
+      <Verdict
+        tone={VERDICT_TONE[result.verdict]}
+        detail={strongest ? strongest.detail : undefined}
+      >
+        {VERDICT_LABEL[result.verdict]}
         {result.confidence > 0 ? (
-          <Text variant="small" className="text-tertiary">
-            {confidenceLabel(result.confidence)}
-          </Text>
+          <span className="gl-triage-confidence">{confidenceLabel(result.confidence)}</span>
         ) : null}
-        {more > 0 ? (
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-            className="text-small flex items-center gap-1 text-secondary hover:text-primary"
-          >
-            {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-            {open ? "Less" : `${more} more`}
-          </button>
-        ) : null}
-      </div>
+      </Verdict>
 
-      {strongest ? (
-        <Text variant="small" className="text-secondary">
-          {strongest.detail}
-        </Text>
+      {more > 0 ? (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="gl-triage-more"
+        >
+          {open ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+          {open ? "Less" : `${more} more`}
+        </button>
       ) : null}
 
       {open ? (
-        <div className="mt-1 flex flex-col gap-1">
+        <div className="gl-triage-rest">
           {result.evidence.slice(1).map((e) => (
-            <Text key={e.signal} variant="small" className="text-secondary">
+            <p key={e.signal} className="gl-triage-line">
               {e.detail}
-            </Text>
+            </p>
           ))}
           {/* Limits are listed with the evidence, not below it or behind a
               second control. What the capture missed is the reason a verdict
               is soft, and separating the two invites the verdict to be read
               without it. */}
           {result.limits.map((l) => (
-            <Text key={l} variant="small" className="text-tertiary">
+            <p key={l} className="gl-triage-line gl-triage-limit">
               {l}
-            </Text>
+            </p>
           ))}
         </div>
       ) : null}
 
-      <Text variant="small" className="mt-1 block text-primary">
-        {result.suggestedNext}
-      </Text>
+      <p className="gl-triage-next">{result.suggestedNext}</p>
     </div>
   );
 }

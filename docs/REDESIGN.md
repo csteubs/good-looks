@@ -1,11 +1,12 @@
 # The indie redesign — an implementation plan
 
 **Status: Phase A is done; Phase B is in progress.** A1–A5 are landed, and so
-are **B1 (Home)**, **B2 (Heals)**, **B3 (Batch)** and **B4 (Settings)** — see the
-✅ marks in §4, §5 and §8.3. The app's frame is the redesign, so are the five
-components every screen embeds, and so are four of the nine screens. **Five still
-carry the old chrome** (B5–B9), one PR each. Where the rest of this says "would",
-it means would.
+are **B1 (Home)**, **B2 (Heals)**, **B3 (Batch)**, **B4 (Settings)** and **B5a
+(Test detail, parity)** — see the ✅ marks in §4, §5 and §8.3. The app's frame is
+the redesign, so are the five components every screen embeds, and so are five of
+the nine screens. **Four still carry the old chrome** (B6–B9), one PR each, plus
+**B5b** (the five non-failure run-state summaries, Phase C §6.1). Where the rest
+of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -534,7 +535,7 @@ recognition, so `SettingsNav` is built from `Rail`/`RailGroup`/`RailRow`, the
 same components the main window's library uses, with the search field in the
 rail's pinned `search` slot.
 
-### B5. Test detail — `test-detail-view.tsx` + `step-row.tsx` + `run-output.tsx` + `script-view.tsx` + `run-triage.tsx`
+### B5. Test detail — `test-detail-view.tsx` + `step-row.tsx` + `run-output.tsx` + `script-view.tsx` + `run-triage.tsx` — **B5a done, 2026-08-10**
 
 823 lines plus satellites. The most-visited screen and the biggest reskin.
 
@@ -558,6 +559,27 @@ Only `failed` gets the diagnosis panel.
 This is more than a reskin and it is why B5 is late in the order. Split it:
 **B5a** = reskin the failed/console path to parity; **B5b** = the other five
 state summaries (Phase C, §6.1).
+
+**B5a shipped 2026-08-10.** ✅ The step list's status is an inset rail rather
+than a tinted row, and selection went neutral with it. ✅ The verdict is a
+`StatusChip`, with `running` on the holo treatment rather than a hue. ✅ The raw
+log is a full-black console, and it now EXPANDS to take the pane — a drawer, not
+a modal, because the verdict, the triage line and the log are one thought. ✅ The
+triage line is the `Verdict` primitive, whose `tone` became optional so that
+"evidence both ways" and "not enough evidence" can stay colourless. Toolbar,
+tabs, checkboxes and the script bar are on the theme layer.
+
+Two items in the table above are deliberately NOT in B5a, because neither is
+parity: the **Console/Timeline layout switch** with its three breakpoints, and
+**`BrowserDeck`** (the engine picker as a fanning card stack). The screenshot
+`CRT` bezel is also still to come — the failed/console path does not show one,
+and Visual (§B8) is where captured frames actually live.
+
+One thing B5a needed that the plan did not anticipate: **the browser preview
+could not finish a run**, so the failed path — this section's entire subject —
+had no way to be looked at outside a packaged build on a Mac. The preview bridge
+gained a push bus and a scripted, fixture-determined run; `?test=t-login` is now
+a stable address for the failed console path.
 
 ### B6. Recorder — `recording-view.tsx` + `cookies-panel.tsx` + `add-step-dialog.tsx`
 
