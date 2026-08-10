@@ -5,9 +5,6 @@
 // ourselves is the host handler set backing window.glazeAPI (dialogs, shell,
 // clipboard, theme, native menus) — see shell/host-handlers.ts.
 
-import * as fs from "fs";
-import * as path from "path";
-import { fileURLToPath } from "url";
 
 import { installUserDataPath } from "./shell/user-data.js";
 import {
@@ -45,10 +42,6 @@ import { setPrunePreflight } from "./services/artifact-store.js";
 // artifacts. Imports are hoisted, so being "first" means first in the body, not
 // first in the import list. See shell/user-data.ts for what it decides and why.
 installUserDataPath();
-
-// Get directory paths
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 // ── Custom scheme ─────────────────────────────────────────────────────
 // Must run at module scope, before app.whenReady(): Electron reads the
@@ -105,10 +98,6 @@ async function createMainWindow() {
     return;
   }
 
-  // Read display name from package.json
-  // In production: __dirname = build/main, package.json is at ../../package.json
-  const packageJsonPath = path.join(__dirname, "..", "..", "package.json");
-
   // 960, not 390. The old minimum was a promise the layout could not keep: the
   // widest toolbar (test detail) needs 688px beside a 240px sidebar, so below
   // ~928px the run controls — including `Run test` itself — left the viewport
@@ -124,16 +113,15 @@ async function createMainWindow() {
   const minWindowHeight = 456;
   const windowWidth = 1000;
   const windowHeight = 700;
-  let windowTitle = "Glaze App";
 
-  try {
-    if (fs.existsSync(packageJsonPath)) {
-      const packageJson = JSON.parse(await fs.promises.readFile(packageJsonPath, "utf-8"));
-      windowTitle = packageJson.productName || packageJson.appConfig?.displayName || windowTitle;
-    }
-  } catch {
-    // Use defaults
-  }
+  // No title. The app's name is already in the menu bar and the Dock, and the
+  // window's own chrome draws the view it is showing — a title bar repeating
+  // "Good Looks!" above that is noise.
+  //
+  // Setting it to "" is not enough on its own: a window with an empty title
+  // adopts its page's <title>, so main-window.html carries an empty one too.
+  // Both halves are needed, which is what `check:app-identity` pins.
+  const windowTitle = "";
 
   // Create main window
   const browserWindowStartTime = Date.now();
@@ -159,6 +147,12 @@ async function createMainWindow() {
     timestamp: new Date().toISOString(),
     duration_ms: browserWindowEndTime - browserWindowStartTime,
   });
+
+  // Keep the window untitled. Chromium pushes the document's title up to the
+  // window whenever it changes, so an empty `title` above only survives until
+  // some page or library sets `document.title` — refusing the event is what
+  // makes "no title" a property of the window rather than of one HTML file.
+  mainWindow.on("page-title-updated", (event) => event.preventDefault());
 
   forwardRendererConsole(mainWindow, "main");
 
