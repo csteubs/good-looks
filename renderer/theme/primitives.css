@@ -149,6 +149,18 @@
 .gl-status-chip {
   width: var(--gl-status-w);
   height: 20px;
+  /* A FLEX PARENT MAY NOT COMPRESS IT, and this line is the whole reason the
+     width above is a contract rather than a suggestion. A flex item's default
+     `flex-shrink: 1` means the chip gives up width whenever its row runs out —
+     so a status cell that also carries a "healed" chip squeezes the status one
+     to whatever is left, `overflow: hidden` eats the word, and the row reports
+     the heal while silently dropping the outcome. That is not a hypothetical:
+     it is what the run-history table did the first time B7 rendered.
+
+     `flex-shrink`, not `flex: 0 0 <width>`. The shorthand would put the width
+     in a second place, which is the drift `check:status-width` exists to
+     prevent — there must stay exactly one declaration of how wide this is. */
+  flex-shrink: 0;
   display: grid;
   place-items: center;
   border: 1px solid var(--gl-line);

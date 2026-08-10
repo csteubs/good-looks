@@ -18,13 +18,14 @@
 // decoration.
 
 import * as React from "react";
-import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
+import { useNavigate, useParams, useRouter, useRouterState } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { PanelLeft, Settings } from "lucide-react";
+import { ChevronLeft, ChevronRight, PanelLeft, Settings } from "lucide-react";
 import { useSplitView } from "@ui";
 
 import { ChromeButton, TopStrip, type Crumb } from "../theme";
 import { api } from "../lib/api";
+import { categoryMeta, facetLabel } from "../lib/stats-categories";
 
 /** Route path → what that screen is called. The router's own `staticData.title`
  *  is the same string, but reading it here would mean matching on the route
@@ -66,6 +67,82 @@ function RailHandle(): React.ReactElement {
   );
 }
 
+/**
+ * Back and forward, over the router's own history.
+ *
+ * THE APP HAD NEITHER UNTIL THE STATS DRILL NEEDED THEM, and the reason is
+ * worth writing down because it is not obvious: the router runs on
+ * `createMemoryHistory()`, so there is no browser history behind it and the
+ * window's own navigation gestures move nothing. Every screen was one level
+ * deep, the rail selected among them, and "back" never meant anything — so it
+ * genuinely was not missing. A drill-down is the first thing in the app with
+ * somewhere to go back TO.
+ *
+ * BACK IS NOT THE BREADCRUMB. The trail goes UP — to the parent of what is on
+ * screen — and back returns to where you came FROM. They coincide while you are
+ * descending and stop coinciding the moment you leave: drill to a stability
+ * verdict, open the failing test, and "up" is Home while "back" is the verdict
+ * you were reading. That case is exactly why the plan chose real routes.
+ *
+ * FORWARD IS OFFERED BECAUSE IT CAN BE ANSWERED HONESTLY. `canGoBack()` is part
+ * of the history API and there is no `canGoForward()`, which nearly made this a
+ * back-only control — a permanently enabled forward button that sometimes does
+ * nothing is the "affordance that answers with silence" `top-strip.tsx` argues
+ * against. But memory history stamps `__TSR_index` into each entry's state, so
+ * "is there anything ahead of me" is `index < length - 1` and the button can be
+ * disabled truthfully.
+ */
+function HistoryNav(): React.ReactElement {
+  const router = useRouter();
+  // Subscribing to the location is what re-renders this when history moves;
+  // reading `router.history` alone would leave both buttons frozen in whatever
+  // state they had at mount.
+  const index = useRouterState({
+    select: (s) => (s.location.state as { __TSR_index?: number })?.__TSR_index ?? 0,
+  });
+  const canBack = router.history.canGoBack();
+  const canForward = index < router.history.length - 1;
+
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey && !e.ctrlKey) return;
+      // Never steal a keystroke from a field. The log search and every inline
+      // editor in the app are plain inputs, and `[` is a character.
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || el?.isContentEditable) return;
+      if (e.key === "[") {
+        e.preventDefault();
+        if (router.history.canGoBack()) router.history.back();
+      } else if (e.key === "]") {
+        e.preventDefault();
+        router.history.forward();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [router]);
+
+  return (
+    <>
+      <ChromeButton
+        label="Back"
+        disabled={!canBack}
+        onClick={() => router.history.back()}
+      >
+        <ChevronLeft aria-hidden="true" />
+      </ChromeButton>
+      <ChromeButton
+        label="Forward"
+        disabled={!canForward}
+        onClick={() => router.history.forward()}
+      >
+        <ChevronRight aria-hidden="true" />
+      </ChromeButton>
+    </>
+  );
+}
+
 export interface AppStripProps {
   /** True while the trainer has replaced the outlet — see the header. */
   recording?: boolean;
@@ -100,14 +177,51 @@ export function AppStrip({ recording = false }: AppStripProps): React.ReactEleme
       // what it is until the name arrives.
       return [home, { label: testName ?? "Test" }];
     }
+
+    // Stats drills. THIS IS WHY THE BOARD IS ROUTED RATHER THAN HELD IN STATE —
+    // the trail is the app's existing "where you are" surface, and every level
+    // above the current one is a real navigation back to it.
+    //
+    // The category is looked up in the registry rather than title-cased from
+    // the param: a URL can say `/stats/nonsense`, and a breadcrumb that
+    // confidently rendered "Nonsense" would be naming a screen that does not
+    // exist. An unknown one gets no crumb of its own, and the view below says
+    // what happened.
+    const stats = /^\/stats\/([^/]+)(?:\/([^/]+))?$/.exec(pathname);
+    if (stats) {
+      const toStats: Crumb = { label: "Stats", onClick: () => navigate({ to: "/stats" }) };
+      const meta = categoryMeta(stats[1]);
+      if (!meta) return [home, toStats];
+      const facet = stats[2];
+      if (facet === undefined) return [home, toStats, { label: meta.label }];
+      return [
+        home,
+        toStats,
+        {
+          label: meta.label,
+          onClick: () =>
+            navigate({ to: "/stats/$category", params: { category: meta.id } }),
+        },
+        // Named the way the app names it, not the way the route spells it —
+        // "Broke recently", never "changed-since". Decoded first, because a
+        // param arrives percent-encoded.
+        { label: facetLabel(meta.id, decodeURIComponent(facet)) },
+      ];
+    }
+
     const label = VIEW_LABEL[pathname];
     return label === undefined ? [home] : [home, { label }];
-  }, [recording, pathname, params.id, testName, home]);
+  }, [recording, pathname, params.id, testName, home, navigate]);
 
   return (
     <TopStrip
       crumbs={crumbs}
-      leading={<RailHandle />}
+      leading={
+        <>
+          <RailHandle />
+          <HistoryNav />
+        </>
+      }
       // `command` (⌘K, REDESIGN §6.7) and `ticker` (§6.8) are left unpassed.
       // See the note in top-strip.tsx: an affordance for a feature that does
       // not exist teaches a shortcut that answers with silence.

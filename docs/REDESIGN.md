@@ -1,12 +1,12 @@
 # The indie redesign — an implementation plan
 
 **Status: Phase A is done; Phase B is in progress.** A1–A5 are landed, and so
-are **B1 (Home)**, **B2 (Heals)**, **B3 (Batch)**, **B4 (Settings)** and **B5a
-(Test detail, parity)** — see the ✅ marks in §4, §5 and §8.3. The app's frame is
-the redesign, so are the five components every screen embeds, and so are five of
-the nine screens. **Four still carry the old chrome** (B6–B9), one PR each, plus
-**B5b** (the five non-failure run-state summaries, Phase C §6.1). Where the rest
-of this says "would", it means would.
+are **B1 (Home)**, **B2 (Heals)**, **B3 (Batch)**, **B4 (Settings)**, **B5a
+(Test detail, parity)** and **B7 (Stats)** — see the ✅ marks in §4, §5 and §8.3.
+The app's frame is the redesign, so are the five components every screen embeds,
+and so are six of the nine screens. **Three still carry the old chrome** (B6,
+B8, B9), one PR each, plus **B5b** (the five non-failure run-state summaries,
+Phase C §6.1). Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -599,6 +599,20 @@ modal. Worth doing, but it is a behaviour change — keep it in Phase C (§6.2) 
 reskin the existing dialog in B6.
 
 ### B7. Stats — `stats-view.tsx` + `flake-panel.tsx` + `suite-cost-panel.tsx` + `step-health-panel.tsx` + `divergence-panel.tsx`
+
+> **The reskin is done, 2026-08-10.** All five files are on the theme layer, with
+> a Stats section in `renderer/theme/screens.css`. Every existing test survived; two queries changed, none were
+> deleted. The reskin also found and closed a hole in `check:status-width`: a
+> width a flex row can take back is not a fixed width, and the run table's status
+> cell was squeezing the chip until the row reported a heal and dropped the
+> outcome.
+>
+> **Two things in this section are NOT done.** The page-level scope + range is
+> deferred — it cannot be honest until the flake and metrics handlers take a time
+> window, or it scopes half the page and misreports the other half (DECISIONS).
+> And `docs/plans/stats-categories.md` supersedes the "one page, three modes"
+> shape below: the board of categories replaces it, and Cost and Report become
+> two more categories rather than two more modes.
 
 975 lines plus five panels. Everything the current view has is in the redesign's
 `health` mode: chart, KPI counts, capture overhead, stability, log search, run

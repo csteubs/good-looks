@@ -8,9 +8,11 @@
 // job is to say WHICH, in words, before it shows any number.
 
 import * as React from "react";
-import { Badge, Button, Text, Tooltip, TooltipContent, TooltipTrigger } from "@ui";
-import { Activity, ChevronDown, ChevronRight, Wand2 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui";
+import { ChevronDown, ChevronRight, Wand2 } from "lucide-react";
 
+import { Btn, Panel, TONE, toneSurface } from "../theme";
+import type { ToneName } from "../theme";
 import { MIN_RUNS_FOR_VERDICT } from "../lib/recorder-types";
 import type { FailureCluster, StabilityVerdict, TestFlake } from "../lib/recorder-types";
 
@@ -23,6 +25,16 @@ import type { FailureCluster, StabilityVerdict, TestFlake } from "../lib/recorde
  *  rate, so 4 passes then 4 failures is a regression while alternating
  *  pass/fail/pass/fail is flaky — and those two have the identical 50%.
  *
+ *  `tone` is `null` for `unknown`, which is the one verdict that is not
+ *  reporting an outcome — "too few runs" is the absence of a result, and
+ *  colouring it would claim one.
+ *
+ *  FLAKY AND DATA-DEPENDENT SHARE AMBER, and that is not a collapse of the old
+ *  orange/yellow pair by accident. The palette has four status hues and they
+ *  mean pass, running, caution and fail; inventing a fifth to keep two shades
+ *  of caution apart would spend a colour on a distinction the WORD already
+ *  makes — and this panel's entire premise is that the word is what you act on.
+ *
  *  EXPORTED so the copy itself can be asserted. The tooltip that shows it
  *  cannot be opened in jsdom (Radix's Tooltip needs pointer APIs jsdom lacks —
  *  the same class of problem as the native-menu Select), so testing the hover
@@ -33,50 +45,50 @@ export const VERDICT_COPY: Record<
   StabilityVerdict,
   {
     label: string;
-    color: "red" | "orange" | "yellow" | "green" | "secondary";
+    tone: ToneName | null;
     hint: string;
     rule: string;
   }
 > = {
   flaky: {
     label: "Flaky",
-    color: "orange",
+    tone: "amber",
     hint: "Passes and fails without the test changing. The next result is a coin toss.",
     rule: "Mixed results that flipped between passing and failing 2 or more times.",
   },
   "data-dependent": {
     label: "Data-dependent",
-    color: "yellow",
+    tone: "amber",
     hint: "Fails consistently on particular dataset rows and passes on the rest — reliable, and telling you something true about that data.",
     rule: "Every dataset row is consistent with itself: some always pass, others always fail.",
   },
   "changed-since": {
     label: "Broke recently",
-    color: "red",
+    tone: "red",
     hint: "Was passing, started failing, and has stayed that way. A regression with a date on it.",
     rule: "Exactly one flip, and the most recent run failed.",
   },
   "still-failing": {
     label: "Consistently failing",
-    color: "red",
+    tone: "red",
     hint: "Has failed every run in the window. Broken rather than unstable.",
     rule: "Every run in the window failed.",
   },
   fixed: {
     label: "Fixed",
-    color: "green",
+    tone: "phos",
     hint: "Was failing, now passing, and has stayed that way.",
     rule: "Exactly one flip, and the most recent run passed.",
   },
   stable: {
     label: "Stable",
-    color: "green",
+    tone: "phos",
     hint: "Passed every run in the window.",
     rule: "No failures in the window.",
   },
   unknown: {
     label: "Too few runs",
-    color: "secondary",
+    tone: null,
     hint: "Not enough runs yet to say anything.",
     rule: `Fewer than ${MIN_RUNS_FOR_VERDICT} runs — too few to tell a flake from a coincidence.`,
   },
@@ -91,6 +103,32 @@ function fmtWhen(ms: number): string {
   });
 }
 
+/** The verdict badge.
+ *
+ *  NOT a `StatusChip`, and the reason is the one shared.css already writes down
+ *  for the heal chips: `StatusChip` is fixed at `--gl-status-w` so that a
+ *  COLUMN of them has one edge, and these labels are "Flaky" through
+ *  "Consistently failing" — twenty characters, which that fixed box would
+ *  silently clip. The label IS the finding here, so truncating it to satisfy a
+ *  layout contract this row is not part of would remove the thing the panel
+ *  exists to say. `.gl-chip-tone` is the variable-width tinted chip for this.
+ *
+ *  (The width is deliberately not quoted above. `check:status-width` treats a
+ *  second copy of the number as a failure wherever it appears, comments
+ *  included, and it is right to: a comment naming the wrong pixel count is a
+ *  worse artefact than no comment.) */
+function VerdictChip({ verdict }: { verdict: StabilityVerdict }) {
+  const v = VERDICT_COPY[verdict];
+  return (
+    <span
+      className={v.tone ? "gl-chip-tone" : "gl-chip"}
+      style={v.tone ? toneSurface(TONE[v.tone]) : undefined}
+    >
+      {v.label}
+    </span>
+  );
+}
+
 function TestRow({ test }: { test: TestFlake }) {
   const [open, setOpen] = React.useState(false);
   const v = VERDICT_COPY[test.verdict];
@@ -100,107 +138,98 @@ function TestRow({ test }: { test: TestFlake }) {
   // case — a test that just alternates. That explanation is the most useful
   // thing here, so there is always something behind the row.
   return (
-    <div className="rounded-md border border-separator">
+    <div className="gl-flake-row">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-control-subtle"
+        className="gl-flake-head"
         aria-expanded={open}
       >
-        {open ? (
-          <ChevronDown className="size-3.5 shrink-0 text-tertiary" />
-        ) : (
-          <ChevronRight className="size-3.5 shrink-0 text-tertiary" />
-        )}
-        <Text variant="small" className="min-w-0 flex-1 truncate font-medium">
-          {test.testName}
-        </Text>
+        <span className="gl-flake-caret">
+          {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+        </span>
+        <span className="gl-flake-name">{test.testName}</span>
         {test.healedRuns > 0 ? (
-          <Badge color="secondary" title={`Auto-Heal substituted a locator in ${test.healedRuns} runs`}>
-            <Wand2 className="size-3" />
+          // Neutral, not toned: how often Auto-Heal intervened is a fact about
+          // the run, and the verdict beside it is what reports the outcome.
+          <span
+            className="gl-chip"
+            title={`Auto-Heal substituted a locator in ${test.healedRuns} runs`}
+          >
+            <Wand2 aria-hidden="true" className="gl-mini-icon me-[3px]" />
             {test.healedRuns}
-          </Badge>
+          </span>
         ) : null}
         {/* The badge is a word the user is expected to act on, and none of the
             seven are self-explanatory — "Flaky" and "Broke recently" describe
             the same 50% pass rate. The tooltip carries both the meaning and the
             rule that produced it.
 
-            The trigger is a SPAN, not the Badge directly: this whole row is a
+            The trigger is a SPAN, not the chip directly: this whole row is a
             <button>, and a button inside a button is invalid markup that
             swallows the inner click. Hover is therefore the only opener —
             keyboard users get the identical text in the expanded body below,
             which is what the row's own button opens. */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="shrink-0">
-              <Badge color={v.color}>{v.label}</Badge>
+            <span style={{ flex: "0 0 auto", display: "inline-flex" }}>
+              <VerdictChip verdict={test.verdict} />
             </span>
           </TooltipTrigger>
           <TooltipContent side="left" className="max-w-[260px] leading-snug">
             {v.hint} {v.rule}
           </TooltipContent>
         </Tooltip>
-        <Text variant="small" color="tertiary" className="w-28 shrink-0 text-right tabular-nums">
+        <span className="gl-flake-count">
           {test.passed}/{test.runs} passed
-        </Text>
+        </span>
       </button>
 
       {open ? (
-        <div className="flex flex-col gap-2 border-t border-separator px-3 py-2">
-          <Text variant="small" color="secondary">
-            {v.hint}
-          </Text>
+        <div className="gl-flake-body">
+          <p className="gl-cost-say">{v.hint}</p>
           {/* The same rule the tooltip shows. Hover is unavailable to a keyboard
               or touch user, so the expanded row has to carry it too. */}
-          <Text variant="small" color="tertiary">
-            {v.rule}
-          </Text>
+          <p className="gl-note">{v.rule}</p>
           {/* The transition count is the actual measure, so it's shown as one —
               a pass rate can't distinguish alternating from broken-and-stayed. */}
-          <Text variant="small" color="tertiary">
+          <p className="gl-note">
             Changed between passing and failing {test.transitions}{" "}
             {test.transitions === 1 ? "time" : "times"} across {test.runs} runs.
-          </Text>
+          </p>
 
           {test.failingDatasets.length > 0 ? (
-            <div className="flex flex-col gap-1">
-              <Text variant="small" className="font-medium">
-                Failing rows
-              </Text>
+            <div className="gl-flake-group">
+              <span className="gl-section-title">Failing rows</span>
               {test.failingDatasets.map((d) => (
-                <div key={d.id} className="flex items-center gap-2">
-                  <Text variant="small" className="min-w-0 flex-1 truncate">
+                <div key={d.id} className="gl-flake-item">
+                  <span className="gl-mono-value" style={{ flex: "1 1 auto" }}>
                     {d.name}
-                  </Text>
-                  <Text variant="small" color="tertiary" className="tabular-nums">
+                  </span>
+                  <span className="gl-flake-count">
                     failed {d.failed}/{d.runs}
-                  </Text>
+                  </span>
                 </div>
               ))}
             </div>
           ) : null}
 
           {test.steps.length > 0 ? (
-            <div className="flex flex-col gap-1">
-              <Text variant="small" className="font-medium">
-                Steps involved
-              </Text>
+            <div className="gl-flake-group">
+              <span className="gl-section-title">Steps involved</span>
               {test.steps.slice(0, 6).map((s) => (
-                <div key={s.stepId} className="flex items-center gap-2">
-                  <code className="min-w-0 flex-1 truncate font-mono text-xs text-secondary">
+                <div key={s.stepId} className="gl-flake-item">
+                  <span className="gl-mono-value" style={{ flex: "1 1 auto" }}>
                     {s.label}
-                  </code>
+                  </span>
                   {s.failures > 0 ? (
-                    <Text variant="small" color="tertiary" className="tabular-nums">
-                      failed {s.failures}×
-                    </Text>
+                    <span className="gl-flake-count">failed {s.failures}×</span>
                   ) : null}
                   {s.heals > 0 ? (
-                    <Badge color="secondary" title="Auto-Heal had to substitute a locator here">
-                      <Wand2 className="size-3" />
+                    <span className="gl-chip" title="Auto-Heal had to substitute a locator here">
+                      <Wand2 aria-hidden="true" className="gl-mini-icon me-[3px]" />
                       {s.heals}×
-                    </Badge>
+                    </span>
                   ) : null}
                 </div>
               ))}
@@ -214,25 +243,27 @@ function TestRow({ test }: { test: TestFlake }) {
 
 function ClusterRow({ cluster }: { cluster: FailureCluster }) {
   return (
-    <div className="flex flex-col gap-1 rounded-md border border-separator px-3 py-2">
-      <div className="flex items-center gap-2">
-        <Badge color={cluster.count > 1 ? "orange" : "secondary"}>
+    <div className="gl-cluster">
+      <div className="gl-cluster-head">
+        {/* Toned only once it is a PATTERN. A signature seen in one run is a
+            failure the run history already reports; the same signature across
+            twelve is the finding this grouping exists to surface. */}
+        <span
+          className={cluster.count > 1 ? "gl-chip-tone" : "gl-chip"}
+          style={cluster.count > 1 ? toneSurface(TONE.amber) : undefined}
+        >
           {cluster.count} {cluster.count === 1 ? "run" : "runs"}
-        </Badge>
+        </span>
         {cluster.stepLabel ? (
-          <code className="min-w-0 flex-1 truncate font-mono text-xs text-secondary">
+          <span className="gl-mono-value" style={{ flex: "1 1 auto" }}>
             {cluster.stepLabel}
-          </code>
+          </span>
         ) : (
-          <div className="flex-1" />
+          <span style={{ flex: "1 1 auto" }} />
         )}
-        <Text variant="small" color="tertiary">
-          {fmtWhen(cluster.lastSeenAt)}
-        </Text>
+        <span className="gl-flake-count">{fmtWhen(cluster.lastSeenAt)}</span>
       </div>
-      <Text variant="small" className="break-words">
-        {cluster.example || cluster.signature}
-      </Text>
+      <p className="gl-cluster-text">{cluster.example || cluster.signature}</p>
     </div>
   );
 }
@@ -260,79 +291,51 @@ export function FlakePanel({
   const shown = showAll ? report.tests : interesting;
 
   return (
-    <div className="rounded-lg border border-separator bg-panel p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Activity className="size-4 text-secondary" />
-          <Text variant="small" className="font-medium">
-            Stability
-          </Text>
-        </div>
-        <Text variant="small" color="tertiary">
-          {report.analysedTests} {report.analysedTests === 1 ? "test" : "tests"} over the last{" "}
-          {report.windowRuns} {report.windowRuns === 1 ? "run" : "runs"}
-          {/* Say so when the window is capped, rather than presenting a partial
-              history as the whole one. */}
-          {report.windowRuns >= report.windowCap ? ` (capped at ${report.windowCap})` : ""}
-        </Text>
-      </div>
+    <Panel
+      title="Stability"
+      id={
+        `${report.analysedTests} ${report.analysedTests === 1 ? "test" : "tests"} over the last ` +
+        `${report.windowRuns} ${report.windowRuns === 1 ? "run" : "runs"}` +
+        // Say so when the window is capped, rather than presenting a partial
+        // history as the whole one.
+        (report.windowRuns >= report.windowCap ? ` (capped at ${report.windowCap})` : "")
+      }
+    >
+      {/* No nested scroller, deliberately. This panel already lives inside the
+          page-level one in stats-view, and a nested one broke twice over: it
+          needs a definite height to clip at all, and even given one it would be
+          wrong for this content — expanding a row has to grow the panel, and a
+          nested scroller traps that growth behind a second scrollbar. Sizing to
+          content and letting the page scroll is what every panel here does. */}
+      <div className="gl-flake">
+        {interesting.length === 0 && !showAll ? (
+          <p className="gl-note">Every test with enough runs is passing consistently.</p>
+        ) : (
+          shown.map((t) => <TestRow key={t.testId} test={t} />)
+        )}
 
-      {interesting.length === 0 && !showAll ? (
-        <Text variant="small" color="tertiary">
-          Every test with enough runs is passing consistently.
-        </Text>
-      ) : (
-        // No ScrollArea here, deliberately. This panel already lives inside the
-        // page-level one in stats-view, and a nested scroller broke twice over:
-        //
-        //   • The SDK's ScrollArea needs a DEFINITE height — its viewport sizes
-        //     against the root. Given only `max-h-72` there was nothing to size
-        //     against, so nothing clipped: the list overflowed its box and
-        //     painted on top of the "Show all" button and the Failure causes
-        //     section, while the parent still reserved only 288px for it.
-        //   • Even at a fixed height it would be wrong for this content —
-        //     expanding a row has to grow the panel, and a nested scroller
-        //     traps that growth behind a second scrollbar.
-        //
-        // Sizing to content and letting the page scroll is what every other
-        // panel on this view does.
-        <div className="flex flex-col gap-1.5">
-          {shown.map((t) => (
-            <TestRow key={t.testId} test={t} />
-          ))}
-        </div>
-      )}
+        {report.tests.length > interesting.length ? (
+          <div>
+            <Btn tone="ghost" onClick={() => setShowAll((v) => !v)}>
+              {showAll ? "Show only unstable tests" : `Show all ${report.tests.length} tests`}
+            </Btn>
+          </div>
+        ) : null}
 
-      {report.tests.length > interesting.length ? (
-        <Button
-          size="small"
-          variant="ghost"
-          className="mt-2"
-          onClick={() => setShowAll((v) => !v)}
-        >
-          {showAll
-            ? "Show only unstable tests"
-            : `Show all ${report.tests.length} tests`}
-        </Button>
-      ) : null}
-
-      {report.clusters.length > 0 ? (
-        <div className="mt-4 flex flex-col gap-1.5">
-          <Text variant="small" className="font-medium">
-            Failure causes
-          </Text>
-          {/* Grouped, because one root cause across twenty runs is one problem.
-              Ungrouped, the run history shows it as twenty. */}
-          <Text variant="small" color="tertiary">
-            Grouped by step and error, so a single cause reads as one problem.
-          </Text>
-          <div className="flex flex-col gap-1.5 pt-1">
+        {report.clusters.length > 0 ? (
+          <div className="gl-flake-group" style={{ marginTop: 4, gap: 5 }}>
+            <span className="gl-section-title">Failure causes</span>
+            {/* Grouped, because one root cause across twenty runs is one problem.
+                Ungrouped, the run history shows it as twenty. */}
+            <p className="gl-note">
+              Grouped by step and error, so a single cause reads as one problem.
+            </p>
             {report.clusters.slice(0, 5).map((c, i) => (
               <ClusterRow key={i} cluster={c} />
             ))}
           </div>
-        </div>
-      ) : null}
-    </div>
+        ) : null}
+      </div>
+    </Panel>
   );
 }

@@ -301,9 +301,75 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       meanMsPerA11yCheck: 35,
       a11yShareOfRun: 0.017,
     }),
+    // THE VERDICTS ARE POPULATED ON PURPOSE, and this used to answer `tests: []`.
+    //
+    // An empty list is a legitimate shape — it is what a healthy suite returns —
+    // but it is the one shape that makes the Stability panel, the Stability
+    // dashboard and its per-verdict drill ALL render their empty states. The
+    // preview is the only place any of them can be looked at (jsdom has no
+    // layout engine and the dom suite runs with `css: false`), so an empty
+    // fixture here meant the populated design had never been seen by anyone.
+    //
+    // Three verdicts rather than one, because they are the vocabulary: `flaky`
+    // and `changed-since` sit at the SAME pass rate and need opposite responses,
+    // which is the whole reason the panel reports transitions instead of a rate.
     "runs:flake": (): FlakeReport => ({
-      tests: [],
-      clusters: [],
+      tests: [
+        {
+          testId: "t-checkout",
+          testName: "Checkout — happy path",
+          runs: 12,
+          passed: 6,
+          failed: 6,
+          transitions: 5,
+          flakeRate: 0.45,
+          verdict: "flaky",
+          failingDatasets: [],
+          steps: [
+            { stepId: "s-pay", label: "click Place order", failures: 4, heals: 1, failureRate: 0.33 },
+          ],
+          healedRuns: 1,
+        },
+        {
+          testId: "t-login",
+          testName: "Login — wrong password shows an error",
+          runs: 9,
+          passed: 5,
+          failed: 4,
+          transitions: 1,
+          flakeRate: 0.12,
+          verdict: "changed-since",
+          failingDatasets: [],
+          steps: [
+            { stepId: "s-pw", label: "fill Password", failures: 4, heals: 0, failureRate: 0.44 },
+          ],
+          healedRuns: 0,
+        },
+        {
+          testId: "t-search",
+          testName: "Search returns results",
+          runs: 11,
+          passed: 11,
+          failed: 0,
+          transitions: 0,
+          flakeRate: 0,
+          verdict: "stable",
+          failingDatasets: [],
+          steps: [],
+          healedRuns: 0,
+        },
+      ],
+      clusters: [
+        {
+          signature: "timeout waiting for locator",
+          example: 'Timeout 30000ms exceeded waiting for getByTestId("pay")',
+          stepId: "s-pay",
+          stepLabel: "click Place order",
+          count: 4,
+          lastSeenAt: Date.now() - 3_600_000,
+          runIds: ["r-1", "r-2", "r-3", "r-4"],
+        },
+      ],
       analysedTests: state.tests.length,
       windowRuns: state.runs.length,
       windowCap: 50,
