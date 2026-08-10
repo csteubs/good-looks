@@ -23,11 +23,12 @@ export type PaneId =
   | "storage"
   | "ai"
   | "alerts"
-  | "advanced";
+  | "diagnostics"
+  | "experiments";
 
 /** Sidebar grouping. `null` = ungrouped, rendered above the titled groups
- *  (Appearance) or below them (Advanced), which is where macOS puts the
- *  general-purpose and the developer-ish panes respectively. */
+ *  (Appearance) or below them (Diagnostics, Experiments), which is where macOS
+ *  puts the general-purpose and the developer-ish panes respectively. */
 export type PaneGroup = "Testing" | "Connections" | null;
 
 export interface PaneDef {
@@ -85,9 +86,18 @@ export const PANES: readonly PaneDef[] = [
     group: "Connections",
   },
   {
-    id: "advanced",
-    title: "Advanced",
+    id: "diagnostics",
+    title: "Diagnostics",
     subtitle: "Tools for handing this app's state to someone helping you.",
+    group: null,
+  },
+  {
+    // Its own pane since B4. A flag that changes how a RUN behaves does not
+    // belong buried inside AI settings, where nobody looking for "what might be
+    // affecting my results?" would ever think to check.
+    id: "experiments",
+    title: "Experiments",
+    subtitle: "Behaviour that is still being decided. Any of it can change.",
     group: null,
   },
 ];
@@ -108,10 +118,10 @@ export interface PaneSegment {
  * group, not one bucket per distinct group.
  *
  * The difference matters because two separate stretches are ungrouped:
- * Appearance at the top and Advanced at the bottom, which is where macOS puts
- * the general-purpose and the developer panes. Bucketing by group value would
- * collapse those into one section and render Advanced directly under
- * Appearance, at the top of the list.
+ * Appearance at the top, and Diagnostics + Experiments at the bottom, which is
+ * where macOS puts the general-purpose and the developer panes. Bucketing by
+ * group value would collapse those into one section and render the developer
+ * panes directly under Appearance, at the top of the list.
  */
 export function paneSegments(): readonly PaneSegment[] {
   const segments: PaneSegment[] = [];
@@ -167,6 +177,16 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     label: "Home screen animation",
     keywords: "black hole ink drawing flourish aesthetic enhancement",
     key: "disabledAestheticEnhancements",
+  },
+  // Keywords name the thing that is SENT, not just the thing that is drawn:
+  // someone auditing this app searches "network", "privacy" or "duckduckgo",
+  // not "site icons".
+  {
+    id: "site-icons-from-web",
+    pane: "appearance",
+    label: "Fetch site icons from the web",
+    keywords: "favicon icon monogram network privacy egress duckduckgo hostname third party",
+    key: "siteIconsFromWeb",
   },
 
   // Recording
@@ -325,20 +345,6 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "lm studio bearer authentication unauthorized 401 credential secret",
   },
   { id: "llm-model", pane: "ai", label: "Model", keywords: "llm ollama claude sonnet opus haiku" },
-  {
-    id: "keep-running-ai-debug-jobs",
-    pane: "ai",
-    label: "Keep a running AI debug job when a test is re-run",
-    keywords: "experimental cancel session survive rerun",
-    key: "keepRunningAiDebugJobs",
-  },
-  {
-    id: "auto-accept-ai-debug-fixes",
-    pane: "ai",
-    label: "Apply AI debug fixes automatically",
-    keywords: "experimental auto accept apply suggestion corrected script",
-    key: "autoAcceptAiDebugFixes",
-  },
 
   // Alerts
   {
@@ -376,19 +382,37 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "slack discord secret credential https endpoint",
   },
 
-  // Advanced
+  // Diagnostics
   {
     id: "debug-screenshots",
-    pane: "advanced",
+    pane: "diagnostics",
     label: "Debug screenshots",
     keywords: "mcp claude code capture window shortcut helper",
     key: "debugScreenshots",
   },
   {
     id: "debug-capture-now",
-    pane: "advanced",
+    pane: "diagnostics",
     label: "Capture now",
     keywords: "screenshot mcp immediate window",
+  },
+
+  // Experiments. The keywords still carry "ai" and "debug" because that is what
+  // someone looking for these will type — "experiments" is the pane they ended
+  // up in, not a word anyone would search for.
+  {
+    id: "keep-running-ai-debug-jobs",
+    pane: "experiments",
+    label: "Keep a running AI debug job when a test is re-run",
+    keywords: "experimental ai debug cancel session survive rerun",
+    key: "keepRunningAiDebugJobs",
+  },
+  {
+    id: "auto-accept-ai-debug-fixes",
+    pane: "experiments",
+    label: "Apply AI debug fixes automatically",
+    keywords: "experimental ai debug auto accept apply suggestion corrected script",
+    key: "autoAcceptAiDebugFixes",
   },
 ];
 
@@ -448,6 +472,7 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   defaultCaptureArtifacts: false,
   defaultRecordLogs: false,
   recordAllHeaders: false,
+  siteIconsFromWeb: false,
   keepRunningAiDebugJobs: false,
   defaultRunHeadless: false,
   defaultRunBrowser: "chromium",

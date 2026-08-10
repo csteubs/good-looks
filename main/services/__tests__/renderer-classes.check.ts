@@ -161,6 +161,58 @@ assert(
   `every utility class the renderer uses produces CSS (${missingClasses.size} do not)`,
 );
 
+// ── 1b. The theme layer's OWN class names ──────────────────────────────
+//
+// The audit above only looks at Tailwind's colour- and type-bearing prefixes,
+// which is the right scope for the bug it was written for. But since A2 the
+// renderer has a second class vocabulary — the redesign's `gl-*` layer — and it
+// has exactly the same failure mode with none of the same coverage: a `.tsx`
+// saying `className="gl-setting-groupp"` compiles, lints, type-checks and
+// renders as an unstyled div. That is `bg-muted` again, in our own namespace.
+//
+// Same oracle as above, deliberately: a `gl-*` class may also be used only
+// behind a variant, so `isEmitted` matches `.foo` AND `\:foo`.
+//
+// `gl-` is a prefix nothing else in this tree uses, so no corroboration that
+// the literal "looks like classes" is needed — unlike `text-bottom`, a token
+// starting `gl-` inside a string literal is a class name or a bug either way.
+{
+  const missingTheme = new Map<string, string[]>();
+  for (const file of tsFiles) {
+    const src = stripComments(readFileSync(file, "utf-8"));
+    for (const m of src.matchAll(/(?<![\w-])gl-[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?![\w-])/g)) {
+      const token = m[0];
+      if (isEmitted(token)) continue;
+      const line = src.slice(0, m.index).split("\n").length;
+      const where = `${relative(root, file)}:${line}`;
+      const list = missingTheme.get(token) ?? [];
+      if (list.length < 3) list.push(where);
+      missingTheme.set(token, list);
+    }
+  }
+
+  for (const [cls, where] of missingTheme) {
+    console.error(`     ${cls} — used at ${where.join(", ")} but no rule is emitted`);
+  }
+  assert(
+    missingTheme.size === 0,
+    `every gl-* class the renderer uses produces CSS (${missingTheme.size} do not)`,
+  );
+
+  // The pattern's own liveness. If a refactor renames the prefix or the theme
+  // classes stop being written as plain literals, the loop above quietly audits
+  // nothing and reports a clean pass forever.
+  let seen = 0;
+  for (const file of tsFiles) {
+    seen += [
+      ...stripComments(readFileSync(file, "utf-8")).matchAll(
+        /(?<![\w-])gl-[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?![\w-])/g,
+      ),
+    ].length;
+  }
+  assert(seen > 50, `found ${seen} gl-* class uses to judge (a small number means the pattern rotted)`);
+}
+
 // ── 2. Custom properties ───────────────────────────────────────────────
 
 const declared = new Set<string>();

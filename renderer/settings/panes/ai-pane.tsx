@@ -19,7 +19,6 @@ import {
   SelectTrigger,
   SelectValue,
   Status,
-  Switch,
 } from "@ui";
 
 import { useSettingsController } from "../settings-controller";
@@ -28,8 +27,6 @@ import { PaneSection } from "../pane-section";
 
 export function AiPane() {
   const {
-    settings,
-    save,
     provider,
     model,
     llmStatus,
@@ -65,192 +62,163 @@ export function AiPane() {
   };
 
   return (
-    <>
-      <PaneSection>
-        <SettingRow
+    <PaneSection>
+      <SettingRow
+        id="llm-provider"
+        label="AI provider"
+        summary={
+          provider === "anthropic"
+            ? "Use Claude via your Anthropic account. Prompts are sent to api.anthropic.com over HTTPS."
+            : "Use a local LLM running on your machine. No data leaves your computer."
+        }
+      >
+        <RadioGroup
           id="llm-provider"
-          label="AI provider"
+          value={provider}
+          onValueChange={(v) => void changeProvider(v)}
+          orientation="horizontal"
+        >
+          <Label>
+            <RadioGroupItem value="ollama" />
+            Ollama
+          </Label>
+          <Label>
+            <RadioGroupItem value="lmstudio" />
+            LM Studio
+          </Label>
+          <Label>
+            <RadioGroupItem value="anthropic" />
+            Claude
+          </Label>
+        </RadioGroup>
+      </SettingRow>
+
+      {provider !== "anthropic" ? (
+        <SettingRow
+          id="llm-server-url"
+          label="Server URL"
           summary={
-            provider === "anthropic"
-              ? "Use Claude via your Anthropic account. Prompts are sent to api.anthropic.com over HTTPS."
-              : "Use a local LLM running on your machine. No data leaves your computer."
+            llmStatus && !llmStatus.reachable
+              ? (llmStatus.error ?? "Not reachable")
+              : `Default: ${defaultUrlFor(provider)}`
           }
         >
-          <RadioGroup
-            id="llm-provider"
-            value={provider}
-            onValueChange={(v) => void changeProvider(v)}
-            orientation="horizontal"
-          >
-            <Label>
-              <RadioGroupItem value="ollama" />
-              Ollama
-            </Label>
-            <Label>
-              <RadioGroupItem value="lmstudio" />
-              LM Studio
-            </Label>
-            <Label>
-              <RadioGroupItem value="anthropic" />
-              Claude
-            </Label>
-          </RadioGroup>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {llmStatus ? (
+              <Status variant={llmStatus.reachable ? "success" : "error"}>
+                {llmStatus.reachable ? "Online" : "Offline"}
+              </Status>
+            ) : null}
+            <Input
+              id="llm-server-url"
+              className="w-64"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder={defaultUrlFor(provider)}
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              onBlur={(e) => void commitBaseUrl(e.target.value)}
+            />
+            <Button variant="muted" onClick={() => void testConnection()} disabled={testing}>
+              {testing ? "Testing…" : "Test connection"}
+            </Button>
+          </div>
         </SettingRow>
+      ) : null}
 
-        {provider !== "anthropic" ? (
-          <SettingRow
-            id="llm-server-url"
-            label="Server URL"
-            summary={
-              llmStatus && !llmStatus.reachable
-                ? (llmStatus.error ?? "Not reachable")
-                : `Default: ${defaultUrlFor(provider)}`
-            }
-          >
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              {llmStatus ? (
-                <Status variant={llmStatus.reachable ? "success" : "error"}>
-                  {llmStatus.reachable ? "Online" : "Offline"}
-                </Status>
-              ) : null}
-              <Input
-                id="llm-server-url"
-                className="w-64"
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-                placeholder={defaultUrlFor(provider)}
-                value={baseUrl}
-                onChange={(e) => setBaseUrl(e.target.value)}
-                onBlur={(e) => void commitBaseUrl(e.target.value)}
-              />
-              <Button variant="muted" onClick={() => void testConnection()} disabled={testing}>
-                {testing ? "Testing…" : "Test connection"}
-              </Button>
-            </div>
-          </SettingRow>
-        ) : null}
-
-        {/* No Status chip here on purpose: the Server URL row above already
-            reports Online/Offline for this provider, and a second indicator for
-            the same connection is how you end up with two that disagree. */}
-        {provider === "lmstudio" ? (
-          <SettingRow
-            id="lmstudio-token"
-            label="API token"
-            summary={
-              hasLmStudioToken
-                ? "Stored encrypted on this Mac. Enter a new token to replace it."
-                : "Only needed if you turned authentication on in LM Studio (Developer → server settings). Stored encrypted on this Mac."
-            }
-          >
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <Input
-                id="lmstudio-token"
-                type="password"
-                className="w-56"
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-                placeholder={hasLmStudioToken ? "••••••••" : "Paste token…"}
-                value={tokenInput}
-                onChange={(e) => setTokenInput(e.target.value)}
-              />
-              <Button onClick={() => void onSaveToken()} disabled={savingKey || !tokenInput.trim()}>
-                {savingKey ? "Saving…" : "Save"}
-              </Button>
-              {hasLmStudioToken ? (
-                <Button variant="muted" onClick={() => void clearLmStudioToken()}>
-                  Clear
-                </Button>
-              ) : null}
-            </div>
-          </SettingRow>
-        ) : null}
-
-        {provider === "anthropic" ? (
-          <SettingRow
-            id="anthropic-key"
-            label="API key"
-            summary={
-              hasApiKey
-                ? "Stored encrypted on this Mac. Enter a new key to replace it."
-                : "Paste a key from console.anthropic.com. Stored encrypted on this Mac."
-            }
-          >
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              {hasApiKey ? (
-                <Status variant={llmStatus?.reachable === false ? "error" : "success"}>
-                  {llmStatus?.reachable === false ? "Not connected" : "Connected"}
-                </Status>
-              ) : null}
-              <Input
-                id="anthropic-key"
-                type="password"
-                className="w-56"
-                spellCheck={false}
-                autoCapitalize="off"
-                autoCorrect="off"
-                placeholder="sk-ant-…"
-                value={apiKeyInput}
-                onChange={(e) => setApiKeyInput(e.target.value)}
-              />
-              <Button onClick={() => void onSaveKey()} disabled={savingKey || !apiKeyInput.trim()}>
-                {savingKey ? "Saving…" : "Save"}
-              </Button>
-              {hasApiKey ? (
-                <Button variant="muted" onClick={() => void clearApiKey()}>
-                  Clear
-                </Button>
-              ) : null}
-            </div>
-          </SettingRow>
-        ) : null}
-
-        {llmStatus?.reachable && llmStatus.models.length > 0 ? (
-          <SettingRow id="llm-model" label="Model">
-            <Select value={model ?? ""} onValueChange={(v) => void changeModel(v)}>
-              <SelectTrigger id="llm-model" className="w-56">
-                <SelectValue placeholder="Select a model…" />
-              </SelectTrigger>
-              <SelectContent>
-                {llmStatus.models.map((m) => (
-                  <SelectItem key={m.id} value={m.id}>
-                    {m.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </SettingRow>
-        ) : null}
-      </PaneSection>
-
-      <PaneSection title="Experimental">
+      {/* No Status chip here on purpose: the Server URL row above already
+          reports Online/Offline for this provider, and a second indicator for
+          the same connection is how you end up with two that disagree. */}
+      {provider === "lmstudio" ? (
         <SettingRow
-          id="keep-running-ai-debug-jobs"
-          label="Keep a running AI debug job when a test is re-run"
-          summary="A job that is still working survives the re-run instead of being cancelled."
-          details="Re-running a test normally clears its AI debug session, so each run starts from a blank slate. With this on, a surviving job is reachable from the AI debug chip and marked as belonging to the previous run. Finished answers are still cleared either way. Useful with a slow local model, at the cost of a session on screen that describes output you can no longer see."
+          id="lmstudio-token"
+          label="API token"
+          summary={
+            hasLmStudioToken
+              ? "Stored encrypted on this Mac. Enter a new token to replace it."
+              : "Only needed if you turned authentication on in LM Studio (Developer → server settings). Stored encrypted on this Mac."
+          }
         >
-          <Switch
-            id="keep-running-ai-debug-jobs"
-            checked={settings.keepRunningAiDebugJobs ?? false}
-            onCheckedChange={(checked) => void save({ keepRunningAiDebugJobs: checked })}
-          />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Input
+              id="lmstudio-token"
+              type="password"
+              className="w-56"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder={hasLmStudioToken ? "••••••••" : "Paste token…"}
+              value={tokenInput}
+              onChange={(e) => setTokenInput(e.target.value)}
+            />
+            <Button onClick={() => void onSaveToken()} disabled={savingKey || !tokenInput.trim()}>
+              {savingKey ? "Saving…" : "Save"}
+            </Button>
+            {hasLmStudioToken ? (
+              <Button variant="muted" onClick={() => void clearLmStudioToken()}>
+                Clear
+              </Button>
+            ) : null}
+          </div>
         </SettingRow>
+      ) : null}
+
+      {provider === "anthropic" ? (
         <SettingRow
-          id="auto-accept-ai-debug-fixes"
-          label="Apply AI debug fixes automatically"
-          summary="A run-debug job that finishes while minimized applies its corrected script on its own."
-          details="Guarded three ways: only while the job's dialog is minimized, only when the model produced a complete corrected script, and only when the script is byte-identical to the one the prompt was built from — an edit made while the AI was thinking always wins, and the suggestion falls back to a review toast instead of applying over it. Applied fixes are highlighted in the step list, exactly as a manual Apply would be."
+          id="anthropic-key"
+          label="API key"
+          summary={
+            hasApiKey
+              ? "Stored encrypted on this Mac. Enter a new key to replace it."
+              : "Paste a key from console.anthropic.com. Stored encrypted on this Mac."
+          }
         >
-          <Switch
-            id="auto-accept-ai-debug-fixes"
-            checked={settings.autoAcceptAiDebugFixes ?? false}
-            onCheckedChange={(checked) => void save({ autoAcceptAiDebugFixes: checked })}
-          />
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            {hasApiKey ? (
+              <Status variant={llmStatus?.reachable === false ? "error" : "success"}>
+                {llmStatus?.reachable === false ? "Not connected" : "Connected"}
+              </Status>
+            ) : null}
+            <Input
+              id="anthropic-key"
+              type="password"
+              className="w-56"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              placeholder="sk-ant-…"
+              value={apiKeyInput}
+              onChange={(e) => setApiKeyInput(e.target.value)}
+            />
+            <Button onClick={() => void onSaveKey()} disabled={savingKey || !apiKeyInput.trim()}>
+              {savingKey ? "Saving…" : "Save"}
+            </Button>
+            {hasApiKey ? (
+              <Button variant="muted" onClick={() => void clearApiKey()}>
+                Clear
+              </Button>
+            ) : null}
+          </div>
         </SettingRow>
-      </PaneSection>
-    </>
+      ) : null}
+
+      {llmStatus?.reachable && llmStatus.models.length > 0 ? (
+        <SettingRow id="llm-model" label="Model">
+          <Select value={model ?? ""} onValueChange={(v) => void changeModel(v)}>
+            <SelectTrigger id="llm-model" className="w-56">
+              <SelectValue placeholder="Select a model…" />
+            </SelectTrigger>
+            <SelectContent>
+              {llmStatus.models.map((m) => (
+                <SelectItem key={m.id} value={m.id}>
+                  {m.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </SettingRow>
+      ) : null}
+    </PaneSection>
   );
 }

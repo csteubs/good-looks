@@ -25,13 +25,19 @@
 
 import { createContext, useContext, useState } from "react";
 import type { ReactNode } from "react";
-import { Badge, Field, FieldContent, FieldDescription, FieldLabel } from "@ui";
+import { Field, FieldContent, FieldDescription, FieldLabel } from "@ui";
+
+import { TONE, insetRail, toneSurface } from "../theme";
 
 /** Ids of the rows a search matched, or `null` when no search is active.
  *  Filtering at the ROW rather than in each pane means a pane's JSX is the
  *  same whether or not a search is running — there is no second, filtered
  *  rendering path that can drift from the real one. */
 const RowFilterCtx = createContext<readonly string[] | null>(null);
+
+/** The nested row's dependency rule. Neutral — a nested row is a DEPENDENT
+ *  setting, not a dangerous one, and the two must not look the same. */
+const LINE_RULE = "rgba(255, 255, 255, 0.16)";
 
 export function RowFilterProvider({
   matchedIds,
@@ -81,9 +87,34 @@ export interface SettingRowProps {
    * both of which carry their full text in `summary` instead.
    */
   details?: ReactNode;
-  /** Short badge text, e.g. "stores credentials". Draws the badge and the
-   *  accent rule down the row's leading edge. */
-  danger?: string;
+  /**
+   * Short badge text beside the label, e.g. "stores credentials".
+   *
+   * WHAT this row touches, in two or three words. It is a category, not a
+   * sentence — the sentence is `risk`. Renamed from `danger` in B4, because
+   * that one prop was doing three jobs and the other two are below.
+   */
+  flag?: string;
+  /**
+   * What choosing this COSTS you, in its own block, always visible.
+   *
+   * NEVER BEHIND THE DISCLOSURE, and that is structural rather than a rule this
+   * component polices: `risk` has no closed state to be in. The old row got the
+   * same result by refusing `details` on a `danger` row, which worked only for
+   * as long as everybody remembered why.
+   *
+   * Put a security or privacy consequence here, not in `summary` — in `summary`
+   * it competes with thirty ordinary descriptions and reads as one of them.
+   */
+  risk?: ReactNode;
+  /**
+   * How the thing WORKS — a separate affordance from `risk`, deliberately.
+   *
+   * "How does this work?" and "what will this cost me?" are different
+   * questions, and answering both behind one link means the second gets skipped
+   * by anyone who thinks they already know the first.
+   */
+  doc?: { label: string; onOpen: () => void };
   /** Indent under the row above and draw the dependency rule. */
   nested?: boolean;
   /**
@@ -107,7 +138,9 @@ export function SettingRow({
   label,
   summary,
   details,
-  danger,
+  flag,
+  risk,
+  doc,
   nested,
   stacked,
   children,
@@ -116,10 +149,11 @@ export function SettingRow({
   const visible = useRowVisible(id);
   if (!visible) return null;
 
-  // A danger row's full text is always on screen. Building one with `details`
+  // A flagged row's full text is always on screen. Building one with `details`
   // would put a credential warning behind a click, which is the one thing this
-  // component must not make easy.
-  const showDetails = details && !danger;
+  // component must not make easy. `risk` needs no such guard — it has no closed
+  // state — but the rule still holds for the summary's own disclosure.
+  const showDetails = details && !flag;
 
   return (
     <Field
@@ -128,20 +162,33 @@ export function SettingRow({
       // `rounded-none` because a single-sided border with rounded corners
       // renders as a detached arc.
       className={
-        nested
-          ? `ml-4 rounded-none border-l-2 pl-4 ${danger ? "border-l-red-9" : "border-l-separator"}`
-          : danger
-            ? "rounded-none border-l-2 border-l-red-9 pl-4"
+        nested ? "gl-setting-row ml-4 rounded-none pl-4" : "gl-setting-row"
+      }
+      // The leading rule, as an inset shadow rather than a border: a border
+      // participates in layout, so a list where some rows have one and some do
+      // not jumps by 2px per flagged row. Same motif and same reasoning as
+      // every other status rail in this design.
+      //
+      // A FLAGGED ROW GETS THE RAIL ONLY WHEN IT HAS NO `risk` BLOCK. The block
+      // draws the same red rail one level in, and two of them at two indents
+      // read as a rendering glitch rather than as emphasis — the inner one is
+      // also the more useful of the two, since it marks the sentence rather
+      // than the whole row. The badge still identifies a flagged row either way.
+      style={
+        flag && !risk
+          ? { boxShadow: insetRail(TONE.red) }
+          : nested
+            ? { boxShadow: insetRail(LINE_RULE) }
             : undefined
       }
     >
       <FieldContent>
         <FieldLabel htmlFor={id} className="flex flex-wrap items-center gap-2">
           {label}
-          {danger ? (
-            <Badge color="red" size="small">
-              {danger}
-            </Badge>
+          {flag ? (
+            <span className="gl-setting-flag" style={toneSurface(TONE.red)}>
+              {flag}
+            </span>
           ) : null}
         </FieldLabel>
         {summary ? (
@@ -165,6 +212,18 @@ export function SettingRow({
         ) : null}
         {showDetails && open ? (
           <FieldDescription id={`${id}-details`}>{details}</FieldDescription>
+        ) : null}
+        {/* Unconditional. See the prop's own note: this is the one piece of
+            copy on the row that must never be one click away. */}
+        {risk ? (
+          <p className="gl-setting-risk" style={{ boxShadow: insetRail(TONE.red) }}>
+            {risk}
+          </p>
+        ) : null}
+        {doc ? (
+          <button type="button" className="gl-setting-doc" onClick={doc.onOpen}>
+            {doc.label}
+          </button>
         ) : null}
       </FieldContent>
       {stacked ? <div className="flex w-full justify-end">{children}</div> : children}

@@ -203,6 +203,15 @@
   gap: 4px;
 }
 
+/* The filter field, PINNED like the nav below. `flex: 0 0 auto` is the whole
+   point: inside the scroller it would be reachable only while the list is
+   short, which is exactly when nobody needs to filter. */
+.gl-rail-search {
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
 /* The scrolling middle. `min-height: 0` is what lets it shrink inside the
    column instead of pushing the pinned nav below the window — the same failure
    `check:scroll-layout` exists for, one level up. */

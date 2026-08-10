@@ -1,11 +1,11 @@
 # The indie redesign — an implementation plan
 
 **Status: Phase A is done; Phase B is in progress.** A1–A5 are landed, and so
-are **B1 (Home)**, **B2 (Heals)** and **B3 (Batch)** — see the ✅ marks in §4, §5
-and §8.3. The app's frame is the redesign, so are the five components every
-screen embeds, and so are three of the nine screens. **Six still carry the old
-chrome** (B4–B9), one PR each. Where the rest of this says "would", it means
-would.
+are **B1 (Home)**, **B2 (Heals)**, **B3 (Batch)** and **B4 (Settings)** — see the
+✅ marks in §4, §5 and §8.3. The app's frame is the redesign, so are the five
+components every screen embeds, and so are four of the nine screens. **Five still
+carry the old chrome** (B5–B9), one PR each. Where the rest of this says "would",
+it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -291,8 +291,11 @@ degraded one.
 > app sent Google the hostname of every site under test. `SiteIcon` replaced it
 > (2026-08-08), and `check:renderer-egress` now judges every absolute URL in the
 > renderer against an allowlist of specific strings with written reasons.
-> **The opt-in setting is still outstanding** and lands with §B4; until then the
-> default is the one that sends nothing.
+> **The opt-in setting landed with §B4** (2026-08-10): Appearance → "Fetch site
+> icons from the web", off by default on both sides of the IPC boundary, with a
+> `flag` badge and a `risk` block naming icons.duckduckgo.com and saying the
+> hostname is what gets sent. `check:renderer-egress` pins the defaults, the
+> disclosure copy, and that no call site hardcodes the fetch on.
 
 **The textures are 75MB.** With texture fixed at the `ember` default, the app
 needs `acid-25.jpg` (4.2MB) and the grain plate `super-light-1.png` (4.2MB). Both
@@ -490,28 +493,46 @@ Also landed: **`Menu`**, the box `MenuItem` always implied. The SDK `Select`
 stays native everywhere else — but a native menu item is a string, and the whole
 point here is the second line. See DECISIONS 2026-08-10.
 
-### B4. Settings — `settings-view.tsx`, `settings-nav.tsx`, `setting-row.tsx`, 8 panes
+### B4. Settings — `settings-view.tsx`, `settings-nav.tsx`, `setting-row.tsx`, 9 panes ✅ **Done, 2026-08-10**
 
-The IA is already right — eight panes plus search landed 2026-08-07. This is
-mostly a restyle, plus two renames and one split the redesign argues for:
+**Shipped 2026-08-10.** The IA was already right — eight panes plus search
+landed 2026-08-07 — so this was mostly a restyle, plus two renames and one split:
 
-- **Advanced → Diagnostics.** `advanced-pane.tsx` is the debug-screenshot
+- **Advanced → Diagnostics.** ✅ `advanced-pane.tsx` is the debug-screenshot
   shortcut and a capture button — tools for handing this app's state to whoever
-  is helping you. That is diagnostics, not experiments.
-- **Experimental section out of the AI pane → its own Experiments pane.** A flag
-  that changes how a run behaves does not belong buried inside AI settings.
-- **New pane: Keys & creds.** Currently scattered (Anthropic key in AI, secrets
-  handling implicit). The redesign collects them.
+  is helping you. That is diagnostics, not experiments. "Advanced" is a promise
+  about difficulty, and it attracts everything nobody could place.
+- **Experimental section out of the AI pane → its own Experiments pane.** ✅ Both
+  flags change how a RUN behaves, and a section heading is invisible from the
+  sidebar, so its caveat only reached someone already reading the AI pane.
+- **New pane: Keys & creds.** ⏳ **Deferred, with a reason.** Collecting the
+  credentials means moving the Anthropic key and the LM Studio token away from
+  the controls that VALIDATE them — the connection test and the model list, both
+  in the AI pane, are how you find out a key works. A credentials pane that
+  cannot tell you whether the credential is good is a worse home than the pane
+  that can. This waits for a design that moves the validation too.
 
-The row treatment is the valuable part: `risk` copy gets its own bordered block
-with a red inset rail, `flag` renders as a red uppercase badge next to the label,
-`doc` is a separate link for the *mechanism* rather than the warning. The current
-`SettingRow` already refuses `details` on `danger` rows — keep that rule and
-extend it: **a row with `risk` renders the risk unconditionally, never behind a
-disclosure.**
+The row treatment was the valuable part and shipped whole: ✅ `risk` copy gets its
+own bordered block with a red inset rail, `flag` renders as a red uppercase badge
+next to the label, `doc` is a separate link for the *mechanism* rather than the
+warning. `SettingRow` still refuses `details` on a `flag` row, and **a row with
+`risk` renders it unconditionally** — structurally, because `risk` has no closed
+state to be in. One thing only visible on screen: a flagged row that ALSO has a
+risk block drops the row-level rail, because two red rails at two indents read as
+a rendering glitch rather than as emphasis.
+
+Also shipped with it, though neither is in the mockup: the **site-icon opt-in**
+owed since §3.5, and the `gl-*` half of `check:renderer-classes` — the class
+audit only ever looked at Tailwind's prefixes, so every class this theme layer
+has added since A2 was unguarded.
 
 Also: the rail becomes the settings nav while in settings (the panes *are* the
-navigation), and the library list hides. Same surface, two jobs.
+navigation), and the library list hides. Same surface, two jobs. ✅ **with a
+caveat** — Settings is its own `BrowserWindow` here, so there is no library list
+to hide and no single element to repurpose. What the sentence actually buys is
+recognition, so `SettingsNav` is built from `Rail`/`RailGroup`/`RailRow`, the
+same components the main window's library uses, with the search field in the
+rail's pinned `search` slot.
 
 ### B5. Test detail — `test-detail-view.tsx` + `step-row.tsx` + `run-output.tsx` + `script-view.tsx` + `run-triage.tsx`
 

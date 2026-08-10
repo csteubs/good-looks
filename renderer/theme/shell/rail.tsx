@@ -33,6 +33,19 @@ export interface RailProps {
   title?: string;
   /** Controls in the header, trailing edge. */
   actions?: React.ReactNode;
+  /**
+   * A filter field, pinned between the header and the scrolling body.
+   *
+   * PINNED FOR THE SAME REASON THE NAV IS. A search box at the top of a
+   * scrolling list is only reachable while the list is short: type a query that
+   * narrows to one pane, scroll, and the field that put you there is gone. It
+   * is its own slot rather than the first child of `children` so that "does not
+   * scroll" is structural instead of something the caller has to keep true.
+   *
+   * The Settings window is what needs it (B4) and the main window passes
+   * nothing, so the rail is byte-identical there.
+   */
+  search?: React.ReactNode;
   /** The views nav. Pinned below the scrolling body — see the header. */
   nav?: React.ReactNode;
   /** The footer strip (the AI connection indicator, today). */
@@ -44,6 +57,7 @@ export interface RailProps {
 export function Rail({
   title,
   actions,
+  search,
   nav,
   footer,
   className,
@@ -64,6 +78,7 @@ export function Rail({
           ) : null}
         </div>
       ) : null}
+      {search !== undefined ? <div className="gl-rail-search">{search}</div> : null}
       <div className="gl-rail-body">{children}</div>
       {nav !== undefined ? <div className="gl-rail-nav">{nav}</div> : null}
       {footer !== undefined ? <div className="gl-rail-foot">{footer}</div> : null}

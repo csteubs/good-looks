@@ -1,4 +1,15 @@
-// Tools for handing this app's state to someone helping you.
+// Diagnostics — tools for handing this app's state to someone helping you.
+//
+// RENAMED FROM "ADVANCED" IN B4, and the rename is the point rather than
+// tidying. "Advanced" is a promise about difficulty and it attracts everything
+// nobody could place: it becomes the pane where settings go to be lost, and a
+// user reading it cannot tell whether the contents are dangerous, experimental
+// or simply obscure. What is actually in here is a screenshot shortcut and a
+// capture button — tools for producing evidence for whoever is helping you.
+// That is diagnostics, and naming it that is what stops the next unplaceable
+// setting landing here by default (it has somewhere else to go now: the
+// Experiments pane, which is where a flag that changes how a RUN behaves
+// belongs — see REDESIGN §B4).
 //
 // Debug screenshots used to open the third FieldSet, above "Check accessibility
 // by default" and the Auto-Heal block — so the first thing under a heading-less
@@ -12,7 +23,7 @@ import { useSettingsController } from "../settings-controller";
 import { SettingRow } from "../setting-row";
 import { PaneSection } from "../pane-section";
 
-export function AdvancedPane() {
+export function DiagnosticsPane() {
   const { settings, save, debugShortcut, capturing, captureNow } = useSettingsController();
 
   return (

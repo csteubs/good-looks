@@ -35,12 +35,15 @@ function row(title: string): HTMLElement {
   return screen.getByRole("button", { name: new RegExp(title, "i") });
 }
 
-/** `SidebarListItem` activates on MOUSE-DOWN, not on a bare click — the same
- *  native-macOS idiom as Radix's `TabsTrigger` (see CLAUDE.md). `fireEvent.click`
- *  leaves the row untouched and the assertion then reports "0 calls", which
- *  reads as a broken handler rather than as the wrong event. */
+/** CLICK SINCE B4, and that is a real behaviour change rather than a test edit.
+ *  These rows were `SidebarListItem`, which fires on MOUSE-DOWN — the native
+ *  macOS idiom, and a documented trap in this repo because `fireEvent.click`
+ *  leaves such a row untouched and the assertion then reports "0 calls", which
+ *  reads as a broken handler rather than as the wrong event. `RailRow` is an
+ *  ordinary button, so a press that lands on a row and is dragged off it no
+ *  longer selects the pane. */
 function selectRow(title: string) {
-  fireEvent.mouseDown(row(title));
+  fireEvent.click(row(title));
 }
 
 describe("the pane list", () => {
@@ -57,15 +60,16 @@ describe("the pane list", () => {
     expect(screen.getByText("Connections")).toBeTruthy();
   });
 
-  it("puts Appearance first and Advanced last", () => {
+  it("puts Appearance first and the developer panes last", () => {
     // The segments model exists for exactly this. Bucketing by group value
-    // would render Advanced directly under Appearance, at the top.
+    // would render Diagnostics directly under Appearance, at the top.
     const { container } = renderNav();
     const titles = Array.from(container.querySelectorAll("button"))
       .map((b) => b.textContent?.trim() ?? "")
       .filter((t) => PANES.some((p) => t.startsWith(p.title)));
     expect(titles[0]).toContain("Appearance");
-    expect(titles[titles.length - 1]).toContain("Advanced");
+    expect(titles[titles.length - 2]).toContain("Diagnostics");
+    expect(titles[titles.length - 1]).toContain("Experiments");
   });
 
   it("selects a pane when its row is clicked", () => {
@@ -75,10 +79,12 @@ describe("the pane list", () => {
   });
 
   it("marks the selected pane for assistive tech", () => {
-    // The SDK's `selected` only applies a background class, so without this the
-    // window announces nothing about which pane is showing.
+    // Without this the window announces nothing about which pane is showing.
+    // `"true"` rather than `"page"` since B4: `RailRow` says it, and it says
+    // the same thing about the library rows in the main window — these switch
+    // panes within one window rather than navigating between pages.
     renderNav({ selected: "storage" });
-    expect(row("Storage").getAttribute("aria-current")).toBe("page");
+    expect(row("Storage").getAttribute("aria-current")).toBe("true");
   });
 
   it("marks only the selected pane", () => {
@@ -87,10 +93,17 @@ describe("the pane list", () => {
   });
 
   it("styles the selected row", () => {
-    // Belt and braces: aria-current is for screen readers, the class is what a
-    // sighted user sees. Losing either one is a real regression.
+    // Belt and braces: aria-current is for screen readers, the attribute below
+    // is what a sighted user sees. Losing either one is a real regression.
+    //
+    // `data-selected` and not a class, and BARE rather than `="false"` on the
+    // others: `RailRow` carries the whole selection treatment on that attribute
+    // so `check:selection-neutral` can prove no selection in this app is drawn
+    // in a status colour, and `[data-selected]` matches an empty attribute — a
+    // literal `data-selected="false"` would style every row as selected.
     renderNav({ selected: "storage" });
-    expect(row("Storage").className).toContain("bg-list-selection");
+    expect(row("Storage").hasAttribute("data-selected")).toBe(true);
+    expect(row("Appearance").hasAttribute("data-selected")).toBe(false);
   });
 });
 

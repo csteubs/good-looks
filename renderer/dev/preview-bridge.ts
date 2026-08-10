@@ -414,6 +414,11 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "llm:hasLmStudioToken": () => ({ hasToken: false }),
     "llm:isActive": () => ({ active: false }),
     "alerts:status": () => ({ hasUrl: false, host: null }),
+    // Only the Settings window asks for this, and only to print it inside a
+    // description. The real value comes from the main process's accelerator
+    // constant; this is the same string so the row reads correctly under
+    // `?view=settings`.
+    "debug:shortcut": () => "⌘⌥⇧S",
 
     // ── Visual ───────────────────────────────────────────────────────────
     "visual:listBaselines": () => [],

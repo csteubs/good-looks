@@ -87,6 +87,31 @@ export function AppearancePane() {
           />
         </SettingRow>
       </PaneSection>
+
+      {/* THE OPT-IN OWED SINCE §3.5, and it lives here rather than in a
+       *  credentials pane because what the user is choosing between is two
+       *  ways the sidebar can LOOK. The cost of the prettier one is what the
+       *  `risk` block is for.
+       *
+       *  `risk` and not `summary`: this is the second outbound channel in the
+       *  product and the first one nobody has to configure to trigger. In
+       *  `summary` it would be one description among thirty. `flag` as well,
+       *  so the row is identifiable as an egress row while scrolling past. */}
+      <PaneSection title="Site icons">
+        <SettingRow
+          id="site-icons-from-web"
+          label="Fetch site icons from the web"
+          flag="leaves this Mac"
+          summary="Off, every site in your library draws a generated monogram — two letters on a colour derived from the hostname, computed on this machine."
+          risk="On, this app asks icons.duckduckgo.com for an icon for every site in your library, which tells them the hostname of everything you test — including staging and internal hosts. It happens whenever the sidebar draws, not only when you add a test."
+        >
+          <Switch
+            id="site-icons-from-web"
+            checked={settings.siteIconsFromWeb ?? false}
+            onCheckedChange={(checked) => void save({ siteIconsFromWeb: checked })}
+          />
+        </SettingRow>
+      </PaneSection>
     </>
   );
 }

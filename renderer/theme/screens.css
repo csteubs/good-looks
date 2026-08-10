@@ -739,3 +739,187 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ── Settings (B4) ────────────────────────────────────────────────────── */
+
+/*
+ * THE ROW TREATMENT IS THE VALUABLE PART OF THIS SCREEN, and it is three
+ * separate things the old row had collapsed into one `danger` prop:
+ *
+ *   flag   a badge beside the label — WHAT this row touches
+ *   risk   a block of copy — WHAT IT COSTS YOU, rendered unconditionally
+ *   doc    a link — HOW IT WORKS, which is a different question from either
+ *
+ * They were one prop because the only two rows that used it wanted a badge and
+ * an accent rule together. But "stores credentials" (a fact about the row) and
+ * "the value is written to disk in plain text and read by every run" (a
+ * consequence you need before deciding) are not the same sentence, and putting
+ * the second in `summary` meant it competed with thirty ordinary descriptions.
+ */
+
+/* Uppercase and red, beside the label. Short — it is a category, not a
+   sentence; the sentence is what `risk` is for. */
+.gl-setting-flag {
+  display: inline-flex;
+  align-items: center;
+  height: 15px;
+  padding: 0 5px;
+  border: 1px solid;
+  font-family: var(--gl-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/*
+ * The risk block. AN INSET RAIL, like every other status in this design, and a
+ * block rather than an inline sentence so it cannot be mistaken for more of the
+ * description above it.
+ *
+ * IT IS NEVER BEHIND THE DISCLOSURE. The old row already refused `details` on a
+ * `danger` row for exactly this reason — a warning you have to click to see is
+ * a warning most people never see — and this makes that structural rather than
+ * a rule the component enforces on itself: `risk` has no closed state to be in.
+ */
+.gl-setting-risk {
+  margin: 6px 0 0;
+  padding: 7px 9px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gl-tx-2);
+}
+
+/* The mechanism, not the warning. A separate affordance because "how does this
+   work?" and "what will this cost me?" are different questions, and answering
+   both in one link means the second gets skipped by anyone who thinks they
+   already know the first. */
+.gl-setting-doc {
+  display: inline-block;
+  margin-top: 4px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.gl-setting-doc:hover {
+  color: var(--gl-tx-1);
+}
+
+.gl-setting-doc:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+/*
+ * The pane surface. Everything below re-draws the SDK's `FieldSet`/`FieldGroup`
+ * in this design's own container: a square hairline box on `--gl-panel`, not a
+ * rounded translucent card. It is one class per element rather than a rule
+ * hung off the SDK's emitted Tailwind, because a class we declare is one
+ * `check:renderer-classes` can prove resolves — an SDK class name is not
+ * (CLAUDE.md, and DECISIONS 2026-08-09).
+ *
+ * These are UNLAYERED, so they beat Tailwind's `@layer utilities` regardless of
+ * order. That is the mechanism the other reskinned screens rely on too; it is
+ * worth knowing, because moving these into a layer would silently hand the
+ * rounded card back.
+ */
+.gl-setting-set {
+  gap: 6px;
+}
+
+/* The section legend. Mono uppercase micro-label, the same voice as every other
+   group heading in the app — a bold sentence here competed with the row labels
+   directly under it. */
+.gl-setting-set > legend {
+  margin-bottom: 2px;
+  padding: 0;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-setting-group {
+  border-radius: 0;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  padding-inline: 10px;
+}
+
+/* The between-rows rule at the lighter weight. A nested box drawn at its
+   parent's strength reads as a table rather than as a box inside a box, which
+   is the whole reason `--gl-line-2` exists. */
+.gl-setting-group > * + * {
+  border-top-color: var(--gl-line-2);
+}
+
+.gl-setting-row {
+  padding-block: 9px;
+}
+
+/*
+ * The switch, which is the most-repeated control in this window and was the
+ * last blue thing in it.
+ *
+ * `bg-accent` when checked resolves to the SDK's blue, and BLUE IS NOT IN THIS
+ * PALETTE. Colour means outcome (tokens.css) — pass, running, flaky, fail — and
+ * a row of blue switches down a settings pane is the largest coloured surface
+ * in the app saying nothing about a result. A switch's on-state is a SELECTION,
+ * and selection in this design is neutral: white at low alpha, no hue. Same
+ * rule `--gl-sel-bg` exists for, same reason `check:selection-neutral` pins it.
+ *
+ * TARGETED BY ROLE RATHER THAN BY CLASS, which is the exception to the rule
+ * two blocks up. `Switch` renders a Radix primitive whose classes are Tailwind
+ * strings inside `@ui`; there is no stable class name to hang this on, and
+ * adding one would mean threading a prop through every one of ~20 call sites.
+ * `role="switch"` and `data-state` are the primitive's public contract — the
+ * same two attributes every test in this repo drives a switch through — so
+ * they are the stable surface here, not an implementation detail.
+ */
+.gl-setting-group [role="switch"] {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--gl-line);
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+/* ON IS BRIGHTER THAN `--gl-sel-bg`, deliberately, and this is the one place
+   the neutral-selection alpha is not simply reused. That token is tuned for a
+   ROW, where the lift has to be visible without competing with the status
+   colour beside it. A switch has no status beside it and one job: to be
+   legible as on or off across the room. At 0.055 the two states differed by
+   the knob's x-position alone, which is a coin-flip at 20px. Still hueless —
+   the rule the palette actually makes is that selection carries NO COLOUR, not
+   that it is always the same alpha. */
+.gl-setting-group [role="switch"][data-state="checked"] {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: var(--gl-sel-ring);
+}
+
+/* The knob. Square, and dimmed while off — a full-white knob on a dark track
+   reads as ON at a glance, which is the one thing a switch must never do. */
+.gl-setting-group [role="switch"] > span {
+  border-radius: 1px;
+  background: var(--gl-tx-3);
+}
+
+.gl-setting-group [role="switch"][data-state="checked"] > span {
+  background: var(--gl-tx-1);
+}

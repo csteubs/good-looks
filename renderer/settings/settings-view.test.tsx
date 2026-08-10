@@ -76,10 +76,10 @@ async function renderSettings() {
   await screen.findByRole("switch", { name: /ai thinking gif/i });
 }
 
-/** `SidebarListItem` activates on MOUSE-DOWN, not a bare click — see
- *  settings-nav.test.tsx. */
+/** Click, not mouse-down: the rows are `RailRow` since B4 — see
+ *  settings-nav.test.tsx for why that distinction has its own comment. */
 async function goToPane(title: string) {
-  fireEvent.mouseDown(screen.getByRole("button", { name: new RegExp(title, "i") }));
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(title, "i") }));
   await screen.findByRole("heading", { name: new RegExp(title, "i") });
 }
 
@@ -124,7 +124,8 @@ describe("navigation", () => {
       "Storage",
       "AI",
       "Alerts",
-      "Advanced",
+      "Diagnostics",
+      "Experiments",
       "Appearance",
     ]) {
       await goToPane(title);

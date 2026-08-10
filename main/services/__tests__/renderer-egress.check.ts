@@ -167,19 +167,61 @@ const ALLOWED: Array<{ needle: string; why: string }> = [
     "SiteIcon fetches only on an explicit `favicon` opt-in, never on a truthy default",
   );
 
-  const callers: string[] = [];
+  // B4 landed the setting this was waiting for, so a call site passing
+  // `favicon` is no longer forbidden — it is forbidden to pass it TURNED ON. A
+  // bare `favicon` or `favicon={true}` is the exact regression the whole check
+  // exists for, dressed as an opt-in; anything else is an expression, and the
+  // assertions below are what pin that expression to a real, defaulted-off
+  // setting.
+  const hardcoded: string[] = [];
   for (const file of walk(join(root, "renderer"))) {
     if (/\.test\.tsx?$/.test(file) || file.includes("/dev/")) continue;
     const src = readFileSync(file, "utf-8");
-    for (const m of src.matchAll(/<SiteIcon\b[^>]*>/gs)) {
-      if (/\bfavicon\b/.test(m[0])) callers.push(`${file.slice(root.length + 1)}: ${m[0].slice(0, 60)}`);
+    for (const m of src.matchAll(/<SiteIcon\b[^>]*?>/gs)) {
+      if (/\bfavicon(\s*=\s*\{\s*true\s*\})?(\s|\/|>)/.test(m[0])) {
+        hardcoded.push(`${file.slice(root.length + 1)}: ${m[0].slice(0, 60)}`);
+      }
     }
   }
   assert(
-    callers.length === 0,
-    callers.length === 0
-      ? "no shipped call site turns SiteIcon's favicon fetch on"
-      : `these turn on the third-party favicon fetch — it needs a visible setting first:\n     ${callers.join("\n     ")}`,
+    hardcoded.length === 0,
+    hardcoded.length === 0
+      ? "no shipped call site hardcodes SiteIcon's favicon fetch on"
+      : `these turn the third-party favicon fetch on unconditionally — it has to follow the setting:\n     ${hardcoded.join("\n     ")}`,
+  );
+
+  // The setting itself, on both sides of the IPC boundary. Either default
+  // flipping to `true` turns the fetch on for everyone who never opened
+  // Settings, which is precisely the state the original bug was in.
+  const store = readFileSync(join(root, "main/services/recorder-settings-store.ts"), "utf-8");
+  assert(
+    /siteIconsFromWeb:\s*false,/.test(store),
+    "the backend's default for siteIconsFromWeb is off",
+  );
+  const schema = readFileSync(join(root, "renderer/lib/settings-schema.ts"), "utf-8");
+  assert(
+    /siteIconsFromWeb:\s*false,/.test(schema),
+    "the renderer's default for siteIconsFromWeb is off, so 'reset section' cannot turn it on",
+  );
+
+  // And the disclosure. An opt-in whose copy does not say who is being told
+  // what is not an opt-in, it is a switch — REDESIGN §3.5 asks for the host and
+  // the payload by name, so both are asserted rather than the row's existence.
+  const appearance = readFileSync(
+    join(root, "renderer/settings/panes/appearance-pane.tsx"),
+    "utf-8",
+  );
+  assert(
+    /id="site-icons-from-web"/.test(appearance),
+    "the site-icon opt-in has a row the user can find",
+  );
+  assert(
+    /risk=/.test(appearance) && /icons\.duckduckgo\.com/.test(appearance),
+    "that row names the third party in its always-visible risk copy, not behind a disclosure",
+  );
+  assert(
+    /hostname/.test(appearance),
+    "that row says what is sent, not only where it goes",
   );
 }
 
