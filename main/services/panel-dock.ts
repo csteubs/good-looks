@@ -187,6 +187,64 @@ export function computePanelFollow(
 }
 
 /**
+ * Where the panel goes when it opens but CANNOT dock.
+ *
+ * `computeDock` returning `null` means "this display cannot hold the pair", and
+ * the caller's answer is to open the panel undocked. Undocked is not the same
+ * as unplaced: leaving the coordinates off hands the decision to the window
+ * layer, which centres a new window on the display — dead centre over the page
+ * being trained against, which is the single outcome the whole feature exists
+ * to avoid. That is what shipped, and it is invisible in every test that only
+ * looks at `computeDock`.
+ *
+ * So: place it deliberately, and prefer in this order.
+ *   1. Flush beside the browser, if a whole panel fits there on-screen. Docking
+ *      was refused, not "there is nowhere sensible to be" — those are different
+ *      questions, and `computePanelFollow` already answers the second.
+ *   2. Otherwise against a work-area edge, choosing the edge that covers LESS
+ *      of the browser. Some overlap is unavoidable here by definition (a pair
+ *      that fitted would have docked); how much of the page it eats is not.
+ *
+ * The panel keeps the docked geometry otherwise — same top, same height — so a
+ * parked panel reads as the panel that would be docked, rather than a stray
+ * window that happens to be open.
+ */
+export function computeParkedPanel(
+  browser: Bounds,
+  panelWidth: number,
+  workArea: Bounds,
+  preferred: DockSide = "right",
+): Bounds {
+  const beside = computePanelFollow(browser, panelWidth, workArea, preferred);
+  if (beside) return beside.panel;
+
+  const pw = Math.round(clamp(panelWidth, PANEL_MIN_WIDTH, workArea.width));
+  const height = Math.round(Math.min(browser.height, workArea.height));
+  const y = Math.round(clamp(browser.y, workArea.y, workArea.y + workArea.height - height));
+
+  const atLeft = Math.round(workArea.x);
+  const atRight = Math.round(workArea.x + workArea.width - pw);
+  const covered = (x: number): number =>
+    Math.max(0, Math.min(x + pw, browser.x + browser.width) - Math.max(x, browser.x));
+
+  const leftCover = covered(atLeft);
+  const rightCover = covered(atRight);
+  // A tie is the symmetric case (a browser centred on the display), where the
+  // two edges are equally good — so the user's preferred side decides, and the
+  // result stays on the side a dock would have used.
+  const x =
+    leftCover === rightCover
+      ? preferred === "right"
+        ? atRight
+        : atLeft
+      : leftCover < rightCover
+        ? atLeft
+        : atRight;
+
+  return { x, y, width: pw, height };
+}
+
+/**
  * The browser's bounds after the panel is undocked — it reclaims the width the
  * panel was occupying, so undocking is visually the inverse of docking.
  *

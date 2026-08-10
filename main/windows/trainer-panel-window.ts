@@ -36,6 +36,7 @@ import {
   PANEL_WIDTH,
   computeDock,
   computePanelFollow,
+  computeParkedPanel,
   computeUndock,
   isDuplicateApply,
   type Bounds,
@@ -71,6 +72,20 @@ let browserWindow: BrowserWindow | null = null;
 
 /** Null when undocked. Which edge the panel is currently glued to. */
 let dockSide: DockSide | null = null;
+
+/**
+ * Why the panel is not docked, or null while it is.
+ *
+ * Kept so the panel can ASK on mount. The push that carries this is emitted
+ * while the panel window is still loading its page, so a renderer that opens
+ * undocked never hears it — the same shape as the empty step list in
+ * DECISIONS 2026-08-06, and with the same fix: a push is not a substitute for
+ * being able to ask. Without it the panel's control reads "Undock" (its
+ * optimistic default) beside a panel that is not docked, so the one button that
+ * would fix the arrangement asks for the state it is already in and does
+ * nothing.
+ */
+let undockedReason: string | null = null;
 
 /** Raised around our own bounds writes — see defence 1 above. */
 let applying = false;
@@ -253,12 +268,19 @@ export async function openTrainerPanel(
   const workArea = workAreaFor(browserBounds);
   const layout = computeDock(browserBounds, WIDTH, workArea, "right", { preserveBrowserWidth });
 
+  // Where the panel opens, docked or not. NEVER left to the window layer to
+  // decide: an omitted x/y centres the new window on the display, which is on
+  // top of the page under test. See `computeParkedPanel`.
+  const opensAt: Bounds = layout
+    ? layout.panel
+    : computeParkedPanel(browserBounds, WIDTH, workArea, "right");
+
   panelWindow = new BrowserWindow({
     windowKey: "trainer-panel",
-    width: WIDTH,
-    height: layout?.panel.height ?? browserBounds.height,
-    x: layout?.panel.x,
-    y: layout?.panel.y,
+    width: opensAt.width,
+    height: opensAt.height,
+    x: opensAt.x,
+    y: opensAt.y,
     minWidth: WIDTH,
     title: "Trainer",
     // Frameless would look tidier, but the title bar is how the panel is
@@ -296,15 +318,25 @@ export async function openTrainerPanel(
 
   if (layout) {
     dockSide = "right";
+    undockedReason = null;
     applyBounds(recWindow, layout.browser, "browser");
     applyBounds(panelWindow, layout.panel, "panel");
     noteViewportChange(layout.browser.width);
   } else {
-    // The display cannot hold both. Open free-floating rather than not at all.
+    // The display cannot hold both. Open free-floating rather than not at all —
+    // but PLACED, and never over the middle of the page.
     dockSide = null;
+    undockedReason = "no-room";
     logger.info("trainer-panel", "Display too small to dock — opening undocked", {
       workArea,
+      browser: browserBounds,
+      panel: opensAt,
+      preserveBrowserWidth,
     });
+    // Creation options are a request; `setBounds` is the statement. The docked
+    // branch writes for the same reason, and going through the same guard is
+    // what keeps `check:trainer-panel`'s "one bounds writer" rule true.
+    applyBounds(panelWindow, opensAt, "panel");
     sendToMain("trainerPanel:undocked", { reason: "no-room" });
   }
 
@@ -339,6 +371,7 @@ export function undock(reason: string): void {
   if (dockSide === null) return;
   const side = dockSide;
   dockSide = null;
+  undockedReason = reason;
 
   // Nothing to give back when the dock never took any: growing the browser here
   // would push it PAST its preset — undocking would silently change the size the
@@ -364,11 +397,13 @@ export function dock(): void {
       workArea,
       preserveBrowserWidth,
     });
+    undockedReason = "no-room";
     sendToMain("trainerPanel:undocked", { reason: "no-room" });
     return;
   }
 
   dockSide = "right";
+  undockedReason = null;
   applyBounds(browserWindow, layout.browser, "browser");
   applyBounds(panelWindow, layout.panel, "panel");
   noteViewportChange(layout.browser.width);
@@ -389,6 +424,7 @@ export function closeTrainerPanel(): void {
   panelWindow = null;
   browserWindow = null;
   dockSide = null;
+  undockedReason = null;
   lastPanelWrite = null;
   lastBrowserWrite = null;
   seenEvents.clear();
@@ -407,4 +443,15 @@ export function isTrainerPanelOpen(): boolean {
 
 export function isTrainerPanelDocked(): boolean {
   return dockSide !== null;
+}
+
+/**
+ * The dock state, for a panel that wants to know it rather than be told.
+ *
+ * The pushes stay — they are how the state changes mid-session — but the FIRST
+ * state is decided before the panel's renderer exists, so it can only ever be
+ * fetched.
+ */
+export function getTrainerPanelDockState(): { docked: boolean; reason: string | null } {
+  return { docked: dockSide !== null, reason: dockSide === null ? undockedReason : null };
 }

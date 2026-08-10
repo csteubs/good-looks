@@ -56,6 +56,22 @@ import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "../main/add-ste
 import { GenerateStepsDialog } from "../main/generate-steps-dialog";
 import { RefineSelectorDialog } from "../main/refine-selector-dialog";
 
+/**
+ * Copy for the dock control's tooltip.
+ *
+ * Exported because a Radix tooltip cannot be opened in jsdom — its trigger
+ * tracks pointers with APIs jsdom does not implement — so the only way to test
+ * this copy is to assert against the constant. `noRoom` is the one that has to
+ * exist: a panel that opens beside the browser instead of docked to it looks
+ * like the feature not working, and "the display is too small for this window
+ * size" is the difference between a bug and a choice the user can act on.
+ */
+export const DOCK_TOOLTIP = {
+  docked: "Undock from the training browser",
+  undocked: "Dock to the training browser",
+  noRoom: "No room to dock at this window size — the display is too narrow for both windows",
+} as const;
+
 /** Assertions capturable by clicking an element — same set as the main trainer. */
 const ASSERT_PICKABLE: { kind: AssertKind; label: string }[] = [
   { kind: "visible", label: "Is visible" },
@@ -169,6 +185,8 @@ export function TrainerPanelView() {
   const [replayStatus, setReplayStatus] = React.useState<string | null>(null);
   const [addStepPicking, setAddStepPicking] = React.useState(false);
   const [docked, setDocked] = React.useState(true);
+  /** Why the panel is not docked, when the backend has told us. */
+  const [dockReason, setDockReason] = React.useState<string | null>(null);
   const [contextPick, setContextPick] = React.useState<{
     picked: PickedElement | null;
     assert?: AssertKind;
@@ -196,10 +214,44 @@ export function TrainerPanelView() {
   // Dock state is owned by the backend (it moves real windows), so the button
   // reflects what actually happened rather than an optimistic local guess —
   // docking can legitimately be REFUSED when the display is too small.
+  //
+  // ASK as well as listen. The first state is decided while this window is
+  // still loading, so a session that opened undocked has already missed the
+  // push that said so — and this control would then read "Undock" beside a
+  // panel that is not docked, doing nothing when pressed. Same lesson as the
+  // step list needing `recorder:getSteps`.
   React.useEffect(() => {
-    const offDocked = api.on("trainerPanel:docked", () => setDocked(true));
-    const offUndocked = api.on("trainerPanel:undocked", () => setDocked(false));
+    let live = true;
+    // The ask supplies the INITIAL value only. It was answered before it
+    // resolved here, so a push that lands while it is in flight is the newer
+    // fact — letting the reply win would undo a real dock change with a
+    // snapshot taken before it happened.
+    let pushed = false;
+    void api.trainerPanel
+      .getState()
+      .then((s) => {
+        if (!live || pushed) return;
+        setDocked(s.docked);
+        setDockReason(s.docked ? null : s.reason);
+      })
+      .catch(() => {
+        /* the pushes below still carry every later change */
+      });
+    const offDocked = api.on("trainerPanel:docked", () => {
+      pushed = true;
+      setDocked(true);
+      setDockReason(null);
+    });
+    const offUndocked = api.on<{ reason?: string } | undefined>(
+      "trainerPanel:undocked",
+      (payload) => {
+        pushed = true;
+        setDocked(false);
+        setDockReason(payload?.reason ?? null);
+      },
+    );
     return () => {
+      live = false;
       offDocked();
       offUndocked();
     };
@@ -344,7 +396,11 @@ export function TrainerPanelView() {
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {docked ? "Undock from the training browser" : "Dock to the training browser"}
+              {docked
+                ? DOCK_TOOLTIP.docked
+                : dockReason === "no-room"
+                  ? DOCK_TOOLTIP.noRoom
+                  : DOCK_TOOLTIP.undocked}
             </TooltipContent>
           </Tooltip>
         </div>
