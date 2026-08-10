@@ -54,14 +54,18 @@ export function Switch({ className, ...props }: React.ComponentProps<typeof Swit
 /* ── RadioGroup ─────────────────────────────────────────────────────── */
 
 export function RadioGroup({ className, ...props }: React.ComponentProps<typeof RadioGroupPrimitive.Root>) {
-  return <RadioGroupPrimitive.Root className={cn("flex items-center gap-3", className)} {...props} />;
+  // gap-4 between options, against the Label's own gap-2 between a radio and
+  // its text: the space separating two options has to read as larger than the
+  // space inside one, or the text of one option looks attached to the next
+  // option's radio.
+  return <RadioGroupPrimitive.Root className={cn("flex items-center gap-4", className)} {...props} />;
 }
 
 export function RadioGroupItem({ className, ...props }: React.ComponentProps<typeof RadioGroupPrimitive.Item>) {
   return (
     <RadioGroupPrimitive.Item
       className={cn(
-        "aspect-square size-4 rounded-full border border-input bg-background shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-accent",
+        "aspect-square size-4 shrink-0 rounded-full border border-input bg-background shadow-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:border-accent",
         className,
       )}
       {...props}
