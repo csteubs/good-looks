@@ -19,6 +19,7 @@
 import * as React from "react";
 
 import "../styles.css";
+import { Button, Dialog, DialogActions } from "@ui";
 import {
   Atmosphere,
   Btn,
@@ -80,11 +81,32 @@ function Row({ label, children }: { label: string; children: React.ReactNode }):
   );
 }
 
+/** The trainer panel's dialog box, at its real width, with its content edge
+ *  drawn. 296 = `PANEL_WIDTH` 360 - 4rem; the `p-4` inside is the dialog's own.
+ *  A button laid out outside the dashed rule is the bug this exists to show. */
+function PanelWidthBox({ children }: { children: React.ReactNode }): React.ReactElement {
+  return (
+    <div
+      style={{
+        width: 296,
+        padding: 16,
+        borderRadius: 12,
+        background: "var(--gl-panel)",
+        outline: "1px dashed var(--gl-tx-3)",
+        outlineOffset: -16,
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function Specimen(): React.ReactElement {
   const [mode, setMode] = React.useState<"tint" | "rule" | "bar" | "delta" | "halo" | "off">("tint");
   const [seg, setSeg] = React.useState<"current" | "baseline" | "diff">("diff");
   const [cursor, setCursor] = React.useState(2);
   const [crt, setCrt] = React.useState(false);
+  const [exitOpen, setExitOpen] = React.useState(false);
 
   return (
     <>
@@ -328,6 +350,61 @@ export function Specimen(): React.ReactElement {
               consequence="A laptop will thrash and report failures it caused."
             />
             <MenuItem label="Delete test" danger consequence="The spec and its run history go too." />
+          </div>
+        </Panel>
+
+        {/* The dialog footer at the width it broke at. The trainer panel is 360
+            DIP, so its dialog is `w-[calc(100vw-4rem)]` = 296px with 264px of
+            content — and this is the ONLY place that can be looked at, because
+            the main window has a 928px floor and the dialog is roomy there.
+            The dashed rule is the panel's content edge: before `flex-wrap`,
+            the destructive button was laid out to the LEFT of it. */}
+        <Panel title="DialogActions" id="264px of content, no escaping it" pad={12}>
+          <div style={{ display: "grid", gap: 14, justifyItems: "start" }}>
+            <Row label="shipped">
+              <PanelWidthBox>
+                <DialogActions
+                  onConfirm={() => {}}
+                  confirmLabel="Save & Exit"
+                  destructiveAction={{ label: "Discard Edits", onClick: () => {} }}
+                />
+              </PanelWidthBox>
+            </Row>
+            {/* A third button is allowed — it costs a row, not the page behind
+                the dialog. This is the exact set that used to overflow. */}
+            <Row label="+ a 3rd button">
+              <PanelWidthBox>
+                <DialogActions
+                  onConfirm={() => {}}
+                  confirmLabel="Save & Exit"
+                  destructiveAction={{ label: "Discard Edits", onClick: () => {} }}
+                  secondaryAction={{ label: "Cancel", onClick: () => {} }}
+                />
+              </PanelWidthBox>
+            </Row>
+            {/* Opened from state rather than the `trigger` prop, which is how
+                every real caller drives this dialog too — the trainer raises it
+                from `exitOpen`, not from a button inside it. */}
+            <Row label="the real one">
+              <Button variant="muted" onClick={() => setExitOpen(true)}>
+                Open exit dialog
+              </Button>
+              <Dialog
+                open={exitOpen}
+                onOpenChange={setExitOpen}
+                title="Save changes to this test?"
+                description="You have unsaved edits to this test's steps. Save them, or discard your edits and exit."
+                confirmLabel="Save & Exit"
+                onConfirm={() => {}}
+                destructiveAction={{ label: "Discard Edits", onClick: () => {} }}
+              >
+                <span style={{ fontSize: 12, color: "var(--gl-tx-2)" }}>
+                  Portalled and modal — narrow the window to 360px to see it at the trainer
+                  panel&rsquo;s width. Dismissed by the X, Escape or the overlay; there is no
+                  Cancel button.
+                </span>
+              </Dialog>
+            </Row>
           </div>
         </Panel>
 

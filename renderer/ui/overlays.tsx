@@ -17,13 +17,23 @@ import { Button, type ButtonProps } from "./primitives";
 /* ── Shared sizing ──────────────────────────────────────────────────── */
 
 type DialogSize = "small" | "medium" | "large" | "xl" | "2xl";
-const dialogSizeClass: Record<DialogSize, string> = {
+export const dialogSizeClass: Record<DialogSize, string> = {
   small: "max-w-sm",
   medium: "max-w-md",
   large: "max-w-lg",
   xl: "max-w-2xl",
   "2xl": "max-w-4xl",
 };
+
+/** The dialog panel's own geometry — a fixed, centred box that is
+ *  `100vw - 4rem` until it hits its size cap, minus `p-4` of padding.
+ *
+ *  Exported because `e2e/dialog-footer.spec.ts` measures the real footer inside
+ *  the real panel. Those numbers are the whole reason the footer overflowed at
+ *  all (the trainer panel is 360 DIP wide, so the box is 296px and the content
+ *  264px), and a copy of them in the test would drift silently. */
+export const dialogPanelClass =
+  "fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-[calc(100vw-4rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4 shadow-2xl outline-none";
 
 /* ── Dialog ─────────────────────────────────────────────────────────── */
 
@@ -73,11 +83,7 @@ export function DialogContent({
     <DialogPrimitive.Portal>
       <DialogOverlay className={overlayClassName} />
       <DialogPrimitive.Content
-        className={cn(
-          "fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-[calc(100vw-4rem)] -translate-x-1/2 -translate-y-1/2 flex-col gap-3 rounded-xl border border-border/60 bg-card p-4 shadow-2xl outline-none",
-          dialogSizeClass[size],
-          className,
-        )}
+        className={cn(dialogPanelClass, dialogSizeClass[size], className)}
         {...props}
       >
         {children}
@@ -113,8 +119,26 @@ export function DialogBody({
   );
 }
 
+/** `flex-wrap` is load-bearing, not tidiness.
+ *
+ *  A nowrap flex row lays its items out at their intrinsic widths — Button is
+ *  `whitespace-nowrap`, so nothing here can shrink — and when they do not fit,
+ *  `justify-end` anchors the row's END to the container and the surplus hangs
+ *  off the LEFT. In the trainer panel (360 DIP → a 296px dialog → 264px of
+ *  content) "Discard Edits · Cancel · Save & Exit" needs ~282px, so the
+ *  destructive button hung outside the panel entirely, over the page behind it.
+ *
+ *  Wrapping is what makes that structurally impossible: too many buttons, or
+ *  longer labels, cost a second row instead of leaving the box. Guarded by
+ *  `e2e/dialog-footer.spec.ts` (real layout) and `check:dialog-footer`. */
 export function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
-  return <div className={cn("flex items-center justify-end gap-2 pt-1", className)} {...props} />;
+  return (
+    <div
+      data-dialog-footer=""
+      className={cn("flex flex-wrap items-center justify-end gap-2 pt-1", className)}
+      {...props}
+    />
+  );
 }
 
 export function DialogTitle({ className, ...props }: React.ComponentProps<typeof DialogPrimitive.Title>) {
@@ -150,6 +174,57 @@ type DialogOwnProps = {
 /** Screen-reader-only, so Radix's required Title/Description are always present
  *  even when the caller asks to hide them. */
 const srOnly = "absolute size-px overflow-hidden whitespace-nowrap [clip:rect(0,0,0,0)]";
+
+type DialogActionsProps = Pick<
+  DialogOwnProps,
+  "confirmLabel" | "confirmVariant" | "confirmDisabled" | "destructiveAction" | "secondaryAction"
+> & { onConfirm: () => void | Promise<void> };
+
+/** The composed dialog's action row.
+ *
+ *  Its own component so the layout test can lay out the REAL buttons — the set,
+ *  the order and the `mr-auto` are the thing under test, and a footer
+ *  hand-rebuilt in a spec would pass while this one overflowed.
+ *
+ *  There is deliberately NO Cancel button. Every composed dialog renders the
+ *  close "X" (and Radix closes on Escape and on the overlay), so Cancel bought
+ *  a third way to do the same thing at the cost of ~75px in a 264px row — it is
+ *  what pushed "Discard Edits" out of the panel. Adding a button back here is
+ *  allowed; the footer wraps. */
+export function DialogActions({
+  onConfirm,
+  confirmLabel = "Done",
+  confirmVariant = "accent",
+  confirmDisabled,
+  destructiveAction,
+  secondaryAction,
+}: DialogActionsProps) {
+  return (
+    <DialogFooter>
+      {destructiveAction && (
+        <Button
+          variant="destructive"
+          className="mr-auto"
+          onClick={() => void destructiveAction.onClick()}
+        >
+          {destructiveAction.label}
+        </Button>
+      )}
+      {secondaryAction && (
+        <Button
+          variant="muted"
+          className={destructiveAction ? undefined : "mr-auto"}
+          onClick={() => void secondaryAction.onClick()}
+        >
+          {secondaryAction.label}
+        </Button>
+      )}
+      <Button variant={confirmVariant} disabled={confirmDisabled} onClick={() => void onConfirm()}>
+        {confirmLabel}
+      </Button>
+    </DialogFooter>
+  );
+}
 
 export function Dialog({
   children,
@@ -200,32 +275,14 @@ export function Dialog({
         </DialogHeader>
         <DialogBody>{children}</DialogBody>
         {onConfirm && (
-          <DialogFooter>
-            {destructiveAction && (
-              <Button variant="destructive" className="mr-auto" onClick={() => void destructiveAction.onClick()}>
-                {destructiveAction.label}
-              </Button>
-            )}
-            {secondaryAction && (
-              <Button
-                variant="muted"
-                className={destructiveAction ? undefined : "mr-auto"}
-                onClick={() => void secondaryAction.onClick()}
-              >
-                {secondaryAction.label}
-              </Button>
-            )}
-            <DialogPrimitive.Close asChild>
-              <Button variant="muted">Cancel</Button>
-            </DialogPrimitive.Close>
-            <Button
-              variant={confirmVariant}
-              disabled={confirmDisabled}
-              onClick={() => void onConfirm()}
-            >
-              {confirmLabel}
-            </Button>
-          </DialogFooter>
+          <DialogActions
+            onConfirm={onConfirm}
+            confirmLabel={confirmLabel}
+            confirmVariant={confirmVariant}
+            confirmDisabled={confirmDisabled}
+            destructiveAction={destructiveAction}
+            secondaryAction={secondaryAction}
+          />
         )}
       </DialogContent>
     </DialogPrimitive.Root>
