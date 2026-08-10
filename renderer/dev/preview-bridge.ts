@@ -32,8 +32,11 @@ import {
   HEALS,
   LLM_CONFIG,
   LLM_STATUS,
+  REPLAY,
+  REPLAY_SUMMARIES,
   RUNS,
   RUN_LOG,
+  VISUAL_FRAMES,
   SETTINGS,
   TESTS,
 } from "./preview-fixtures";
@@ -51,8 +54,11 @@ import type {
   RecorderState,
   RunLogs,
   RunRecord,
+  RunReplay,
+  RunReplaySummary,
   SecretStatus,
   TestRecord,
+  VisualMask,
 } from "../lib/recorder-types";
 import type { LlmConfig, LlmModel, LlmProviderStatus } from "../lib/llm-types";
 import type { BranchStatus } from "../lib/branch-types";
@@ -424,7 +430,21 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       ],
     }),
 
-    "artifacts:list": () => [],
+    // The Visual screen's entire subject. Returning `[]` here is honest for a
+    // preview that cannot run Playwright, and it also meant the largest file in
+    // the renderer only ever rendered its empty state — see REPLAY.
+    "artifacts:list": (): RunReplaySummary[] => REPLAY_SUMMARIES,
+    "artifacts:getReplay": (p): RunReplay | null =>
+      p?.testId === REPLAY.testId && p?.runId === REPLAY.runId ? REPLAY : null,
+    /** The frames. `readShot` is asked for the CURRENT or the DIFF image and
+     *  told which by filename, so the two are told apart on `.diff.` rather
+     *  than by guessing from the step — a viewer showing the current frame in
+     *  diff mode is exactly the bug a preview should make visible. */
+    "artifacts:readShot": (p): string =>
+      typeof p?.file === "string" && p.file.includes(".diff.")
+        ? VISUAL_FRAMES.diff
+        : VISUAL_FRAMES.current,
+    "visual:baselineShot": (): string => VISUAL_FRAMES.baseline,
     /** `RunLogs`, not a line array: the panel reads `console` and `network`
      *  separately and reports what was dropped. */
     "artifacts:getLogs": (): RunLogs => ({
@@ -497,8 +517,13 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "debug:shortcut": () => "⌘⌥⇧S",
 
     // ── Visual ───────────────────────────────────────────────────────────
-    "visual:listBaselines": () => [],
-    "visual:getMasks": () => [],
+    "visual:listBaselines": (): string[] => REPLAY.steps.filter((st) => st.screenshot).map((st) => st.stepId),
+    /** One mask, on the step whose diff reports `maskedCount: 1` — the two
+     *  numbers describing the same thing have to agree, or the panel says a
+     *  mask was applied and the list shows none. */
+    "visual:getMasks": (): VisualMask[] => [
+      { id: "m-1", stepId: "s2", x: 0.62, y: 0.06, w: 0.3, h: 0.09 },
+    ],
     "visual:getThreshold": () => 0.2,
     "visual:getElementSteps": () => [],
 
