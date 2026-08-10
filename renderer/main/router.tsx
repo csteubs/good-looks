@@ -10,6 +10,7 @@ import { HomeView } from "./home-view";
 import { RootView } from "./root-view";
 import { HealsView } from "./heals-view";
 import { StatsView } from "./stats-view";
+import { StatsCategoryView } from "./stats/stats-category-view";
 import { TestDetailView } from "./test-detail-view";
 import { VisualView } from "./visual-view";
 import { QueryClient } from "@tanstack/react-query";
@@ -59,6 +60,36 @@ const statsRoute = createRoute({
   },
 });
 
+/** A category's dashboard, and the leaf below it.
+ *
+ *  REAL ROUTES RATHER THAN A DRILL STACK INSIDE THE VIEW, and the reason is the
+ *  top strip: the app already has one surface that says where you are, and one
+ *  history that back and forward operate on. A stack held in `stats-view.tsx`
+ *  would build a second of each — the strip would keep saying "Stats" three
+ *  levels down, re-entering from the rail would silently reset the trail, and
+ *  drilling out to a test would lose it. See docs/plans/stats-categories.md §5.
+ *
+ *  `$category` and `$facet` are strings out of history and are NOT trusted: the
+ *  view checks them against the registry and renders an explained empty state
+ *  for anything else. */
+const statsCategoryRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/stats/$category",
+  component: StatsCategoryView,
+  staticData: {
+    title: "Stats",
+  },
+});
+
+const statsFacetRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/stats/$category/$facet",
+  component: StatsCategoryView,
+  staticData: {
+    title: "Stats",
+  },
+});
+
 const visualRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/visual",
@@ -102,6 +133,8 @@ const routeTree = rootRoute.addChildren([
   homeRoute,
   testRoute,
   statsRoute,
+  statsCategoryRoute,
+  statsFacetRoute,
   visualRoute,
   batchRoute,
   healsRoute,

@@ -27,6 +27,20 @@ vi.mock("../lib/api", () => ({
       resetStats: async () => ({ removed: 0 }),
       deleteAll: async () => ({ removed: 0 }),
       deleteRange: async () => ({ removed: 0 }),
+      // The category board reads this. `null` rather than a report: the board
+      // OMITS a category whose query has not answered, so a null keeps these
+      // tests about the run table rather than about the board.
+      flake: async () => null,
+    },
+    // Two series the board added to this page. Both are answered emptily here —
+    // the board has its own test file, and a fixture rich enough to light it up
+    // would make every assertion below harder to read for no gain.
+    heals: { listAll: async () => [] },
+    artifacts: { list: async () => [] },
+    metrics: {
+      stepHealth: async () => null,
+      slowness: async () => null,
+      divergence: async () => null,
     },
     on: () => () => {},
   },
@@ -63,6 +77,24 @@ function renderView() {
 function rowsNow(): HTMLElement[] {
   const table = screen.getByRole("table");
   return within(table).getAllByRole("row").slice(1) as HTMLElement[];
+}
+
+/** The run table's status filter.
+ *
+ *  THE ROLE CHANGED IN THE B7 RESKIN AND THAT IS WORTH STATING RATHER THAN
+ *  QUIETLY REWRITING. The SDK's `SegmentedControl` was a Radix ToggleGroup, so
+ *  its items announced as `radio` and activated on POINTER-DOWN — which is why
+ *  a plain `fireEvent.click` on one silently asserted against the previous
+ *  selection, a trap CLAUDE.md documents. The theme's `Segmented` is plain
+ *  buttons with `aria-pressed`, so `click` works, keyboard works, and the
+ *  stylesheet selects on the same attribute that is announced: the visual state
+ *  cannot disagree with the announced one, because there is no second `selected`
+ *  class to forget.
+ *
+ *  Queried by name AND pressed-ness rather than by role alone, so the helper
+ *  cannot start matching some other button that happens to say "Failed". */
+function statusFilter(name: string): HTMLElement {
+  return screen.getByRole("button", { name }) as HTMLElement;
 }
 
 /** Wait for the run query to resolve and rows to render. */
@@ -154,7 +186,7 @@ describe("filtering", () => {
   it("narrows the table by status", async () => {
     renderView();
     expect(await bodyRows()).toHaveLength(3);
-    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+    fireEvent.click(statusFilter("Failed"));
     await expectRows(2);
   });
 
@@ -165,7 +197,7 @@ describe("filtering", () => {
     await bodyRows();
     const totalBefore = screen.getByText("Total runs").parentElement?.textContent;
 
-    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+    fireEvent.click(statusFilter("Failed"));
     await expectRows(2);
 
     expect(screen.getByText("Total runs").parentElement?.textContent).toBe(totalBefore);
@@ -176,7 +208,7 @@ describe("filtering", () => {
     await bodyRows();
     expect(screen.queryByRole("button", { name: /clear/i })).toBeNull();
 
-    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+    fireEvent.click(statusFilter("Failed"));
     expect(await screen.findByRole("button", { name: /clear/i })).toBeTruthy();
   });
 
@@ -184,7 +216,7 @@ describe("filtering", () => {
     runs = [run({ id: "r1", status: "passed" })];
     renderView();
     await bodyRows();
-    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+    fireEvent.click(statusFilter("Failed"));
     expect(await screen.findByText(/no runs match these filters/i)).toBeTruthy();
   });
 
@@ -197,7 +229,7 @@ describe("filtering", () => {
     renderView();
     expect(await bodyRows()).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole("radio", { name: "Passed" }));
+    fireEvent.click(statusFilter("Passed"));
     const rows = await expectRows(1);
     expect(within(rows[0]).queryByText("Pinned")).toBeNull();
   });
@@ -246,7 +278,7 @@ describe("pagination", () => {
     fireEvent.click(screen.getByRole("button", { name: /next page/i }));
     expect(await screen.findByText(/page 3 of 3/i)).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+    fireEvent.click(statusFilter("Failed"));
 
     await expectRows(10);
     expect(screen.getByText("Fail 0")).toBeTruthy();
@@ -304,7 +336,7 @@ describe("layout keeps the page's last controls reachable", () => {
     renderView();
     await bodyRows(1);
     const content = scrollContent();
-    const chart = screen.getByText(/pass \/ fail/i).closest("div")!;
+    const chart = screen.getByText(/pass \/ fail/i).closest('[data-gl="panel"]')!;
     const cards = screen.getByText("Pass rate").closest("div")!;
     const kids = Array.from(content.children);
     const idx = (el: Element) => kids.findIndex((k) => k.contains(el));
@@ -316,7 +348,7 @@ describe("layout keeps the page's last controls reachable", () => {
     // All three must coexist: a layout that hides any one of them is the bug.
     renderView();
     await bodyRows(1);
-    expect(screen.getByRole("radio", { name: "All" })).toBeTruthy();
+    expect(statusFilter("All")).toBeTruthy();
     expect(screen.getByRole("table")).toBeTruthy();
     expect(screen.getByRole("button", { name: /next page/i })).toBeTruthy();
   });

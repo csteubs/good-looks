@@ -59,6 +59,19 @@ const tsFiles = files.filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f
     /width:\s*var\(--gl-status-w\)/.test(rule),
     "the status chip takes its width from --gl-status-w, not from a repeated literal",
   );
+
+  // A WIDTH A FLEX PARENT CAN TAKE BACK IS NOT A FIXED WIDTH, and this was the
+  // hole the first version of this check left open: it pinned that nothing
+  // RE-SIZES the chip, which is a different question from whether anything
+  // COMPRESSES it. A flex item shrinks by default, so a status cell that also
+  // holds a "healed" chip squeezed the status chip to whatever space was left
+  // and `overflow: hidden` ate the word — the row then reported the heal and
+  // silently dropped the outcome. Exactly the one-row-at-a-time failure in the
+  // header, arriving through a property the header never mentions.
+  assert(
+    /flex-shrink:\s*0/.test(rule),
+    "the status chip refuses to shrink, so a flex row cannot take its width back",
+  );
 }
 
 // ── Nobody overrides it ───────────────────────────────────────────────
@@ -72,16 +85,22 @@ const tsFiles = files.filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f
     for (const m of src.matchAll(/([^{}]*gl-status-chip[^{}]*)\{([^}]*)\}/g)) {
       const selector = m[1].trim();
       const body = m[2];
-      if (!/(^|[\s;])(min-|max-)?width\s*:/.test(body)) continue;
-      if (/width:\s*var\(--gl-status-w\)/.test(body)) continue;
+      // A width override, or a rule that hands the chip back to flex sizing —
+      // `flex: 1`, `flex-shrink: 1`, `flex-basis: auto` all undo the contract
+      // just as completely as `width: 60px` does.
+      const resizes =
+        /(^|[\s;])(min-|max-)?width\s*:/.test(body) && !/width:\s*var\(--gl-status-w\)/.test(body);
+      const unshrinks =
+        /(^|[\s;])flex(-shrink|-basis)?\s*:/.test(body) && !/flex-shrink:\s*0/.test(body);
+      if (!resizes && !unshrinks) continue;
       offenders.push(`${file.slice(root.length + 1)}: ${selector}`);
     }
   }
   assert(
     offenders.length === 0,
     offenders.length === 0
-      ? "no stylesheet re-sizes the status chip"
-      : `these set their own width on a status chip, so the column goes ragged:\n     ${offenders.join("\n     ")}`,
+      ? "no stylesheet re-sizes the status chip or lets a flex row shrink it"
+      : `these re-size a status chip, or hand its width back to flex sizing — either way\n     the column goes ragged one row at a time:\n     ${offenders.join("\n     ")}`,
   );
 }
 

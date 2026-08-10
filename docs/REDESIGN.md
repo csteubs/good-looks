@@ -578,6 +578,20 @@ reskin the existing dialog in B6.
 
 ### B7. Stats — `stats-view.tsx` + `flake-panel.tsx` + `suite-cost-panel.tsx` + `step-health-panel.tsx` + `divergence-panel.tsx`
 
+> **The reskin is done, 2026-08-10.** All five files are on the theme layer, with
+> a Stats section in `renderer/theme/screens.css`. Every existing test survived; two queries changed, none were
+> deleted. The reskin also found and closed a hole in `check:status-width`: a
+> width a flex row can take back is not a fixed width, and the run table's status
+> cell was squeezing the chip until the row reported a heal and dropped the
+> outcome.
+>
+> **Two things in this section are NOT done.** The page-level scope + range is
+> deferred — it cannot be honest until the flake and metrics handlers take a time
+> window, or it scopes half the page and misreports the other half (DECISIONS).
+> And `docs/plans/stats-categories.md` supersedes the "one page, three modes"
+> shape below: the board of categories replaces it, and Cost and Report become
+> two more categories rather than two more modes.
+
 975 lines plus five panels. Everything the current view has is in the redesign's
 `health` mode: chart, KPI counts, capture overhead, stability, log search, run
 table. The reskin is mostly `Panel` + `kpi` + `TagStack` + `Temp`.

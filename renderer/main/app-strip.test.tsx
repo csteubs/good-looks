@@ -18,11 +18,25 @@ let params: { id?: string } = {};
 let tests: TestRecord[] = [];
 const navigate = vi.fn();
 
+/** The router's memory history, as much of it as the strip reads.
+ *
+ *  `__TSR_index` and `length` are how the forward button knows whether there is
+ *  anywhere ahead: the history API has `canGoBack()` and no `canGoForward()`,
+ *  and memory history stamps the index into each entry's state. */
+const history = {
+  index: 0,
+  length: 1,
+  canGoBack: vi.fn(() => history.index > 0),
+  back: vi.fn(),
+  forward: vi.fn(),
+};
+
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigate,
   useParams: () => params,
+  useRouter: () => ({ history }),
   useRouterState: (opts: { select: (s: unknown) => unknown }) =>
-    opts.select({ location: { pathname } }),
+    opts.select({ location: { pathname, state: { __TSR_index: history.index } } }),
 }));
 
 vi.mock("../lib/api", () => ({
@@ -61,6 +75,10 @@ beforeEach(() => {
   pathname = "/";
   params = {};
   tests = [];
+  history.index = 0;
+  history.length = 1;
+  history.back.mockClear();
+  history.forward.mockClear();
   navigate.mockClear();
   invoke.mockClear();
   window.localStorage.clear();
@@ -171,6 +189,117 @@ describe("the two Phase C slots", () => {
     renderStrip();
     expect(screen.queryByText(/⌘K/)).toBeNull();
     const buttons = screen.getAllByRole("button").map((b) => b.getAttribute("aria-label"));
-    expect(buttons).toEqual(["Hide library", "Settings"]);
+    // The exact inventory, deliberately — this is the test that notices a
+    // placeholder creeping in, and it can only do that by enumerating.
+    // Back/Forward joined the strip with the Stats drill: they are real
+    // controls over the router's own history, not slots for a future feature,
+    // and both are disabled here because there is nowhere to go.
+    expect(buttons).toEqual(["Hide library", "Back", "Forward", "Settings"]);
+  });
+});
+
+// ── The Stats drill's trail, and the controls beside it ───────────────
+//
+// The breadcrumb is the reason the category board is ROUTED rather than holding
+// a stack in the view: the app already has one surface that says where you are.
+// These pin that it says the right thing at each depth, including for a
+// category that does not exist — a URL can say anything, and a trail that
+// confidently rendered "Nonsense" would be naming a screen that isn't there.
+
+describe("the Stats drill", () => {
+  it("names the category at depth two", async () => {
+    pathname = "/stats/stability";
+    renderStrip();
+    await waitFor(() => expect(screen.getByText("Stability")).toBeTruthy());
+    // "Stats" is a link back up; the category is where you are.
+    fireEvent.click(screen.getByRole("button", { name: "Stats" }));
+    expect(navigate).toHaveBeenCalledWith({ to: "/stats" });
+  });
+
+  it("names the facet at depth three, with the category still a link", async () => {
+    pathname = "/stats/stability/flaky";
+    renderStrip();
+    // "Flaky", not "flaky" — the trail names the facet the way the app names
+    // it, never the way the route spells it. The ids that reach the URL are
+    // internal vocabulary ("changed-since"), and leaking one into the
+    // breadcrumb puts an implementation detail on screen.
+    await waitFor(() => expect(screen.getByText("Flaky")).toBeTruthy());
+    expect(screen.queryByText("flaky")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Stability" }));
+    expect(navigate).toHaveBeenCalledWith({
+      to: "/stats/$category",
+      params: { category: "stability" },
+    });
+  });
+
+  it("does not invent a name for a category that does not exist", async () => {
+    // Resolved through the registry rather than title-cased from the URL.
+    pathname = "/stats/nonsense";
+    renderStrip();
+    await waitFor(() => expect(screen.getByText("Stats")).toBeTruthy());
+    expect(screen.queryByText(/nonsense/i)).toBeNull();
+  });
+});
+
+describe("back and forward", () => {
+  // The app had neither before the Stats drill, and it genuinely was not
+  // missing: every screen was one level deep and the router runs on memory
+  // history, so there was never anywhere to go back TO.
+
+  it("disables both when there is nowhere to go", async () => {
+    renderStrip();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Back" })).toBeTruthy());
+    expect(screen.getByRole("button", { name: "Back" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Forward" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("enables Back once there is history behind you", async () => {
+    history.index = 2;
+    history.length = 3;
+    renderStrip();
+    const back = await screen.findByRole("button", { name: "Back" });
+    expect(back.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(back);
+    expect(history.back).toHaveBeenCalled();
+    // Nothing ahead — the last entry IS where we are.
+    expect(screen.getByRole("button", { name: "Forward" }).hasAttribute("disabled")).toBe(true);
+  });
+
+  it("enables Forward only when an entry is actually ahead", async () => {
+    // The assertion that would go red if someone rendered Forward always-on.
+    // The history API has no canGoForward(); this is derived from the index.
+    history.index = 0;
+    history.length = 3;
+    renderStrip();
+    const fwd = await screen.findByRole("button", { name: "Forward" });
+    expect(fwd.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(fwd);
+    expect(history.forward).toHaveBeenCalled();
+  });
+
+  it("takes the keyboard shortcuts", async () => {
+    history.index = 1;
+    history.length = 2;
+    renderStrip();
+    await screen.findByRole("button", { name: "Back" });
+    fireEvent.keyDown(window, { key: "[", metaKey: true });
+    expect(history.back).toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: "]", metaKey: true });
+    expect(history.forward).toHaveBeenCalled();
+  });
+
+  it("does NOT steal the keystroke from a text field", async () => {
+    // The log search and every inline editor in the app are plain inputs, and
+    // "[" is a character someone may well be typing.
+    history.index = 1;
+    history.length = 2;
+    renderStrip();
+    await screen.findByRole("button", { name: "Back" });
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    fireEvent.keyDown(input, { key: "[", metaKey: true });
+    expect(history.back).not.toHaveBeenCalled();
+    input.remove();
   });
 });
