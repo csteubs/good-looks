@@ -102,6 +102,9 @@
   --color-support-red: var(--support-red);
   --color-support-orange: var(--support-orange);
   --color-support-yellow: var(--support-yellow);
+  --color-support-green-yellow: var(--support-green-yellow);
+  --color-support-yellow-orange: var(--support-yellow-orange);
+  --color-support-orange-red: var(--support-orange-red);
   --color-support-green-10: var(--support-green-10);
   --color-support-red-10: var(--support-red-10);
   --color-accent-10: var(--accent-10);

@@ -169,6 +169,27 @@ export const RUNS: RunRecord[] = [
     runBrowser: "chromium",
     speed: "medium",
   },
+  // One batch of the same test across the three browsers, with webkit failing.
+  // Here so the sidebar's blended verdict dot has something to draw in the
+  // preview: pass/fail fixtures alone only ever produce plain green and plain
+  // red, which is exactly the state the five-way scale was added to break out
+  // of, and the preview is the only place any of it can be SEEN.
+  ...(["chromium", "firefox", "webkit"] as const).map((browser, i) => ({
+    id: `r-4-${browser}`,
+    testId: "t-search",
+    testName: "Search returns results",
+    url: "https://docs.example.com",
+    status: browser === "webkit" ? ("failed" as const) : ("passed" as const),
+    exitCode: browser === "webkit" ? 1 : 0,
+    startedAt: NOW - 3 * HOUR + i * 1_000,
+    finishedAt: NOW - 3 * HOUR + i * 1_000 + 9_000,
+    durationMs: 9_000,
+    logFile: `/preview/runs/r-4-${browser}.log`,
+    logBytes: 3_120,
+    runBrowser: browser,
+    speed: "medium" as const,
+    batchId: "b-1",
+  })),
 ];
 
 export const RUN_LOG = [

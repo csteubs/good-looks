@@ -4,6 +4,7 @@
 
 import * as React from "react";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@ui";
 
 import { api } from "../lib/api";
@@ -251,6 +252,11 @@ export function RecorderProvider({
   // re-subscribe every push listener on each render.
   const finishedRef = React.useRef(onFinished);
   finishedRef.current = onFinished;
+  // Both windows that mount this provider (main and trainer) have their own
+  // QueryClientProvider, so this is safe in either — the trainer's client is a
+  // separate cache, which is fine: the caches it invalidates are read in the
+  // window that owns them.
+  const qc = useQueryClient();
 
   React.useEffect(() => {
     const offState = api.on<RecorderState>("recorder:state", (s) => setState(s));
@@ -328,6 +334,18 @@ export function RecorderProvider({
         });
       },
     );
+    // The run history changed on disk — a run persisted, or history was
+    // deleted. The backend has broadcast this since run history existed, but
+    // the only subscribers were StatsView and VisualView, both of which are
+    // ROUTE components: on any other route nothing was listening, so the
+    // shared ["runs"] cache kept serving the list from whenever it was last
+    // fetched. That is the sidebar's stale status dot — a failing test re-run
+    // until it passed stayed red until the window was reopened, while the run
+    // panel one pane over showed the pass. Subscribing here puts it on the
+    // provider that is mounted for the whole session instead.
+    const offRunsChanged = api.on("runs:changed", () => {
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+    });
     const offDebug = api.on<{ testId: string; entries: DebugEntry[] }>(
       "recorder:debugLogs",
       ({ entries }) => setDebugEntries(entries ?? []),
@@ -448,6 +466,7 @@ export function RecorderProvider({
       offOut();
       offStep();
       offDone();
+      offRunsChanged();
       offDebug();
       offReplayStep();
       offReplayLog();

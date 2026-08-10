@@ -51,6 +51,14 @@
   --support-red: var(--destructive);
   --support-orange: var(--warning);
   --support-yellow: hsl(48 92% 42%);
+  /* Blends, for the run-verdict dot's five-way scale (renderer/lib/run-verdict.ts).
+     A test run across three browsers is not pass OR fail — two of three passing
+     is a different fact from all three failing, and one dot has to say which.
+     Mixed from the four above rather than written as fresh literals for the
+     same reason everything else here is: one palette, one place to flip. */
+  --support-green-yellow: color-mix(in srgb, var(--support-green) 50%, var(--support-yellow));
+  --support-yellow-orange: color-mix(in srgb, var(--support-yellow) 50%, var(--support-orange));
+  --support-orange-red: color-mix(in srgb, var(--support-orange) 50%, var(--support-red));
   /* Alpha steps, spelled the SDK's way (`-10` = 10%). Used as row tints behind
      text, so they are mixed toward transparent rather than toward the
      background — a tint over a selected row has to let the selection show. */

@@ -105,6 +105,73 @@ Glaze app's agent, which no longer works on this codebase.
 
 **Verified by breaking it.** The nav-outside-the-scroller assertion and both halves of the click/mouseDown pair were reverted deliberately and confirmed red (3 and 4 failures respectively) before being put back.
 
+### 2026-08-09 — The sidebar's run dot: a stale colour, and a scale wide enough to describe three browsers
+
+**The stale dot.** A test that failed, was re-run and passed kept a red dot in
+the sidebar until the window was reopened. Nothing about the run or its record
+was wrong — the dot is drawn from the shared `["runs"]` React Query cache, and
+nothing invalidated it. The `runs:changed` push has existed since run history
+did, but its only subscribers were `StatsView` and `VisualView`, both ROUTE
+components: on any other route nobody was listening. So the failure needed the
+user to be looking at the sidebar (i.e. not at Stats) — exactly the case the dot
+exists for. It is also the quietest possible failure: the run panel one pane
+over showed the pass at the same moment, so the app looked like it disagreed
+with itself, and the dot is the half people trust.
+
+The subscription moved to `RecorderProvider`, which is mounted for the whole
+session in both windows. Subscribing to `runs:changed` rather than to
+`runner:done` was deliberate: it also covers history being deleted from Stats
+and records written by a batch, and it fires after the record is on disk, so the
+refetch cannot race the write.
+
+**The scale.** A dot with two colours cannot describe a batch run across
+chromium, firefox and webkit. Two of three passing and none of three passing
+both came out red, which is the same signal for "one engine is broken" and "the
+test is broken" — and the first one you can often ship around. `run-verdict.ts`
+grades the whole cohort instead: green, green-yellow (passed, but leaning on
+more than three Auto-Heal substitutions), yellow-orange (a third or less
+failed), orange-red (more than a third, not all), red (all).
+
+Three decisions inside that:
+
+- **Cohort, not last run.** A three-browser batch writes three records; the
+  newest is whichever browser finished last. Read alone it reports the batch
+  green when webkit passed and the other two failed. The verdict widens the
+  newest run to its `batchId` siblings.
+- **Ratio, not "1 of 3".** The browser set is the user's to choose, so a cohort
+  can be two runs or four. `failed * 3 <= total` is the yellow-orange band,
+  which at the size people actually run is exactly one browser of three, and it
+  keeps an ordinary single failing run at plain red rather than turning every
+  failure into a blend.
+- **Nothing is sticky.** The brief asked for the colour to reset the instant a
+  later run passes, from anywhere in the app, and to go red again on a failing
+  reproduction attempt. Both fall out of recomputing from the newest cohort
+  every time; a remembered "was failing" flag would need a clearing rule for
+  every path that can run a test, and the one that got missed would be a dot
+  stuck on a colour with no way back.
+
+The three blends are declared as tokens (`--support-green-yellow`,
+`--support-yellow-orange`, `--support-orange-red`) mixed from the existing four
+status colours, for the reason the rest of this repo declares its own tokens: a
+`bg-` class Tailwind has no key for emits nothing and throws nothing, and a
+verdict dot with no background is a verdict that silently disappeared.
+
+### 2026-08-09 — A generated test had two steps and a 37-line script, and the trainer offered to fix that backwards
+
+**Symptom:** "Generate from prompt" produced a good spec — readable comments, useful `console.log` output — and the test opened with a Steps count of 2. The trainer had nothing to work with, and "Edit in Trainer" warned it would regenerate the script from the recorded steps, i.e. replace the whole script with a `viewport` + `goto` stub.
+
+**The translation was not missing — the vocabulary was.** `tests:createFromPrompt` has parsed the generated source into steps since 2026-08-05. But `spec-parser.ts` is the reverse of `script-generator.ts`, and it reads the vocabulary this app EMITS: one self-contained `await page.<builder>(…).<action>(…)` per statement. A model asked for a readable spec writes a JavaScript program instead — locators in `const`s, `test.step(…)` phases, values read out of the page with `.textContent()` and asserted with `expect(value).toBeDefined()`. Only the first two statements were in the vocabulary, so only two became steps.
+
+Three things came out of that, and the ordering between them is the decision:
+
+- **Widen the parser where the shape is honestly translatable.** A locator bound to a `const` and used later is the same step as the inline form; it just needs a variable map. That it was previously LOST is worse than a miscount — the declaration counted a skip but the `await submit.click()` matched no branch at all and was walked past character by character, contributing neither a step nor a skip. Same failure mode as the nested-`page.*` paths fixed earlier, and the same fix: claim it, or count it.
+- **Count what cannot be translated, never approximate it.** A refined chain (`.first()`, `.filter()`, `.or()`) could be stored as its base locator — and would then regenerate a selector that matches a *different element*, which passes review and fails at run time. Rejected: it is recorded as unclassified, which surfaces as `stepsDiverged` and a warning the user can see. `expect(<jsValue>)` gets the same treatment for the same reason.
+- **Constrain the generator rather than chase the parser.** The remaining gap (extraction, branching, `.or()` composition) is not a parser bug — the step model has no vocabulary for "read a value into a variable and assert on it", and inventing one to satisfy a prompt would be a data-model change driven by an LLM's habits. So `GENERATE_SYSTEM_PROMPT` now states the round-trippable vocabulary outright. **Comments and `console.log` are explicitly kept welcome** — they are what made the output readable, and `spec-parser.ts` already consumes both WITHOUT counting a skip, so they cost nothing. A rule that tightened the output by taking those away would have fixed the step count by making the script worse.
+
+`test.step(…)` was a separate, opposite bug found while probing this: `extractTestBodies` matched the wrapper as a test body of its own, and since the scan already walks straight through it inside the enclosing `test(...)` body, **every step in a `test.step` block was emitted twice**. Silent — the list just showed the flow twice — and it lands on exactly the specs a model writes when it is also writing good comments.
+
+**The two prompts are a matched pair with nothing connecting them in the type system**, which is why `llm-prompts.test.ts` does more than assert copy: it parses a spec written to the prompt's own rules and asserts every action becomes a step with zero skips. A copy edit that drops a rule, or a parser change that narrows the vocabulary, fails there instead of in a generated test the user has to notice is wrong.
+
 ### 2026-08-09 — Radio buttons touched their own labels, because `Label` was typography only
 
 **Symptom:** in Settings → AI, the AI provider options read as `◯Ollama ◉LM Studio ◯Claude` — each circle jammed against its text, close enough to look like an overlap. Appearance → Theme (Auto / Light / Dark) had it too; the panes were built the same way and both shipped it.

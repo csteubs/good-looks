@@ -174,6 +174,16 @@ This app's generated specs always follow these conventions — follow them exact
 - If a browser viewport is specified in the user message, the very first line inside the test(...) body (before goto) must be await page.setViewportSize({ width: <w>, height: <h> }) using the exact dimensions given. Never substitute your own default viewport size.
 - Add assertions that verify the user's intent, not just that actions ran.
 
+The spec is also read back into the app's own step list, which is what the trainer edits and replays. Statements outside the vocabulary below still RUN, but they cannot become steps — so write the flow as a flat sequence of the supported calls:
+- Write each action as one self-contained statement: \`await page.<locatorBuilder>(...).<action>(...);\`. Do NOT assign a locator to a variable and act on it later, and do NOT chain refinements like .first(), .nth(), .filter() or .or() onto a locator.
+  Bad:  const submit = page.getByRole('button', { name: 'Submit' }); await submit.click();
+  Good: await page.getByRole('button', { name: 'Submit' }).click();
+- Supported actions: .click(), .fill(), .selectOption(), .check(), .uncheck(), .press(), .hover(), .focus(), .waitFor({ state }). Plus page.goto(), page.setViewportSize(), page.keyboard.press().
+- Every expect() must take a locator or \`page\` as its subject: expect(page.getByText('Welcome')).toBeVisible(), expect(page).toHaveURL(...). Never expect() a JavaScript value.
+- Do NOT read data out of the page (.textContent(), .allTextContents(), .isVisible() into a variable), and do NOT use if/ternary branching, loops, or intermediate variables to decide what to assert. Assert the expected state directly.
+- Do NOT wrap the flow in test.step(...) blocks — write the statements directly in the test body.
+- Comments and console.log() calls are welcome and are ignored by the step reader — use them to label the phases of the flow.
+
 Output format:
 - Output ONLY the complete spec file inside a single fenced code block with a "ts" language tag. No prose before or after the block.
 - The file must start with the import line and contain exactly one test(...) call, ready to save and run as-is.

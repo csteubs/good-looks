@@ -800,6 +800,121 @@ for (const c of WAIT_UNTIL_CASES) {
   assertEqual(parsed.steps[1]?.assert, "css", "…and keeps its assert kind");
 }
 
+// ── 18. `test.step(...)` blocks contribute their steps exactly ONCE ───────
+//
+// The wrapper's body is already inside the `test(...)` body the scan walks, so
+// extracting it as a test body of its own replayed every statement a second
+// time. Prompt-generated specs use this shape constantly, and the duplicate
+// steps were silent: the list simply showed the flow twice.
+{
+  const src = [
+    'import { test, expect } from "@playwright/test";',
+    "",
+    'test("wrapped", async ({ page }) => {',
+    '  await test.step("Go", async () => {',
+    '    await page.goto("https://example.com");',
+    "  });",
+    '  await test.step("Act", async () => {',
+    '    await page.getByRole("button", { name: "Go" }).click();',
+    '    await expect(page.getByText("Done")).toBeVisible();',
+    "  });",
+    "});",
+    "",
+  ].join("\n");
+  const parsed = parseSpecDetailed(src);
+  assertEqual(
+    parsed.steps.map((s) => s.type),
+    ["goto", "click", "assert"],
+    "test.step bodies contribute their steps once, not twice",
+  );
+  assertEqual(parsed.skipped, 0, "the test.step wrappers themselves aren't counted as skipped");
+}
+
+// ── 19. A locator bound to a `const` and used later ───────────────────────
+//
+// The app never generates this, but a model asked for a readable spec writes
+// it constantly. Before it was recognized the declaration counted a skip and
+// the LATER USE vanished entirely — no step and no skip — so a generated test
+// arrived with a step list that silently omitted every action.
+{
+  const src = [
+    'import { test, expect } from "@playwright/test";',
+    "",
+    'test("vars", async ({ page }) => {',
+    '  await page.goto("https://example.com");',
+    '  const emailInput = page.getByLabel("Email");',
+    '  const submit = page.getByRole("button", { name: "Submit" });',
+    '  const banner = page.getByText("Thanks");',
+    '  await emailInput.fill("a@b.com");',
+    "  await submit.click();",
+    "  await expect(banner).toBeVisible();",
+    "});",
+    "",
+  ].join("\n");
+  const parsed = parseSpecDetailed(src);
+  assertEqual(
+    parsed.steps.map((s) => s.type),
+    ["goto", "fill", "click", "assert"],
+    "actions on a locator held in a variable become steps",
+  );
+  assertEqual(parsed.skipped, 0, "…and neither the declarations nor the uses count as skipped");
+  assertEqual(
+    parsed.steps[1]?.locator,
+    { k: "label", v: "Email" },
+    "the variable's locator is carried to its use",
+  );
+  assertEqual(parsed.steps[1]?.value, "a@b.com", "…along with the action's value");
+  assertEqual(
+    parsed.steps[3]?.locator,
+    { k: "text", v: "Thanks" },
+    "expect() over a locator variable resolves the same way",
+  );
+}
+
+// ── 20. What CANNOT be modeled is counted, not swallowed ──────────────────
+//
+// Both of these are one statement away from the shapes above, and both used to
+// leave no trace: a refined chain would have regenerated as the unrefined
+// locator (matching the wrong element), and an expect() over a JS value has no
+// step at all. Counting them is what puts the divergence warning on screen.
+{
+  const refined = [
+    'import { test, expect } from "@playwright/test";',
+    "",
+    'test("refined", async ({ page }) => {',
+    '  await page.goto("https://example.com");',
+    '  const row = page.getByRole("row").first();',
+    "  await row.click();",
+    "});",
+    "",
+  ].join("\n");
+  const parsedRefined = parseSpecDetailed(refined);
+  assertEqual(
+    parsedRefined.steps.map((s) => s.type),
+    ["goto"],
+    "a refined locator chain is not stored as its unrefined base",
+  );
+  assertEqual(parsedRefined.skipped, 2, "…and both the declaration and its use are counted");
+
+  const valueExpect = [
+    'import { test, expect } from "@playwright/test";',
+    "",
+    'test("value", async ({ page }) => {',
+    '  await page.goto("https://example.com");',
+    '  const label = "hello";',
+    "  expect(label).toBeDefined();",
+    "});",
+    "",
+  ].join("\n");
+  const parsedValue = parseSpecDetailed(valueExpect);
+  assertEqual(
+    parsedValue.steps.map((s) => s.type),
+    ["goto"],
+    "expect() over a plain JS value produces no step",
+  );
+  assertEqual(parsedValue.skipped, 1, "…and is reported as unclassified rather than ignored");
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);
