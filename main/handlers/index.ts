@@ -11,6 +11,7 @@ import { appHandlers } from "./app.js";
 import { getSettingsWindow, openSettingsWindow } from "../windows/settings-window.js";
 import {
   dock as dockTrainerPanel,
+  getTrainerPanelDockState,
   isTrainerPanelDocked,
   undock as undockTrainerPanel,
 } from "../windows/trainer-panel-window.js";
@@ -230,6 +231,11 @@ export function registerHandlers(): void {
     undockTrainerPanel("user");
     return { docked: isTrainerPanelDocked() };
   });
+  // The panel's FIRST dock state cannot arrive by push: it is decided while the
+  // panel window is still loading its page, so the `trainerPanel:undocked` that
+  // announces a refused dock is emitted into a renderer that does not exist yet.
+  // Asking on mount is the only way a panel that opened undocked can know.
+  ipcMain.handle("trainerPanel:getState", async () => getTrainerPanelDockState());
 
   ipcMain.handle("recorder:getSettings", async () => recorderSettingsStore.get());
   ipcMain.handle(

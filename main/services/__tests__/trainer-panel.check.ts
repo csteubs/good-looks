@@ -184,7 +184,54 @@ assert(
   "the panel loads its own local HTML entry",
 );
 
-// ── 9. The renderer entry exists to match the window it loads ────────
+// ── 9. The panel is never opened without coordinates ─────────────────
+// A BrowserWindow created with no x/y is CENTRED ON THE DISPLAY — which, for a
+// panel opening beside a training browser, is on top of the page under test.
+// That is what shipped: the docked branch passed `layout?.panel.x`, so the
+// no-room branch passed `undefined` and the window layer chose. Nothing throws,
+// nothing logs, and the geometry unit tests all pass, because the rectangle was
+// never computed at all.
+{
+  const opts = /panelWindow = new BrowserWindow\(\{([\s\S]*?)\n {2}\}\);/.exec(panelCode);
+  assert(opts !== null, "the panel's creation options can be read");
+  const creation = opts?.[1] ?? "";
+  assert(
+    /\n\s*x:\s*\S/.test(creation) && /\n\s*y:\s*\S/.test(creation),
+    "the panel is created with an x and a y",
+  );
+  assert(
+    !/\n\s*[xy]:\s*[^,\n]*\?\./.test(creation),
+    "those coordinates cannot be undefined (no optional chain in the panel's x/y)",
+  );
+  assert(
+    panelCode.includes("computeParkedPanel("),
+    "a refused dock still places the panel deliberately (computeParkedPanel)",
+  );
+}
+
+// ── 10. A panel that opened undocked can find out ────────────────────
+// The push that announces a refused dock is emitted while this window is still
+// loading its page, so the renderer never receives it and its control keeps its
+// optimistic "docked" default — pointing at the state it is already in, and
+// doing nothing when pressed.
+{
+  assert(
+    /export function getTrainerPanelDockState\(/.test(panelCode),
+    "the dock state can be read, not only pushed",
+  );
+  const handlers = code(readFileSync(resolve(mainDir, "handlers/index.ts"), "utf8"));
+  assert(
+    handlers.includes('ipcMain.handle("trainerPanel:getState"'),
+    "the renderer can ask for the dock state over IPC",
+  );
+  const view = code(readFileSync(resolve(projectRoot, "renderer/trainer/trainer-panel-view.tsx"), "utf8"));
+  assert(
+    view.includes("api.trainerPanel") && view.includes("getState()"),
+    "the panel asks for the dock state as well as listening for pushes",
+  );
+}
+
+// ── 11. The renderer entry exists to match the window it loads ───────
 // The SDK generates <name>-window.html from renderer/<name>/index.tsx, so a
 // mismatch here is a window that opens blank.
 {
