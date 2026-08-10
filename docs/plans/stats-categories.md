@@ -2,10 +2,17 @@
 
 Written 2026-08-10, against `claude/stats-category-components-5k95rt`.
 
-> **Status: decided.** This started as a set of options and was settled in two
-> rounds with the maintainer on 2026-08-10. The choices are in §0; the
-> alternatives are kept beside each one, because a rejected option with its
-> reason is what stops the same question being reopened in six months.
+> **Status: PRs 1 and 2 are built.** The B7 reskin landed first, then the
+> registry, the board, the routes, the breadcrumb trail, `check:stats-categories`
+> and the Stability and Auto-Heal dashboards. What is left is §10's PRs 3–5:
+> Outcomes and the landing rearrange, the a11y summariser and its severity drill,
+> and the remaining three dashboards.
+>
+> Options were settled in two rounds with the maintainer on 2026-08-10. The
+> choices are in §0; the alternatives are kept beside each one, because a
+> rejected option with its reason is what stops the same question being reopened
+> in six months. **One claim in §5 was wrong and is corrected in place** — the
+> app had no back/forward at all, and building them was part of the work.
 
 **The ask.** Stats grows a component that reports across overall *categories* —
 accessibility, visual diff, stability, Auto-Heal, and so on. Clicking a category
@@ -190,8 +197,23 @@ this feature can produce: a confident, wrong, all-clear.
 The router uses `createMemoryHistory()`, so there is no address bar — but it is
 still a real history stack.
 
-- Back and forward are the router's own, so ⌘[ / ⌘] work and so does anything
-  added later.
+- Back and forward are the router's own.
+
+  > **Corrected while building this.** An earlier draft of this section said
+  > "⌘[ / ⌘] work", which was simply false: with memory history there is no
+  > browser history behind the router, the window's own navigation gestures move
+  > nothing, and **nothing in the app was wired to `router.history` at all.** It
+  > had never mattered, because every screen was one level deep and the rail
+  > selected among them — a drill-down is the first thing in this app with
+  > somewhere to go back *to*. So the controls are part of the work rather than
+  > a property inherited from it: `HistoryNav` in `app-strip.tsx` puts Back and
+  > Forward in the top strip and binds ⌘[ / ⌘].
+  >
+  > **Back is not the breadcrumb**, and the difference is the reason both exist.
+  > The trail goes UP — to the parent of what is on screen. Back returns to where
+  > you came FROM. They coincide while you descend and stop the moment you leave:
+  > drill to a stability verdict, open the failing test, and "up" is Home while
+  > "back" is the verdict you were reading.
 - The **top-strip breadcrumb already exists and is already the app's
   "where you are" surface**. `app-strip.tsx` builds it from the location;
   extending it to `Home / Stats / Accessibility / Severity` is about fifteen
@@ -368,8 +390,8 @@ board later becomes a rail-context surface the way Settings is, that changes.
 
 | # | PR | Contains | Size |
 |---|---|---|---|
-| 1 | **B7 — Stats parity reskin** | `stats-view.tsx` + `flake-panel`, `suite-cost-panel`, `step-health-panel`, `divergence-panel` onto the theme layer. Same behaviour, new chrome. Page-level scope + range in the header. Existing tests migrated, none deleted. | 2–4 days |
-| 2 | Registry + board + routes | `categories.ts`, the verdict band and tiles, the four states, `/stats/$category`, breadcrumb extension in `app-strip.tsx`, param validation, `check:stats-categories`. Two dashboards land with it — **Stability** and **Auto-Heal**, both already suite-aggregated. Tiles for unbuilt dashboards state why rather than dead-linking. | 2 days |
+| 1 ✅ | **B7 — Stats parity reskin** | `stats-view.tsx` + `flake-panel`, `suite-cost-panel`, `step-health-panel`, `divergence-panel` onto the theme layer. Same behaviour, new chrome. Page-level scope + range in the header. Existing tests migrated, none deleted. | 2–4 days |
+| 2 ✅ | Registry + board + routes | `categories.ts`, the verdict band and tiles, the four states, `/stats/$category`, breadcrumb extension in `app-strip.tsx`, param validation, `check:stats-categories`. Two dashboards land with it — **Stability** and **Auto-Heal**, both already suite-aggregated. Tiles for unbuilt dashboards state why rather than dead-linking. | 2 days |
 | 3 | Outcomes + landing | Chart, KPIs, run table and log search become the Outcomes category; the landing becomes the board. REDESIGN §B7 rewritten in this PR. | 1–2 days |
 | 4 | a11y summariser + severity drill | `shared/a11y-rollup.mjs` + `.d.mts`, one IPC, `check:a11y-rollup`, the a11y dashboard and the severity leaf — the ask's worked example. | 2 days |
 | 5 | Visual diff + Speed & cost + Step health | Riding PR 4's summariser and the existing metrics queries. Step health and Speed carry the metrics-DB unavailable state. | 1–2 days |

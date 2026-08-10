@@ -16,6 +16,74 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — The Stats category board, and the app's first Back button
+
+The board from `docs/plans/stats-categories.md`: a verdict band over seven
+tiles, each a category, each opening its own dashboard, each dashboard drilling
+one level further and exiting to the object it names. Stability and Auto-Heal
+have dashboards; the other five show their headline and say why they do not open
+yet.
+
+**The rule the whole thing is built around is that zero is not "never
+measured".** `display` is `null` in both non-measured states, so nothing
+downstream has a number to print, and `unmeasured` (you never switched this on)
+is separate from `unavailable` (the metrics DB cannot answer) because only one of
+them is the user's to fix. This is not a new idea here — `a11y-panel.tsx` opens
+with it and every `metrics:*` response carries an `available` flag — but it is
+the first time it has been enforced across seven surfaces at once, and the tests
+for it were written first and verified to fail against a naive implementation
+that sums an empty list to `0`.
+
+**The verdict band counts categories in a state and never touches their values,**
+which is the condition that treatment shipped under. Fourteen unaccepted
+accessibility steps, three flaky tests and nine healed locators are different
+units; a total across them means nothing while looking authoritative, and a band
+is the most natural place in the design for one to appear —
+"2 categories need attention" is one small edit from "17 issues". Two guards, not
+one: a unit test that asserts two boards with wildly different numbers and the
+same states produce the identical sentence, and `check:stats-categories`, which
+bans cross-category arithmetic under `renderer/main/stats/` outright.
+
+**Stats reports; Heals and Visual act.** The same check bans accept, revert,
+delete and clear from every Stats surface, and asserts the positive half too —
+that a leaf can actually reach the test it names. A dashboard that mutated
+nothing and linked nowhere would satisfy the rule while being a dead end, which
+is the failure drill-downs actually have.
+
+**The app had no Back button, and that is why this needed one.** The plan claimed
+⌘[ / ⌘] would work "because back and forward are the router's own". That was
+false, and it took driving the real thing to notice: the router runs on
+`createMemoryHistory()`, so there is no browser history behind it, the window's
+own gestures move nothing, and **nothing in the app was wired to `router.history`
+at all.** It had never mattered — every screen was one level deep and the rail
+selected among them — so a drill-down is the first thing in this app with
+somewhere to go back *to*.
+
+`HistoryNav` in `app-strip.tsx` is that: two controls in the top strip plus the
+shortcuts. Two things about it are decisions rather than defaults. **Back is not
+the breadcrumb** — the trail goes UP to the parent of what is on screen, and back
+returns to where you came FROM; they coincide while you descend and stop the
+moment you leave, which is exactly the case the routed design exists for (drill
+to a verdict, open the failing test, and "up" is Home while "back" is the verdict
+you were reading). And **Forward is offered because it can be answered
+honestly**: the history API has `canGoBack()` and no `canGoForward()`, which
+nearly made this back-only, but memory history stamps `__TSR_index` into each
+entry so `index < length - 1` disables the control truthfully rather than
+shipping one that is always enabled and sometimes does nothing — the failure
+`top-strip.tsx` already argues against for the ⌘K slot.
+
+**Two smaller things worth the record.** The facet ids reach the URL and were
+reaching the breadcrumb with them, so the trail read "Stats / Stability /
+CHANGED-SINCE" — an implementation detail on screen. `FACET_LABELS` fixes it, at
+the cost of a second copy of the verdict names (the first is `VERDICT_COPY`,
+which lives beside the component that renders it and cannot be imported by a
+node-project test or a source-level check); the check compares them
+string-for-string, the same answer `check:flake-analysis` gives for the
+renderer's mirror of the analysis. And the preview's flake fixture answered
+`tests: []` — a legitimate shape, and the one shape that makes the Stability
+panel, the dashboard and the drill ALL render their empty states, which meant the
+populated design had never been looked at by anyone. It is populated now.
+
 ### 2026-08-10 — Stats is the first Phase B screen, and it found a hole in the status-width contract
 
 The parity reskin of Stats (REDESIGN §B7) — `stats-view.tsx` plus `flake-panel`,

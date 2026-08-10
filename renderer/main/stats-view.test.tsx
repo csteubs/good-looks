@@ -27,6 +27,20 @@ vi.mock("../lib/api", () => ({
       resetStats: async () => ({ removed: 0 }),
       deleteAll: async () => ({ removed: 0 }),
       deleteRange: async () => ({ removed: 0 }),
+      // The category board reads this. `null` rather than a report: the board
+      // OMITS a category whose query has not answered, so a null keeps these
+      // tests about the run table rather than about the board.
+      flake: async () => null,
+    },
+    // Two series the board added to this page. Both are answered emptily here —
+    // the board has its own test file, and a fixture rich enough to light it up
+    // would make every assertion below harder to read for no gain.
+    heals: { listAll: async () => [] },
+    artifacts: { list: async () => [] },
+    metrics: {
+      stepHealth: async () => null,
+      slowness: async () => null,
+      divergence: async () => null,
     },
     on: () => () => {},
   },

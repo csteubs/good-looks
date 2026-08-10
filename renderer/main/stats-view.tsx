@@ -26,8 +26,13 @@ import {
   Wand2,
 } from "lucide-react";
 
+import { useNavigate } from "@tanstack/react-router";
+
 import { Btn, Panel, Segmented, StatusChip, TONE, toneSurface } from "../theme";
 import { api } from "../lib/api";
+import { summariseAll } from "../lib/stats-categories";
+import { CategoryBoard } from "./stats/category-board";
+import { BUILT } from "./stats/stats-category-view";
 import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
 import { FlakePanel } from "./flake-panel";
 import { StepHealthPanel } from "./step-health-panel";
@@ -278,6 +283,7 @@ function PassFailChart({ buckets }: { buckets: DayBucket[] }) {
 
 export function StatsView() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
   const runs = React.useMemo(() => runsQuery.data ?? [], [runsQuery.data]);
 
@@ -343,6 +349,36 @@ export function StatsView() {
     queryKey: ["metrics", "divergence"],
     queryFn: () => api.metrics.divergence(),
   });
+
+  // The two series the board needs that the panels below do not. Both reuse the
+  // key their own screen already caches — ["heals","all"] is the Heals view's
+  // and ["replays"] is the Visual view's — so the board costs a round trip only
+  // on the first visit, and drilling into a category costs none at all.
+  const healsQuery = useQuery({ queryKey: ["heals", "all"], queryFn: () => api.heals.listAll() });
+  const replaysQuery = useQuery({ queryKey: ["replays"], queryFn: api.artifacts.list });
+
+  // Every category that has an answer yet. One that has not resolved is OMITTED
+  // rather than given a state — see the note in stats-categories.ts on why
+  // "loading" must not render as "you have never switched this on".
+  const summaries = React.useMemo(
+    () =>
+      summariseAll({
+        runs: runsQuery.data,
+        flake: flakeQuery.data,
+        heals: healsQuery.data,
+        replays: replaysQuery.data,
+        stepHealth: stepHealthQuery.data,
+        slowness: slownessQuery.data,
+      }),
+    [
+      runsQuery.data,
+      flakeQuery.data,
+      healsQuery.data,
+      replaysQuery.data,
+      stepHealthQuery.data,
+      slownessQuery.data,
+    ],
+  );
 
   // Runs whose test still exists. Everything that NAMES a test works from this
   // — the table, the test filter, log search — while the summary cards, the
@@ -506,6 +542,17 @@ export function StatsView() {
             </div>
           ) : (
             <>
+              {/* The category board FIRST, and the chart's own argument is why:
+                  the shape of the last week is what you can read without
+                  reading. The board is that same idea one level up — it answers
+                  "is anything wrong?" across every category, where the chart
+                  answers it for outcomes alone. */}
+              <CategoryBoard
+                summaries={summaries}
+                openable={BUILT}
+                onOpen={(id) => navigate({ to: "/stats/$category", params: { category: id } })}
+              />
+
               {/* Chart FIRST. The shape of the last week is the thing you can
                   read without reading — a rising red band answers "is something
                   wrong?" before any number does, and it was previously below
