@@ -31,6 +31,31 @@ Glaze app's agent, which no longer works on this codebase.
 **The verdict chip was added to the finished-batch panel, which had no colour at all.** The outcome lived in the panel's heading text alone, so the single moment the view most needs a signal — the batch finishing — was the one place it had none. The words stay two tokens long (`2 failed`, not `2 failed · 1 passed`) because `StatusChip` is fixed at `--gl-status-w` and does not grow: a longer label is a clipped chip, and jsdom cannot see that. `check:status-width` caught the literal `78px` being copied into a comment in the new module during this work, which is exactly the drift it exists for.
 
 **The preview could not show any of this, so it got fixtures.** `batch:list` answered `[]`, which meant the Previous batches panel and the finished-batch panel above it had never been visible in `npm run dev:web` at all — and those are the two surfaces where the tone IS the signal. `BATCHES` now carries one record per verdict, with the mixed one at 2 failed / 1 passed, since that is the case an all-red reading gets wrong.
+### 2026-08-10 — `Btn`'s icons get a size, and the fix is not on the screen that reported it
+
+Reported as "the trash icons are too large on Heals". They are, but nothing about the Heals view causes it: **`.gl-btn` never sized its `svg` children at all**, so every icon in every `Btn` in the app was rendering at lucide's 24px default next to a 10px letterspaced label in a 30px box. Measured in the preview — Apply's check, Dismiss's rotate and Delete's trash all came back at exactly 24px.
+
+**Trash2 is where it gets reported because Trash2 is the heaviest shape at that size**, not because Heals is special. Fixing it locally would have left the same defect on every other screen and added a second mechanism for a size that should have exactly one. The rule goes on the primitive.
+
+**13px, matching `.gl-icon-btn`** — the icon-only sibling of this button. Picking a fresh number would have made two buttons that sit next to each other disagree about what an icon is.
+
+### 2026-08-10 — The home screen's three numbers become three doors
+
+**A count is a question, and the app already had the answer one click away.** "16 heals to review" is only ever read as *which sixteen* — and B1 had put that number on the first screen anyone sees while leaving it inert, so the reading ended at the rail, hunting for the entry that means the same thing. Each readout now navigates to the view that explains it: Tests → Batch, Green · 7d → Stats, Heals to review → Heals.
+
+**Tests goes to Batch, not to the library.** The rail already lists every test one click away, so the count adds nothing as a way to *find* one. What "22 tests" suggests is something to DO with twenty-two tests, and running them together is the only action the number itself implies.
+
+**One table, `STAT_DESTINATIONS`, because this mapping is expected to move.** What the home screen surfaces will change as the app does, and a readout wired to the wrong view fails in the quietest way available — it still renders, still presses, and simply lands you somewhere else, which reads as a confusing app rather than as a bug. Keeping the pairing in one `as const` means the destination is a route literal TanStack Router type-checks: a path that stops existing is a `type-check` failure rather than a dead click. Verified by pointing one at `/bogus` and watching `tsc` name every registered route.
+
+**`<button>`, not a div with an `onClick`, and the test asserts the ELEMENT.** The two render identically, and only one of them is in tab order, responds to Enter and Space, announces a role, and takes a focus ring. A mouse-click test passes over either — so `home-view.test.tsx` pins `tagName === "BUTTON"` and `type="button"` alongside the route, because that tag *is* the keyboard behaviour. Confirmed by swapping the button back to a div: ten assertions fail, and the click test is not among them.
+
+**The accessible name carries the destination, because the visible text cannot.** "22 Tests" read aloud is a fact, not a control — a button whose whole name is a statistic gives no reason to press it. The name is `"Tests: 22, opens the Batch view"`: label first, so the readout identifies itself before reading a number that means nothing without it.
+
+**They stay pressable while the value is still "—".** Gating on a resolved query, or on a non-zero count, is the easy version and it teaches people the control is not there — an empty library is exactly when someone presses "0 tests" looking for what to do next. Pinned in both directions: the em-dash case and a genuine zero.
+
+**The readouts are separately asserted to reach three DIFFERENT views**, by clicking all three and comparing what the router was handed. A copy-paste that points two of them at one route passes every per-readout assertion — each really does navigate, and really does land somewhere that works.
+
+**Follow-up, same day: a new accessible name broke an e2e locator, and the local gate could not have said so.** `app-launch.spec.ts` asked the whole WINDOW for a button whose name starts with "Heals"; the home screen then grew "Heals to review: 0, opens the Heals view", two elements matched, and Playwright's strict mode failed the run. The red reads as *the rail lost its Heals entry* — the opposite of what happened. Fixed by scoping the loop to the rail's `role="group"` named "Views", which is both the structure a screen-reader user navigates by and the claim the test's own name makes: these four are reachable FROM THE SIDEBAR, which a home-screen shortcut does not satisfy. **The general lesson is about where this was caught.** `test:all` does not run `e2e/`, so a full green local gate says nothing about window-wide locators, and every accessible name added anywhere is a new candidate to collide with one. Broad `getByRole` matches over the whole window are the liability; scope them to the region the test is actually about.
 
 ### 2026-08-10 — Findings you can wave off, and a warning that knows when to come back
 
