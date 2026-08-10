@@ -29,6 +29,7 @@
 // you most want to look at it.
 
 import {
+  BATCHES,
   HEALS,
   LLM_CONFIG,
   LLM_STATUS,
@@ -740,7 +741,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
           },
 
     // ── Batch ────────────────────────────────────────────────────────────
-    "batch:list": (): BatchRecord[] => [],
+    "batch:list": (): BatchRecord[] => structuredClone(BATCHES),
     /** `BatchState | null`, and idle is `null` — not a half-filled state
      *  object. A `{ running: false }` stand-in is missing every other field the
      *  view reads once it decides a batch exists. */
