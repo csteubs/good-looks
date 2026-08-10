@@ -23,8 +23,8 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: "bg-secondary text-secondary-foreground hover:bg-secondary/80 active:bg-secondary/70 border border-border/60 shadow-sm",
-        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80 active:bg-secondary/70 shadow-sm",
+        primary: "bg-fill-secondary text-secondary-foreground hover:bg-fill-secondary/80 active:bg-fill-secondary/70 border border-border/60 shadow-sm",
+        secondary: "bg-fill-secondary text-secondary-foreground hover:bg-fill-secondary/80 active:bg-fill-secondary/70 shadow-sm",
         accent: "bg-accent text-accent-foreground hover:bg-accent/90 active:bg-accent/80 shadow-sm",
         destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-sm",
         muted: "bg-muted text-foreground hover:bg-muted/70",
@@ -87,7 +87,7 @@ export type BadgeColor =
 
 const badgeColorClass: Record<BadgeColor, string> = {
   primary: "bg-accent/15 text-accent",
-  secondary: "bg-secondary text-secondary-foreground",
+  secondary: "bg-fill-secondary text-secondary-foreground",
   blue: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
   green: "bg-green-500/15 text-green-700 dark:text-green-400",
   yellow: "bg-yellow-500/20 text-yellow-700 dark:text-yellow-400",

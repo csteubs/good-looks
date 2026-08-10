@@ -327,10 +327,23 @@ exactly one candidate cause.
   the screen. Measured there in a real engine: all seven chips exactly 78.00px
   with one shared right edge, the ramp's dead band identical across three
   samples, and the CRT at 610 with `filter: none` under a mounted scanline layer.
-- **Four source-level guards**, all for the same reason `check:text-color`
+- **Five guards**, all for the same reason `check:text-color`
   exists: the dom suite runs with `css: false`, so there is no cascade to ask,
   and jsdom returns zeros from `getBoundingClientRect()` so a width assertion
   would prove nothing while passing.
+  - `check:renderer-classes` — the only one that is not source-level, because it
+    is the one whose question source cannot answer: does this class *paint*?
+    It builds the renderer and reads the emitted stylesheet, asserting that
+    every class used in a class-list context produces a rule and every `var()`
+    read names a declared property. `check:theme-tokens` below covers `--gl-*`
+    only — the redesign's own layer — which is why it did not see the twenty-
+    eight SDK class names and fourteen custom properties the port left dangling
+    (DECISIONS 2026-08-09). It also pins, by value, that `text-secondary` is the
+    text ramp and not the secondary *surface*: Tailwind derives a whole utility
+    family from one colour key, and the two halves of that family need different
+    colours here. Matches `.foo` and `\:foo` so a class used only behind a
+    variant is not reported as missing, and builds into a fresh temp directory
+    because Vite hashes CSS filenames without clearing stale ones.
   - `check:theme-tokens` — every `var(--gl-*)` read names a declared token; no
     token declared twice or empty; all four sheets imported and ordered above
     `@source`; every woff2 present *and really woff2* (a proxied download leaves
@@ -365,7 +378,7 @@ exactly one candidate cause.
 
 ### Data & storage
 - `userData/recorder/tests.json` — array of `TestRecord`.
-- `userData/recorder/scripts/<id>.spec.ts` — generated specs. A `node_modules` symlink → app node_modules is created here so specs resolve `@playwright/test`.
+- `userData/recorder/scripts/<id>.spec.ts` — generated specs. A `node_modules` symlink → app node_modules is created here so specs resolve `@playwright/test`. **`ensureModuleResolution` REPAIRS that link, it does not merely create a missing one.** The scripts dir outlives the build that made the link: adopting a legacy Glaze store (`main/shell/user-data.ts`) inherits the old install's link, still pointing into the SDK tree, and the spec then resolves a *second* copy of `@playwright/test` while the CLI runs from ours — which fails every run at collection with "Playwright Test did not expect test() to be called here". It `lstat`s rather than `existsSync`, because `existsSync` follows symlinks and so answers `false` for a dangling one, which is exactly the case that has to be repaired. A real directory is left alone. Covered by `main/services/module-resolution.test.ts`.
 - `userData/recorder/browsers/` — Playwright browser install (`PLAYWRIGHT_BROWSERS_PATH`).
 - `userData/recorder/run-history.json` — array of `RunRecord` (run stats index; capped 1000). `userData/recorder/logs/<runId>.log` — raw console output per run. These two are deleted independently (see the Stats feature): reset-stats keeps the `.log` files. `RunRecord.id` is now minted at run START by the runner (passed into `append`) so it equals the artifacts `runId`.
 - `userData/recorder/artifacts/<testId>/<runId>/` — **visual-testing screenshots (Phase 1)**: `<stepIndex>.png` (0-based page-action order) + `manifest.json` (`{testId,runId,title,status,startedAt,finishedAt,steps:[{index,action,target,value,ok,ts}]}`). `runId` === `RunRecord.id`. Written by the `glaze-capture.mjs` fixture inside the Playwright worker; NOT inlined into tests.json (binary blobs kept out of the JSON store). Retention: newest 10 run dirs per test (`artifact-store.ts`). Deleted with the test via `tests:delete`. **Phase 2:** the run dir also holds `replay.json` — the canonical per-step replay model (`{testId,runId,testName,url,status,startedAt,finishedAt,failedIndex,visualThreshold?,steps:[{index,stepId,label,type,status,screenshot,diff?}]}`, aligned to `Step[]` index, `screenshot` a filename or null). Written by the runner (`buildReplay`), read by the Visual tab. Runs captured before Phase 2 lack `replay.json` so they don't appear in the replay list. **Phase 3 (visual diffing):** each `ReplayStep` also carries `diff?: {state:"new-baseline"|"match"|"changed"|"unable", ratio?, threshold?, reason?, diffFile?}` and the run dir holds `<stepIndex>.diff.png` overlays for `changed` steps. **Pinned baselines** live at `userData/recorder/artifacts/<testId>/baseline/<stepId>.png` + `baseline.json` (`{testId,updatedAt,steps:{[stepId]:{stepId,runId,at,label}}}`) — keyed by `Step.id` (NOT URL: a test is a deterministic script and Step.id survives reorder/insert; only screenshot-producing steps get a baseline). Managed by `baseline-store.ts`; deleted with the test via `tests:delete`. The first captured run seeds baselines; later runs diff against the PINNED baseline (never the previous run). Diffing is pure-JS (`visual-diff.ts` → pixelmatch + pngjs, no native bindings); size mismatch (viewport/responsive change) or a decode error degrades to `state:"unable"`, never a false flag. Per-test threshold on `TestRecord.visualThreshold` (percent of pixels, default `DEFAULT_VISUAL_THRESHOLD` = 0.1 in `recorder/types.ts`).
@@ -523,5 +536,5 @@ only changed their import specifier to `@ui`.
 - `layout.tsx` — Toolbar family, the composite ScrollArea (auto-follow-bottom), Field family, Callout, EmptyState, Sidebar family, SplitView, ErrorBoundaryView
 - `overlays.tsx` — Dialog, AlertDialog, the Radix DOM context menu, Toaster/`toast`, and the DOM date picker
 - `native-menu.tsx` — **Select and DropdownMenu, still backed by real macOS menus.** Items render to `null`; the tree is walked into a plain-data template and handed to `Menu.popup`, which answers with a `commandId`. Options never enter the DOM, so assert the displayed value and cover persistence at the IPC layer — unchanged from the original.
-- `tokens.css` — design tokens (light/dark), bridged to Tailwind in `renderer/styles.css`
+- `tokens.css` — design tokens (light/dark), bridged to Tailwind in `renderer/styles.css`. Carries a second block of **SDK-compatibility names** — the text ramp (`--text-primary/secondary/tertiary`), the `--support-*` status family, named surfaces (`--panel`, `--well`, `--control-subtle`), and the Radix numeric steps (`--blue-9`, `--red-9`). The 36 ported views were deliberately not rewritten, so they still address that vocabulary; none of it came across with the component library, and every one of those names styled nothing until 2026-08-09. Defined in terms of the semantic tokens above them rather than as fresh literals, so light/dark flips in one place. Guarded by `check:renderer-classes`
 - `use-theme.ts` — keeps `.dark` on `<html>` in sync with `nativeTheme`

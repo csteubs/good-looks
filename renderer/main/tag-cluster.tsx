@@ -56,7 +56,7 @@ function TagChip({
       className={`inline-flex items-stretch overflow-hidden rounded-pill border text-small transition-colors ${
         active
           ? "border-accent bg-accent/12 text-primary"
-          : "border-secondary text-secondary hover:border-primary"
+          : "border-fill-secondary text-secondary hover:border-primary"
       } ${disabled ? "opacity-50" : ""}`}
     >
       <button
@@ -209,7 +209,7 @@ export function TagCluster({
   if (tags.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 rounded-card border border-secondary bg-well px-2 py-1.5">
+    <div className="flex flex-wrap items-center gap-1.5 rounded-card border border-fill-secondary bg-well px-2 py-1.5">
       <Tag className="mx-0.5 size-3.5 shrink-0 text-tertiary" aria-hidden="true" />
       <TagChip
         label="All"
