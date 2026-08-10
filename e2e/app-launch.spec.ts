@@ -44,8 +44,21 @@ test("the preload bridge is exposed to the renderer", async ({ window }) => {
 });
 
 test("the sidebar offers every view", async ({ window }) => {
+  // SCOPED TO THE RAIL'S "Views" GROUP, not the whole window, and the reason is
+  // a failure this test has already had: it used to search the window for a
+  // button whose name STARTS WITH "Heals", and the home screen then grew a
+  // readout called "Heals to review: 0, opens the Heals view". Two matches is a
+  // strict-mode violation, so a green test turned red over a control that has
+  // nothing to do with the sidebar — and the red reads as "the rail lost its
+  // Heals entry", which is the opposite of what happened.
+  //
+  // `RailGroup` renders `role="group"` with its label, so the scope is the same
+  // structure a screen-reader user navigates by. That also makes the assertion
+  // say what it means: these four are reachable FROM THE RAIL, which is the
+  // claim in the test's name and the one a home-screen shortcut cannot satisfy.
+  const views = window.getByRole("group", { name: "Views" });
   for (const name of ["Stats", "Visual", "Batch", "Heals"]) {
-    await expect(window.getByRole("button", { name: new RegExp(`^${name}`) })).toBeVisible();
+    await expect(views.getByRole("button", { name: new RegExp(`^${name}`) })).toBeVisible();
   }
   await expect(window.getByRole("button", { name: "Add test" })).toBeVisible();
 });
