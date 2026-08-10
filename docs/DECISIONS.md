@@ -99,6 +99,26 @@ The panel geometry the spec reconstructs (296px) is derived, not asserted:
 `dialogPanelClass` and fails if they stop agreeing. A layout test measuring a box
 the app never renders is worse than no layout test, because it is green.
 
+### 2026-08-09 — Packaging from a bootstrapped worktree shipped an app that fails every test run, and exited 0
+
+`npm run bootstrap` gives a worktree its `node_modules` as a symlink at the main checkout's tree. Everything in this repo resolves modules the way Node does — lint, type-check, `test:all`, `build`, `dev` — so the shortcut has been free. **electron-builder does not.** It collects the dependency tree by reading `node_modules` itself, and through the link it finds the direct dependencies and nothing beneath them. It says so, at length:
+
+    cannot find path for dependency dependencies=["zod@undefined","playwright@undefined", …]
+
+and then **exits 0**. Measured on this branch: 18 direct dependencies bundled, **175 transitive packages missing**. Chief among them `playwright` and `playwright-core` — `@playwright/test` was present, and it requires `playwright` internally, and `main/services/playwright-runner.ts` spawns the CLI out of the bundle's own tree. So the app builds, installs, opens, and looks correct; the first thing that fails is pressing Run.
+
+**The existing note did not cover it.** `bootstrap-worktree.mjs` said to replace the link "if you change dependencies on this branch", which is a rule about *lockfile divergence*. Here the lockfiles were identical and the tree was byte-for-byte the right one — the failure is that electron-builder cannot traverse a link, so no statement about dependency *contents* could ever have caught it.
+
+**Two guards, and the second is the one that matters.** The preflight refusal is the cheap half: it names the cause before a multi-minute build, at the moment the fix costs one command. But a guard that only knows about symlinks goes green on every other way a bundle can come out incomplete — a `files` pattern that excludes too much, a dependency moved to `devDependencies`, a future electron-builder that drops something new. So `--verify` re-asks the finished `.app` the runtime question directly and is what the exit code now depends on. It also runs in CI after `electron-builder`, where the install is real: that is the only place the assertion is regularly exercised against a bundle that is *supposed* to pass, so a guard that started rejecting good builds surfaces as a red gate instead of as a local mystery.
+
+**Resolve, don't compare listings.** The verify half walks the closure and asks whether each package is resolvable *from the directory that needs it*, by Node's own walk-up rule, rather than checking that a path exists where the source tree had one. npm hoists most packages to the top level and nests the ones it cannot; both layouts are correct, and a path comparison reports the nested case as a broken build. It follows `dependencies` only — `devDependencies` are never shipped, and an `optionalDependency` that was legitimately pruned must not read as a failure.
+
+**The fixture had to have a transitive level, or it proved nothing.** The bug shipped *every* direct dependency. A check whose fixture only had direct dependencies would pass against the exact bundle being guarded against, so `check:package-integrity` builds a miniature project three levels deep and omits only the deep ones. It also nests a package in the source tree and hoists it in the bundle, which is what keeps a future rewrite from turning the resolution into a path comparison. Verified in both directions for real, not just on fixtures: packaged from the symlinked worktree the verify half reports **175 packages missing** and exits 1; after `rm node_modules && npm install --include=dev` the same command reports **193 runtime packages across 580 dependency edges, all resolvable**, and `npm run package` exits 0 with `playwright` and `playwright-core` present.
+
+**One assertion in the check was vacuous and shipped green in draft** — worth recording because it is the failure mode CLAUDE.md warns about and it still got written. The docs half was pinned with `/packag/i`, which matches `package-lock.json`; that string has been in `bootstrap-worktree.mjs` since it was written, so the assertion would have passed before the note existed and would keep passing if it were deleted. It now matches `npm run package` literally, in both that file and CLAUDE.md.
+
+**`scripts/switch-branch.mjs` was checked and is fine.** It gives branch worktrees the same symlink, but it never packages — it runs the branch's own `npm run build` (Vite and esbuild, which resolve like Node), and the app it launches finds the Playwright CLI through the link at runtime because `fs.existsSync` follows symlinks (confirmed against the runner's exact lookups). Adding a real install there would cost minutes per switch and buy nothing. Said so in its header, since "why does the other worktree script get away with this" is otherwise a question that has to be re-derived.
+
 ### 2026-08-09 — The AI debug follow-up send moved inside the textarea, and is a raw button on purpose
 
 Small change, three decisions in it that all read as sloppiness later if they are not written down.
