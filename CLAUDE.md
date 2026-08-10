@@ -74,7 +74,10 @@ vitest.config.ts     test runner config (node + jsdom projects)
 preview.html         browser-preview entry. NOT `*-window.html` on purpose — see the file
 *.test.ts(x)         Vitest tests, colocated with the code they cover
 main/services/__tests__/  standalone check:* scripts + the @shell/backend stub
-renderer/__tests__/setup.ts  jsdom setup (browser-API stubs, sonner/toast stub)
+renderer/__tests__/setup.ts  jsdom setup (browser-API stubs; NOT the toast stub)
+renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
+                    vitest.config.ts. Assert with `toastTexts()`, not the DOM —
+                    a toast is recorded here as a CALL and never rendered
 ```
 
 ## Commands

@@ -24,6 +24,8 @@ import { TooltipProvider } from "@ui";
 
 import type { ContextAction, RecorderState, Step, StepType } from "../lib/recorder-types";
 import { DOCK_TOOLTIP, TrainerPanelView } from "./trainer-panel-view";
+import { viewportNarrowedNotice } from "../main/viewport-narrowed-notice";
+import { toastTexts, clearToastCalls } from "../__tests__/sonner-stub";
 
 function step(id: string, partial: Partial<Step> & { type: StepType }): Step {
   return { id, timestamp: 0, ...partial } as Step;
@@ -174,6 +176,7 @@ function ctx(over: Partial<ContextAction> = {}): ContextAction {
 beforeEach(() => {
   vi.clearAllMocks();
   for (const key of Object.keys(listeners)) delete listeners[key];
+  clearToastCalls();
   dockState = { docked: true, reason: null };
   setStore();
 });
@@ -457,6 +460,59 @@ describe("dock control", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /undock panel/i })).toBeTruthy(),
     );
+  });
+
+  it("says the training viewport narrowed, and by how much", async () => {
+    // The push has existed since the panel landed and nothing consumed it, so
+    // the training browser lost 360pt at dock time and the user was told
+    // nothing. That is the silent divergence the notice exists to break: a
+    // responsive site re-lays-out at the new width while the generated spec
+    // still runs at whatever viewport it sets.
+    //
+    // Asserted through the sonner stub rather than the DOM because a toast is
+    // recorded as a CALL here, not rendered — same reason `DOCK_TOOLTIP` is
+    // asserted at its source.
+    renderPanel();
+    emit("trainerPanel:viewportNarrowed", { width: 1080 });
+    await waitFor(() => {
+      const t = toastTexts().find((x) => x.title.includes("Training viewport narrowed"));
+      expect(t).toBeTruthy();
+      // The WIDTH is the point. A notice that says "something changed" without
+      // the number leaves the user unable to tell whether it crossed a
+      // breakpoint that matters to their site.
+      expect(t?.title).toContain("1080");
+      expect(t?.description).toMatch(/responsive/i);
+    });
+  });
+
+  it("does not warn about a narrowing that never happened", async () => {
+    // Nothing is emitted here, which is the case that matters: the backend
+    // withholds this push when the browser's width was PRESERVED (a recording
+    // at a viewport preset), and a notice appearing anyway would send the user
+    // hunting for a layout problem in the one arrangement whose geometry is
+    // guaranteed correct.
+    renderPanel();
+    emit("trainerPanel:docked", { width: 840 });
+    await waitFor(() => expect(dock).not.toHaveBeenCalled());
+    expect(toastTexts().some((x) => x.title.includes("Training viewport narrowed"))).toBe(false);
+  });
+});
+
+describe("the viewport notice copy", () => {
+  it("names the width it was given", () => {
+    expect(viewportNarrowedNotice(1080).title).toContain("1080pt");
+  });
+
+  it("stays a sentence when the payload carries no usable width", () => {
+    // `api.on` hands back whatever was on the channel with no runtime check, so
+    // a missing or broken width must not render as "narrowed to NaNpt" — that
+    // reads as a bug in the feature rather than a bad payload, and it is the
+    // notice's own credibility that pays for it.
+    for (const bad of [undefined, Number.NaN, Infinity]) {
+      const { title } = viewportNarrowedNotice(bad as number | undefined);
+      expect(title).toBe("Training viewport narrowed");
+      expect(title).not.toMatch(/nan|infinity/i);
+    }
   });
 });
 

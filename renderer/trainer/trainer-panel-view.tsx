@@ -55,6 +55,7 @@ import { CursorGap, StepRow } from "../main/step-row";
 import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "../main/add-step-dialog";
 import { GenerateStepsDialog } from "../main/generate-steps-dialog";
 import { RefineSelectorDialog } from "../main/refine-selector-dialog";
+import { useViewportNarrowedNotice } from "../main/viewport-narrowed-notice";
 
 /**
  * Copy for the dock control's tooltip.
@@ -256,6 +257,12 @@ export function TrainerPanelView() {
       offUndocked();
     };
   }, []);
+
+  // Docking narrows the training browser. This window only ever hears the push
+  // on the re-dock path — when the panel opens already docked it is sent before
+  // this page exists — which is why the main window subscribes too, and why a
+  // passing test here is not evidence the user was told. See the notice module.
+  useViewportNarrowedNotice();
 
   // A right-click test-tools action from the training browser. The backend
   // addresses it to whichever trainer should handle it; ignoring the ones meant

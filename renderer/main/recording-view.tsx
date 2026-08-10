@@ -32,6 +32,7 @@ import { toneFor } from "../lib/ai-debug-status";
 import { GenerateStepsDialog } from "./generate-steps-dialog";
 import { RefineSelectorDialog, formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 import { CookiesPanel } from "./cookies-panel";
+import { useViewportNarrowedNotice } from "./viewport-narrowed-notice";
 
 // Assertions that can be captured by clicking an element in the page. Operand
 // assertions (value/attribute/count/url/title) need typed input, so they live in
@@ -553,6 +554,11 @@ export function RecordingView() {
     prefillText?: string;
     prefillValue?: string;
   } | null>(null);
+
+  // Docking the panel narrows the training browser. This window is the one that
+  // can be relied on to hear about it: the push is sent before the panel's page
+  // loads, so the panel misses it on the ordinary path. See the notice module.
+  useViewportNarrowedNotice();
 
   // A right-click test-tools action arrives from the backend: open the Add-step
   // dialog prefilled. "refine" opens the Refine Selector flow for that element
