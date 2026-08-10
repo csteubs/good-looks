@@ -16,6 +16,22 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — The AI status contract becomes checkable, and the app finally says what it sends
+
+**B9 of the redesign (REDESIGN §B9), the two parts the plan names.** This is the reskin the plan calls highest-risk, and the risk is specific: the status icon's colour IS the contract of a minimized job, a wrong colour is silent, and the panel works perfectly while the icon lies — the user walks away from a finished answer or waits on a dead one.
+
+**The mapping was untestable, and that was the actual problem.** The colour was a Tailwind class string, and jsdom has no computed styles worth trusting, so the only thing a test could pin was the LABEL. A wrong colour with a right label passed every check in this repo. `toneFor` now returns the palette tone as data alongside the class, so the contract §B9 specifies — blue→cyan, orange→amber, green→phos, red→red — is asserted by value rather than written down and hoped for. Verified by collapsing "thinking" onto "finished" and watching two tests fail.
+
+**The class names are semantic, never hues.** `.gl-ai-busy`, not `.gl-ai-amber`. Retuning which colour "thinking" takes must not turn a class name into a lie, and this is the one place in the app where a name that lies about its meaning IS the bug.
+
+**Four test files had the old colours hardcoded**, and they all failed the moment the mapping moved — which is the file doing its job rather than an inconvenience. Consumers now derive the expected class from `toneFor` so the two cannot drift; only `ai-debug-status.test.ts`, which is the mapping's own unit test and therefore its source of truth, still pins literals.
+
+**One new guard the per-status assertions cannot make:** that the four meanings stay in four DIFFERENT colours. The catastrophic failure is not one wrong hue, it is two states collapsing onto one — at which point the icon stops carrying information at all, and a per-status test still passes for every individual state.
+
+**The "Sending" strip ships with the reskin because it is a privacy affordance, not decoration.** "Debug with AI" can send a user's script and a run's console output to a hosted provider, and until now the only way to know what left the machine was to read the prompt builder's source. A test script routinely carries staging hostnames, seeded credentials and customer-shaped fixture data. It is **derived from the same `ctx` the prompt is built from** — a hand-maintained second list eventually describes a request the app no longer sends, and an inaccurate privacy disclosure is worse than none because it is trusted. A drift test fails if the builder attaches a payload the strip does not name.
+
+Sizes are CHARACTERS, not tokens: a token count is a guess dressed as a measurement (it depends on the tokenizer, which depends on the provider), and the question being answered is "how much of my stuff", for which characters are honest and sufficient. The strip sits ABOVE the prompt preview — a disclosure you reach by scrolling past the thing it is about is one most people never see, the same reasoning as `risk` on a settings row.
+
 ### 2026-08-10 — Visual gets the bezel it was designed for, and a fixture that makes the screen exist
 
 **B8 of the redesign (REDESIGN §B8), first slice.** Visual is 1,548 lines, the largest file in the renderer.

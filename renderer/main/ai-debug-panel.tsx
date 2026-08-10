@@ -35,7 +35,12 @@ import {
 import { diffLines, diffSummary, type DiffLine } from "../lib/line-diff";
 import { friendlyError } from "../lib/llm-errors";
 import type { LlmMessage, LlmModel } from "../lib/llm-types";
-import { buildDebugMessages, buildStepDebugMessages } from "../lib/llm-prompts";
+import {
+  buildDebugMessages,
+  buildStepDebugMessages,
+  describeSending,
+  sendingTotalChars,
+} from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
 import type { AiDebugStatus } from "../lib/recorder-types";
 import { useDisabledEnhancements } from "../lib/use-disabled-enhancements";
@@ -789,6 +794,26 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
     [runCtx],
   );
 
+  // WHAT LEAVES THIS MACHINE, itemised. Derived from the same `runCtx` the
+  // prompt is built from, so it cannot describe a request the app no longer
+  // sends — see `describeSending`, and the drift test beside it.
+  const sending = React.useMemo(
+    () =>
+      runCtx
+        ? describeSending({
+            testName: runCtx.testName,
+            testUrl: runCtx.testUrl,
+            script: runCtx.script,
+            output: runCtx.output,
+            imported: runCtx.imported,
+            speed: runCtx.speed,
+            failedStepIndex: runCtx.failedStepIndex,
+            logsAvailable: runCtx.logsAvailable,
+          })
+        : [],
+    [runCtx],
+  );
+
   const send = React.useCallback(
     async (stopOldest?: boolean) => {
       if (!runCtx) return;
@@ -1072,6 +1097,43 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                 Review the prompt that will be sent to the model, then add any context you want and
                 confirm to send. Nothing is sent until you confirm.
               </Text>
+              {/* THE SENDING STRIP. A privacy affordance, which is why it ships
+                  with the reskin rather than waiting for Phase C (REDESIGN §B9):
+                  this button can send a script and a run's console output to a
+                  hosted provider, and until now the only way to know what left
+                  the machine was to read the prompt builder's source. A test
+                  script routinely carries staging hostnames, seeded credentials
+                  and customer-shaped fixture data.
+
+                  Above the prompt preview, not below it — the preview is long,
+                  and a disclosure the user reaches by scrolling past the thing
+                  it is about is one most people never see. Same reasoning as
+                  `risk` on a settings row. */}
+              {sending.length > 0 ? (
+                <div className="gl-sending" data-gl="sending">
+                  <span className="gl-section-title">Sending</span>
+                  <ul className="gl-sending-list">
+                    {sending.map((item) => (
+                      <li key={item.label} className="gl-sending-item">
+                        <span>{item.label}</span>
+                        {item.chars !== null ? (
+                          <span className="gl-sending-size">
+                            {item.chars.toLocaleString()} chars
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {/* Characters, not tokens. A token count is a guess dressed as
+                      a measurement — it depends on the tokenizer, which depends
+                      on the provider — and the question here is "how much of my
+                      stuff", for which characters are honest. */}
+                  <p className="gl-sending-total">
+                    {sendingTotalChars(sending).toLocaleString()} characters in total, to the
+                    provider configured in Settings.
+                  </p>
+                </div>
+              ) : null}
               <div className="flex flex-wrap items-center gap-1.5">
                 {QUICK_CONTEXT_REASONS.map((reason) => {
                   const active = isReasonActive(draft.additionalContext, reason);

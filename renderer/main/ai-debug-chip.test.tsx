@@ -100,7 +100,7 @@ describe("AiDebugChip", () => {
     await waitFor(() => expect(chip()).not.toBeNull());
 
     const button = screen.getByRole("button", { name: `AI debug — ${toneFor("done").label}` });
-    expect(button.querySelector("svg")?.getAttribute("class") ?? "").toContain("text-support-green");
+    expect(button.querySelector("svg")?.getAttribute("class") ?? "").toContain(toneFor("done").className);
   });
 
   it("shows a running session in orange, pulsing", async () => {
@@ -126,7 +126,7 @@ describe("AiDebugChip", () => {
 
     const button = screen.getByRole("button", { name: /^AI debug —/ });
     const cls = button.querySelector("svg")?.getAttribute("class") ?? "";
-    expect(cls).toContain("text-support-orange");
+    expect(cls).toContain(toneFor("streaming").className);
     expect(cls).toContain("animate-pulse");
   });
 

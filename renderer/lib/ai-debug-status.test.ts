@@ -13,14 +13,16 @@ const ALL: AiDebugStatus[] = ["idle", "streaming", "done", "error", "cancelled",
 
 describe("toneFor", () => {
   it("gives blue for a session waiting on the user", () => {
-    expect(toneFor("idle").className).toBe("text-accent");
+    expect(toneFor("idle").className).toBe("gl-ai-ready");
+    expect(toneFor("idle").tone).toBe("cyan");
     expect(toneFor("idle").busy).toBe(false);
     expect(toneFor("idle").ready).toBe(false);
   });
 
   it("gives orange while the model is thinking", () => {
     const tone = toneFor("streaming");
-    expect(tone.className).toBe("text-support-orange");
+    expect(tone.className).toBe("gl-ai-busy");
+    expect(tone.tone).toBe("amber");
     expect(tone.busy).toBe(true);
     // Not ready: an in-progress answer is exactly what the user must NOT be
     // invited back for.
@@ -29,7 +31,8 @@ describe("toneFor", () => {
 
   it("gives green only when the job has finished", () => {
     const tone = toneFor("done");
-    expect(tone.className).toBe("text-support-green");
+    expect(tone.className).toBe("gl-ai-done");
+    expect(tone.tone).toBe("phos");
     expect(tone.ready).toBe(true);
     expect(tone.busy).toBe(false);
     for (const status of ALL.filter((s) => s !== "done")) {
@@ -38,14 +41,15 @@ describe("toneFor", () => {
   });
 
   it("gives red for a failed request", () => {
-    expect(toneFor("error").className).toBe("text-support-red");
+    expect(toneFor("error").className).toBe("gl-ai-failed");
+    expect(toneFor("error").tone).toBe("red");
   });
 
   it("treats a stopped or interrupted session as ready for input, not as an error", () => {
     // Deliberate: nothing is broken in either case and the only action is to
     // send again, which is what blue means everywhere else in this mapping.
-    expect(toneFor("cancelled").className).toBe("text-accent");
-    expect(toneFor("interrupted").className).toBe("text-accent");
+    expect(toneFor("cancelled").className).toBe("gl-ai-ready");
+    expect(toneFor("interrupted").className).toBe("gl-ai-ready");
     expect(toneFor("interrupted").busy).toBe(false);
   });
 
