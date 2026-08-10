@@ -16,6 +16,89 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-09 — A dialog button was laid out outside its dialog, and Cancel was the button that pushed it there
+
+The trainer's exit dialog ("Save changes to this test?") rendered
+**"Discard Edits" outside the dialog**, over the step list behind it — on both
+the Discard and the Save Test paths, since both raise the same confirm.
+
+**The mechanism is `justify-end`, and it is why nobody caught this by reading
+the CSS.** `DialogFooter` was `flex items-center justify-end gap-2`. Every
+button in it is `whitespace-nowrap`, and a flex item's default `min-width: auto`
+means none of them can shrink — so the row is laid out at its intrinsic width
+whatever the container is. When that exceeds the container, `justify-end`
+anchors the row's END to the box and the surplus hangs off the **LEFT**, i.e.
+away from the direction anyone looks when they think about overflow.
+
+The numbers are small and entirely specific to one window. The trainer panel is
+`PANEL_WIDTH` 360 DIP; the dialog is `w-[calc(100vw-4rem)]` capped at
+`max-w-md`, so 296px, with 264px of content inside `p-4`.
+"Discard Edits · Cancel · Save & Exit" needs about 282px. **The same dialog in
+the main window is fine** — its 928px floor (see 2026-08-09, narrow layout)
+gives the dialog its full 448px, and 282 fits with room to spare. That is why
+this shipped: the component was correct everywhere it was looked at.
+
+**Two independent fixes, because either alone is temporary.**
+
+`flex-wrap` on the footer is the real one. It makes the failure *structurally*
+impossible rather than arithmetically unlikely: buttons that do not fit cost a
+second row instead of leaving the box, at any width, for any label. Removing
+Cancel alone would only have bought headroom until the next label was longer —
+and the ask was explicitly that a re-added button must not bring the bug back.
+
+Dropping **Cancel** is the second, and it is a real simplification rather than a
+width trick. Every composed dialog renders the close "X" (`showCloseButton`
+defaults on, and no caller turns it off), and Radix already closes on Escape and
+on the overlay click. Cancel was a fourth way to do the same thing, costing
+~75px of a 264px row. The property it was there for — *a dialog must offer a way
+out that is not the thing it is asking you to agree to* — is unchanged and still
+asserted; it now points at the X. Two existing tests were asserting the button
+rather than the property and were rewritten to the X, which is the whole reason
+they are worth keeping.
+
+**Rejected: letting the buttons shrink.** `min-w-0` plus `overflow-hidden` would
+also keep them inside the box, by clipping their labels. A destructive action
+reading "Discard Ed…" is a worse outcome than a second row, and it fails
+silently — nothing about a clipped label says the layout is wrong.
+
+**The footer became its own exported component (`DialogActions`) to make the
+layout testable.** The set of buttons, their order and the `mr-auto` on the
+destructive one *are* the thing under test; a footer rebuilt by hand inside a
+spec would keep passing while the real one overflowed. That is not a
+hypothetical here — see below.
+
+**Three layers of guard, because the obvious one cannot see the bug.**
+`renderer/ui/dialog-actions.test.tsx` renders this exact footer, and every
+assertion in it passed for the whole life of the bug: jsdom has no layout engine
+and the dom project runs with `css: false`, so `flex-wrap` never produces a
+second row there and a `getBoundingClientRect` assertion reads zeros in both the
+fixed and the broken case. It pins what it *can* — no Cancel, an exhaustive list
+of the actions, the X still dismisses, and `flex-wrap` as a class proxy.
+`check:dialog-footer` is the fast source-level guard, in the same tradition as
+`check:narrow-layout` and `check:clickable-chrome`.
+
+`e2e/dialog-footer.spec.ts` is the one that could actually have caught it. It
+server-renders the real `DialogActions` and injects it into the **running app's
+renderer**, so the measurement uses the real stylesheet, the real self-hosted
+fonts and a real layout engine, then checks every button's box against the
+panel's content box. Two things it does deliberately:
+
+- **A nowrap CONTROL.** The same markup is measured a second time with wrapping
+  forced off, and that one *must* overflow. Without it, shortening a label until
+  the row happened to fit would turn the real assertion green for a reason that
+  has nothing to do with the fix — the vacuous pass this repo keeps finding. Its
+  failure message says so in those words.
+- **A separate process for the fixture** (`e2e/dialog-footer-fixtures.tsx`).
+  Playwright compiles the TSX it loads with its own component-testing JSX
+  runtime, so `renderToStaticMarkup(<DialogActions/>)` inside a spec dies with
+  "Objects are not valid as a React child". Running it under `tsx` is what keeps
+  the fixture the real component instead of markup copied into a spec.
+
+The panel geometry the spec reconstructs (296px) is derived, not asserted:
+`check:dialog-footer` recomputes it from `PANEL_WIDTH` and the real
+`dialogPanelClass` and fails if they stop agreeing. A layout test measuring a box
+the app never renders is worse than no layout test, because it is green.
+
 ### 2026-08-09 — Packaging from a bootstrapped worktree shipped an app that fails every test run, and exited 0
 
 `npm run bootstrap` gives a worktree its `node_modules` as a symlink at the main checkout's tree. Everything in this repo resolves modules the way Node does — lint, type-check, `test:all`, `build`, `dev` — so the shortcut has been free. **electron-builder does not.** It collects the dependency tree by reading `node_modules` itself, and through the link it finds the direct dependencies and nothing beneath them. It says so, at length:

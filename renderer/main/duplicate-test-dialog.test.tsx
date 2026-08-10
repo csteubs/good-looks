@@ -91,8 +91,14 @@ describe("DuplicateTestDialog", () => {
   });
 
   it("offers a way out that isn't the primary action", () => {
+    // That way out is the close "X", not a Cancel button — the composed
+    // dialog's footer dropped Cancel because three actions did not fit the
+    // trainer panel's 264px row (see renderer/ui/dialog-actions.test.tsx). The
+    // property this test exists for is unchanged: a dialog whose only button is
+    // the thing it is asking you to agree to is a trap.
     renderDialog();
-    expect(screen.getByRole("button", { name: /cancel/i })).toBeTruthy();
+    expect(screen.getByLabelText("Close")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /cancel/i })).toBeNull();
   });
 
   it("renders nothing when closed", () => {

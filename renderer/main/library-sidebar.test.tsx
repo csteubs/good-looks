@@ -279,12 +279,15 @@ describe("LibrarySidebar — Duplicate Test", () => {
     );
   });
 
-  it("does nothing when the dialog is cancelled", async () => {
+  it("does nothing when the dialog is dismissed", async () => {
     tests = [record({ variables: [{ name: "user", kind: "plain", value: "ada" }] })];
     renderSidebar();
     await chooseDuplicate();
 
-    fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+    // Dismissed by the close "X": the composed dialog's footer no longer
+    // carries a Cancel button (renderer/ui/dialog-actions.test.tsx). What must
+    // not change is that dismissing copies nothing.
+    fireEvent.click(await screen.findByLabelText("Close"));
 
     await waitFor(() => expect(screen.queryByText(/Duplicate “Login”\?/)).toBeNull());
     expect(duplicate).not.toHaveBeenCalled();

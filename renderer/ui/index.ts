@@ -137,6 +137,7 @@ export {
   CustomContextMenuSubTrigger,
   CustomContextMenuTrigger,
   Dialog,
+  DialogActions,
   DialogBody,
   DialogClose,
   DialogContent,
