@@ -200,6 +200,25 @@
   background: var(--gl-cyan);
 }
 
+/* A labelled cursor needs room the 8px strip does not have. Only the ACTIVE
+   cursor is ever labelled, and only when it is not at the end of the list, so
+   this grows exactly one gap in the list rather than all of them. */
+.gl-cursor-gap[data-labelled] {
+  height: auto;
+  gap: 8px;
+  padding: 4px 8px;
+}
+
+.gl-cursor-gap-label {
+  flex: 0 0 auto;
+  color: var(--gl-cyan);
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 /* ── Pager ────────────────────────────────────────────────────────────── */
 
 .gl-pager {

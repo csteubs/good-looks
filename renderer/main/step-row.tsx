@@ -107,6 +107,14 @@ function editableField(
 }
 
 /**
+ * What the active insert cursor says when it is not at the end of the list.
+ *
+ * Exported so both trainers use one string, and so a test can assert the copy
+ * without re-typing it — the same reason `DOCK_TOOLTIP` is exported.
+ */
+export const INSERT_HERE = "New steps go here";
+
+/**
  * Thin clickable strip between rows that moves the insert cursor.
  *
  * Lives beside StepRow rather than in either view because BOTH step lists —
@@ -118,10 +126,19 @@ export function CursorGap({
   active,
   onClick,
   disabled,
+  label,
 }: {
   active: boolean;
   onClick: () => void;
   disabled?: boolean;
+  /** Words for the active cursor when it is NOT at the end of the list.
+   *
+   *  At the end it needs none — steps appearing under the last row is what
+   *  everybody already expects. Anywhere else it is the answer to "where did my
+   *  step go", and a 1px cyan rule is not an answer. Continuing an existing
+   *  test opens the cursor just past the navigation, so this is the common
+   *  case there rather than an exotic one. */
+  label?: string;
 }) {
   return (
     <button
@@ -130,8 +147,13 @@ export function CursorGap({
       disabled={disabled}
       className="gl-cursor-gap"
       data-active={active ? "" : undefined}
+      data-labelled={active && label ? "" : undefined}
       aria-label="Move insert point here"
     >
+      {/* Label first: it sits in the left gutter, in line with the step-index
+          column the eye already scans, rather than at the far end of a rule
+          that is a full window wide in the main trainer. */}
+      {active && label ? <span className="gl-cursor-gap-label">{label}</span> : null}
       <span className="gl-cursor-gap-rule" aria-hidden="true" />
     </button>
   );
@@ -157,6 +179,7 @@ export function StepRow({
   drag,
   runStatus,
   isNew,
+  justAdded,
   replayFlash,
   indent = 0,
 }: {
@@ -176,6 +199,19 @@ export function StepRow({
    *  gets a pulsing green border until the list changes again. Only ADDED
    *  steps are marked; removals are deliberately unstyled. */
   isNew?: boolean;
+  /**
+   * This is the step that most recently ARRIVED in the list — captured in the
+   * training browser, added from a dialog, generated.
+   *
+   * It scrolls itself into view, and that is the point of it rather than a side
+   * effect. The insert cursor sits where the browser is, so continuing an
+   * existing test writes new steps into the middle of the list while the view
+   * follows the bottom: the row that changed was off-screen, which reads as the
+   * trainer not having recorded anything. `isNew` cannot do this job — it says
+   * an AI put the step here, and stays true for a whole batch until the list
+   * changes again, so scrolling on it would fight the user's own scrolling.
+   */
+  justAdded?: boolean;
   /** This step just finished replaying, and whether it passed. Ephemeral — the
    *  store clears it after REPLAY_FLASH_MS. Drawn as an outline, which is why
    *  it and `isNew` are mutually exclusive below rather than additive. */
@@ -185,6 +221,14 @@ export function StepRow({
 }) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState("");
+  const rowRef = React.useRef<HTMLDivElement | null>(null);
+  // `block: "nearest"` so a row already on screen is left exactly where it is —
+  // a step captured at the bottom of a short list must not make the list jump
+  // to prove it arrived.
+  React.useEffect(() => {
+    if (!justAdded) return;
+    rowRef.current?.scrollIntoView({ block: "nearest" });
+  }, [justAdded]);
   const [replay, setReplay] = React.useState<{
     status: "idle" | "running" | "ok" | "fail";
     error?: string;
@@ -281,17 +325,27 @@ export function StepRow({
   // wins while it lasts: it is the newer fact and the one the user is waiting
   // on, and it expires on its own, so `.step-new` comes back underneath rather
   // than being lost.
+  //
+  // `justAdded` is last of the three for the same reason: it is the weakest
+  // claim (a step arrived) and the other two are about what happened to it. An
+  // AI-inserted step is both, and keeping its green pulse is right — the flash
+  // would expire and leave the provenance highlight looking like it had failed
+  // to appear.
   const outlineClass = replayFlash
     ? replayFlash === "pass"
       ? "step-replay-pass"
       : "step-replay-fail"
     : isNew
       ? "step-new"
-      : "";
+      : justAdded
+        ? "step-just-added"
+        : "";
 
   return (
     <div
+      ref={rowRef}
       data-new-step={isNew ? "true" : undefined}
+      data-just-added={justAdded ? "true" : undefined}
       data-replay-flash={replayFlash}
       className={`group flex items-center gap-2 rounded-md px-2 py-1 ${flash} ${outlineClass} ${
         drag?.isOver ? "border-t-2 border-accent" : ""
