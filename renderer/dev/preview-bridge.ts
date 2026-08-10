@@ -32,8 +32,11 @@ import {
   HEALS,
   LLM_CONFIG,
   LLM_STATUS,
+  REPLAY,
+  REPLAY_SUMMARIES,
   RUNS,
   RUN_LOG,
+  VISUAL_FRAMES,
   SETTINGS,
   TESTS,
 } from "./preview-fixtures";
@@ -52,8 +55,11 @@ import type {
   RunLogs,
   StepStructure,
   RunRecord,
+  RunReplay,
+  RunReplaySummary,
   SecretStatus,
   TestRecord,
+  VisualMask,
 } from "../lib/recorder-types";
 import type { LlmConfig, LlmModel, LlmProviderStatus } from "../lib/llm-types";
 import type { BranchStatus } from "../lib/branch-types";
@@ -143,6 +149,33 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       maxMs: 240,
       lastSeenAt: RUNS[1].startedAt,
     },
+    // Filler, so the preview shows the panel at the size it actually reaches on
+    // a real history — past one page. A two-row fixture renders the pager not at
+    // all, which is the state the panel is least likely to be broken in.
+    ...Array.from({ length: 58 }, (_, i): StepHealthRow => {
+      const runs = 24 - (i % 7);
+      return {
+        stepId: `s-fill-${i}`,
+        label: `${["click", "fill", "expect", "goto"][i % 4]} step ${i + 1}`,
+        type: (["click", "fill", "expect", "goto"] as const)[i % 4],
+        testId: i % 2 ? "t-checkout" : "t-login",
+        testName: i % 2 ? "Checkout — happy path" : "Login — wrong password shows an error",
+        runs,
+        failed: i % 5 === 0 ? 1 : 0,
+        failRate: i % 5 === 0 ? 1 / runs : 0,
+        heals: i % 3 === 0 ? 1 : 0,
+        healFailures: 0,
+        visualChanges: i % 4 === 0 ? 1 : 0,
+        a11yNew: 0,
+        pageErrors: 0,
+        // Every seventh row is unmeasured, so the dash-not-zero rendering is
+        // visible in the preview too.
+        timedRuns: i % 7 === 0 ? 0 : runs,
+        minMs: i % 7 === 0 ? null : 90 + i * 5,
+        maxMs: i % 7 === 0 ? null : 400 + i * 40,
+        lastSeenAt: RUNS[1].startedAt,
+      };
+    }),
   ];
 
   /** `slowed` is a SUBSET of `rows` in the real query — a step that is slower
@@ -425,7 +458,21 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       ],
     }),
 
-    "artifacts:list": () => [],
+    // The Visual screen's entire subject. Returning `[]` here is honest for a
+    // preview that cannot run Playwright, and it also meant the largest file in
+    // the renderer only ever rendered its empty state — see REPLAY.
+    "artifacts:list": (): RunReplaySummary[] => REPLAY_SUMMARIES,
+    "artifacts:getReplay": (p): RunReplay | null =>
+      p?.testId === REPLAY.testId && p?.runId === REPLAY.runId ? REPLAY : null,
+    /** The frames. `readShot` is asked for the CURRENT or the DIFF image and
+     *  told which by filename, so the two are told apart on `.diff.` rather
+     *  than by guessing from the step — a viewer showing the current frame in
+     *  diff mode is exactly the bug a preview should make visible. */
+    "artifacts:readShot": (p): string =>
+      typeof p?.file === "string" && p.file.includes(".diff.")
+        ? VISUAL_FRAMES.diff
+        : VISUAL_FRAMES.current,
+    "visual:baselineShot": (): string => VISUAL_FRAMES.baseline,
     /** `RunLogs`, not a line array: the panel reads `console` and `network`
      *  separately and reports what was dropped. */
     "artifacts:getLogs": (): RunLogs => ({
@@ -560,8 +607,13 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "debug:shortcut": () => "⌘⌥⇧S",
 
     // ── Visual ───────────────────────────────────────────────────────────
-    "visual:listBaselines": () => [],
-    "visual:getMasks": () => [],
+    "visual:listBaselines": (): string[] => REPLAY.steps.filter((st) => st.screenshot).map((st) => st.stepId),
+    /** One mask, on the step whose diff reports `maskedCount: 1` — the two
+     *  numbers describing the same thing have to agree, or the panel says a
+     *  mask was applied and the list shows none. */
+    "visual:getMasks": (): VisualMask[] => [
+      { id: "m-1", stepId: "s2", x: 0.62, y: 0.06, w: 0.3, h: 0.09 },
+    ],
     "visual:getThreshold": () => 0.2,
     "visual:getElementSteps": () => [],
 

@@ -2263,3 +2263,27 @@
   padding: 5px 12px;
   border-bottom: 1px solid var(--gl-line);
 }
+
+/* ── Visual (B8) ───────────────────────────────────────────────────────── */
+
+/* The bezel fills the viewer. `CRT` sizes to its content by default, which is
+   right for a thumbnail and wrong for the one frame the whole screen is about —
+   here it should take the pane and let the frame inside it letterbox. The
+   `min-height: 0` is what lets it shrink rather than pushing the step row and
+   filmstrip below the window. */
+.gl-visual-frame {
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+}
+
+/* Chrome laid ON the frame, so it clears the bezel. `CRT` sits at 610 to escape
+   the global atmosphere overlays at 600 (tokens.css); anything drawn over the
+   frame has to clear the same bar or it is simply invisible. This is chrome, not
+   content — the rule the CRT enforces is that nothing may be drawn INSIDE the
+   screen, and a control sitting above the bezel's border is outside it. */
+.gl-visual-modes {
+  z-index: 620;
+}

@@ -16,6 +16,18 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — Visual gets the bezel it was designed for, and a fixture that makes the screen exist
+
+**B8 of the redesign (REDESIGN §B8), first slice.** Visual is 1,548 lines, the largest file in the renderer.
+
+**The screen could not be looked at, so the fixture came first.** `artifacts:list` returned `[]` in the browser preview — honest for a fake backend that cannot run Playwright, and it meant every capability the screen has (frame selection, current/baseline/diff, masks, the threshold slider) sat behind an empty state. Reskinning 1,548 lines I could not see is exactly the situation that produced the nested-CSS defect earlier today, so the run fixture is the prerequisite rather than a nicety. It carries **one step of each diff state** — match, changed-over-threshold, new-baseline, unable, and one uncaptured step — because a fixture where everything matches exercises one branch of the viewer and hides four.
+
+**The frames are generated SVG data URIs.** A real PNG would be a binary blob nobody can diff in review; a remote image would be an egress path this repo bans outright (`check:renderer-egress`); and what is being judged here is the CHROME around the frame, for which a legible placeholder that names itself beats a photograph. Each frame states its own identity, so a mode switch that shows the wrong one is visible rather than plausible.
+
+**The frame goes in `CRT`, which is the one rule in this design system about correctness rather than taste.** Every image on this screen is evidence; the entire question being asked is "does this look right?"; and an amber cast from our own chrome is indistinguishable from an amber cast in the page under test — a user would file the bug against their own site. The bezel sits at z-index 610 precisely so the global atmosphere overlays at 600 cannot fall on it.
+
+**Which immediately broke the compare-mode switch, and that is worth recording.** The switch was `z-10`, laid over the frame. Against a bezel at 610 it rendered behind and vanished — the compare-mode switch, invisible, on the compare screen. Caught by looking at the screenshot, not by any test, and the fix is a stacking rule with the reasoning attached. The CRT's actual rule is that nothing may be drawn INSIDE the screen; a control sitting above the bezel's border is outside it, so lifting the chrome to 620 respects the constraint rather than working around it.
+
 ### 2026-08-10 — What the locator actually matched, and one artifact with two consumers
 
 The `structure` request shipped answering an *approximate* question. Auto-Heal's
@@ -159,6 +171,7 @@ worth the lines they cost: it REBUILDS rather than spreads, so a field added to
 score is dropped to zero rather than clamped to 1, because the payload presents
 these as ranked and a made-up 1 would sort an attacker's candidate to the top of
 a list the model is reading as "best match first".
+
 ### 2026-08-10 — The trainer stops being red, and the tab strip becomes shared furniture
 
 **B6 of the redesign (REDESIGN §B6), the reskin half.** The inline composer, the `ToolTile`s and the assertion bottom sheet stay in Phase C — those are behaviour changes, and the plan says so. Three decisions here.
@@ -188,6 +201,16 @@ The only symptom was the Stats screen rendering unstyled — which reads as "the
 **The fix, and the guard.** `screens.css` was rebuilt from the two clean parents rather than hand-patched: both sides' sections are pure appends over an identical 926-line base, so reconstructing is exact where repairing a splice is guesswork. The new assertion is that **no theme stylesheet nests a style rule inside another style rule** — at-rule nesting (`@media`, `@supports`, `@keyframes`) is fine and used, so the walk tracks which kind of block it is inside rather than banning depth. Verified against the broken file: it names the rule and the line.
 
 **The lesson worth keeping is about the oracle, not the merge.** An audit that matches text in the output can only prove a name is *present*. Presence and effect are different questions, and the gap between them is exactly where a valid-but-inert stylesheet lives. That is also why the guard is source-level: the emitted sheet has already flattened the nesting away, so the only place the mistake is visible is the file somebody wrote.
+
+### 2026-08-10 — Step health and the run history page at 25
+
+Step health rendered every row the query returned — 200 of them on a suite with real history, each two lines tall with six numeric columns. A table nobody can reach the bottom of is one nobody reads the top of either, so it paged, and the run history moved to the same size while it was in hand.
+
+**A second constant rather than lowering `PAGE_SIZE`.** `DENSE_PAGE_SIZE` is 25; `PAGE_SIZE` stays 50 for the raw-log search results and the Heals list. Those are one-line rows and are *scanned* — halving them just doubles the clicking. The two dense tables are read.
+
+**Sort first, then page.** The obvious inversion — page the received rows, sort what's on screen — renders identically on page 1 and is wrong everywhere: clicking "Heals" would rank 25 rows out of 200 while the header claims to have ranked the suite, and the worst step in it stays invisible. `metrics-panels.test.tsx` pins it with a row that only surfaces if the sort saw all 200, and the mutation was run to confirm that test fails against the page-then-sort version. Changing the sort also returns to page 1, because every row has moved and the old page number no longer refers to anything.
+
+**`Pager` had to learn a `size`.** It computes its own counts from `PAGE_SIZE` rather than receiving them, so a caller slicing at 25 while the pager counts in 50 reports "page 1 of 4" over 8 real pages and buries half the rows behind a Next button that disables early — no error, no empty state, just rows that are not there. The prop defaults to `PAGE_SIZE` so the existing call sites are unchanged, and `check:paginate` now pins the dense size independently of the components.
 
 ### 2026-08-10 — Test detail: status becomes a rail, the log becomes a drawer, and the preview learns to finish a run
 

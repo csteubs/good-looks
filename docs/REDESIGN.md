@@ -655,7 +655,7 @@ Two structural moves:
 
 `Cost` and `Report` modes are new — Phase C (§6.4, §6.5).
 
-### B8. Visual — `visual-view.tsx`
+### B8. Visual — `visual-view.tsx` — **first slice done, 2026-08-10**
 
 1,548 lines, the largest file in the renderer, and the screen where the redesign
 adds the most. Current view has Current/Baseline/Diff, page-vs-element scope,
@@ -674,6 +674,17 @@ into rail + viewer + inspector.
 
 B8 reskins the existing five capabilities. Wipe, Blink, region breakdown,
 baseline provenance and drift are Phase C (§6.6).
+
+**First slice shipped 2026-08-10.** ✅ Captured frames are in the `CRT` bezel —
+the primitive this screen is the reason for. ✅ The compare-mode switch is the
+theme's `Segmented`, whose active item is neutral, which matters more here than
+anywhere else: an accent-coloured segment sitting on a screenshot is a colour
+the page did not put there. ✅ The browser preview now serves a captured run, so
+the screen is reviewable at all — it previously rendered only its empty state,
+which is why this slice is scoped the way it is rather than attempting 1,548
+lines blind. Still to do in B8: the frame rail with per-frame diff percentages
+and a "changed only" filter, the mask list, and the threshold slider drawn
+against the frames.
 
 **One implementation note carried over from the mockup and worth keeping:** the
 diff region boxes are *measured after layout*, never authored as percentages,

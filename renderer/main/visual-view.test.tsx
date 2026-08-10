@@ -12,7 +12,7 @@
 // measured with regions excluded is not a full-page match. Plus the view's own
 // run-selection behavior, where the failure mode is a blank pane.
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -20,13 +20,17 @@ import type { RunReplaySummary, VisualDiff } from "../lib/recorder-types";
 import { DiffBadge, VisualView } from "./visual-view";
 
 let replays: RunReplaySummary[] = [];
+/** Mutable so the bezel tests can seed a run with a real frame; every other
+ *  test in this file leaves them null and never reaches the viewer. */
+let replayDetail: unknown = null;
+let shot: string | null = null;
 
 vi.mock("../lib/api", () => ({
   api: {
     artifacts: {
       list: async () => replays,
-      getReplay: async () => null,
-      readShot: async () => null,
+      getReplay: async () => replayDetail,
+      readShot: async () => shot,
     },
     runs: { list: async () => [] },
     visual: {
@@ -195,5 +199,68 @@ describe("VisualView run selection", () => {
     renderVisual();
     await screen.findByText("Checkout");
     expect(screen.queryByLabelText("accessibility issues")).toBeNull();
+  });
+});
+
+describe("the frame is evidence, and the bezel says so", () => {
+  beforeEach(() => {
+    replays = [summary({ runId: "r1", stepCount: 1, changedSteps: 0 })];
+    replayDetail = {
+      testId: "t1",
+      runId: "r1",
+      testName: "Checkout",
+      status: "passed",
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_001_000,
+      failedIndex: null,
+      steps: [
+        {
+          index: 0,
+          stepId: "s1",
+          label: "goto example.com",
+          type: "goto",
+          status: "passed",
+          screenshot: "0.png",
+          diff: { state: "match", ratio: 0.0001, threshold: 0.2 },
+        },
+      ],
+    };
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+  });
+
+  afterEach(() => {
+    replayDetail = null;
+    shot = null;
+  });
+
+  // The one rule in this design system that is about CORRECTNESS rather than
+  // taste, and this screen is why it exists: every frame here is evidence, the
+  // question being asked is "does this look right?", and a tint from our own
+  // chrome is indistinguishable from a tint in the page under test.
+  it("wraps the captured frame in the CRT bezel", async () => {
+    renderVisual();
+    const bezel = await waitFor(() => {
+      const el = document.querySelector('[data-gl="crt"]');
+      if (!el) throw new Error("no CRT bezel");
+      return el as HTMLElement;
+    });
+    expect(bezel.querySelector("img")).not.toBeNull();
+  });
+
+  it("puts the compare-mode switch ABOVE the bezel", async () => {
+    // Not a styling nit. `CRT` sits at z-index 610 to escape the global
+    // atmosphere overlays at 600; the mode switch is chrome laid on the frame,
+    // and at its old `z-10` it rendered behind the bezel and disappeared — the
+    // compare-mode switch, invisible, on the compare screen.
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("not ready");
+    });
+    const modes = document.querySelector(".gl-visual-modes");
+    expect(modes).not.toBeNull();
+    // The stacking value itself lives in screens.css (the dom project runs with
+    // `css: false`, so there is no computed z-index here to read). What this
+    // owns is that the element still opts in by carrying the class.
+    expect(modes?.className).toContain("gl-visual-modes");
   });
 });

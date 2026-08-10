@@ -18,11 +18,16 @@
 //
 // Sorting is client-side over rows the query already capped and ordered by
 // severity, so the default view is "worst first" without a sort being chosen.
+// Paging is client-side for the same reason and over the SORTED rows, not the
+// received ones — a sort that only reordered the current page would rank 25 rows
+// out of 200 and read as a broken sort.
 
 import { ArrowDown, ArrowUp } from "lucide-react";
 import * as React from "react";
 
 import { Panel, TONE } from "../theme";
+import { DENSE_PAGE_SIZE, clampPage, pageSlice } from "../lib/paginate";
+import { Pager } from "./pager";
 import type { StepHealthRow } from "../../shared/metrics-query.mjs";
 
 type SortKey = "label" | "runs" | "failRate" | "heals" | "visualChanges" | "pageErrors";
@@ -85,6 +90,7 @@ export function StepHealthPanel({
   available: boolean;
 }) {
   const [sort, setSort] = React.useState<{ key: SortKey; desc: boolean } | null>(null);
+  const [page, setPage] = React.useState(1);
 
   const sorted = React.useMemo(() => {
     if (!sort) return rows;
@@ -120,8 +126,18 @@ export function StepHealthPanel({
     );
   }
 
-  const toggle = (key: SortKey) =>
+  // Re-sorting moves every row, so the page you were on no longer means
+  // anything — page 1 is where the newly-worst rows are.
+  const toggle = (key: SortKey) => {
     setSort((s) => (s?.key === key ? { key, desc: !s.desc } : { key, desc: true }));
+    setPage(1);
+  };
+
+  // clampPage is the backstop for the list shrinking under a page (retention
+  // prunes, metrics roll up) — without it the table renders empty while rows
+  // exist, which reads as "my history vanished".
+  const safePage = clampPage(page, sorted.length, DENSE_PAGE_SIZE);
+  const visible = pageSlice(sorted, safePage, DENSE_PAGE_SIZE);
 
   return (
     <Panel title="Step health" id={`${rows.length} step${rows.length === 1 ? "" : "s"}`}>
@@ -161,7 +177,7 @@ export function StepHealthPanel({
             </tr>
           </thead>
           <tbody>
-            {sorted.map((r) => (
+            {visible.map((r) => (
               <tr key={`${r.testId}:${r.stepId}`}>
                 {/* Two lines in one cell, so the step and the test it belongs to
                     stay together while the numeric columns keep one baseline. */}
@@ -200,6 +216,13 @@ export function StepHealthPanel({
           </tbody>
         </table>
       </div>
+      <Pager
+        page={safePage}
+        total={sorted.length}
+        onPage={setPage}
+        label="steps"
+        size={DENSE_PAGE_SIZE}
+      />
     </Panel>
   );
 }
