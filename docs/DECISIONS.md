@@ -16,6 +16,18 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — Visual gets the bezel it was designed for, and a fixture that makes the screen exist
+
+**B8 of the redesign (REDESIGN §B8), first slice.** Visual is 1,548 lines, the largest file in the renderer.
+
+**The screen could not be looked at, so the fixture came first.** `artifacts:list` returned `[]` in the browser preview — honest for a fake backend that cannot run Playwright, and it meant every capability the screen has (frame selection, current/baseline/diff, masks, the threshold slider) sat behind an empty state. Reskinning 1,548 lines I could not see is exactly the situation that produced the nested-CSS defect earlier today, so the run fixture is the prerequisite rather than a nicety. It carries **one step of each diff state** — match, changed-over-threshold, new-baseline, unable, and one uncaptured step — because a fixture where everything matches exercises one branch of the viewer and hides four.
+
+**The frames are generated SVG data URIs.** A real PNG would be a binary blob nobody can diff in review; a remote image would be an egress path this repo bans outright (`check:renderer-egress`); and what is being judged here is the CHROME around the frame, for which a legible placeholder that names itself beats a photograph. Each frame states its own identity, so a mode switch that shows the wrong one is visible rather than plausible.
+
+**The frame goes in `CRT`, which is the one rule in this design system about correctness rather than taste.** Every image on this screen is evidence; the entire question being asked is "does this look right?"; and an amber cast from our own chrome is indistinguishable from an amber cast in the page under test — a user would file the bug against their own site. The bezel sits at z-index 610 precisely so the global atmosphere overlays at 600 cannot fall on it.
+
+**Which immediately broke the compare-mode switch, and that is worth recording.** The switch was `z-10`, laid over the frame. Against a bezel at 610 it rendered behind and vanished — the compare-mode switch, invisible, on the compare screen. Caught by looking at the screenshot, not by any test, and the fix is a stacking rule with the reasoning attached. The CRT's actual rule is that nothing may be drawn INSIDE the screen; a control sitting above the bezel's border is outside it, so lifting the chrome to 620 respects the constraint rather than working around it.
+
 ### 2026-08-10 — The trainer stops being red, and the tab strip becomes shared furniture
 
 **B6 of the redesign (REDESIGN §B6), the reskin half.** The inline composer, the `ToolTile`s and the assertion bottom sheet stay in Phase C — those are behaviour changes, and the plan says so. Three decisions here.

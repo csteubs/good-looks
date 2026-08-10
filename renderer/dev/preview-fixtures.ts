@@ -17,6 +17,8 @@ import type {
   HealListEntry,
   RecorderSettings,
   RunRecord,
+  RunReplay,
+  RunReplaySummary,
   Step,
   TestRecord,
 } from "../lib/recorder-types";
@@ -192,6 +194,100 @@ export const RUNS: RunRecord[] = [
   })),
 ];
 
+/**
+ * The captured run the Visual screen replays, and its summary row.
+ *
+ * `t-checkout` / `r-1`, which is the fixture that already declares
+ * `captureArtifacts: true` and `shotCount: 6` — so the run list, the Stats
+ * capture-overhead panel and this agree with each other rather than describing
+ * three different worlds.
+ *
+ * ONE STEP OF EACH DIFF STATE, because the states are what the screen is for:
+ * a match, a `changed` with a ratio over threshold, a `new-baseline` (nothing to
+ * compare against yet), an `unable` (the comparison could not run), and one
+ * uncaptured step with no screenshot at all. A fixture where everything matches
+ * exercises exactly one branch of the viewer.
+ */
+export const REPLAY: RunReplay = {
+  testId: "t-checkout",
+  runId: "r-1",
+  testName: "Checkout — happy path",
+  url: "https://shop.example.com",
+  status: "passed",
+  startedAt: NOW - 2 * HOUR,
+  finishedAt: NOW - 2 * HOUR + 12_400,
+  failedIndex: null,
+  visualThreshold: 0.2,
+  steps: [
+    {
+      index: 0,
+      stepId: "s1",
+      label: "goto shop.example.com",
+      type: "goto",
+      status: "passed",
+      screenshot: "0.png",
+      diff: { state: "match", ratio: 0.0004, threshold: 0.2 },
+    },
+    {
+      index: 1,
+      stepId: "s2",
+      label: "click Add to cart",
+      type: "click",
+      status: "passed",
+      screenshot: "1.png",
+      rect: { x: 0.06, y: 0.5, w: 0.27, h: 0.07 },
+      diff: {
+        state: "changed",
+        ratio: 0.0413,
+        threshold: 0.2,
+        diffFile: "1.diff.png",
+        maskedCount: 1,
+      },
+    },
+    {
+      index: 2,
+      stepId: "s3",
+      label: "click Cart",
+      type: "click",
+      status: "passed",
+      screenshot: "2.png",
+      diff: { state: "new-baseline" },
+    },
+    {
+      index: 3,
+      stepId: "s4",
+      label: "fill Email",
+      type: "fill",
+      status: "passed",
+      screenshot: "3.png",
+      diff: { state: "unable", reason: "The frames are different sizes — the viewport changed." },
+    },
+    {
+      index: 4,
+      stepId: "s5",
+      label: "click Place order",
+      type: "click",
+      status: "passed",
+      screenshot: null,
+    },
+  ],
+};
+
+export const REPLAY_SUMMARIES: RunReplaySummary[] = [
+  {
+    testId: REPLAY.testId,
+    runId: REPLAY.runId,
+    testName: REPLAY.testName,
+    status: REPLAY.status,
+    startedAt: REPLAY.startedAt,
+    finishedAt: REPLAY.finishedAt,
+    stepCount: REPLAY.steps.length,
+    failedIndex: REPLAY.failedIndex,
+    changedSteps: REPLAY.steps.filter((s) => s.diff?.state === "changed").length,
+    a11yNewSteps: 0,
+  },
+];
+
 export const RUN_LOG = [
   "Running 1 test using 1 worker",
   "",
@@ -248,6 +344,49 @@ export const HEALS: HealListEntry[] = [
 /** The full settings record, because `RecorderSettings` has no optional fields
  *  and the panes read straight off it. Values are the app's own defaults except
  *  where a non-default makes a pane more interesting to look at. */
+/**
+ * A captured run, for the Visual screen.
+ *
+ * WITHOUT THIS, VISUAL ONLY EVER SHOWS ITS EMPTY STATE. It is the largest file
+ * in the renderer and the one screen entirely about looking at pictures, and
+ * every capability it has — frame selection, current/baseline/diff, masks, the
+ * threshold slider — is behind having a run with artifacts. `artifacts:list`
+ * returning `[]` is honest for a preview that cannot run Playwright, and it also
+ * made the screen unreviewable.
+ *
+ * THE FRAMES ARE GENERATED SVG DATA URIs, not real screenshots. Three reasons:
+ * a real PNG would be a binary blob in a source file that nobody can diff; a
+ * remote image would be an egress path this repo bans outright
+ * (`check:renderer-egress`); and what the screen is being judged on is the
+ * CHROME around the frame — the bezel, the rail, the mode switch — for which a
+ * legible placeholder that says what it is beats a photograph of someone's
+ * checkout page. Each frame states its own identity, so a mode switch that
+ * silently shows the wrong one is visible rather than plausible.
+ */
+function frame(label: string, bg: string, accent: string): string {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600">
+    <rect width="960" height="600" fill="${bg}"/>
+    <rect x="0" y="0" width="960" height="64" fill="${accent}" opacity="0.18"/>
+    <rect x="24" y="20" width="180" height="24" rx="3" fill="${accent}" opacity="0.5"/>
+    <rect x="24" y="112" width="420" height="34" rx="3" fill="#ffffff" opacity="0.13"/>
+    <rect x="24" y="168" width="640" height="14" rx="3" fill="#ffffff" opacity="0.08"/>
+    <rect x="24" y="196" width="560" height="14" rx="3" fill="#ffffff" opacity="0.08"/>
+    <rect x="24" y="224" width="600" height="14" rx="3" fill="#ffffff" opacity="0.08"/>
+    <rect x="24" y="300" width="260" height="44" rx="4" fill="${accent}" opacity="0.55"/>
+    <text x="24" y="560" font-family="monospace" font-size="26" fill="${accent}">${label}</text>
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+/** The three frames one step can be shown as. Deliberately DIFFERENT from each
+ *  other — a preview where current and baseline look identical cannot show that
+ *  the compare-mode switch works. */
+export const VISUAL_FRAMES = {
+  current: frame("CURRENT", "#0f1113", "#35e0ff"),
+  baseline: frame("BASELINE", "#0f1113", "#6bff9e"),
+  diff: frame("DIFF", "#140f11", "#ff4d61"),
+};
+
 export const SETTINGS: RecorderSettings = {
   showUrlBar: true,
   trainerPanelEnabled: false,

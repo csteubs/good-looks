@@ -23,13 +23,14 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@ui";
+
+import { CRT, Segmented } from "../theme";
 import {
   Accessibility,
   Check,
   ChevronLeft,
   ChevronRight,
   CircleSlash,
-  Diff,
   Eye,
   ImageOff,
   MessageSquare,
@@ -278,13 +279,18 @@ function StepScreenshot({
       : mode === "diff"
         ? `Visual diff for step ${step.index + 1}`
         : `Screenshot for step ${step.index + 1}`;
+  // THE BEZEL IS `CRT`, AND WHAT IS INSIDE IT IS NEVER TREATED. This is the one
+  // rule in the design system that is about correctness rather than taste, and
+  // this screen is the reason it exists: every frame here is EVIDENCE, the whole
+  // question being asked is "does this look right?", and an amber cast from our
+  // own chrome is indistinguishable from an amber cast in the page under test —
+  // a user would file the bug against their own site. The primitive sits at
+  // z-index 610, above the global atmosphere at 600, because those overlays are
+  // fixed and full-viewport so anything below them is tinted by definition.
+  // `check:crt-untreated` pins that nothing here gains a filter or blend mode.
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden">
-      <img
-        src={src}
-        alt={alt}
-        className="block max-h-full max-w-full rounded-md object-contain shadow-sm ring-1 ring-inset ring-[var(--color-border-separator)]"
-      />
+      <CRT className="gl-visual-frame" src={src} alt={alt} />
       {children}
     </div>
   );
@@ -1240,23 +1246,28 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           ) : null}
           {/* View-mode toggle — only when there's a baseline to compare against */}
           {hasBaselineView ? (
-            <div className="absolute right-3 top-3 z-10">
-              <SegmentedControl
-                type="single"
-                size="small"
-                variant="glass"
+            // ABOVE THE BEZEL. `CRT` sits at z-index 610 so the global
+            // atmosphere overlays (600) cannot tint a frame the user is judging;
+            // this control is chrome laid ON that frame, so it has to clear the
+            // same bar. At `z-10` it rendered behind the bezel and vanished —
+            // which is not a styling nit, it is the compare-mode switch on the
+            // compare screen.
+            <div className="gl-visual-modes absolute right-3 top-3">
+              {/* The theme's `Segmented`: its active item is NEUTRAL, which
+                  matters more here than anywhere else in the app. This control
+                  sits on top of a frame the user is being asked to judge, and an
+                  accent-coloured segment over a screenshot is a colour the page
+                  did not put there. */}
+              <Segmented
+                label="Compare mode"
                 value={effectiveMode}
-                onValueChange={(v) => v && setMode(v as ShotMode)}
-              >
-                <SegmentedControlItem value="current">Current</SegmentedControlItem>
-                <SegmentedControlItem value="baseline">Baseline</SegmentedControlItem>
-                {canDiff ? (
-                  <SegmentedControlItem value="diff">
-                    <Diff className="size-3.5" />
-                    Diff
-                  </SegmentedControlItem>
-                ) : null}
-              </SegmentedControl>
+                onChange={(v) => setMode(v as ShotMode)}
+                options={[
+                  { value: "current", label: "Current" },
+                  { value: "baseline", label: "Baseline" },
+                  ...(canDiff ? [{ value: "diff", label: "Diff" }] : []),
+                ]}
+              />
             </div>
           ) : null}
           <StepScreenshot
