@@ -67,6 +67,10 @@ scripts/verify-package.mjs  the two guards around `npm run package`: refuse a sy
                      node_modules before the build, and re-ask the finished .app whether
                      every runtime dependency is resolvable inside it. electron-builder
                      reports the failure and exits 0, so the exit code cannot be trusted
+scripts/dev-app-bundle.mjs  what makes `npm run dev` look like this app: a branded,
+                     re-signed clone of Electron.app (name + icon), because macOS reads
+                     both from the BUNDLE and dev runs Electron's. Never `app.setName` —
+                     that moves userData. Falls back to plain Electron on any failure
 scripts/switch-branch.mjs  the branch switcher's build half: checks a branch out into
                      its own worktree under userData, builds it, prints where. Runs
                      standalone (`node scripts/switch-branch.mjs --repo . --branch main
@@ -97,9 +101,9 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 2253 Vitest tests across 116 files and 50 checks in the chain as of 2026-08-10 (52 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 2253 Vitest tests across 116 files and 52 checks in the chain as of 2026-08-10 (54 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
-**A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS gets checked: `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
+**A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS gets checked: `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `window-title.spec.ts` (that the main window has no title and no page can give it one). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 
 **`check:shell-drift` has retired itself.** It guarded the Glaze tree and the Electron tree against drifting apart, and on 2026-08-09 they became one: `main` carries no `@glaze/*` dependency, and the stale `shell/electron` branch was deleted (preserved as the tag `archive/shell-electron`). The script was written to expect exactly this — with no counterpart ref it prints `nothing to compare` and exits 0, deliberately rather than failing, because a guard that goes red because its problem was *solved* trains people to ignore it. Leave it wired up: it costs nothing and it is what would notice a second shell reappearing.
 
