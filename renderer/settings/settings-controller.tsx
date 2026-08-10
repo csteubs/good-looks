@@ -18,14 +18,11 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "@ui";
-import type { NativeThemeInfo } from "../lib/host-types";
 
 import { api } from "../lib/api";
 import type { LlmProvider, LlmProviderStatus } from "../lib/llm-types";
 import type { ArtifactUsage, RecorderSettings } from "../lib/recorder-types";
 import { formatBytes } from "../lib/settings-schema";
-
-export type ThemeSource = "system" | "light" | "dark";
 
 export interface WebhookStatus {
   hasUrl: boolean;
@@ -43,9 +40,6 @@ export interface SettingsController {
    *  and leaves the optimistic value in place — same as before the split.
    *  Rolling back would fight the user's next keystroke. */
   save: (patch: Partial<RecorderSettings>) => Promise<void>;
-
-  themeSource: ThemeSource;
-  setTheme: (source: string) => Promise<void>;
 
   provider: LlmProvider;
   model: string | null;
@@ -104,8 +98,6 @@ function defaultUrlFor(p: LlmProvider): string {
 export function useSettingsControllerState(): SettingsController {
   const [settings, setSettings] = useState<Partial<RecorderSettings>>({});
   const [loaded, setLoaded] = useState(false);
-
-  const [themeSource, setThemeSource] = useState<ThemeSource>("system");
 
   const [provider, setProvider] = useState<LlmProvider>("ollama");
   const [model, setModel] = useState<string | null>(null);
@@ -205,34 +197,6 @@ export function useSettingsControllerState(): SettingsController {
       toast.error(`Failed to save setting: ${error}`);
     }
   }, []);
-
-  // ── Theme ─────────────────────────────────────────────────────────────────
-
-  const refreshThemeInfo = useCallback(async () => {
-    try {
-      const info: NativeThemeInfo = await window.glazeAPI.nativeTheme.getInfo();
-      setThemeSource((info?.themeSource as ThemeSource) ?? "system");
-    } catch (error) {
-      toast.error(`Failed to get theme info: ${error}`);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshThemeInfo();
-  }, [refreshThemeInfo]);
-
-  const setTheme = useCallback(
-    async (value: string) => {
-      const source = value as ThemeSource;
-      try {
-        await window.glazeAPI.nativeTheme.setThemeSource(source);
-        await refreshThemeInfo();
-      } catch (error) {
-        toast.error(`Failed to set theme: ${error}`);
-      }
-    },
-    [refreshThemeInfo],
-  );
 
   // ── LLM provider ──────────────────────────────────────────────────────────
 
@@ -512,8 +476,6 @@ export function useSettingsControllerState(): SettingsController {
     settings,
     loaded,
     save,
-    themeSource,
-    setTheme,
     provider,
     model,
     llmStatus,

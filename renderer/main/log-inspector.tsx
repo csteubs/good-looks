@@ -6,9 +6,10 @@
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Dialog, ScrollArea } from "@ui";
+import { Dialog, ScrollArea } from "@ui";
 import { Check, Copy } from "lucide-react";
 
+import { Btn } from "../theme";
 import { api } from "../lib/api";
 
 function clipboard(): { writeText: (t: string) => void } {
@@ -50,13 +51,18 @@ export function LogInspector({
     >
       <div className="flex flex-col gap-2">
         <div className="flex justify-end">
-          <Button variant="glass" size="small" onClick={copy}>
-            {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+          <Btn tone="ghost" onClick={copy}>
+            {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
             {copied ? "Copied" : "Copy log"}
-          </Button>
+          </Btn>
         </div>
-        <ScrollArea className="h-[55vh] rounded-md border border-separator bg-well">
-          <pre className="whitespace-pre-wrap break-words p-3 text-mono font-mono text-secondary">
+        {/* `--gl-black` via `.gl-console`, the only true #000 in the palette and
+            reserved for exactly this and the backing behind a captured frame:
+            anything lighter reads as a surface the app drew rather than as
+            output it captured. The ScrollArea stays — it is structural, it owns
+            the auto-follow behaviour, and it is on the SDK's keep list. */}
+        <ScrollArea className="h-[55vh]">
+          <pre className="gl-console">
             {logQuery.isLoading ? "Loading…" : text || "(empty log)"}
           </pre>
         </ScrollArea>

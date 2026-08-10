@@ -8,16 +8,26 @@
       content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:*; style-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:*; img-src 'self' data: blob: https: http://localhost:* http://127.0.0.1:*; font-src 'self' data:; connect-src 'self' https: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; media-src 'self' data: blob: https:; worker-src 'self' blob:; frame-src 'self' blob: data:"
     />
     <title>Settings</title>
+    <!--
+      DARK ONLY, AND UNCONDITIONALLY (docs/REDESIGN.md §0).
+
+      This used to add `.dark` only when the OS asked for it, with `useTheme()`
+      taking over once the first IPC round-trip answered. Both are gone: the
+      app has one theme, so a class applied on a condition that can be false is
+      a light-mode rendering of a design that has no light mode — a white
+      background under near-black panels, reachable by flipping a system
+      setting.
+
+      It stays a CLASS rather than moving into the stylesheet because the SDK
+      layer's whole token set is declared under `.dark`, and it is set HERE, in
+      the markup, so the first paint already has it. Setting it from the bundle
+      would leave one frame of unstyled light between paint and hydrate.
+    -->
     <script>
-      if (window.matchMedia("(prefers-color-scheme: dark)").matches) {
-        document.documentElement.classList.add("dark");
-      }
+      document.documentElement.classList.add("dark");
     </script>
     <style>
       :root {
-        --background: hsl(0 0% 100% / 0.9);
-      }
-      .dark {
         --background: hsl(0 0% 0% / 0.4);
       }
       body {

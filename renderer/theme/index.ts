@@ -40,6 +40,12 @@ export {
 } from "./tokens";
 export type { ToneName } from "./tokens";
 
+// ── Shell (A4) ────────────────────────────────────────────────────────
+export { TopStrip, ChromeButton, WORDMARK } from "./shell/top-strip";
+export type { TopStripProps, ChromeButtonProps, Crumb } from "./shell/top-strip";
+export { Rail, RailGroup, RailRow, RailEmpty } from "./shell/rail";
+export type { RailProps, RailRowProps } from "./shell/rail";
+
 // ── Primitives (A3) ───────────────────────────────────────────────────
 export { Panel } from "./primitives/panel";
 export type { PanelProps } from "./primitives/panel";

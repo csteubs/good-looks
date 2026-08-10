@@ -2,9 +2,10 @@ import { Outlet, useNavigate } from "@tanstack/react-router";
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { SplitView } from "@ui";
-import { useTheme } from "@ui";
 
+import { Atmosphere } from "../theme";
 import { AiDebugChip } from "./ai-debug-chip";
+import { AppStrip } from "./app-strip";
 import { AiDebugHost } from "./ai-debug-panel";
 import { AiDebugProvider } from "./ai-debug-store";
 import { LibrarySidebar } from "./library-sidebar";
@@ -16,23 +17,23 @@ function RootShell() {
   const { state } = useRecorder();
   return (
     <SplitView
+      // The strip is the `header` slot rather than a sibling, because its rail
+      // handle reads the SplitView context — see the note on the prop. It
+      // replaces the pinned `SplitView.SidebarToggle` that used to float here:
+      // the handle is now in-flow chrome in the strip's leading slot, so no
+      // Toolbar has to reserve 44px under a floating button any more, and
+      // collapse persistence (storageKey, ⌃⌘S) is untouched.
+      header={<AppStrip recording={state.recording} />}
       sidebar={<LibrarySidebar />}
       sidebarSize={{ default: 240, min: 200, max: 320 }}
       storageKey="recorder"
     >
-      {/* Pinned (the default): the button portals to a fixed anchor on the
-          frame's leading edge, so it stays put whether the sidebar is open or
-          collapsed. A non-pinned toggle inside Sidebar.actions would disappear
-          along with the sidebar, leaving ⌃⌘S as the only way back.
-          Collapse state persists via the SplitView storageKey above. */}
-      <SplitView.SidebarToggle aria-label="Toggle sidebar" />
       {state.recording ? <RecordingView /> : <Outlet />}
     </SplitView>
   );
 }
 
 export function RootView() {
-  useTheme();
   const navigate = useNavigate();
   const qc = useQueryClient();
 
@@ -96,6 +97,14 @@ export function RootView() {
     //
     // Guarded by `check:clickable-chrome`.
     <div className="relative h-full">
+      {/* The three global overlay layers (grain, vignette, and — when enabled —
+          scanlines), portalled to document.body. Mounted HERE, at last: A2
+          shipped the component with nothing consuming it so the app kept its
+          old face until the shell landed (REDESIGN §4). Defaults from §0 —
+          `calm`, CRT off — with the reduced-motion floor applied inside. The
+          CRT and motion SETTINGS land with the settings reskin (§B4); until
+          then the defaults are the design's shipped state, not placeholders. */}
+      <Atmosphere />
       <RecorderProvider onFinished={onFinished}>
         {/* Above the shell, so an AI debug session survives navigation AND the
             trainer replacing the whole outlet. The host renders whichever

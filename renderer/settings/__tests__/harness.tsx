@@ -32,9 +32,6 @@ export function makeController(overrides: Partial<SettingsController> = {}): Set
     loaded: true,
     save: vi.fn(async () => {}),
 
-    themeSource: "system",
-    setTheme: vi.fn(async () => {}),
-
     provider: "ollama",
     model: null,
     llmStatus: null,

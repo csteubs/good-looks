@@ -6,9 +6,9 @@
 // list reads "page 1 of 1" not "of 0", and a page number that outlives its list
 // clamps to real rows instead of rendering an empty table.
 
-import { Button, Text } from "@ui";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
+import { Btn } from "../theme";
 import { clampPage, pageCount, pageRange } from "../lib/paginate";
 
 export function Pager({
@@ -27,36 +27,33 @@ export function Pager({
   const safe = clampPage(page, total);
   const range = pageRange(safe, total);
   return (
-    <div className="flex items-center justify-between gap-2 border-t border-separator px-3 py-2">
-      <Text variant="small" color="tertiary">
+    <div className="gl-pager">
+      <span className="gl-pager-count">
         {range ? `${range.from}–${range.to} of ${total} ${label}` : `0 ${label}`}
-      </Text>
-      <div className="flex items-center gap-2">
-        <Button
-          variant="glass"
-          size="small"
+      </span>
+      <div className="gl-pager-controls">
+        <Btn
+          tone="ghost"
           disabled={safe <= 1}
           onClick={() => onPage(safe - 1)}
           aria-label="Previous page"
         >
-          <ChevronLeft className="size-4" />
+          <ChevronLeft aria-hidden="true" />
           Prev
-        </Button>
-        <Text variant="small" color="secondary" className="tabular-nums">
+        </Btn>
+        <span className="gl-pager-page">
           Page {safe} of {pages}
-        </Text>
-        <Button
-          variant="glass"
-          size="small"
+        </span>
+        <Btn
+          tone="ghost"
           disabled={safe >= pages}
           onClick={() => onPage(safe + 1)}
           aria-label="Next page"
         >
           Next
-          <ChevronRight className="size-4" />
-        </Button>
+          <ChevronRight aria-hidden="true" />
+        </Btn>
       </div>
     </div>
   );
 }
-

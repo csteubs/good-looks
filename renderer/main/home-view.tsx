@@ -1,21 +1,22 @@
-import { Toolbar, ToolbarContent, ToolbarTitle } from "@ui";
-import { useTheme } from "@ui";
-
 import { BlackHoleLoader } from "./black-hole-loader";
 import { useDisabledEnhancements } from "../lib/use-disabled-enhancements";
 
 export function HomeView() {
-  const isDarkMode = useTheme();
   const disabledEnhancements = useDisabledEnhancements();
   const animationEnabled = !disabledEnhancements.has("homeBlackHole");
 
   return (
+    // THE EMPTY TOOLBAR THAT USED TO BE HERE IS GONE, and A4 is why. It held a
+    // single non-breaking title — no text, no controls — because the pinned
+    // sidebar toggle floated over the top-left of this pane and something had
+    // to reserve its 52px. The toggle now lives in the top strip's leading
+    // slot, in flow, so the reservation had nothing left to reserve for: what
+    // remained was a blank band under a strip that already names the screen.
+    //
+    // The other views keep their toolbars — those carry a title and controls,
+    // and folding them into the strip's breadcrumb is each screen's own reskin
+    // (REDESIGN §5). This one carried neither.
     <div className="relative flex h-full flex-col">
-      <Toolbar>
-        <ToolbarContent>
-          <ToolbarTitle> </ToolbarTitle>
-        </ToolbarContent>
-      </Toolbar>
       <div className="relative flex-1">
         {/* Scrolls rather than clips. This was `overflow-hidden`, so at a 720px
             window — an ordinary size — the last line of the copy below was cut
@@ -30,7 +31,9 @@ export function HomeView() {
             instead of being centred half-off-screen. */}
         <div className="absolute inset-0 overflow-y-auto">
           <div className="flex min-h-full flex-col items-center justify-center gap-6 px-8 py-10 text-center">
-            {animationEnabled ? <BlackHoleLoader size={440} dark={isDarkMode} /> : null}
+            {/* Always the dark ink drawing: the app is dark only (REDESIGN §0),
+                so the theme-following variant switch has nothing to follow. */}
+            {animationEnabled ? <BlackHoleLoader size={440} dark /> : null}
             <div className="flex max-w-sm flex-col gap-2">
               <h1 className="text-heading1" style={{ fontSize: "54px" }}>GOOD LOOKS!</h1>
               {/* The 120px of inline vertical padding that used to be here was

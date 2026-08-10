@@ -6,7 +6,7 @@
 // looks like the toggle is broken rather than the mapping.
 
 import { describe, it, expect } from "vitest";
-import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { screen, fireEvent } from "@testing-library/react";
 
 import { makeController, renderPane, savedPatch } from "../__tests__/harness";
 import { AppearancePane } from "./appearance-pane";
@@ -16,34 +16,42 @@ function switchState(name: RegExp): string {
   return sw.getAttribute("aria-checked") ?? sw.getAttribute("data-state") ?? "";
 }
 
-describe("theme", () => {
-  it("offers all three sources", () => {
+describe("theme — retired, and the row says so", () => {
+  // WHAT THIS USED TO ASSERT was an Auto / Light / Dark radio group. The light
+  // theme is gone (REDESIGN §0): the palette is near-black with phosphor
+  // accents and the screenshot bezel has no light reading, so a light variant
+  // is a second design rather than a swap of values.
+  //
+  // These tests are not deleted with the control, because the row is not
+  // deleted with the control. Someone who had pinned Light will come here
+  // looking, and a row that answers is worth more than the space it costs —
+  // that is a behaviour, and it is what is pinned below.
+
+  it("still has a Theme row", () => {
     renderPane(<AppearancePane />);
-    for (const name of ["Auto", "Light", "Dark"]) {
-      expect(screen.getByRole("radio", { name }), name).toBeTruthy();
+    expect(screen.getByText("Theme")).toBeTruthy();
+  });
+
+  it("states dark only, in the present tense", () => {
+    renderPane(<AppearancePane />);
+    expect(screen.getByText(/dark only for now/i)).toBeTruthy();
+  });
+
+  it("offers no way to choose one", () => {
+    // The failure this catches is a half-revert: the radios back, wired to a
+    // `setTheme` that no longer exists on the controller.
+    renderPane(<AppearancePane />);
+    expect(screen.queryByRole("radio")).toBeNull();
+    for (const name of ["Auto", "Light"]) {
+      expect(screen.queryByText(name), name).toBeNull();
     }
   });
 
-  it("shows the current source", () => {
-    const controller = makeController({ themeSource: "dark" });
-    renderPane(<AppearancePane />, { controller });
-    const dark = screen.getByRole("radio", { name: "Dark" });
-    expect(dark.getAttribute("aria-checked") ?? dark.getAttribute("data-state")).toMatch(
-      /true|checked/i,
-    );
-  });
-
-  it("sets a new source", async () => {
+  it("does not write a theme through the settings store", () => {
+    // It never did — the theme lived in nativeTheme, not RecorderSettings —
+    // and the way this row could regress is by being "fixed" into a stored
+    // preference the backend would drop on the floor.
     const { controller } = renderPane(<AppearancePane />);
-    fireEvent.click(screen.getByRole("radio", { name: "Light" }));
-    await waitFor(() => expect(controller.setTheme).toHaveBeenCalledWith("light"));
-  });
-
-  it("does not write the theme through the settings store", () => {
-    // Theme lives in nativeTheme, not RecorderSettings. Routing it through
-    // `save` would persist a key the backend does not know.
-    const { controller } = renderPane(<AppearancePane />);
-    fireEvent.click(screen.getByRole("radio", { name: "Dark" }));
     expect(controller.save).not.toHaveBeenCalled();
   });
 });
@@ -130,13 +138,15 @@ describe("presentation", () => {
 describe("search filtering", () => {
   it("hides the theme row when only a flourish matched", () => {
     renderPane(<AppearancePane />, { matchedIds: ["home-black-hole"] });
-    expect(screen.queryByRole("radio", { name: "Auto" })).toBeNull();
+    expect(screen.queryByText("Theme")).toBeNull();
     expect(screen.getByRole("switch", { name: /home screen animation/i })).toBeTruthy();
   });
 
   it("drops the flourishes section when only the theme matched", () => {
+    // The row is still indexed under "light" and "auto" (settings-schema.ts):
+    // the words someone searches for are the ones for the thing that is gone.
     renderPane(<AppearancePane />, { matchedIds: ["theme"] });
     expect(screen.queryByText("Flourishes")).toBeNull();
-    expect(screen.getByRole("radio", { name: "Auto" })).toBeTruthy();
+    expect(screen.getByText("Theme")).toBeTruthy();
   });
 });

@@ -568,22 +568,6 @@ export function installPreviewBridge(): PreviewDiagnostics {
       beep: () => {},
       showItemInFolder: () => {},
     },
-    nativeTheme: {
-      getInfo: async () => ({
-        shouldUseDarkColors: window.matchMedia("(prefers-color-scheme: dark)").matches,
-        themeSource: "system" as const,
-      }),
-      setThemeSource: async (source: "system" | "light" | "dark") => {
-        document.documentElement.classList.toggle(
-          "dark",
-          source === "dark" ||
-            (source === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches),
-        );
-        return true;
-      },
-      getShouldUseDarkColors: async () => window.matchMedia("(prefers-color-scheme: dark)").matches,
-      getThemeSource: async () => "system" as const,
-    },
     dialog: {
       showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
       showSaveDialog: async () => ({ canceled: true, filePath: undefined }),

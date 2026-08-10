@@ -1,0 +1,340 @@
+/*
+ * The shell's static structure: the top strip and the rail.  docs/REDESIGN.md §4 (A4).
+ *
+ * SEPARATE FROM primitives.css ON PURPOSE. That file is the fifteen components
+ * a screen composes out of (§3.3); this one is the chrome those screens sit
+ * INSIDE, and there is exactly one instance of each rule here in the whole
+ * window. Keeping them apart is what lets `check:renderer-classes` and a reader
+ * both answer "is this a screen thing or a frame thing?" without opening a
+ * component.
+ *
+ * The same two house rules apply as in primitives.css and for the same reasons:
+ * everything constant lives here as a named class, only per-instance values go
+ * inline; zero border radius; a hairline is the only container.
+ *
+ * ONE ADDITIONAL RULE THIS FILE INTRODUCES: THE STRIP AND THE RAIL HEADER ARE
+ * THE SAME HEIGHT, and it is `--gl-strip-h`. They are two different elements on
+ * either side of the rail's hairline, and they read as one continuous band
+ * across the top of the window only while they agree. A number written twice is
+ * a number that stops agreeing, so it is written once.
+ */
+
+/* ── Top strip ────────────────────────────────────────────────────────── */
+
+.gl-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--gl-strip-h);
+  flex: 0 0 var(--gl-strip-h);
+  padding: 0 8px;
+  background: var(--gl-ink);
+  border-bottom: 1px solid var(--gl-line);
+  /* The strip names where you are. It is not a place text is selected FROM,
+     and a stray drag across it selecting "GOOD LOOKS! / STATS" is noise. */
+  user-select: none;
+}
+
+/* The leading slot: the rail handle lives here. Fixed width so the wordmark
+   starts on the same x whether or not a handle is mounted — the settings
+   window runs this strip with no rail at all. */
+.gl-strip-lead {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.gl-strip-mark {
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* The breadcrumb. Mono, uppercase, dim — it is a location, not a heading, and
+   the design's rule is that anything you read at a glance is mono. */
+.gl-strip-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.gl-strip-crumb,
+.gl-strip-crumb-current,
+.gl-strip-sep {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* A crumb that navigates is a button; the last one is not. Both are dim except
+   the one you are on, so the trail reads as a path with a head. */
+.gl-strip-crumb {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-strip-crumb:hover {
+  color: var(--gl-tx-1);
+}
+
+.gl-strip-crumb:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+.gl-strip-crumb-current {
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.gl-strip-sep {
+  color: var(--gl-tx-3);
+  opacity: 0.6;
+}
+
+/* Everything from here is pinned to the trailing edge: the two slots that
+   Phase C fills (§6.7 command palette, §6.8 job ticker) and the gear. */
+.gl-strip-tail {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* Icon controls in the strip and in the rail header are the same control. 24px
+   rather than the `Btn` 30px: this is chrome sitting in a 34px band, and a
+   30px button in it leaves 2px of air above and below, which reads as a
+   mistake rather than as a row. */
+.gl-chrome-btn {
+  height: 24px;
+  min-width: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--gl-tx-2);
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  /* `body` sets `cursor: default` app-wide and Tailwind's preflight sets it on
+     `button` as well, so a control that does not ask for the pointer has no
+     hover affordance at all. Guarded by `check:clickable-chrome`. */
+  cursor: pointer;
+}
+
+.gl-chrome-btn:hover {
+  color: var(--gl-tx-1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.gl-chrome-btn:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-chrome-btn[aria-pressed="true"] {
+  color: var(--gl-tx-1);
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-chrome-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── Rail ─────────────────────────────────────────────────────────────── */
+
+.gl-rail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--gl-rail);
+  border-inline-end: 1px solid var(--gl-line);
+}
+
+/* Aligned with `.gl-strip` — see the header. */
+.gl-rail-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--gl-strip-h);
+  flex: 0 0 var(--gl-strip-h);
+  padding: 0 8px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.gl-rail-head-title {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-rail-head-actions {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The scrolling middle. `min-height: 0` is what lets it shrink inside the
+   column instead of pushing the pinned nav below the window — the same failure
+   `check:scroll-layout` exists for, one level up. */
+.gl-rail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+/* The views nav, PINNED. It used to be `mt-auto` inside the scrolling list,
+   which means it is only at the bottom while the library is short: with more
+   tests than fit, Stats/Visual/Batch/Heals scroll away and the app's own views
+   become something you have to hunt for. Outside the scroller it is always
+   there. */
+.gl-rail-nav {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--gl-line);
+  padding: 4px 0;
+}
+
+.gl-rail-foot {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--gl-line);
+}
+
+.gl-rail-group-label {
+  display: block;
+  padding: 6px 10px 4px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-rail-empty {
+  padding: 8px 10px;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--gl-tx-3);
+}
+
+/* ── Rail row ─────────────────────────────────────────────────────────── */
+
+.gl-rail-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 10px;
+  border: 0;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+  /* The status rail's channel, reserved on every row whether or not the row
+     has a status. Without it a row that gains one shifts its content 2px and
+     the column stops being a column. */
+  box-shadow: inset 2px 0 0 transparent;
+}
+
+.gl-rail-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* SELECTION IS NEUTRAL — never a status hue. A selected row drawn in a colour
+   would be a second thing on that row claiming to report a result, and a row
+   that is both selected and failing would have two treatments arguing. See
+   tokens.css, and `check:selection-neutral`, which reads this rule by name. */
+.gl-rail-row[data-selected] {
+  background: var(--gl-sel-bg);
+  box-shadow:
+    inset 2px 0 0 transparent,
+    inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-rail-row:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-rail-row-icon {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  color: var(--gl-tx-3);
+}
+
+.gl-rail-row-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.gl-rail-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 1px;
+}
+
+.gl-rail-row-title {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--gl-tx-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-rail-row[data-selected] .gl-rail-row-title {
+  color: var(--gl-tx-1);
+}
+
+.gl-rail-row-sub {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-rail-row-accessory {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}

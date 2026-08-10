@@ -37,13 +37,6 @@ interface PopupOptions {
   y?: number;
 }
 
-function themeInfo() {
-  return {
-    shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
-    themeSource: nativeTheme.themeSource,
-  };
-}
-
 export function registerHostHandlers(): void {
   // ── Dialogs ─────────────────────────────────────────────────────────
   ipcMain.handle("dialog:showOpenDialog", (e, options) => {
@@ -75,24 +68,24 @@ export function registerHostHandlers(): void {
   ipcMain.handle("clipboard:readText", () => clipboard.readText());
 
   // ── Native theme ────────────────────────────────────────────────────
-  ipcMain.handle("nativeTheme:getInfo", () => themeInfo());
-  ipcMain.handle("nativeTheme:getShouldUseDarkColors", () => nativeTheme.shouldUseDarkColors);
-  ipcMain.handle("nativeTheme:getThemeSource", () => nativeTheme.themeSource);
-  ipcMain.handle("nativeTheme:setThemeSource", (_e, source: "system" | "light" | "dark") => {
-    if (source === "system" || source === "light" || source === "dark") {
-      nativeTheme.themeSource = source;
-      return true;
-    }
-    return false;
-  });
-  // Push theme flips to every window (the settings window is not part of the
-  // sendToMain fan-out, and the theme is the one signal both need live).
-  nativeTheme.on("updated", () => {
-    const info = themeInfo();
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send("nativeTheme:updated", info);
-    }
-  });
+  //
+  // THIS APP IS DARK ONLY AND SAYS SO (REDESIGN §0). The palette is near-black
+  // with phosphor accents over two texture layers; a light variant is a second
+  // design rather than a token swap, and the CRT treatment has no light reading
+  // at all. So there is one line here instead of four handlers and a broadcast.
+  //
+  // It is set rather than left alone because `themeSource` is what Electron's
+  // OWN chrome reads — the native menus this app pops up for every Select and
+  // dropdown, the file pickers, the message boxes. Following the OS from here
+  // would put a white menu on top of a black app for anyone whose Mac is in
+  // light mode, which is the one part of the window we do not draw ourselves.
+  //
+  // The renderer no longer asks: `useTheme()` is gone, `.dark` is applied
+  // unconditionally by each window's entry HTML, and the `nativeTheme:*`
+  // handlers, the preload bridge and the `nativeTheme:updated` push went with
+  // it. Nothing was left registered-but-unused — an IPC surface nobody calls is
+  // indistinguishable from one that is about to be needed again.
+  nativeTheme.themeSource = "dark";
 
   // ── Native menus (renderer-driven popups) ───────────────────────────
   //

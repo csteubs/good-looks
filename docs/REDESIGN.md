@@ -1,11 +1,12 @@
 # The indie redesign — an implementation plan
 
-**Status: Phase A in progress.** A1 (browser preview), A2 (tokens, fonts,
-atmosphere) and A3 (the fifteen primitives) are done — see the ✅ marks in §4 and
-§8.3. **A4 (shell) and A5 (retire the SDK on shared components) are next, and
-nothing in Phase B onwards exists yet.** The foundation is deliberately
-unconsumed: no screen reads the theme layer, so the app still looks exactly as it
-did. Where the rest of this says "would", it means would.
+**Status: Phase A is done.** A1 (browser preview), A2 (tokens, fonts,
+atmosphere), A3 (the fifteen primitives), A4 (the shell) and A5 (the SDK off the
+shared components) are all landed — see the ✅ marks in §4 and §8.3. **Phase B is
+next and nothing in it exists yet.** A4 is where the foundation stopped being
+unconsumed: the app's frame — top strip, rail, atmosphere — is the redesign, and
+so are the five components every screen embeds. The nine screens themselves are
+still the old chrome. Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -355,15 +356,44 @@ CRT-content-is-untreated — all three as `check:*` scripts, plus a fourth
 (the narrow set a `var()` cannot express) and `renderer/dev/specimen.tsx`, every
 primitive in every state at `/?view=specimen`. See DECISIONS 2026-08-08.
 
-**A4. Shell.** Top strip (wordmark, breadcrumb, ⌘K affordance, job ticker slot,
-settings gear), the rail restyle over `SplitView`, the views nav pinned to the
-bottom, the rail handle. Retire `useTheme()` and the light theme; Appearance pane
-becomes "Dark only for now".
+**A4. Shell.** ✅ **Done, 2026-08-10.** `renderer/theme/shell/` (`TopStrip`,
+`ChromeButton`, the `Rail` family) + `shell.css`, wired up by
+`renderer/main/app-strip.tsx`; the rail restyle over `SplitView`, the views nav
+pinned to the bottom, the rail handle. `<Atmosphere />` finally mounts.
+`useTheme()` and the light theme are gone — with the `nativeTheme:*` IPC, the
+preload bridge and the `nativeTheme:updated` push, since nothing called them any
+more — and the Appearance pane reads "Dark only for now".
 
-**A5. Retire the SDK on the shared surfaces.** `step-row.tsx`, `pager.tsx`,
-`tag-cluster.tsx`, `log-inspector.tsx`, `heals-panel.tsx` — the components every
-screen embeds. Doing these before the screens means Phase B's per-screen PRs are
-about layout, not about swapping buttons.
+Four things resolved in the building. The strip is a new `header` SLOT on
+`SplitView` rather than a sibling above it, because the rail handle reads that
+context and hoisting the collapse state out would take `storageKey` persistence
+and ⌃⌘S with it; the pinned `SidebarToggle` retires with it, which gives every
+view title its 44px back. **The ⌘K and job-ticker slots render nothing** — an
+affordance for a feature that does not exist teaches a shortcut that answers with
+silence, so §6.7 and §6.8 land in props that are already there. The breadcrumb
+takes `recording` explicitly, because the trainer replaces the outlet without
+navigating and a router-derived trail would name the wrong screen. And the views
+nav moving out of the scroller is a bug fix, not a restyle: `mt-auto` pinned it
+to the bottom only while the library was short. See DECISIONS 2026-08-10.
+
+**A5. Retire the SDK on the shared surfaces.** ✅ **Done, 2026-08-10.**
+`step-row.tsx`, `pager.tsx`, `tag-cluster.tsx`, `log-inspector.tsx`,
+`heals-panel.tsx` — the components every screen embeds — plus
+`renderer/theme/shared.css`, the third stylesheet (primitives are what a screen
+is built out of, `shell.css` is what it sits inside, this is what it embeds).
+
+Three things worth carrying forward. The chips split by whether a label reports
+an OUTCOME — `.gl-chip-tone` via `toneSurface()` for "Applied to the test",
+neutral `.gl-chip` for "soft" or "During a run" — and neither is a `StatusChip`,
+whose fixed width is a contract about columns these are not part of. The step
+row KEEPS its own structure: drag, inline edit, replay and the run flash belong
+to the step list's own reskin (§B5/§B6), so only the SDK left. And the tag
+delete stopped turning red on hover, because an outcome hue on a hover state
+reads as a result — the confirm dialog states the danger instead.
+
+**`check:sdk-retired` ships with it** and is the point rather than an extra: the
+premise erodes silently, one `import { Button }` at a time, in diffs where
+nobody is looking at the import block. See DECISIONS 2026-08-10.
 
 ---
 
@@ -720,7 +750,7 @@ Known from this repo's own recorded gotchas:
   install that `step-replayer.dom.test.ts` already does. Without it the measured
   boxes are all zero and the test proves nothing while passing.
 
-### 8.3 New guards — four `check:*` scripts
+### 8.3 New guards — five `check:*` scripts
 
 The visual contract needs source-level guards, because the failure mode is silent
 and neither type-check nor jsdom observes it. Modelled on `check:text-color`,
@@ -732,6 +762,8 @@ which exists for exactly this reason.
 | `check:status-width` ✅ | **Shipped in A3.** Every status chip uses `STATUS_W`. A ragged status column is the exact thing the fixed width exists to prevent, and it degrades one row at a time. Also pins that `78px` is written down in exactly one file — a second copy will not be changed with the first. |
 | `check:selection-neutral` ✅ | **Shipped in A3.** No selection treatment uses a status hue. Two tiers, from the palette's own token list: the outcome hues and violet are banned from any selection, hover or active state; `--gl-cyan` is declared "running / live / **focus**", so it is allowed on a caret or focus ring but never on a selection. |
 | `check:crt-untreated` ✅ | **Shipped in A3.** No scanline, grain, vignette, filter, blend mode or shadow inside a `CRT` (the caption is exempt — it is chrome, not evidence). The z-index is asserted as a RELATIONSHIP to `--gl-z-atmo`, not as the number 610, so raising the overlays without raising the bezel fails. |
+
+| `check:sdk-retired` ✅ | **Shipped in A5.** The surfaces already moved onto the theme layer import only structural or native-backed pieces from `@ui`. Not a style rule — a guard against erosion: a Phase B PR needs a button, `Button` is one import away and is what eighty other files still use, and a rounded control among square ones is invisible to jsdom, to type-check and to a reviewer reading a 400-line reskin diff. It asserts the mirror too (every retired surface must actually read the theme), because `pager.tsx` imports nothing from `@ui` at all and would otherwise pass vacuously. |
 
 Plus one extension: **`check:text-color` widens** from `Text`'s colour to the
 retired-SDK surfaces, or is retired itself as those surfaces stop using `Text`.
@@ -767,16 +799,16 @@ catches it.
 
 | # | Work | Depends on | Rough size |
 |---|---|---|---|
-| A1 | Port `dev:web` to `main` | — | 1 day |
-| A2 | Tokens, fonts, atmosphere, reduced-motion floor | A1 | 1 day |
-| A3 | Fifteen primitives + tests | A2 | 3–4 days |
-| A4 | Shell: top strip, rail, views nav; retire light theme | A3 | 2 days |
-| A5 | Retire SDK on shared components | A3 | 2 days |
+| A1 | Port `dev:web` to `main` | — | 1 day ✅ |
+| A2 | Tokens, fonts, atmosphere, reduced-motion floor | A1 | 1 day ✅ |
+| A3 | Fifteen primitives + tests | A2 | 3–4 days ✅ |
+| A4 | Shell: top strip, rail, views nav; retire light theme | A3 | 2 days ✅ |
+| A5 | Retire SDK on shared components | A3 | 2 days ✅ |
 | B1–B9 | Parity reskin, one screen per PR | A4, A5 | 2–4 days each; B5 and B8 at the top of that range |
 | C | Nine new features, independently | their screen's B | 1–4 days each |
 | D | Routines, groups, emit adapters, capture parity | C where noted | per ROUTINES.md and the MCP plan |
 
-Phase A is ~9 days and unlocks everything. Phase B is the bulk. Phase C and D are
+Phase A landed on 2026-08-10 and unlocks everything. Phase B is the bulk. Phase C and D are
 separable and can be reprioritised freely once the foundation is in.
 
 ---
@@ -793,7 +825,9 @@ Not blocking, but each will need an answer before the PR it affects.
    query?
 3. **Report mode's "Where it goes"** (§7.3). Confirmed as emit-only? If any of it
    ever sends, that is a new egress path and needs its own decision entry.
-4. **`check:text-color`'s fate** (§8.3).
+4. ~~**`check:text-color`'s fate** (§8.3)~~ — answered for now in A5: **keep it**.
+   The five shared components no longer render `Text`, but forty-odd files still
+   do, so its subject is not gone until they are. Ask again per Phase B PR.
 5. ~~**CLAUDE.md's directory map is stale**~~ — ✅ **Resolved in A2.**
    `renderer/components/` had already gone by the time A2 landed;
    `renderer/theme/` and the undocumented `renderer/trainer/` were added, and the

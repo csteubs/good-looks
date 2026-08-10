@@ -22,7 +22,6 @@ import type { IpcRendererEvent } from "electron";
 import type {
   MessageBoxOptions,
   MessageBoxResult,
-  NativeThemeInfo,
   OpenDialogOptions,
   OpenDialogResult,
   PopupOptions,
@@ -35,7 +34,6 @@ import type {
 export type {
   MessageBoxOptions,
   MessageBoxResult,
-  NativeThemeInfo,
   OpenDialogOptions,
   OpenDialogResult,
   SaveDialogOptions,
@@ -99,20 +97,6 @@ const glazeAPI = {
       void ipcRenderer.invoke("clipboard:writeText", text).catch(() => {});
     },
     readText: (): Promise<string> => ipcRenderer.invoke("clipboard:readText"),
-  },
-
-  // ── Native theme ────────────────────────────────────────────────────
-  nativeTheme: {
-    getInfo: (): Promise<NativeThemeInfo> => ipcRenderer.invoke("nativeTheme:getInfo"),
-
-    setThemeSource: (source: "system" | "light" | "dark"): Promise<boolean> =>
-      ipcRenderer.invoke("nativeTheme:setThemeSource", source),
-
-    getShouldUseDarkColors: (): Promise<boolean> =>
-      ipcRenderer.invoke("nativeTheme:getShouldUseDarkColors"),
-
-    getThemeSource: (): Promise<"system" | "light" | "dark"> =>
-      ipcRenderer.invoke("nativeTheme:getThemeSource"),
   },
 
   // ── Native menus (popup answers with the picked commandId) ──────────

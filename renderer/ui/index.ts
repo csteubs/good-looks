@@ -11,7 +11,11 @@
 //   native-menu.tsx — Select + DropdownMenu, still backed by real macOS menus
 
 export { cn } from "./cn";
-export { useTheme } from "./use-theme";
+// `useTheme` was here, and it is gone with the light theme (REDESIGN §0, A4).
+// It kept `.dark` in sync with `nativeTheme` and returned whether dark was
+// active; both windows now apply `.dark` unconditionally in their entry HTML,
+// and `main/shell/host-handlers.ts` pins Electron's own themeSource to dark so
+// the native menus agree.
 
 export {
   Badge,
