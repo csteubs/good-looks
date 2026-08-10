@@ -1269,6 +1269,14 @@ export interface RecorderSettings {
    *  caching, which is what headers are usually wanted for; this is the
    *  explicit escape hatch for anything else, and it can capture credentials. */
   recordAllHeaders: boolean;
+  /** Draw each library row's icon by fetching a third-party favicon instead of
+   *  the generated monogram (default false).
+   *
+   *  AN EGRESS SWITCH, so `false` is a security default and not a taste one:
+   *  turning it on tells icons.duckduckgo.com the hostname of every test in the
+   *  library, every time the sidebar draws. See `SiteIcon` and REDESIGN §3.5;
+   *  `check:renderer-egress` pins both defaults and the disclosure copy. */
+  siteIconsFromWeb: boolean;
   /** default value of the per-test "Check accessibility" toggle (default
    *  false). Off by default because axe typically costs more per step than
    *  everything else the step does. */

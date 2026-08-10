@@ -85,7 +85,7 @@ export function AlertsPane() {
       <SettingRow
         id="alert-webhook-enabled"
         label="Send alerts to a webhook"
-        danger="leaves this Mac"
+        flag="leaves this Mac"
         summary={
           <>
             POSTs a short summary to a URL you choose when a run fails, a step changes visually, or a

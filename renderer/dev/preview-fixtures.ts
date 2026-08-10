@@ -262,6 +262,7 @@ export const SETTINGS: RecorderSettings = {
   defaultCaptureArtifacts: true,
   defaultRecordLogs: true,
   recordAllHeaders: false,
+  siteIconsFromWeb: false,
   keepRunningAiDebugJobs: false,
   defaultRunHeadless: false,
   defaultRunBrowser: "chromium",

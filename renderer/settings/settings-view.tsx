@@ -33,8 +33,9 @@ import {
 import { SettingsProvider, useSettingsController } from "./settings-controller";
 import { SettingsNav } from "./settings-nav";
 import { RowFilterProvider } from "./setting-row";
-import { AdvancedPane } from "./panes/advanced-pane";
+import { DiagnosticsPane } from "./panes/diagnostics-pane";
 import { AiPane } from "./panes/ai-pane";
+import { ExperimentsPane } from "./panes/experiments-pane";
 import { AlertsPane } from "./panes/alerts-pane";
 import { AppearancePane } from "./panes/appearance-pane";
 import { AutoHealPane } from "./panes/auto-heal-pane";
@@ -50,7 +51,8 @@ const PANE_COMPONENTS: Record<PaneId, ComponentType> = {
   storage: StoragePane,
   ai: AiPane,
   alerts: AlertsPane,
-  advanced: AdvancedPane,
+  diagnostics: DiagnosticsPane,
+  experiments: ExperimentsPane,
 };
 
 /** Close on Escape, unless an interactive element is focused or a popover is

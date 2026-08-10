@@ -127,15 +127,20 @@ function hostOf(url: string): string {
  * `SiteIcon` (REDESIGN §3.5) is the answer and was built for exactly this: the
  * monogram is deterministic per host, needs no network, and is a complete
  * design rather than a degraded one — it was already what reserved names like
- * `localhost` fell back to. Third-party favicons stay available as an
- * explicitly opt-in setting whose copy has to say what it sends and where; that
- * setting lands with the settings work (REDESIGN §B4), and until it exists the
- * honest default is the one that sends nothing.
+ * `localhost` fell back to.
+ *
+ * THE OPT-IN LANDED IN B4 and is what `fromWeb` carries: Appearance → "Fetch
+ * site icons from the web", off by default, with a `risk` block naming the
+ * third party and what it learns. `fromWeb` is a required prop rather than one
+ * defaulting to `false`, so re-enabling the fetch is a decision somebody has to
+ * write at this call site instead of something a missing prop does quietly.
+ * Reserved hosts (`localhost`, `*.local`, bare IPs) stay on the monogram even
+ * when it is on — `SiteIcon` decides that, not this.
  *
  * Guarded by `check:renderer-egress`, so the next one of these is a build
  * failure rather than a discovery. */
-function Favicon({ url }: { url: string }) {
-  return <SiteIcon host={hostOf(url)} size={16} />;
+function Favicon({ url, fromWeb }: { url: string; fromWeb: boolean }) {
+  return <SiteIcon host={hostOf(url)} size={16} favicon={fromWeb} />;
 }
 
 // Native popup menu bridge. The sidebar header action renders as a native
@@ -311,6 +316,16 @@ export function LibrarySidebar() {
   // the list had when the sidebar mounted, which is the exact failure of a
   // re-run that fixed the test and left the dot red.
   const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
+  // Only for the site-icon opt-in. Shares the ["recorder-settings"] key with the
+  // batch and detail views, so on any screen that already reads settings this
+  // costs nothing — and while it is loading `data` is undefined, which resolves
+  // to the monogram. Undefined meaning "don't fetch" is the right way round for
+  // an egress switch: the failure mode is a plainer icon, not a silent request.
+  const settingsQuery = useQuery({
+    queryKey: ["recorder-settings"],
+    queryFn: () => api.recorder.getSettings(),
+  });
+  const siteIconsFromWeb = settingsQuery.data?.siteIconsFromWeb === true;
   const verdictByTest = React.useMemo(
     () => verdictsByTest(runsQuery.data ?? []),
     [runsQuery.data],
@@ -468,7 +483,7 @@ export function LibrarySidebar() {
             <CustomContextMenu key={t.id}>
               <CustomContextMenuTrigger asChild>
                 <RailRow
-                  icon={<Favicon url={t.url} />}
+                  icon={<Favicon url={t.url} fromWeb={siteIconsFromWeb} />}
                   title={t.name}
                   subtitle={hostOf(t.url)}
                   selected={t.id === selectedId}

@@ -127,6 +127,9 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   defaultA11yChecks: false,
   defaultRecordLogs: false,
   recordAllHeaders: false,
+  // An egress path, so `false` here is a security default rather than a taste
+  // one. See the field's own note in `recorder-types.ts`.
+  siteIconsFromWeb: false,
   keepRunningAiDebugJobs: false,
   debugScreenshots: false,
   defaultRunHeadless: false,
@@ -198,6 +201,10 @@ function read(): RecorderSettings {
         typeof parsed.recordAllHeaders === "boolean"
           ? parsed.recordAllHeaders
           : DEFAULT_SETTINGS.recordAllHeaders,
+      siteIconsFromWeb:
+        typeof parsed.siteIconsFromWeb === "boolean"
+          ? parsed.siteIconsFromWeb
+          : DEFAULT_SETTINGS.siteIconsFromWeb,
       keepRunningAiDebugJobs:
         typeof parsed.keepRunningAiDebugJobs === "boolean"
           ? parsed.keepRunningAiDebugJobs
@@ -319,6 +326,10 @@ export const recorderSettingsStore = {
           : current.defaultRecordLogs,
       recordAllHeaders:
         update.recordAllHeaders !== undefined ? update.recordAllHeaders : current.recordAllHeaders,
+      siteIconsFromWeb:
+        update.siteIconsFromWeb !== undefined
+          ? update.siteIconsFromWeb
+          : current.siteIconsFromWeb,
       keepRunningAiDebugJobs:
         update.keepRunningAiDebugJobs !== undefined
           ? update.keepRunningAiDebugJobs
@@ -407,6 +418,7 @@ export const recorderSettingsStore = {
       defaultA11yChecks: next.defaultA11yChecks,
       defaultRecordLogs: next.defaultRecordLogs,
       recordAllHeaders: next.recordAllHeaders,
+      siteIconsFromWeb: next.siteIconsFromWeb,
       keepRunningAiDebugJobs: next.keepRunningAiDebugJobs,
       debugScreenshots: next.debugScreenshots,
       defaultCaptureArtifacts: next.defaultCaptureArtifacts,

@@ -719,6 +719,18 @@ export interface RecorderSettings {
   defaultCaptureArtifacts: boolean;
   defaultRecordLogs: boolean;
   recordAllHeaders: boolean;
+  /**
+   * Fetch a third-party favicon for each site in the library instead of drawing
+   * the generated monogram (default false).
+   *
+   * OFF IS THE HONEST DEFAULT AND HAS TO STAY THAT WAY. Turning it on sends the
+   * hostname of every test in the library to icons.duckduckgo.com, on every
+   * render of the sidebar — see `SiteIcon` and REDESIGN §3.5. This app's stated
+   * egress posture is one opt-in summary-only webhook, so this is the second
+   * outbound channel in the product and the only reason it is acceptable is
+   * that the user asked for it by name.
+   */
+  siteIconsFromWeb: boolean;
   keepRunningAiDebugJobs: boolean;
   /** default value of the per-test "Run headless" toggle (default false). */
   defaultRunHeadless: boolean;
