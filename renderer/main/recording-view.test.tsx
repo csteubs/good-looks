@@ -15,6 +15,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { RecorderState, Step, StepType } from "../lib/recorder-types";
 import { RecordingView } from "./recording-view";
 import { withAiDebug } from "../__tests__/ai-debug-harness";
+import { toastCalls, toastTexts, clearToastCalls } from "../__tests__/sonner-stub";
 
 function step(id: string, partial: Partial<Step> & { type: StepType }): Step {
   return { id, timestamp: 0, ...partial } as Step;
@@ -67,6 +68,15 @@ vi.mock("./recorder-store", () => ({
   useRecorder: () => store,
 }));
 
+/** Backend push listeners, keyed by channel, so a test can deliver an event the
+ *  way the backend would. Mirrors the panel's suite. */
+const listeners: Record<string, ((payload: unknown) => void)[]> = {};
+
+/** Deliver a backend push to whatever the view subscribed. */
+function emit(channel: string, payload: unknown = {}) {
+  for (const cb of listeners[channel] ?? []) cb(payload);
+}
+
 vi.mock("../lib/api", () => ({
   api: {
     recorder: { listCookies: async () => [], getSettings: async () => ({}) },
@@ -87,7 +97,12 @@ vi.mock("../lib/api", () => ({
       cancel: async () => {},
       isActive: async () => ({ active: false }),
     },
-    on: () => () => {},
+    on: (channel: string, cb: (payload: unknown) => void) => {
+      (listeners[channel] ??= []).push(cb);
+      return () => {
+        listeners[channel] = (listeners[channel] ?? []).filter((f) => f !== cb);
+      };
+    },
   },
 }));
 
@@ -124,6 +139,8 @@ function selectTab(name: RegExp) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  for (const key of Object.keys(listeners)) delete listeners[key];
+  clearToastCalls();
   setStore();
 });
 
@@ -479,5 +496,45 @@ describe("a replay started in the docked panel", () => {
     for (const name of [/add step/i, /replay from the current step/i]) {
       expect(screen.getByRole("button", { name }).hasAttribute("disabled")).toBe(true);
     }
+  });
+});
+
+describe("the training viewport narrowing is not allowed to be silent", () => {
+  it("tells the user when the backend says the browser got narrower", async () => {
+    // THIS is the window that has to carry the notice. `noteViewportChange`
+    // fires while the trainer panel is still being created — before
+    // `panelWindow.loadURL` — so on the ordinary path (a panel that opens
+    // already docked) the panel's page does not exist yet and the push reaches
+    // a window with no listeners. The main window has been loaded since the
+    // session started, so a subscription only in the panel would be one that
+    // never fires in the real app while its own test passed.
+    render(withAiDebug(<RecordingView />));
+    emit("trainerPanel:viewportNarrowed", { width: 1080 });
+    await waitFor(() => {
+      const t = toastTexts().find((x) => x.title.includes("Training viewport narrowed"));
+      expect(t).toBeTruthy();
+      expect(t?.title).toContain("1080");
+    });
+  });
+
+  it("leaves the notice up instead of expiring it behind the training browser", async () => {
+    // Docking moves focus to the training browser and the panel beside it, so
+    // this toast is raised in a window the user is, at that exact moment, not
+    // looking at. A few seconds of auto-dismiss would run out behind another
+    // window and the warning would be gone before anyone saw it — which is the
+    // same silence the notice was added to end.
+    render(withAiDebug(<RecordingView />));
+    emit("trainerPanel:viewportNarrowed", { width: 1080 });
+    await waitFor(() => expect(toastCalls.length).toBeGreaterThan(0));
+    const opts = toastCalls[toastCalls.length - 1].options as { duration?: unknown };
+    expect(opts?.duration).toBe(Infinity);
+  });
+
+  it("stays quiet until the backend actually reports a narrowing", () => {
+    // The one-per-session guarantee and the "not when the width was preserved"
+    // rule both live in the backend. The renderer must not manufacture a notice
+    // on its own — mounting the view is not evidence anything narrowed.
+    render(withAiDebug(<RecordingView />));
+    expect(toastTexts().some((x) => x.title.includes("Training viewport narrowed"))).toBe(false);
   });
 });

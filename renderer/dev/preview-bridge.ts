@@ -450,7 +450,6 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       replaying: false,
       pageReady: false,
       loading: false,
-      loadFailed: false,
     }),
 
     // ── Batch ────────────────────────────────────────────────────────────

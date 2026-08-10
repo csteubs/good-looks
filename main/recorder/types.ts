@@ -1444,9 +1444,6 @@ export interface RecorderState {
    *  The renderer shows a loading modal with copy explaining the load; if this
    *  stays true past the timeout, the session is cancelled and an error shown. */
   loading: boolean;
-  /** set when the training window failed to open within the timeout; the
-   *  renderer shows an error dialog prompting the user to try again. */
-  loadFailed: boolean;
 }
 
 // ── Batch (suite) runs ────────────────────────────────────────────────

@@ -88,7 +88,6 @@ const EMPTY_STATE: RecorderState = {
   replaying: false,
   pageReady: false,
   loading: false,
-  loadFailed: false,
 };
 
 interface RecorderContextValue {
