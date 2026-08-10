@@ -12,6 +12,7 @@ import { render, screen, fireEvent, within, waitFor } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { RunRecord } from "../lib/recorder-types";
+import { DENSE_PAGE_SIZE } from "../lib/paginate";
 import { StatsView } from "./stats-view";
 
 let runs: RunRecord[] = [];
@@ -236,11 +237,13 @@ describe("filtering", () => {
 });
 
 describe("pagination", () => {
-  it("shows at most 50 rows and pages the rest", async () => {
+  it("shows at most one dense page of rows and pages the rest", async () => {
     runs = Array.from({ length: 120 }, (_, i) => run({ id: `r${i}`, testName: `Test ${i}` }));
     renderView();
-    await expectRows(50);
-    expect(screen.getByText(/page 1 of 3/i)).toBeTruthy();
+    await expectRows(DENSE_PAGE_SIZE);
+    expect(DENSE_PAGE_SIZE).toBe(25);
+    expect(screen.getByText(/page 1 of 5/i)).toBeTruthy();
+    expect(screen.getByText(/1–25 of 120 runs/)).toBeTruthy();
   });
 
   it("hides the pager when everything fits on one page", async () => {
@@ -256,15 +259,17 @@ describe("pagination", () => {
     await bodyRows();
 
     fireEvent.click(screen.getByRole("button", { name: /next page/i }));
-    expect(await screen.findByText(/page 2 of 3/i)).toBeTruthy();
-    // Page 2 holds the 51st row onward.
-    expect(screen.getByText("Test 50")).toBeTruthy();
+    expect(await screen.findByText(/page 2 of 5/i)).toBeTruthy();
+    // Page 2 holds the 26th row onward.
+    expect(screen.getByText("Test 25")).toBeTruthy();
     expect(screen.queryByText("Test 0")).toBeNull();
   });
 
   it("lands on real rows when a filter narrows the list under you", async () => {
     // THE interaction: without clamping, page 3 of a 120-row table becomes an
-    // empty table the moment a filter cuts it to 10 rows.
+    // empty table the moment a filter cuts it to 10 rows. The pager's own size
+    // has to match the slice's for this to hold — a Pager still counting in
+    // fifties would report "page 1 of 1" over five real pages.
     runs = [
       ...Array.from({ length: 110 }, (_, i) => run({ id: `p${i}`, testName: `Pass ${i}` })),
       ...Array.from({ length: 10 }, (_, i) =>
@@ -276,7 +281,7 @@ describe("pagination", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /next page/i }));
     fireEvent.click(screen.getByRole("button", { name: /next page/i }));
-    expect(await screen.findByText(/page 3 of 3/i)).toBeTruthy();
+    expect(await screen.findByText(/page 3 of 5/i)).toBeTruthy();
 
     fireEvent.click(statusFilter("Failed"));
 
@@ -356,9 +361,10 @@ describe("layout keeps the page's last controls reachable", () => {
   it("keeps the pager reachable on the last page too", async () => {
     renderView();
     await bodyRows(1);
-    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
-    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
-    expect(await screen.findByText(/page 3 of 3/i)).toBeTruthy();
+    for (let i = 0; i < 4; i++) {
+      fireEvent.click(screen.getByRole("button", { name: /next page/i }));
+    }
+    expect(await screen.findByText(/page 5 of 5/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /previous page/i })).toBeTruthy();
   });
 });

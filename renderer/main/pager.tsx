@@ -9,23 +9,29 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
 import { Btn } from "../theme";
-import { clampPage, pageCount, pageRange } from "../lib/paginate";
+import { PAGE_SIZE, clampPage, pageCount, pageRange } from "../lib/paginate";
 
 export function Pager({
   page,
   total,
   onPage,
   label,
+  // The page size the list is actually sliced with. Defaults to PAGE_SIZE, but a
+  // caller paging at a different size MUST pass it too: the counts here are
+  // computed, not received, so a mismatch silently reports the wrong page count
+  // and hides real rows behind a Next button that never enables.
+  size = PAGE_SIZE,
 }: {
   page: number;
   total: number;
   onPage: (page: number) => void;
   label: string;
+  size?: number;
 }) {
-  const pages = pageCount(total);
+  const pages = pageCount(total, size);
   if (pages <= 1) return null;
-  const safe = clampPage(page, total);
-  const range = pageRange(safe, total);
+  const safe = clampPage(page, total, size);
+  const range = pageRange(safe, total, size);
   return (
     <div className="gl-pager">
       <span className="gl-pager-count">

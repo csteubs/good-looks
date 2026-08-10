@@ -15,6 +15,13 @@
 /** Rows per page for the Stats lists. */
 export const PAGE_SIZE = 50;
 
+/** Rows per page for the two DENSE tables — Step health and the run history.
+ *  Half of PAGE_SIZE on purpose: both carry two lines per row and several
+ *  numeric columns, so fifty of them is a wall rather than a list, and both
+ *  arrive already ordered by what matters (severity, then recency) — the rows
+ *  worth reading are at the top of page 1. */
+export const DENSE_PAGE_SIZE = 25;
+
 /** Total pages for `total` items. Always at least 1, so an empty list reads
  *  "Page 1 of 1" rather than "Page 1 of 0". */
 export function pageCount(total: number, size: number = PAGE_SIZE): number {
