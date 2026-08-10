@@ -16,9 +16,9 @@
 // numbers would put an estimate and two measurements in the same sentence with
 // nothing saying which was which.
 
-import { Text } from "@ui";
 import { TrendingUp } from "lucide-react";
 
+import { Panel, TONE } from "../theme";
 import type { StepDurationRow } from "../../shared/metrics-query.mjs";
 import type { CostBreakdown } from "../../shared/step-insights.mjs";
 import { MIN_SAMPLES_FOR_TREND } from "../../shared/step-insights.mjs";
@@ -63,92 +63,92 @@ export function SuiteCostPanel({
   const reason = trendUnavailableReason(rows);
 
   return (
-    <div className="rounded-lg border border-separator bg-panel">
-      <div className="flex items-baseline gap-2 border-b border-separator px-3 py-2">
-        <Text variant="small-strong">Where the time goes</Text>
-        <Text variant="small" color="tertiary">
-          {cost.runs} run{cost.runs === 1 ? "" : "s"}, {formatSeconds(cost.totalMs)} total
-        </Text>
-      </div>
-
-      <div className="flex flex-col gap-3 p-3">
-        {cost.totalMs > 0 ? (
-          <>
-            <div className="flex h-2 overflow-hidden rounded-full bg-separator">
-              <div
-                className="bg-support-orange"
-                style={{ width: `${(cost.captureMs / cost.totalMs) * 100}%` }}
-                title={`Screenshot capture: ${formatSeconds(cost.captureMs)}`}
-              />
-              <div
-                className="bg-accent"
-                style={{ width: `${(cost.a11yMs / cost.totalMs) * 100}%` }}
-                title={`Accessibility checks: ${formatSeconds(cost.a11yMs)}`}
-              />
-            </div>
-            <Text variant="small" className="block text-secondary">
-              {/* The sentence the panel exists to be able to say. */}
-              <strong className="text-primary">{formatSeconds(cost.instrumentedMs)}</strong> of{" "}
-              {formatSeconds(cost.totalMs)} ({Math.round(cost.instrumentedShare * 100)}%) is
-              instrumentation you can switch off — {formatSeconds(cost.captureMs)} capturing{" "}
-              {cost.shots} screenshot{cost.shots === 1 ? "" : "s"} and {formatSeconds(cost.a11yMs)}{" "}
-              on accessibility checks.
-            </Text>
-          </>
-        ) : null}
-
-        {cost.bySpeed.length > 0 ? (
-          <div className="flex flex-wrap gap-x-4 gap-y-1">
-            {cost.bySpeed.map((s) => (
-              <Text key={s.speed} variant="small" color="tertiary">
-                <span className="capitalize">{s.speed}</span>: {formatSeconds(s.totalMs)} over{" "}
-                {s.runs} run{s.runs === 1 ? "" : "s"}
-              </Text>
-            ))}
+    <Panel
+      title="Where the time goes"
+      id={`${cost.runs} run${cost.runs === 1 ? "" : "s"} · ${formatSeconds(cost.totalMs)} total`}
+    >
+      {cost.totalMs > 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, padding: 10 }}>
+          {/* Amber for capture and violet for accessibility, over a neutral
+              total. Amber because capture is the cost you are most likely to
+              want back; violet because the a11y check is the one span here that
+              is not reporting an outcome at all — it is a mechanism, and the
+              palette reserves violet for exactly that. */}
+          <div className="gl-cost-bar">
+            <div
+              style={{
+                width: `${(cost.captureMs / cost.totalMs) * 100}%`,
+                background: TONE.amber,
+              }}
+              title={`Screenshot capture: ${formatSeconds(cost.captureMs)}`}
+            />
+            <div
+              style={{ width: `${(cost.a11yMs / cost.totalMs) * 100}%`, background: TONE.violet }}
+              title={`Accessibility checks: ${formatSeconds(cost.a11yMs)}`}
+            />
           </div>
-        ) : null}
-      </div>
+          <p className="gl-cost-say">
+            {/* The sentence the panel exists to be able to say. */}
+            <strong>{formatSeconds(cost.instrumentedMs)}</strong> of{" "}
+            {formatSeconds(cost.totalMs)} ({Math.round(cost.instrumentedShare * 100)}%) is
+            instrumentation you can switch off — {formatSeconds(cost.captureMs)} capturing{" "}
+            {cost.shots} screenshot{cost.shots === 1 ? "" : "s"} and {formatSeconds(cost.a11yMs)}{" "}
+            on accessibility checks.
+          </p>
 
-      <div className="border-t border-separator px-3 py-2">
-        <Text variant="small-strong" className="block">
-          Steps that got slower
-        </Text>
+          {cost.bySpeed.length > 0 ? (
+            <div className="gl-cost-speeds">
+              {cost.bySpeed.map((s) => (
+                <span key={s.speed} className="gl-rowline-sub">
+                  {s.speed}: {formatSeconds(s.totalMs)} over {s.runs} run
+                  {s.runs === 1 ? "" : "s"}
+                </span>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div
+        style={{
+          borderTop: "1px solid var(--gl-line-2)",
+          padding: "8px 10px",
+        }}
+      >
+        <span className="gl-section-title">Steps that got slower</span>
       </div>
 
       {reason ? (
-        <Text variant="small" color="tertiary" className="block px-3 pb-3">
-          {reason}
-        </Text>
+        <p className="gl-panel-note">{reason}</p>
       ) : slowed.length === 0 ? (
-        <Text variant="small" color="tertiary" className="block px-3 pb-3">
+        <p className="gl-panel-note">
           No step’s median has moved enough to report. That is the good answer.
-        </Text>
+        </p>
       ) : (
-        <div className="flex flex-col">
+        <div>
           {slowed.map((r) => (
-            <div
-              key={`${r.testId}:${r.stepId}`}
-              className="flex items-center gap-2 border-t border-separator/50 px-3 py-2"
-            >
-              <TrendingUp className="size-3.5 shrink-0 text-support-orange" />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-small" title={r.label ?? r.stepId}>
+            <div key={`${r.testId}:${r.stepId}`} className="gl-slowed-row">
+              <span className="gl-slowed-icon">
+                <TrendingUp aria-hidden="true" />
+              </span>
+              <div className="gl-rowline">
+                <div className="gl-rowline-main" title={r.label ?? r.stepId}>
                   {r.label ?? r.stepId}
                 </div>
-                <Text variant="small" color="tertiary" className="block truncate">
-                  {r.testName ?? r.testId}
-                </Text>
+                <div className="gl-rowline-sub">{r.testName ?? r.testId}</div>
               </div>
-              <Text variant="small" className="shrink-0 tabular-nums text-secondary">
+              <span className="gl-slowed-delta">
                 {formatMs(r.previousP50Ms)} → {formatMs(r.recentP50Ms)}
-                <span className="ml-2 text-support-orange">
-                  {r.changeRatio ? `${r.changeRatio.toFixed(1)}×` : ""}
-                </span>
-              </Text>
+                {r.changeRatio ? (
+                  <span style={{ color: TONE.amber, marginInlineStart: 6 }}>
+                    {r.changeRatio.toFixed(1)}×
+                  </span>
+                ) : null}
+              </span>
             </div>
           ))}
         </div>
       )}
-    </div>
+    </Panel>
   );
 }

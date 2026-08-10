@@ -19,46 +19,55 @@
 // Sorting is client-side over rows the query already capped and ordered by
 // severity, so the default view is "worst first" without a sort being chosen.
 
-import { Text } from "@ui";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import * as React from "react";
 
+import { Panel, TONE } from "../theme";
 import type { StepHealthRow } from "../../shared/metrics-query.mjs";
 
 type SortKey = "label" | "runs" | "failRate" | "heals" | "visualChanges" | "pageErrors";
 
-const COLUMNS: { key: SortKey; label: string; hint: string; numeric: boolean }[] = [
+const COLUMNS: { key: SortKey; label: string; hint: string; numeric: boolean; width?: string }[] = [
   { key: "label", label: "Step", hint: "The step, across every run that has it", numeric: false },
-  { key: "runs", label: "Runs", hint: "How many runs included this step", numeric: true },
-  { key: "failRate", label: "Fail", hint: "Share of those runs where it failed", numeric: true },
+  { key: "runs", label: "Runs", hint: "How many runs included this step", numeric: true, width: "56px" },
+  {
+    key: "failRate",
+    label: "Fail",
+    hint: "Share of those runs where it failed",
+    numeric: true,
+    width: "56px",
+  },
   {
     key: "heals",
     label: "Heals",
     hint: "Times Auto-Heal substituted a locator — a step that never fails but heals often is decaying",
     numeric: true,
+    width: "72px",
   },
   {
     key: "visualChanges",
     label: "Visual",
     hint: "Runs where the screenshot differed from its baseline",
     numeric: true,
+    width: "72px",
   },
   {
     key: "pageErrors",
     label: "Page errors",
     hint: "Times the page's own JavaScript threw during this step",
     numeric: true,
+    width: "86px",
   },
 ];
 
 /** A count against the runs it was drawn from. Zero renders as a muted dash:
  *  a column of "0"s is noise, and the eye should go to the non-zero rows. */
 function Count({ n, of }: { n: number; of: number }) {
-  if (!n) return <span className="text-tertiary">—</span>;
+  if (!n) return <span style={{ color: "var(--gl-tx-3)" }}>—</span>;
   return (
     <span>
       {n}
-      <span className="text-tertiary"> / {of}</span>
+      <span style={{ color: "var(--gl-tx-3)" }}> / {of}</span>
     </span>
   );
 }
@@ -93,10 +102,10 @@ export function StepHealthPanel({
   if (!available) {
     return (
       <Panel title="Step health">
-        <Text variant="small" color="tertiary" className="block p-3">
+        <p className="gl-panel-note">
           Step metrics aren’t available on this runtime, so there’s nothing to show here. Everything
           else on this page still works.
-        </Text>
+        </p>
       </Panel>
     );
   }
@@ -104,9 +113,9 @@ export function StepHealthPanel({
   if (rows.length === 0) {
     return (
       <Panel title="Step health">
-        <Text variant="small" color="tertiary" className="block p-3">
+        <p className="gl-panel-note">
           No steps recorded yet. Run a test and its steps will start accumulating history here.
-        </Text>
+        </p>
       </Panel>
     );
   }
@@ -115,77 +124,76 @@ export function StepHealthPanel({
     setSort((s) => (s?.key === key ? { key, desc: !s.desc } : { key, desc: true }));
 
   return (
-    <Panel title="Step health" subtitle={`${rows.length} step${rows.length === 1 ? "" : "s"}`}>
-      <div className="overflow-x-auto">
-        <table className="w-full text-small">
+    <Panel title="Step health" id={`${rows.length} step${rows.length === 1 ? "" : "s"}`}>
+      <div className="gl-table-wrap" style={{ border: 0 }}>
+        <table className="gl-table">
           <thead>
-            <tr className="border-b border-separator">
+            <tr>
               {COLUMNS.map((c) => (
                 <th
                   key={c.key}
-                  className={`p-2 font-normal ${c.numeric ? "text-right" : "text-left"}`}
+                  style={{
+                    ...(c.width ? { width: c.width } : null),
+                    ...(c.numeric ? { textAlign: "end" as const } : null),
+                  }}
                 >
                   <button
                     type="button"
                     onClick={() => toggle(c.key)}
                     title={c.hint}
                     aria-label={`Sort by ${c.label}`}
-                    className={`inline-flex items-center gap-1 text-secondary hover:text-primary ${
-                      c.numeric ? "flex-row-reverse" : ""
-                    }`}
+                    className={`gl-sort${c.numeric ? " gl-sort-num" : ""}`}
                   >
                     {c.label}
                     {sort?.key === c.key ? (
                       sort.desc ? (
-                        <ArrowDown className="size-3" />
+                        <ArrowDown aria-hidden="true" />
                       ) : (
-                        <ArrowUp className="size-3" />
+                        <ArrowUp aria-hidden="true" />
                       )
                     ) : null}
                   </button>
                 </th>
               ))}
-              <th className="p-2 text-right font-normal">
-                <span className="text-secondary" title="Fastest and slowest measured run of this step">
-                  Range
-                </span>
+              <th style={{ width: "104px", textAlign: "end" }}>
+                <span title="Fastest and slowest measured run of this step">Range</span>
               </th>
             </tr>
           </thead>
           <tbody>
             {sorted.map((r) => (
-              <tr key={`${r.testId}:${r.stepId}`} className="border-b border-separator/50">
-                <td className="max-w-0 p-2">
-                  <div className="truncate" title={r.label ?? r.stepId}>
-                    {r.label ?? r.stepId}
+              <tr key={`${r.testId}:${r.stepId}`}>
+                {/* Two lines in one cell, so the step and the test it belongs to
+                    stay together while the numeric columns keep one baseline. */}
+                <td style={{ paddingTop: 4, paddingBottom: 4, whiteSpace: "normal" }}>
+                  <div className="gl-rowline">
+                    <div className="gl-rowline-main" title={r.label ?? r.stepId}>
+                      {r.label ?? r.stepId}
+                    </div>
+                    <div className="gl-rowline-sub">{r.testName ?? r.testId}</div>
                   </div>
-                  <Text variant="small" color="tertiary" className="block truncate">
-                    {r.testName ?? r.testId}
-                  </Text>
                 </td>
-                <td className="p-2 text-right tabular-nums">{r.runs}</td>
-                <td className="p-2 text-right tabular-nums">
+                <td className="gl-num">{r.runs}</td>
+                <td className="gl-num">
                   {r.failed ? (
-                    <span className="text-support-red">{Math.round(r.failRate * 100)}%</span>
+                    <span style={{ color: TONE.red }}>{Math.round(r.failRate * 100)}%</span>
                   ) : (
-                    <span className="text-tertiary">—</span>
+                    <span style={{ color: "var(--gl-tx-3)" }}>—</span>
                   )}
                 </td>
-                <td className="p-2 text-right tabular-nums">
+                <td className="gl-num">
                   <Count n={r.heals} of={r.runs} />
                 </td>
-                <td className="p-2 text-right tabular-nums">
+                <td className="gl-num">
                   <Count n={r.visualChanges} of={r.runs} />
                 </td>
-                <td className="p-2 text-right tabular-nums">
+                <td className="gl-num">
                   <Count n={r.pageErrors} of={r.runs} />
                 </td>
-                <td className="p-2 text-right tabular-nums text-secondary">
+                <td className="gl-num">
                   {/* Null when the step's runs predate the fixture measuring
                       duration. A dash, never a zero. */}
-                  {r.timedRuns === 0
-                    ? "—"
-                    : `${formatMs(r.minMs)}–${formatMs(r.maxMs)}`}
+                  {r.timedRuns === 0 ? "—" : `${formatMs(r.minMs)}–${formatMs(r.maxMs)}`}
                 </td>
               </tr>
             ))}
@@ -193,29 +201,5 @@ export function StepHealthPanel({
         </table>
       </div>
     </Panel>
-  );
-}
-
-function Panel({
-  title,
-  subtitle,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="rounded-lg border border-separator bg-panel">
-      <div className="flex items-baseline gap-2 border-b border-separator px-3 py-2">
-        <Text variant="small-strong">{title}</Text>
-        {subtitle ? (
-          <Text variant="small" color="tertiary">
-            {subtitle}
-          </Text>
-        ) : null}
-      </div>
-      {children}
-    </div>
   );
 }

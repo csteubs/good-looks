@@ -51,8 +51,8 @@ function assert(condition: boolean, label: string): void {
   }
 }
 
-/** The surfaces A5 moved onto the theme layer. Adding a Phase B screen here is
- *  how its reskin gets the same protection. */
+/** The surfaces A5 moved onto the theme layer, plus each Phase B screen as it
+ *  lands. Adding a screen here is how its reskin gets the same protection. */
 const RETIRED = [
   "renderer/main/pager.tsx",
   "renderer/main/log-inspector.tsx",
@@ -61,37 +61,90 @@ const RETIRED = [
   "renderer/main/step-row.tsx",
   "renderer/theme/shell/rail.tsx",
   "renderer/theme/shell/top-strip.tsx",
+  // The Phase B screens (REDESIGN §5). B1 and B2 landed without listing
+  // themselves here, which left them reskinned but unguarded — the erosion this
+  // check exists for starts on exactly those files, since they are the ones
+  // being edited next. Both already pass; adding them costs nothing and is what
+  // the note above asks for.
+  "renderer/main/home-view.tsx",
+  "renderer/main/heals-view.tsx",
+  "renderer/main/stats-view.tsx",
+  "renderer/main/flake-panel.tsx",
+  "renderer/main/suite-cost-panel.tsx",
+  "renderer/main/step-health-panel.tsx",
+  "renderer/main/divergence-panel.tsx",
 ];
 
-/** What may still be imported from `@ui`, with the reason in the header. */
-const KEEP = new Set([
-  "Dialog",
-  "AlertDialog",
-  "ScrollArea",
-  "DropdownMenu",
-  "DropdownMenuCheckboxItem",
-  "DropdownMenuContent",
-  "DropdownMenuItem",
-  "DropdownMenuSeparator",
-  "DropdownMenuTrigger",
-  "CustomContextMenu",
-  "CustomContextMenuContent",
-  "CustomContextMenuItem",
-  "CustomContextMenuSeparator",
-  "CustomContextMenuSub",
-  "CustomContextMenuSubContent",
-  "CustomContextMenuSubTrigger",
-  "CustomContextMenuTrigger",
-  "Tooltip",
-  "TooltipProvider",
-  "Toaster",
-  "toast",
-  "SplitView",
-  "Select",
-  "SelectItem",
-  "useSplitView",
-  "cn",
-]);
+/**
+ * What may still be imported from `@ui`, BY FAMILY.
+ *
+ * THE UNIT HERE IS A DECISION, NOT A SYMBOL, and that distinction is the whole
+ * reason this is a list of groups rather than a flat set. `Select`,
+ * `SelectTrigger`, `SelectContent`, `SelectValue` and `SelectItem` are five
+ * names for ONE choice — the picker stays native-menu-backed — and a flat set
+ * counts that choice five times. The cap below then fires on a screen that made
+ * no new decision at all, and the fix for a red run becomes "raise the cap",
+ * which is indistinguishable from the bug the cap exists to catch.
+ *
+ * Members are enumerated rather than prefix-matched. `/^Select/` would also
+ * wave through a future `SelectableCard`, which is a component and not this
+ * decision.
+ */
+const KEEP_FAMILIES: { reason: string; members: string[] }[] = [
+  {
+    reason: "focus trap and escape handling; the visible surface is ours (REDESIGN §1)",
+    members: ["Dialog", "AlertDialog"],
+  },
+  {
+    reason: "structural — it owns follow-the-bottom scrolling",
+    members: ["ScrollArea"],
+  },
+  {
+    reason: "NATIVE-menu-backed: items never enter the DOM, and real macOS menus stay",
+    members: [
+      "DropdownMenu",
+      "DropdownMenuCheckboxItem",
+      "DropdownMenuContent",
+      "DropdownMenuItem",
+      "DropdownMenuSeparator",
+      "DropdownMenuTrigger",
+      "CustomContextMenu",
+      "CustomContextMenuContent",
+      "CustomContextMenuItem",
+      "CustomContextMenuSeparator",
+      "CustomContextMenuSub",
+      "CustomContextMenuSubContent",
+      "CustomContextMenuSubTrigger",
+      "CustomContextMenuTrigger",
+    ],
+  },
+  {
+    reason: "positioning and dismissal are not worth rewriting; we restyle the surface",
+    members: ["Tooltip", "TooltipProvider", "TooltipContent", "TooltipTrigger"],
+  },
+  {
+    reason: "same — positioning and dismissal",
+    members: ["Toaster", "toast"],
+  },
+  {
+    reason: "owns collapse persistence and the pinned toggle anchor (REDESIGN §1)",
+    members: ["SplitView", "useSplitView"],
+  },
+  {
+    reason: "native-menu-backed picker; the redesign draws the box, the OS draws the menu",
+    members: ["Select", "SelectItem", "SelectContent", "SelectTrigger", "SelectValue"],
+  },
+  {
+    reason: "native date picker — there is no web control to replace it with",
+    members: ["NativeDatePickerRoot", "NativeDatePickerTrigger", "NativeDatePickerValue"],
+  },
+  {
+    reason: "a className joiner, not a component",
+    members: ["cn"],
+  },
+];
+
+const KEEP = new Set(KEEP_FAMILIES.flatMap((f) => f.members));
 
 /** Named imports from `@ui` in one file. Type-only imports count too — a file
  *  typing against `ButtonProps` is a file about to render a `Button`. */
@@ -168,14 +221,26 @@ function uiImports(src: string): string[] {
 //
 // The failure mode of a check like this is that the fix for a red run becomes
 // "add the symbol to KEEP" — indistinguishable from the bug. There is no way to
-// enforce a reason, so the next best thing is to make the list small and to
-// notice when it grows: the four families in the header are the whole argument,
-// and anything beyond them wants an entry in DECISIONS rather than a line here.
+// enforce a reason, so the next best thing is to notice when the list grows.
+//
+// COUNTED IN FAMILIES, because a family is one decision and a symbol is not:
+// admitting `SelectTrigger` beside `Select` is not a new choice about the
+// picker, and a per-symbol cap would fire on a screen that made no choice at
+// all — teaching exactly the "raise the cap" reflex this is here to prevent.
+// A NEW FAMILY is a real decision and wants an entry in DECISIONS.
 {
   assert(
-    KEEP.size <= 30,
-    `the keep-list is still small (${KEEP.size} symbols) — growing it is how this check gets turned off one symbol at a time`,
+    KEEP_FAMILIES.length <= 12,
+    `the keep-list is still a short list of decisions (${KEEP_FAMILIES.length} families) — growing it is how this check gets turned off one family at a time`,
   );
+  // Every family states why it is exempt. A member list with no reason beside
+  // it is the shape this check is supposed to make impossible.
+  for (const f of KEEP_FAMILIES) {
+    assert(
+      f.reason.trim().length > 0 && f.members.length > 0,
+      `keep-family "${f.members[0]}" states a reason`,
+    );
+  }
   for (const banned of ["Button", "Text", "Badge", "Input", "Switch", "SidebarListItem"]) {
     assert(!KEEP.has(banned), `${banned} is not on the keep-list`);
   }

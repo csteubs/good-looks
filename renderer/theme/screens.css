@@ -923,3 +923,747 @@
 .gl-setting-group [role="switch"][data-state="checked"] > span {
   background: var(--gl-tx-1);
 }
+
+/* ── Stats (B7) ───────────────────────────────────────────────────────
+   The run history screen: KPI tiles, the pass/fail chart, the table
+   treatment, the log-search field, and the Stability / suite-cost /
+   divergence row furniture.
+
+   THE PAGE'S LAYOUT IS NOT HERE, and that is deliberate rather than an
+   omission. `check:scroll-layout` reads the view's
+   `<ScrollArea className="min-h-0 flex-1">` and its `mx-auto … pb-10`
+   content container AT SOURCE LEVEL — jsdom has no layout engine and the
+   SDK's ScrollArea exposes no stable DOM marker — so moving those two
+   class lists in here would leave the check with nothing to read. What it
+   guards is a bug this screen has already had: `h-full` in a flex column
+   resolves against the PARENT, so the scroll region ran past the bottom of
+   the window by the header's height and the pager was in the DOM and
+   impossible to click. */
+
+/* ── The page ─────────────────────────────────────────────────────────
+   THE PAGE'S LAYOUT STAYS IN TAILWIND, ON PURPOSE, and only its treatment is
+   here. That is the pattern A5 set — `heals-panel.tsx` and `log-inspector.tsx`
+   both carry `flex flex-col gap-2` beside their `gl-*` classes — and the split
+   is by what the rule is ABOUT: a hairline, a font and a colour describe the
+   redesign, while `flex-1 min-h-0` describes a box fitting inside another box.
+
+   It is also load-bearing here specifically. `check:scroll-layout` reads the
+   page's `<ScrollArea className="min-h-0 flex-1">` and its `mx-auto … pb-10`
+   content container AT SOURCE LEVEL, because jsdom has no layout engine and
+   the SDK's ScrollArea exposes no stable DOM marker. Moving those two class
+   lists into this file would leave the check with nothing to read — and what
+   it guards is a real bug this screen has already had: `h-full` in a flex
+   column resolves against the PARENT, so the scroll region ran past the bottom
+   of the window by the header's height and its last child (the pager) was
+   present in the DOM and impossible to click. */
+.gl-stats-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* Bigger than a `.gl-panel-title` and deliberately so: this names the SCREEN,
+   and a panel header inside it names a section. Same face, same treatment, one
+   step up — the hierarchy is size and nothing else, because colour is spoken
+   for. */
+.gl-stats-title {
+  font-family: var(--gl-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+  white-space: nowrap;
+}
+
+.gl-stats-meta {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: var(--gl-tx-3);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-stats-actions {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* The glyph inside a chip or a dense table cell. A named class rather than an
+   inline width/height pair at nine call sites — and required rather than
+   merely tidier for `BrowserIcon`, which takes a `className` and no `style`. */
+.gl-mini-icon {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+}
+
+/* The label above a group of controls — "Run history", "Filters". Same face as
+   a panel title, one step dimmer, because it names a region of the page rather
+   than a bordered box. */
+.gl-stats-label {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-2);
+  white-space: nowrap;
+}
+
+/* ── KPI tile ─────────────────────────────────────────────────────────
+   The one place on this screen where a number is the content rather than a
+   cell. Sans for the figure, because it is read at a glance rather than
+   scanned in a column, and mono everywhere around it. */
+.gl-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.gl-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 11px 11px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  min-width: 0;
+}
+
+.gl-kpi-label {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-kpi-value {
+  font-family: var(--gl-sans);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  color: var(--gl-tx-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.gl-kpi-hint {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--gl-tx-3);
+}
+
+/* ── Pass / fail chart ────────────────────────────────────────────────
+   Seven calendar days, stacked, always all seven — a day with no runs is drawn
+   as an empty column rather than skipped, because a gap is information and a
+   chart that closes over it invents continuity that was not there. */
+.gl-chart {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  height: 132px;
+}
+
+.gl-chart-col {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 12px;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.gl-chart-plot {
+  display: flex;
+  width: 100%;
+  flex: 1 1 auto;
+  align-items: flex-end;
+}
+
+/* Height comes inline — it is the datum. */
+.gl-chart-stack {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+
+/* An empty day still draws a hairline floor, so the column reads as "nothing
+   happened" rather than as a rendering failure. */
+.gl-chart-floor {
+  width: 100%;
+  height: 1px;
+  background: var(--gl-line);
+}
+
+.gl-chart-tick {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gl-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+/* Colour comes inline from TONE — see the header. */
+.gl-legend-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+}
+
+/* ── Tables ───────────────────────────────────────────────────────────
+   One table treatment for the whole screen: run history, step health, and
+   anything a category dashboard grows later.
+
+   `table-layout: fixed` with widths on the header cells, because the run table
+   carries user-supplied test names and a name long enough to push the status
+   column off the right edge is a name someone will have. */
+.gl-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+}
+
+.gl-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.gl-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: start;
+  height: 26px;
+  padding: 0 8px;
+  background: var(--gl-panel);
+  border-bottom: 1px solid var(--gl-line);
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-table td {
+  height: 30px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--gl-line-2);
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* The run-history table, which is the one carrying a fixed-width status chip.
+   THE MIN-WIDTH IS WHAT KEEPS THAT WIDTH A CONTRACT. With `table-layout: fixed`
+   and `width: 100%`, a browser scales specified column widths DOWN when they no
+   longer fit — so a narrow window would quietly shave the status column, the
+   chip inside it would be clipped by the cell, and the row would report a heal
+   while dropping the outcome. Below this width the wrapper scrolls
+   sideways instead, which is the honest answer and what its `overflow-x: auto`
+   is there for.
+
+   640px, against a floor the app already enforces: `minWindowWidth` is 928 and
+   the rail takes 240, so the content column is never narrower than about 650.
+   In practice this never scrolls; it exists so that the chip cannot be crushed
+   if that floor ever moves. */
+.gl-table-runs {
+  min-width: 640px;
+}
+
+/* Neutral, never a status hue — a row that is both hovered and failing would
+   otherwise have two treatments arguing about what the colour reports.
+   `check:selection-neutral` draws that line. */
+.gl-table tbody tr[data-clickable] {
+  cursor: pointer;
+}
+
+.gl-table tbody tr[data-clickable]:hover td {
+  background: var(--gl-sel-bg);
+}
+
+.gl-table td[data-strong] {
+  color: var(--gl-tx-1);
+}
+
+.gl-num {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A sortable header. The arrow is the only thing that moves, so the column
+   heading does not shift when a sort is applied. */
+.gl-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+}
+
+.gl-sort:hover {
+  color: var(--gl-tx-1);
+}
+
+.gl-sort:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+.gl-sort svg {
+  width: 10px;
+  height: 10px;
+}
+
+.gl-sort-num {
+  flex-direction: row-reverse;
+}
+
+/* ── Two-line row ─────────────────────────────────────────────────────
+   A thing and what it belongs to — a step and its test, a locator and its
+   step. Used by step health, suite cost and divergence, which is why it is one
+   class rather than three near-copies. */
+.gl-rowline {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.gl-rowline-main {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-rowline-sub {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Search ───────────────────────────────────────────────────────────
+   Taller than `.gl-input`, which is sized to replace a step's description
+   in-line without reflowing the list. This one is a field the user aims at. */
+.gl-search {
+  position: relative;
+  display: flex;
+}
+
+.gl-search-input {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px 0 26px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-ink);
+  color: var(--gl-tx-1);
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+}
+
+.gl-search-input::placeholder {
+  color: var(--gl-tx-3);
+}
+
+.gl-search-input:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-search-icon {
+  position: absolute;
+  inset-inline-start: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--gl-tx-3);
+}
+
+.gl-search-icon svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+/* One log-search hit. A button, not a row with a click handler, so it is
+   reachable by keyboard and announces as what it is. */
+.gl-result {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--gl-line-2);
+  background: none;
+  text-align: start;
+  cursor: pointer;
+}
+
+.gl-result:last-of-type {
+  border-bottom: 0;
+}
+
+.gl-result:hover {
+  background: var(--gl-sel-bg);
+}
+
+.gl-result:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-result-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.gl-result-name {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-result-when {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-result-snippet {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Empty states ─────────────────────────────────────────────────────
+   Deliberately a two-part shape: what is true, then what to do about it. A
+   single dim sentence reads as an error on a screen the user has just arrived
+   at, and half the empty states on this screen are "you have not run anything
+   yet", which is not a fault. */
+.gl-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 40px 20px;
+  text-align: center;
+}
+
+.gl-empty-title {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+}
+
+.gl-empty-note {
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gl-tx-3);
+  max-width: 46ch;
+}
+
+/* The in-panel version: no vertical drama, just the sentence. */
+.gl-panel-note {
+  display: block;
+  padding: 10px;
+  font-family: var(--gl-sans);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--gl-tx-3);
+}
+
+/* ── Stability ────────────────────────────────────────────────────────
+   Each test is a hairline box that opens. It is ALWAYS openable, including for
+   a test with no step or dataset detail: the verdict's explanation is the most
+   useful thing here, and gating disclosure on having extra detail is what made
+   it unreachable for the plainest case — a test that simply alternates. */
+.gl-flake {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px;
+}
+
+.gl-flake-row {
+  border: 1px solid var(--gl-line);
+}
+
+.gl-flake-head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  text-align: start;
+  cursor: pointer;
+}
+
+.gl-flake-head:hover {
+  background: var(--gl-sel-bg);
+}
+
+.gl-flake-head:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-flake-caret {
+  flex: 0 0 12px;
+  color: var(--gl-tx-3);
+}
+
+.gl-flake-caret svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.gl-flake-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-flake-count {
+  flex: 0 0 auto;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.gl-flake-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px;
+  border-top: 1px solid var(--gl-line-2);
+}
+
+.gl-flake-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gl-flake-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* One failure signature, grouped across the runs that share it — a single root
+   cause across twenty runs is one problem, and the run history shows it as
+   twenty. */
+.gl-cluster {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 8px;
+  border: 1px solid var(--gl-line);
+}
+
+.gl-cluster-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.gl-cluster-text {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  line-height: 1.45;
+  color: var(--gl-tx-2);
+  overflow-wrap: anywhere;
+}
+
+/* ── Suite cost ───────────────────────────────────────────────────────
+   The bar is two measured spans over a neutral total, never three: slow-motion
+   delay is spread across steps rather than recorded, so folding an estimate in
+   beside two measurements would put both in one sentence with nothing saying
+   which was which. */
+.gl-cost-bar {
+  display: flex;
+  height: 6px;
+  background: var(--gl-line);
+  overflow: hidden;
+}
+
+.gl-cost-say {
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gl-tx-2);
+}
+
+.gl-cost-say strong {
+  color: var(--gl-tx-1);
+  font-weight: 600;
+}
+
+.gl-cost-speeds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.gl-slowed-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--gl-line-2);
+}
+
+.gl-slowed-icon {
+  flex: 0 0 auto;
+  color: var(--gl-amber);
+}
+
+.gl-slowed-icon svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.gl-slowed-delta {
+  flex: 0 0 auto;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Divergence ───────────────────────────────────────────────────────
+   Both sides of the comparison are named. "Fails on webkit" alone leaves the
+   reader asking "compared with what?", and the answer is the evidence. */
+.gl-diverge-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--gl-line-2);
+}
+
+.gl-diverge-row:last-child {
+  border-bottom: 0;
+}
+
+.gl-diverge-icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.gl-diverge-icon svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.gl-diverge-verdict {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--gl-tx-2);
+  overflow-wrap: anywhere;
+}
+
+.gl-fail-list {
+  color: var(--gl-red);
+}
+
+.gl-pass-list {
+  color: var(--gl-phos);
+}
+
+/* ── Narrow ───────────────────────────────────────────────────────────
+   REDESIGN's `narrow` breakpoint. The KPI grid already reflows on its own
+   (auto-fit), so what is left is the header wrapping and the run table's
+   optional columns folding away — `check:narrow-layout` is what notices when a
+   control becomes unreachable rather than merely cramped. */
+@media (max-width: 720px) {
+  .gl-stats-actions {
+    margin-inline-start: 0;
+  }
+}
