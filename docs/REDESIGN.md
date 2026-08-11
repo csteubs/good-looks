@@ -687,9 +687,23 @@ anywhere else: an accent-coloured segment sitting on a screenshot is a colour
 the page did not put there. ✅ The browser preview now serves a captured run, so
 the screen is reviewable at all — it previously rendered only its empty state,
 which is why this slice is scoped the way it is rather than attempting 1,548
-lines blind. Still to do in B8: the frame rail with per-frame diff percentages
-and a "changed only" filter, the mask list, and the threshold slider drawn
-against the frames.
+lines blind.
+
+✅ **The frame rail, 2026-08-10.** Every frame now carries its diff PERCENTAGE
+and there is a "changed only" filter. The percentage is the substantive part: a
+run with forty frames and three real changes was a row of near-identical bars —
+the strip could say THAT a frame changed but never by how much, so a 0.01%
+antialiasing shift and a 40% layout break looked identical and triage meant
+clicking through one frame at a time. The filter is offered only when it would
+do something, and it always keeps the SELECTED frame even when that frame did
+not change: dropping it while the viewer above still shows it would leave the
+rail disagreeing with the picture, and the user with no handle to move off it.
+The bars take the palette (phos/red for the two real outcomes, neutral for a
+frame that was never attempted, an amber inset rail to mark a change — caution,
+not an outcome, since the frame still passed).
+
+Still to do in B8: the mask list, and the threshold slider drawn against the
+frames.
 
 **One implementation note carried over from the mockup and worth keeping:** the
 diff region boxes are *measured after layout*, never authored as percentages,

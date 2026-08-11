@@ -443,3 +443,87 @@ describe("the frame is evidence, and the bezel says so", () => {
     expect(modes?.className).toContain("gl-visual-modes");
   });
 });
+
+describe("the frame rail (B8)", () => {
+  /** Three frames, one of which changed — the shape the filter exists for. */
+  function seedRail() {
+    replays = [summary({ runId: "r1", stepCount: 3, changedSteps: 1 })];
+    replayDetail = {
+      testId: "t1",
+      runId: "r1",
+      testName: "Checkout",
+      status: "passed",
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_001_000,
+      failedIndex: null,
+      steps: [
+        { index: 0, stepId: "s1", label: "goto", type: "goto", status: "passed", screenshot: "0.png", diff: { state: "match", ratio: 0.0001 } },
+        { index: 1, stepId: "s2", label: "click", type: "click", status: "passed", screenshot: "1.png", diff: { state: "changed", ratio: 0.0413, diffFile: "1.diff.png" } },
+        { index: 2, stepId: "s3", label: "assert", type: "assert", status: "passed", screenshot: "2.png", diff: { state: "match", ratio: 0 } },
+      ],
+    };
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+  }
+
+  beforeEach(seedRail);
+  afterEach(() => {
+    replayDetail = null;
+    shot = null;
+  });
+
+  const frames = () => document.querySelectorAll(".gl-frame-btn");
+
+  it("shows how much each changed frame changed by", async () => {
+    // THE NUMBER THE STRIP COULD NOT SHOW. A run with forty frames and three
+    // real changes was a row of near-identical bars: a 0.01% antialiasing shift
+    // and a 40% layout break looked the same, so triage meant clicking through.
+    renderVisual();
+    await waitFor(() => expect(frames().length).toBe(3));
+    const pcts = [...document.querySelectorAll(".gl-frame-pct")].map((e) => e.textContent);
+    expect(pcts).toEqual(["4.13%"]);
+  });
+
+  it("prints no percentage on frames that did not change", async () => {
+    // Printing "0%" under every unchanged frame would bury the ones that
+    // matter in noise, which is the problem this is here to solve.
+    renderVisual();
+    await waitFor(() => expect(frames().length).toBe(3));
+    expect(document.querySelectorAll(".gl-frame-pct").length).toBe(1);
+  });
+
+  it("narrows to the changed frames on request", async () => {
+    renderVisual();
+    await waitFor(() => expect(frames().length).toBe(3));
+    fireEvent.click(screen.getByRole("button", { name: "Changed" }));
+    await waitFor(() => expect(frames().length).toBeLessThan(3));
+  });
+
+  it("keeps the selected frame even when it did not change", async () => {
+    // The rule worth pinning. Filtering the selected frame out of the rail
+    // while the viewer above still shows it leaves the two disagreeing — and
+    // the user with no handle to move off it.
+    renderVisual();
+    await waitFor(() => expect(frames().length).toBe(3));
+    // Frame 0 is selected on open (failedIndex is null → index 0) and matched.
+    fireEvent.click(screen.getByRole("button", { name: "Changed" }));
+    await waitFor(() => expect(frames().length).toBe(2));
+    const labels = [...frames()].map((f) => f.getAttribute("aria-label") ?? "");
+    expect(labels.some((l) => l.startsWith("Step 1:"))).toBe(true);
+    expect(labels.some((l) => l.startsWith("Step 2:"))).toBe(true);
+  });
+
+  it("offers no filter when nothing changed", async () => {
+    // A control that is always present and usually a no-op teaches people it
+    // does nothing.
+    replayDetail = {
+      ...(replayDetail as { steps: unknown[] }),
+      steps: (replayDetail as { steps: { diff?: unknown }[] }).steps.map((st) => ({
+        ...st,
+        diff: { state: "match", ratio: 0 },
+      })),
+    };
+    renderVisual();
+    await waitFor(() => expect(frames().length).toBe(3));
+    expect(screen.queryByRole("button", { name: "Changed" })).toBeNull();
+  });
+});

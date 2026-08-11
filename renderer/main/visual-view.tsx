@@ -24,7 +24,7 @@ import {
   TooltipTrigger,
 } from "@ui";
 
-import { CRT, Segmented } from "../theme";
+import { CRT, Segmented, TONE, withAlpha } from "../theme";
 import {
   Accessibility,
   Check,
@@ -78,14 +78,17 @@ function fmtPct(ratio: number): string {
 }
 
 // ── Status → colors/labels ─────────────────────────────────────────────
-function statusBar(status: ReplayStepStatus): string {
+/** The frame rail's bar colour. COLOUR MEANS OUTCOME, so only the two real
+ *  outcomes get a hue — an unrun or skipped frame stays neutral rather than
+ *  borrowing one, because "not attempted" is not a result. */
+function statusBarColor(status: ReplayStepStatus): string {
   switch (status) {
     case "passed":
-      return "bg-support-green";
+      return TONE.phos;
     case "failed":
-      return "bg-support-red";
+      return TONE.red;
     default:
-      return "bg-control-subtle";
+      return "rgba(255, 255, 255, 0.14)";
   }
 }
 
@@ -984,6 +987,16 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   }, [replay]);
 
   const steps = replay?.steps ?? [];
+
+  // The frame rail's filter (B8). UP HERE WITH THE OTHER HOOKS, above the
+  // `if (!replay || steps.length === 0)` early return below — a `useState`
+  // placed after it runs on some renders and not others, which React reports as
+  // "Rendered more hooks than during the previous render" and which takes the
+  // whole view down. Nothing static caught that: type-check, lint and
+  // `check:renderer-classes` were all green on the broken version, and only
+  // opening the screen showed it.
+  const [changedOnly, setChangedOnly] = React.useState(false);
+
   const clamp = React.useCallback(
     (i: number) => Math.max(0, Math.min(steps.length - 1, i)),
     [steps.length],
@@ -1086,10 +1099,19 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   }
 
   const idx = clamp(current);
+
+
   const step = steps[idx];
   // Test-wide masks (stepId null) plus any pinned to this step.
   const stepMasks = allMasks.filter((m) => m.stepId === null || m.stepId === step.stepId);
   const changedCount = steps.filter((s) => s.diff?.state === "changed").length;
+  // The SELECTED frame is always kept, even when it does not match the filter:
+  // dropping it from the rail while the viewer above still shows it would leave
+  // the two disagreeing, and the user with no handle to move off it.
+  const visibleSteps =
+    changedOnly && changedCount > 0
+      ? steps.filter((s) => s.diff?.state === "changed" || s.index === idx)
+      : steps;
   const a11yCount = countA11ySteps(steps);
   // Read off the replay, not component state: the banner has to stay gone after
   // the user selects another run and comes back, which is where a local flag
@@ -1465,11 +1487,40 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         onSave={(text) => upsertAnnotation.mutate({ stepId: step.stepId, text })}
       />
 
-      {/* Timeline scrubber */}
-      <div className="border-t border-separator px-4 py-3">
+      {/* THE FRAME RAIL (B8). Every captured frame, its outcome, and — new here —
+          its diff PERCENTAGE, plus a filter that drops everything unchanged.
+
+          The percentage is the point. A run with forty frames and three real
+          changes was previously a row of forty near-identical bars: the strip
+          could say THAT a frame changed but never BY HOW MUCH, so triage meant
+          clicking through frames one at a time to find the one that mattered.
+          A 0.01% antialiasing shift and a 40% layout break looked the same. */}
+      <div className="gl-frame-rail">
+        <div className="gl-frame-rail-head">
+          <span className="gl-section-title">Frames</span>
+          <span className="gl-note">
+            {changedCount === 0
+              ? "None changed"
+              : `${changedCount} of ${steps.length} changed`}
+          </span>
+          {/* Only offered when it would DO something. A filter that is always
+              present and usually a no-op teaches people it does nothing. */}
+          {changedCount > 0 ? (
+            <Segmented
+              className="ml-auto"
+              label="Which frames to show"
+              value={changedOnly ? "changed" : "all"}
+              onChange={(v) => setChangedOnly(v === "changed")}
+              options={[
+                { value: "all", label: "All" },
+                { value: "changed", label: "Changed" },
+              ]}
+            />
+          ) : null}
+        </div>
         <ScrollArea className="w-full">
           <div className="flex items-end gap-1 pb-1">
-            {steps.map((s) => {
+            {visibleSteps.map((s) => {
               const active = s.index === idx;
               const failed = s.index === replay.failedIndex;
               const changed = s.diff?.state === "changed";
@@ -1487,33 +1538,42 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
                   title={`${s.index + 1}. ${s.label}${changed ? " · visual change" : ""}${
                     a11yNew ? " · accessibility" : ""
                   }${noted ? " · note" : ""}`}
-                  className={`group flex min-w-[22px] shrink-0 flex-col items-center gap-1 rounded-md px-1 pb-1 pt-0.5 ${
-                    active ? "bg-accent-10 ring-1 ring-inset ring-accent" : "hover:bg-control-subtle"
-                  }`}
+                  className="gl-frame-btn"
+                  data-selected={active ? "" : undefined}
                 >
                   <span className="flex h-4 items-center justify-center">
                     {failed ? (
-                      <TriangleAlert className="size-3.5 text-support-red" />
+                      <TriangleAlert className="size-3.5" style={{ color: TONE.red }} />
                     ) : changed ? (
-                      <Eye className="size-3.5 text-support-orange" />
+                      <Eye className="size-3.5" style={{ color: TONE.amber }} />
                     ) : a11yNew ? (
-                      <Accessibility className="size-3.5 text-support-orange" />
+                      <Accessibility className="size-3.5" style={{ color: TONE.amber }} />
                     ) : noted ? (
                       <MessageSquare className="size-3.5 text-tertiary" />
                     ) : null}
                   </span>
                   <span
-                    className={`w-full rounded-sm ${statusBar(s.status)} ${
-                      failed || changed ? "h-7" : "h-5"
-                    } ${changed && !failed ? "ring-1 ring-inset ring-support-orange" : ""}`}
+                    className="gl-frame-bar"
+                    style={{
+                      background: statusBarColor(s.status),
+                      height: failed || changed ? 28 : 20,
+                      // Amber marks a CHANGE, which is caution rather than an
+                      // outcome — the frame still passed. An inset rail, so it
+                      // does not resize the bar it sits on.
+                      boxShadow:
+                        changed && !failed ? `inset 0 0 0 1px ${withAlpha(TONE.amber, "bf")}` : undefined,
+                    }}
                   />
-                  <Text
-                    variant="small-mono"
-                    color={active ? "primary" : "tertiary"}
-                    className="text-[10px] tabular-nums"
-                  >
+                  <span className="gl-frame-index" data-active={active ? "" : undefined}>
                     {s.index + 1}
-                  </Text>
+                  </span>
+                  {/* THE NUMBER THIS RAIL EXISTED WITHOUT. Only on a changed
+                      frame: printing "0%" under forty unchanged ones would bury
+                      the three that matter in noise, which is the problem this
+                      is here to solve rather than restate. */}
+                  {changed && s.diff?.ratio !== undefined ? (
+                    <span className="gl-frame-pct">{fmtPct(s.diff.ratio)}</span>
+                  ) : null}
                 </button>
               );
             })}
