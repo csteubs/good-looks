@@ -2309,3 +2309,78 @@
 .gl-visual-modes {
   z-index: 620;
 }
+
+/* The frame rail (B8). Every captured frame, its outcome, and its diff
+   percentage — the number the strip previously could not show, which is what
+   made triage on a forty-frame run a click-through. */
+.gl-frame-rail {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--gl-line);
+  padding: 8px 12px 10px;
+}
+
+.gl-frame-rail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.gl-frame-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  min-width: 26px;
+  border: 0;
+  padding: 2px 3px 3px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.gl-frame-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* NEUTRAL, like every selection in this design. It matters here for the usual
+   reason and one specific to this rail: the bars beside it are reporting
+   outcomes in phos and red, so an accent-coloured selection would be a third
+   hue competing with them. */
+.gl-frame-btn[data-selected] {
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-frame-btn:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-frame-bar {
+  width: 100%;
+  border-radius: 1px;
+}
+
+.gl-frame-index {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-3);
+}
+
+.gl-frame-btn[data-selected] .gl-frame-index {
+  color: var(--gl-tx-1);
+}
+
+/* The percentage. Amber, matching the bar's own change marker — the two are
+   the same claim at two sizes, and giving them different colours would read as
+   two different findings about one frame. */
+.gl-frame-pct {
+  font-family: var(--gl-mono);
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  color: var(--gl-amber);
+  white-space: nowrap;
+}

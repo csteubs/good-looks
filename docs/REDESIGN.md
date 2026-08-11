@@ -7,12 +7,12 @@ first slice)** and **B9 (AI debug — the status contract and the Sending strip)
 — see the ✅ marks in §4, §5 and §8.3. The app's frame is the redesign, so are
 the five components every screen embeds, and every screen has been reached.
 
-**Two screens are partially done and say so in their own sections**: B8 still
-owes its frame rail, mask list and threshold-against-frames, and B9 still owes
-the panel's own chrome. Both were scoped that way deliberately — each shipped the
-half with a contract riding on it and left the half that is only a restyle.
-**B5b** (the five non-failure run-state summaries) remains Phase C §6.1. Where
-the rest of this says "would", it means would.
+**One screen is partially done and says so in its own section**: B8 still owes
+its frame rail, mask list and threshold-against-frames. It was scoped that way
+deliberately — the first slice shipped the half with a contract riding on it (the
+`CRT` bezel) and left the half that is only a restyle. B9 is now complete, chrome
+included. **B5b** (the five non-failure run-state summaries) remains Phase C
+§6.1. Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -687,9 +687,23 @@ anywhere else: an accent-coloured segment sitting on a screenshot is a colour
 the page did not put there. ✅ The browser preview now serves a captured run, so
 the screen is reviewable at all — it previously rendered only its empty state,
 which is why this slice is scoped the way it is rather than attempting 1,548
-lines blind. Still to do in B8: the frame rail with per-frame diff percentages
-and a "changed only" filter, the mask list, and the threshold slider drawn
-against the frames.
+lines blind.
+
+✅ **The frame rail, 2026-08-10.** Every frame now carries its diff PERCENTAGE
+and there is a "changed only" filter. The percentage is the substantive part: a
+run with forty frames and three real changes was a row of near-identical bars —
+the strip could say THAT a frame changed but never by how much, so a 0.01%
+antialiasing shift and a 40% layout break looked identical and triage meant
+clicking through one frame at a time. The filter is offered only when it would
+do something, and it always keeps the SELECTED frame even when that frame did
+not change: dropping it while the viewer above still shows it would leave the
+rail disagreeing with the picture, and the user with no handle to move off it.
+The bars take the palette (phos/red for the two real outcomes, neutral for a
+frame that was never attempted, an amber inset rail to mark a change — caution,
+not an outcome, since the frame still passed).
+
+Still to do in B8: the mask list, and the threshold slider drawn against the
+frames.
 
 **One implementation note carried over from the mockup and worth keeping:** the
 diff region boxes are *measured after layout*, never authored as percentages,
