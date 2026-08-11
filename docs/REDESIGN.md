@@ -7,12 +7,12 @@ first slice)** and **B9 (AI debug — the status contract and the Sending strip)
 — see the ✅ marks in §4, §5 and §8.3. The app's frame is the redesign, so are
 the five components every screen embeds, and every screen has been reached.
 
-**Two screens are partially done and say so in their own sections**: B8 still
-owes its frame rail, mask list and threshold-against-frames, and B9 still owes
-the panel's own chrome. Both were scoped that way deliberately — each shipped the
-half with a contract riding on it and left the half that is only a restyle.
-**B5b** (the five non-failure run-state summaries) remains Phase C §6.1. Where
-the rest of this says "would", it means would.
+**One screen is partially done and says so in its own section**: B8 still owes
+its frame rail, mask list and threshold-against-frames. It was scoped that way
+deliberately — the first slice shipped the half with a contract riding on it (the
+`CRT` bezel) and left the half that is only a restyle. B9 is now complete, chrome
+included. **B5b** (the five non-failure run-state summaries) remains Phase C
+§6.1. Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
