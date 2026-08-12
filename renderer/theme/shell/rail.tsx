@@ -118,6 +118,11 @@ export interface RailRowProps
    *  opened under jsdom, so a hint carried by one is untestable. */
   hint?: string;
   className?: string;
+  /** React 19 passes `ref` as an ordinary prop, but `ButtonHTMLAttributes` does
+   *  not declare one — so it is declared here. `RailFlyout` needs it to return
+   *  focus to the row when Escape closes the menu; without that the caret is
+   *  dropped at the top of the document. */
+  ref?: React.Ref<HTMLButtonElement>;
 }
 
 export function RailRow({
@@ -128,10 +133,12 @@ export function RailRow({
   selected,
   hint,
   className,
+  ref,
   ...props
 }: RailRowProps): React.ReactElement {
   return (
     <button
+      ref={ref}
       type="button"
       title={hint}
       // `data-selected` rather than a class, because that is the attribute
