@@ -124,6 +124,65 @@ async function geometry(app: AppFixtures["app"]): Promise<{
   });
 }
 
+/** Move the training browser's window, the way dragging its title bar would. */
+async function moveBrowser(app: AppFixtures["app"], dx: number, dy: number): Promise<void> {
+  await app.evaluate(({ BrowserWindow, webContents }, d) => {
+    const wc = webContents
+      .getAllWebContents()
+      .find((c) => !c.isDestroyed() && c.getURL().startsWith("http://127.0.0.1"));
+    const win = BrowserWindow.getAllWindows().find((w) =>
+      w.contentView.children.some(
+        (child) => (child as Electron.WebContentsView).webContents?.id === wc?.id,
+      ),
+    );
+    if (!win) throw new Error("no training browser");
+    const b = win.getBounds();
+    win.setBounds({ x: b.x + d.dx, y: b.y + d.dy, width: b.width, height: b.height });
+  }, { dx, dy });
+}
+
+test("the panel follows the browser down the screen", async ({ app, window }) => {
+  // THE GAP THIS FILLS. Nothing in the suite asserted the panel actually
+  // FOLLOWS. `panel-dock.test.ts` proves the arithmetic against a generous
+  // 1055pt work area where the old clamp never bound; `check:trainer-panel`
+  // proves the listeners are attached, not that they produce a correct
+  // rectangle; and the two tests below only ever looked at the FIRST dock.
+  // So a follower that had stopped moving vertically was invisible to all of
+  // it, and was reported by a person instead.
+  const page = await servePage();
+  try {
+    await startSession(window, page.url, null);
+    const before = await geometry(app);
+    expect(before.browser, "the training browser window").not.toBeNull();
+    expect(before.panel, "the trainer panel window").not.toBeNull();
+
+    test.skip(
+      before.workArea.width < 960,
+      `this display is ${before.workArea.width}pt wide — too narrow to hold any docked pair`,
+    );
+
+    // Far enough that the old clamp would have run out: a default browser is
+    // 820pt tall, so on any ordinary work area it had well under 200pt of
+    // vertical travel before it stuck.
+    const DROP = 200;
+    await moveBrowser(app, -40, DROP);
+    await expect
+      .poll(async () => {
+        const g = await geometry(app);
+        return g.panel && g.browser ? g.panel.y - g.browser.y : null;
+      })
+      .toBe(0);
+
+    const after = await geometry(app);
+    expect(after.browser!.y, "the browser actually moved").toBe(before.browser!.y + DROP);
+    expect(after.panel!.x, "still flush against the browser's right edge").toBe(right(after.browser!));
+    // It pays for the drop in height, and never leaves the work area.
+    expect(bottom(after.panel!)).toBeLessThanOrEqual(bottom(after.workArea));
+  } finally {
+    await page.close();
+  }
+});
+
 test("the panel docks flush against the training browser", async ({ app, window }) => {
   const page = await servePage();
   try {

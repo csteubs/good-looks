@@ -51,6 +51,69 @@ export const PANEL_MIN_WIDTH = 300;
  */
 export const BROWSER_MIN_WIDTH = 600;
 
+/**
+ * The panel's floor HEIGHT, for the case where the browser hangs off the bottom
+ * of the display.
+ *
+ * Below this the step list shows a row or two and the tool bar, which is the
+ * point at which a shorter panel stops being worth keeping flush and should
+ * just sit on-screen instead. Deliberately generous: the panel losing height is
+ * a much smaller cost than the panel losing its ALIGNMENT with the browser,
+ * which is the thing that makes it read as docked.
+ */
+export const PANEL_MIN_HEIGHT = 240;
+
+/**
+ * Where a docked panel sits vertically, given where the browser is.
+ *
+ * THE BUG THIS EXISTS TO FIX. Both callers used to compute the panel's height
+ * as `min(browser.height, workArea.height)` and then CLAMP its `y` into the
+ * work area. That reads as safe and is: the panel is always fully on-screen.
+ * But it means the panel's top can only move within `workArea.height -
+ * panel.height` points — and a default training browser is 820pt tall on a
+ * work area of ~870, so the panel had about fifty points of travel. Drag the
+ * browser further down than that (macOS lets a window hang off the bottom
+ * freely) and the panel stops following: it sits at the clamp while the browser
+ * walks away from it, still the right width, still on the right side, no longer
+ * attached to anything. Which is exactly what "the trainer doesn't come along"
+ * looks like.
+ *
+ * So the top edge wins. The panel is pinned to the browser's top and takes
+ * whatever height is left between there and the bottom of the work area —
+ * shrinking rather than detaching, because being flush with the browser is what
+ * "docked" MEANS, and height is the negotiable part. Only when there is less
+ * than `PANEL_MIN_HEIGHT` left does it stop shrinking and slide up.
+ */
+export function computePanelSpan(
+  browser: Bounds,
+  workArea: Bounds,
+): { y: number; height: number } {
+  const waTop = workArea.y;
+  const waBottom = workArea.y + workArea.height;
+
+  // Never above the work area: a panel under the menu bar is unreachable, and
+  // the browser CAN be there (a window dragged up by a title bar it no longer
+  // has, or restored from a display that is now gone).
+  const top = Math.max(browser.y, waTop);
+  // Track the browser's own bottom, so a SHORT browser gets a short panel — the
+  // pair reads as one unit rather than as a panel that happens to be beside it.
+  const bottom = Math.min(browser.y + browser.height, waBottom);
+
+  let height = Math.round(bottom - top);
+  let y = Math.round(top);
+
+  if (height < PANEL_MIN_HEIGHT) {
+    // The browser is mostly off the bottom (or genuinely tiny). Stop shrinking
+    // and slide the panel up to fit — it stops being flush here, which is the
+    // honest outcome: there is no on-screen rectangle that is both flush and
+    // usable.
+    height = Math.round(Math.min(PANEL_MIN_HEIGHT, workArea.height));
+    y = Math.round(clamp(y, waTop, waBottom - height));
+  }
+
+  return { y, height };
+}
+
 /** Both windows, positioned. */
 export interface DockLayout {
   browser: Bounds;
@@ -173,8 +236,10 @@ export function computePanelFollow(
   preferred: DockSide = "right",
 ): PanelPlacement | null {
   const pw = Math.round(clamp(panelWidth, PANEL_MIN_WIDTH, workArea.width));
-  const height = Math.round(Math.min(browser.height, workArea.height));
-  const y = Math.round(clamp(browser.y, workArea.y, workArea.y + workArea.height - height));
+  // Pinned to the browser's top, shrinking rather than detaching — see
+  // `computePanelSpan`. This is the whole of the follow behaviour that the old
+  // clamp got wrong.
+  const { y, height } = computePanelSpan(browser, workArea);
 
   const order: DockSide[] = preferred === "right" ? ["right", "left"] : ["left", "right"];
   for (const side of order) {
@@ -219,8 +284,9 @@ export function computeParkedPanel(
   if (beside) return beside.panel;
 
   const pw = Math.round(clamp(panelWidth, PANEL_MIN_WIDTH, workArea.width));
-  const height = Math.round(Math.min(browser.height, workArea.height));
-  const y = Math.round(clamp(browser.y, workArea.y, workArea.y + workArea.height - height));
+  // Same vertical rule as a docked panel: a parked panel is meant to read as
+  // "the panel that would be docked", so it keeps the browser's top edge.
+  const { y, height } = computePanelSpan(browser, workArea);
 
   const atLeft = Math.round(workArea.x);
   const atRight = Math.round(workArea.x + workArea.width - pw);
