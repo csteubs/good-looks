@@ -2517,3 +2517,64 @@
   white-space: nowrap;
   flex: 0 0 auto;
 }
+
+/*
+ * ── The inline step composer (§6.2) ──────────────────────────────
+ *
+ * It sits BETWEEN two steps, in the list, at the insert cursor. That position
+ * is the whole feature — the modal it replaces covered up the answer to "where
+ * is this going?" while you filled in the fields that decide what goes there.
+ *
+ * Indented and inset by a hairline rather than drawn as a full-width card: it
+ * is part of the list it interrupts, not a thing floating over one. A card here
+ * reads as a modal that forgot to centre itself.
+ */
+.gl-composer {
+  display: flex;
+  flex-direction: column;
+  margin: 4px 0;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  /* The cursor's own colour, on the leading edge. The composer IS the cursor,
+     expanded — so it wears the same rail rather than a status tone, which
+     would report an outcome about a step that does not exist yet. */
+  box-shadow: inset 2px 0 0 var(--gl-cyan);
+}
+
+.gl-composer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.gl-composer-close {
+  margin-inline-start: auto;
+}
+
+/* CAPPED TO A FORM'S MEASURE, and that is not decoration. The dialog this
+   replaces was `size="large"` — a fixed, modest width — and its fields were
+   laid out for it. The panel inherits the width of the STEP LIST, which is most
+   of the window: uncapped, a label and its control end up at opposite ends of a
+   thousand pixels with nothing in between, which reads as a broken layout
+   rather than a wide one. */
+.gl-composer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 580px;
+  padding: 12px 10px;
+}
+
+/* Leading, not trailing. A dialog's buttons go bottom-right because the dialog
+   is the whole screen; a panel's belong where the reading ends, which in a
+   left-aligned form is the left. */
+.gl-composer-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--gl-line);
+}

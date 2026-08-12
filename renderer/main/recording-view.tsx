@@ -24,7 +24,7 @@ import { urlAssertPrefill } from "../../shared/url-assert.mjs";
 import { locatorToPrompt } from "../lib/llm-prompts";
 import { useRecorder, type ReplayRun } from "./recorder-store";
 import { CursorGap, INSERT_HERE, StepRow } from "./step-row";
-import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "./add-step-dialog";
+import { StepComposer, ADD_STEP_LABEL, type AddStepKind } from "./step-composer";
 import { stepSessionKey, useAiDebug } from "./ai-debug-store";
 import { parseSessionKey } from "../lib/ai-debug-sessions";
 import { toneFor } from "../lib/ai-debug-status";
@@ -729,6 +729,60 @@ export function RecordingView() {
   // Indentation level for each row, so conditional block bodies nest visually.
   const stepDepths = computeStepDepths(liveSteps);
 
+  // The composer, rendered AT THE CURSOR rather than over the list (§6.2).
+  //
+  // A function of the gap index rather than one element hoisted out of the
+  // list: the panel has to sit between the two steps the new one will land
+  // between, and "between" is a position in this map, not a place in the tree.
+  // It renders at most once — `state.cursor` is a single index.
+  const composerAt = (index: number) =>
+    addKind !== null && state.cursor === index ? (
+      <StepComposer
+        // Remounts when the caller re-targets it from the context menu, so a
+        // half-filled draft for one element never carries over to another.
+        key={`${addKind}:${contextPick?.picked?.description ?? ""}`}
+        kind={addKind}
+        currentTestId={state?.testId ?? undefined}
+        onCancel={() => {
+          setAddKind(null);
+          // Leaving the composer: tear down any in-flight pick and the
+          // context-menu prefill state.
+          if (addStepPicking) {
+            setAddStepPicking(false);
+            endRefine();
+            clearPicked();
+          }
+          setContextPick(null);
+        }}
+        onAdd={(steps: RawStep[]) => {
+          steps.forEach((s) => insertStep(s));
+          if (addStepPicking) {
+            setAddStepPicking(false);
+            endRefine();
+            clearPicked();
+          }
+          setContextPick(null);
+        }}
+        // Use the context-menu's pre-resolved element when present (it was
+        // captured at the right-click point); otherwise the in-panel picker.
+        picked={contextPick?.picked ?? (addStepPicking ? picked : null)}
+        onStartPick={() => {
+          setAddStepPicking(true);
+          startRefine(null);
+        }}
+        onClearPick={() => {
+          setAddStepPicking(false);
+          endRefine();
+          clearPicked();
+        }}
+        initialAssert={contextPick?.assert}
+        initialWaitMode={contextPick?.waitMode}
+        initialState={contextPick?.elementState}
+        prefillText={contextPick?.prefillText}
+        prefillValue={contextPick?.prefillValue}
+      />
+    ) : null;
+
   return (
     <div className="flex h-full flex-col">
       <Toolbar>
@@ -912,14 +966,20 @@ export function RecordingView() {
       >
         <div className="flex flex-col p-3">
           {liveSteps.length === 0 ? (
-            <div className="flex flex-col items-start gap-2 px-2 py-1">
-              <Text variant="small" color="secondary">
-                Interact with the site — steps appear here as you go.
-              </Text>
-              <Text variant="small" color="tertiary">
-                Or use <ListPlus className="inline size-3.5 align-text-bottom" /> “Add step” / “AI steps”.
-              </Text>
-            </div>
+            <>
+              {/* The empty list has no gaps to sit between, and the composer
+                  still has to land somewhere — it is the ONLY way to put a step
+                  into a session where nothing has been captured yet. */}
+              {composerAt(0)}
+              <div className="flex flex-col items-start gap-2 px-2 py-1">
+                <Text variant="small" color="secondary">
+                  Interact with the site — steps appear here as you go.
+                </Text>
+                <Text variant="small" color="tertiary">
+                  Or use <ListPlus className="inline size-3.5 align-text-bottom" /> “Add step” / “AI steps”.
+                </Text>
+              </div>
+            </>
           ) : (
             <>
               <CursorGap
@@ -928,6 +988,7 @@ export function RecordingView() {
                 disabled={controlsDisabled}
                 label={INSERT_HERE}
               />
+              {composerAt(0)}
               {liveSteps.map((s, i) => (
                 <React.Fragment key={s.id}>
                   <StepRow
@@ -958,6 +1019,7 @@ export function RecordingView() {
                     disabled={controlsDisabled}
                     label={i + 1 === liveSteps.length ? undefined : INSERT_HERE}
                   />
+                  {composerAt(i + 1)}
                 </React.Fragment>
               ))}
             </>
@@ -989,52 +1051,6 @@ export function RecordingView() {
         onApplyHeal={applyHeal}
       />
 
-      {addKind ? (
-        <AddStepDialog
-          open={addKind !== null}
-          kind={addKind}
-          currentTestId={state?.testId ?? undefined}
-          onOpenChange={(o) => {
-            if (!o) {
-              setAddKind(null);
-              // Leaving the Add-step dialog: tear down any in-flight pick and
-              // the context-menu prefill state.
-              if (addStepPicking) {
-                setAddStepPicking(false);
-                endRefine();
-                clearPicked();
-              }
-              setContextPick(null);
-            }
-          }}
-          onAdd={(steps: RawStep[]) => {
-            steps.forEach((s) => insertStep(s));
-            if (addStepPicking) {
-              setAddStepPicking(false);
-              endRefine();
-              clearPicked();
-            }
-            setContextPick(null);
-          }}
-          // Use the context-menu's pre-resolved element when present (it was
-          // captured at the right-click point); otherwise the in-dialog picker.
-          picked={contextPick?.picked ?? (addStepPicking ? picked : null)}
-          onStartPick={() => {
-            setAddStepPicking(true);
-            startRefine(null);
-          }}
-          onClearPick={() => {
-            setAddStepPicking(false);
-            endRefine();
-            clearPicked();
-          }}
-          initialAssert={contextPick?.assert}
-          initialWaitMode={contextPick?.waitMode}
-          initialState={contextPick?.elementState}
-          prefillText={contextPick?.prefillText}
-          prefillValue={contextPick?.prefillValue}
-        />
-      ) : null}
       <GenerateStepsDialog
         open={aiOpen}
         url={state.url}
