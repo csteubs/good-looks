@@ -3266,3 +3266,42 @@
 .gl-report-risk {
   color: var(--gl-amber);
 }
+
+/* The weekly read (§6.5), between the Stats header and the scroller.
+
+   OUTSIDE THE SCROLL REGION on purpose. It is three or four sentences that
+   answer "how was this week?", and a summary you have to scroll back up to is
+   one that stops being read by the second day. It sits in the header's band
+   rather than the content's, which is why it takes the same side padding. */
+.gl-digest {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 16px 10px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.gl-digest-label {
+  flex: 0 0 auto;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+/* The sentences run together on one line where there is room and wrap where
+   there is not — they are a paragraph, not a list, and bulleting three short
+   clauses makes a four-word finding look like a report. */
+.gl-digest-lines {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 6px;
+}
+
+.gl-digest-line {
+  min-width: 0;
+}
