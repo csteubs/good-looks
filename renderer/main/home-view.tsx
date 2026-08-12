@@ -160,7 +160,7 @@ export function HomeView() {
         {/* `data-text` feeds the two echo ghosts in screens.css. They are
             pseudo-elements, so the string is in the DOM once and announced
             once. */}
-        <h1 className="gl-home-mark" data-text={WORDMARK}>
+        <h1 className="gl-home-mark gl-echo" data-text={WORDMARK}>
           {WORDMARK}
         </h1>
 

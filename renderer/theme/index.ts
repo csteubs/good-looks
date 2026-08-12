@@ -45,6 +45,16 @@ export { TopStrip, ChromeButton, WORDMARK } from "./shell/top-strip";
 export type { TopStripProps, ChromeButtonProps, Crumb } from "./shell/top-strip";
 export { Rail, RailGroup, RailRow, RailEmpty } from "./shell/rail";
 export type { RailProps, RailRowProps } from "./shell/rail";
+export {
+  BootPlate,
+  bootDurationMs,
+  bootFadeMs,
+  resetBootPlateForTests,
+  BOOT_MS,
+  BOOT_MS_STILL,
+  BOOT_FADE_MS,
+} from "./shell/boot-plate";
+export type { BootPlateProps } from "./shell/boot-plate";
 
 // ── Primitives (A3) ───────────────────────────────────────────────────
 export { Panel } from "./primitives/panel";

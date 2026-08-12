@@ -340,8 +340,9 @@ The nine screens inside the shell are still the old chrome until Phase B.
   opt-in, because the mockup's per-row icon lookup is an egress path);
   `CRT` (content never treated, z-610 above the overlays).
 - `renderer/theme/shell/` + `shell.css` — the frame the screens sit inside (A4).
-  `TopStrip` (wordmark, breadcrumb, two empty slots, actions) and the `Rail`
-  family (`Rail`, `RailGroup`, `RailRow`, `RailEmpty`). Separate from
+  `TopStrip` (wordmark, breadcrumb, two empty slots, actions), the `Rail`
+  family (`Rail`, `RailGroup`, `RailRow`, `RailEmpty`), and — since C §6.9,
+  2026-08-12 — `BootPlate`. Separate from
   `primitives/` because there is exactly one instance of each of these in a
   window, and the split is what lets a reader answer "screen thing or frame
   thing?" without opening a component. Three things in here are decisions rather
@@ -359,6 +360,26 @@ The nine screens inside the shell are still the old chrome until Phase B.
   behaviour change — a press dragged off a row no longer navigates — and
   REDESIGN §8.2 predicted it. `--gl-strip-h` is written once and shared by the
   strip and the rail header, which is what makes them read as one band.
+
+  **`BootPlate` (C §6.9)** is the 2.6s glitch plate, mounted once in
+  `root-view.tsx` immediately after `Atmosphere` — the plate wears the same
+  `echo` treatment as the Home wordmark and that treatment is keyed on the
+  `data-glitch` attribute `Atmosphere` sets. Four things about it are decisions.
+  **It covers the app rather than delaying it**: everything below is mounted and
+  interactive the whole time, and the plate is `pointer-events: none`, so it is
+  a curtain over a running show rather than a loading screen holding one up.
+  **It is skippable on any key or click**, unadvertised — 2.6s is right the first
+  time and wrong the two-hundredth, and an on-screen "Skip" would make the plate
+  look like something being endured. **Reduced motion gets a different DURATION**
+  (900ms), not merely a stiller plate: a motionless black rectangle held for 2.6
+  seconds reads as a hang, not as a splash, and the fill rule is drawn full and
+  still rather than left at zero width, which reads as stalled. **It plays once
+  per window, and the flag is set when it FINISHES** — set on mount, StrictMode's
+  mount/unmount/remount would make it never appear in development. The hold and
+  the fade are TWO effects on purpose: one effect with `phase` in its
+  dependencies clears the fade timer it just set the moment it sets `phase`, and
+  the plate then sits at zero opacity over the app forever, having looked
+  perfectly correct for the first 2.6 seconds. Covered by `boot-plate.test.tsx`.
 - `renderer/main/app-strip.tsx` — **also owns Back/Forward since the Stats drill (2026-08-10).** `HistoryNav` renders two `ChromeButton`s over `router.history` and binds ⌘[ / ⌘]. The app had neither before, and genuinely did not need them: every screen was one level deep and the router runs on `createMemoryHistory()`, so there was no browser history behind it and nowhere to go back TO. **Back is not the breadcrumb** — the trail goes UP, back returns to where you came FROM, and they stop coinciding the moment you drill out to a test. Forward is offered because it can be answered honestly: the history API has `canGoBack()` and no `canGoForward()`, but memory history stamps `__TSR_index` into each entry, so `index < length - 1` disables it truthfully rather than shipping a control that sometimes does nothing.
   Its original job stands: the location becomes a breadcrumb and the rail
   handle gets its behaviour. **The breadcrumb

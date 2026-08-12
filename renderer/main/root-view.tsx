@@ -3,7 +3,7 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { SplitView } from "@ui";
 
-import { Atmosphere } from "../theme";
+import { Atmosphere, BootPlate } from "../theme";
 import { AiDebugChip } from "./ai-debug-chip";
 import { AppStrip } from "./app-strip";
 import { AiDebugHost } from "./ai-debug-panel";
@@ -105,6 +105,13 @@ export function RootView() {
           CRT and motion SETTINGS land with the settings reskin (§B4); until
           then the defaults are the design's shipped state, not placeholders. */}
       <Atmosphere />
+      {/* The boot sequence (§6.9). AFTER `Atmosphere`, because the plate wears
+          the same `echo` treatment as the Home wordmark and that treatment is
+          keyed on `data-glitch` — which is an attribute Atmosphere sets. It
+          covers the app rather than delaying it: everything below is mounted
+          and interactive underneath, and any key or click takes the plate
+          away. It plays once per window, so navigation never brings it back. */}
+      <BootPlate />
       <RecorderProvider onFinished={onFinished}>
         {/* Above the shell, so an AI debug session survives navigation AND the
             trainer replacing the whole outlet. The host renders whichever
