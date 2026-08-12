@@ -41,6 +41,7 @@ import { CostPanel } from "./cost-panel";
 import { assumptionsFromSettings } from "../lib/cost-model";
 import { DEFAULT_COST_CURRENCY } from "../../shared/cost-units.mjs";
 import { ReportPanel } from "./report-panel";
+import { DigestPanel } from "./digest-panel";
 import { DivergencePanel } from "./divergence-panel";
 import { LogInspector } from "./log-inspector";
 import { Pager } from "./pager";
@@ -533,6 +534,12 @@ export function StatsView() {
           </Btn>
         </div>
       </header>
+
+      {/* The weekly read (§6.5), above everything. The panels below are tables
+          and breakdowns, each answering a question you already knew you had;
+          this answers the one you arrive with, and a summary printed underneath
+          the detail it summarises is a summary nobody reads. */}
+      <DigestPanel runs={realRuns} />
 
       {/* min-h-0 flex-1, NOT h-full. In a flex column h-full resolves to 100% of
           the PARENT, but the header above has already consumed part of that —

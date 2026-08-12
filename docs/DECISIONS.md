@@ -89,6 +89,59 @@ runs for the same reason the step-health fixture already carries 58 filler rows
 — with three tests the pager renders not at all, which is the state the panel is
 least likely to be broken in.
 
+### 2026-08-12 — The weekly digest, reinterpreted once its delivery was removed (C §6.5)
+
+The mockup drew a weekly DIGEST PREVIEW beside a list of delivery channels: a
+picture of the email that went out on Mondays. §7.3 removed the channels because
+they promised a Slack integration that was never built — and a preview of
+something nothing sends is a preview of nothing.
+
+**So the feature was rebuilt around the question rather than the artefact.**
+Stats carries six panels — cost, suite cost, step health, flake, divergence,
+capture overhead — and every one is a table or a breakdown answering something
+the reader already knew they wanted. None answered "how was this week?", which is
+the question people arrive with, in the seconds before they know which panel they
+need. That is a real gap rather than a restatement, and it is what shipped: three
+or four sentences at the top of the screen, with the ticket emitter as the way to
+take them away.
+
+This is a reinterpretation on the same order as dropping PDF and the public link,
+with one difference worth admitting: those were backed by §7.3's own words, and
+this is not. It was a judgement call, and the alternative — closing §6.5 without
+a digest at all — was live.
+
+**A quiet week is not a good week, and that is the reading this most had to get
+right.** With no runs, "0 failures" and "100% passed" are both true of an empty
+set and both read as good news; a suite nobody is running is the failure mode the
+whole app exists against. It says "Nothing ran this week", and when the previous
+week had runs it says how many — the useful reading is not "quiet" but "quieter
+than it was".
+
+**The week-on-week comparison is what makes it weekly**, and it is omitted
+entirely for a first week rather than compared against zero, which reads as
+explosive growth and is really a statement about the app being new.
+
+**Failures count per TEST, not per run.** One test failing three times is one
+problem; three tests failing once each is three, and a bare "3 failures" says the
+same thing about both while they want completely different reactions. Two
+offenders are named and the rest counted, because a list of five test names is a
+table written in prose and there is a real table further down the screen.
+
+**Flake reuses §6.4's definition rather than adding a second**, since two
+definitions of flake in one app is how two surfaces disagree in front of a user.
+That reuse cost a real bug on the way in: `flakeRuns` reads ONE test's history and
+wants it OLDEST FIRST — its rule is "failed and then passed", which it finds by
+looking for a failure at `i` and a pass at `i + 1`. `runHistoryStore.list` returns
+newest first, so the first version silently found nothing: no error, no
+zero-division, just a flake line that never appeared. `cost-model`'s own
+`realRuns` re-sorts for exactly this reason, which was worth checking before
+assuming §6.4 had the same bug — it does not.
+
+**One honest overlap.** On a suite whose entire history sits inside the week, the
+first line restates the Stats header's own count. The labels separate them and
+they diverge the moment the suite is older than seven days, but on day one it is
+a duplication.
+
 ### 2026-08-12 — Report mode emits, and the renderer never sees the bytes (C §6.5)
 
 The emitters landed first and separately (§7.3 says build them once, and the MCP
