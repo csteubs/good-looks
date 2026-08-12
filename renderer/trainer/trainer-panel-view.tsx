@@ -50,6 +50,7 @@ import {
 import { api } from "../lib/api";
 import type { AssertKind, PickedElement, RawStep, WaitDialogMode } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
+import { urlAssertPrefill } from "../../shared/url-assert.mjs";
 import { useRecorder } from "../main/recorder-store";
 import { CursorGap, INSERT_HERE, StepRow } from "../main/step-row";
 import { StepComposer, ADD_STEP_LABEL, type AddStepKind } from "../main/step-composer";
@@ -83,6 +84,21 @@ const ASSERT_PICKABLE: { kind: AssertKind; label: string }[] = [
   { kind: "disabled", label: "Is disabled" },
   { kind: "checked", label: "Is checked" },
   { kind: "unchecked", label: "Is unchecked" },
+];
+
+/**
+ * URL assertions, which need a typed value rather than an element click.
+ *
+ * The panel had no URL assertion at all until now — its assert menu offered
+ * only the element kinds above, so the one trainer sitting against the training
+ * browser was the one place you could not assert on the location. Offered here
+ * with the live URL prefilled, same as the main window and the browser's own
+ * URL strip.
+ */
+const ASSERT_URL: { kind: AssertKind; label: string }[] = [
+  { kind: "url", label: "URL contains" },
+  { kind: "urlEndsWith", label: "URL ends with" },
+  { kind: "urlIs", label: "URL is" },
 ];
 
 /** Order matters: index === commandId in the native "+ Add step" menu. */
@@ -334,11 +350,33 @@ export function TrainerPanelView() {
       // View-relative, not screen: absolute coordinates put the menu on the
       // primary display regardless of which one the panel is on.
       coordinateSpace: "view",
-      items: ASSERT_PICKABLE.map((a, i) => ({ label: a.label, commandId: i })),
+      // Offset by 100 for the URL group, the same encoding `recording-view.tsx`
+      // uses — the two menus stay readable against each other, and a commandId
+      // cannot silently mean an element assert in one and a URL assert in the
+      // other.
+      items: [
+        ...ASSERT_PICKABLE.map((a, i) => ({ label: a.label, commandId: i })),
+        { type: "separator" as const },
+        ...ASSERT_URL.map((a, i) => ({ label: a.label, commandId: 100 + i })),
+      ],
     });
     if (typeof res.commandId !== "number") return;
-    const chosen = ASSERT_PICKABLE[res.commandId];
-    if (chosen) setAssert(chosen.kind, false);
+    if (res.commandId < 100) {
+      const chosen = ASSERT_PICKABLE[res.commandId];
+      if (chosen) setAssert(chosen.kind, false);
+      return;
+    }
+    const urlKind = ASSERT_URL[res.commandId - 100];
+    if (!urlKind) return;
+    // A URL assertion takes a typed value, so it opens the Add-step dialog
+    // rather than arming the element picker — prefilled from where the page is
+    // now, via the one helper all three surfaces share.
+    setContextPick({
+      picked: null,
+      assert: urlKind.kind,
+      prefillValue: urlAssertPrefill(urlKind.kind, state.liveUrl ?? state.url ?? ""),
+    });
+    setAddKind("assertion");
   };
 
   const openAddStepMenu = async (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -467,9 +505,14 @@ export function TrainerPanelView() {
         </div>
       </div>
 
+      {/* `liveUrl` — where the page IS — not `url`, which is where the recording
+          STARTED and is what gets saved as the test's URL. This line rendered
+          `url` for its whole life, so it was right until the first navigation
+          and quietly wrong from then on. `GenerateStepsDialog` below still
+          takes `url`, correctly: it is asking about the test, not the page. */}
       <div className="border-b border-separator px-3 py-1.5">
         <Text variant="small" color="secondary" truncate className="min-w-0">
-          {state.url}
+          {state.liveUrl ?? state.url}
         </Text>
       </div>
 

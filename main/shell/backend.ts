@@ -16,6 +16,11 @@
 //   • Navigation events (`will-navigate` etc.) carry url/isMainFrame/
 //     isSameDocument on the event object in modern Electron, matching Glaze's
 //     WebContentsNavigationEvent shape. No adaptation needed.
+//   • `WebContentsView` has no Glaze ancestor — it arrived with the training
+//     browser's URL strip, which needs the untrusted page in a child view so an
+//     app-owned toolbar can sit above it. Re-exported raw (no wrapper): there is
+//     no `windowKey` equivalent to strip, and the rule that only this directory
+//     imports `electron` is what makes the re-export necessary at all.
 
 import {
   app,
@@ -27,10 +32,21 @@ import {
   Notification,
   safeStorage,
   screen,
+  WebContentsView,
 } from "electron";
 import type { BrowserWindowConstructorOptions } from "electron";
 
-export { app, dialog, globalShortcut, ipcMain, Menu, Notification, safeStorage, screen };
+export {
+  app,
+  dialog,
+  globalShortcut,
+  ipcMain,
+  Menu,
+  Notification,
+  safeStorage,
+  screen,
+  WebContentsView,
+};
 export { logger } from "./logger.js";
 
 export type { MenuItemConstructorOptions, Cookie, CookiesSetDetails } from "electron";

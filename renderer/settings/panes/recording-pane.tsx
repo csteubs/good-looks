@@ -26,7 +26,8 @@ export function RecordingPane() {
       <SettingRow
         id="show-url-bar"
         label="Show URL bar in training window"
-        summary="Shows the current page's URL in the training window's title bar while recording."
+        summary="Adds a bar above the page showing where you are, with a button to assert on it."
+        details="The bar is read-only: every navigation in a recording is either the opening step or the result of one of your actions, so typing an address would produce a test that replays a different journey than the one you recorded. Turning this off gives the page the full window."
       >
         <Switch
           id="show-url-bar"

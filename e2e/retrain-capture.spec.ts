@@ -50,7 +50,17 @@ function invoke<T>(window: AppFixtures["window"], channel: string, params?: unkn
   ) as Promise<T>;
 }
 
-/** The training browser's own page, found by URL — its title is the site's. */
+/**
+ * The training browser's own page, found by URL.
+ *
+ * `app.windows()` enumerates every page-like target the Electron app exposes,
+ * which includes the WebContentsView the training page moved into when the
+ * browser grew a URL strip — the view is a separate target with the site's URL,
+ * while the window that contains it reports the strip's `app://` one. So the
+ * URL match is still the right question; what changed is that the answer is no
+ * longer a window. If this ever returns undefined, check that first: every
+ * assertion downstream fails on a null page and reads like capture breaking.
+ */
 function trainingPage(app: AppFixtures["app"]) {
   return app.windows().find((p) => p.url().startsWith("http://127.0.0.1"));
 }

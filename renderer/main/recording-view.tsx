@@ -20,6 +20,7 @@ import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plu
 import { Btn, Segmented, StatusChip, TONE } from "../theme";
 import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step, WaitDialogMode } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
+import { urlAssertPrefill } from "../../shared/url-assert.mjs";
 import { locatorToPrompt } from "../lib/llm-prompts";
 import { useRecorder, type ReplayRun } from "./recorder-store";
 import { CursorGap, INSERT_HERE, StepRow } from "./step-row";
@@ -682,8 +683,19 @@ export function RecordingView() {
     } else if (res.commandId >= 100) {
       const urlKind = ASSERT_URL[res.commandId - 100];
       if (urlKind) {
-        // URL assertions need a typed string — open the Add-step dialog prefilled.
-        setContextPick({ picked: null, assert: urlKind.kind });
+        // Prefilled with where the page actually is. This used to open with an
+        // EMPTY field, which meant the user had to know the URL — and the only
+        // legible copy of it was outside the app, because the trainer showed
+        // the session's start URL and the training window's title showed the
+        // site's own `document.title`. `urlAssertPrefill` decides what each
+        // kind gets (a path for the substring kinds, the whole URL for `is`),
+        // and it is the same function the training browser's own URL strip and
+        // right-click menu call.
+        setContextPick({
+          picked: null,
+          assert: urlKind.kind,
+          prefillValue: urlAssertPrefill(urlKind.kind, state.liveUrl ?? state.url ?? ""),
+        });
         setAddKind("assertion");
       }
     }
