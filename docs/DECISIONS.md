@@ -50,6 +50,83 @@ The detail view was shaped around one run state. A verdict chip, a triage line, 
 
 **And one guard earned its keep on the way through.** `check:selection-neutral` rejected an amber `:hover` on the review button. It is right: this app spends its four hues on outcomes, and a control that goes amber under the pointer is indistinguishable from one reporting a warning.
 
+### 2026-08-11 — Connecting to Linear, and one pane for everything that leaves
+
+Phase 1 of sending a defect to an issue tracker: the connection only. Nothing
+files an issue yet, and the `IssueProvider` interface has no `createIssue` on
+purpose — a half-implemented interface that looks finished is worse than an
+obviously incomplete one.
+
+**A personal API key, not OAuth.** OAuth needs a registered app, a redirect
+handler in the shell and refresh-token storage, none of which this app has any
+precedent for. `createEncryptedSecretStore` already gives the exact contract
+wanted — encrypted at rest, write-only from the renderer — so the key is a
+fourth instance of a mechanism that already works. **One workspace**, by
+decision rather than by limitation: the filename is provider-specific, so a
+second workspace is a keyed collection later, not a migration.
+
+**The interface is designed against two APIs, not one.** Multi-provider was
+chosen up front, and the known failure of that is an interface that quietly
+becomes "Linear, renamed" and then fits the second tracker badly. The defence
+was to write the GitHub Issues mapping on paper first and let its disagreements
+drive the shape: REST vs GraphQL forced methods that express intent; a
+repo-scoped integer vs a UUID-plus-`ENG-42` forced an opaque id **and** a
+display string, because one field cannot be both without a caller guessing;
+string labels vs node ids forced "take names, let the provider resolve";
+repo→milestone vs team→project forced provider-supplied vocabulary rather than a
+hardcoded "Team". Only Linear is implemented. If a future provider needs an
+escape hatch through this interface, that is the signal the abstraction was
+premature and Linear should have been built directly.
+
+**"Saved" and "works" are separate claims, and the pane makes both.** Collapsing
+them fails in one direction or the other and there is no third option: keying
+off "a key is stored" keeps saying Connected for a key revoked last week, and
+keying off a live probe calls a perfectly good key broken whenever Settings is
+opened offline. So `status()` is local and never touches the network, `verify()`
+is the only thing that does, and the verified account is cached **in process and
+never persisted** — a claim about right now, read off disk at launch, is exactly
+the bug. `connect()` **saves before it verifies and does not roll back**: a good
+key pasted on a dead network should not have to be pasted again.
+
+**Errors may never carry the key**, and the enforcement is deliberate rather
+than incidental. A raw `fetch` rejection can carry the request, and for a
+provider authenticating by header that is one refactor from carrying the header;
+a raw response body is written by a remote server. So the provider never
+forwards what it caught — every throw is an `IssueProviderError` built from a
+status code plus, at most, a scrubbed and bounded GraphQL message, and the
+service refuses to display the message of anything that is not one. The scrub is
+belt-and-braces: the key travels in a header and Linear has nothing to echo, but
+the file promises the invariant and one line makes the promise enforceable
+instead of a piece of reasoning that has to stay correct.
+
+Two Linear specifics that cost real debugging elsewhere and are pinned by tests:
+personal API keys go in `Authorization` **raw**, with no `Bearer` prefix, and a
+bad key comes back as a **200 with an `errors` array** rather than a 401 — a
+status-code check alone reports it as a parse failure and sends someone off to
+debug their network.
+
+**The Integrations pane absorbs the webhook and the GitHub token — but not the
+notifications.** The point of the pane is that "what does this app talk to?" has
+one answer in one place, and the GitHub token had no settings UI at all before
+(it was reachable only from inside the branch switcher, where nobody auditing
+the app would look). The three local notification rows stayed in Alerts: they
+send nothing anywhere, and listing three non-integrations weakens the claim the
+pane exists to make. Alerts now says, per row, that everything on it is local,
+and `alerts-pane.test.tsx` asserts the pane holds no credential field at all —
+the regression that test exists for is the webhook drifting back in.
+
+**Two silent-failure traps this hit while being built**, both worth knowing
+because neither errors. `SettingRow` **drops `details` on a flagged row** — by
+design, so a credential warning can never be one click away — so the "nothing
+goes to Linear on its own" sentence written as `details` compiled, type-checked
+and rendered nowhere; it belongs in `summary`. And `check:renderer-egress`
+flagged `https://linear.app/settings/api` in the pane's fallback vocabulary. It
+was only ever displayed as text, so an allowlist entry would have been
+defensible — but the URL already has one source of truth in the provider, a
+transcribed copy is right the day it is written and silently wrong afterwards,
+and allowlisting a decorative URL trains the next person to allowlist a real
+one. The fallback carries an empty string instead.
+
 ### 2026-08-10 — The trainer records into an existing test, and says where
 
 Reported as "re-training a test only shows Paused and Editing, and it doesn't record any manual page interaction". Capture was never off. Reproduced against the real app (`e2e/retrain-capture.spec.ts`, which drives `_electron` and clicks in the actual training browser): the click is captured, the count grows, both trainers render the row. Three things then conspire to make that invisible, and one of them also makes it wrong.

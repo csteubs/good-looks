@@ -36,6 +36,7 @@ import {
   Bell,
   FlaskConical,
   HardDrive,
+  Plug,
   Palette,
   Settings2,
   Sparkles,
@@ -58,6 +59,7 @@ const PANE_ICONS: Record<PaneId, ComponentType<{ className?: string }>> = {
   storage: HardDrive,
   ai: Sparkles,
   alerts: Bell,
+  integrations: Plug,
   diagnostics: Wrench,
   experiments: FlaskConical,
 };

@@ -89,6 +89,10 @@ describe("handler registration", () => {
       "batch:list",
       "alerts:setWebhookUrl",
       "alerts:status",
+      "issues:status",
+      "issues:connect",
+      "issues:disconnect",
+      "issues:setDefaults",
       "recorder:listCookies",
       "recorder:setCookie",
       "recorder:getSettings",
@@ -259,6 +263,66 @@ describe("alerts — the webhook URL is validated and never read back", () => {
   it("refuses to send a test alert with no URL configured", async () => {
     await invokeHandler("alerts:clearWebhookUrl");
     await expect(invokeHandler("alerts:test")).rejects.toThrow(/no webhook url/i);
+  });
+});
+
+describe("issues — the key never comes back, and the patch keeps its shape", () => {
+  // `connect` verifies, and verification is a network call. Stubbed so this
+  // suite makes no outbound request: a unit test that reaches api.linear.app is
+  // slow, flaky, and sends a fake credential to a third party on every CI run.
+  // The provider looks `fetch` up per request precisely so this works.
+  const realFetch = globalThis.fetch;
+  beforeAll(() => {
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { viewer: { name: "Sam" }, organization: { name: "Northwind" } } }),
+    })) as unknown as typeof fetch;
+  });
+  afterAll(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it("reports only whether a key exists and whose it is, never the key", async () => {
+    const status = await invokeHandler<{ hasKey: boolean }>("issues:connect", {
+      key: "lin_api_SECRET-TOKEN",
+    });
+    expect(status.hasKey).toBe(true);
+    expect(JSON.stringify(status)).not.toContain("SECRET-TOKEN");
+
+    const read = await invokeHandler("issues:status");
+    expect(JSON.stringify(read)).not.toContain("SECRET-TOKEN");
+  });
+
+  it("keeps `omitted` and `null` distinct across IPC", async () => {
+    // The distinction the whole defaults API rests on: omitting a field means
+    // "leave it alone", passing null means "clear it". A handler that spread
+    // its params, or defaulted a missing key to null, would collapse the two —
+    // and clearing a default would become impossible to express while looking
+    // like it worked.
+    await invokeHandler("issues:setDefaults", { containerId: "t1", subContainerId: "p1" });
+
+    const omitted = await invokeHandler<{ containerId: string | null; subContainerId: string | null }>(
+      "issues:setDefaults",
+      { containerId: "t1" },
+    );
+    expect(omitted.subContainerId).toBe("p1");
+
+    const cleared = await invokeHandler<{ subContainerId: string | null }>("issues:setDefaults", {
+      subContainerId: null,
+    });
+    expect(cleared.subContainerId).toBeNull();
+  });
+
+  it("clears the defaults when the key is removed", async () => {
+    // A team id is only meaningful inside the workspace that key opened.
+    await invokeHandler("issues:connect", { key: "lin_api_ANOTHER" });
+    await invokeHandler("issues:setDefaults", { containerId: "t9", subContainerId: "p9" });
+    await invokeHandler("issues:disconnect");
+    expect(await invokeHandler("issues:getDefaults")).toEqual({
+      containerId: null,
+      subContainerId: null,
+    });
   });
 });
 
