@@ -23,6 +23,7 @@ import { postWebhook } from "../services/alert-service.js";
 import { issueTrackerService } from "../services/issue-tracker/issue-tracker-service.js";
 import { playwrightRunner } from "../services/playwright-runner.js";
 import { runHistoryStore } from "../services/run-history-store.js";
+import { emitReport } from "../services/report-emitter.js";
 import { artifactStore } from "../services/artifact-store.js";
 import { baselineStore } from "../services/baseline-store.js";
 import { acceptRunBaseline, acceptStepBaseline } from "../services/visual-baseline-ops.js";
@@ -97,6 +98,7 @@ import {
 } from "../recorder/types.js";
 import type { AiDebugSession, AssertKind, CookieSpec, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
+import type { EmitterId } from "../../shared/emitters.mjs";
 
 import { ipcMain, logger } from "@shell/backend";
 
@@ -1235,6 +1237,17 @@ export function registerHandlers(): void {
   ipcMain.handle("debug:dir", async () => debugDir());
   ipcMain.handle("debug:shortcut", async () => DEBUG_CAPTURE_ACCELERATOR);
 
+  // REDESIGN §6.5. One channel, and it is a VERB: the renderer asks for an emit
+  // and gets back a path, never the text. Redaction reads an encrypted store
+  // that cannot leave this process, so a channel returning content would move
+  // the un-redacted payload across the boundary and make the redaction a
+  // formality applied to a copy. `stamp` comes from the caller so the filename
+  // the panel is about to show is the filename it asked for.
+  ipcMain.handle(
+    "report:emit",
+    async (_e, params: { emitter: EmitterId; stamp: string; testId?: string }) =>
+      emitReport(params.emitter, params.stamp, { testId: params.testId }),
+  );
   ipcMain.handle("runs:list", async () => runHistoryStore.list());
   /** Flake and failure analytics over the recent run history.
    *

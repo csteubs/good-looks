@@ -53,6 +53,8 @@ import type {
   ProviderVocabulary,
 } from "./issue-types";
 import type { TriageResult } from "../../shared/triage.mjs";
+import type { EmitterId } from "../../shared/emitters.mjs";
+import type { EmitResult } from "./recorder-types";
 import type {
   StepDurationRow,
   StepHealthRow,
@@ -443,6 +445,12 @@ export const api = {
       ipc().invoke<{ hasStructure: boolean }>("artifacts:hasStructure", { testId, runId }),
     usage: () => ipc().invoke<ArtifactUsage>("artifacts:usage"),
     pruneNow: () => ipc().invoke<RetentionResult>("artifacts:pruneNow"),
+  },
+  // REDESIGN §6.5. A verb, not a getter — there is deliberately no channel that
+  // returns the emitted text. See `main/services/report-emitter.ts`.
+  report: {
+    emit: (emitter: EmitterId, stamp: string, testId?: string) =>
+      ipc().invoke<EmitResult>("report:emit", { emitter, stamp, testId }),
   },
   visual: {
     getThreshold: (testId: string) =>

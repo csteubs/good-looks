@@ -52,6 +52,7 @@ import type {
   BaselineEntry,
   BatchRecord,
   BatchState,
+  EmitResult,
   CaptureOverheadSummary,
   FlakeReport,
   RecorderState,
@@ -997,6 +998,12 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
           },
 
     // ── Batch ────────────────────────────────────────────────────────────
+    // REDESIGN §6.5. The preview has no filesystem and no save dialog, so it
+    // reports the cancel the real dialog reports when the user backs out — the
+    // panel's own "nothing was written" path, which is the one an unbacked
+    // preview can honestly exercise. A fake success would put a path on screen
+    // that names a file nobody can open.
+    "report:emit": (): EmitResult => ({ path: null, bytes: 0, count: 0, cancelled: true }),
     "batch:list": (): BatchRecord[] => structuredClone(BATCHES),
     /** `BatchState | null`, and idle is `null` — not a half-filled state
      *  object. A `{ running: false }` stand-in is missing every other field the

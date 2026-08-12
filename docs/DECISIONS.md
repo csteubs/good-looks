@@ -16,6 +16,52 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — Report mode emits, and the renderer never sees the bytes (C §6.5)
+
+The emitters landed first and separately (§7.3 says build them once, and the MCP
+shares them). This is the surface: an Export panel under Cost in Stats.
+
+**The renderer never holds the emitted text, and everything else follows from
+that.** `redactWithSnapshot` reads an encrypted secrets store and cannot leave
+the main process. If the panel asked for the text and saved it itself, the
+un-redacted payload would cross the IPC boundary first — the redaction would be
+real but applied to a copy of something that had already left. So the channel is
+a VERB: `report:emit` answers with a path, a byte count and a row count. There is
+deliberately no channel that returns content, and `check:emit-redaction` asserts
+there never is.
+
+**That check exists because the failure is invisible.** `redact` is an OPTION on
+the emitters with a working default, which is correct for a pure module shared
+with an MCP that may have no secrets store — but precisely wrong for the app,
+where every call has `redactWithSnapshot` available and one branch that forgets
+produces a perfectly valid file with a live credential in it. Nothing goes red:
+the option is optional by design, so omitting it type-checks, and observing the
+difference in a unit test would mean standing up an encrypted store and a save
+dialog. Hence source level, and hence three assertions rather than one — every
+call passes a redactor, none reaches for `NO_REDACTION`, and no `report:` channel
+returns text.
+
+**The check's first version went red on the service's own comment**, which
+mentioned `NO_REDACTION` while explaining the rule. A guard that fires on the
+sentence documenting it is a guard that teaches people to delete the
+documentation, so it strips comments before that scan. What matters is whether
+the identifier is reached for, which is a fact about code.
+
+**Three smaller calls.** A cancelled save raises no toast — the user closed a
+dialog, that is an answer, and telling them what they just did reads as the app
+not having noticed; it would also fire on the most ordinary way out of the flow.
+"Last written" is keyed per emitter, because one shared slot would make exporting
+a second format look like it replaced the first, and it reports the row count
+next to the size, since "2 KB" says nothing about whether the file covers the run
+the reader cares about. And the risk note is amber and is the only colour in the
+panel: a prompt to look before forwarding, not a failure, and never green,
+because there is no good news to report about what a file contains.
+
+**One invented token, caught by a check rather than by eye.** The row separator
+was written as `var(--gl-line-soft, rgba(...))` — a name that does not exist,
+with a fallback that made it render correctly. `check:theme-tokens` failed it;
+the fallback is exactly what would have hidden it in review.
+
 ### 2026-08-12 — The job ticker, and the open question the codebase had already answered (C §6.8)
 
 `top-strip.tsx` shipped two empty slots in A4 with an argument attached: an

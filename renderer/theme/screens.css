@@ -3198,3 +3198,71 @@
   font-variant-numeric: tabular-nums;
   color: var(--gl-tx-3);
 }
+
+/* Report (§6.5) — the emitters, and what each last wrote.
+
+   A LIST OF ROWS, NOT A GRID OF CHIPS. The mockup drew export chips, but each
+   emitter now carries a summary, sometimes a risk note, and a "last written"
+   line; a chip has room for a label and nothing else, and the sentences are
+   the part that makes this panel honest rather than decorative. */
+.gl-report {
+  border: 1px solid var(--gl-line);
+  padding: 12px 14px 14px;
+}
+
+.gl-report-head {
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.gl-report-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gl-report-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.gl-report-row:last-child {
+  border-bottom: 0;
+}
+
+.gl-report-main {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.gl-report-label {
+  font-weight: 600;
+}
+
+.gl-report-summary,
+.gl-report-written {
+  min-width: 0;
+}
+
+/* The path can be long and is worth reading in full, so it wraps rather than
+   truncating: a truncated path is one the user cannot check, and checking it is
+   the entire reason it is on screen. */
+.gl-report-written {
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+
+/* AMBER, and it is the only colour in this panel. It is a prompt to look before
+   forwarding — not a failure, so not red, and never green, because there is no
+   good news to report about what a file contains. */
+.gl-report-risk {
+  color: var(--gl-amber);
+}
