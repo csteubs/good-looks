@@ -120,6 +120,64 @@ The preview's batch fixtures are now split across the two Routines with one left
 unattributed, because a fixture where every batch belongs to the same job would
 look identical with the filter missing.
 
+### 2026-08-12 — Script changes join the Heals view, and split on "did you see it"
+
+The Heals tab knew about one way a test changes without the user writing it:
+Auto-Heal swapping a locator. It did not know about the two that rewrite the
+whole spec — AI Debug applying a corrected script, and a hand edit in the Script
+tab. Both go through `tests:updateScript`, which overwrites the file and
+re-parses the step list wholesale, so the previous script existed nowhere
+afterwards. There was no record and no undo.
+
+The sharpest version of the gap is in the settings copy for "Apply AI debug
+fixes automatically", which names its own risk: *"Your script can change without
+you reading the change first."* That was true, and nothing anywhere reported it
+afterwards.
+
+**A separate journal file, not rows in `heal-journal.json`.** The obvious move
+is a `kind` discriminator on the existing entry — one store, one list, one
+retention policy. It is wrong here because five consumers already read that file
+and key its entries on `stepId`/`runId`: `metrics-store.ts` (the `healed`
+column), `shared/rollup.mjs`, `flake-source.ts`, and `mcp/server.mjs` twice
+over. A script-level entry would be counted by every one of them as a healed
+step — inflating the heal rate, the step-health table, the flake report and the
+MCP's `list_heals`. Five filters would have to be added and never forgotten, and
+one of those files is plain `.mjs` reading the raw JSON outside `type-check`,
+where a missed filter is silent forever. `script-changes.json` leaves every one
+of them structurally unaffected; the two lists are merged in the renderer, which
+is the only place they are both just "things that changed this test".
+
+**The review queue splits on whether the user SAW the change, not on whether a
+model made it.** The first design was AI → review, manual → history, which is
+the obvious reading and is wrong in both directions. An AI fix you clicked Apply
+on — behind a diff, having read it — is already reviewed, and queueing it asks
+you to approve the same change twice. An AI fix that landed while the job was
+minimized is the one nobody has read. So `reviewed` is the field, `false` means
+"applied without review", and only that enters the queue. Auto-apply is
+unchanged by any of this: the entry is a record of a write that already
+happened, not a gate on it. What it gains is the safety net its own settings
+copy admits it lacked.
+
+**Revert stays available on a settled entry**, unlike a heal's. A settled heal
+leaves the test pointing at a locator the user chose, and the journal entry is
+just history. A settled script change leaves the whole file rewritten, and the
+entry holds the only copy of what it replaced — so "I kept this yesterday and
+want it back" has nowhere else to go. For the same reason the delete
+confirmation says so in as many words, and an entry whose sources were too large
+to store (`truncated`) disables Revert in the UI *and* refuses it in the
+handler: one of those alone would eventually write an empty spec over a working
+test.
+
+**One chip, not two.** The row first carried both "Applied to the test" and
+"Applied without review". Every script change is written to the test — there is
+no suggest-only mode as there is for a heal — so the first chip is true of every
+row and reports nothing. Amber is spent on the fact that actually varies.
+
+Also: `DiffView` moved out of `ai-debug-panel.tsx` into
+`renderer/components/diff-view.tsx`. The panel shows the diff before the write
+and the Heals row shows it after; two renderers for one picture would drift, and
+the drift would be one of them disagreeing about what a removed line looks like.
+
 ### 2026-08-12 — Batch becomes a Routine's editor (Phase D)
 
 REDESIGN §7.1 says "the checklist is unchanged; it is now the open Routine's

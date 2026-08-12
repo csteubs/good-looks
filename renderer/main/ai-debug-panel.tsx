@@ -32,6 +32,7 @@ import {
   type LogRequest,
   type LogRequestNeed,
 } from "../lib/ai-log-request";
+import { DiffView } from "../components/diff-view";
 import { diffLines, diffSummary, type DiffLine } from "../lib/line-diff";
 import { friendlyError } from "../lib/llm-errors";
 import type { LlmMessage, LlmModel } from "../lib/llm-types";
@@ -165,34 +166,6 @@ export function CodeBlock({ lang, content }: { lang: string; content: string }) 
         </button>
       </div>
       <pre className="gl-console">{content}</pre>
-    </div>
-  );
-}
-
-// Renders a line-level diff between the current script and the AI's corrected
-// spec, shown in the "Apply to script" confirm so the user can review exactly
-// what changes before overwriting the file. Equal lines are dimmed; removed
-// lines (current) get a red tint; added lines (corrected) get a green tint.
-function DiffView({ diff }: { diff: DiffLine[] }) {
-  return (
-    <div className="text-small-mono overflow-auto rounded-md border border-separator">
-      <div className="min-w-max">
-        {diff.map((d, i) => {
-          const sign = d.type === "add" ? "+" : d.type === "remove" ? "-" : " ";
-          const cls =
-            d.type === "add"
-              ? "bg-[var(--color-positive-subtle,rgba(46,196,87,0.12))] text-primary"
-              : d.type === "remove"
-                ? "bg-[var(--color-negative-subtle,rgba(229,72,77,0.12))] text-primary"
-                : "text-secondary";
-          return (
-            <div key={i} className={`whitespace-pre px-2 py-px ${cls}`}>
-              <span className="select-none opacity-60">{sign} </span>
-              {d.text}
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -878,7 +851,18 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
   const applyScript = async () => {
     if (!correctedScript || !runCtx?.onApplyScript) return;
     try {
-      await runCtx.onApplyScript(correctedScript);
+      // `reviewed: true`: this button is only reachable behind the diff, so the
+      // user has read what it overwrites. That is what files the resulting
+      // journal entry as history rather than as something to review.
+      //
+      // The model comes from the SESSION, not from the picker — a follow-up can
+      // be sent to a different model than the one that wrote the fix being
+      // applied, and the label has to name the one that wrote it.
+      await runCtx.onApplyScript(correctedScript, {
+        by: "ai-debug",
+        model: session?.model ?? modelName ?? undefined,
+        reviewed: true,
+      });
       setDraft({ applied: true });
       toast.success("Applied the suggested fix to the script.");
     } catch (err) {

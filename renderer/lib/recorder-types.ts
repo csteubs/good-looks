@@ -476,6 +476,51 @@ export interface HealListEntry extends HealEntry {
   testName: string | null;
 }
 
+/** Where a whole-script change came from (mirror of script-change-store.ts). */
+export type ScriptChangeOrigin = "ai-debug" | "manual";
+
+/** What the renderer sends with a script write, so the journal can say who did
+ *  it. `reviewed: false` means the change landed without the user reading it —
+ *  an auto-applied AI fix — which is the only thing that enters the review
+ *  queue. Normalized backend-side; the renderer's copy is a claim, not a fact. */
+export interface ScriptChangeSource {
+  by: ScriptChangeOrigin;
+  model?: string;
+  reviewed?: boolean;
+}
+
+/** One recorded change to a test's whole spec, and the means to undo it.
+ *
+ *  The sibling of `HealEntry`: a heal swaps one step's locator, this replaces
+ *  the file. Kept in its own store backend-side — see script-change-store.ts —
+ *  and merged with the heals in the Heals surfaces, which is where they are
+ *  both just "things that changed this test". */
+export interface ScriptChangeEntry {
+  id: string;
+  testId: string;
+  origin: ScriptChangeOrigin;
+  /** Which model wrote the fix. May be absent even on an `ai-debug` entry, so
+   *  every label must degrade to a bare "AI Debug". */
+  model?: string;
+  reviewed: boolean;
+  /** The previous spec — the undo. Empty when `truncated`. */
+  before: string;
+  after: string;
+  addedLines: number;
+  removedLines: number;
+  /** The sources were too large to store, so there is nothing to revert TO.
+   *  Every Revert control must be disabled on one of these. */
+  truncated?: boolean;
+  status: HealStatus;
+  at: number;
+}
+
+/** A script change as the cross-test Heals view sees it — same reason
+ *  `HealListEntry` exists. */
+export interface ScriptChangeListEntry extends ScriptChangeEntry {
+  testName: string | null;
+}
+
 /** What the renderer is allowed to know about a stored secret: that it exists,
  *  never what it is. The value lives encrypted backend-side and is injected
  *  straight into the run's child process. */
@@ -1211,6 +1256,11 @@ export interface AiDebugSession {
    *  is no longer on screen. */
   superseded?: boolean;
   scriptHash: string | null;
+  /** Which model is answering, stamped when the stream starts. Read by the
+   *  auto-apply path, which lands long after the panel that chose it — asking
+   *  the settings then would name whichever model is selected at that moment.
+   *  Absent on sessions stored before this was recorded. */
+  model?: string;
   startedAt: number;
   updatedAt: number;
   readOnly?: boolean;
