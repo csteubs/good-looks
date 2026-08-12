@@ -12,6 +12,7 @@ import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import type {
   DebugCaptureSession,
   AssertKind,
+  BatchState,
   ContextAction,
   DebugEntry,
   DebugLogLine,
@@ -72,6 +73,14 @@ export interface RunInfo {
    *  where recordId only arrives at the end — so anything keyed on "which run
    *  is this" is stable for the whole run instead of changing under it. */
   startedAt: number;
+  /** When it ENDED. Undefined while running.
+   *
+   *  Added for §6.8's ticker, which holds a failure in the strip for a few
+   *  seconds after the fact. Measuring that hold from `startedAt` expires a run
+   *  that took longer than the window before it has even finished — which kills
+   *  the one notice the ticker exists to give, a long run that failed while the
+   *  user was on another screen. */
+  finishedAt?: number;
 }
 
 const EMPTY_STATE: RecorderState = {
@@ -124,6 +133,10 @@ interface RecorderContextValue {
    */
   lastAddedStepId: string | null;
   runs: Record<string, RunInfo>;
+  /** The batch running right now, or null. NOT "the batch being displayed" —
+   *  see the state's own note. Owned here so every screen can see it, which is
+   *  what §6.8's ticker needs and what `batch-view` alone could not give. */
+  liveBatch: BatchState | null;
   /** `viewport` is the New Recording dialog's window-size preset; omitted (or
    *  null) keeps the trainer's default window size. Ignored when `testId` names
    *  an existing test — that session opens at the size the test recorded. */
@@ -266,6 +279,17 @@ export function RecorderProvider({
   const [contextAction, setContextAction] = React.useState<ContextAction | null>(null);
   const [debugEntries, setDebugEntries] = React.useState<DebugEntry[]>([]);
   const [runs, setRuns] = React.useState<Record<string, RunInfo>>({});
+  // THE LIVE BATCH, OWNED HERE FOR THE SAME REASON `runs:changed` IS. Batch
+  // progress arrived only on `batch:progress`, and the only subscriber was
+  // `batch-view` — a ROUTE component. On any other screen nothing was
+  // listening, so a batch you started and walked away from was invisible from
+  // everywhere except the one page you had left.
+  //
+  // Distinct from the batch VIEW's own `batch` state, which is "the record I am
+  // displaying" and can be a historical one the user picked out of the list.
+  // Those are two different questions that happened to share a variable; this
+  // is only ever "what is running now".
+  const [liveBatch, setLiveBatch] = React.useState<BatchState | null>(null);
   // Per-step status for an in-flight trainer replayAll (auto-run on Edit in
   // Trainer), keyed by step index. Cleared when a new run starts.
   const [replayStepStatus, setReplayStepStatus] = React.useState<Record<number, RunStepStatus>>({});
@@ -368,7 +392,7 @@ export function RecorderProvider({
       ({ runId, code, recordId }) => {
         setRuns((prev) => {
           const cur = prev[runId] ?? { lines: [], running: false, code, stepStatus: {}, startedAt: Date.now() };
-          return { ...prev, [runId]: { ...cur, running: false, code, recordId } };
+          return { ...prev, [runId]: { ...cur, running: false, code, recordId, finishedAt: Date.now() } };
         });
       },
     );
@@ -383,6 +407,27 @@ export function RecorderProvider({
     // provider that is mounted for the whole session instead.
     const offRunsChanged = api.on("runs:changed", () => {
       void qc.invalidateQueries({ queryKey: ["runs"] });
+    });
+    // A batch already running when this window opened. `batch:progress` fires
+    // on every test transition so it would self-seed within seconds, but "the
+    // ticker is blank until the next test finishes" is a blank ticker during
+    // exactly the long test somebody wanted to know about.
+    void api.batch
+      .status()
+      .then((s) => setLiveBatch(s ?? null))
+      .catch(() => {});
+    const offBatchProgress = api.on("batch:progress", (payload) => {
+      setLiveBatch(payload as BatchState);
+    });
+    const offBatchDone = api.on("batch:done", (payload) => {
+      setLiveBatch(payload as BatchState);
+      // Every member wrote its own RunRecord, so history and the sidebar's
+      // status dots are stale. This used to live in `batch-view`, where it only
+      // fired if you happened to be looking at it — the same shape of bug as
+      // the one `runs:changed` above was moved here to fix.
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+      void qc.invalidateQueries({ queryKey: ["captureOverhead"] });
+      void qc.invalidateQueries({ queryKey: ["batch-history"] });
     });
     const offDebug = api.on<{ testId: string; entries: DebugEntry[] }>(
       "recorder:debugLogs",
@@ -502,6 +547,8 @@ export function RecorderProvider({
       offStep();
       offDone();
       offRunsChanged();
+      offBatchProgress();
+      offBatchDone();
       offDebug();
       offReplayStep();
       offReplayLog();
@@ -698,6 +745,7 @@ export function RecorderProvider({
     newStepIds,
     lastAddedStepId,
     runs,
+    liveBatch,
     start,
     pause,
     resume,

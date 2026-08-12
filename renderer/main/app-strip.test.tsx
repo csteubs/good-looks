@@ -43,6 +43,16 @@ vi.mock("../lib/api", () => ({
   api: { tests: { list: async () => tests } },
 }));
 
+// The strip has held a `JobTicker` since §6.8, and the ticker reads the recorder
+// store. Mocked rather than wrapped in a real `RecorderProvider`: that provider
+// subscribes to a dozen IPC channels and owns the whole session, and standing
+// one up here would make these tests — which are about the breadcrumb and the
+// rail handle — depend on all of it. The ticker has its own file.
+// The real app never hits this: `RootShell` renders inside `RecorderProvider`.
+vi.mock("./recorder-store", () => ({
+  useRecorder: () => ({ runs: {}, liveBatch: null }),
+}));
+
 const invoke = vi.fn(async () => {});
 
 function record(over: Partial<TestRecord> = {}): TestRecord {

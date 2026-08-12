@@ -24,6 +24,7 @@ import { ChevronLeft, ChevronRight, PanelLeft, Settings } from "lucide-react";
 import { useSplitView } from "@ui";
 
 import { ChromeButton, TopStrip, type Crumb } from "../theme";
+import { JobTicker } from "./job-ticker";
 import { api } from "../lib/api";
 import { categoryMeta, facetLabel } from "../lib/stats-categories";
 import { useCommandPalette } from "./command-palette";
@@ -248,11 +249,12 @@ export function AppStrip({ recording = false }: AppStripProps): React.ReactEleme
           <HistoryNav />
         </>
       }
-      // `command` is filled since §6.7 — the debt top-strip.tsx describes is
-      // discharged for one of its two slots. `ticker` (§6.8) is still unpassed:
-      // an affordance for a feature that does not exist teaches a shortcut
-      // that answers with silence.
+      // Both slots are filled as of §6.8 — the debt `top-strip.tsx` describes
+      // is discharged. `JobTicker` renders NOTHING when the app is idle, which
+      // keeps the promise the empty slot was making: a strip that says
+      // something only when there is something to say.
       command={<CommandKey />}
+      ticker={<JobTicker />}
       actions={
         <ChromeButton label="Settings" onClick={openSettingsWindow}>
           <Settings aria-hidden="true" />

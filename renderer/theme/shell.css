@@ -754,3 +754,97 @@
   line-height: 1.45;
   color: var(--gl-tx-3);
 }
+
+/* The job ticker (§6.8) — the strip's second Phase C slot, filled at last.
+
+   IT IS SIZED LIKE THE CHROME BUTTONS BESIDE IT, not like a badge. The strip is
+   a 34px band and everything in the trailing cluster is 24px; a taller readout
+   would make the band look like it had grown a toolbar. */
+.gl-ticker {
+  height: 24px;
+  max-width: 220px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--gl-line);
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-2);
+  /* `body` sets `cursor: default` app-wide and Tailwind's preflight sets it on
+     `button`, so a control that does not ask for the pointer has no hover
+     affordance. Guarded by `check:clickable-chrome`. */
+  cursor: pointer;
+}
+
+/* "Several running" has nowhere single to go, so it is not a link. It still
+   READS the same — the reading is the point — it just stops offering. */
+.gl-ticker:disabled {
+  cursor: default;
+}
+
+.gl-ticker:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--gl-tx-1);
+}
+
+.gl-ticker:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-ticker-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* THE DOT CARRIES THE COLOUR, NOT THE TEXT. Colour means outcome in this
+   palette, and a whole word rendered in red is a much louder claim than a
+   failure that has already happened and is about to expire — while a label in
+   the resting ramp stays readable against the strip in both states. */
+.gl-ticker-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--gl-tx-3);
+}
+
+/* Running takes the holo/cyan reading the palette reserves for "live", never a
+   hue: a run in flight has no outcome yet, and colouring it green or amber
+   would be the app guessing one.
+
+   THE PULSE IS DELIBERATELY NOT MARKED `data-gl-motion="ambient"`, and
+   atmosphere.css is where that decision already lives: motion that REPORTS
+   something is not decoration, and its own comment names "a run status
+   indicator that must still pulse" as the example. So this is the unmarked
+   kind — only `still` stops it, and reduced motion leaves it alone. Marking it
+   ambient, or adding a `prefers-reduced-motion` rule here, would delete the one
+   thing in the strip that separates a run IN PROGRESS from a run that stopped
+   and left its readout up for its last few seconds. */
+@keyframes gl-ticker-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.gl-ticker[data-tone="run"] .gl-ticker-dot {
+  background: var(--gl-cyan);
+  box-shadow: 0 0 6px rgba(53, 224, 255, 0.6);
+  animation: gl-ticker-pulse 1.6s ease-in-out infinite;
+}
+
+.gl-ticker[data-tone="fail"] .gl-ticker-dot {
+  background: var(--gl-red);
+  box-shadow: 0 0 6px rgba(255, 77, 97, 0.55);
+}

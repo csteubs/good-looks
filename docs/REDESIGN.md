@@ -9,13 +9,13 @@ the five components every screen embeds, and every screen has been reached.
 
 **Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
 its frame rail, threshold-against-frames and the masks/baselines reskin.
-**Phase C is most of the way in: §6.1, §6.2, §6.3, §6.4, §6.6, §6.7 and §6.9 all
-landed 2026-08-12** — the five non-failure run-state summaries (which were B5b),
-the inline step composer, change temp against real medians, Stats → Cost, the
-whole of Visual triage (Wipe/Blink, baseline provenance, drift and the region
-breakdown), the ⌘K command palette, and the boot sequence. **§6.5 (Stats →
-Report) and §6.8 (the job ticker) are what remain**, both blocked on an open
-question in §8.
+**Phase C is nearly complete: §6.1, §6.2, §6.3, §6.4, §6.6, §6.7, §6.8 and §6.9
+all landed 2026-08-12** — the five non-failure run-state summaries (which were
+B5b), the inline step composer, change temp against real medians, Stats → Cost,
+the whole of Visual triage (Wipe/Blink, baseline provenance, drift and the region
+breakdown), the ⌘K command palette, the job ticker, and the boot sequence.
+**§6.5 (Stats → Report) is what remains**, and it overlaps §7.3's MCP emit
+adapters — build the emitters once, surface them there.
 Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
@@ -1080,12 +1080,58 @@ Four things the line above does not say:
   ⌘K produces none, and a palette you cannot open from the log search is one you
   learn not to trust.
 
-Still unfilled: `ticker` (§6.8). An affordance for a feature that does not exist
-teaches a shortcut that answers with silence.
+✅ **Both slots are filled as of §6.8**, which closes the debt `top-strip.tsx`
+describes. The ticker keeps the promise the empty slot was making: it renders
+nothing at all when there is nothing to say.
 
-**6.8 Job ticker.** The top-strip live readout — one shape, five readings (one
-run / several / batch / failed / idle-hidden). Needs a global run-state
-subscription the app does not currently expose to the shell.
+**6.8 Job ticker.** ✅ **Done, 2026-08-12.** The top-strip live readout, and the
+last of the two slots `top-strip.tsx` shipped empty in A4. The reading is in
+`renderer/lib/job-ticker.ts`; the subscription and the markup are
+`renderer/main/job-ticker.tsx`.
+
+**The data source, which is §10's open question 2, is `recorder-store` — and the
+codebase had already made the argument.** That store owns the live run map and
+is the one provider mounted for the whole session; its own `runs:changed`
+comment explains why a subscription on a route component is one that is not
+listening on every other route. So: not a new provider, and not a poll.
+
+**Which turned the batch half into a bug fix.** `batch:progress` had exactly one
+subscriber — `batch-view`, a route component — so a batch you started and walked
+away from was invisible from everywhere except the page you had left, and the
+cache invalidation on `batch:done` only fired if you happened to be looking at
+it. Both moved onto the store. The view keeps its own `batch` state, because
+that variable answers a different question — "the record I am displaying", which
+can be a historical one the user picked out of the list — and conflating the two
+is what made the invalidation view-local in the first place.
+
+Four decisions in the reading itself:
+
+- **Idle renders nothing, and that took the most deciding.** An "idle" chip is a
+  permanent word in the chrome that is true and useless: it costs the same
+  attention every time the user looks at the strip and pays it back only in the
+  rare moment it changes. Rendering nothing makes the ticker's PRESENCE the
+  signal, which is what makes a glance work. A passing run gets the same
+  treatment — good news does not belong in the chrome either.
+- **A batch outranks its own member runs.** A batch executes tests, so its
+  members are in the run map too; reporting "3 running" during a batch of eight
+  is a true statement about a smaller thing than the one the user started. Its
+  failure is likewise the batch's, not its last test's — three failures out of
+  eight is one finding, and naming the last member to fail hides the other two.
+- **Every label leads with its state, which is a truncation rule rather than a
+  style one.** The strip gives this a couple of hundred pixels and test names
+  exceed it. The first version put the verb last — "Login — wrong password shows
+  an error failed" — where FAILED was the first thing cut, leaving a red dot
+  beside what read as a name. Found on screen, not in a test.
+- **A failure is a NOTICE, so it expires**, held twelve seconds and measured
+  from when the run ENDED. `RunInfo` gained a `finishedAt` for it: measured from
+  `startedAt`, a run longer than the hold window is already expired when it
+  finishes, so the one notice this exists to give — a long run that failed while
+  the user was elsewhere — is the exact one it would never give.
+
+The pulsing dot is deliberately **not** marked `data-gl-motion="ambient"`.
+`atmosphere.css` already decided this: motion that reports something is not
+decoration, and its own comment names "a run status indicator that must still
+pulse" as the example. Only `still` stops it.
 
 **6.9 Boot sequence.** ✅ **Done, 2026-08-12.** The 2.6s glitch plate, on the
 palette's only true black, wearing the same `echo` treatment as the Home
@@ -1315,9 +1361,12 @@ Not blocking, but each will need an answer before the PR it affects.
    assumption lives on another screen is one the reader has to go looking for
    before they can judge it, which is the failure the requirement was written
    against.
-2. **The `job` ticker's data source** (§6.8). The shell needs a global run-state
-   subscription. Does that come from `recorder-store`, a new provider, or a
-   query?
+2. ~~**The `job` ticker's data source** (§6.8)~~ — ✅ **Answered 2026-08-12:
+   `recorder-store`.** Not a new provider and not a query. It already owns the
+   live run map and is the one provider mounted for the whole session, and its
+   own `runs:changed` comment had already made the argument: a subscription on a
+   route component is not listening on any other route. The live BATCH moved
+   there too, which was a bug fix — see §6.8.
 3. **Report mode's "Where it goes"** (§7.3). Confirmed as emit-only? If any of it
    ever sends, that is a new egress path and needs its own decision entry.
 4. ~~**`check:text-color`'s fate** (§8.3)~~ — answered for now in A5: **keep it**.
