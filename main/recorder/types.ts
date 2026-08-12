@@ -2035,6 +2035,12 @@ export interface AiDebugSession {
   /** Hash of the script the prompt was built from, so a diff computed against a
    *  since-edited script can be flagged instead of silently clobbering it. */
   scriptHash: string | null;
+  /** Which model answered, stamped when the stream started. The auto-apply path
+   *  labels the resulting script-change entry with it, and runs long after the
+   *  panel that chose the model is gone — reading the current setting there
+   *  would name whichever model happens to be selected then. Absent on sessions
+   *  stored before this was recorded. */
+  model?: string;
   startedAt: number;
   updatedAt: number;
   /** Restored from disk with no live context behind it — readable, not re-runnable. */

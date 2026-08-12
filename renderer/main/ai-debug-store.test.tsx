@@ -14,7 +14,7 @@ import * as React from "react";
 
 import { clearToastCalls, toastCalls, toastTexts } from "../__tests__/sonner-stub";
 import { hashScript } from "../lib/ai-debug-sessions";
-import type { AiDebugSession } from "../lib/recorder-types";
+import type { AiDebugSession, ScriptChangeSource } from "../lib/recorder-types";
 import {
   AiDebugProvider,
   runSessionKey,
@@ -736,7 +736,11 @@ describe("script hashing and staleness", () => {
 // Every guard here exists so the auto path can never clobber a user's edit.
 
 /** A run view whose context carries an apply handler, like TestDetailView's. */
-function ViewWithApply({ onApplyScript }: { onApplyScript: (source: string) => Promise<void> }) {
+function ViewWithApply({
+  onApplyScript,
+}: {
+  onApplyScript: (source: string, origin?: ScriptChangeSource) => Promise<void>;
+}) {
   const s = useAiDebug();
   React.useEffect(() => {
     s.openSession({
@@ -875,6 +879,43 @@ describe("finishing while minimized", () => {
     await waitFor(() =>
       expect(toastTexts().some((t) => t.title.includes("Applied the AI fix"))).toBe(true),
     );
+  });
+
+  it("tells the journal this fix landed unread, and which model wrote it", async () => {
+    // `reviewed: false` is what puts an auto-applied fix in the Heals tab's
+    // review queue instead of its history — the safety net for the one thing
+    // this setting's own copy admits it costs: "your script can change without
+    // you reading the change first". Send `true` here and the fix nobody saw
+    // files itself as settled history.
+    h.settings = { autoAcceptAiDebugFixes: true };
+    const onApplyScript = vi.fn(async (_source: string, _origin?: unknown) => {});
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <ViewWithApply onApplyScript={onApplyScript} />
+      </AiDebugProvider>,
+    );
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    await act(async () => {
+      await store.startStream(
+        KEY,
+        [{ role: "user", content: "fix it" }],
+        { scriptHash: hashScript("the script"), model: "claude-sonnet-4" },
+      );
+    });
+    act(() => store.minimize());
+
+    emit("llm:chunk", { requestId: "req-1", delta: CORRECTED_ANSWER });
+    emit("llm:done", { requestId: "req-1" });
+
+    await waitFor(() => expect(onApplyScript).toHaveBeenCalledTimes(1));
+    expect(onApplyScript.mock.calls[0][1]).toEqual({
+      by: "ai-debug",
+      // From the SESSION, not from the current setting: this path runs long
+      // after the panel that chose the model is gone.
+      model: "claude-sonnet-4",
+      reviewed: false,
+    });
   });
 
   it("refuses to auto-apply over a script edited while the model was thinking", async () => {

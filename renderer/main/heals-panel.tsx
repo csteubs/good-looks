@@ -1,4 +1,5 @@
-// Heals tab on a test's detail view — the review queue for Auto-Heal.
+// Heals tab on a test's detail view — the review queue for everything that
+// changes a test without the user writing it.
 //
 // Auto-Heal changes what a step points at. Before the journal, it did that
 // silently whenever the retry succeeded, which is worse than it sounds: a
@@ -6,8 +7,18 @@
 // step was marked passed and the test quietly stopped testing what it was
 // written to test.
 //
+// TWO KINDS OF EVENT LIVE HERE, from two stores. Locator heals, above, and
+// whole-script changes — an AI-debug fix, or a hand edit in the Script tab —
+// which had exactly the same problem and no journal at all: the "Apply AI debug
+// fixes automatically" setting says in its own copy that "your script can
+// change without you reading the change first", and until this panel showed
+// them, nothing recorded that it had. They are merged into one time-ordered
+// list rather than sectioned by kind, because the question the user arrives
+// with is "what has happened to this test", not "what happened to its
+// locators".
+//
 // So this panel's job is not to make healing look clever. It is to make every
-// heal visible, say plainly whether the stored test was changed, and put both
+// change visible, say plainly whether the stored test was changed, and put both
 // directions one click away.
 
 import * as React from "react";
@@ -18,7 +29,13 @@ import { Check, RotateCcw, Wand2 } from "lucide-react";
 import { Btn, TONE, insetRail, toneSurface } from "../theme";
 import { api } from "../lib/api";
 import { formatLocator } from "./refine-selector-dialog";
-import type { HealEntry, Locator, TestRecord } from "../lib/recorder-types";
+import { ScriptChangeRow } from "./script-change-row";
+import type {
+  HealEntry,
+  Locator,
+  ScriptChangeEntry,
+  TestRecord,
+} from "../lib/recorder-types";
 
 function fmtWhen(ms: number): string {
   return new Date(ms).toLocaleString(undefined, {
@@ -146,16 +163,32 @@ function HealRow({
   );
 }
 
+/** The merged list this panel renders: a heal or a script change, with the one
+ *  field both have — when it happened — used to interleave them. Discriminated
+ *  on `kind` rather than on a field only one of them carries, so adding a third
+ *  kind later is a compile error at every branch rather than a silent fallthrough. */
+type Change =
+  | { kind: "heal"; at: number; id: string; entry: HealEntry }
+  | { kind: "script"; at: number; id: string; entry: ScriptChangeEntry };
+
 export function HealsPanel({ test }: { test: TestRecord }) {
   const qc = useQueryClient();
   const heals = useQuery({
     queryKey: ["heals", test.id],
     queryFn: () => api.heals.list(test.id),
   });
+  const scriptChanges = useQuery({
+    queryKey: ["script-changes", test.id],
+    queryFn: () => api.scriptChanges.list(test.id),
+  });
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ["heals", test.id] });
+    void qc.invalidateQueries({ queryKey: ["script-changes", test.id] });
     void qc.invalidateQueries({ queryKey: ["test", test.id] });
+    // A reverted script change rewrites the spec and re-parses the steps, so
+    // the Script and Steps tabs are stale the moment it lands.
+    void qc.invalidateQueries({ queryKey: ["script", test.id] });
   };
 
   const accept = useMutation({
@@ -173,19 +206,82 @@ export function HealsPanel({ test }: { test: TestRecord }) {
     onError: (err: unknown) => toast.error(String(err)),
   });
 
-  const clearSettled = useMutation({
-    mutationFn: () => api.heals.clearSettled(test.id),
+  const keepChange = useMutation({
+    mutationFn: (id: string) => api.scriptChanges.accept(id),
     onSuccess: invalidate,
     onError: (err: unknown) => toast.error(String(err)),
   });
 
-  const entries = heals.data ?? [];
-  const pending = entries.filter((e) => e.status === "pending");
-  const settled = entries.filter((e) => e.status !== "pending");
-  const busy = accept.isPending || revert.isPending;
-  // An applied-but-unreviewed heal is the case worth calling out: the test on
-  // disk has already changed and nobody has looked at it.
-  const appliedPending = pending.filter((e) => e.applied).length;
+  const revertChange = useMutation({
+    mutationFn: (id: string) => api.scriptChanges.revert(id),
+    onSuccess: () => {
+      invalidate();
+      toast.success("Put the previous script back.");
+    },
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+
+  const clearSettled = useMutation({
+    // Both stores, one button. "Clear history" that emptied half the list would
+    // read as a control that didn't work.
+    mutationFn: async () => {
+      await Promise.all([
+        api.heals.clearSettled(test.id),
+        api.scriptChanges.clearSettled(test.id),
+      ]);
+    },
+    onSuccess: invalidate,
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+
+  // Newest first, both kinds interleaved — see the note at the top of the file.
+  const entries: Change[] = React.useMemo(
+    () =>
+      [
+        ...(heals.data ?? []).map(
+          (entry): Change => ({ kind: "heal", at: entry.at, id: entry.id, entry }),
+        ),
+        ...(scriptChanges.data ?? []).map(
+          (entry): Change => ({ kind: "script", at: entry.at, id: entry.id, entry }),
+        ),
+      ].sort((a, b) => b.at - a.at),
+    [heals.data, scriptChanges.data],
+  );
+  const pending = entries.filter((e) => e.entry.status === "pending");
+  const settled = entries.filter((e) => e.entry.status !== "pending");
+  const busy =
+    accept.isPending || revert.isPending || keepChange.isPending || revertChange.isPending;
+  // The case worth calling out: the test on disk has ALREADY changed and nobody
+  // has looked at it. True of an applied heal, and of a script change that was
+  // auto-applied while the AI debug job was minimized — which is the same
+  // hazard arriving by a different route, so it gets the same banner rather
+  // than a second one competing with it.
+  const appliedPending = pending.filter((e) =>
+    e.kind === "heal" ? e.entry.applied : !e.entry.reviewed,
+  ).length;
+
+  const renderRow = (change: Change, actionable: boolean) =>
+    change.kind === "heal" ? (
+      <HealRow
+        key={change.id}
+        entry={change.entry}
+        busy={busy}
+        onAccept={
+          actionable ? (locator) => accept.mutate({ id: change.id, locator }) : () => {}
+        }
+        onRevert={actionable ? () => revert.mutate(change.id) : () => {}}
+      />
+    ) : (
+      <ScriptChangeRow
+        key={change.id}
+        entry={change.entry}
+        busy={busy}
+        onAccept={actionable ? () => keepChange.mutate(change.id) : undefined}
+        // Deliberately offered on a settled row too: the entry holds the only
+        // copy of the previous spec, so "put it back" has nowhere else to go.
+        onRevert={() => revertChange.mutate(change.id)}
+      />
+    );
 
   return (
     <ScrollArea className="h-full">
@@ -195,9 +291,9 @@ export function HealsPanel({ test }: { test: TestRecord }) {
           // every other status in this design uses, so a warning does not need
           // a shape of its own to be read as one.
           <p className="gl-notice" style={{ boxShadow: insetRail(TONE.amber) }}>
-            {appliedPending} step{appliedPending === 1 ? " has" : "s have"} already been changed by
-            Auto-Heal. Review below — a heal that succeeded is not the same as a heal that was
-            right.
+            {appliedPending} change{appliedPending === 1 ? " has" : "s have"} already been made to
+            this test without review. Look below — a change that made the test pass is not the same
+            as a change that was right.
           </p>
         ) : null}
 
@@ -206,25 +302,15 @@ export function HealsPanel({ test }: { test: TestRecord }) {
           {pending.length > 0 ? <span className="gl-chip">{pending.length}</span> : null}
         </div>
 
-        {heals.isLoading ? (
+        {heals.isLoading || scriptChanges.isLoading ? (
           <p className="gl-note">Loading…</p>
         ) : pending.length === 0 ? (
           <p className="gl-note">
-            Nothing to review. Auto-Heal records every locator it changes here, with a way to put it
-            back.
+            Nothing to review. Every locator Auto-Heal changes and every rewrite of this test&rsquo;s
+            script is recorded here, with a way to put it back.
           </p>
         ) : (
-          <div className="flex flex-col gap-2">
-            {pending.map((e) => (
-              <HealRow
-                key={e.id}
-                entry={e}
-                busy={busy}
-                onAccept={(locator) => accept.mutate({ id: e.id, locator })}
-                onRevert={() => revert.mutate(e.id)}
-              />
-            ))}
-          </div>
+          <div className="flex flex-col gap-2">{pending.map((e) => renderRow(e, true))}</div>
         )}
 
         {settled.length > 0 ? (
@@ -240,11 +326,7 @@ export function HealsPanel({ test }: { test: TestRecord }) {
                 Clear history
               </Btn>
             </div>
-            <div className="flex flex-col gap-2">
-              {settled.map((e) => (
-                <HealRow key={e.id} entry={e} busy={busy} onAccept={() => {}} onRevert={() => {}} />
-              ))}
-            </div>
+            <div className="flex flex-col gap-2">{settled.map((e) => renderRow(e, false))}</div>
           </>
         ) : null}
       </div>

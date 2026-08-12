@@ -17,6 +17,7 @@ import type {
   BatchRecord,
   BatchTestResult,
   HealListEntry,
+  ScriptChangeListEntry,
   RecorderSettings,
   RunRecord,
   RunReplay,
@@ -418,6 +419,67 @@ export const HEALS: HealListEntry[] = [
     // and a preview that showed heals landing silently would misrepresent it.
     applied: false,
     status: "pending",
+  },
+];
+
+/** Two spec versions, so the preview's diff is a real diff rather than one
+ *  line against another. */
+const SPEC_BEFORE = [
+  "import { test, expect } from '@playwright/test';",
+  "",
+  "test('login', async ({ page }) => {",
+  "  await page.goto('https://example.test/login');",
+  "  await page.getByTestId('signin').click();",
+  "  await expect(page.getByText('Welcome')).toBeVisible();",
+  "});",
+  "",
+].join("\n");
+
+const SPEC_AFTER = [
+  "import { test, expect } from '@playwright/test';",
+  "",
+  "test('login', async ({ page }) => {",
+  "  await page.goto('https://example.test/login');",
+  "  await page.getByRole('button', { name: 'Sign in' }).click();",
+  "  await expect(page.getByText('Welcome')).toBeVisible({ timeout: 10_000 });",
+  "});",
+  "",
+].join("\n");
+
+/** Typed as the superset for the same reason `HEALS` is: one array serves both
+ *  `scriptChanges:list` and `scriptChanges:listAll`.
+ *
+ *  Both states are here on purpose, because they are the whole point of the
+ *  feature and they render differently. The first landed while the AI debug job
+ *  was minimized — nobody read it, so it is in the review queue. The second is
+ *  a hand edit, which is settled history the moment it is saved. */
+export const SCRIPT_CHANGES: ScriptChangeListEntry[] = [
+  {
+    id: "sc-1",
+    testId: "t-login",
+    testName: "Login — wrong password shows an error",
+    origin: "ai-debug",
+    model: "claude-sonnet-4",
+    reviewed: false,
+    before: SPEC_BEFORE,
+    after: SPEC_AFTER,
+    addedLines: 2,
+    removedLines: 2,
+    status: "pending",
+    at: NOW - 20 * MINUTE,
+  },
+  {
+    id: "sc-2",
+    testId: "t-login",
+    testName: "Login — wrong password shows an error",
+    origin: "manual",
+    reviewed: true,
+    before: SPEC_AFTER,
+    after: SPEC_AFTER.replace("Welcome", "Welcome back"),
+    addedLines: 1,
+    removedLines: 1,
+    status: "accepted",
+    at: NOW - 3 * HOUR,
   },
 ];
 

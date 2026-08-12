@@ -31,6 +31,7 @@
 import {
   BATCHES,
   HEALS,
+  SCRIPT_CHANGES,
   LLM_CONFIG,
   LLM_STATUS,
   REPLAY,
@@ -185,6 +186,7 @@ function seed() {
     tests: structuredClone(TESTS),
     runs: [...structuredClone(RUNS), ...costFiller()],
     heals: structuredClone(HEALS),
+    scriptChanges: structuredClone(SCRIPT_CHANGES),
     settings: structuredClone(SETTINGS),
     llmConfig: structuredClone(LLM_CONFIG),
     // Starts DISCONNECTED, so the preview opens on the state that actually
@@ -778,6 +780,43 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "heals:list": () => state.heals,
     "heals:listAll": () => state.heals,
     "heals:pending": () => state.heals.filter((h) => h.status === "pending"),
+
+    // ── Script changes ───────────────────────────────────────────────────
+    //
+    // Keep and Revert mutate the fixture rather than returning a value and
+    // leaving the row as it was: the whole point of these two buttons is that
+    // the row settles, and a preview where clicking Keep does nothing visible
+    // teaches the opposite of what the app does.
+    "scriptChanges:list": () => state.scriptChanges,
+    "scriptChanges:listAll": () => state.scriptChanges,
+    "scriptChanges:pending": () => state.scriptChanges.filter((c) => c.status === "pending"),
+    "scriptChanges:accept": (p) => {
+      const entry = state.scriptChanges.find((c) => c.id === p?.id);
+      if (entry) entry.status = "accepted";
+      return entry ?? null;
+    },
+    "scriptChanges:revert": (p) => {
+      const entry = state.scriptChanges.find((c) => c.id === p?.id);
+      if (entry) entry.status = "reverted";
+      return entry ?? null;
+    },
+    "scriptChanges:remove": (p) => {
+      const before = state.scriptChanges.length;
+      state.scriptChanges = state.scriptChanges.filter((c) => c.id !== p?.id);
+      return { removed: before - state.scriptChanges.length };
+    },
+    "scriptChanges:clearSettled": (p) => {
+      const before = state.scriptChanges.length;
+      state.scriptChanges = state.scriptChanges.filter(
+        (c) => c.testId !== p?.testId || c.status === "pending",
+      );
+      return { removed: before - state.scriptChanges.length };
+    },
+    "scriptChanges:clearAllSettled": () => {
+      const before = state.scriptChanges.length;
+      state.scriptChanges = state.scriptChanges.filter((c) => c.status === "pending");
+      return { removed: before - state.scriptChanges.length };
+    },
 
     // ── Settings and providers ───────────────────────────────────────────
     "recorder:getSettings": () => state.settings,

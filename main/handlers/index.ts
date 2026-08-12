@@ -41,6 +41,11 @@ import { duplicateTest } from "../services/duplicate-test.js";
 import { importService } from "../services/import-service.js";
 import { testSecretsStore } from "../services/test-secrets-store.js";
 import { healJournalStore } from "../services/heal-journal-store.js";
+import {
+  normalizeScriptChangeOrigin,
+  scriptChangeStore,
+  type ScriptChangeJournal,
+} from "../services/script-change-store.js";
 import { refreshSecretSnapshot } from "../services/secret-redaction.js";
 import { parseSpecDetailed } from "../services/spec-parser.js";
 import { llmService } from "../services/llm-service.js";
@@ -323,6 +328,7 @@ export function registerHandlers(): void {
     await testSecretsStore.clearTest(params.id);
     await refreshSecretSnapshot();
     healJournalStore.deleteTest(params.id);
+    scriptChangeStore.deleteTest(params.id);
     // Tombstone the history: records kept for the aggregates, raw logs deleted.
     runHistoryStore.markTestDeleted(params.id);
     batchHistoryStore.markTestDeleted(params.id);
@@ -684,10 +690,36 @@ export function registerHandlers(): void {
     },
   );
 
-  ipcMain.handle("tests:updateScript", async (_e, params: { id: string; source: string }) => {
-    const rec = testStore.get(params.id);
-    if (!rec) throw new Error("Test not found: " + params.id);
-    rec.scriptPath = testStore.writeScript(rec.id, params.source);
+  /** Write a new spec over a test's script and re-parse its steps.
+   *
+   *  ONE body, two callers — `tests:updateScript` and `scriptChanges:revert` —
+   *  because a revert has to land exactly the way the change it undoes did. Two
+   *  copies would drift, and the direction they'd drift in is a revert that
+   *  restores the file but leaves the Steps tab describing the fix.
+   *
+   *  `journal` is what tells them apart: a revert must NOT record a change of
+   *  its own, or undoing a change would create a second entry to undo. */
+  const writeTestScript = (
+    id: string,
+    source: string,
+    journal: ScriptChangeJournal | null,
+  ) => {
+    const rec = testStore.get(id);
+    if (!rec) throw new Error("Test not found: " + id);
+    // Read the outgoing script BEFORE the write — this is the only moment the
+    // previous spec still exists anywhere, and it is the entire undo.
+    let before = "";
+    if (journal) {
+      try {
+        before = testStore.readScript(id);
+      } catch {
+        // A record whose file is missing still gets its change recorded, just
+        // with nothing to revert to. Losing the journal entry as well would be
+        // the worse of the two failures.
+        before = "";
+      }
+    }
+    rec.scriptPath = testStore.writeScript(rec.id, source);
     rec.scriptEdited = true;
     // Re-parse the steps from the new script so the Steps tab reflects the
     // edited spec (e.g. after applying an AI-suggested fix). Imported tests
@@ -695,7 +727,7 @@ export function registerHandlers(): void {
     // source of truth, so we don't overwrite their parsed steps.
     if (!rec.sourceDir) {
       try {
-        const { steps, skipped } = parseSpecDetailed(params.source);
+        const { steps, skipped } = parseSpecDetailed(source);
         rec.steps = steps;
         rec.stepsDiverged = skipped > 0;
         rec.stepsDivergedReason = skipped > 0 ? "parse" : undefined;
@@ -720,8 +752,101 @@ export function registerHandlers(): void {
     }
     rec.updatedAt = Date.now();
     testStore.save(rec);
+    if (journal) {
+      // The journal must never cost the user their edit. A failure to record
+      // degrades to "no history", exactly as the metrics DB degrades to "no
+      // metrics" — the write to the script already succeeded.
+      try {
+        scriptChangeStore.record({ testId: rec.id, before, after: source, ...journal });
+      } catch (err) {
+        logger.warn("handlers", "Could not journal a script change", {
+          id: rec.id,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     return rec;
+  };
+
+  ipcMain.handle(
+    "tests:updateScript",
+    async (_e, params: { id: string; source: string; origin?: unknown }) => {
+      return writeTestScript(
+        params.id,
+        params.source,
+        normalizeScriptChangeOrigin(params.origin),
+      );
+    },
+  );
+
+  // ── Script-change journal ────────────────────────────────────────────────
+  //
+  // The sibling of the heal journal, for changes to the whole spec rather than
+  // to one step's locator: an AI-debug fix, or a hand edit in the Script tab.
+  // Kept in its own store — see script-change-store.ts for why it must not be
+  // folded into heal-journal.json — and merged with the heals in the renderer,
+  // which is where they are both just "things that changed this test".
+  ipcMain.handle("scriptChanges:list", async (_e, params: { testId: string }) =>
+    scriptChangeStore.list(params.testId),
+  );
+
+  /** Every script change across every test, for the Heals view. The test NAME
+   *  is attached here for the same reason `heals:listAll` does it: a record
+   *  outlives the test it came from, and a bare uuid after a delete is worse
+   *  than saying the test is gone. */
+  ipcMain.handle("scriptChanges:listAll", async () => {
+    const names = new Map(testStore.list().map((t) => [t.id, t.name]));
+    return scriptChangeStore.listAll().map((entry) => ({
+      ...entry,
+      testName: names.get(entry.testId) ?? null,
+    }));
   });
+
+  ipcMain.handle("scriptChanges:pending", async (_e, params: { testId: string }) =>
+    scriptChangeStore.pending(params.testId),
+  );
+
+  /** Keep the change. Status only — unlike a heal, the script was already
+   *  written when the entry was recorded, so there is nothing to apply. */
+  ipcMain.handle("scriptChanges:accept", async (_e, params: { id: string }) => {
+    const entry = scriptChangeStore.get(params.id);
+    if (!entry) throw new Error("Script change not found: " + params.id);
+    return scriptChangeStore.setStatus(params.id, "accepted");
+  });
+
+  /** Put the previous script back.
+   *
+   *  Goes through the same `writeTestScript` the change itself did, so the
+   *  Steps tab is re-parsed from the restored spec rather than left describing
+   *  the change that was just undone — and journals NOTHING, or every undo
+   *  would create a new entry to undo. */
+  ipcMain.handle("scriptChanges:revert", async (_e, params: { id: string }) => {
+    const entry = scriptChangeStore.get(params.id);
+    if (!entry) throw new Error("Script change not found: " + params.id);
+    // An entry whose sources were too large to keep is a record, not an undo.
+    // Refusing here is what stops the UI ever writing an empty spec over a
+    // real one; the row disables its button too, and both are load-bearing.
+    if (entry.truncated) {
+      throw new Error("That change was too large to store, so it can't be undone.");
+    }
+    writeTestScript(entry.testId, entry.before, null);
+    return scriptChangeStore.setStatus(params.id, "reverted");
+  });
+
+  ipcMain.handle("scriptChanges:clearSettled", async (_e, params: { testId: string }) =>
+    scriptChangeStore.clearSettled(params.testId),
+  );
+
+  /** Delete one record. The test keeps whatever the change left it as — which
+   *  makes this the one action that throws the previous script away for good,
+   *  so the UI has to say so before asking. */
+  ipcMain.handle("scriptChanges:remove", async (_e, params: { id: string }) =>
+    scriptChangeStore.remove(params.id),
+  );
+
+  ipcMain.handle("scriptChanges:clearAllSettled", async () =>
+    scriptChangeStore.clearAllSettled(),
+  );
 
   /** Wave off the "steps and script disagree" warning for this test. Note what
    *  it does NOT do: `stepsDiverged` stays true, because the two really are out

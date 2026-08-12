@@ -28,7 +28,13 @@ import {
   type StartDecision,
 } from "../lib/ai-debug-sessions";
 import { extractCorrectedScript } from "../lib/parse-llm-response";
-import type { AiDebugKind, AiDebugSession, AiDebugStatus, TestSpeed } from "../lib/recorder-types";
+import type {
+  AiDebugKind,
+  AiDebugSession,
+  AiDebugStatus,
+  ScriptChangeSource,
+  TestSpeed,
+} from "../lib/recorder-types";
 import type { LlmErrorKind, LlmMessage } from "../lib/llm-types";
 
 /** Metadata for one session — everything except the streamed text. */
@@ -61,7 +67,9 @@ export interface AiDebugRunContext {
   /** Whether that run recorded any Auto-Heal failure, which is where the page
    *  structure comes from. Independent of logsAvailable — different setting. */
   structureAvailable?: boolean;
-  onApplyScript?: (source: string) => Promise<void>;
+  /** `origin` reaches the script-change journal, which is what makes an applied
+   *  fix visible (and undoable) in the Heals tab afterwards. */
+  onApplyScript?: (source: string, origin?: ScriptChangeSource) => Promise<void>;
 }
 
 export interface AiDebugStepContext {
@@ -329,7 +337,14 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
         fresh
       ) {
         try {
-          await ctx.onApplyScript(corrected);
+          // `reviewed: false` is the whole point of this path: the fix landed
+          // while the job was minimized, so nobody has read it. That is what
+          // puts it in the Heals tab's review queue rather than its history.
+          await ctx.onApplyScript(corrected, {
+            by: "ai-debug",
+            model: meta.model ?? undefined,
+            reviewed: false,
+          });
           toast.success(`Applied the AI fix to “${testName}” automatically.`);
           return;
         } catch {
@@ -676,6 +691,12 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
           // Stamp what this prompt was built from, so a later approval can tell
           // whether the script has moved on since.
           ...(options?.scriptHash ? { scriptHash: options.scriptHash } : {}),
+          // And WHICH MODEL is answering. Not for display here — for the
+          // script-change journal, which labels an applied fix "AI Debug -
+          // <model>". The auto-apply path runs long after the panel that chose
+          // the model has been minimized, and reading the current setting there
+          // would name whichever model the user has selected NOW.
+          ...(options?.model ? { model: options.model } : {}),
         },
         { persist: false },
       );

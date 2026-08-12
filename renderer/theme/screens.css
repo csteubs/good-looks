@@ -262,6 +262,14 @@
   color: var(--gl-violet);
 }
 
+/* A script change's glyph. NOT violet, unlike the heal beside it: violet marks
+   AI-adjacent machinery, and half of these rows are the user's own edit. Which
+   one a row is gets said in words on the line below, where it can't be
+   misread by hue alone. */
+.gl-heals-row-icon.gl-heals-row-icon-plain {
+  color: var(--gl-tx-2);
+}
+
 .gl-heals-row-icon svg {
   width: 13px;
   height: 13px;

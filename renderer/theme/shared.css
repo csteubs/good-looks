@@ -476,6 +476,50 @@
   gap: 6px;
 }
 
+/* ── Script-change row ─────────────────────────────────────────────────
+   A whole-spec change — an AI-debug fix, or a hand edit — shown in the same
+   list as the heals above. It REUSES `.gl-heal-row` and its head/actions
+   deliberately: the two are different kinds of the same event ("something
+   changed this test"), and giving one its own frame would read as two lists
+   stacked rather than one list of two kinds.
+
+   What differs is only what the row can't share. The icon takes the text ramp
+   rather than violet, because violet marks AI-adjacent chrome and half of
+   these rows are the user's own edit; the AI ones say so with a violet CHIP,
+   which is a claim about that row rather than about the shape. */
+.gl-heal-head-icon.gl-heal-head-icon-plain {
+  color: var(--gl-tx-2);
+}
+
+/* "+12 −7 lines" — the whole body of a collapsed row, so it sits where the
+   `was`/`now` pair sits on a heal. Mono, because the numbers are the content
+   and a proportional font makes a column of them ragged. */
+.gl-script-change-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-2);
+}
+
+.gl-script-change-added {
+  color: var(--gl-phos);
+}
+
+.gl-script-change-removed {
+  color: var(--gl-red);
+}
+
+/* The expanded diff. Capped and scrolled: a corrected spec can be the whole
+   file, and a row that grows to two hundred lines pushes every other entry in
+   the review queue off the screen — which is the one thing this list exists to
+   keep in front of the user. */
+.gl-script-change-diff {
+  max-height: 320px;
+  overflow: auto;
+}
+
 /* The amber block: "a heal that succeeded is not the same as a heal that was
    right." An inset rail rather than a filled banner — the same motif every
    other status in this design uses, so a warning does not need a shape of its
