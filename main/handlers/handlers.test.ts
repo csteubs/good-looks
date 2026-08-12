@@ -30,6 +30,7 @@ import { recorderDebugStore } from "../services/recorder-debug-store.js";
 import { recorderSettingsStore } from "../services/recorder-settings-store.js";
 import { annotationStore } from "../services/annotation-store.js";
 import { healJournalStore } from "../services/heal-journal-store.js";
+import { MAX_SOURCE_BYTES, scriptChangeStore } from "../services/script-change-store.js";
 import { artifactStore } from "../services/artifact-store.js";
 import { DELETED_TEST_NAME } from "../recorder/types.js";
 import type { Step, TestRecord } from "../recorder/types.js";
@@ -1251,5 +1252,205 @@ describe("tests:delete — what a deleted test leaves behind", () => {
 
   it("does not throw for an id that never existed", async () => {
     await expect(invokeHandler("tests:delete", { id: "never-was" })).resolves.toBeUndefined();
+  });
+});
+
+describe("the script-change journal — recording a whole-spec change, and undoing it", () => {
+  /** Seed a test with a script actually on disk. */
+  function seedWithScript(id: string, source: string): TestRecord {
+    const rec = seedTest(id);
+    rec.scriptPath = testStore.writeScript(id, source);
+    testStore.save(rec);
+    return rec;
+  }
+
+  const ORIGINAL =
+    "import { test } from '@playwright/test';\ntest('a', async ({ page }) => {});\n";
+  const FIXED = "import { test } from '@playwright/test';\ntest('b', async ({ page }) => {});\n";
+
+  it("records the previous script, which is the only copy of it that survives", async () => {
+    // `tests:updateScript` overwrites the file and re-parses the steps, so
+    // after this call the old spec exists nowhere else on disk.
+    const rec = seedWithScript("t-sc-record", ORIGINAL);
+    await invokeHandler("tests:updateScript", { id: rec.id, source: FIXED });
+
+    const [entry] = scriptChangeStore.list(rec.id);
+    expect(entry.before).toBe(ORIGINAL);
+    expect(entry.after).toBe(FIXED);
+  });
+
+  it("treats a caller that says nothing as a manual edit the user watched land", async () => {
+    // Every call site predating the journal passes no origin, and none of them
+    // should start filling the review queue.
+    const rec = seedWithScript("t-sc-default", ORIGINAL);
+    await invokeHandler("tests:updateScript", { id: rec.id, source: FIXED });
+
+    const [entry] = scriptChangeStore.list(rec.id);
+    expect(entry.origin).toBe("manual");
+    expect(entry.reviewed).toBe(true);
+    expect(entry.status).toBe("accepted");
+  });
+
+  it("queues an AI fix nobody saw land, and settles one that was read first", async () => {
+    const auto = seedWithScript("t-sc-auto", ORIGINAL);
+    await invokeHandler("tests:updateScript", {
+      id: auto.id,
+      source: FIXED,
+      origin: { by: "ai-debug", model: "claude-sonnet-4", reviewed: false },
+    });
+    const read = seedWithScript("t-sc-read", ORIGINAL);
+    await invokeHandler("tests:updateScript", {
+      id: read.id,
+      source: FIXED,
+      origin: { by: "ai-debug", model: "claude-sonnet-4", reviewed: true },
+    });
+
+    expect(scriptChangeStore.list(auto.id)[0]).toMatchObject({
+      origin: "ai-debug",
+      model: "claude-sonnet-4",
+      status: "pending",
+    });
+    expect(scriptChangeStore.list(read.id)[0].status).toBe("accepted");
+  });
+
+  it("rebuilds a hostile origin rather than filtering it", async () => {
+    const rec = seedWithScript("t-sc-hostile", ORIGINAL);
+    await invokeHandler("tests:updateScript", {
+      id: rec.id,
+      source: FIXED,
+      origin: {
+        by: "<script>alert(1)</script>",
+        model: "evil",
+        reviewed: "no",
+        // Unknown keys must not survive into the stored entry, or the next
+        // field wired into a row is a hole again.
+        status: "accepted",
+        truncated: true,
+      },
+    });
+
+    const [entry] = scriptChangeStore.list(rec.id);
+    expect(entry.origin).toBe("manual");
+    // A model is only kept for an ai-debug change, and this one isn't.
+    expect(entry.model).toBeUndefined();
+    // "no" is not `false`, so it does not mean unreviewed.
+    expect(entry.reviewed).toBe(true);
+    expect(entry.truncated).toBeUndefined();
+  });
+
+  it("strips control characters from a model name and caps its length", async () => {
+    const rec = seedWithScript("t-sc-model", ORIGINAL);
+    await invokeHandler("tests:updateScript", {
+      id: rec.id,
+      source: FIXED,
+      origin: { by: "ai-debug", model: `a\u0000b\u001b[31m${"z".repeat(200)}`, reviewed: true },
+    });
+
+    const model = scriptChangeStore.list(rec.id)[0].model ?? "";
+    // Asserted by codepoint rather than by regex: a character class of literal
+    // control characters is exactly what `no-control-regex` exists to stop.
+    const control = [...model].filter((c) => {
+      const code = c.charCodeAt(0);
+      return code < 0x20 || code === 0x7f;
+    });
+    expect(control).toEqual([]);
+    expect(model.length).toBeLessThanOrEqual(80);
+  });
+
+  it("records nothing when the save did not change the script", async () => {
+    const rec = seedWithScript("t-sc-noop", ORIGINAL);
+    await invokeHandler("tests:updateScript", { id: rec.id, source: ORIGINAL });
+
+    expect(scriptChangeStore.list(rec.id)).toEqual([]);
+  });
+
+  it("reverts by writing the previous spec back and re-parsing its steps", async () => {
+    const rec = seedWithScript(
+      "t-sc-revert",
+      "import { test, expect } from '@playwright/test';\n" +
+        "test('t', async ({ page }) => {\n  await page.goto('https://before.test/');\n});\n",
+    );
+    await invokeHandler("tests:updateScript", {
+      id: rec.id,
+      source:
+        "import { test, expect } from '@playwright/test';\n" +
+        "test('t', async ({ page }) => {\n  await page.goto('https://after.test/');\n});\n",
+      origin: { by: "ai-debug", model: "m", reviewed: false },
+    });
+    expect(testStore.get(rec.id)?.steps[0]).toMatchObject({ url: "https://after.test/" });
+
+    const [entry] = scriptChangeStore.list(rec.id);
+    await invokeHandler("scriptChanges:revert", { id: entry.id });
+
+    expect(testStore.readScript(rec.id)).toContain("https://before.test/");
+    // The step list has to come back too. A revert that restores the file but
+    // leaves the Steps tab describing the fix reads as a control that half
+    // worked, and nothing would report it.
+    expect(testStore.get(rec.id)?.steps[0]).toMatchObject({ url: "https://before.test/" });
+    expect(scriptChangeStore.get(entry.id)?.status).toBe("reverted");
+  });
+
+  it("does not journal the revert itself", async () => {
+    // Otherwise every undo leaves a new entry to undo, and the list grows by
+    // one each time the user puts something back.
+    const rec = seedWithScript("t-sc-revert-once", ORIGINAL);
+    await invokeHandler("tests:updateScript", { id: rec.id, source: FIXED });
+    const [entry] = scriptChangeStore.list(rec.id);
+
+    await invokeHandler("scriptChanges:revert", { id: entry.id });
+
+    expect(scriptChangeStore.list(rec.id)).toHaveLength(1);
+  });
+
+  it("refuses to revert an entry whose sources were too large to keep", async () => {
+    // `before` is empty on one of these, so a revert that went ahead would
+    // write an empty spec over a working test.
+    const rec = seedWithScript("t-sc-truncated", ORIGINAL);
+    const entry = scriptChangeStore.record({
+      testId: rec.id,
+      origin: "manual",
+      reviewed: true,
+      before: "x".repeat(MAX_SOURCE_BYTES + 1),
+      after: FIXED,
+    })!;
+
+    await expect(invokeHandler("scriptChanges:revert", { id: entry.id })).rejects.toThrow();
+    expect(testStore.readScript(rec.id)).toBe(ORIGINAL);
+  });
+
+  it("accepts without touching the script — it was already written", async () => {
+    const rec = seedWithScript("t-sc-accept", ORIGINAL);
+    await invokeHandler("tests:updateScript", {
+      id: rec.id,
+      source: FIXED,
+      origin: { by: "ai-debug", model: "m", reviewed: false },
+    });
+    const [entry] = scriptChangeStore.list(rec.id);
+
+    await invokeHandler("scriptChanges:accept", { id: entry.id });
+
+    expect(scriptChangeStore.get(entry.id)?.status).toBe("accepted");
+    expect(testStore.readScript(rec.id)).toBe(FIXED);
+  });
+
+  it("throws for an unknown id rather than reporting success", async () => {
+    await expect(invokeHandler("scriptChanges:revert", { id: "nope" })).rejects.toThrow();
+    await expect(invokeHandler("scriptChanges:accept", { id: "nope" })).rejects.toThrow();
+  });
+
+  it("attaches the test name for the cross-test view, and drops the lot on delete", async () => {
+    const rec = seedWithScript("t-sc-named", ORIGINAL);
+    await invokeHandler("tests:updateScript", { id: rec.id, source: FIXED });
+
+    const listed = await invokeHandler<Array<{ testId: string; testName: string | null }>>(
+      "scriptChanges:listAll",
+    );
+    expect(listed.find((e) => e.testId === rec.id)?.testName).toBe(rec.name);
+
+    await invokeHandler("tests:delete", { id: rec.id });
+    const after = await invokeHandler<Array<{ testId: string }>>("scriptChanges:listAll");
+    // Deleting the test takes its journal with it, for the same reason the heal
+    // journal goes: nothing is left that could act on the entry.
+    expect(after.some((e) => e.testId === rec.id)).toBe(false);
   });
 });

@@ -57,6 +57,7 @@ import {
   RUN_BROWSERS,
   RUN_BROWSER_LABELS,
   type RunBrowser,
+  type ScriptChangeSource,
   type Step,
   type TestRecord,
 } from "../lib/recorder-types";
@@ -176,6 +177,13 @@ export function TestDetailView() {
   // count is visible without opening the tab — an unreviewed heal means the
   // test may already have been changed underneath the user.
   const healsQuery = useQuery({ queryKey: ["heals", id], queryFn: () => api.heals.list(id) });
+  // The other half of that badge: whole-script changes. Fetched here for the
+  // same reason, and it is what decides whether an IMPORTED test gets the tab
+  // at all — see the trigger below.
+  const scriptChangesQuery = useQuery({
+    queryKey: ["script-changes", id],
+    queryFn: () => api.scriptChanges.list(id),
+  });
   // Badged on the Accessibility tab, from the most recent run that actually
   // checked — same reasoning as the Heals count: an unaccepted violation the
   // user has to open a tab to discover is one they won't discover. Shares the
@@ -186,7 +194,13 @@ export function TestDetailView() {
     queryFn: () => api.recorder.getSettings(),
   });
   const test = testQuery.data;
-  const pendingHeals = (healsQuery.data ?? []).filter((h) => h.status === "pending").length;
+  const scriptChanges = scriptChangesQuery.data ?? [];
+  // One badge for both stores. They are two routes to the same hazard — the
+  // stored test changed and nobody has looked — and two numbers on one tab
+  // would be asking the user to add them up.
+  const pendingHeals =
+    (healsQuery.data ?? []).filter((h) => h.status === "pending").length +
+    scriptChanges.filter((c) => c.status === "pending").length;
   const a11yNewSteps = latestA11yRun(runsQuery.data ?? [], id)?.a11yNewSteps ?? 0;
   const runInfo = runs[id];
 
@@ -380,19 +394,21 @@ export function TestDetailView() {
   );
 
   const applyScript = React.useCallback(
-    async (source: string) => {
+    async (source: string, origin?: ScriptChangeSource) => {
       // Snapshot the steps BEFORE the write. Applying a fix goes through
       // `tests:updateScript`, which re-parses the whole spec and replaces the
       // step list wholesale — so this is the only moment the previous list
       // still exists anywhere.
       const before = qc.getQueryData<TestRecord | null>(["test", id])?.steps ?? [];
-      const updated = await api.tests.updateScript(id, source);
+      const updated = await api.tests.updateScript(id, source, origin);
       // Diff off the handler's return value rather than a refetch: the refetch
       // is async and the highlight would race it, and the record it returns is
       // the same one the invalidation is about to put in the cache anyway.
       setNewStepIds(computeNewStepIds(before, updated?.steps ?? []));
       qc.invalidateQueries({ queryKey: ["script", id] });
       qc.invalidateQueries({ queryKey: ["test", id] });
+      // The Heals tab now has a new entry, and its badge counts them.
+      qc.invalidateQueries({ queryKey: ["script-changes", id] });
     },
     [id, qc],
   );
@@ -484,9 +500,13 @@ export function TestDetailView() {
   };
 
   const saveScript = async () => {
-    await api.tests.updateScript(id, scriptDraft);
+    // No origin: a hand edit the user is looking at as they save it. The
+    // backend defaults to exactly that, but saying it here is what keeps the
+    // Heals tab's labels honest if the default ever changes.
+    await api.tests.updateScript(id, scriptDraft, { by: "manual", reviewed: true });
     qc.invalidateQueries({ queryKey: ["script", id] });
     qc.invalidateQueries({ queryKey: ["test", id] });
+    qc.invalidateQueries({ queryKey: ["script-changes", id] });
     setEditingScript(false);
   };
 
@@ -506,9 +526,10 @@ export function TestDetailView() {
   // edited script is preserved on disk before the trainer can regenerate it.
   const saveAndEditInTrainer = async () => {
     if (editingScript) {
-      await api.tests.updateScript(id, scriptDraft);
+      await api.tests.updateScript(id, scriptDraft, { by: "manual", reviewed: true });
       qc.invalidateQueries({ queryKey: ["script", id] });
       qc.invalidateQueries({ queryKey: ["test", id] });
+      qc.invalidateQueries({ queryKey: ["script-changes", id] });
       setEditingScript(false);
     }
     start(test.url, test.name, test.id);
@@ -829,7 +850,14 @@ export function TestDetailView() {
                     {(test.variables?.length ?? 0) > 0 ? ` (${test.variables?.length})` : ""}
                   </TabsTrigger>
                 )}
-                {imported ? null : (
+                {/* Hidden for an imported test only while it would be EMPTY,
+                    which is the same rule the two neighbours state — "a tab
+                    that could only ever be empty is worse than no tab". An
+                    imported test can't be healed (its steps aren't the source
+                    of truth), but its script is exactly the kind that gets
+                    hand-edited, and hiding the tab outright would put that
+                    history somewhere the user cannot reach. */}
+                {imported && scriptChanges.length === 0 ? null : (
                   <TabsTrigger value="heals">
                     Heals
                     {pendingHeals > 0 ? ` (${pendingHeals})` : ""}

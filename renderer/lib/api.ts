@@ -9,6 +9,9 @@ import type {
   FlakeReport,
   HealEntry,
   HealListEntry,
+  ScriptChangeEntry,
+  ScriptChangeListEntry,
+  ScriptChangeSource,
   SecretStatus,
   TestVariable,
   AiDebugSession,
@@ -178,8 +181,11 @@ export const api = {
     /** Copy a test — steps, script and settings, none of its history. Returns
      *  the new record, whose name is `<original> [n]`. */
     duplicate: (id: string) => ipc().invoke<TestRecord>("tests:duplicate", { id }),
-    updateScript: (id: string, source: string) =>
-      ipc().invoke<TestRecord>("tests:updateScript", { id, source }),
+    /** `origin` says who made the change, for the script-change journal. Absent
+     *  means a manual edit the user watched land — the behaviour every caller
+     *  had before the journal existed. */
+    updateScript: (id: string, source: string, origin?: ScriptChangeSource) =>
+      ipc().invoke<TestRecord>("tests:updateScript", { id, source, origin }),
     /** `regenerate` rebuilds the .spec.ts from these steps even when it was
      *  hand-edited / imported / model-written. Without it such a test keeps its
      *  script and is marked diverged — the steps are saved, the run is not
@@ -274,6 +280,27 @@ export const api = {
     remove: (id: string) => ipc().invoke<{ removed: number }>("heals:remove", { id }),
     /** Clear settled heals across every test; pending ones are kept. */
     clearAllSettled: () => ipc().invoke<{ removed: number }>("heals:clearAllSettled"),
+  },
+  /** Whole-script changes — an AI-debug fix, or a hand edit in the Script tab.
+   *  The heal journal's sibling; the two are merged in the Heals surfaces. */
+  scriptChanges: {
+    list: (testId: string) =>
+      ipc().invoke<ScriptChangeEntry[]>("scriptChanges:list", { testId }),
+    listAll: () => ipc().invoke<ScriptChangeListEntry[]>("scriptChanges:listAll"),
+    pending: (testId: string) =>
+      ipc().invoke<ScriptChangeEntry[]>("scriptChanges:pending", { testId }),
+    /** Keep the change. Status only: the script was written when the entry was
+     *  recorded, so unlike a heal there is nothing left to apply. */
+    accept: (id: string) =>
+      ipc().invoke<ScriptChangeEntry | null>("scriptChanges:accept", { id }),
+    /** Write the previous spec back and re-parse the steps from it. */
+    revert: (id: string) =>
+      ipc().invoke<ScriptChangeEntry | null>("scriptChanges:revert", { id }),
+    clearSettled: (testId: string) =>
+      ipc().invoke<{ removed: number }>("scriptChanges:clearSettled", { testId }),
+    /** Delete one record — and with it the last copy of the previous script. */
+    remove: (id: string) => ipc().invoke<{ removed: number }>("scriptChanges:remove", { id }),
+    clearAllSettled: () => ipc().invoke<{ removed: number }>("scriptChanges:clearAllSettled"),
   },
   batch: {
     run: (

@@ -19,15 +19,20 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import type { HealListEntry } from "../lib/recorder-types";
+import type { HealListEntry, ScriptChangeListEntry } from "../lib/recorder-types";
 import { PAGE_SIZE } from "../lib/paginate";
 import { HealsView } from "./heals-view";
 
 let journal: HealListEntry[] = [];
+let changes: ScriptChangeListEntry[] = [];
 const accept = vi.fn(async (_id: string, _locator?: unknown) => null);
 const revert = vi.fn(async (_id: string) => null);
 const remove = vi.fn(async (_id: string) => ({ removed: 1 }));
 const clearAllSettled = vi.fn(async () => ({ removed: 2 }));
+const acceptChange = vi.fn(async (_id: string) => null);
+const revertChange = vi.fn(async (_id: string) => null);
+const removeChange = vi.fn(async (_id: string) => ({ removed: 1 }));
+const clearAllSettledChanges = vi.fn(async () => ({ removed: 0 }));
 
 vi.mock("../lib/api", () => ({
   api: {
@@ -38,8 +43,33 @@ vi.mock("../lib/api", () => ({
       remove: (id: string) => remove(id),
       clearAllSettled: () => clearAllSettled(),
     },
+    scriptChanges: {
+      listAll: async () => changes,
+      accept: (id: string) => acceptChange(id),
+      revert: (id: string) => revertChange(id),
+      remove: (id: string) => removeChange(id),
+      clearAllSettled: () => clearAllSettledChanges(),
+    },
   },
 }));
+
+function scriptChange(partial: Partial<ScriptChangeListEntry> = {}): ScriptChangeListEntry {
+  return {
+    id: "sc1",
+    testId: "t1",
+    testName: "Checkout",
+    origin: "ai-debug",
+    model: "claude-sonnet-4",
+    reviewed: false,
+    before: "one\ntwo\n",
+    after: "one\nthree\n",
+    addedLines: 1,
+    removedLines: 1,
+    status: "pending",
+    at: 1_700_000_000_000,
+    ...partial,
+  };
+}
 
 function heal(partial: Partial<HealListEntry> = {}): HealListEntry {
   return {
@@ -95,12 +125,13 @@ function rowLabels(): string[] {
 beforeEach(() => {
   vi.clearAllMocks();
   journal = [];
+  changes = [];
 });
 
 describe("HealsView", () => {
   it("explains itself when nothing has been healed", async () => {
     renderView();
-    expect(await screen.findByText(/No heals yet/i)).toBeTruthy();
+    expect(await screen.findByText(/Nothing yet/i)).toBeTruthy();
   });
 
   it("shows at most 50 heals per page", async () => {
@@ -130,7 +161,7 @@ describe("HealsView", () => {
     journal = manyHeals(120);
     renderView();
     await screen.findByText("step 0");
-    expect(screen.getByText("1–50 of 120 heals")).toBeTruthy();
+    expect(screen.getByText("1–50 of 120 records")).toBeTruthy();
     expect(screen.getByText(/Page 1 of 3/)).toBeTruthy();
   });
 
@@ -163,7 +194,7 @@ describe("HealsView", () => {
   it("prompts for a selection before one is made", async () => {
     journal = manyHeals(3);
     renderView();
-    expect(await screen.findByText(/Select a heal/i)).toBeTruthy();
+    expect(await screen.findByText(/Select a record/i)).toBeTruthy();
   });
 
   it("shows the details of the heal you clicked", async () => {
@@ -283,7 +314,7 @@ describe("HealsView", () => {
       heal({ id: "c", status: "reverted" }),
     ];
     renderView();
-    expect(await screen.findByText(/3 heals recorded · 1 needing review/i)).toBeTruthy();
+    expect(await screen.findByText(/3 records · 1 needing review/i)).toBeTruthy();
   });
 
   it("offers no accept or revert on a settled heal", async () => {
@@ -381,7 +412,7 @@ describe("HealsView deleting records", () => {
 
     confirmDelete(await openConfirm(/^delete$/i));
     await waitFor(() => expect(remove).toHaveBeenCalled());
-    expect(await screen.findByText(/Select a heal/i)).toBeTruthy();
+    expect(await screen.findByText(/Select a record/i)).toBeTruthy();
   });
 
   it("clears settled history in bulk, keeping what still needs review", async () => {
@@ -393,7 +424,7 @@ describe("HealsView deleting records", () => {
     renderView();
     const dialog = await openConfirm(/clear history/i);
     // The count is the user's only preview of what a bulk delete will take.
-    expect(within(dialog).getByText(/delete 2 settled heals\?/i)).toBeTruthy();
+    expect(within(dialog).getByText(/delete 2 settled records\?/i)).toBeTruthy();
     expect(within(dialog).getByText(/needing review are kept/i)).toBeTruthy();
     confirmDelete(dialog);
     await waitFor(() => expect(clearAllSettled).toHaveBeenCalled());
@@ -413,8 +444,128 @@ describe("HealsView deleting records", () => {
     journal = [heal({ id: "a", status: "pending" }), heal({ id: "b", status: "accepted" })];
     renderView();
     const dialog = await openConfirm(/clear history/i);
-    expect(within(dialog).getByText(/delete 1 settled heal\?/i)).toBeTruthy();
+    expect(within(dialog).getByText(/delete 1 settled record\?/i)).toBeTruthy();
     expect(within(dialog).queryByText(/all heals|everything/i)).toBeNull();
+  });
+});
+
+describe("HealsView — script changes", () => {
+  /** Same helper as the block above, which scopes its own. */
+  async function openConfirm(name: RegExp) {
+    fireEvent.click(await screen.findByRole("button", { name }));
+    return await screen.findByRole("alertdialog");
+  }
+
+  it("lists them beside heals, interleaved by time rather than grouped by kind", async () => {
+    // The question this screen answers is "what has been changing my tests".
+    // Two lists sorted separately would make the user read both to answer it.
+    journal = [heal({ id: "h-old", stepLabel: "step old", at: 1000 })];
+    changes = [scriptChange({ id: "sc-new", at: 3000 })];
+    renderView();
+
+    await screen.findByText(/AI Debug - claude-sonnet-4/i);
+    const rows = screen
+      .getAllByRole("button")
+      .map((b) => b.textContent ?? "")
+      .filter((t) => t.includes("step old") || t.includes("Script"));
+    expect(rows[0]).toContain("Script");
+    expect(rows[1]).toContain("step old");
+  });
+
+  it("names the model that wrote the fix", async () => {
+    changes = [scriptChange({ model: "llama3.1:70b" })];
+    renderView();
+    expect(await screen.findByText(/AI Debug - llama3\.1:70b/i)).toBeTruthy();
+  });
+
+  it("degrades to a bare label when the entry has no model", async () => {
+    // Sessions stored before the model was stamped have none, and "AI Debug -
+    // undefined" is worse than saying less.
+    changes = [scriptChange({ model: undefined })];
+    renderView();
+    const labels = await screen.findAllByText(/AI Debug/i);
+    expect(labels.every((l) => !/undefined/.test(l.textContent ?? ""))).toBe(true);
+  });
+
+  it("calls a hand edit a hand edit", async () => {
+    changes = [scriptChange({ origin: "manual", model: undefined, reviewed: true, status: "accepted" })];
+    renderView();
+    expect(await screen.findByText(/Edited by hand/i)).toBeTruthy();
+    expect(screen.queryByText(/AI Debug/i)).toBeNull();
+  });
+
+  it("shows the diff in the detail pane, so the change can be judged", async () => {
+    changes = [scriptChange({ before: "keep\ndrop\n", after: "keep\nadd\n" })];
+    renderView();
+    fireEvent.click(await screen.findByText(/Script ·/));
+
+    // The diff itself, not just a count — the count can be right while the
+    // stored sources are the wrong pair.
+    await waitFor(() => expect(screen.getByText(/drop/)).toBeTruthy());
+    expect(screen.getByText(/add/)).toBeTruthy();
+  });
+
+  it("warns that an unreviewed change is already in the test", async () => {
+    changes = [scriptChange({ status: "pending", reviewed: false })];
+    renderView();
+    fireEvent.click(await screen.findByText(/Script ·/));
+    expect(await screen.findByText(/rewritten without review/i)).toBeTruthy();
+  });
+
+  it("keeps and reverts through the script-change API, not the heal one", async () => {
+    // The two journals are separate stores; crossing them would report success
+    // and settle nothing.
+    changes = [scriptChange({ id: "sc-x" })];
+    renderView();
+    fireEvent.click(await screen.findByText(/Script ·/));
+
+    fireEvent.click(await screen.findByRole("button", { name: /^keep$/i }));
+    await waitFor(() => expect(acceptChange).toHaveBeenCalledWith("sc-x"));
+    fireEvent.click(screen.getByRole("button", { name: /^revert$/i }));
+    await waitFor(() => expect(revertChange).toHaveBeenCalledWith("sc-x"));
+    expect(accept).not.toHaveBeenCalled();
+    expect(revert).not.toHaveBeenCalled();
+  });
+
+  it("still offers Revert on a settled change — the record is the only copy", async () => {
+    changes = [scriptChange({ status: "accepted", reviewed: true })];
+    renderView();
+    fireEvent.click(await screen.findByText(/Script ·/));
+    await screen.findByRole("button", { name: /^revert$/i });
+    // Settled, so the review decision is gone but the undo is not.
+    expect(screen.queryByRole("button", { name: /^keep$/i })).toBeNull();
+  });
+
+  it("refuses to offer an undo it does not have", async () => {
+    // A truncated entry stored no sources, so a Revert that went ahead would
+    // write an empty spec over a working test.
+    changes = [scriptChange({ truncated: true, before: "", after: "" })];
+    renderView();
+    fireEvent.click(await screen.findByText(/Script ·/));
+    const revertBtn = await screen.findByRole("button", { name: /^revert$/i });
+    expect((revertBtn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("says a deleted record is the last copy of the previous script", async () => {
+    changes = [scriptChange()];
+    renderView();
+    fireEvent.click(await screen.findByText(/Script ·/));
+    const dialog = await openConfirm(/^delete$/i);
+    expect(within(dialog).getByText(/only copy of the script/i)).toBeTruthy();
+  });
+
+  it("counts both journals in the header and the bulk clear", async () => {
+    journal = [heal({ id: "h1", status: "accepted" })];
+    changes = [scriptChange({ id: "sc1", status: "pending" })];
+    renderView();
+    expect(await screen.findByText(/2 records · 1 needing review/i)).toBeTruthy();
+
+    const dialog = await openConfirm(/clear history/i);
+    fireEvent.click(within(dialog).getByRole("button", { name: /^delete$/i }));
+    // Both stores, one button: a "Clear history" that emptied half the list
+    // reads as a control that didn't work.
+    await waitFor(() => expect(clearAllSettled).toHaveBeenCalled());
+    expect(clearAllSettledChanges).toHaveBeenCalled();
   });
 });
 
