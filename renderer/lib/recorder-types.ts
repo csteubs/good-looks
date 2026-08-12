@@ -484,6 +484,20 @@ export interface SecretStatus {
 /** A single completed test run (mirror of main/recorder/types.ts RunRecord). */
 export type RunRecordKind = "run" | "baseline-update";
 
+/** What an emit reports back. REDESIGN §6.5 — note there is no `text` field
+ *  and there is not meant to be: the renderer never holds the emitted bytes,
+ *  because redaction happens in the main process and a payload that crossed the
+ *  boundary first would be redacted only in a copy. */
+export interface EmitResult {
+  /** Where it landed, or null when the user cancelled the save dialog. */
+  path: string | null;
+  bytes: number;
+  /** Runs (or metric rows) that went in, so the panel can say what the file
+   *  covers rather than leaving the user to guess. */
+  count: number;
+  cancelled: boolean;
+}
+
 export interface RunRecord {
   id: string;
   testId: string;

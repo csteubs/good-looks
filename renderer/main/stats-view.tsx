@@ -38,6 +38,7 @@ import { FlakePanel } from "./flake-panel";
 import { StepHealthPanel } from "./step-health-panel";
 import { SuiteCostPanel } from "./suite-cost-panel";
 import { CostPanel } from "./cost-panel";
+import { ReportPanel } from "./report-panel";
 import { DivergencePanel } from "./divergence-panel";
 import { LogInspector } from "./log-inspector";
 import { Pager } from "./pager";
@@ -589,6 +590,11 @@ export function StatsView() {
                   what it bought, `SuiteCostPanel` is about which switches are
                   spending the minutes. */}
               <CostPanel runs={realRuns} />
+
+              {/* Report (§6.5), under Cost. The order is the reading order of
+                  the screen: what happened, what it cost, and then what you can
+                  take away from it. */}
+              <ReportPanel />
 
               {slownessQuery.data ? (
                 <SuiteCostPanel

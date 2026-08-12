@@ -914,8 +914,8 @@ directly followed by a pass with none of the recorded run settings changed. Two
 definitions of flake in one app is how two surfaces end up disagreeing in front
 of a user.
 
-**6.5 Stats → Report mode.** **Emitters landed 2026-08-12; the panel and the
-weekly digest are what remain.** `shared/emitters.mjs` carries §7.3's five
+**6.5 Stats → Report mode.** **Emitters and the Export panel landed 2026-08-12;
+the weekly digest is what remains.** `shared/emitters.mjs` carries §7.3's five
 formats — JUnit XML, GitHub Actions annotations, OTLP JSON trace, ticket
 markdown, and NDJSON/CSV of `step_metrics` — built once and shared with the MCP,
 as §7.3 asks.
@@ -948,11 +948,35 @@ spreadsheet with the columns meaning different things per line); and OTLP nanos
 as STRINGS (2026 in nanoseconds is past `Number.MAX_SAFE_INTEGER`, so computing
 them as a JS number silently drops the low digits and every span drifts).
 
-**Still to land: the Export panel and the weekly digest.** The panel's shape is
-decided — the renderer never sees the emitted text. It asks the main process to
-emit; main gathers the runs and rows, redacts, saves through the existing
-`dialog:showSaveDialog`, and returns only the path. The digest preview is a
-different thing from exporting and gets its own slice.
+**The Export panel landed 2026-08-12.** `renderer/main/report-panel.tsx`, under
+Cost in Stats, rendering `EMITTERS` rather than a copy of the list — an emitter
+added to the module appears in the UI without anyone remembering to add it,
+which is the failure mode of every "list of formats" that exists twice.
+
+**THE RENDERER NEVER SEES THE EMITTED TEXT.** It calls `api.report.emit`, a
+VERB, and gets back a path, a byte count and a row count. Redaction runs in the
+main process against an encrypted store that cannot cross the IPC boundary, so a
+channel that returned the bytes would move the un-redacted payload across first
+and make the redaction a formality applied to a copy. `check:emit-redaction`
+pins all three halves of that: every emitter call in `report-emitter.ts` passes
+`redact: redactWithSnapshot`, none reaches for the `NO_REDACTION` escape hatch
+(which exists for the MCP and for tests), and no `report:` channel returns text.
+
+Three smaller decisions:
+
+- **A cancelled save is an ANSWER, not an error.** The user closed a dialog;
+  telling them what they just did reads as the app not having noticed, and it
+  would fire on the most ordinary way out of the flow.
+- **"Last written" is per-emitter.** One shared slot would make exporting a
+  second format look like it replaced the first, which is the opposite of what
+  the list is for. It reports the path, the size AND the row count — "2 KB" says
+  nothing about whether the file covers the run the reader cares about.
+- **The risk note is amber and is the only colour in the panel.** It is a prompt
+  to look before forwarding: not a failure, so not red, and never green, because
+  there is no good news to report about what a file contains.
+
+**Still to land: the weekly digest preview.** A different thing from exporting —
+an in-app summary with no emit path — and it gets its own slice.
 
 **6.6 Visual triage.** ✅ **Done, 2026-08-12** — Wipe, Blink, baseline
 provenance, drift and the region breakdown. It was split into four PRs for the
