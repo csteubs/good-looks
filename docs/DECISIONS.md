@@ -171,6 +171,28 @@ The detail view was shaped around one run state. A verdict chip, a triage line, 
 
 **And one guard earned its keep on the way through.** `check:selection-neutral` rejected an amber `:hover` on the review button. It is right: this app spends its four hues on outcomes, and a control that goes amber under the pointer is indistinguishable from one reporting a warning.
 
+### 2026-08-11 — `app.isPackaged` made the branch switcher unreachable in the only way anyone runs this app from source
+
+**Found by running the app and looking at it, which is the step in CLAUDE.md that exists for exactly this.** Every automated gate was green; the Branches row simply was not in the sidebar, and opening the view said *"This is a packaged build … Run the app from a checkout (`npm run dev`)"* — to a user who had run `npm run dev`.
+
+**`isPackaged` is not "was this shipped".** Electron derives it from the name of the executable: anything not called `Electron` counts as packaged. And `npm run dev` deliberately runs a **branded, re-signed clone of Electron.app called "Good Looks!"**, because macOS reads an app's name and icon from its bundle (`scripts/dev-app-bundle.mjs`, and never `app.setName` — that would move userData). So every dev run reported itself as packaged. The two facts are individually documented and had never been put together.
+
+**It was worse than a hidden row.** `relaunchOnto` relaunches the same binary, so a user who did reach the feature and switched onto a branch arrived at a Branches view telling them branch switching was unavailable — with the way back to their own checkout inside it. The escape was to quit and re-run `npm run dev`.
+
+**So availability is decided by what the feature actually requires: a git repository to check a branch out of.** `readRepoInfo` already answers that, and answers it correctly for a dev run, for a branch build, and for a shipped `.app` in /Applications, which has no repository above it and fails exactly as it did before. `isPackaged` is kept **only to choose the wording** of that failure, which is the one thing it is reliable for — a packaged build is the case where "no repository" has a specific, actionable explanation.
+
+**Two existing tests only passed because of the short-circuit.** Both set `packaged` and asserted unavailability, while the stub's default app path is this project — a real checkout. The old code returned before anything looked at it. Their setups now say what they mean, which is that a packaged build has no repository above it.
+
+### 2026-08-11 — The app can open a URL now, and the ban that said it never would
+
+**`check:recorder-navigation` asserted that no file in `main/` calls `shell.openExternal`, on the stated grounds that nothing needed it and "its absence is far easier to keep than its correctness."** The branch menu's pull-request icon needs it. The choice was to delete that assertion or to narrow it, and deleting it would have thrown away the reasoning along with the rule — so it is now a one-file allowlist naming `main/shell/host-handlers.ts`, plus a second assertion that the allowed file still contains the call. An allowlist entry for code that has since been deleted is a guard that passes vacuously forever.
+
+**The validator is the second layer, not the first.** `ipcMain.handle` registers a channel process-wide: every renderer holding the preload bridge can invoke it, so the real question is whether the trainer's arbitrary untrusted website can. It cannot, because **the training window has no preload** and therefore no `glazeAPI` object — and that fact was load-bearing and completely unpinned before this. It is asserted now, twice over (no `getPreloadPath` anywhere in `recorder-service.ts`, and no `preload:` in the window's `webPreferences`), because a preload added there for some unrelated debugging convenience would hand an arbitrary site the entire host surface, and nothing else in the toolchain would mention it.
+
+**`checkExternalUrl` returns the href it approved, and that is the whole shape of the thing.** The first version returned a reason string and the handler opened its own argument — which is two values that merely usually agree. The WHATWG parser strips leading whitespace, resolves dot segments and lowercases the host, so `"   https://github.com/…"` passes a hostname test performed on a string that nobody subsequently opens. Returning `parsed.href` means there is only one URL in play. This was found by a check case asserting whitespace was *rejected*; rejecting it would have been the wrong fix for a real bug.
+
+**Allowlist, not blocklist, and https-on-github.com only.** The URL passed is a PR's `html_url` out of a GitHub API response — network input, the same category as the recorder's page JSON and an imported project's relative specifiers. `shell.openExternal` is not "show a web page": it is Launch Services, where `file://` opens a document and any scheme another installed app has registered starts that application with an argument this app chose. The four host traps in `check:open-external` are there because each defeats a check somebody would plausibly write instead — `startsWith` loses to `github.com.evil.com`, `endsWith` loses to `evilgithub.com`, and both lose to `https://github.com@evil.com`, which a human reads left-to-right and stops at the wrong label.
+
 ### 2026-08-11 — Connecting to Linear, and one pane for everything that leaves
 
 Phase 1 of sending a defect to an issue tracker: the connection only. Nothing

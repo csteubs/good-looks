@@ -18,6 +18,7 @@ import {
 } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 
+import { checkExternalUrl } from "./external-url.js";
 import { logger } from "./logger.js";
 
 /** Renderer-side native menu item (see NativeMenu in the views): a plain-data
@@ -59,6 +60,25 @@ export function registerHostHandlers(): void {
   ipcMain.handle("shell:beep", () => shell.beep());
   ipcMain.handle("shell:showItemInFolder", (_e, fullPath: string) => {
     if (typeof fullPath === "string" && fullPath) shell.showItemInFolder(fullPath);
+  });
+  // Opens a pull request in the user's real browser. The URL arrives from the
+  // renderer having originated in a GitHub API response, so it is checked here
+  // rather than trusted — see `external-url.ts` for what the OS would otherwise
+  // do with a scheme we didn't expect. Refusals are logged and swallowed: the
+  // renderer's icon has nothing useful to do with the error, and the honest
+  // report of a URL this app won't open belongs in the main log.
+  ipcMain.handle("shell:openExternal", async (_e, url: string) => {
+    const verdict = checkExternalUrl(url);
+    if (!verdict.ok) {
+      logger.warn("shell", "Refused to open a URL externally", { problem: verdict.problem });
+      return;
+    }
+    try {
+      // `verdict.href`, NOT `url` — the checked value is the only one opened.
+      await shell.openExternal(verdict.href);
+    } catch (err) {
+      logger.warn("shell", "The OS refused to open a URL", { err: String(err) });
+    }
   });
 
   // ── Clipboard ───────────────────────────────────────────────────────

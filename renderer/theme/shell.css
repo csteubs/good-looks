@@ -593,3 +593,164 @@
   outline: 1px solid var(--gl-cyan);
   outline-offset: 1px;
 }
+
+/* ── Rail flyout ──────────────────────────────────────────────────────── */
+
+/* The wrapper holds only the row. The PANEL is portalled to `document.body`,
+   because `SplitView` renders the sidebar inside `overflow-hidden` and an
+   absolutely-positioned menu is clipped at the rail's edge — it renders, it has
+   a size, it is in the accessibility tree, and almost none of it is on screen.
+   jsdom cannot see that, so `rail-flyout.test.tsx` pins the structural fact
+   instead: the panel is not a descendant of the rail. */
+.gl-rail-flyout-root {
+  position: relative;
+}
+
+/* `fixed`, positioned from the trigger's own rect — see rail-flyout.tsx. The
+   coordinates are inline styles; everything that is not a coordinate is here. */
+.gl-rail-flyout {
+  position: fixed;
+  z-index: var(--gl-z-menu);
+  min-width: 268px;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  /* Clear of the rail's own border, so the panel reads as a separate surface
+     rather than a widening of the sidebar. */
+  margin-inline-start: 6px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+}
+
+.gl-rail-flyout-label {
+  padding: 7px 10px 5px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-rail-flyout-sep {
+  height: 1px;
+  margin: 2px 0;
+  background: var(--gl-line-2);
+}
+
+/* A row is TWO controls — the branch, and its pull request — so it is a flex
+   container of two buttons rather than one button with a button inside it,
+   which is invalid HTML and which browsers resolve by dropping the inner one. */
+.gl-rail-flyout-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+.gl-rail-flyout-item {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+  /* Reserved on every row so the one marked current does not shift its
+     neighbours' text by 2px — the same rule `.gl-rail-row` follows. */
+  box-shadow: inset 2px 0 0 transparent;
+}
+
+.gl-rail-flyout-item:hover,
+.gl-rail-flyout-item:focus-visible {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.gl-rail-flyout-item:focus-visible,
+.gl-rail-flyout-pr:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+/* SELECTION IS NEUTRAL — never a status hue, the same rule as `.gl-rail-row`
+   and for the same reason. `check:selection-neutral` reads this by name. */
+.gl-rail-flyout-item[data-current] {
+  background: var(--gl-sel-bg);
+  box-shadow:
+    inset 2px 0 0 transparent,
+    inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-rail-flyout-item-icon {
+  flex: 0 0 auto;
+  display: flex;
+  color: var(--gl-tx-3);
+}
+
+.gl-rail-flyout-item-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.gl-rail-flyout-item-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.gl-rail-flyout-item-title {
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-rail-flyout-item-sub {
+  font-family: var(--gl-sans);
+  font-size: 10px;
+  color: var(--gl-tx-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The pull-request icon. Its own control, so it needs its own hit area — an
+   icon that only reacts on its 14px glyph is one people miss. */
+.gl-rail-flyout-pr {
+  appearance: none;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 0;
+  border-inline-start: 1px solid var(--gl-line-2);
+  background: transparent;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-rail-flyout-pr:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--gl-cyan);
+}
+
+.gl-rail-flyout-pr svg {
+  width: 14px;
+  height: 14px;
+}
+
+.gl-rail-flyout-empty {
+  padding: 8px 10px;
+  font-family: var(--gl-sans);
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--gl-tx-3);
+}
