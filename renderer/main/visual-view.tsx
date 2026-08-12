@@ -24,7 +24,7 @@ import {
   TooltipTrigger,
 } from "@ui";
 
-import { Btn, CRT, Segmented, TONE, withAlpha } from "../theme";
+import { Btn, CRT, Segmented, TONE, usePrefersReducedMotion, withAlpha } from "../theme";
 import {
   Accessibility,
   Check,
@@ -45,6 +45,7 @@ import {
 
 import { api } from "../lib/api";
 import { countA11ySteps } from "../lib/a11y-format";
+import { blinkIntervalMs, wipeAfterKey, wipeFromPointer } from "../lib/visual-compare";
 import { A11yBadge, A11yViolationList } from "./a11y-violations";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import type {
@@ -207,7 +208,176 @@ export function DiffBadge({ diff }: { diff: VisualDiff }) {
 }
 
 // ── Screenshot pane (current / baseline / diff-overlay) ─────────────────
-type ShotMode = "current" | "baseline" | "diff";
+/** The five compare modes (§6.6 added the last two).
+ *
+ *  `wipe` and `blink` are the only two that need BOTH frames at once, which is
+ *  why they get their own component rather than a branch inside
+ *  `StepScreenshot` — that one resolves a single `src` from the mode, and
+ *  threading a second query through it would make every single-image mode pay
+ *  for a fetch it does not use. */
+type ShotMode = "current" | "baseline" | "diff" | "wipe" | "blink";
+
+/**
+ * Wipe and Blink — the two modes that need BOTH frames at once. REDESIGN §6.6.
+ *
+ * A diff map is exact and nearly useless for triage: it lights every changed
+ * pixel with equal weight, so a font-smoothing shift and a button that moved
+ * 40px look the same. These put the two frames in the same PLACE instead and
+ * let the eye do the comparison it is very good at.
+ *
+ * BOTH FRAMES GO IN A `CRT` AND NEITHER IS TREATED — the same rule the rest of
+ * this screen obeys, and it binds harder here. The whole premise is that any
+ * difference the user sees between the two images is a difference in the page;
+ * a filter, a blend mode or an opacity on either layer would manufacture one.
+ * Wipe therefore CLIPS rather than fading, and Blink swaps a whole frame rather
+ * than cross-dissolving. `check:crt-untreated` pins it.
+ */
+function CompareShot({
+  testId,
+  runId,
+  step,
+  mode,
+  children,
+}: {
+  testId: string;
+  runId: string;
+  step: ReplayStep;
+  mode: "wipe" | "blink";
+  children?: React.ReactNode;
+}) {
+  const reduced = usePrefersReducedMotion();
+  const [wipe, setWipe] = React.useState(50);
+  const [showBaseline, setShowBaseline] = React.useState(false);
+  const [dragging, setDragging] = React.useState(false);
+  const boxRef = React.useRef<HTMLDivElement>(null);
+
+  const currentQuery = useQuery({
+    queryKey: ["shot", testId, runId, step.screenshot],
+    queryFn: () => api.artifacts.readShot(testId, runId, step.screenshot as string),
+    enabled: Boolean(step.screenshot),
+    staleTime: 5 * 60 * 1000,
+  });
+  const baselineQuery = useQuery({
+    queryKey: ["baselineShot", testId, step.stepId],
+    queryFn: () => api.visual.baselineShot(testId, step.stepId),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const interval = blinkIntervalMs(reduced);
+  React.useEffect(() => {
+    // `interval === null` is reduced motion, and it is a MANUAL toggle rather
+    // than a stopped one — see `blinkIntervalMs`. Nothing is scheduled; the
+    // button below does the swapping.
+    if (mode !== "blink" || interval === null) return;
+    const t = setInterval(() => setShowBaseline((v) => !v), interval);
+    return () => clearInterval(t);
+  }, [mode, interval]);
+
+  const current = currentQuery.data;
+  const baseline = baselineQuery.data;
+
+  if (currentQuery.isLoading || baselineQuery.isLoading) {
+    return <div className="h-full w-full animate-pulse rounded-md bg-control-subtle" />;
+  }
+  if (!current || !baseline) {
+    // Both modes need both frames by definition, so this says which is missing
+    // rather than rendering half a comparison the user would read as a result.
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+        <ImageOff className="size-8 text-tertiary" />
+        <Text color="secondary">
+          {current ? "No baseline for this step" : "No screenshot for this step"}
+        </Text>
+        <Text variant="small" color="tertiary">
+          Wipe and Blink compare two frames — both have to exist.
+        </Text>
+      </div>
+    );
+  }
+
+  if (mode === "blink") {
+    return (
+      <div className="relative flex h-full w-full flex-col items-center justify-center gap-2 overflow-hidden">
+        <CRT
+          className="gl-visual-frame"
+          src={showBaseline ? baseline : current}
+          alt={`${showBaseline ? "Baseline" : "Current"} frame for step ${step.index + 1}`}
+        />
+        {/* The label is not decoration: with the frames alternating, "which one
+            am I looking at" is otherwise unanswerable, and a user who cannot
+            answer it cannot say which direction the change went. */}
+        <div className="gl-visual-blink-bar">
+          <span className="gl-visual-blink-which">{showBaseline ? "Baseline" : "Current"}</span>
+          {interval === null ? (
+            <button
+              type="button"
+              className="gl-cost-edit"
+              onClick={() => setShowBaseline((v) => !v)}
+            >
+              Swap
+            </button>
+          ) : null}
+        </div>
+        {children}
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative flex h-full w-full items-center justify-center overflow-hidden">
+      <div ref={boxRef} className="gl-visual-wipe" data-gl="wipe">
+        <CRT className="gl-visual-frame" src={baseline} alt={`Baseline for step ${step.index + 1}`} />
+        {/* The current frame on top, clipped. `clip-path` and not opacity: the
+            premise of this mode is that any difference on screen is a
+            difference in the page, and a partly-transparent layer invents one. */}
+        <div
+          className="gl-visual-wipe-top"
+          style={{ clipPath: `inset(0 ${100 - wipe}% 0 0)` }}
+          aria-hidden
+        >
+          <CRT className="gl-visual-frame" src={current} alt="" />
+        </div>
+        <div
+          className="gl-visual-wipe-handle"
+          style={{ left: `${wipe}%` }}
+          role="slider"
+          tabIndex={0}
+          aria-label="Wipe between the current frame and the baseline"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(wipe)}
+          aria-valuetext={`${Math.round(wipe)}% current`}
+          data-dragging={dragging ? "" : undefined}
+          onKeyDown={(e) => {
+            const next = wipeAfterKey(wipe, e.key, e.shiftKey);
+            if (next === null) return;
+            e.preventDefault();
+            setWipe(next);
+          }}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            (e.target as HTMLElement).setPointerCapture(e.pointerId);
+            setDragging(true);
+          }}
+          onPointerMove={(e) => {
+            if (!dragging) return;
+            const box = boxRef.current?.getBoundingClientRect();
+            if (box) setWipe(wipeFromPointer(e.clientX, box));
+          }}
+          onPointerUp={(e) => {
+            (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+            setDragging(false);
+          }}
+        />
+        {/* Which side is which, on the frame. Without it the mode is a picture
+            with a line through it. */}
+        <span className="gl-visual-wipe-label gl-visual-wipe-left">Current</span>
+        <span className="gl-visual-wipe-label gl-visual-wipe-right">Baseline</span>
+      </div>
+      {children}
+    </div>
+  );
+}
 
 function StepScreenshot({
   testId,
@@ -1398,44 +1568,76 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
                   { value: "current", label: "Current" },
                   { value: "baseline", label: "Baseline" },
                   ...(canDiff ? [{ value: "diff", label: "Diff" }] : []),
+                  // §6.6. Offered only when there is a CURRENT frame to compare
+                  // against the baseline — `hasBaselineView` already guarantees
+                  // the other half. A mode that opens on "both have to exist"
+                  // is a mode that should not have been offered.
+                  ...(step.screenshot
+                    ? [
+                        { value: "wipe", label: "Wipe" },
+                        { value: "blink", label: "Blink" },
+                      ]
+                    : []),
                 ]}
               />
             </div>
           ) : null}
-          <StepScreenshot
-            testId={summary.testId}
-            runId={summary.runId}
-            step={step}
-            mode={effectiveMode}
-          >
-            {step.rect && elementSteps.has(step.stepId) ? (
-              <div
-                className="pointer-events-none absolute border-2 border-accent"
-                style={{
-                  left: pctStr(step.rect.x),
-                  top: pctStr(step.rect.y),
-                  width: pctStr(step.rect.w),
-                  height: pctStr(step.rect.h),
-                }}
-                title="Only this region is compared"
-              />
-            ) : null}
-            <MaskLayer
-              masks={stepMasks}
-              editing={masking}
-              onAdd={(rect) =>
-                saveMasks.mutate([
-                  ...allMasks,
-                  {
-                    id: crypto.randomUUID(),
-                    stepId: maskAllSteps ? null : step.stepId,
-                    ...rect,
-                  },
-                ])
-              }
-              onRemove={(id) => saveMasks.mutate(allMasks.filter((m) => m.id !== id))}
-            />
-          </StepScreenshot>
+          {/* The overlays that ride ON the frame — the element-scope box and
+              the mask layer — are the same in every mode, so they are built
+              once and handed to whichever frame component the mode selects.
+              Duplicating them into both branches is how the two would drift. */}
+          {(() => {
+            const overlays = (
+              <>
+                  {step.rect && elementSteps.has(step.stepId) ? (
+                    <div
+                      className="pointer-events-none absolute border-2 border-accent"
+                      style={{
+                        left: pctStr(step.rect.x),
+                        top: pctStr(step.rect.y),
+                        width: pctStr(step.rect.w),
+                        height: pctStr(step.rect.h),
+                      }}
+                      title="Only this region is compared"
+                    />
+                  ) : null}
+                  <MaskLayer
+                    masks={stepMasks}
+                    editing={masking}
+                    onAdd={(rect) =>
+                      saveMasks.mutate([
+                        ...allMasks,
+                        {
+                          id: crypto.randomUUID(),
+                          stepId: maskAllSteps ? null : step.stepId,
+                          ...rect,
+                        },
+                      ])
+                    }
+                    onRemove={(id) => saveMasks.mutate(allMasks.filter((m) => m.id !== id))}
+                  />
+              </>
+            );
+            return effectiveMode === "wipe" || effectiveMode === "blink" ? (
+              <CompareShot
+                testId={summary.testId}
+                runId={summary.runId}
+                step={step}
+                mode={effectiveMode}
+              >
+                {overlays}
+              </CompareShot>
+            ) : (
+              <StepScreenshot
+                testId={summary.testId}
+                runId={summary.runId}
+                step={step}
+                mode={effectiveMode}
+              >
+                {overlays}
+              </StepScreenshot>
+            );
+          })()}
         </div>
         {masking ? (
           <Text variant="small" color="tertiary" className="mt-2 block text-center">

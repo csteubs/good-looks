@@ -16,6 +16,22 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — Wipe and Blink, and what reduced motion means when the motion IS the information (C §6.6)
+
+The Visual screen had three compare modes and none of them answered the question triage actually asks. Current and Baseline show one frame each, so comparing them means holding an image in your head while you look at another. Diff is exact and nearly useless for judging: it lights every changed pixel with equal weight, so a font-smoothing shift and a button that moved 40px look the same. Wipe and Blink put the two frames in the same PLACE and let the eye do the comparison it is extremely good at.
+
+**Neither frame may be treated, and here that is not a style rule.** Wipe clips with `clip-path` rather than fading, and Blink swaps a whole frame rather than cross-dissolving. The premise of both modes is that any difference the user sees between the two images is a difference in the PAGE — an opacity, a filter or a blend mode on either layer manufactures one, and the user files a bug against their own site. `check:crt-untreated` already pinned the rule for the bezel; these two modes are where it binds hardest, and the tests assert it on the inline styles as well.
+
+**Reduced motion turns Blink into a manual toggle rather than switching it off, and that distinction took the longest to get right.** The house rule (`resolveAtmo`) is that motion which reports something survives `calm`. Here the alternation is not decoration layered on the information — it IS the information, and a Blink that does not blink is a mode that does nothing at all. But it is equally true that this is involuntary, repeating, full-frame motion, which is exactly what somebody turning reduced motion on is asking not to be shown. Turning it off loses a capability; leaving it on ignores a request. Neither is necessary: the user swaps the frames themselves, at their own pace, and gets the identical comparison. Nothing is lost except the part they asked not to have.
+
+**The divider never reaches an edge.** Flush to one, the last sliver of the other frame is gone and so is any handle inside the frame to drag it back with — the control vanishes into the bezel and the mode reads as broken. A 2% margin costs nothing (there is no comparison anybody was making at 0%) and keeps it always grabbable. It is also keyboard-driven, because it is the one control on this screen that otherwise requires a steady hand.
+
+**Two guards that look like defensive coding and are not.** `wipeFromPointer` checks for a zero-width box: the frame is an image, and for one paint before it loads its box really is zero-wide — dividing by that yields Infinity, which the clamp pins to the right-hand margin, so the first drag of every session would jump. And `clampWipe` centres on a non-finite input rather than clamping it, for the same reason.
+
+**And both modes are offered only when a current frame exists.** A mode whose empty state reads "both have to exist" is a mode that should not have been in the switch. When the BASELINE is missing the mode is still offered — the switch is gated on a baseline record existing, which is a different fact — and it says which frame it could not load rather than rendering one and letting it read as a result.
+
+**Split into two slices, like B8.** Region breakdown, baseline provenance and drift are the rest of §6.6. `visual-view.tsx` is the largest file in the renderer and the one where a change is most easily made blind; the same reasoning that scoped B8 scopes this.
+
 ### 2026-08-12 — Cost mode, and the three numbers it refuses to make up (C §6.4)
 
 §6.4's own requirement was that the assumptions be "visible and editable — a number nobody can check is a number nobody believes". The open question was whether that meant Settings rows. It does not, and the distinction is the whole feature: a Settings row makes the value editable *somewhere*, and leaves a reader looking at "48 minutes of manual testing avoided" having to know an assumption exists, guess where it lives, and go and find it before they can judge the figure. The two inputs sit directly under the numbers they produce. The derivation is part of the reading.

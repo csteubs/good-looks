@@ -2735,3 +2735,115 @@
   line-height: 1.5;
   color: var(--gl-tx-3);
 }
+
+/* ── Wipe and Blink (§6.6) ────────────────────────────────────────────── */
+/*
+ * NOTHING IN HERE MAY TINT, FADE OR BLEND A FRAME. The premise of both modes is
+ * that any difference the user sees between the two images is a difference in
+ * the PAGE — so the wipe clips rather than cross-fading, and the blink swaps a
+ * whole frame rather than dissolving. `check:crt-untreated` pins the rule; this
+ * comment is why it binds harder on this screen than anywhere else.
+ */
+.gl-visual-wipe {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* Stacked exactly over the frame beneath it, and clipped by an inline
+   `clip-path` the component sets from the divider position. */
+.gl-visual-wipe-top {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Above the CRT bezel (610) for the same reason the mode switch is: this is
+   chrome laid ON the frame, and at a lower layer it renders behind the bezel
+   and disappears — which on a drag handle means the mode looks broken. */
+.gl-visual-wipe-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 620;
+  width: 2px;
+  margin-inline-start: -1px;
+  background: var(--gl-cyan);
+  box-shadow: 0 0 8px var(--gl-cyan);
+  cursor: ew-resize;
+  /* A 2px line is not a 2px target. The bar is what you see; the grab area is
+     this, and it is centred on the line rather than offset from it. */
+  outline: none;
+}
+
+.gl-visual-wipe-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -9px;
+  right: -9px;
+}
+
+.gl-visual-wipe-handle:focus-visible {
+  box-shadow:
+    0 0 8px var(--gl-cyan),
+    0 0 0 2px var(--gl-cyan);
+}
+
+.gl-visual-wipe-handle[data-dragging] {
+  box-shadow: 0 0 14px var(--gl-cyan);
+}
+
+/* Which side is which. Without these the mode is a picture with a line through
+   it, and a user cannot say which direction a change went. */
+/* BOTTOM, not top. The compare-mode switch owns the frame's top-right corner,
+   and a right-hand label up there lands on top of it — which hides the control
+   that got you into this mode. */
+.gl-visual-wipe-label {
+  position: absolute;
+  bottom: 8px;
+  z-index: 620;
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.62);
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-2);
+  pointer-events: none;
+}
+
+.gl-visual-wipe-left {
+  left: 8px;
+}
+
+.gl-visual-wipe-right {
+  right: 8px;
+}
+
+/* Blink's "which frame am I looking at". Under the frame rather than on it: it
+   changes twice a second, and a label flickering ON the evidence is the one
+   piece of motion this screen genuinely cannot afford. */
+.gl-visual-blink-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.gl-visual-blink-which {
+  min-width: 72px;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-2);
+}
