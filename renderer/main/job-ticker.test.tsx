@@ -29,13 +29,25 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigate,
 }));
 
+/** A test record with every required field, so the fixture keeps type-checking
+ *  when `TestRecord` gains one. The `as` cast this replaced did not — it named
+ *  the type without satisfying it. */
+function record(id: string, name: string): TestRecord {
+  return {
+    id,
+    name,
+    url: "https://example.com",
+    createdAt: 0,
+    updatedAt: 0,
+    steps: [],
+    scriptPath: `/scripts/${id}.spec.ts`,
+  };
+}
+
 vi.mock("../lib/api", () => ({
   api: {
     tests: {
-      list: async (): Promise<TestRecord[]> => [
-        { id: "t1", name: "Checkout", url: "https://x", createdAt: 0, updatedAt: 0, steps: [] },
-        { id: "t2", name: "Login", url: "https://x", createdAt: 0, updatedAt: 0, steps: [] },
-      ] as TestRecord[],
+      list: async (): Promise<TestRecord[]> => [record("t1", "Checkout"), record("t2", "Login")],
     },
   },
 }));
