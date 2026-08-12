@@ -9,9 +9,10 @@ the five components every screen embeds, and every screen has been reached.
 
 **Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
 its frame rail, threshold-against-frames and the masks/baselines reskin.
-**Phase C has started: §6.1, §6.7 and §6.9 landed 2026-08-12** — the five
-non-failure run-state summaries (which were B5b), the ⌘K command palette, and
-the boot sequence. Where the rest of this says "would", it means would.
+**Phase C has started: §6.1, §6.3, §6.7 and §6.9 landed 2026-08-12** — the five
+non-failure run-state summaries (which were B5b), change temp against real
+medians, the ⌘K command palette, and the boot sequence. Where the rest of this
+says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -816,8 +817,32 @@ Four things the plan did not anticipate, all of which changed the shipped shape:
 **6.2 Inline step composer** (from B6). Retires `add-step-dialog.tsx`. The
 `InsertGap` cursor is the prerequisite and the reason it can be moved.
 
-**6.3 Change temp against real medians.** Wire `Temp` to `metrics-store`
-per-test and per-step medians. Turns a decoration into a measurement.
+**6.3 Change temp against real medians.** ✅ **Done, 2026-08-12.** `Temp` now
+reads `metrics-store`, per test and per step, and the step list is where it
+earns its keep: forty durations, one lit row.
+
+- **Per step, BOTH numbers are medians** — recent p50 against the p50 before it,
+  not this run against a median. A single run's duration for a single step is
+  noise (a GC pause, a slow DNS answer), and colouring it would light half the
+  list on every run for reasons that are not about the test. What gets a colour
+  is the step having CHANGED.
+- **Per test, the metrics median is PREFERRED over the one §6.1 derives from run
+  history, and the reason is retention.** `run-history.json` is pruned; the
+  metrics DB is rolled up *before* retention runs, so after a prune it holds
+  strictly more of a test's past. A median is exactly the statistic that
+  degrades when its sample is silently truncated — the number stays plausible
+  and stops being true. It falls back to the history median rather than to no
+  median when metrics are unavailable: losing the better source must not mean
+  losing the answer.
+- **`testDurationTrend` counts PASSED runs only.** A run that died on step two
+  is fast and one that timed out is as slow as the budget; either poisons a
+  median being used to say whether a pass was unusual.
+
+New: `testDurationTrend` in `shared/metrics-query.mjs`, returned on the existing
+`metrics:slowness` channel when a test is named — the step list and the run
+summary are one screen asking one question, and two channels would let them
+answer it from two different reads of a database being written to while they
+look.
 
 **6.4 Stats → Cost mode.** CI spend, manual QA avoided, return on spend, waste
 on flake, regressions caught; spend-by-test table with an earning/review verdict;

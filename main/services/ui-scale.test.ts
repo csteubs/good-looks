@@ -253,12 +253,29 @@ describe("what it does not touch", () => {
     expect(imports.join("\n")).not.toContain("BrowserWindow");
   });
 
-  it("is not imported by the recorder service", async () => {
+  // This used to assert that `recorder-service.ts` did not import this module at
+  // all, which was a clean way to state "the training browser is never scaled" for
+  // as long as that window was a single webContents holding the page.
+  //
+  // The URL strip ended that: the recorder window now contains an app-owned view
+  // as well as the page, and the strip is app chrome that SHOULD scale with the
+  // rest of the app — a 36px bar with 11px type does not stay legible at 125% when
+  // everything around it grows. So the import is legitimate now, and the assertion
+  // moved to the thing that actually matters and was only ever implied before: the
+  // PAGE is not scaled. Zooming it would change what a responsive site renders,
+  // what a click lands on, and what a visual baseline captures — a reading
+  // preference silently rewriting the test.
+  it("is applied to the recorder's URL strip but never to the page", async () => {
     const src = await fs.promises.readFile(
       path.join(process.cwd(), "main/services/recorder-service.ts"),
       "utf-8",
     );
-    expect(src).not.toContain("ui-scale");
+    expect(src).toContain("chromeView.webContents.setZoomFactor(uiScale())");
+    expect(src).not.toContain("pageView.webContents.setZoomFactor");
+    // No blanket application either — `applyUiScaleToAllWindows` walks the app's
+    // own windows, and a recorder that called it would be reaching for exactly the
+    // "scale everything" helper this module refuses to provide.
+    expect(src).not.toContain("applyUiScaleToAllWindows");
   });
 });
 

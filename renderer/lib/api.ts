@@ -42,13 +42,22 @@ import type {
 import type { BranchStatus, BranchSummary, PullRequestSummary } from "./branch-types";
 import type {
   ConnectionStatus,
+  CreatedIssue,
+  DefectSource,
   IssueContainer,
   IssueDefaults,
+  IssueDraft,
+  IssueLabel,
+  IssueLink,
   IssueSubContainer,
   ProviderVocabulary,
 } from "./issue-types";
 import type { TriageResult } from "../../shared/triage.mjs";
-import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
+import type {
+  StepDurationRow,
+  StepHealthRow,
+  TestDurationTrend,
+} from "../../shared/metrics-query.mjs";
 import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
 import type {
   LlmChatParams,
@@ -96,6 +105,12 @@ export const api = {
     resume: () => ipc().invoke<RecorderState>("recorder:resume"),
     setAssert: (mode: AssertKind | null, soft = false) =>
       ipc().invoke<RecorderState>("recorder:setAssert", { mode, soft }),
+    /** Open a URL assertion prefilled with the training page's live URL. Called
+     *  from the training browser's URL strip. */
+    assertUrl: (kind: AssertKind) =>
+      ipc().invoke<RecorderState>("recorder:assertUrl", { kind }),
+    getTrainingUrl: () =>
+      ipc().invoke<{ url: string; loading: boolean }>("recorder:getTrainingUrl"),
     deleteStep: (stepId: string) =>
       ipc().invoke<RecorderState>("recorder:deleteStep", { stepId }),
     insertStep: (step: RawStep, index?: number) =>
@@ -315,6 +330,29 @@ export const api = {
      *  list that has nothing to show, so the failure has to be visible. */
     listContainers: () => ipc().invoke<IssueContainer[]>("issues:listContainers"),
     listSubContainers: () => ipc().invoke<IssueSubContainer[]>("issues:listSubContainers"),
+    listLabels: () => ipc().invoke<IssueLabel[]>("issues:listLabels"),
+    /** The pre-filled issue for one defect. Null when its evidence is gone —
+     *  a pruned run, a re-recorded step — which the dialog reports rather than
+     *  opening onto an empty form. */
+    buildDraft: (source: DefectSource) =>
+      ipc().invoke<IssueDraft | null>("issues:buildDraft", { source }),
+    /** File it. `attachmentFiles` names which images the user kept; the bytes
+     *  are re-read backend-side, so nothing image-shaped travels this way. */
+    createIssue: (params: {
+      source: DefectSource;
+      title: string;
+      body: string;
+      attachmentFiles: string[];
+      containerId: string;
+      subContainerId: string | null;
+      labelIds: string[];
+    }) => ipc().invoke<CreatedIssue>("issues:createIssue", params),
+    /** Every issue already filed against a test, so a list badges itself in one
+     *  read rather than one call per row. */
+    linksForTest: (testId: string) => ipc().invoke<IssueLink[]>("issues:linksForTest", { testId }),
+    /** Report a recurrence onto the existing issue instead of filing a second. */
+    commentRecurrence: (source: DefectSource, attachmentFiles: string[]) =>
+      ipc().invoke<IssueLink>("issues:commentRecurrence", { source, attachmentFiles }),
     getDefaults: () => ipc().invoke<IssueDefaults>("issues:getDefaults"),
     /** Omit a field to leave it alone; pass null to clear it. */
     setDefaults: (patch: Partial<IssueDefaults>) =>
@@ -369,6 +407,9 @@ export const api = {
         rows: StepDurationRow[];
         slowed: StepDurationRow[];
         cost: CostBreakdown;
+        /** The named test's own duration trend (C §6.3). Null when no test was
+         *  named — the suite-wide call has no single test to trend. */
+        testTrend: TestDurationTrend | null;
       }>("metrics:slowness", { testId }),
     divergence: (testId?: string) =>
       ipc().invoke<{ available: boolean; steps: DivergentStep[] }>("metrics:divergence", {

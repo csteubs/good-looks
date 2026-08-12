@@ -81,6 +81,7 @@ const EMPTY_STATE: RecorderState = {
   stepCount: 0,
   testId: null,
   url: null,
+  liveUrl: null,
   name: null,
   editing: false,
   assertSoft: false,

@@ -1,10 +1,6 @@
 // Linear, behind the provider-neutral interface.
 //
-// The read half only: prove a key works, and list the places an issue could go.
-// Creating issues, uploading images and commenting arrive with the compose
-// dialog; they are absent rather than stubbed so this cannot look finished.
-//
-// Two constraints shape everything here:
+// Three constraints shape everything here:
 //
 //   • NO ERROR MAY CARRY THE KEY. A raw fetch rejection can carry the request
 //     URL, and a URL is one refactor away from a query string; a raw response
@@ -14,6 +10,10 @@
 //   • The key is a PARAMETER, not state. It is decrypted by the caller
 //     immediately before use and never stored here, so a long-lived provider
 //     instance holds nothing worth stealing.
+//   • THE UPLOAD PUT CARRIES NO AUTHORIZATION HEADER. It is the one request in
+//     this file whose destination is not the hardcoded endpoint — Linear names
+//     a storage host — and the signed URL is itself the credential for it.
+//     Attaching the API key would hand it to a third party.
 //
 // Linear's personal API keys go in `Authorization` RAW — no `Bearer` prefix,
 // which OAuth tokens do use. Getting that wrong produces a 400 with an
@@ -24,11 +24,15 @@ import { logger } from "@shell/backend";
 
 import {
   IssueProviderError,
+  type CreatedIssue,
+  type CreateIssueRequest,
   type IssueContainer,
+  type IssueLabel,
   type IssueProvider,
   type IssueSubContainer,
   type ProviderAccount,
   type ProviderVocabulary,
+  type UploadImage,
 } from "./types.js";
 
 const ENDPOINT = "https://api.linear.app/graphql";
@@ -43,6 +47,10 @@ const PAGE_SIZE = 250;
 
 /** Remote text is displayed, so it is bounded here rather than trusted. */
 const MAX_MESSAGE_LEN = 300;
+
+/** An image PUT to a storage host, which is slower than a GraphQL round trip
+ *  and is the one request here whose size the user controls. */
+const UPLOAD_TIMEOUT_MS = 60_000;
 
 /** Injectable for tests. The real one is the global. */
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
@@ -127,6 +135,16 @@ function errorForGraphQL(
 }
 
 async function query<T>(key: string, doc: string, fetchImpl: FetchLike): Promise<T> {
+  return request<T>(key, { query: doc }, fetchImpl);
+}
+
+/** The one place a request reaches Linear's API. Both `query` and `mutate` go
+ *  through it, so the header contract and the error mapping have one home. */
+async function request<T>(
+  key: string,
+  payload: Record<string, unknown>,
+  fetchImpl: FetchLike,
+): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   let res: Response;
@@ -138,7 +156,7 @@ async function query<T>(key: string, doc: string, fetchImpl: FetchLike): Promise
         authorization: key,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ query: doc }),
+      body: JSON.stringify(payload),
       signal: controller.signal,
     });
   } catch (err) {
@@ -168,6 +186,103 @@ async function query<T>(key: string, doc: string, fetchImpl: FetchLike): Promise
   if (body.errors && body.errors.length > 0) throw errorForGraphQL(body.errors, key);
   if (!body.data) throw new IssueProviderError("server", "Linear returned an empty response.");
   return body.data;
+}
+
+/** A query carrying variables. Split from `query` only because a mutation is
+ *  worth being able to find by name when reading this file. */
+async function mutate<T>(
+  key: string,
+  doc: string,
+  variables: Record<string, unknown>,
+  fetchImpl: FetchLike,
+): Promise<T> {
+  return request<T>(key, { query: doc, variables }, fetchImpl);
+}
+
+/**
+ * Upload every image and return the markdown that references them.
+ *
+ * Linear's upload is two steps: ask for a signed URL, then PUT the bytes at it.
+ * The PUT goes to whatever host Linear names, which is the one request in this
+ * file whose destination is not the hardcoded endpoint — so it carries NO
+ * Authorization header. The signed URL is the credential for that request, and
+ * attaching the API key would send it to a third-party storage host.
+ *
+ * A failed upload throws rather than filing an issue without its evidence: a
+ * visual-difference issue whose images silently did not arrive is worse than no
+ * issue, because it looks complete.
+ */
+async function uploadAll(
+  key: string,
+  images: UploadImage[],
+  fetchImpl: FetchLike,
+): Promise<string> {
+  if (images.length === 0) return "";
+  const parts: string[] = [];
+  for (const image of images) {
+    const data = await mutate<{
+      fileUpload?: { success?: unknown; uploadFile?: { uploadUrl?: unknown; assetUrl?: unknown; headers?: unknown } };
+    }>(
+      key,
+      `mutation Upload($contentType: String!, $filename: String!, $size: Int!) {
+         fileUpload(contentType: $contentType, filename: $filename, size: $size) {
+           success
+           uploadFile {
+             uploadUrl
+             assetUrl
+             headers { key value }
+           }
+         }
+       }`,
+      { contentType: image.contentType, filename: image.filename, size: image.bytes.byteLength },
+      fetchImpl,
+    );
+
+    const file = data.fileUpload?.uploadFile;
+    const uploadUrl = str(file?.uploadUrl);
+    const assetUrl = str(file?.assetUrl);
+    if (!data.fileUpload?.success || !uploadUrl || !assetUrl) {
+      throw new IssueProviderError("server", "Linear would not accept an image upload.");
+    }
+
+    // Headers Linear tells us the storage host requires. Rebuilt from the
+    // response rather than spread, and the key is deliberately not among them.
+    const headers: Record<string, string> = { "content-type": image.contentType };
+    for (const h of Array.isArray(file?.headers) ? (file?.headers as unknown[]) : []) {
+      if (!h || typeof h !== "object") continue;
+      const name = str((h as Record<string, unknown>).key);
+      const value = str((h as Record<string, unknown>).value);
+      if (name && value) headers[name] = value;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+    try {
+      const res = await fetchImpl(uploadUrl, {
+        method: "PUT",
+        headers,
+        body: new Uint8Array(image.bytes),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        throw new IssueProviderError("server", `Uploading an image failed (${res.status}).`);
+      }
+    } catch (err) {
+      if (err instanceof IssueProviderError) throw err;
+      throw new IssueProviderError("network", "Could not upload an image. Check your connection and try again.");
+    } finally {
+      clearTimeout(timer);
+    }
+
+    parts.push(`**${line(image.label)}**\n\n![${line(image.label)}](${assetUrl})`);
+  }
+  return parts.join("\n\n");
+}
+
+/** One line, bounded, safe to put in markdown. Labels are ours, but this is the
+ *  boundary and a label that grew a newline would break the block around it. */
+function line(v: string): string {
+  return v.replace(/\s+/g, " ").trim().slice(0, 80).replace(/[[\]()]/g, "");
 }
 
 /** A remote list, rebuilt rather than trusted: anything without a usable id and
@@ -231,6 +346,85 @@ export function createLinearProvider(fetchImpl?: FetchLike): IssueProvider {
         if (id && name) out.push({ id, name, key: str(node.key) });
       }
       return out;
+    },
+
+    async listLabels(key: string): Promise<IssueLabel[]> {
+      const data = await query<{ issueLabels?: unknown }>(
+        key,
+        `query { issueLabels(first: ${PAGE_SIZE}) { nodes { id name color } } }`,
+        doFetch,
+      );
+      const out: IssueLabel[] = [];
+      for (const node of nodesOf(data.issueLabels)) {
+        const id = str(node.id);
+        const name = str(node.name);
+        if (id && name) out.push({ id, name, color: str(node.color) });
+      }
+      return out;
+    },
+
+    async createIssue(key: string, request: CreateIssueRequest): Promise<CreatedIssue> {
+      // Images first, so their markdown can be part of the body the issue is
+      // created with. Creating and then editing would leave a visible flicker
+      // in Linear's activity feed, and a failed second call would leave an
+      // issue whose evidence never arrived.
+      const markdown = await uploadAll(key, request.images, doFetch);
+      const body = markdown ? `${request.body}\n\n${markdown}` : request.body;
+
+      const input: Record<string, unknown> = {
+        title: request.title,
+        description: body,
+        teamId: request.containerId,
+      };
+      if (request.subContainerId) input.projectId = request.subContainerId;
+      if (request.labelIds.length) input.labelIds = request.labelIds;
+
+      const data = await mutate<{
+        issueCreate?: { success?: unknown; issue?: { id?: unknown; identifier?: unknown; url?: unknown } };
+      }>(
+        key,
+        `mutation Create($input: IssueCreateInput!) {
+           issueCreate(input: $input) {
+             success
+             issue { id identifier url }
+           }
+         }`,
+        { input },
+        doFetch,
+      );
+
+      const issue = data.issueCreate?.issue;
+      const id = str(issue?.id);
+      const identifier = str(issue?.identifier);
+      const url = str(issue?.url);
+      if (!data.issueCreate?.success || !id || !identifier || !url) {
+        // A mutation that reports failure without an `errors` array. Rare, but
+        // returning a half-built object here would give the UI an issue link
+        // that goes nowhere.
+        throw new IssueProviderError("server", "Linear accepted the request but did not return an issue.");
+      }
+      logger.info("issues", "Filed a Linear issue", { identifier });
+      return { id, identifier, url };
+    },
+
+    async addComment(
+      key: string,
+      issueId: string,
+      body: string,
+      images: UploadImage[],
+    ): Promise<void> {
+      const markdown = await uploadAll(key, images, doFetch);
+      const data = await mutate<{ commentCreate?: { success?: unknown } }>(
+        key,
+        `mutation Comment($input: CommentCreateInput!) {
+           commentCreate(input: $input) { success }
+         }`,
+        { input: { issueId, body: markdown ? `${body}\n\n${markdown}` : body } },
+        doFetch,
+      );
+      if (!data.commentCreate?.success) {
+        throw new IssueProviderError("server", "Linear did not accept the comment.");
+      }
     },
 
     async listSubContainers(key: string): Promise<IssueSubContainer[]> {

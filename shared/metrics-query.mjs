@@ -333,6 +333,61 @@ export function stepDurations(db, { testId, window = 10, limit = 200 } = {}) {
 }
 
 /**
+ * A TEST's own duration, recent median against the median before that.
+ *
+ * The step-level answer to "is this slower than it was?" is `stepDurations`;
+ * this is the same question one level up, and C §6.3 is why it exists — `Temp`
+ * needs a real median to measure a run against, and until now the only one
+ * available to the renderer came from `run-history.json`.
+ *
+ * WHICH MATTERS BECAUSE RETENTION PRUNES THAT FILE AND NOT THIS ONE. The
+ * metrics DB is rolled up BEFORE retention runs (see CLAUDE.md), so after a
+ * prune it holds strictly more history than the JSON does — and a median is
+ * exactly the statistic that degrades when its sample is silently truncated.
+ *
+ * PASSED RUNS ONLY. A failure's duration is not evidence about how long this
+ * test takes: a run that died on step two is fast, and a run that timed out is
+ * as slow as the budget. Either one poisons a median that is being used to say
+ * whether a PASS was unusual. `baseline-update` rows are excluded for the
+ * reason they are everywhere else — accepting screenshots is an audit event,
+ * not an execution.
+ *
+ * Both windows come back null when there is nothing to measure, which is the
+ * ordinary state of a test that has run twice.
+ */
+export function testDurationTrend(db, testId, window = 10) {
+  const rows = all(
+    db,
+    `SELECT duration_ms AS ms
+     FROM runs
+     WHERE test_id = ? AND status = 'passed' AND COALESCE(kind, 'run') = 'run'
+     ORDER BY started_at DESC
+     LIMIT ?`,
+    [testId, window * 2],
+  );
+
+  // Sliced in JS rather than by two OFFSET queries, for the reason written out
+  // at length in `stepDurations`: `all()` swallows a throw by contract, so a
+  // statement SQLite rejects comes back as an empty array and reads exactly
+  // like "this test has no timings".
+  const ms = rows.map((r) => r.ms);
+  const recentP50 = percentile(ms.slice(0, window), 50);
+  const previousP50 = percentile(ms.slice(window), 50);
+
+  return {
+    testId,
+    window,
+    recentRuns: Math.min(ms.length, window),
+    previousRuns: Math.max(0, ms.length - window),
+    recentP50Ms: recentP50,
+    previousP50Ms: previousP50,
+    // Only when BOTH windows have data — a ratio against a missing baseline
+    // reads as "no change" when it means "nothing to compare".
+    changeRatio: recentP50 !== null && previousP50 ? recentP50 / previousP50 : null,
+  };
+}
+
+/**
  * Nearest-rank percentile, or null for an empty sample.
  *
  * Nearest-rank rather than interpolated: with the ten-run windows this uses,

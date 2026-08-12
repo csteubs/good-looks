@@ -175,36 +175,64 @@ function walk(dir: string): string[] {
   );
 }
 
-// ── Why the one exception is safe: no preload on the trainer ─────────
+// ── Why the one exception is safe: no preload on the PAGE view ───────
 // `ipcMain.handle` is process-wide. A channel registered for the app's own
-// windows is invokable by ANY renderer that has the preload bridge, so the
-// training window's `webPreferences` is what decides whether an arbitrary
-// website can call `shell:openExternal`. It sets `partition` and nothing else,
-// and that omission is the whole guarantee.
+// windows is invokable by ANY renderer holding the preload bridge, so what
+// decides whether an arbitrary website can call `shell:openExternal` is the
+// `webPreferences` of the view the untrusted page loads into. It sets
+// `partition` and nothing else, and that omission is the whole guarantee.
+//
+// THE TRAINING WINDOW IS TWO VIEWS, and conflating them is how this check goes
+// quietly wrong. `pageView` is the site; `chromeView` is the app's own URL strip
+// above it, which needs the preload to talk to us and legitimately has one. An
+// earlier version of this asserted the file never mentioned `getPreloadPath` at
+// all — true when the trainer had no chrome of its own, and false the moment the
+// URL bar landed. It also read "the first `webPreferences` block", which passed
+// only because `pageView` happens to be constructed first; reorder the two and
+// it would have audited the wrong view while still reporting ok.
+//
+// So both assertions anchor on the VIEW BY NAME.
 {
-  // Two assertions rather than one, because each covers the other's blind spot.
-  // The file-wide one cannot be dodged by nesting or reformatting but would miss
-  // a preload path built by hand; the block-scoped one reads the actual options
-  // but stops at the first `}`, so a nested object added above `preload` would
-  // hide it. `getPreloadPath` is the only supported way to name that file.
-  assert(
-    !/getPreloadPath/.test(service),
-    "recorder-service never reaches for the preload path at all",
-  );
+  /** The options block of `<name> = new WebContentsView({ webPreferences: {…} })`.
+   *  Non-greedy to the first `}`, which is why the *anchor* has to be the name —
+   *  the shape is fragile, the identifier is not. */
+  function prefsOf(name: string): string | null {
+    const re = new RegExp(
+      `${name}\\s*=\\s*new WebContentsView\\(\\{[\\s\\S]*?webPreferences:\\s*\\{([\\s\\S]*?)\\}`,
+    );
+    return re.exec(service)?.[1] ?? null;
+  }
 
-  const prefs = /webPreferences:\s*\{([\s\S]*?)\}/.exec(service)?.[1] ?? "";
-  assert(prefs.length > 0, "the training window's webPreferences block was found to check");
+  const pagePrefs = prefsOf("pageView");
   assert(
-    !/\bpreload\s*:/.test(prefs),
-    "the training window gets NO preload, so an untrusted page has no glazeAPI to invoke host channels with",
+    pagePrefs !== null,
+    "found pageView's webPreferences — if this fails the view was renamed and the checks below are auditing nothing",
   );
   assert(
-    !/nodeIntegration\s*:\s*true/.test(prefs),
+    pagePrefs !== null && !/\bpreload\s*:/.test(pagePrefs),
+    "the untrusted page's view gets NO preload, so a website has no glazeAPI to invoke host channels with",
+  );
+  assert(
+    pagePrefs !== null && !/nodeIntegration\s*:\s*true/.test(pagePrefs),
     "…and no nodeIntegration",
   );
   assert(
-    !/contextIsolation\s*:\s*false/.test(prefs),
+    pagePrefs !== null && !/contextIsolation\s*:\s*false/.test(pagePrefs),
     "…and context isolation is not turned off",
+  );
+
+  // The URL strip is ours and may have one. Pinning the COUNT is what keeps that
+  // exception from becoming a second one nobody notices: a preload added to any
+  // other view in this file fails here even if it dodges the block match above.
+  const preloadUses = service.match(/\bpreload\s*:/g)?.length ?? 0;
+  assert(
+    preloadUses === 1,
+    `exactly one view in recorder-service has a preload — the app's own URL strip (found ${preloadUses})`,
+  );
+  const chromePrefs = prefsOf("chromeView");
+  assert(
+    chromePrefs !== null && /\bpreload\s*:/.test(chromePrefs),
+    "…and it is chromeView's, the app's own URL strip, not the page's",
   );
 }
 

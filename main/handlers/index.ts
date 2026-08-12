@@ -67,6 +67,7 @@ import {
   siblingRuns,
   stepBrowserMatrix,
   stepDurations,
+  testDurationTrend,
   stepHealth,
   suiteCost,
 } from "../../shared/metrics-query.mjs";
@@ -218,6 +219,13 @@ export function registerHandlers(): void {
     return recorderService.listCookies();
   });
 
+  // The training browser's URL strip: read the live URL, and open a URL
+  // assertion prefilled with it. Both are called from `recorder-chrome.html`,
+  // which runs in a view inside the training browser rather than in a window.
+  ipcMain.handle("recorder:getTrainingUrl", async () => recorderService.getTrainingUrl());
+  ipcMain.handle("recorder:assertUrl", async (_e, params: { kind: AssertKind }) =>
+    recorderService.assertUrl(params.kind),
+  );
   ipcMain.handle("recorder:startRefine", async () => recorderService.startRefine());
   ipcMain.handle("recorder:endRefine", async () => recorderService.endRefine());
   ipcMain.handle("recorder:stop", async () => {
@@ -1012,6 +1020,65 @@ export function registerHandlers(): void {
   ipcMain.handle("issues:disconnect", async () => issueTrackerService.disconnect());
   ipcMain.handle("issues:listContainers", async () => issueTrackerService.listContainers());
   ipcMain.handle("issues:listSubContainers", async () => issueTrackerService.listSubContainers());
+  ipcMain.handle("issues:listLabels", async () => issueTrackerService.listLabels());
+  // The source becomes a filesystem path, so it is rebuilt rather than trusted
+  // — see `normalizeSource`. A coordinate that does not survive that, or no
+  // longer resolves on disk, answers null: the dialog says the evidence is gone
+  // rather than opening onto an empty form.
+  ipcMain.handle("issues:buildDraft", async (_e, params: { source?: unknown }) => {
+    const source = issueTrackerService.normalizeSource(params?.source);
+    return source ? issueTrackerService.buildDraft(source) : null;
+  });
+  ipcMain.handle(
+    "issues:createIssue",
+    async (
+      _e,
+      params: {
+        source?: unknown;
+        title?: unknown;
+        body?: unknown;
+        attachmentFiles?: unknown;
+        containerId?: unknown;
+        subContainerId?: unknown;
+        labelIds?: unknown;
+      },
+    ) => {
+      const source = issueTrackerService.normalizeSource(params?.source);
+      if (!source) throw new Error("That defect could not be identified.");
+      const containerId = typeof params?.containerId === "string" ? params.containerId : "";
+      if (!containerId) throw new Error("Choose a destination before sending.");
+      const strings = (v: unknown): string[] =>
+        Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+      return issueTrackerService.createIssue(
+        {
+          source,
+          title: typeof params?.title === "string" ? params.title : "",
+          body: typeof params?.body === "string" ? params.body : "",
+          attachmentFiles: strings(params?.attachmentFiles),
+        },
+        {
+          containerId,
+          subContainerId:
+            typeof params?.subContainerId === "string" ? params.subContainerId : null,
+          labelIds: strings(params?.labelIds),
+        },
+      );
+    },
+  );
+  ipcMain.handle("issues:linksForTest", async (_e, params: { testId?: unknown }) =>
+    typeof params?.testId === "string" ? issueTrackerService.linksForTest(params.testId) : [],
+  );
+  ipcMain.handle(
+    "issues:commentRecurrence",
+    async (_e, params: { source?: unknown; attachmentFiles?: unknown }) => {
+      const source = issueTrackerService.normalizeSource(params?.source);
+      if (!source) throw new Error("That defect could not be identified.");
+      const files = Array.isArray(params?.attachmentFiles)
+        ? params.attachmentFiles.filter((x): x is string => typeof x === "string")
+        : [];
+      return issueTrackerService.commentRecurrence(source, files);
+    },
+  );
   ipcMain.handle("issues:getDefaults", async () => issueTrackerService.defaults());
   ipcMain.handle(
     "issues:setDefaults",
@@ -1238,6 +1305,14 @@ export function registerHandlers(): void {
         // disagree about what counts as a slowdown.
         slowed: slowdowns(rows),
         cost: costBreakdown(suiteCost(metricsStore.handle())),
+        // The TEST's own trend, only when one was named (C §6.3). On the same
+        // channel as its steps rather than a new one: the run summary and the
+        // step list are one screen asking one question, and two channels would
+        // let them answer it from two different reads of a database that is
+        // being written to while they look.
+        testTrend: params?.testId
+          ? testDurationTrend(metricsStore.handle(), params.testId, params?.window)
+          : null,
       };
     },
   );

@@ -72,21 +72,48 @@ async function startSession(
 /**
  * The two training windows and the display they are on.
  *
- * Found by URL, not by title: the training browser's title is whatever the
- * PAGE calls itself, so matching on "Recording — …" finds nothing the moment
- * the site under test has a `<title>`.
+ * Found by the URL of a webContents INSIDE the window, not by the window's own
+ * URL and not by its title.
+ *
+ * Not the window's URL: the training browser stopped loading the site itself
+ * when it grew a URL strip. The page is in a child WebContentsView, so the
+ * window's own webContents reports the strip's `app://` URL and a match on
+ * `http://127.0.0.1` finds nothing — every geometry assertion below would then
+ * fail as "the training browser window was null", which reads like the dock
+ * feature breaking rather than like the finder being out of date.
+ *
+ * Not the title either: it is whatever the PAGE calls itself, so matching on
+ * "Recording — …" finds nothing the moment the site under test has a `<title>`.
+ * (The service now refuses `page-title-updated`, so that is no longer true —
+ * but the URL is still the more direct question to ask.)
  */
 async function geometry(app: AppFixtures["app"]): Promise<{
   workArea: Rect;
   panel: Rect | null;
   browser: Rect | null;
 }> {
-  return app.evaluate(({ BrowserWindow, screen }) => {
+  return app.evaluate(({ BrowserWindow, screen, webContents }) => {
     const find = (match: (url: string) => boolean): Electron.Rectangle | null => {
       const win = BrowserWindow.getAllWindows().find((w) => match(w.webContents.getURL()));
       return win ? win.getBounds() : null;
     };
-    const browser = find((u) => u.startsWith("http://127.0.0.1"));
+    /** The WINDOW that hosts a webContents matching `match`, whether that
+     *  webContents is the window's own or one of its child views. */
+    const findByChild = (match: (url: string) => boolean): Electron.Rectangle | null => {
+      const wc = webContents.getAllWebContents().find((c) => !c.isDestroyed() && match(c.getURL()));
+      if (!wc) return null;
+      // `fromWebContents` answers for a window's own contents; a view's parent
+      // is reached through the ownerBrowserWindow it was added to.
+      const win =
+        BrowserWindow.fromWebContents(wc) ??
+        BrowserWindow.getAllWindows().find((w) =>
+          w.contentView.children.some(
+            (child) => (child as Electron.WebContentsView).webContents?.id === wc.id,
+          ),
+        );
+      return win ? win.getBounds() : null;
+    };
+    const browser = findByChild((u) => u.startsWith("http://127.0.0.1"));
     return {
       workArea: screen.getDisplayMatching(
         browser ?? screen.getPrimaryDisplay().workArea,

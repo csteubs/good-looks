@@ -34,6 +34,10 @@ main/windows/        BrowserWindow creation/config
 renderer/main/       primary views (home, recording/trainer, script view, ai-debug-panel, stats)
 renderer/settings/   settings window UI
 renderer/trainer/    the trainer window's own panel (runs the recorder store with no router)
+renderer/recorder-chrome/  the training browser's URL bar. Renders into a WebContentsView
+                     docked above the untrusted page INSIDE the recorder window — not a
+                     window, hence not `*-window.html`. Read-only by design: a navigation
+                     the user types is one the recorder does not record
 renderer/ui/         the app's component library (Radix + Tailwind + cva). Replaces the
                      former SDK design system; same symbol names and prop contracts, so
                      consuming views were not rewritten. Select/DropdownMenu are still
@@ -60,7 +64,8 @@ mcp/                 standalone MCP server exposing the test library to external
                      — see mcp/README.md
 docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated rationale)
 .github/             PR template, hygiene workflow, and the script it runs
-vite.config.ts       renderer build (three windows). `--mode preview` builds the browser
+vite.config.ts       renderer build (three windows + the training browser's URL strip).
+                     `--mode preview` builds the browser
                      preview instead — preview.html + renderer/dev/, into build-preview/
 scripts/build-main.mjs   esbuild bundling for the main process + preload
 scripts/verify-package.mjs  the two guards around `npm run package`: refuse a symlinked
@@ -101,7 +106,7 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 2381 Vitest tests across 119 files and 53 checks in the chain as of 2026-08-10 (55 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 2585 Vitest tests across 131 files and 56 checks in the chain as of 2026-08-12 (58 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS gets checked: `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 

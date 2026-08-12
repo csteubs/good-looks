@@ -16,27 +16,96 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
-### 2026-08-11 — `app.isPackaged` made the branch switcher unreachable in the only way anyone runs this app from source
+### 2026-08-12 — The training browser gets a real URL bar, and the URL assertion gets a default
 
-**Found by running the app and looking at it, which is the step in CLAUDE.md that exists for exactly this.** Every automated gate was green; the Branches row simply was not in the sidebar, and opening the view said *"This is a packaged build … Run the app from a checkout (`npm run dev`)"* — to a user who had run `npm run dev`.
+**The URL bar already existed and had never once worked.** `updateTitle()` wrote `Recording — <url>` into the training window's native title on every `did-navigate`, described in its own comment as "the trainer's stand-in for an address bar, since an externally-loaded page can't host an app-owned toolbar". Electron's default handling of `page-title-updated` copies `document.title` onto the window, and that fires after the navigation — so the page won the race every time, on every site with a `<title>`. The window said "Ritual" where it was meant to say where you were. The setting to turn it off worked; the thing it turned on did not.
 
-**`isPackaged` is not "was this shipped".** Electron derives it from the name of the executable: anything not called `Electron` counts as packaged. And `npm run dev` deliberately runs a **branded, re-signed clone of Electron.app called "Good Looks!"**, because macOS reads an app's name and icon from its bundle (`scripts/dev-app-bundle.mjs`, and never `app.setName` — that would move userData). So every dev run reported itself as packaged. The two facts are individually documented and had never been put together.
+**Which made a URL assertion a trip outside the app.** The trainer panel's header shows `state.url`, which is the session's START url and is never reassigned — correct for what that field means, and stale from the first navigation onward. So the three URL assert kinds opened with an empty field and no legible copy of the current URL anywhere in the product. The actual user workflow was: leave the app, look at the URL in a different browser, come back, type it.
 
-**It was worse than a hidden row.** `relaunchOnto` relaunches the same binary, so a user who did reach the feature and switched onto a branch arrived at a Branches view telling them branch switching was unavailable — with the way back to their own checkout inside it. The escape was to quit and re-run `npm run dev`.
+**A stand-in was not fixable into a URL bar, so the page moved into a child view.** `recWindow.webContents` was the page; it is now a `WebContentsView`, with an app-owned strip in a second view above it. This is the first `WebContentsView` in the codebase and it is a real cost — the partition, the navigation guards, the denied `openExternal` permission, the capture injection, the drains, the cookies, the input host and the focus call all had to move from the window to the page, and **every one of those fails silently if it is left behind**. A drain pointed at the strip returns nothing and the trainer records no steps. A guard attached to the window protects a webContents that never navigates. The partition on the window still creates a partition — just not the one the site loads in, so every recording would quietly inherit the last one's cookies. None of it throws.
 
-**So availability is decided by what the feature actually requires: a git repository to check a branch out of.** `readRepoInfo` already answers that, and answers it correctly for a dev run, for a branch build, and for a shipped `.app` in /Applications, which has no repository above it and fails exactly as it did before. `isPackaged` is kept **only to choose the wording** of that failure, which is the one thing it is reliable for — a packaged build is the case where "no repository" has a specific, actionable explanation.
+**So the rule is lexical and enforced: `recWindow.webContents` may not appear in `recorder-service.ts`.** `pageWc()` is the only way to reach the page, and `check:recorder-views` fails the build on the direct form. A type would have been better and was not available — both are `WebContents`, the same type doing two different jobs.
 
-**Two existing tests only passed because of the short-circuit.** Both set `packaged` and asserted unavailability, while the stub's default app path is this project — a real checkout. The old code returned before anything looked at it. Their setups now say what they mean, which is that a packaged build has no repository above it.
+**The hazard that would have shipped is the viewport.** `useContentSize` made the window's content box *be* the recorded viewport, which is what `page.setViewportSize` replays at. Insert a 36pt strip into that box and the page renders 36pt shorter than the step, the generated spec and the real run all claim — and nothing measures it, because the step is written from the preset rather than from the page. The window is created at `viewport.height + strip` and a replayed `viewport` step goes through `pageResizeHost()`, an adapter that adds the strip on the way in and subtracts it on the way out so `resize-service.ts` never learns the training browser grew a toolbar. Verified against a real window: preset 900×600 → content 900×636 → page view at y=36, height 600.
 
-### 2026-08-11 — The app can open a URL now, and the ban that said it never would
+**The bar is deliberately read-only.** A real address bar is the obvious next request and it is the wrong feature. Every navigation in a recording is either the opening `goto` or a consequence of a recorded interaction; a navigation the user performs by typing is one the recorder does not capture, so the spec would replay a different journey than the one on screen — silently, which is the only kind of wrong that matters here. It is selectable and copyable, because *reading* the URL was the need.
 
-**`check:recorder-navigation` asserted that no file in `main/` calls `shell.openExternal`, on the stated grounds that nothing needed it and "its absence is far easier to keep than its correctness."** The branch menu's pull-request icon needs it. The choice was to delete that assertion or to narrow it, and deleting it would have thrown away the reasoning along with the rule — so it is now a one-file allowlist naming `main/shell/host-handlers.ts`, plus a second assertion that the allowed file still contains the call. An allowlist entry for code that has since been deleted is a guard that passes vacuously forever.
+**`liveUrl` is a separate field from `url`, and nearly was not.** The first draft updated `session.url` on every navigation, which reads as the obvious fix and would have rewritten every saved test's starting point to wherever the user happened to stop — `finalize()` writes `session.url` to `TestRecord.url`, and that is what the opening `goto` replays.
 
-**The validator is the second layer, not the first.** `ipcMain.handle` registers a channel process-wide: every renderer holding the preload bridge can invoke it, so the real question is whether the trainer's arbitrary untrusted website can. It cannot, because **the training window has no preload** and therefore no `glazeAPI` object — and that fact was load-bearing and completely unpinned before this. It is asserted now, twice over (no `getPreloadPath` anywhere in `recorder-service.ts`, and no `preload:` in the window's `webPreferences`), because a preload added there for some unrelated debugging convenience would hand an arbitrary site the entire host surface, and nothing else in the toolchain would mention it.
+**The prefill is per-kind because the kinds mean different things.** `urlIs` generates an exact whole-URL match, so it gets the absolute URL; anything shorter can never pass. `url` and `urlEndsWith` get the path, because the origin is what differs between staging and production and asserting it is the reason those two kinds exist beside `urlIs`. At a site root the path is `/`, which as a "contains" assertion is satisfied by every URL on every host — a green assertion testing nothing — so that case falls back to the host. One implementation in `shared/url-assert.mjs`, because four call sites that disagreed about what "URL contains" means would teach the user to distrust the suggestion, which is worse than not offering one.
 
-**`checkExternalUrl` returns the href it approved, and that is the whole shape of the thing.** The first version returned a reason string and the handler opened its own argument — which is two values that merely usually agree. The WHATWG parser strips leading whitespace, resolves dot segments and lowercases the host, so `"   https://github.com/…"` passes a hostname test performed on a string that nobody subsequently opens. Returning `parsed.href` means there is only one URL in play. This was found by a check case asserting whitespace was *rejected*; rejecting it would have been the wrong fix for a real bug.
+**Two things the split broke that tests caught rather than users.** `debug-capture.ts` captured `win.webContents`, which is now blank — the training browser had silently dropped out of every debug capture, skipped by an `isEmpty()` guard, and it is the window you most want a picture of. And the strip's first draft gave it its own `partition`; `protocol.handle` registers `app://` on the DEFAULT session only, so the load failed with no exception and no useful event, rendering as a blank band above a page that otherwise worked perfectly. `e2e/ui-scale.spec.ts` found that one, because it was extended to assert the strip scales with the app while the page never does — a distinction the split made delicate, since both now live one point apart in the same window and the natural implementation (scale the window) gets the strip right and the page wrong.
 
-**Allowlist, not blocklist, and https-on-github.com only.** The URL passed is a PR's `html_url` out of a GitHub API response — network input, the same category as the recorder's page JSON and an imported project's relative specifiers. `shell.openExternal` is not "show a web page": it is Launch Services, where `file://` opens a document and any scheme another installed app has registered starts that application with an argument this app chose. The four host traps in `check:open-external` are there because each defeats a check somebody would plausibly write instead — `startsWith` loses to `github.com.evil.com`, `endsWith` loses to `evilgithub.com`, and both lose to `https://github.com@evil.com`, which a human reads left-to-right and stops at the wrong label.
+### 2026-08-12 — Change temp stops guessing, and two numbers that are both medians (C §6.3)
+
+`Temp` shipped in A3 with a note admitting what it was: a component that reads a timing against a median, with no median to read. It fell to `off` and rendered neutral everywhere, which was the current behaviour rendered honestly rather than a feature. This wires it to `metrics-store`, and two of the three decisions are about refusing to colour something.
+
+**On a step row, both numbers are medians.** Recent p50 against the p50 before it — not this run against a median. The obvious design is the other one, and it is wrong here: a single run's duration for a single step is noise, a garbage collection or a slow DNS answer, and colouring it would light half the list on every run for reasons that have nothing to do with the test. What earns a colour is the step having CHANGED, which is a claim two medians can support and one sample cannot. §3.4's dead band exists for the same reason at one level down — a table where every row is lit says nothing at all.
+
+**For the test's own median, metrics beats run history, and the reason is retention.** §6.1 computes a median from `api.runs.list()`, which is `run-history.json` — and retention prunes that file. The metrics DB is rolled up BEFORE retention runs (CLAUDE.md says why: after it, retention costs you pictures rather than history), so once a prune has happened it holds strictly more of a test's past. A median is exactly the statistic that degrades when its sample is silently truncated: the number stays plausible, keeps rendering, and stops being true. Nothing about the screen changes when that happens, which is what makes it worth the extra query.
+
+**But it falls back rather than failing.** The metrics DB is a derived shadow that is allowed to be unavailable — a runtime without `node:sqlite`, a failed open — and every method in it swallows its own errors by design. So `summariseRun`'s `medianMs` is preferred when present and the history-derived median is used when it is not. Losing the better source must not mean losing the answer.
+
+**`testDurationTrend` counts passed runs only.** A run that died on step two is fast; one that timed out is exactly as slow as the budget. Either poisons a median whose entire job is to say whether a PASS was unusual. `baseline-update` rows are excluded for the reason they are excluded everywhere else: accepting screenshots is an audit event, not an execution.
+
+**It rides the existing channel rather than taking its own.** `metrics:slowness` already answers per-test when given a `testId`, so the trend goes on that response. The step list and the run summary are one screen asking one question, and two channels would let them answer it from two different reads of a database that is being written to while they look.
+
+**And the check is real SQL against a real database, deliberately.** `stepDurations` once computed its percentiles with `LIMIT 1 OFFSET <expression over aggregates>`, which SQLite accepted for p95 and refused for p50 — and because `all()` swallows a throw by contract, the broken half came back as `null` and read exactly like "this step was never timed". A pure test of the arithmetic would have passed. The same trap applies here, so the same kind of test guards it.
+
+### 2026-08-12 — Filing a defect: the payload, the consent, and three invisible bugs
+
+Phases 2–6 of the issue-tracker integration, on top of the connection that
+landed in #87. A visual difference, an accessibility violation or a failed step
+becomes a Linear issue; the same defect seen again comments on the issue it
+already has; and every issue carries a `goodlooks://` link back.
+
+**The renderer never handles the evidence.** It names a coordinate — this test,
+this run, this step — and the BACKEND loads the screenshots, console lines and
+error text itself. That is what makes the leak check meaningful: if the renderer
+carried the evidence across IPC and handed it back to be sent, `check:issue-payload`
+could only verify what it was given. It also means the sending direction of IPC
+carries no image data at all — the dialog returns filenames, and the bytes are
+re-read from the same coordinate the draft was built from.
+
+**What the check actually guarantees is narrower than "no logs", and the
+distinction is the whole point.** The raw Playwright log never appears, because
+its only redaction is for declared secrets while it carries DOM snippets,
+assertion diffs and unscrubbed URLs; what goes instead is `errorSignature`'s
+reduction of its first line. Console lines DO go, for a failure only, filtered to
+errors and page errors — that is where a diagnosis lives. Network entries go only
+when the run had its headers filtered, and are dropped **whole** otherwise rather
+than narrowed: `GLAZE_RECORD_ALL_HEADERS=1` produces exactly the run someone
+debugging an auth failure would have, and not reading those entries is a stronger
+guarantee than remembering to strip them.
+
+**Screenshots are consented to, not filtered.** They cannot be redacted, so the
+mitigation is the thumbnail strip: all three images shown at a size you can
+actually read, above the button, each removable. The dialog is `2xl` rather than
+`large` for that reason alone — at `max-w-lg` the strip wraps to one per row and
+the consent it exists to obtain stops meaning anything.
+
+**Links are keyed without the run id.** A visual difference reappears on every
+run, so a run-keyed link reports "not filed" every time and the feature produces
+one duplicate per run — which is how it would become the one everyone mutes. The
+exception is a failure that blamed no step: nothing identifies it but its run,
+and keying those together would comment a new failure onto an unrelated issue.
+
+**Three bugs found here were invisible, and all three are the same shape.**
+
+The first: `SettingRow` drops `details` on a flagged row by design, so copy
+written there compiled, type-checked and rendered nowhere. The second:
+`new URL()` **resolves `..` rather than preserving it**, so a deep-link
+validator inspecting parsed segments can never see a traversal — by then it has
+been applied, silently changing which target the link resolves to. Dot segments
+are now rejected on the raw string, before parsing. The third was the worst: the
+issue-link store built its key in two places, and the two `join` separators
+**rendered identically in every editor, grep and diff** while being different
+characters. Every save succeeded, every lookup missed, and the feature reported
+"not filed yet" for defects it had just filed. There is now one derivation, and
+it joins on a visible `::`.
+
+None of the three throws, none shows up in type-check, and two of them were found
+only because a test was written for the behaviour rather than the code.
 
 ### 2026-08-12 — ⌘K, and why its scoring is three tiers rather than a fuzzy library (C §6.7)
 
@@ -87,6 +156,28 @@ The detail view was shaped around one run state. A verdict chip, a triage line, 
 **Two traps this cost, both worth writing down.** First: `.gl-heal-row` **already existed** in `shared.css`, used by `heals-panel.tsx`. The new rows silently adopted its border and background, and the new rules leaked back into that panel. Nothing catches this — `check:renderer-classes` asks whether a class resolves, and it did, to the wrong rule. It was caught by looking at the screen. Renamed to `.gl-run-heal-*`. Second: the summary's height cap was written as `max-height: 60%`, and with no log the panel is `flex: 0 0 auto`, so its own height is content-driven and **indefinite** — against which a percentage `max-height` resolves to `none` and does nothing at all. The symptom is a panel that looks correct and is cut off at the window's edge, with the scrollbar that would have revealed the rest never appearing. `vh` is definite everywhere.
 
 **And one guard earned its keep on the way through.** `check:selection-neutral` rejected an amber `:hover` on the review button. It is right: this app spends its four hues on outcomes, and a control that goes amber under the pointer is indistinguishable from one reporting a warning.
+
+### 2026-08-11 — `app.isPackaged` made the branch switcher unreachable in the only way anyone runs this app from source
+
+**Found by running the app and looking at it, which is the step in CLAUDE.md that exists for exactly this.** Every automated gate was green; the Branches row simply was not in the sidebar, and opening the view said *"This is a packaged build … Run the app from a checkout (`npm run dev`)"* — to a user who had run `npm run dev`.
+
+**`isPackaged` is not "was this shipped".** Electron derives it from the name of the executable: anything not called `Electron` counts as packaged. And `npm run dev` deliberately runs a **branded, re-signed clone of Electron.app called "Good Looks!"**, because macOS reads an app's name and icon from its bundle (`scripts/dev-app-bundle.mjs`, and never `app.setName` — that would move userData). So every dev run reported itself as packaged. The two facts are individually documented and had never been put together.
+
+**It was worse than a hidden row.** `relaunchOnto` relaunches the same binary, so a user who did reach the feature and switched onto a branch arrived at a Branches view telling them branch switching was unavailable — with the way back to their own checkout inside it. The escape was to quit and re-run `npm run dev`.
+
+**So availability is decided by what the feature actually requires: a git repository to check a branch out of.** `readRepoInfo` already answers that, and answers it correctly for a dev run, for a branch build, and for a shipped `.app` in /Applications, which has no repository above it and fails exactly as it did before. `isPackaged` is kept **only to choose the wording** of that failure, which is the one thing it is reliable for — a packaged build is the case where "no repository" has a specific, actionable explanation.
+
+**Two existing tests only passed because of the short-circuit.** Both set `packaged` and asserted unavailability, while the stub's default app path is this project — a real checkout. The old code returned before anything looked at it. Their setups now say what they mean, which is that a packaged build has no repository above it.
+
+### 2026-08-11 — The app can open a URL now, and the ban that said it never would
+
+**`check:recorder-navigation` asserted that no file in `main/` calls `shell.openExternal`, on the stated grounds that nothing needed it and "its absence is far easier to keep than its correctness."** The branch menu's pull-request icon needs it. The choice was to delete that assertion or to narrow it, and deleting it would have thrown away the reasoning along with the rule — so it is now a one-file allowlist naming `main/shell/host-handlers.ts`, plus a second assertion that the allowed file still contains the call. An allowlist entry for code that has since been deleted is a guard that passes vacuously forever.
+
+**The validator is the second layer, not the first.** `ipcMain.handle` registers a channel process-wide: every renderer holding the preload bridge can invoke it, so the real question is whether the trainer's arbitrary untrusted website can. It cannot, because **the training window has no preload** and therefore no `glazeAPI` object — and that fact was load-bearing and completely unpinned before this. It is asserted now, twice over (no `getPreloadPath` anywhere in `recorder-service.ts`, and no `preload:` in the window's `webPreferences`), because a preload added there for some unrelated debugging convenience would hand an arbitrary site the entire host surface, and nothing else in the toolchain would mention it.
+
+**`checkExternalUrl` returns the href it approved, and that is the whole shape of the thing.** The first version returned a reason string and the handler opened its own argument — which is two values that merely usually agree. The WHATWG parser strips leading whitespace, resolves dot segments and lowercases the host, so `"   https://github.com/…"` passes a hostname test performed on a string that nobody subsequently opens. Returning `parsed.href` means there is only one URL in play. This was found by a check case asserting whitespace was *rejected*; rejecting it would have been the wrong fix for a real bug.
+
+**Allowlist, not blocklist, and https-on-github.com only.** The URL passed is a PR's `html_url` out of a GitHub API response — network input, the same category as the recorder's page JSON and an imported project's relative specifiers. `shell.openExternal` is not "show a web page": it is Launch Services, where `file://` opens a document and any scheme another installed app has registered starts that application with an argument this app chose. The four host traps in `check:open-external` are there because each defeats a check somebody would plausibly write instead — `startsWith` loses to `github.com.evil.com`, `endsWith` loses to `evilgithub.com`, and both lose to `https://github.com@evil.com`, which a human reads left-to-right and stops at the wrong label.
 
 ### 2026-08-11 — Connecting to Linear, and one pane for everything that leaves
 
