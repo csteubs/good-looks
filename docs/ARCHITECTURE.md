@@ -330,7 +330,11 @@ The nine screens inside the shell are still the old chrome until Phase B.
   an inset `box-shadow` rail that COMPOSES with the selection ring, so a row can
   be selected and failing at once); `MenuItem` (the consequence line renders
   unconditionally — the honest description of concurrency 8 is a failure mode
-  that looks like a flaky suite); `SiteIcon` (monogram by default, favicon
+  that looks like a flaky suite); `Menu` (the box it goes in: Escape with focus
+  return, outside `pointerdown`, `aria-expanded`, choose-closes — **and the
+  keyboard pattern `role="menu"` promises**, added 2026-08-10 after shipping
+  those roles with no key handler at all. Opens on the item in force, arrows
+  wrap, Tab closes rather than walking the list); `SiteIcon` (monogram by default, favicon
   opt-in, because the mockup's per-row icon lookup is an egress path);
   `CRT` (content never treated, z-610 above the overlays).
 - `renderer/theme/shell/` + `shell.css` — the frame the screens sit inside (A4).

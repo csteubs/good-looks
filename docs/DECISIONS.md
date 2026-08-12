@@ -16,6 +16,53 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — The new Menu promised a keyboard pattern its roles did not implement
+
+`Menu` shipped in B3 with `role="menu"` and `role="menuitem"` children. Those
+roles are a specific claim to assistive tech — arrow keys move between items,
+Tab leaves — and none of it was implemented. ArrowDown did nothing. Every item
+was `tabIndex 0`, which is the only reason the menu was operable at all: Tab
+walked the list, so a four-option menu was four stops on the way to the next
+control. All of this was free when it was a native `Menu.popup`.
+
+The primitive's own header enumerated "the four behaviours a hand-rolled
+dropdown always gets half-right". They were all correctly implemented. The hole
+was the fifth, and it survived review *because the list said there were four* —
+a scope statement read as a completeness statement. `menu.tsx` also had no test
+file while `menu-item.tsx` did: the box was unowned and unasserted.
+
+Opening focuses the item **in force** (`aria-current`), not the first one — where
+a native menu opens, and opening on "Off" when the batch is set to 2 invites
+changing a setting the user came only to read. Tab now closes rather than
+walking, and deliberately does not `preventDefault`: closing without letting Tab
+move strands the caret on the trigger, which reads as a dead Tab key.
+
+**Two things about how this was verified, both of which nearly produced a false
+result.**
+
+A synthetic `KeyboardEvent` dispatched at the wrong node reports exactly what a
+missing handler reports. The first probe dispatched Escape from the trigger —
+outside the menu subtree — and concluded Escape was broken. It was not; the
+listener is on `document` and the dispatch simply never reached it. Anything
+about this component asserted by hand-dispatching events needs the node it
+dispatches from stated, or the result means nothing.
+
+And the browser tool's `key` action silently accepts a name it does not map:
+`"Down"` delivers a keydown with `key: ""`, `keyCode: 0`. It reports "pressed
+Down" and the page receives an empty event, which is indistinguishable from a
+handler that ignored the key. `"ArrowDown"` is the name that works. The original
+finding survived only because it rested on reading the source, where there was
+no key handler to miss.
+
+The test file that came with the fix had the same class of bug and it is worth
+recording, because it passed: `expect(document.activeElement?.textContent)
+.toContain("4 at once")` is vacuous. When nothing has focus `activeElement` is
+`document.body`, whose `textContent` contains every label in the tree — so the
+ArrowDown and Home/End cases both went green against a component with no key
+handler whatsoever. They would have shipped as coverage over the exact hole they
+were written for. Focus is asserted by element identity now, with an explicit
+`not.toBe(document.body)`.
+
 ### 2026-08-10 — Visual's run header was painting its outcome under the Re-run button
 
 Found by driving the browser preview at 1440×900 — an ordinary window, not a
