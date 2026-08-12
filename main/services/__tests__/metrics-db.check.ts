@@ -51,6 +51,7 @@ import {
   siblingRuns,
   stepBrowserMatrix,
   stepDurations,
+  testDurationTrend,
   stepHealth,
   suiteCost,
 } from "../../../shared/metrics-query.mjs";
@@ -449,6 +450,72 @@ try {
     siblings.length === 1 && siblings[0].id === "run-2",
     "query: sibling runs exclude the run being triaged",
   );
+
+  // Its own database: the assertions below ingest extra runs, and doing that
+  // to the shared one moves every count the earlier queries were checked
+  // against.
+  for (const sql of DROP_STATEMENTS) db.exec(sql);
+  create();
+  ingest(rollupFixture());
+  ingest(
+    rollupFixture({
+      run: makeRun({ id: "run-2", status: "passed", runBrowser: "webkit", startedAt: 2000 }),
+    }),
+  );
+
+  // ── 5b. testDurationTrend (C §6.3) ──────────────────────────────────
+  //
+  // Real SQL against a real database for the same reason as above: the one
+  // thing a pure fixture cannot catch is a statement SQLite rejects, and
+  // `all()` swallows a throw by contract — a broken query returns [] and
+  // reads exactly like "this test has never passed".
+    // The fixture holds run-1 (failed, 4000ms) and run-2 (passed, 4000ms).
+    const trend = testDurationTrend(db, "test-1");
+    assert(
+      trend.recentRuns === 1 && trend.recentP50Ms === 4000,
+      "query: a test's trend takes its median from its PASSED runs",
+    );
+    assert(
+      trend.previousP50Ms === null && trend.changeRatio === null,
+      "query: …and invents no ratio against a window with no samples",
+    );
+
+    // A slow FAILED run must not move the median. This is the whole reason
+    // the statement filters on status: a run that timed out is as slow as
+    // the budget, and one that died on step two is fast — either poisons a
+    // median being used to say whether a PASS was unusual.
+    ingest(
+      rollupFixture({
+        run: makeRun({ id: "run-3", status: "failed", durationMs: 900_000, startedAt: 3000 }),
+      }),
+    );
+    assert(
+      testDurationTrend(db, "test-1").recentP50Ms === 4000,
+      "query: a failed run's duration never enters the median",
+    );
+
+    // Same for a baseline-update row, which is an audit event rather than
+    // an execution — excluded everywhere else in the app for this reason.
+    ingest(
+      rollupFixture({
+        run: makeRun({
+          id: "run-4",
+          status: "passed",
+          kind: "baseline-update",
+          durationMs: 1,
+          startedAt: 4000,
+        }),
+      }),
+    );
+    assert(
+      testDurationTrend(db, "test-1").recentP50Ms === 4000,
+      "query: …nor does a baseline-update row",
+    );
+
+    assert(
+      testDurationTrend(db, "no-such-test").recentP50Ms === null,
+      "query: a test with no history reports no median rather than zero",
+    );
 
   // ── 6. Never fatal ──────────────────────────────────────────────────
   //

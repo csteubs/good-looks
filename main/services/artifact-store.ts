@@ -188,8 +188,18 @@ export interface RunReplay {
   failedIndex: number | null;
   /** threshold (percent, 0–100) this run's visual diffs used, when captured. */
   visualThreshold?: number;
+  /** Which of the replay screen's findings banners the user has dismissed.
+   *  Lives on the replay rather than in renderer state because a dismissal that
+   *  comes back when you click away is not a dismissal. Safe to pin to the run:
+   *  a run's findings never change after it finishes, and a re-run writes a new
+   *  replay that starts undismissed. */
+  dismissedNotices?: RunNoticeKind[];
   steps: ReplayStep[];
 }
+
+/** The two findings a run reports that don't fail it, and that the user can
+ *  therefore either resolve (accept) or wave off (dismiss). */
+export type RunNoticeKind = "visual" | "a11y";
 
 /** Lightweight summary for the replay run list (from each run's replay.json). */
 export interface RunReplaySummary {
@@ -560,6 +570,49 @@ export const artifactStore = {
       path.join(dir, "heal-failures.json"),
       JSON.stringify({ testId, runId, entries: failures }, null, 2),
     );
+  },
+
+  /** Whether this run recorded anything about the page around a failing step —
+   *  either file. Asked before offering the data to a model, so an unavailable
+   *  request can be answered without reading and normalizing to find it empty.
+   *
+   *  Either alone is a complete answer to a different question, so this is an
+   *  OR: a step whose ambiguous locator then healed writes matches and no heal
+   *  failure, and a run from before matches existed writes the reverse. */
+  hasHealFailures(testId: string, runId: string): boolean {
+    const dir = this.runDir(testId, runId);
+    return (
+      fs.existsSync(path.join(dir, "heal-failures.json")) ||
+      fs.existsSync(path.join(dir, "step-matches.json"))
+    );
+  },
+
+  /** Persist what each failing locator actually resolved to. Its own file for
+   *  the same reason heal-failures.json is: unbounded in a way a per-step
+   *  manifest entry is not. */
+  writeStepMatches(testId: string, runId: string, sets: unknown[]): void {
+    if (sets.length === 0) return;
+    const dir = this.ensureRunDir(testId, runId);
+    fs.writeFileSync(
+      path.join(dir, "step-matches.json"),
+      JSON.stringify({ testId, runId, entries: sets }, null, 2),
+    );
+  },
+
+  /** Read what each failing locator resolved to, or an empty list. Returned
+   *  RAW: every field is page-authored, and the rebuild belongs at the IPC
+   *  edge with the other boundary normalizers, not here. */
+  readStepMatches(testId: string, runId: string): unknown[] {
+    try {
+      const raw = fs.readFileSync(
+        path.join(this.runDir(testId, runId), "step-matches.json"),
+        "utf-8",
+      );
+      const parsed = JSON.parse(raw) as { entries?: unknown[] };
+      return Array.isArray(parsed.entries) ? parsed.entries : [];
+    } catch {
+      return [];
+    }
   },
 
   /** Read a run's failed heal attempts, or an empty list. */

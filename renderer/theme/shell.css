@@ -1,0 +1,756 @@
+/*
+ * The shell's static structure: the top strip and the rail.  docs/REDESIGN.md §4 (A4).
+ *
+ * SEPARATE FROM primitives.css ON PURPOSE. That file is the fifteen components
+ * a screen composes out of (§3.3); this one is the chrome those screens sit
+ * INSIDE, and there is exactly one instance of each rule here in the whole
+ * window. Keeping them apart is what lets `check:renderer-classes` and a reader
+ * both answer "is this a screen thing or a frame thing?" without opening a
+ * component.
+ *
+ * The same two house rules apply as in primitives.css and for the same reasons:
+ * everything constant lives here as a named class, only per-instance values go
+ * inline; zero border radius; a hairline is the only container.
+ *
+ * ONE ADDITIONAL RULE THIS FILE INTRODUCES: THE STRIP AND THE RAIL HEADER ARE
+ * THE SAME HEIGHT, and it is `--gl-strip-h`. They are two different elements on
+ * either side of the rail's hairline, and they read as one continuous band
+ * across the top of the window only while they agree. A number written twice is
+ * a number that stops agreeing, so it is written once.
+ */
+
+/* ── Top strip ────────────────────────────────────────────────────────── */
+
+.gl-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--gl-strip-h);
+  flex: 0 0 var(--gl-strip-h);
+  padding: 0 8px;
+  background: var(--gl-ink);
+  border-bottom: 1px solid var(--gl-line);
+  /* The strip names where you are. It is not a place text is selected FROM,
+     and a stray drag across it selecting "GOOD LOOKS! / STATS" is noise. */
+  user-select: none;
+}
+
+/* The leading slot: the rail handle lives here. Fixed width so the wordmark
+   starts on the same x whether or not a handle is mounted — the settings
+   window runs this strip with no rail at all. */
+.gl-strip-lead {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.gl-strip-mark {
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/* The breadcrumb. Mono, uppercase, dim — it is a location, not a heading, and
+   the design's rule is that anything you read at a glance is mono. */
+.gl-strip-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.gl-strip-crumb,
+.gl-strip-crumb-current,
+.gl-strip-sep {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* A crumb that navigates is a button; the last one is not. Both are dim except
+   the one you are on, so the trail reads as a path with a head. */
+.gl-strip-crumb {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-strip-crumb:hover {
+  color: var(--gl-tx-1);
+}
+
+.gl-strip-crumb:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+.gl-strip-crumb-current {
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.gl-strip-sep {
+  color: var(--gl-tx-3);
+  opacity: 0.6;
+}
+
+/* Everything from here is pinned to the trailing edge: the two slots that
+   Phase C fills (§6.7 command palette, §6.8 job ticker) and the gear. */
+.gl-strip-tail {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* Icon controls in the strip and in the rail header are the same control. 24px
+   rather than the `Btn` 30px: this is chrome sitting in a 34px band, and a
+   30px button in it leaves 2px of air above and below, which reads as a
+   mistake rather than as a row. */
+.gl-chrome-btn {
+  height: 24px;
+  min-width: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--gl-tx-2);
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  /* `body` sets `cursor: default` app-wide and Tailwind's preflight sets it on
+     `button` as well, so a control that does not ask for the pointer has no
+     hover affordance at all. Guarded by `check:clickable-chrome`. */
+  cursor: pointer;
+}
+
+.gl-chrome-btn:hover {
+  color: var(--gl-tx-1);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.gl-chrome-btn:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-chrome-btn[aria-pressed="true"] {
+  color: var(--gl-tx-1);
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-chrome-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ── Rail ─────────────────────────────────────────────────────────────── */
+
+.gl-rail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--gl-rail);
+  border-inline-end: 1px solid var(--gl-line);
+}
+
+/* Aligned with `.gl-strip` — see the header. */
+.gl-rail-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--gl-strip-h);
+  flex: 0 0 var(--gl-strip-h);
+  padding: 0 8px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.gl-rail-head-title {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-rail-head-actions {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The filter field, PINNED like the nav below. `flex: 0 0 auto` is the whole
+   point: inside the scroller it would be reachable only while the list is
+   short, which is exactly when nobody needs to filter. */
+.gl-rail-search {
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* The scrolling middle. `min-height: 0` is what lets it shrink inside the
+   column instead of pushing the pinned nav below the window — the same failure
+   `check:scroll-layout` exists for, one level up. */
+.gl-rail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+/* The views nav, PINNED. It used to be `mt-auto` inside the scrolling list,
+   which means it is only at the bottom while the library is short: with more
+   tests than fit, Stats/Visual/Batch/Heals scroll away and the app's own views
+   become something you have to hunt for. Outside the scroller it is always
+   there. */
+.gl-rail-nav {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--gl-line);
+  padding: 4px 0;
+}
+
+.gl-rail-foot {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--gl-line);
+}
+
+.gl-rail-group-label {
+  display: block;
+  padding: 6px 10px 4px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-rail-empty {
+  padding: 8px 10px;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--gl-tx-3);
+}
+
+/* ── Rail row ─────────────────────────────────────────────────────────── */
+
+.gl-rail-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 4px 10px;
+  border: 0;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+  /* The status rail's channel, reserved on every row whether or not the row
+     has a status. Without it a row that gains one shifts its content 2px and
+     the column stops being a column. */
+  box-shadow: inset 2px 0 0 transparent;
+}
+
+.gl-rail-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* SELECTION IS NEUTRAL — never a status hue. A selected row drawn in a colour
+   would be a second thing on that row claiming to report a result, and a row
+   that is both selected and failing would have two treatments arguing. See
+   tokens.css, and `check:selection-neutral`, which reads this rule by name. */
+.gl-rail-row[data-selected] {
+  background: var(--gl-sel-bg);
+  box-shadow:
+    inset 2px 0 0 transparent,
+    inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-rail-row:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-rail-row-icon {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  color: var(--gl-tx-3);
+}
+
+.gl-rail-row-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.gl-rail-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 1px;
+}
+
+.gl-rail-row-title {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--gl-tx-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-rail-row[data-selected] .gl-rail-row-title {
+  color: var(--gl-tx-1);
+}
+
+.gl-rail-row-sub {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-rail-row-accessory {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── The boot plate ────────────────────────────────────────────────────── */
+/*
+ * REDESIGN §6.9. A full-window title card on the palette's only true black,
+ * over everything including the modal layer — it is what the app looks like
+ * before there is an app to look at, so nothing may be in front of it.
+ *
+ * INERT TO THE POINTER. The app underneath is already mounted and interactive:
+ * the plate is a curtain over a running show, not a loading screen holding one
+ * up. A plate that swallowed the first click would make the skip read as the
+ * app dropping input rather than as it getting on with things.
+ */
+.gl-boot {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--gl-black);
+  pointer-events: none;
+  opacity: 1;
+  transition-property: opacity;
+  transition-timing-function: ease-out;
+}
+
+/* The duration comes from the component, because it is zero under reduced
+   motion — a cross-fade is motion, and the still path has none. */
+.gl-boot[data-phase="out"] {
+  opacity: 0;
+}
+
+.gl-boot-plate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 0 24px;
+  text-align: center;
+}
+
+/* Smaller than the Home wordmark at 40px, deliberately. This one is alone on a
+   black field with nothing to be measured against, and type with no neighbours
+   reads larger than it is; matching the Home size here would make the reveal
+   look like the mark shrinking. */
+.gl-boot-mark {
+  position: relative;
+  font-family: var(--gl-mono);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  /* Same correction as the Home mark: the tracking leaves a full space after
+     the last letter, so the mark measures centred and looks left of centre. */
+  text-indent: 0.24em;
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+  line-height: 1.1;
+}
+
+.gl-boot-sub {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+/* A fixed width rather than one derived from the mark: the rule is a beat, and
+   a beat whose length depends on how long the product's name happens to be is
+   a coincidence rather than a design. */
+.gl-boot-rule {
+  width: 180px;
+  height: 2px;
+  margin-top: 6px;
+  background: var(--gl-line);
+  overflow: hidden;
+}
+
+/* Phosphor, and the only colour on the plate. It is not reporting an outcome —
+   nothing has happened yet — but it is the app's own accent introducing itself,
+   which is the one job this screen has. */
+.gl-boot-rule-fill {
+  width: 0;
+  height: 100%;
+  background: var(--gl-phos);
+  box-shadow: 0 0 8px var(--gl-phos);
+  animation-name: gl-boot-fill;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+/* NOT an ambient animation name, and that matters: atmosphere.css stops the
+   ambient set under `calm`, which is the reduced-motion floor. This one is
+   turned off by the component instead — under reduced motion the fill is drawn
+   full and still, so there is a rule rather than an empty groove. Leaving it to
+   the stylesheet would give a `calm` user a bar stuck at zero for the whole
+   hold, which reads as stalled. */
+@keyframes gl-boot-fill {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+/* ── The ⌘K command palette ────────────────────────────────────────────── */
+/*
+ * REDESIGN §6.7. Above the modal layer, because it can be opened FROM a modal:
+ * ⌘K is the one shortcut in the app that does not exempt text fields, and a
+ * palette that opened behind the dialog whose input the user was in would be
+ * the app swallowing a keystroke it visibly accepted.
+ */
+.gl-cmd-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  display: flex;
+  justify-content: center;
+  /* Not centred vertically. A box that opens in the middle of the window has
+     to travel to wherever it ends up as the list grows and shrinks under the
+     query; pinned near the top, only the bottom edge moves and the input — the
+     thing being typed into — never does. */
+  align-items: flex-start;
+  padding: 12vh 16px 16px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.gl-cmd-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: 62vh;
+  border: 1px solid var(--gl-line-2);
+  background: var(--gl-panel);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+/* Sans and 14px, and it is the only input in the app set that way. Everything
+   else here is a mono label because everything else is SCANNED; this one is a
+   sentence somebody is composing, and mono at .12em tracking is measurably
+   slower to type into. */
+.gl-cmd-input {
+  flex: 0 0 auto;
+  border: 0;
+  border-bottom: 1px solid var(--gl-line);
+  padding: 14px 16px;
+  background: transparent;
+  font-family: var(--gl-sans);
+  font-size: 14px;
+  color: var(--gl-tx-1);
+  outline: none;
+}
+
+.gl-cmd-input::placeholder {
+  color: var(--gl-tx-3);
+}
+
+.gl-cmd-list {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.gl-cmd-group {
+  padding: 8px 16px 4px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-cmd-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 16px;
+  cursor: pointer;
+}
+
+/* NEUTRAL, like every other selection in this app. The selected row here is
+   "where the cursor is", not an outcome, and a tone would make Enter look like
+   it were about to do something the row's own words do not say. */
+.gl-cmd-row[data-selected] {
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+.gl-cmd-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-cmd-hint {
+  flex: 0 0 auto;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-cmd-empty {
+  padding: 16px;
+}
+
+/* The strip's affordance. It is a button as well as a hint, because the
+   shortcut is undiscoverable on its own and a key cap nobody can click is a
+   label rather than a control. */
+.gl-cmd-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid var(--gl-line-2);
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-cmd-key:hover {
+  border-color: var(--gl-line);
+  color: var(--gl-tx-1);
+}
+
+.gl-cmd-key:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 1px;
+}
+
+/* ── Rail flyout ──────────────────────────────────────────────────────── */
+
+/* The wrapper holds only the row. The PANEL is portalled to `document.body`,
+   because `SplitView` renders the sidebar inside `overflow-hidden` and an
+   absolutely-positioned menu is clipped at the rail's edge — it renders, it has
+   a size, it is in the accessibility tree, and almost none of it is on screen.
+   jsdom cannot see that, so `rail-flyout.test.tsx` pins the structural fact
+   instead: the panel is not a descendant of the rail. */
+.gl-rail-flyout-root {
+  position: relative;
+}
+
+/* `fixed`, positioned from the trigger's own rect — see rail-flyout.tsx. The
+   coordinates are inline styles; everything that is not a coordinate is here. */
+.gl-rail-flyout {
+  position: fixed;
+  z-index: var(--gl-z-menu);
+  min-width: 268px;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  /* Clear of the rail's own border, so the panel reads as a separate surface
+     rather than a widening of the sidebar. */
+  margin-inline-start: 6px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+}
+
+.gl-rail-flyout-label {
+  padding: 7px 10px 5px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-rail-flyout-sep {
+  height: 1px;
+  margin: 2px 0;
+  background: var(--gl-line-2);
+}
+
+/* A row is TWO controls — the branch, and its pull request — so it is a flex
+   container of two buttons rather than one button with a button inside it,
+   which is invalid HTML and which browsers resolve by dropping the inner one. */
+.gl-rail-flyout-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+.gl-rail-flyout-item {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+  /* Reserved on every row so the one marked current does not shift its
+     neighbours' text by 2px — the same rule `.gl-rail-row` follows. */
+  box-shadow: inset 2px 0 0 transparent;
+}
+
+.gl-rail-flyout-item:hover,
+.gl-rail-flyout-item:focus-visible {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.gl-rail-flyout-item:focus-visible,
+.gl-rail-flyout-pr:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+/* SELECTION IS NEUTRAL — never a status hue, the same rule as `.gl-rail-row`
+   and for the same reason. `check:selection-neutral` reads this by name. */
+.gl-rail-flyout-item[data-current] {
+  background: var(--gl-sel-bg);
+  box-shadow:
+    inset 2px 0 0 transparent,
+    inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-rail-flyout-item-icon {
+  flex: 0 0 auto;
+  display: flex;
+  color: var(--gl-tx-3);
+}
+
+.gl-rail-flyout-item-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.gl-rail-flyout-item-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.gl-rail-flyout-item-title {
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-rail-flyout-item-sub {
+  font-family: var(--gl-sans);
+  font-size: 10px;
+  color: var(--gl-tx-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The pull-request icon. Its own control, so it needs its own hit area — an
+   icon that only reacts on its 14px glyph is one people miss. */
+.gl-rail-flyout-pr {
+  appearance: none;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 0;
+  border-inline-start: 1px solid var(--gl-line-2);
+  background: transparent;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-rail-flyout-pr:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--gl-cyan);
+}
+
+.gl-rail-flyout-pr svg {
+  width: 14px;
+  height: 14px;
+}
+
+.gl-rail-flyout-empty {
+  padding: 8px 10px;
+  font-family: var(--gl-sans);
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--gl-tx-3);
+}

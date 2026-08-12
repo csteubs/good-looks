@@ -1,0 +1,2861 @@
+/*
+ * The screens' own chrome.  docs/REDESIGN.md §5 (Phase B).
+ *
+ * THE FOURTH AND LAST OF THE THEME'S STYLESHEETS, and the split stays the same
+ * one: by scope.
+ *
+ *   primitives.css  what a screen is BUILT OUT OF   (§3.3, A3)
+ *   shell.css       what a screen SITS INSIDE       (A4)
+ *   shared.css      what a screen EMBEDS            (A5)
+ *   screens.css     what one screen IS              (Phase B)
+ *
+ * It grows one section per screen as Phase B lands, and each section is only
+ * ever read by that screen. Rules that turn out to be wanted by a second screen
+ * belong in `shared.css` instead — that move is the signal a component is being
+ * born, and doing it late is much cheaper than inventing a component early.
+ *
+ * Same house rules as the other three: constants are named classes and only
+ * per-instance derived values go inline, zero border radius, a hairline is the
+ * only container.
+ */
+
+/* ── Home (B1) ────────────────────────────────────────────────────────── */
+
+.gl-home {
+  position: relative;
+  height: 100%;
+  overflow-y: auto;
+}
+
+/*
+ * The plate: a full-bleed ground with the light falling off towards the edges.
+ *
+ * THE PHOTOGRAPHIC TEXTURE IS NOT IN THIS REPO. The design fixes `texture` at
+ * `ember` — "warm orange suspended in black" — and the plate behind it is
+ * `acid-25.jpg`, which lives in the mockup zip and has never been checked in
+ * (REDESIGN §3.5, and open question 6, which names this as the one thing
+ * blocking B1). What is here is the part that does not need it: the radial
+ * falloff, which is the plate's actual job, and an ember wash for the warmth.
+ * When the art arrives it is one `background-image` on this rule, and the two
+ * gradients stay underneath it.
+ *
+ * `--gl-ember` IS NOT `--gl-amber`, and the distinction is load-bearing rather
+ * than pedantic. Amber means flaky / healed / caution; a wash of it behind the
+ * home screen would be the largest coloured surface in the app claiming a
+ * status, on the one screen with no status vocabulary to interpret it. The
+ * texture gets its own token so that reading is impossible.
+ *
+ * `pointer-events: none` because it covers the whole pane and the column above
+ * it is where every control lives — a decorative ground that eats clicks is the
+ * bug `check:clickable-chrome` exists for, one layer down.
+ */
+.gl-home-plate {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    radial-gradient(80% 55% at 50% 34%, color-mix(in srgb, var(--gl-ember) 9%, transparent) 0%, transparent 68%),
+    radial-gradient(120% 85% at 50% 38%, transparent 30%, rgba(0, 0, 0, 0.62) 100%);
+}
+
+/* `min-height: 100%` is a FLOOR, not a cap, and that is what keeps
+   `justify-content: center` honest: short content centres in a column exactly
+   the pane's height, and taller content grows past it, leaves `center` no free
+   space to distribute, and starts at the top and scrolls instead of being
+   centred half off-screen. The pane this replaced shipped `overflow: hidden`
+   and cut its own last line off at a 720px window. */
+.gl-home-col {
+  position: relative;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  padding: 40px 24px;
+  text-align: center;
+}
+
+/* ── The wordmark, and the glitch ─────────────────────────────────────── */
+
+.gl-home-mark {
+  position: relative;
+  margin: 0;
+  font-family: var(--gl-mono);
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  /* The tracking adds a full space of air after the last letter, which pushes
+     the mark visually off-centre to the left. Pulling it back by the same
+     amount is what makes it look centred rather than measure centred. */
+  text-indent: 0.2em;
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+  line-height: 1.1;
+}
+
+.gl-home-copy {
+  max-width: 44ch;
+  margin: 0;
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--gl-tx-2);
+}
+
+/* ── The three readouts ───────────────────────────────────────────────── */
+
+/* One hairline box split into three, rather than three boxes: the numbers are
+   read across, and three separate frames make them look like three unrelated
+   facts. */
+.gl-home-stats {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+}
+
+/* A `<button>`, because each readout navigates to the view that explains it.
+   The reset is the price of that: a button carries a UA border, background,
+   font and centre alignment, and every one of them fights the row above.
+   `border: 0` here is safe — the divider below is a more specific selector and
+   still wins. */
+.gl-home-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 18px;
+  min-width: 104px;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.gl-home-stat + .gl-home-stat {
+  border-inline-start: 1px solid var(--gl-line-2);
+}
+
+/* Neutral, like the tiles in Stats: these three sit inside one frame, and a
+   hover that tinted one of them would read as a status rather than as a
+   pointer under it. */
+.gl-home-stat:hover {
+  background: var(--gl-sel-bg);
+}
+
+.gl-home-stat:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+/* Tabular, because these three sit in a row and a proportional digit makes the
+   column edges disagree with each other. */
+.gl-home-stat-value {
+  font-family: var(--gl-mono);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--gl-tx-1);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.gl-home-stat-label {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+/* ── Heals (B2) ───────────────────────────────────────────────────────── */
+
+/*
+ * Two panels side by side: the journal, and what one heal changed.
+ *
+ * The journal is a FIXED 330px rather than a fraction, and the reason is the
+ * detail pane: it carries two locators, a candidate list and a run reference,
+ * all of which are long single lines that wrap into unreadable ribbons when the
+ * column narrows. A percentage split gives that space away on a small window
+ * exactly when it is scarcest. The journal's own rows are built to be terse
+ * enough to live at 330px forever.
+ */
+.gl-heals {
+  display: flex;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  padding: 10px;
+}
+
+.gl-heals-journal {
+  flex: 0 0 330px;
+  min-width: 0;
+}
+
+.gl-heals-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The BODY fills what the header leaves, in both panels.
+ *
+ * Not `Panel`'s own `flex` prop, and the difference matters: that prop sets
+ * `flex: 1 1 auto` INLINE on the section as well as the body, and an inline
+ * style beats `.gl-heals-journal`'s fixed 330px — the journal silently grew to
+ * half the window, which looks like a plausible layout rather than a bug. */
+.gl-heals-journal > .gl-panel-body,
+.gl-heals-detail > .gl-panel-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.gl-heals-row {
+  display: flex;
+  align-items: center;
+  /* 10px rather than the 8 used elsewhere: at 330px the step label truncates
+     right up against the timestamp, and two mono strings a hair apart read as
+     one collided string rather than as two columns. */
+  gap: 10px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--gl-line-2);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.gl-heals-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* SELECTION IS NEUTRAL. This list is a column of status chips reporting four
+   different outcomes; a selected row drawn in any of those hues would be a
+   fifth claim competing with the four real ones on the same line. */
+.gl-heals-row[data-selected] {
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-heals-row:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-heals-row-icon {
+  flex: 0 0 auto;
+  display: flex;
+  color: var(--gl-violet);
+}
+
+.gl-heals-row-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+.gl-heals-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: 1px;
+}
+
+.gl-heals-row-step {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-heals-row-test {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The row's time sits BELOW the status chip rather than beside it: at 330px
+   there is not room for both on one line without the chip losing its fixed
+   width, and the chip's one edge down the column is the contract. */
+.gl-heals-row-meta {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.gl-heals-row-when {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.gl-heals-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px;
+}
+
+.gl-heals-section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+/* Centred copy where a pane's content would be. Used for both empty states —
+   "nothing has been healed" and "nothing is selected" — which are different
+   sentences about different things and deliberately look the same: neither is
+   an error, and both are answered by doing something elsewhere on the screen. */
+.gl-heals-empty {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+}
+
+/* ── Batch (B3) ───────────────────────────────────────────────────────── */
+
+/*
+ * FIXED COLUMNS, and that is the whole idea of this screen's row.
+ *
+ * The row this replaces sized every cell to its own content, so the engines of
+ * one test sat under the tags of the next and nothing lined up down the list.
+ * A batch checklist is read DOWN — "which of these are headed?", "which have
+ * three engines?" — and a column you have to re-find on every row cannot be
+ * read that way at all.
+ *
+ * So every cell but the name is `flex: 0 0 <n>px`, and the name is the one that
+ * gives. It keeps a floor (`min-width`) for a reason this repo has already paid
+ * for: as the only flexible cell in a row of fixed furniture, `min-width: 0`
+ * let it shrink to LITERALLY ZERO, and a row with no name at all is worse than
+ * a truncated one — the checkbox beside it stops meaning anything.
+ */
+.gl-batch {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 10px;
+  gap: 10px;
+}
+
+.gl-batch-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The header cluster: two cells in one bordered box, at control height. Boxed
+   together because they are one question — "how should this batch run?" — and
+   two loose checkboxes in a toolbar read as two unrelated ones. */
+.gl-batch-cluster {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--gl-line);
+  flex: 0 0 auto;
+}
+
+.gl-batch-cluster-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  height: 24px;
+  cursor: pointer;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.gl-batch-cluster-cell + .gl-batch-cluster-cell {
+  border-inline-start: 1px solid var(--gl-line);
+}
+
+.gl-batch-cluster-cell:hover {
+  color: var(--gl-tx-2);
+}
+
+.gl-batch-cluster-cell[data-on] {
+  color: var(--gl-tx-1);
+  background: var(--gl-sel-bg);
+}
+
+.gl-batch-note {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-3);
+  margin-inline-start: auto;
+}
+
+/* ── The checklist ────────────────────────────────────────────────────── */
+
+.gl-batch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--gl-line-2);
+}
+
+.gl-batch-row:last-child {
+  border-bottom: 0;
+}
+
+.gl-batch-row:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+/* Running is the ABSENCE of an outcome, so the row in flight takes the same
+   treatment `StatusChip` gives it: a mark, not one of the four result hues.
+   Cyan is the palette's "running / live", and this is a live row. */
+.gl-batch-row[data-running] {
+  box-shadow: inset 2px 0 0 var(--gl-cyan);
+}
+
+.gl-batch-row[data-dragging] {
+  opacity: 0.5;
+}
+
+.gl-batch-row[data-drop-target] {
+  border-top: 1px solid var(--gl-cyan);
+}
+
+.gl-batch-grip {
+  flex: 0 0 14px;
+  display: flex;
+  color: var(--gl-tx-3);
+  cursor: grab;
+  opacity: 0;
+}
+
+.gl-batch-row:hover .gl-batch-grip {
+  opacity: 1;
+}
+
+.gl-batch-grip[data-locked] {
+  cursor: default;
+  opacity: 0.2;
+}
+
+.gl-batch-grip svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* The one cell that gives, with a floor — see the header. */
+.gl-batch-name {
+  flex: 1 1 auto;
+  min-width: 96px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: start;
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-batch-name:hover {
+  text-decoration: underline;
+}
+
+.gl-batch-tags {
+  flex: 0 0 118px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+}
+
+.gl-batch-engines {
+  flex: 0 0 84px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* `CR` / `FF` / `WK`, not icons.
+ *
+ * Three logos at 14px are three coloured blobs — recognisable if you already
+ * know them and meaningless if you do not — and they cannot carry a per-engine
+ * RESULT, which is the thing this cell has to say when one row runs three
+ * engines and one of them failed. Two letters can be tinted.
+ *
+ * An engine that is OFF stays visible at low contrast rather than being
+ * hidden: an engine you cannot see is one you cannot add back. */
+.gl-batch-engine {
+  flex: 0 0 auto;
+  min-width: 24px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--gl-tx-3);
+  opacity: 0.4;
+  cursor: pointer;
+}
+
+.gl-batch-engine[aria-pressed="true"] {
+  opacity: 1;
+  color: var(--gl-tx-1);
+  border-color: var(--gl-line);
+  background: var(--gl-sel-bg);
+}
+
+.gl-batch-engine:hover:not(:disabled) {
+  opacity: 1;
+}
+
+.gl-batch-engine:disabled {
+  cursor: default;
+}
+
+.gl-batch-engine:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+/* HEADED IS AMBER, and it is the one place on this row where a hue is spent on
+   a setting rather than a result. It earns it: a headed batch opens a real
+   window per test and takes focus as each launches, so the machine stops being
+   usable — which is caution, which is what amber means here. Headless is the
+   quiet default and says so by being quiet. */
+.gl-batch-window {
+  flex: 0 0 72px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--gl-line);
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-batch-window:disabled {
+  cursor: default;
+}
+
+.gl-batch-window:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-batch-time {
+  flex: 0 0 46px;
+  text-align: end;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  color: var(--gl-tx-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 82px, not the chip's own 78: the cell has to hold its width when the row has
+   no status yet, or every column to its left shifts as results arrive. */
+.gl-batch-status {
+  flex: 0 0 82px;
+  display: flex;
+  justify-content: flex-end;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.gl-batch-status[data-clickable] {
+  cursor: pointer;
+}
+
+/* ── History, and its drawer ──────────────────────────────────────────── */
+
+.gl-batch-history-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--gl-line-2);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-2);
+}
+
+.gl-batch-history-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.gl-batch-history-row[data-selected] {
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-batch-history-caret {
+  flex: 0 0 10px;
+  color: var(--gl-tx-3);
+}
+
+.gl-batch-history-when {
+  flex: 0 0 118px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.gl-batch-history-what {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The drawer: what that batch actually ran, and under what settings. Indented
+   so it reads as belonging to the row above rather than as the next row. */
+.gl-batch-drawer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px 10px 28px;
+  border-bottom: 1px solid var(--gl-line-2);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.gl-batch-drawer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gl-batch-drawer-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Settings (B4) ────────────────────────────────────────────────────── */
+
+/*
+ * THE ROW TREATMENT IS THE VALUABLE PART OF THIS SCREEN, and it is three
+ * separate things the old row had collapsed into one `danger` prop:
+ *
+ *   flag   a badge beside the label — WHAT this row touches
+ *   risk   a block of copy — WHAT IT COSTS YOU, rendered unconditionally
+ *   doc    a link — HOW IT WORKS, which is a different question from either
+ *
+ * They were one prop because the only two rows that used it wanted a badge and
+ * an accent rule together. But "stores credentials" (a fact about the row) and
+ * "the value is written to disk in plain text and read by every run" (a
+ * consequence you need before deciding) are not the same sentence, and putting
+ * the second in `summary` meant it competed with thirty ordinary descriptions.
+ */
+
+/* Uppercase and red, beside the label. Short — it is a category, not a
+   sentence; the sentence is what `risk` is for. */
+.gl-setting-flag {
+  display: inline-flex;
+  align-items: center;
+  height: 15px;
+  padding: 0 5px;
+  border: 1px solid;
+  font-family: var(--gl-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/*
+ * The risk block. AN INSET RAIL, like every other status in this design, and a
+ * block rather than an inline sentence so it cannot be mistaken for more of the
+ * description above it.
+ *
+ * IT IS NEVER BEHIND THE DISCLOSURE. The old row already refused `details` on a
+ * `danger` row for exactly this reason — a warning you have to click to see is
+ * a warning most people never see — and this makes that structural rather than
+ * a rule the component enforces on itself: `risk` has no closed state to be in.
+ */
+.gl-setting-risk {
+  margin: 6px 0 0;
+  padding: 7px 9px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gl-tx-2);
+}
+
+/* The mechanism, not the warning. A separate affordance because "how does this
+   work?" and "what will this cost me?" are different questions, and answering
+   both in one link means the second gets skipped by anyone who thinks they
+   already know the first. */
+.gl-setting-doc {
+  display: inline-block;
+  margin-top: 4px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.gl-setting-doc:hover {
+  color: var(--gl-tx-1);
+}
+
+.gl-setting-doc:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+/*
+ * The pane surface. Everything below re-draws the SDK's `FieldSet`/`FieldGroup`
+ * in this design's own container: a square hairline box on `--gl-panel`, not a
+ * rounded translucent card. It is one class per element rather than a rule
+ * hung off the SDK's emitted Tailwind, because a class we declare is one
+ * `check:renderer-classes` can prove resolves — an SDK class name is not
+ * (CLAUDE.md, and DECISIONS 2026-08-09).
+ *
+ * These are UNLAYERED, so they beat Tailwind's `@layer utilities` regardless of
+ * order. That is the mechanism the other reskinned screens rely on too; it is
+ * worth knowing, because moving these into a layer would silently hand the
+ * rounded card back.
+ */
+.gl-setting-set {
+  gap: 6px;
+}
+
+/* The section legend. Mono uppercase micro-label, the same voice as every other
+   group heading in the app — a bold sentence here competed with the row labels
+   directly under it. */
+.gl-setting-set > legend {
+  margin-bottom: 2px;
+  padding: 0;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-setting-group {
+  border-radius: 0;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  padding-inline: 10px;
+}
+
+/* The between-rows rule at the lighter weight. A nested box drawn at its
+   parent's strength reads as a table rather than as a box inside a box, which
+   is the whole reason `--gl-line-2` exists. */
+.gl-setting-group > * + * {
+  border-top-color: var(--gl-line-2);
+}
+
+.gl-setting-row {
+  padding-block: 9px;
+}
+
+/*
+ * The switch, which is the most-repeated control in this window and was the
+ * last blue thing in it.
+ *
+ * `bg-accent` when checked resolves to the SDK's blue, and BLUE IS NOT IN THIS
+ * PALETTE. Colour means outcome (tokens.css) — pass, running, flaky, fail — and
+ * a row of blue switches down a settings pane is the largest coloured surface
+ * in the app saying nothing about a result. A switch's on-state is a SELECTION,
+ * and selection in this design is neutral: white at low alpha, no hue. Same
+ * rule `--gl-sel-bg` exists for, same reason `check:selection-neutral` pins it.
+ *
+ * TARGETED BY ROLE RATHER THAN BY CLASS, which is the exception to the rule
+ * two blocks up. `Switch` renders a Radix primitive whose classes are Tailwind
+ * strings inside `@ui`; there is no stable class name to hang this on, and
+ * adding one would mean threading a prop through every one of ~20 call sites.
+ * `role="switch"` and `data-state` are the primitive's public contract — the
+ * same two attributes every test in this repo drives a switch through — so
+ * they are the stable surface here, not an implementation detail.
+ */
+.gl-setting-group [role="switch"] {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: var(--gl-line);
+  border-radius: 2px;
+  box-shadow: none;
+}
+
+/* ON IS BRIGHTER THAN `--gl-sel-bg`, deliberately, and this is the one place
+   the neutral-selection alpha is not simply reused. That token is tuned for a
+   ROW, where the lift has to be visible without competing with the status
+   colour beside it. A switch has no status beside it and one job: to be
+   legible as on or off across the room. At 0.055 the two states differed by
+   the knob's x-position alone, which is a coin-flip at 20px. Still hueless —
+   the rule the palette actually makes is that selection carries NO COLOUR, not
+   that it is always the same alpha. */
+.gl-setting-group [role="switch"][data-state="checked"] {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: var(--gl-sel-ring);
+}
+
+/* The knob. Square, and dimmed while off — a full-white knob on a dark track
+   reads as ON at a glance, which is the one thing a switch must never do. */
+.gl-setting-group [role="switch"] > span {
+  border-radius: 1px;
+  background: var(--gl-tx-3);
+}
+
+.gl-setting-group [role="switch"][data-state="checked"] > span {
+  background: var(--gl-tx-1);
+}
+
+/* ── Stats (B7) ───────────────────────────────────────────────────────
+   The run history screen: KPI tiles, the pass/fail chart, the table
+   treatment, the log-search field, and the Stability / suite-cost /
+   divergence row furniture.
+
+   THE PAGE'S LAYOUT IS NOT HERE, and that is deliberate rather than an
+   omission. `check:scroll-layout` reads the view's
+   `<ScrollArea className="min-h-0 flex-1">` and its `mx-auto … pb-10`
+   content container AT SOURCE LEVEL — jsdom has no layout engine and the
+   SDK's ScrollArea exposes no stable DOM marker — so moving those two
+   class lists in here would leave the check with nothing to read. What it
+   guards is a bug this screen has already had: `h-full` in a flex column
+   resolves against the PARENT, so the scroll region ran past the bottom of
+   the window by the header's height and the pager was in the DOM and
+   impossible to click. */
+
+/* ── The page ─────────────────────────────────────────────────────────
+   THE PAGE'S LAYOUT STAYS IN TAILWIND, ON PURPOSE, and only its treatment is
+   here. That is the pattern A5 set — `heals-panel.tsx` and `log-inspector.tsx`
+   both carry `flex flex-col gap-2` beside their `gl-*` classes — and the split
+   is by what the rule is ABOUT: a hairline, a font and a colour describe the
+   redesign, while `flex-1 min-h-0` describes a box fitting inside another box.
+
+   It is also load-bearing here specifically. `check:scroll-layout` reads the
+   page's `<ScrollArea className="min-h-0 flex-1">` and its `mx-auto … pb-10`
+   content container AT SOURCE LEVEL, because jsdom has no layout engine and
+   the SDK's ScrollArea exposes no stable DOM marker. Moving those two class
+   lists into this file would leave the check with nothing to read — and what
+   it guards is a real bug this screen has already had: `h-full` in a flex
+   column resolves against the PARENT, so the scroll region ran past the bottom
+   of the window by the header's height and its last child (the pager) was
+   present in the DOM and impossible to click. */
+.gl-stats-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* Bigger than a `.gl-panel-title` and deliberately so: this names the SCREEN,
+   and a panel header inside it names a section. Same face, same treatment, one
+   step up — the hierarchy is size and nothing else, because colour is spoken
+   for. */
+.gl-stats-title {
+  font-family: var(--gl-mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+  white-space: nowrap;
+}
+
+.gl-stats-meta {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: var(--gl-tx-3);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-stats-actions {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+/* The glyph inside a chip or a dense table cell. A named class rather than an
+   inline width/height pair at nine call sites — and required rather than
+   merely tidier for `BrowserIcon`, which takes a `className` and no `style`. */
+.gl-mini-icon {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+}
+
+/* The label above a group of controls — "Run history", "Filters". Same face as
+   a panel title, one step dimmer, because it names a region of the page rather
+   than a bordered box. */
+.gl-stats-label {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-2);
+  white-space: nowrap;
+}
+
+/* ── KPI tile ─────────────────────────────────────────────────────────
+   The one place on this screen where a number is the content rather than a
+   cell. Sans for the figure, because it is read at a glance rather than
+   scanned in a column, and mono everywhere around it. */
+.gl-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.gl-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 11px 11px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  min-width: 0;
+}
+
+.gl-kpi-label {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-kpi-value {
+  font-family: var(--gl-sans);
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  color: var(--gl-tx-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.gl-kpi-hint {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--gl-tx-3);
+}
+
+/* ── Pass / fail chart ────────────────────────────────────────────────
+   Seven calendar days, stacked, always all seven — a day with no runs is drawn
+   as an empty column rather than skipped, because a gap is information and a
+   chart that closes over it invents continuity that was not there. */
+.gl-chart {
+  display: flex;
+  align-items: stretch;
+  gap: 5px;
+  height: 132px;
+}
+
+.gl-chart-col {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 12px;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+}
+
+.gl-chart-plot {
+  display: flex;
+  width: 100%;
+  flex: 1 1 auto;
+  align-items: flex-end;
+}
+
+/* Height comes inline — it is the datum. */
+.gl-chart-stack {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+}
+
+/* An empty day still draws a hairline floor, so the column reads as "nothing
+   happened" rather than as a rendering failure. */
+.gl-chart-floor {
+  width: 100%;
+  height: 1px;
+  background: var(--gl-line);
+}
+
+.gl-chart-tick {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-legend {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.gl-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+/* Colour comes inline from TONE — see the header. */
+.gl-legend-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+}
+
+/* ── Tables ───────────────────────────────────────────────────────────
+   One table treatment for the whole screen: run history, step health, and
+   anything a category dashboard grows later.
+
+   `table-layout: fixed` with widths on the header cells, because the run table
+   carries user-supplied test names and a name long enough to push the status
+   column off the right edge is a name someone will have. */
+.gl-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+}
+
+.gl-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.gl-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  text-align: start;
+  height: 26px;
+  padding: 0 8px;
+  background: var(--gl-panel);
+  border-bottom: 1px solid var(--gl-line);
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-table td {
+  height: 30px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--gl-line-2);
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+/* The run-history table, which is the one carrying a fixed-width status chip.
+   THE MIN-WIDTH IS WHAT KEEPS THAT WIDTH A CONTRACT. With `table-layout: fixed`
+   and `width: 100%`, a browser scales specified column widths DOWN when they no
+   longer fit — so a narrow window would quietly shave the status column, the
+   chip inside it would be clipped by the cell, and the row would report a heal
+   while dropping the outcome. Below this width the wrapper scrolls
+   sideways instead, which is the honest answer and what its `overflow-x: auto`
+   is there for.
+
+   640px, against a floor the app already enforces: `minWindowWidth` is 928 and
+   the rail takes 240, so the content column is never narrower than about 650.
+   In practice this never scrolls; it exists so that the chip cannot be crushed
+   if that floor ever moves. */
+.gl-table-runs {
+  min-width: 640px;
+}
+
+/* Neutral, never a status hue — a row that is both hovered and failing would
+   otherwise have two treatments arguing about what the colour reports.
+   `check:selection-neutral` draws that line. */
+.gl-table tbody tr[data-clickable] {
+  cursor: pointer;
+}
+
+.gl-table tbody tr[data-clickable]:hover td {
+  background: var(--gl-sel-bg);
+}
+
+.gl-table td[data-strong] {
+  color: var(--gl-tx-1);
+}
+
+.gl-num {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A sortable header. The arrow is the only thing that moves, so the column
+   heading does not shift when a sort is applied. */
+.gl-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+}
+
+.gl-sort:hover {
+  color: var(--gl-tx-1);
+}
+
+.gl-sort:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+.gl-sort svg {
+  width: 10px;
+  height: 10px;
+}
+
+.gl-sort-num {
+  flex-direction: row-reverse;
+}
+
+/* ── Two-line row ─────────────────────────────────────────────────────
+   A thing and what it belongs to — a step and its test, a locator and its
+   step. Used by step health, suite cost and divergence, which is why it is one
+   class rather than three near-copies. */
+.gl-rowline {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.gl-rowline-main {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-rowline-sub {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Search ───────────────────────────────────────────────────────────
+   Taller than `.gl-input`, which is sized to replace a step's description
+   in-line without reflowing the list. This one is a field the user aims at. */
+.gl-search {
+  position: relative;
+  display: flex;
+}
+
+.gl-search-input {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px 0 26px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-ink);
+  color: var(--gl-tx-1);
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+}
+
+.gl-search-input::placeholder {
+  color: var(--gl-tx-3);
+}
+
+.gl-search-input:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-search-icon {
+  position: absolute;
+  inset-inline-start: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--gl-tx-3);
+}
+
+.gl-search-icon svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+/* One log-search hit. A button, not a row with a click handler, so it is
+   reachable by keyboard and announces as what it is. */
+.gl-result {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--gl-line-2);
+  background: none;
+  text-align: start;
+  cursor: pointer;
+}
+
+.gl-result:last-of-type {
+  border-bottom: 0;
+}
+
+.gl-result:hover {
+  background: var(--gl-sel-bg);
+}
+
+.gl-result:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-result-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.gl-result-name {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-result-when {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-result-snippet {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Empty states ─────────────────────────────────────────────────────
+   Deliberately a two-part shape: what is true, then what to do about it. A
+   single dim sentence reads as an error on a screen the user has just arrived
+   at, and half the empty states on this screen are "you have not run anything
+   yet", which is not a fault. */
+.gl-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 40px 20px;
+  text-align: center;
+}
+
+.gl-empty-title {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+}
+
+.gl-empty-note {
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gl-tx-3);
+  max-width: 46ch;
+}
+
+/* The in-panel version: no vertical drama, just the sentence. */
+.gl-panel-note {
+  display: block;
+  padding: 10px;
+  font-family: var(--gl-sans);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--gl-tx-3);
+}
+
+/* ── Stability ────────────────────────────────────────────────────────
+   Each test is a hairline box that opens. It is ALWAYS openable, including for
+   a test with no step or dataset detail: the verdict's explanation is the most
+   useful thing here, and gating disclosure on having extra detail is what made
+   it unreachable for the plainest case — a test that simply alternates. */
+.gl-flake {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px;
+}
+
+.gl-flake-row {
+  border: 1px solid var(--gl-line);
+}
+
+.gl-flake-head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  background: none;
+  text-align: start;
+  cursor: pointer;
+}
+
+.gl-flake-head:hover {
+  background: var(--gl-sel-bg);
+}
+
+.gl-flake-head:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-flake-caret {
+  flex: 0 0 12px;
+  color: var(--gl-tx-3);
+}
+
+.gl-flake-caret svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.gl-flake-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-flake-count {
+  flex: 0 0 auto;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.gl-flake-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px;
+  border-top: 1px solid var(--gl-line-2);
+}
+
+.gl-flake-group {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gl-flake-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* One failure signature, grouped across the runs that share it — a single root
+   cause across twenty runs is one problem, and the run history shows it as
+   twenty. */
+.gl-cluster {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 8px;
+  border: 1px solid var(--gl-line);
+}
+
+.gl-cluster-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.gl-cluster-text {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  line-height: 1.45;
+  color: var(--gl-tx-2);
+  overflow-wrap: anywhere;
+}
+
+/* ── Suite cost ───────────────────────────────────────────────────────
+   The bar is two measured spans over a neutral total, never three: slow-motion
+   delay is spread across steps rather than recorded, so folding an estimate in
+   beside two measurements would put both in one sentence with nothing saying
+   which was which. */
+.gl-cost-bar {
+  display: flex;
+  height: 6px;
+  background: var(--gl-line);
+  overflow: hidden;
+}
+
+.gl-cost-say {
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--gl-tx-2);
+}
+
+.gl-cost-say strong {
+  color: var(--gl-tx-1);
+  font-weight: 600;
+}
+
+.gl-cost-speeds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+.gl-slowed-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-top: 1px solid var(--gl-line-2);
+}
+
+.gl-slowed-icon {
+  flex: 0 0 auto;
+  color: var(--gl-amber);
+}
+
+.gl-slowed-icon svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.gl-slowed-delta {
+  flex: 0 0 auto;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-2);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ── Divergence ───────────────────────────────────────────────────────
+   Both sides of the comparison are named. "Fails on webkit" alone leaves the
+   reader asking "compared with what?", and the answer is the evidence. */
+.gl-diverge-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--gl-line-2);
+}
+
+.gl-diverge-row:last-child {
+  border-bottom: 0;
+}
+
+.gl-diverge-icon {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.gl-diverge-icon svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.gl-diverge-verdict {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  line-height: 1.5;
+  color: var(--gl-tx-2);
+  overflow-wrap: anywhere;
+}
+
+.gl-fail-list {
+  color: var(--gl-red);
+}
+
+.gl-pass-list {
+  color: var(--gl-phos);
+}
+
+/* ── Narrow ───────────────────────────────────────────────────────────
+   REDESIGN's `narrow` breakpoint. The KPI grid already reflows on its own
+   (auto-fit), so what is left is the header wrapping and the run table's
+   optional columns folding away — `check:narrow-layout` is what notices when a
+   control becomes unreachable rather than merely cramped. */
+@media (max-width: 720px) {
+  .gl-stats-actions {
+    margin-inline-start: 0;
+  }
+}
+
+/* ── Stats: the category board (docs/plans/stats-categories.md) ────────
+   A verdict band over a row of compact tiles. The band's sentence counts
+   CATEGORIES IN A STATE and never merges their numbers — see the plan's §3.1
+   and the header of `renderer/lib/stats-categories.ts`. */
+
+.gl-band {
+  border-bottom: 1px solid var(--gl-line-2);
+}
+
+/* FLEX-WRAP RATHER THAN AUTO-FIT GRID, and the reason is the count. There are
+   seven categories, which divides evenly into no useful column count: a grid of
+   `auto-fit` tracks fits six across at a typical width and leaves the seventh
+   alone beside a half-row of dead panel, which reads as a rendering failure
+   rather than as a list of seven things. Wrapping flex items with `flex-grow`
+   let the last row's tiles stretch to the full width, so the block always ends
+   on a straight edge whatever the count and whatever the window. */
+.gl-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1px;
+  background: var(--gl-line-2);
+}
+
+/* Hairline SEPARATORS rather than hairline boxes: the tiles are one object
+   read across, not seven boxes, and a 1px grid gap over a lit background draws
+   the rules without giving each tile its own frame inside the panel's. */
+.gl-tile {
+  display: flex;
+  /* Grow to share the row, never shrink below a readable width, and start from
+     a basis that fits six across a wide window and two across a narrow one. */
+  flex: 1 1 132px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 11px 11px;
+  border: 0;
+  background: var(--gl-panel);
+  text-align: start;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+/* Neutral, never a status hue — the tile's own colour is busy reporting an
+   outcome, and a hover that tinted it would be a second thing claiming to. */
+.gl-tile:not(:disabled):hover {
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-tile:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+/* A category whose dashboard is not built yet. Dimmed and inert rather than
+   hidden: the board is a map, and a map that omits the places you cannot go
+   yet is a map you cannot trust. `cursor: default` because there is nothing to
+   press, and the `title` says why. */
+.gl-tile:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.gl-tile-label {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-tile-value {
+  font-family: var(--gl-sans);
+  font-size: 21px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* What a tile shows INSTEAD of a number when nothing was measured. Sized and
+   weighted like prose rather than like the figure it replaces, so the eye does
+   not read it as a value — the whole point is that there isn't one. */
+.gl-tile-none {
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  line-height: 1;
+  padding: 5px 0 6px;
+  color: var(--gl-tx-3);
+}
+
+.gl-tile-say {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--gl-tx-2);
+}
+
+.gl-tile-window {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: 0.04em;
+  color: var(--gl-tx-3);
+}
+
+/* A query that has not answered. Deliberately NOT an "unmeasured" tile — that
+   one says "you have never switched this on", which is a lie to tell someone
+   whose query is simply still in flight. */
+/* Roughly a filled tile's height, so the board does not jump as answers land.
+   80 rather than the obvious 5px-less value, and that is a real constraint:
+   `--gl-status-w` is that number, `check:status-width` bans its literal from
+   every stylesheet so a second copy of a layout contract cannot go stale, and
+   it cannot tell a coincidence from a copy. Nor should it — a guard that
+   accepts "but I meant something else" stops being a guard. The cheap move is
+   to pick a different height, so this does. */
+.gl-tile-loading {
+  flex: 1 1 132px;
+  background: var(--gl-panel);
+  min-height: 80px;
+}
+
+.gl-tile-wait {
+  font-family: var(--gl-mono);
+  font-size: 14px;
+  color: var(--gl-tx-3);
+}
+
+/* ── Stats: a category dashboard and its leaf ─────────────────────────── */
+
+.gl-cat-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+}
+
+.gl-cat-value {
+  font-family: var(--gl-sans);
+  font-size: 32px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.gl-cat-say {
+  margin: 0;
+  font-family: var(--gl-sans);
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--gl-tx-2);
+}
+
+/* A drillable row. THE WHOLE ROW IS THE BUTTON — a chevron you have to hit is
+   a target one character wide, and this is the control the entire drill-down
+   depends on. */
+.gl-drill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--gl-line-2);
+  background: none;
+  text-align: start;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.gl-drill:last-child {
+  border-bottom: 0;
+}
+
+.gl-drill:hover {
+  background: var(--gl-sel-bg);
+}
+
+.gl-drill:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-drill-label {
+  flex: 0 0 132px;
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+}
+
+.gl-drill-count {
+  flex: 0 0 32px;
+  font-family: var(--gl-mono);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+.gl-drill-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--gl-sans);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--gl-tx-3);
+}
+
+.gl-drill-arrow {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  color: var(--gl-tx-3);
+}
+
+/* A row that LEAVES Stats for the object it names. Every leaf has these —
+   docs/plans/stats-categories.md §6: the failure mode of a drill-down is a
+   beautifully broken-down number you cannot act on. */
+.gl-exit {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--gl-line-2);
+}
+
+.gl-exit:last-child {
+  border-bottom: 0;
+}
+
+/* Cyan, and this is the one place the selection rule allows it: the palette
+   declares it "running / live / FOCUS", and this is a way out rather than a
+   result. `check:selection-neutral` draws exactly that line. */
+.gl-exit-go {
+  flex: 0 0 auto;
+  border: 0;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-cyan);
+}
+
+.gl-exit-go:hover {
+  text-decoration: underline;
+}
+
+.gl-exit-go:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+@media (max-width: 720px) {
+  .gl-drill-label {
+    flex-basis: 96px;
+  }
+
+  .gl-drill-detail {
+    display: none;
+  }
+}
+
+/* ── Test detail (B5a) ─────────────────────────────────────────────────── */
+
+/*
+ * The run panel. A fixed strip at the bottom of the screen, and an EXPANDED
+ * state that hands it the whole pane.
+ *
+ * 224px is about eight lines of console, which is enough to see that something
+ * failed and never enough to read the stack that says why. Before B5a that was
+ * the only size it had, so diagnosing a failure meant scrolling a viewport the
+ * size of a business card while the step list above it sat idle. The expanded
+ * state is `flex: 1 1 auto` rather than a height: the panel's siblings give up
+ * their space, so the log grows to whatever the window actually has instead of
+ * to a number written here.
+ */
+.gl-run-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 224px;
+  min-height: 0;
+  background: var(--gl-ink);
+  border-top: 1px solid var(--gl-line);
+}
+
+.gl-run-panel-expanded {
+  flex: 1 1 auto;
+}
+
+.gl-run-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* Pushed to the trailing edge, so the expand control is in the same place
+   whether or not the AI sparkle and the copy button are showing. */
+.gl-run-expand {
+  margin-inline-start: auto;
+}
+
+/* The log fills the scroller rather than sitting in it as a card: the panel
+   already draws a border on every side, and a second box at the same weight
+   one pixel inside it reads as a table rather than as depth. */
+.gl-run-log {
+  border: 0;
+  min-height: 100%;
+  padding: 8px 12px;
+}
+
+/*
+ * The triage line. It sits between the verdict chip and the log, which is the
+ * order the question is actually asked in: what happened, why, then the proof.
+ */
+.gl-triage {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* Inline after the claim, not on its own line. A confidence figure is a
+   qualifier on the sentence it follows, and a reader who has to look elsewhere
+   for it reads the verdict as unqualified. */
+.gl-triage-confidence {
+  margin-inline-start: 8px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-triage-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-triage-more:hover {
+  color: var(--gl-tx-1);
+}
+
+.gl-triage-more:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+.gl-triage-rest {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 5px;
+}
+
+/* Sans, like the verdict it belongs to. These are sentences. */
+.gl-triage-line {
+  margin: 0;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gl-tx-2);
+}
+
+.gl-triage-limit {
+  color: var(--gl-tx-3);
+}
+
+/* The suggested next step, which is what most readers act on — so it is the
+   one line here at full strength and it is never behind the disclosure. */
+.gl-triage-next {
+  margin: 6px 0 0;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gl-tx-1);
+}
+
+/*
+ * ── The five non-failed run summaries (§6.1) ─────────────────────
+ *
+ * Same slot as `.gl-triage`, same padding, same divider: a reader who learns
+ * where the explanation sits on a failed run should find it in the same place
+ * on every other kind. What changes between the states is the CONTENT, and
+ * nothing here is per-state except the progress bar — five layouts would be
+ * five things to learn.
+ */
+.gl-run-summary {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--gl-line);
+  overflow-y: auto;
+  /* Bounded, because the healed panel's journal list is as long as the run
+     healed steps. Past this it would push the log out of the strip they share,
+     and the log is the evidence.
+     `vh` AND NOT `%`. The panel is `flex: 0 0 auto` when there is no log, so
+     its own height is content-driven and indefinite — against which a
+     percentage max-height resolves to `none` and silently does nothing. The
+     symptom is a panel that renders correctly and is cut off at the window's
+     edge, with the scrollbar that would have revealed the rest never appearing.
+     Viewport units are definite everywhere, which is what this needs. */
+  max-height: 40vh;
+}
+
+/* Without a live run there is no log, so the fixed 224px strip has nothing to
+   fill it and the panel is as tall as the summary inside it. */
+.gl-run-panel:not(:has(.gl-run-log)) {
+  flex: 0 0 auto;
+}
+
+.gl-run-panel:not(:has(.gl-run-log)) .gl-run-summary {
+  border-bottom: 0;
+}
+
+/* Trailing, and mono: a qualifier on the sentence it follows, in the same
+   register as the triage confidence figure for the same reason. */
+.gl-run-summary-aside {
+  margin-inline-start: 8px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-run-summary .gl-kv {
+  margin-top: 6px;
+}
+
+.gl-run-summary-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gl-amber);
+}
+
+.gl-run-summary-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 3px 8px;
+  border: 1px solid var(--gl-line-2);
+  border-radius: 2px;
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+  cursor: pointer;
+}
+
+/* Neutral, not amber. Hover is not an outcome, and this app spends its four
+   hues on outcomes only — a control that goes amber under the pointer is
+   indistinguishable from one reporting a warning. */
+.gl-run-summary-action:hover {
+  border-color: var(--gl-line);
+  color: var(--gl-tx-1);
+}
+
+.gl-run-summary-action:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 1px;
+}
+
+/* HOW FAR IN, not "still going". A determinate bar because the step count is
+   known from the moment the run starts — a spinner here would repeat what the
+   chip already says and answer nothing the chip does not. */
+.gl-run-progress {
+  height: 3px;
+  margin-top: 8px;
+  border-radius: 2px;
+  background: var(--gl-line);
+  overflow: hidden;
+}
+
+.gl-run-progress-fill {
+  height: 100%;
+  background: var(--gl-cyan);
+  transition: width 200ms linear;
+}
+
+/* The heal journal rows. The locator is the content, so it wraps rather than
+   truncating — a heal you cannot read is a heal you cannot review, and this
+   panel exists to get them reviewed. */
+.gl-run-heals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gl-run-heal {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gl-run-heal-step {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-1);
+}
+
+.gl-run-heal-swap {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  color: var(--gl-tx-3);
+}
+
+.gl-run-heal-locator {
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  word-break: break-all;
+  color: var(--gl-tx-2);
+}
+
+/* The before side is struck through rather than dimmed. Dimming is what this
+   palette uses for "less important", and the old locator is not less
+   important — it is the thing that stopped working. */
+.gl-run-diff {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.gl-run-diff-before {
+  text-decoration: line-through;
+  color: var(--gl-tx-3);
+}
+
+/*
+ * The run-options block: the gang of four, 2×2.
+ *
+ * THE TRACK SIZING IS A LAYOUT CONTRACT, NOT A STYLE, and it is why this rule
+ * exists instead of a `grid-cols-2` utility. Tailwind's `grid-cols-2` is
+ * `repeat(2, minmax(0, 1fr))`, and that `0` floor lets a column shrink below the
+ * width of its own text. These labels are `overflow: visible`, so they do not
+ * clip or ellipsise when that happens — they paint straight across the
+ * neighbouring column. At 860px the columns were 48px wide holding text that
+ * needed 96px, two labels deep, which read as the four options printed on top of
+ * each other.
+ *
+ * `auto` resolves to `minmax(min-content, max-content)`: the floor becomes the
+ * longest unbreakable WORD rather than zero. The labels still wrap to two lines
+ * when the toolbar is tight — always fine to read — they just cannot be squeezed
+ * narrower than a word and spill. `max-content` was tried first and is wrong: it
+ * forbids wrapping outright, which pushed the toolbar's own minimum to 1085px,
+ * wider than this window's 1000px DEFAULT — trading a rare overlap for a
+ * guaranteed one.
+ *
+ * Guarded by `check:narrow-layout`, which reads the tracks from HERE.
+ */
+.gl-run-options {
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: 12px;
+  row-gap: 4px;
+}
+
+.gl-run-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-inline-end: 4px;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-2);
+  user-select: none;
+  cursor: pointer;
+}
+
+.gl-detail-tabs {
+  flex: 0 0 auto;
+  padding: 8px 12px 0;
+}
+
+.gl-detail-script-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/*
+ * The tab strip and the run-option checkboxes.
+ *
+ * BOTH TARGETED BY ROLE, which is the same exception the settings switch takes
+ * (see the note there). `Tabs` and `Checkbox` are Radix primitives inside
+ * `@ui`, styled with Tailwind strings this file has no stable handle on, and
+ * threading a class prop through every call site would be a worse trade than
+ * one selector. `role` + `data-state` are the primitives' public contract —
+ * they are what every test in this repo already drives them through — so they
+ * are a real surface rather than an implementation detail. Both are scoped
+ * under a `gl-*` ancestor so nothing outside this screen is touched.
+ */
+.gl-run-options [role="checkbox"] {
+  border-radius: 1px;
+  border-color: var(--gl-line);
+  background: var(--gl-ink);
+  box-shadow: none;
+}
+
+/* Checked is neutral too, and legible: the box fills white and its glyph goes
+   dark, rather than taking the SDK's accent. `--gl-tx-1` and not pure white so
+   it sits on the same ramp as the label beside it. */
+.gl-run-options [role="checkbox"][data-state="checked"] {
+  border-color: var(--gl-tx-1);
+  background: var(--gl-tx-1);
+  color: var(--gl-ink);
+}
+
+/* The timeout field's row. `cursor: pointer` is inherited from `.gl-run-option`
+   and wrong here — that class is written for a label wrapping a checkbox, where
+   the whole row is the hit target; this one wraps a text field, and a pointer
+   cursor over a number input says "click me to toggle something". */
+.gl-detail-timeout {
+  cursor: default;
+}
+
+.gl-detail-unit {
+  color: var(--gl-tx-3);
+}
+
+/* The screen's own column. `min-height: 0` is what lets the run panel's
+   expanded state actually take space instead of pushing the log off the bottom
+   of the window — the same failure `check:scroll-layout` exists for, one level
+   up. */
+.gl-detail {
+  min-height: 0;
+  background: var(--gl-ink);
+}
+
+/* The toolbar band. Not `--gl-strip-h`: this one holds two lines of title plus a
+   row of controls, so matching the top strip's height would crush it. What it
+   does share is the hairline, so the two read as the same kind of edge. */
+.gl-detail-head {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* ── Trainer / recorder (B6) ───────────────────────────────────────────── */
+
+.gl-trainer-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* Wraps, because this row holds up to seven controls and the trainer is the
+   narrowest surface in the app — it sits beside a real browser window. Wrapping
+   is what stops the trailing pair (Add step / AI steps) being pushed out of the
+   viewport with no horizontal scroll to reach them. */
+.gl-trainer-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* "Click an element in the browser…" — cyan, which the palette declares as
+   "running / live / focus". The app is genuinely waiting on the user here; this
+   is the same licence the insert caret has, and it is why `check:selection-
+   neutral` draws its line at SELECTION rather than at the colour itself. */
+.gl-trainer-prompt {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-cyan);
+}
+
+.gl-trainer-refine {
+  align-items: center;
+  flex: 0 0 auto;
+  border-inline: 0;
+  border-top: 0;
+}
+
+/* The trainer's three-tab console. Its own rule rather than the run panel's,
+   because they are different things wearing the same clothes: this one holds
+   Console / Step details / Cookies and never expands, since the trainer's whole
+   value is the step list staying visible while you work in the browser beside
+   it. The auto-scroll checkbox borrows `.gl-run-option` — same
+   label-wrapping-a-checkbox shape, and a second copy would eventually
+   disagree. */
+.gl-trainer-console {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 224px;
+  min-height: 0;
+  background: var(--gl-ink);
+  border-top: 1px solid var(--gl-line);
+}
+
+.gl-trainer-console-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 6px 12px;
+}
+
+.gl-trainer-console-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* ── Visual (B8) ───────────────────────────────────────────────────────── */
+
+/* The bezel fills the viewer. `CRT` sizes to its content by default, which is
+   right for a thumbnail and wrong for the one frame the whole screen is about —
+   here it should take the pane and let the frame inside it letterbox. The
+   `min-height: 0` is what lets it shrink rather than pushing the step row and
+   filmstrip below the window. */
+.gl-visual-frame {
+  display: flex;
+  flex-direction: column;
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+}
+
+/* Chrome laid ON the frame, so it clears the bezel. `CRT` sits at 610 to escape
+   the global atmosphere overlays at 600 (tokens.css); anything drawn over the
+   frame has to clear the same bar or it is simply invisible. This is chrome, not
+   content — the rule the CRT enforces is that nothing may be drawn INSIDE the
+   screen, and a control sitting above the bezel's border is outside it. */
+.gl-visual-modes {
+  z-index: 620;
+}
+
+/* The frame rail (B8). Every captured frame, its outcome, and its diff
+   percentage — the number the strip previously could not show, which is what
+   made triage on a forty-frame run a click-through. */
+.gl-frame-rail {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--gl-line);
+  padding: 8px 12px 10px;
+}
+
+.gl-frame-rail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.gl-frame-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+  min-width: 26px;
+  border: 0;
+  padding: 2px 3px 3px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.gl-frame-btn:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+/* NEUTRAL, like every selection in this design. It matters here for the usual
+   reason and one specific to this rail: the bars beside it are reporting
+   outcomes in phos and red, so an accent-coloured selection would be a third
+   hue competing with them. */
+.gl-frame-btn[data-selected] {
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-frame-btn:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-frame-bar {
+  width: 100%;
+  border-radius: 1px;
+}
+
+.gl-frame-index {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-3);
+}
+
+.gl-frame-btn[data-selected] .gl-frame-index {
+  color: var(--gl-tx-1);
+}
+
+/* The percentage. Amber, matching the bar's own change marker — the two are
+   the same claim at two sizes, and giving them different colours would read as
+   two different findings about one frame. */
+.gl-frame-pct {
+  font-family: var(--gl-mono);
+  font-size: 8px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  color: var(--gl-amber);
+  white-space: nowrap;
+}
+
+/* What the threshold would do to THIS run's frames. Mono and tabular so the
+   number does not shimmy as it changes under a drag — the whole point is that
+   it updates live, and a figure that jumps sideways while you move a slider is
+   harder to read than one that does not move at all. */
+.gl-threshold-readout {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+/* Amber once it is flagging something — caution, matching the frame rail's own
+   change marker, because it is reporting the same fact at a different scale. */
+.gl-threshold-readout[data-flagged] {
+  color: var(--gl-amber);
+}
+
+/* A row in the masks / baselines manager. Square hairline on `--gl-panel`, like
+   every other list row in this design — the SDK's rounded bordered box read as
+   a card, which is the wrong weight for something you scan a dozen of. */
+.gl-mask-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  padding: 5px 8px;
+}
+
+.gl-mask-size {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+/*
+ * ── The inline step composer (§6.2) ──────────────────────────────
+ *
+ * It sits BETWEEN two steps, in the list, at the insert cursor. That position
+ * is the whole feature — the modal it replaces covered up the answer to "where
+ * is this going?" while you filled in the fields that decide what goes there.
+ *
+ * Indented and inset by a hairline rather than drawn as a full-width card: it
+ * is part of the list it interrupts, not a thing floating over one. A card here
+ * reads as a modal that forgot to centre itself.
+ */
+.gl-composer {
+  display: flex;
+  flex-direction: column;
+  margin: 4px 0;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  /* The cursor's own colour, on the leading edge. The composer IS the cursor,
+     expanded — so it wears the same rail rather than a status tone, which
+     would report an outcome about a step that does not exist yet. */
+  box-shadow: inset 2px 0 0 var(--gl-cyan);
+}
+
+.gl-composer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.gl-composer-close {
+  margin-inline-start: auto;
+}
+
+/* CAPPED TO A FORM'S MEASURE, and that is not decoration. The dialog this
+   replaces was `size="large"` — a fixed, modest width — and its fields were
+   laid out for it. The panel inherits the width of the STEP LIST, which is most
+   of the window: uncapped, a label and its control end up at opposite ends of a
+   thousand pixels with nothing in between, which reads as a broken layout
+   rather than a wide one. */
+.gl-composer-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 580px;
+  padding: 12px 10px;
+}
+
+/* Leading, not trailing. A dialog's buttons go bottom-right because the dialog
+   is the whole screen; a panel's belong where the reading ends, which in a
+   left-aligned form is the left. */
+.gl-composer-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--gl-line);
+}
+
+/* ── Cost (§6.4) ──────────────────────────────────────────────────────── */
+/*
+ * A row of derived figures over the two assumptions that derive them. The
+ * assumptions sit BELOW the numbers rather than above: the numbers are what
+ * somebody came for, and a panel that opens on its own caveats reads as one
+ * that does not trust itself.
+ */
+.gl-cost-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1px;
+  /* One hairline grid, not five boxes — these are read ACROSS, and separate
+     frames make them look like five unrelated facts. Same idiom as the Home
+     screen's three readouts. */
+  background: var(--gl-line);
+  border: 1px solid var(--gl-line);
+}
+
+.gl-cost-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  background: var(--gl-panel);
+}
+
+.gl-cost-figure-label {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-cost-figure-value {
+  font-family: var(--gl-mono);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--gl-tx-1);
+}
+
+.gl-cost-figure-unit {
+  margin-inline-start: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--gl-tx-3);
+}
+
+.gl-cost-figure-note {
+  font-family: var(--gl-sans);
+  font-size: 10px;
+  color: var(--gl-tx-3);
+}
+
+/* Sans and prose, not the mono label register the rest of the panel uses. This
+   is the one line here meant to be READ rather than scanned — it is the
+   sentence that makes every figure above it checkable. */
+.gl-cost-assume {
+  margin: 10px 0 0;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--gl-tx-2);
+}
+
+.gl-cost-assume strong {
+  font-family: var(--gl-mono);
+  font-weight: 700;
+  color: var(--gl-tx-1);
+}
+
+.gl-cost-assume-editing {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.gl-cost-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-cost-input {
+  width: 110px;
+  border: 1px solid var(--gl-line-2);
+  padding: 4px 6px;
+  background: var(--gl-ink);
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  color: var(--gl-tx-1);
+  outline: none;
+}
+
+.gl-cost-input:focus-visible {
+  border-color: var(--gl-cyan);
+}
+
+.gl-cost-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-cost-edit:hover {
+  color: var(--gl-tx-1);
+}
+
+.gl-cost-edit:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+.gl-cost-num {
+  text-align: right;
+  font-family: var(--gl-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.gl-cost-test {
+  display: block;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-1);
+}
+
+/* The reason under a called-out row. Always present when there is a verdict to
+   justify — a verdict with no reason is an assertion, and this table's whole
+   job is to be checkable. */
+.gl-cost-why {
+  display: block;
+  margin-top: 2px;
+  max-width: 52ch;
+  font-family: var(--gl-sans);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--gl-tx-3);
+}
+
+/* ── Wipe and Blink (§6.6) ────────────────────────────────────────────── */
+/*
+ * NOTHING IN HERE MAY TINT, FADE OR BLEND A FRAME. The premise of both modes is
+ * that any difference the user sees between the two images is a difference in
+ * the PAGE — so the wipe clips rather than cross-fading, and the blink swaps a
+ * whole frame rather than dissolving. `check:crt-untreated` pins the rule; this
+ * comment is why it binds harder on this screen than anywhere else.
+ */
+.gl-visual-wipe {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+/* Stacked exactly over the frame beneath it, and clipped by an inline
+   `clip-path` the component sets from the divider position. */
+.gl-visual-wipe-top {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Above the CRT bezel (610) for the same reason the mode switch is: this is
+   chrome laid ON the frame, and at a lower layer it renders behind the bezel
+   and disappears — which on a drag handle means the mode looks broken. */
+.gl-visual-wipe-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 620;
+  width: 2px;
+  margin-inline-start: -1px;
+  background: var(--gl-cyan);
+  box-shadow: 0 0 8px var(--gl-cyan);
+  cursor: ew-resize;
+  /* A 2px line is not a 2px target. The bar is what you see; the grab area is
+     this, and it is centred on the line rather than offset from it. */
+  outline: none;
+}
+
+.gl-visual-wipe-handle::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -9px;
+  right: -9px;
+}
+
+.gl-visual-wipe-handle:focus-visible {
+  box-shadow:
+    0 0 8px var(--gl-cyan),
+    0 0 0 2px var(--gl-cyan);
+}
+
+.gl-visual-wipe-handle[data-dragging] {
+  box-shadow: 0 0 14px var(--gl-cyan);
+}
+
+/* Which side is which. Without these the mode is a picture with a line through
+   it, and a user cannot say which direction a change went. */
+/* BOTTOM, not top. The compare-mode switch owns the frame's top-right corner,
+   and a right-hand label up there lands on top of it — which hides the control
+   that got you into this mode. */
+.gl-visual-wipe-label {
+  position: absolute;
+  bottom: 8px;
+  z-index: 620;
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.62);
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-2);
+  pointer-events: none;
+}
+
+.gl-visual-wipe-left {
+  left: 8px;
+}
+
+.gl-visual-wipe-right {
+  right: 8px;
+}
+
+/* Blink's "which frame am I looking at". Under the frame rather than on it: it
+   changes twice a second, and a label flickering ON the evidence is the one
+   piece of motion this screen genuinely cannot afford. */
+.gl-visual-blink-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+}
+
+.gl-visual-blink-which {
+  min-width: 72px;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-2);
+}
+
+/* Baseline provenance (§6.6), in the CRT's caption. The caption's own type is
+   set in primitives.css; this is only the stale marker.
+
+   AMBER AND NOT RED, and it does not colour the whole line. An old baseline is
+   not a fault — a stable page should have one — so this is a prompt to look,
+   which is what amber means everywhere else in this app. Colouring the entire
+   caption would make every frame with an old baseline read as a warning about
+   the frame, which is a different and wrong claim. */
+[data-gl="baseline-provenance"][data-stale] {
+  color: var(--gl-amber);
+}

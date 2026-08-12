@@ -23,7 +23,10 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { TooltipProvider } from "@ui";
 
 import type { ContextAction, RecorderState, Step, StepType } from "../lib/recorder-types";
-import { TrainerPanelView } from "./trainer-panel-view";
+import { DOCK_TOOLTIP, TrainerPanelView } from "./trainer-panel-view";
+import { INSERT_HERE } from "../main/step-row";
+import { viewportNarrowedNotice } from "../main/viewport-narrowed-notice";
+import { toastTexts, clearToastCalls } from "../__tests__/sonner-stub";
 
 function step(id: string, partial: Partial<Step> & { type: StepType }): Step {
   return { id, timestamp: 0, ...partial } as Step;
@@ -81,12 +84,17 @@ const listeners: Record<string, ((payload: unknown) => void)[]> = {};
 
 const dock = vi.fn(async () => ({ docked: true }));
 const undock = vi.fn(async () => ({ docked: false }));
+/** What the backend answers when the panel asks how it opened. Docked is the
+ *  ordinary case; a test that cares sets this before rendering. */
+let dockState: { docked: boolean; reason: string | null } = { docked: true, reason: null };
+const getState = vi.fn(async () => dockState);
 
 vi.mock("../lib/api", () => ({
   api: {
     trainerPanel: {
       dock: (...args: unknown[]) => dock(...(args as [])),
       undock: (...args: unknown[]) => undock(...(args as [])),
+      getState: (...args: unknown[]) => getState(...(args as [])),
     },
     recorder: { listCookies: async () => [], getSettings: async () => ({}) },
     llm: {
@@ -169,6 +177,8 @@ function ctx(over: Partial<ContextAction> = {}): ContextAction {
 beforeEach(() => {
   vi.clearAllMocks();
   for (const key of Object.keys(listeners)) delete listeners[key];
+  clearToastCalls();
+  dockState = { docked: true, reason: null };
   setStore();
 });
 
@@ -341,25 +351,31 @@ describe("tool icons stay distinguishable", () => {
 
 describe("context actions are addressed", () => {
   // The regression this whole mechanism exists for: one right-click in the
-  // training browser reaching two windows and opening two dialogs.
+  // training browser reaching two windows and opening two composers.
+  //
+  // Queried by `data-gl` since C §6.2: the Add-step surface is an inline panel
+  // in the step list now, not a dialog. What is being pinned is unchanged —
+  // WHICH WINDOW acts on a right-click — so these moved rather than went.
+  const composer = () => document.querySelector('[data-gl="step-composer"]');
+
   it("acts on an action addressed to the panel", async () => {
     setStore({ contextAction: ctx({ target: "panel" }) });
     renderPanel();
-    // The Add-step dialog opened, prefilled as an assertion.
-    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    // The composer opened, prefilled as an assertion.
+    await waitFor(() => expect(composer()).toBeTruthy());
   });
 
   it("ignores an action addressed to the main window", async () => {
     setStore({ contextAction: ctx({ target: "main" }) });
     renderPanel();
     await waitFor(() => expect(actions.clearContextAction).toHaveBeenCalled());
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(composer()).toBeNull();
   });
 
   it("acts on an unaddressed action, so older payloads still work", async () => {
     setStore({ contextAction: ctx({ target: undefined }) });
     renderPanel();
-    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    await waitFor(() => expect(composer()).toBeTruthy());
   });
 });
 
@@ -394,6 +410,51 @@ describe("dock control", () => {
     );
   });
 
+  it("asks how it opened, because the answer predates this window", async () => {
+    // The panel that opens UNDOCKED is the one that cannot be told: the backend
+    // decides before this renderer exists, so its `trainerPanel:undocked` push
+    // goes nowhere and the button keeps its optimistic "docked" default. It then
+    // reads "Undock" beside a panel that is not docked, and pressing it calls
+    // undock() on an already-undocked panel — a control that does nothing, on
+    // the exact arrangement the user wants fixed.
+    dockState = { docked: false, reason: "no-room" };
+    renderPanel();
+    await waitFor(() => expect(getState).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /dock panel to the browser/i })).toBeTruthy(),
+    );
+  });
+
+  it("does not let a slow answer undo a push that overtook it", async () => {
+    // The ask is answered in the backend before it resolves here, so a dock
+    // change that happens in between is the NEWER fact. A reply that overwrote
+    // it would roll the button back to a state that is no longer true — and
+    // only on the timings where the IPC round trip is slow, which is the shape
+    // of bug that never reproduces for the person who has to fix it.
+    let answer: (s: { docked: boolean; reason: string | null }) => void = () => {};
+    getState.mockImplementationOnce(
+      () => new Promise<{ docked: boolean; reason: string | null }>((resolve) => { answer = resolve; }),
+    );
+    renderPanel();
+    emit("trainerPanel:undocked", { reason: "no-room" });
+    answer({ docked: true, reason: null });
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /dock panel to the browser/i })).toBeTruthy(),
+    );
+  });
+
+  it("says WHY it could not dock, not just that it did not", async () => {
+    // The tooltip cannot be opened in jsdom (Radix tracks pointers with APIs
+    // jsdom lacks), so the copy is asserted at its source. It has to be
+    // distinct: "no room on this display at this window size" is a thing the
+    // user can act on — pick a smaller size, or move to a bigger screen —
+    // and an undocked panel with no explanation is indistinguishable from the
+    // feature being broken.
+    expect(DOCK_TOOLTIP.noRoom).not.toBe(DOCK_TOOLTIP.undocked);
+    expect(DOCK_TOOLTIP.noRoom).toMatch(/room/i);
+  });
+
   it("re-docks after the backend reports a successful dock", async () => {
     renderPanel();
     emit("trainerPanel:undocked", { reason: "user" });
@@ -406,6 +467,59 @@ describe("dock control", () => {
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /undock panel/i })).toBeTruthy(),
     );
+  });
+
+  it("says the training viewport narrowed, and by how much", async () => {
+    // The push has existed since the panel landed and nothing consumed it, so
+    // the training browser lost 360pt at dock time and the user was told
+    // nothing. That is the silent divergence the notice exists to break: a
+    // responsive site re-lays-out at the new width while the generated spec
+    // still runs at whatever viewport it sets.
+    //
+    // Asserted through the sonner stub rather than the DOM because a toast is
+    // recorded as a CALL here, not rendered — same reason `DOCK_TOOLTIP` is
+    // asserted at its source.
+    renderPanel();
+    emit("trainerPanel:viewportNarrowed", { width: 1080 });
+    await waitFor(() => {
+      const t = toastTexts().find((x) => x.title.includes("Training viewport narrowed"));
+      expect(t).toBeTruthy();
+      // The WIDTH is the point. A notice that says "something changed" without
+      // the number leaves the user unable to tell whether it crossed a
+      // breakpoint that matters to their site.
+      expect(t?.title).toContain("1080");
+      expect(t?.description).toMatch(/responsive/i);
+    });
+  });
+
+  it("does not warn about a narrowing that never happened", async () => {
+    // Nothing is emitted here, which is the case that matters: the backend
+    // withholds this push when the browser's width was PRESERVED (a recording
+    // at a viewport preset), and a notice appearing anyway would send the user
+    // hunting for a layout problem in the one arrangement whose geometry is
+    // guaranteed correct.
+    renderPanel();
+    emit("trainerPanel:docked", { width: 840 });
+    await waitFor(() => expect(dock).not.toHaveBeenCalled());
+    expect(toastTexts().some((x) => x.title.includes("Training viewport narrowed"))).toBe(false);
+  });
+});
+
+describe("the viewport notice copy", () => {
+  it("names the width it was given", () => {
+    expect(viewportNarrowedNotice(1080).title).toContain("1080pt");
+  });
+
+  it("stays a sentence when the payload carries no usable width", () => {
+    // `api.on` hands back whatever was on the channel with no runtime check, so
+    // a missing or broken width must not render as "narrowed to NaNpt" — that
+    // reads as a bug in the feature rather than a bad payload, and it is the
+    // notice's own credibility that pays for it.
+    for (const bad of [undefined, Number.NaN, Infinity]) {
+      const { title } = viewportNarrowedNotice(bad as number | undefined);
+      expect(title).toBe("Training viewport narrowed");
+      expect(title).not.toMatch(/nan|infinity/i);
+    }
   });
 });
 
@@ -483,5 +597,92 @@ describe("a replay started in the OTHER trainer window", () => {
 
     expect(screen.getByText("Recording")).toBeTruthy();
     expect(screen.getByLabelText("Add step").hasAttribute("disabled")).toBe(false);
+  });
+});
+
+describe("continuing an existing test: where a captured step goes", () => {
+  // The report this was written against: "I only see the Paused and Editing
+  // options in the trainer window, and it doesn't appear to record any manual
+  // page interaction." Capture was live the whole time. What was true is that
+  // the insert cursor sits where the browser is — just past the navigation for
+  // a continued test — so a captured step landed at the TOP of the list while
+  // this panel scrolled to the bottom, unhighlighted, with a chip reading
+  // "Editing" beside it.
+
+  /** Four steps and a cursor just past the navigation, as `initialCursor` sets
+   *  it: the ordinary state of a session opened on an existing test. */
+  function continuedSession(over: Record<string, unknown> = {}) {
+    setStore({
+      state: state({ editing: true, cursor: 1 }),
+      liveSteps: [
+        step("s0", { type: "goto", url: "https://example.com" }),
+        step("s1", { type: "click", locator: { k: "text", v: "One" } }),
+        step("s2", { type: "click", locator: { k: "text", v: "Two" } }),
+        step("s3", { type: "click", locator: { k: "text", v: "Three" } }),
+      ],
+      ...over,
+    });
+  }
+
+  it("says Recording, because capture is live", () => {
+    // "Editing" here said the opposite of what was true, on the one indicator
+    // whose entire job is whether the trainer is listening.
+    continuedSession();
+    renderPanel();
+    expect(screen.getByText("Recording")).toBeTruthy();
+    expect(screen.queryByText("Editing")).toBe(null);
+  });
+
+  it("names the insert point when it is not at the end of the list", () => {
+    continuedSession();
+    renderPanel();
+    expect(screen.getByText(INSERT_HERE)).toBeTruthy();
+  });
+
+  it("says nothing at the end of the list, where steps appear under the last row", () => {
+    continuedSession({ state: state({ editing: true, cursor: 4 }) });
+    renderPanel();
+    expect(screen.queryByText(INSERT_HERE)).toBe(null);
+  });
+
+  it("scrolls the arriving step into view", () => {
+    // The half of the fix jsdom CAN see. Without it the row that changed is
+    // off-screen at the top of the list while the view follows the bottom,
+    // which is indistinguishable from nothing having been recorded.
+    const scrolled: Element[] = [];
+    const spy = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(function (this: Element) {
+        scrolled.push(this);
+      });
+    try {
+      continuedSession({
+        liveSteps: [
+          step("s0", { type: "goto", url: "https://example.com" }),
+          step("new", { type: "click", locator: { k: "text", v: "Just captured" } }),
+          step("s1", { type: "click", locator: { k: "text", v: "One" } }),
+          step("s2", { type: "click", locator: { k: "text", v: "Two" } }),
+        ],
+        lastAddedStepId: "new",
+      });
+      renderPanel();
+      expect(
+        scrolled.some((el) => el.getAttribute("data-just-added") === "true"),
+        "the arriving row scrolled itself into view",
+      ).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("scrolls nothing when no step has arrived", () => {
+    const spy = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+    try {
+      continuedSession({ lastAddedStepId: null });
+      renderPanel();
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

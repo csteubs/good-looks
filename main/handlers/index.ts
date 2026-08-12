@@ -11,6 +11,7 @@ import { appHandlers } from "./app.js";
 import { getSettingsWindow, openSettingsWindow } from "../windows/settings-window.js";
 import {
   dock as dockTrainerPanel,
+  getTrainerPanelDockState,
   isTrainerPanelDocked,
   undock as undockTrainerPanel,
 } from "../windows/trainer-panel-window.js";
@@ -19,13 +20,20 @@ import { batchRunner } from "../services/batch-runner.js";
 import { batchHistoryStore } from "../services/batch-history-store.js";
 import { webhookUrlStore } from "../services/webhook-url-store.js";
 import { postWebhook } from "../services/alert-service.js";
+import { issueTrackerService } from "../services/issue-tracker/issue-tracker-service.js";
 import { playwrightRunner } from "../services/playwright-runner.js";
 import { runHistoryStore } from "../services/run-history-store.js";
 import { artifactStore } from "../services/artifact-store.js";
 import { baselineStore } from "../services/baseline-store.js";
 import { acceptRunBaseline, acceptStepBaseline } from "../services/visual-baseline-ops.js";
 import { acceptRunA11y, acceptStepA11y, resetA11yBaseline } from "../services/a11y-baseline-ops.js";
+import {
+  dismissRunNotice,
+  isRunNoticeKind,
+  restoreRunNotice,
+} from "../services/run-notice-ops.js";
 import { sendToMain } from "../services/app-window.js";
+import { applyUiScaleToAllWindows } from "../services/ui-scale.js";
 import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
 import { duplicateTest } from "../services/duplicate-test.js";
@@ -59,6 +67,7 @@ import {
   siblingRuns,
   stepBrowserMatrix,
   stepDurations,
+  testDurationTrend,
   stepHealth,
   suiteCost,
 } from "../../shared/metrics-query.mjs";
@@ -80,6 +89,7 @@ import {
   isValidVariableName,
   MAX_BATCH_TEST_OPTIONS,
   normalizeDatasets,
+  buildStepStructures,
   normalizeStep,
   normalizeTags,
   normalizeVariables,
@@ -209,6 +219,13 @@ export function registerHandlers(): void {
     return recorderService.listCookies();
   });
 
+  // The training browser's URL strip: read the live URL, and open a URL
+  // assertion prefilled with it. Both are called from `recorder-chrome.html`,
+  // which runs in a view inside the training browser rather than in a window.
+  ipcMain.handle("recorder:getTrainingUrl", async () => recorderService.getTrainingUrl());
+  ipcMain.handle("recorder:assertUrl", async (_e, params: { kind: AssertKind }) =>
+    recorderService.assertUrl(params.kind),
+  );
   ipcMain.handle("recorder:startRefine", async () => recorderService.startRefine());
   ipcMain.handle("recorder:endRefine", async () => recorderService.endRefine());
   ipcMain.handle("recorder:stop", async () => {
@@ -230,6 +247,11 @@ export function registerHandlers(): void {
     undockTrainerPanel("user");
     return { docked: isTrainerPanelDocked() };
   });
+  // The panel's FIRST dock state cannot arrive by push: it is decided while the
+  // panel window is still loading its page, so the `trainerPanel:undocked` that
+  // announces a refused dock is emitted into a renderer that does not exist yet.
+  // Asking on mount is the only way a panel that opened undocked can know.
+  ipcMain.handle("trainerPanel:getState", async () => getTrainerPanelDockState());
 
   ipcMain.handle("recorder:getSettings", async () => recorderSettingsStore.get());
   ipcMain.handle(
@@ -239,6 +261,19 @@ export function registerHandlers(): void {
       // Bring the debug watcher into line immediately. Deferring to the next
       // launch would make the toggle look broken to the person who just used it.
       syncRequestWatcher();
+      // The same argument, twice more, for the two appearance settings.
+      //
+      // Zoom is applied here in the backend because that is the only place it
+      // exists; the typeface is a renderer concern, so it goes out as a push.
+      // Both are broadcast unconditionally rather than only when the value
+      // changed — the patch is a partial and comparing it against the previous
+      // settings to decide would be more code than re-applying an identical
+      // number, which costs nothing.
+      applyUiScaleToAllWindows();
+      sendToMain("settings:appearanceChanged", {
+        uiScale: next.uiScale,
+        uiTypeface: next.uiTypeface,
+      });
       return next;
     },
   );
@@ -648,6 +683,12 @@ export function registerHandlers(): void {
         rec.steps = steps;
         rec.stepsDiverged = skipped > 0;
         rec.stepsDivergedReason = skipped > 0 ? "parse" : undefined;
+        // This is the event the dismissal is scoped to: an applied script (an
+        // AI-debug fix, typically) whose statements don't all come back as
+        // steps. The user acknowledged the LAST divergence, not this one, so
+        // re-arm the warning. Clearing it on the `skipped === 0` branch too
+        // keeps a stale `true` from silencing the next real one.
+        rec.stepsDivergedDismissed = undefined;
         if (skipped > 0) {
           logger.warn("handlers", "Script has statements the parser couldn't map to steps", {
             id: rec.id,
@@ -665,6 +706,24 @@ export function registerHandlers(): void {
     testStore.save(rec);
     return rec;
   });
+
+  /** Wave off the "steps and script disagree" warning for this test. Note what
+   *  it does NOT do: `stepsDiverged` stays true, because the two really are out
+   *  of sync and everything else that reads it (the run comparison, the MCP)
+   *  must keep saying so. This only silences the banner, and only until the next
+   *  divergence is established. */
+  ipcMain.handle(
+    "tests:dismissDiverged",
+    async (_e, params: { id: string; dismissed?: unknown }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      // `=== false` is the only way to un-dismiss; anything else dismisses.
+      rec.stepsDivergedDismissed = params?.dismissed === false ? undefined : true;
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return rec;
+    },
+  );
 
   // Update the steps of a saved test directly (no trainer browser). Used by the
   // "Edit Steps" mode: add / rearrange / remove steps in the detail view, then
@@ -701,6 +760,7 @@ export function registerHandlers(): void {
         rec.scriptPath = testStore.regenerateScript(rec);
         rec.stepsDiverged = false;
         rec.stepsDivergedReason = undefined;
+        rec.stepsDivergedDismissed = undefined;
         // The spec is generated from these steps again, so "edited manually" is
         // no longer true — leaving it set would keep asking about edits that no
         // longer exist, and would block the next step edit from applying.
@@ -708,6 +768,10 @@ export function registerHandlers(): void {
       } else {
         rec.stepsDiverged = true;
         rec.stepsDivergedReason = "unapplied";
+        // A fresh save that the script won't carry is a fresh divergence, even
+        // if one was already dismissed: the previous acknowledgement was about
+        // different edits.
+        rec.stepsDivergedDismissed = undefined;
       }
       rec.updatedAt = Date.now();
       testStore.save(rec);
@@ -938,6 +1002,102 @@ export function registerHandlers(): void {
     return { ok: true };
   });
 
+  // ── Issue tracker handlers ──────────────────────────────────────────
+  // Same credential contract as the webhook above: the key travels
+  // renderer→backend only, and the renderer can learn whether one is stored and
+  // who it belongs to — never the key itself.
+  //
+  // `status` is local and cheap; `verify` is the one that touches the network.
+  // Keeping them separate is what lets the pane say "saved" while offline
+  // instead of "broken".
+  ipcMain.handle("issues:status", async () => issueTrackerService.status());
+  ipcMain.handle("issues:vocabulary", async () => issueTrackerService.vocabulary());
+  ipcMain.handle("issues:connect", async (_e, params: { key?: unknown }) => {
+    const key = typeof params?.key === "string" ? params.key : "";
+    return issueTrackerService.connect(key);
+  });
+  ipcMain.handle("issues:verify", async () => issueTrackerService.verify());
+  ipcMain.handle("issues:disconnect", async () => issueTrackerService.disconnect());
+  ipcMain.handle("issues:listContainers", async () => issueTrackerService.listContainers());
+  ipcMain.handle("issues:listSubContainers", async () => issueTrackerService.listSubContainers());
+  ipcMain.handle("issues:listLabels", async () => issueTrackerService.listLabels());
+  // The source becomes a filesystem path, so it is rebuilt rather than trusted
+  // — see `normalizeSource`. A coordinate that does not survive that, or no
+  // longer resolves on disk, answers null: the dialog says the evidence is gone
+  // rather than opening onto an empty form.
+  ipcMain.handle("issues:buildDraft", async (_e, params: { source?: unknown }) => {
+    const source = issueTrackerService.normalizeSource(params?.source);
+    return source ? issueTrackerService.buildDraft(source) : null;
+  });
+  ipcMain.handle(
+    "issues:createIssue",
+    async (
+      _e,
+      params: {
+        source?: unknown;
+        title?: unknown;
+        body?: unknown;
+        attachmentFiles?: unknown;
+        containerId?: unknown;
+        subContainerId?: unknown;
+        labelIds?: unknown;
+      },
+    ) => {
+      const source = issueTrackerService.normalizeSource(params?.source);
+      if (!source) throw new Error("That defect could not be identified.");
+      const containerId = typeof params?.containerId === "string" ? params.containerId : "";
+      if (!containerId) throw new Error("Choose a destination before sending.");
+      const strings = (v: unknown): string[] =>
+        Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+      return issueTrackerService.createIssue(
+        {
+          source,
+          title: typeof params?.title === "string" ? params.title : "",
+          body: typeof params?.body === "string" ? params.body : "",
+          attachmentFiles: strings(params?.attachmentFiles),
+        },
+        {
+          containerId,
+          subContainerId:
+            typeof params?.subContainerId === "string" ? params.subContainerId : null,
+          labelIds: strings(params?.labelIds),
+        },
+      );
+    },
+  );
+  ipcMain.handle("issues:linksForTest", async (_e, params: { testId?: unknown }) =>
+    typeof params?.testId === "string" ? issueTrackerService.linksForTest(params.testId) : [],
+  );
+  ipcMain.handle(
+    "issues:commentRecurrence",
+    async (_e, params: { source?: unknown; attachmentFiles?: unknown }) => {
+      const source = issueTrackerService.normalizeSource(params?.source);
+      if (!source) throw new Error("That defect could not be identified.");
+      const files = Array.isArray(params?.attachmentFiles)
+        ? params.attachmentFiles.filter((x): x is string => typeof x === "string")
+        : [];
+      return issueTrackerService.commentRecurrence(source, files);
+    },
+  );
+  ipcMain.handle("issues:getDefaults", async () => issueTrackerService.defaults());
+  ipcMain.handle(
+    "issues:setDefaults",
+    async (_e, params: { containerId?: unknown; subContainerId?: unknown }) => {
+      // Rebuilt, not spread. `undefined` means "leave alone" and `null` means
+      // "clear", and both have to survive the trip — so a key that is absent
+      // stays absent rather than becoming an explicit null.
+      const patch: { containerId?: string | null; subContainerId?: string | null } = {};
+      if (params && "containerId" in params) {
+        patch.containerId = typeof params.containerId === "string" ? params.containerId : null;
+      }
+      if (params && "subContainerId" in params) {
+        patch.subContainerId =
+          typeof params.subContainerId === "string" ? params.subContainerId : null;
+      }
+      return issueTrackerService.setDefaults(patch);
+    },
+  );
+
   // ── Runner handlers ─────────────────────────────────────────────────
   ipcMain.handle(
     "runner:run",
@@ -1145,6 +1305,14 @@ export function registerHandlers(): void {
         // disagree about what counts as a slowdown.
         slowed: slowdowns(rows),
         cost: costBreakdown(suiteCost(metricsStore.handle())),
+        // The TEST's own trend, only when one was named (C §6.3). On the same
+        // channel as its steps rather than a new one: the run summary and the
+        // step list are one screen asking one question, and two channels would
+        // let them answer it from two different reads of a database that is
+        // being written to while they look.
+        testTrend: params?.testId
+          ? testDurationTrend(metricsStore.handle(), params.testId, params?.window)
+          : null,
       };
     },
   );
@@ -1213,6 +1381,26 @@ export function registerHandlers(): void {
     "artifacts:hasLogs",
     async (_e, params: { testId: string; runId: string }) => ({
       hasLogs: artifactStore.hasLogs(params.testId, params.runId),
+    }),
+  );
+
+  // The page structure run-time Auto-Heal recorded around the steps it could
+  // not rescue. Every string in it was authored by the site, so it is rebuilt
+  // by `normalizeStepStructures` here rather than anywhere further in: this is
+  // the last point before it can reach a UI or an LLM prompt, the same place
+  // `artifacts:getLogs` redacts secrets.
+  ipcMain.handle(
+    "artifacts:getStructure",
+    async (_e, params: { testId: string; runId: string }) =>
+      buildStepStructures(
+        artifactStore.readHealFailures(params.testId, params.runId),
+        artifactStore.readStepMatches(params.testId, params.runId),
+      ),
+  );
+  ipcMain.handle(
+    "artifacts:hasStructure",
+    async (_e, params: { testId: string; runId: string }) => ({
+      hasStructure: artifactStore.hasHealFailures(params.testId, params.runId),
     }),
   );
 
@@ -1325,6 +1513,30 @@ export function registerHandlers(): void {
     if (result) sendToMain("runs:changed", {});
     return result;
   });
+  // ── Findings banners: dismiss / restore ──────────────────────────────────
+  //
+  // The counterpart to the two accept handlers above. Accepting resolves a
+  // finding and changes what every future run reports; dismissing says "seen"
+  // about this run only. Conflating them would mean the only way to clear a
+  // banner is to sign off on findings you may not have looked at.
+  ipcMain.handle(
+    "artifacts:dismissNotice",
+    async (_e, params: { testId: string; runId: string; kind: unknown }) => {
+      if (!isRunNoticeKind(params?.kind)) return null;
+      const result = dismissRunNotice(params.testId, params.runId, params.kind);
+      if (result) sendToMain("runs:changed", {});
+      return result;
+    },
+  );
+  ipcMain.handle(
+    "artifacts:restoreNotice",
+    async (_e, params: { testId: string; runId: string; kind: unknown }) => {
+      if (!isRunNoticeKind(params?.kind)) return null;
+      const result = restoreRunNotice(params.testId, params.runId, params.kind);
+      if (result) sendToMain("runs:changed", {});
+      return result;
+    },
+  );
   /** Forget everything accepted for a test — the way back from an over-eager
    *  "accept run", which is otherwise irreversible. */
   ipcMain.handle("a11y:resetBaseline", async (_e, params: { testId: string }) =>

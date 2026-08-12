@@ -9,6 +9,8 @@ import { app, logger } from "@shell/backend";
 import {
   isRunBrowser,
   isTestSpeed,
+  isUiScale,
+  isUiTypeface,
   MAX_BATCH_CONCURRENCY,
   MAX_BATCH_TEST_OPTIONS,
   RUN_BROWSERS,
@@ -127,6 +129,9 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   defaultA11yChecks: false,
   defaultRecordLogs: false,
   recordAllHeaders: false,
+  // An egress path, so `false` here is a security default rather than a taste
+  // one. See the field's own note in `recorder-types.ts`.
+  siteIconsFromWeb: false,
   keepRunningAiDebugJobs: false,
   debugScreenshots: false,
   defaultRunHeadless: false,
@@ -152,6 +157,11 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   notifyOnAiDebugDone: false,
   autoAcceptAiDebugFixes: false,
   disabledAestheticEnhancements: [],
+  // 100%. The theme is drawn at these exact pixel sizes, so the default has to
+  // be the identity — anything else would mean the app never renders at the
+  // size it was designed at unless someone goes looking for the setting.
+  uiScale: 1,
+  uiTypeface: "space",
 };
 
 
@@ -198,6 +208,10 @@ function read(): RecorderSettings {
         typeof parsed.recordAllHeaders === "boolean"
           ? parsed.recordAllHeaders
           : DEFAULT_SETTINGS.recordAllHeaders,
+      siteIconsFromWeb:
+        typeof parsed.siteIconsFromWeb === "boolean"
+          ? parsed.siteIconsFromWeb
+          : DEFAULT_SETTINGS.siteIconsFromWeb,
       keepRunningAiDebugJobs:
         typeof parsed.keepRunningAiDebugJobs === "boolean"
           ? parsed.keepRunningAiDebugJobs
@@ -265,6 +279,13 @@ function read(): RecorderSettings {
         parsed.disabledAestheticEnhancements.every((v) => typeof v === "string")
           ? parsed.disabledAestheticEnhancements
           : DEFAULT_SETTINGS.disabledAestheticEnhancements,
+      // Membership, not a clamp, and it matters more here than anywhere else in
+      // this function: `uiScale` is handed to `setZoomFactor` for every app
+      // window, so a hand-edited file carrying `0` or `1e9` would open the app
+      // at a size from which the Settings window cannot be read — and Settings
+      // is the only way back. A bad value falls back to 100%.
+      uiScale: isUiScale(parsed.uiScale) ? parsed.uiScale : DEFAULT_SETTINGS.uiScale,
+      uiTypeface: isUiTypeface(parsed.uiTypeface) ? parsed.uiTypeface : DEFAULT_SETTINGS.uiTypeface,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -319,6 +340,10 @@ export const recorderSettingsStore = {
           : current.defaultRecordLogs,
       recordAllHeaders:
         update.recordAllHeaders !== undefined ? update.recordAllHeaders : current.recordAllHeaders,
+      siteIconsFromWeb:
+        update.siteIconsFromWeb !== undefined
+          ? update.siteIconsFromWeb
+          : current.siteIconsFromWeb,
       keepRunningAiDebugJobs:
         update.keepRunningAiDebugJobs !== undefined
           ? update.keepRunningAiDebugJobs
@@ -392,6 +417,12 @@ export const recorderSettingsStore = {
         update.disabledAestheticEnhancements.every((v) => typeof v === "string")
           ? update.disabledAestheticEnhancements
           : current.disabledAestheticEnhancements,
+      // Same allowlist as `read()`, and it has to be applied on BOTH paths: a
+      // value rejected on load but accepted on save would be written to disk
+      // and then silently ignored forever after, which reads as "the setting
+      // does not work" rather than "the value was refused".
+      uiScale: isUiScale(update.uiScale) ? update.uiScale : current.uiScale,
+      uiTypeface: isUiTypeface(update.uiTypeface) ? update.uiTypeface : current.uiTypeface,
     };
     fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
     fs.writeFileSync(settingsFile(), JSON.stringify(next, null, 2), "utf-8");
@@ -407,6 +438,7 @@ export const recorderSettingsStore = {
       defaultA11yChecks: next.defaultA11yChecks,
       defaultRecordLogs: next.defaultRecordLogs,
       recordAllHeaders: next.recordAllHeaders,
+      siteIconsFromWeb: next.siteIconsFromWeb,
       keepRunningAiDebugJobs: next.keepRunningAiDebugJobs,
       debugScreenshots: next.debugScreenshots,
       defaultCaptureArtifacts: next.defaultCaptureArtifacts,
@@ -425,6 +457,8 @@ export const recorderSettingsStore = {
       notifyOnAiDebugDone: next.notifyOnAiDebugDone,
       autoAcceptAiDebugFixes: next.autoAcceptAiDebugFixes,
       disabledAestheticEnhancements: next.disabledAestheticEnhancements,
+      uiScale: next.uiScale,
+      uiTypeface: next.uiTypeface,
     });
     return next;
   },

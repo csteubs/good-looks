@@ -3,7 +3,6 @@ import { useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import {
   AlertDialog,
-  Button,
   Callout,
   Checkbox,
   Dialog,
@@ -23,15 +22,16 @@ import {
   TabsContent,
   TabsRoot,
   TabsTrigger,
-  Text,
   Toolbar,
   ToolbarActions,
   ToolbarContent,
   ToolbarDescription,
   ToolbarTitle,
+  toast,
 } from "@ui";
 import { ChevronDown, Pencil, TriangleAlert, Trash2 } from "lucide-react";
 
+import { Btn } from "../theme";
 import { api } from "../lib/api";
 import { useRecorder } from "./recorder-store";
 import {
@@ -42,6 +42,7 @@ import {
 } from "./ai-debug-store";
 import { EditStepsView } from "./edit-steps-view";
 import { RunOutput } from "./run-output";
+import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import { ScriptEditor, ScriptView } from "./script-view";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
@@ -50,6 +51,7 @@ import { A11yPanel } from "./a11y-panel";
 import { computeStepDepths } from "../lib/describe-step";
 import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import { latestA11yRun } from "../lib/a11y-format";
+import { summariseRun } from "../lib/run-summary";
 import { BROWSER_SF_SYMBOLS } from "../lib/browser-icons";
 import {
   RUN_BROWSERS,
@@ -113,6 +115,9 @@ export function TestDetailView() {
   // a test whose script isn't generated from its steps; null the rest of the
   // time, which is also what closes the dialog.
   const [pendingSteps, setPendingSteps] = React.useState<Step[] | null>(null);
+  // The run whose failure is being filed. Held here rather than in RunOutput
+  // because the dialog needs the test id, which this view owns.
+  const [failureRunId, setFailureRunId] = React.useState<string | null>(null);
   const [trainerConfirmOpen, setTrainerConfirmOpen] = React.useState(false);
   // Per-test visual-testing gate — remembers the user's "Capture screenshots"
   // choice between sessions. Falls back to the global Settings default when the
@@ -184,6 +189,72 @@ export function TestDetailView() {
   const pendingHeals = (healsQuery.data ?? []).filter((h) => h.status === "pending").length;
   const a11yNewSteps = latestA11yRun(runsQuery.data ?? [], id)?.a11yNewSteps ?? 0;
   const runInfo = runs[id];
+
+  // Real medians, per step and for the test itself (C §6.3). One query for
+  // both — they are one screen asking one question, and two channels would let
+  // the step list and the run summary answer it from two different reads of a
+  // database that is being written to while they look.
+  //
+  // `available: false` is not an error and is not treated as one: the metrics
+  // DB is a derived shadow that degrades to "no metrics" by design, and every
+  // consumer of it here falls back to a `Temp` that renders neutral.
+  const metricsQuery = useQuery({
+    queryKey: ["metrics", "slowness", id],
+    queryFn: () => api.metrics.slowness(id),
+  });
+  const stepTrends = React.useMemo(() => {
+    const map = new Map<string, { recentP50Ms: number | null; previousP50Ms: number | null }>();
+    for (const row of metricsQuery.data?.rows ?? []) {
+      map.set(row.stepId, {
+        recentP50Ms: row.recentP50Ms,
+        previousP50Ms: row.previousP50Ms,
+      });
+    }
+    return map;
+  }, [metricsQuery.data]);
+
+  // The run panel's clock, and ONLY while a run is in flight (§6.1's `running`
+  // panel reports elapsed time). It would usually be carried for free by the
+  // log streaming in, but a run that is waiting — on a slow navigation, on a
+  // locator that will eventually time out — streams nothing, and those are
+  // exactly the runs somebody is watching the clock on.
+  const [nowTick, setNowTick] = React.useState(() => Date.now());
+  const running = runInfo?.running ?? false;
+  React.useEffect(() => {
+    if (!running) return;
+    setNowTick(Date.now());
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [running]);
+
+  // Which of the six states this test's run panel is in. Computed here rather
+  // than inside the panel because both of its inputs are queries this view
+  // already holds for other reasons — the a11y badge needs `runs`, the Heals
+  // tab badge needs `heals` — so the summary costs nothing extra.
+  const runSummary = React.useMemo(
+    () =>
+      summariseRun({
+        testId: id,
+        runs: runsQuery.data ?? [],
+        heals: healsQuery.data ?? [],
+        stepCount: testQuery.data?.steps.length ?? 0,
+        live: runInfo ?? null,
+        now: nowTick,
+        // The REAL median, when the metrics DB can supply one — see §6.3 and
+        // `summariseRun`'s note on why it is preferred over the one derived
+        // from run history here.
+        medianMs: metricsQuery.data?.testTrend?.recentP50Ms ?? null,
+      }),
+    [
+      id,
+      runsQuery.data,
+      healsQuery.data,
+      testQuery.data?.steps.length,
+      runInfo,
+      nowTick,
+      metricsQuery.data,
+    ],
+  );
 
   // Seed the run controls from the record, falling back to the global defaults.
   // Once per TEST rather than once per mount (see `seededFor`), and never again
@@ -278,6 +349,17 @@ export function TestDetailView() {
     enabled: Boolean(recordId),
   });
 
+  // Whether the run left any Auto-Heal failure behind — the source of the page
+  // structure the model can ask for. Asked per run for the same reason as the
+  // logs above: the Auto-Heal setting can be flipped after a run, and what
+  // matters is what THIS run wrote.
+  const structureQuery = useQuery({
+    queryKey: ["run-structure-available", id, recordId],
+    queryFn: () =>
+      recordId ? api.artifacts.hasStructure(id, recordId) : Promise.resolve({ hasStructure: false }),
+    enabled: Boolean(recordId),
+  });
+
   // Write an edited step list back. `regenerate` is what the save-time question
   // resolves to; it's ignored for a test whose script is generated from steps
   // anyway, and refused backend-side for an imported one.
@@ -328,9 +410,19 @@ export function TestDetailView() {
       failedStepIndex,
       recordId,
       logsAvailable: Boolean(logsQuery.data?.hasLogs),
+      structureAvailable: Boolean(structureQuery.data?.hasStructure),
       onApplyScript: applyScript,
     };
-  }, [test, script, runOutput, failedStepIndex, applyScript, recordId, logsQuery.data?.hasLogs]);
+  }, [
+    test,
+    script,
+    runOutput,
+    failedStepIndex,
+    applyScript,
+    recordId,
+    logsQuery.data?.hasLogs,
+    structureQuery.data?.hasStructure,
+  ]);
 
   // Keep a live session's context fresh (the script or run output can change
   // under it) and re-ground one restored from disk, which has no context at all
@@ -368,6 +460,29 @@ export function TestDetailView() {
     qc.invalidateQueries({ queryKey: ["script", id] });
   };
 
+  /** Silence the divergence banner. Optimistic on purpose: this is a "yes, I
+   *  know" click, and a banner that lingers until a round trip reads as a
+   *  control that didn't work. The invalidate below reconciles. */
+  const dismissDiverged = () => {
+    qc.setQueryData(["test", id], (prev: TestRecord | null | undefined) =>
+      prev ? { ...prev, stepsDivergedDismissed: true } : prev,
+    );
+    api.tests
+      .dismissDiverged(id)
+      // Take the saved record rather than invalidating: a refetch would land a
+      // moment later and is indistinguishable from the optimistic value, right
+      // up until the write failed — in which case the banner would reappear
+      // with no explanation. The catch below is the only path that restores it.
+      .then((rec) => {
+        if (rec) qc.setQueryData(["test", id], rec);
+      })
+      .catch(() => {
+        // Put it back rather than leaving the user believing it was recorded.
+        qc.invalidateQueries({ queryKey: ["test", id] });
+        toast.error("Couldn't dismiss the warning.");
+      });
+  };
+
   const saveScript = async () => {
     await api.tests.updateScript(id, scriptDraft);
     qc.invalidateQueries({ queryKey: ["script", id] });
@@ -400,8 +515,12 @@ export function TestDetailView() {
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <Toolbar className="pt-2">
+    <div className="gl-detail flex h-full flex-col">
+      {/* `Toolbar` is kept — it owns the drag region and the `no-drag` islands
+          inside it, which are window behaviour rather than styling, and
+          `check:clickable-chrome` is about exactly that. What changes is what is
+          drawn in it. */}
+      <Toolbar className="gl-detail-head pt-2">
         <ToolbarContent>
           {editingName ? (
             <Input
@@ -441,10 +560,13 @@ export function TestDetailView() {
         <ToolbarActions>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="glass">
+              {/* `Btn` rather than the SDK `Button`, but still inside Radix's
+                  `DropdownMenu`: that one is native-menu-backed here, and the
+                  trigger is the only part of it that is real DOM. */}
+              <Btn>
                 Edit Test
                 <ChevronDown className="size-3.5" />
-              </Button>
+              </Btn>
             </DropdownMenuTrigger>
             <DropdownMenuContent side="bottom" align="end">
               <DropdownMenuItem onSelect={() => {
@@ -475,9 +597,9 @@ export function TestDetailView() {
           ) : null}
           <AlertDialog
             trigger={
-              <Button iconOnly variant="glass" size="large" aria-label="Delete test">
-                <Trash2 className="size-5" />
-              </Button>
+              <button type="button" className="gl-icon-btn" aria-label="Delete test">
+                <Trash2 className="size-4" />
+              </button>
             }
             title="Delete this test?"
             description="This removes the recording and its generated script. This can't be undone."
@@ -498,10 +620,15 @@ export function TestDetailView() {
             }}
             disabled={runInfo?.running}
           >
+            {/* `.gl-input` on a Select trigger: it is a control that reports a
+                value and opens a NATIVE menu, so its box should read as a field
+                rather than as a button. The menu itself is drawn by AppKit and
+                never enters the DOM — nothing here can style it, which is also
+                why the engine choice is asserted at the IPC layer. */}
             <SelectTrigger
               variant="filled"
               size="small"
-              className="w-32"
+              className="gl-input w-32"
               aria-label="Browser engine for this test's runs"
             >
               {/* No icon of ours here: SelectValue already draws the selected
@@ -517,14 +644,14 @@ export function TestDetailView() {
               ))}
             </SelectContent>
           </Select>
-          <label className="flex select-none items-center gap-1.5 pr-1 text-small text-secondary">
+          <label className="gl-run-option gl-detail-timeout">
             <span className="whitespace-nowrap">Timeout</span>
             <Input
               type="number"
               min={5}
               max={1800}
               step={1}
-              className="h-7 w-16 px-1.5 text-small"
+              className="gl-input w-16"
               value={testTimeoutSec ?? ""}
               placeholder={String(
                 Math.round((settingsQuery.data?.defaultTestTimeoutMs ?? 60_000) / 1000),
@@ -547,30 +674,15 @@ export function TestDetailView() {
                 });
               }}
             />
-            <span className="text-tertiary">s</span>
+            <span className="gl-detail-unit">s</span>
           </label>
-          {/* The gang of four: a compact 2×2 block until the run-options row
-              gets its real design pass.
-
-              Columns are `auto`, NOT `grid-cols-2`. Tailwind's `grid-cols-2` is
-              `repeat(2, minmax(0, 1fr))`, and that `0` floor lets a column
-              shrink below the width of its own text. These labels are
-              `overflow: visible`, so they do not clip or ellipsise when that
-              happens — they paint straight across the neighbouring column. At
-              860px the columns were 48px wide holding text that needed 96px,
-              two labels deep, which read as the four options printed on top of
-              each other.
-
-              `auto` resolves to `minmax(min-content, max-content)`: the floor
-              becomes the longest unbreakable WORD rather than zero. The labels
-              still wrap to two lines when the toolbar is tight — which was
-              always fine to read — they just can no longer be squeezed narrower
-              than a word and spill. `max-content` was tried first and is wrong:
-              it forbids wrapping outright, which pushed the toolbar's own
-              minimum to 1085px, i.e. wider than this window's 1000px DEFAULT,
-              trading a rare overlap for a guaranteed one. */}
-          <div className="grid grid-cols-[auto_auto] gap-x-3 gap-y-1">
-            <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+          {/* The gang of four, a compact 2×2 block. The column-track rule that
+              keeps it from overlapping itself at narrow widths moved into
+              `.gl-run-options` (screens.css) in B5a — the reasoning is written
+              out there, and `check:narrow-layout` reads it from the stylesheet
+              rather than from a Tailwind class here. */}
+          <div className="gl-run-options">
+            <label className="gl-run-option">
               <Checkbox
                 checked={runHeadless}
                 onCheckedChange={(v) => {
@@ -585,7 +697,7 @@ export function TestDetailView() {
               />
               Run headless
             </label>
-            <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+            <label className="gl-run-option">
               {/* Independent of "Run headless". Headless Chromium renders to an
                   offscreen surface, so page.screenshot() works exactly the same —
                   it's how visual regression testing is normally done. Headless is
@@ -606,7 +718,7 @@ export function TestDetailView() {
               />
               Capture screenshots
             </label>
-            <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+            <label className="gl-run-option">
               {/* Separate from screenshots on purpose: this writes page console
                   output and request URLs to disk. Off by default, and the model
                   can only ASK for the result — it is never attached automatically. */}
@@ -624,7 +736,7 @@ export function TestDetailView() {
               />
               Record console &amp; network
             </label>
-            <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+            <label className="gl-run-option">
               <Checkbox
                 checked={a11yChecks}
                 onCheckedChange={(v) => {
@@ -640,21 +752,36 @@ export function TestDetailView() {
               Check accessibility
             </label>
           </div>
+          {/* `stop` and `go`, and this is the one place on the screen that earns
+              a hue: pressing it causes the thing the colour means. Everything
+              else in this toolbar is `ghost` for the same reason — a screen
+              where every button is lit spends the whole palette on chrome. */}
           {runInfo?.running ? (
-            <Button variant="destructive" onClick={() => stopRun(id)}>
+            <Btn tone="stop" onClick={() => stopRun(id)}>
               Stop
-            </Button>
+            </Btn>
           ) : (
-            <Button variant="accent" onClick={() => run(id, captureArtifacts, runHeadless, runBrowser)}>
+            <Btn tone="go" onClick={() => run(id, captureArtifacts, runHeadless, runBrowser)}>
               Run test
-            </Button>
+            </Btn>
           )}
         </ToolbarActions>
       </Toolbar>
 
-      {test.stepsDiverged ? (
+      {/* Dismissible, and the dismissal is persisted rather than held here: the
+          record stays diverged (everything else that reads the flag must keep
+          saying so), the user has simply acknowledged it. The backend re-arms
+          the banner when divergence is established AFRESH — an applied script
+          that won't fully parse back into steps, or a step edit saved without
+          regenerating — so a new problem is never hidden by an old dismissal. */}
+      {test.stepsDiverged && !test.stepsDivergedDismissed ? (
         <div className="px-4 pt-2">
-          <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+          <Callout
+            color="yellow"
+            icon={<TriangleAlert className="size-4" />}
+            onDismiss={dismissDiverged}
+            dismissLabel="Dismiss this warning"
+          >
             <Callout.Text>{divergedMessage(test)}</Callout.Text>
           </Callout>
         </div>
@@ -689,7 +816,7 @@ export function TestDetailView() {
         const value = tab === "steps" && !showSteps ? "script" : (tab ?? (showSteps ? "steps" : "script"));
         return (
           <TabsRoot value={value} onValueChange={setTab} className="flex min-h-0 flex-1 flex-col">
-            <div className="px-4 pt-2">
+            <div className="gl-tabs gl-detail-tabs">
               <Tabs variant="filled" size="large">
                 {showSteps ? <TabsTrigger value="steps">Steps ({test.steps.length})</TabsTrigger> : null}
                 <TabsTrigger value="script">Script</TabsTrigger>
@@ -730,6 +857,7 @@ export function TestDetailView() {
                       step={test.steps[i]}
                       indent={depth}
                       runStatus={runInfo?.stepStatus[i]}
+                      trend={stepTrends.get(test.steps[i].id)}
                       isNew={newStepIds.has(test.steps[i].id)}
                     />
                   ))}
@@ -737,33 +865,25 @@ export function TestDetailView() {
               </ScrollArea>
             </TabsContent>
             <TabsContent value="script" className="flex min-h-0 flex-1 flex-col">
-              <div className="flex items-center justify-end gap-2 border-b border-separator px-4 py-2">
+              <div className="gl-detail-script-bar">
                 {editingScript ? (
                   <>
-                    <Button size="small" variant="glass" onClick={() => setEditingScript(false)}>
-                      Cancel
-                    </Button>
-                    <Button size="small" variant="accent" onClick={saveScript}>
+                    <Btn onClick={() => setEditingScript(false)}>Cancel</Btn>
+                    <Btn tone="go" onClick={saveScript}>
                       Save
-                    </Button>
+                    </Btn>
                   </>
                 ) : (
                   <>
-                    {test.scriptEdited ? (
-                      <Text variant="small" color="secondary">
-                        Edited manually
-                      </Text>
-                    ) : null}
-                    <Button
-                      size="small"
-                      variant="glass"
+                    {test.scriptEdited ? <span className="gl-chip">Edited manually</span> : null}
+                    <Btn
                       onClick={() => {
                         setScriptDraft(scriptQuery.data ?? "");
                         setEditingScript(true);
                       }}
                     >
                       Edit script
-                    </Button>
+                    </Btn>
                   </>
                 )}
               </div>
@@ -794,7 +914,34 @@ export function TestDetailView() {
 
       {/* The dialog itself is rendered by AiDebugHost above the router, so a
           minimized session outlives this view. */}
-      {runInfo ? <RunOutput info={runInfo} onDebug={openAiDebug} aiStatus={aiStatus} /> : null}
+      {/* Always rendered now, not only once something has run in this session.
+          Opening a test cold used to say nothing at all about it — not that it
+          had never run, not that it failed yesterday (§6.1). */}
+      <RunOutput
+        info={runInfo}
+        summary={runSummary}
+        onDebug={openAiDebug}
+        onReview={test.sourceDir ? undefined : () => setTab("heals")}
+        onSendToTracker={setFailureRunId}
+        aiStatus={aiStatus}
+      />
+
+      {/* A failure names no step of its own — the loader resolves which step
+          failed from the replay, which is where that fact lives. Passing null
+          rather than guessing here keeps one answer to "which step failed?" */}
+      <IssueComposeDialog
+        source={
+          failureRunId
+            ? { kind: "failure", testId: test.id, runId: failureRunId, stepId: null }
+            : null
+        }
+        open={failureRunId !== null}
+        onOpenChange={(open) => {
+          if (!open) setFailureRunId(null);
+        }}
+        onFiled={(issue) => toast.success(`Filed as ${issue.identifier}.`)}
+        onCommented={(link) => toast.success(`Added to ${link.identifier}.`)}
+      />
 
       {/* Asked at SAVE, not when Edit Steps is opened: this is a question about
           what to do with the edits, and it can only be answered once they

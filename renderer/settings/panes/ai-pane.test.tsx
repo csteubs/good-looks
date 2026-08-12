@@ -12,7 +12,7 @@
 import { describe, it, expect } from "vitest";
 import { screen, fireEvent, waitFor } from "@testing-library/react";
 
-import { makeController, renderPane, savedPatch } from "../__tests__/harness";
+import { makeController, renderPane } from "../__tests__/harness";
 import { AiPane } from "./ai-pane";
 
 const REACHABLE = {
@@ -280,40 +280,29 @@ describe("model picker", () => {
   });
 });
 
-describe("the experimental section", () => {
-  it("saves the keep-running toggle", () => {
-    const { controller } = renderPane(<AiPane />);
-    fireEvent.click(screen.getByRole("switch", { name: /keep a running AI debug job/i }));
-    expect(savedPatch(controller)).toEqual({ keepRunningAiDebugJobs: true });
-  });
-
-  it("saves the auto-accept toggle, which defaults off", () => {
-    // Off is the safe default: this switch lets a background job rewrite a
-    // script. Flipping the default silently would be the worst kind of bug.
-    const { controller } = renderPane(<AiPane />);
-    const sw = screen.getByRole("switch", { name: /apply AI debug fixes automatically/i });
-    expect(sw.getAttribute("aria-checked")).toBe("false");
-    fireEvent.click(sw);
-    expect(savedPatch(controller)).toEqual({ autoAcceptAiDebugFixes: true });
-  });
-
-  it("is labelled as experimental rather than burying that in the row name", () => {
-    // It used to be the whole row label: "Experimental: keep a running AI debug
-    // job when a test is re-run".
+describe("the experimental rows have left this pane", () => {
+  // B4 moved both into their own Experiments pane — they change how a RUN
+  // behaves, and nobody asking "why did my script change?" would look for the
+  // answer under which model answers questions. Asserted here rather than
+  // deleted, because the failure mode of the move is a row rendering in BOTH
+  // panes: two switches writing the same key, and whichever the user did not
+  // touch keeps reporting the old value until it re-renders.
+  it("no longer renders either toggle", () => {
     renderPane(<AiPane />);
-    expect(screen.getByText("Experimental")).toBeTruthy();
+    expect(screen.queryByRole("switch", { name: /keep a running AI debug job/i })).toBeNull();
+    expect(screen.queryByRole("switch", { name: /apply AI debug fixes automatically/i })).toBeNull();
+  });
+
+  it("no longer carries an Experimental section heading", () => {
+    renderPane(<AiPane />);
+    expect(screen.queryByText("Experimental")).toBeNull();
   });
 });
 
 describe("search filtering", () => {
   it("shows only the matched row", () => {
-    renderPane(<AiPane />, { matchedIds: ["keep-running-ai-debug-jobs"] });
-    expect(screen.getByRole("switch", { name: /keep a running AI debug job/i })).toBeTruthy();
+    renderPane(<AiPane />, { matchedIds: ["llm-server-url"] });
+    expect(screen.getByRole("textbox", { name: /server url/i })).toBeTruthy();
     expect(screen.queryByRole("radio", { name: "Ollama" })).toBeNull();
-  });
-
-  it("drops the experimental section when nothing in it matched", () => {
-    renderPane(<AiPane />, { matchedIds: ["llm-provider"] });
-    expect(screen.queryByText("Experimental")).toBeNull();
   });
 });

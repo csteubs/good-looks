@@ -64,6 +64,32 @@ export function needsHeadedParallelWarning(opts: {
   return opts.concurrency > HEADED_PARALLEL_WARN;
 }
 
+/**
+ * What choosing this concurrency actually costs, in the menu, while choosing.
+ *
+ * THE NUMBER CANNOT SAY THIS, and that is the whole reason the copy exists. The
+ * honest description of "8" is that a laptop will thrash and report failures it
+ * caused — a failure mode that looks exactly like a flaky suite from the run
+ * report, and costs an afternoon to diagnose because nothing about it says
+ * "you asked for this". A row of bare numbers makes the user guess, and the
+ * guess is expensive in one direction only.
+ *
+ * Lives here rather than in the view for the same reason the warning threshold
+ * does: it is copy with a rule behind it, and a test can read it.
+ */
+export function batchConcurrencyConsequence(choice: BatchConcurrencyChoice): string {
+  if (choice === 1) {
+    return "One at a time. Slowest, and the only setting where a timing failure is the test's fault rather than the machine's.";
+  }
+  if (choice === "all") {
+    return "Every selected test at once, up to the cap. Fastest when they are headless and independent; the least trustworthy when they are not.";
+  }
+  if (choice >= 8) {
+    return "A laptop will thrash and report failures it caused. Worth it on a machine with cores to spare, and misleading on one without.";
+  }
+  return `${choice} at a time. Roughly ${choice}× faster while the machine keeps up — shared state between tests is what stops it.`;
+}
+
 /** Restore a stored default (a plain number from settings) as a picker value.
  *
  *  Snaps DOWN to an offered option rather than returning the number as-is: the

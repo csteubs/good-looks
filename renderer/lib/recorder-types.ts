@@ -289,6 +289,46 @@ export const RUN_BROWSER_LABELS: Record<RunBrowser, string> = {
   webkit: "WebKit",
 };
 
+/** How big the app's own interface is drawn, as a zoom factor (mirror of main
+ *  types). The backend validates by membership in this exact set before the
+ *  number reaches `setZoomFactor` — see `main/recorder/types.ts`. */
+export type UiScale = 0.9 | 1 | 1.1 | 1.25;
+
+export const UI_SCALES: UiScale[] = [0.9, 1, 1.1, 1.25];
+
+/** Labels for the size picker.
+ *
+ *  DELIBERATELY NOT PERCENTAGES. "110%" invites the reading that this is a
+ *  precise typographic setting; it is a zoom factor, and what the user is
+ *  choosing is how big the app is. Four words say that and survive the value
+ *  set changing. */
+export const UI_SCALE_LABELS: Record<string, string> = {
+  "0.9": "Small",
+  "1": "Default",
+  "1.1": "Large",
+  "1.25": "Larger",
+};
+
+/** Which typeface pairing the interface is set in (mirror of main types). */
+export type UiTypeface = "space" | "system" | "classic";
+
+export const UI_TYPEFACES: UiTypeface[] = ["space", "system", "classic"];
+
+/** Labels for the typeface picker.
+ *
+ *  THE FACES, NOT THE PAIRING NAMES. "Space", "System" and "Classic" are what
+ *  the values are called in the store and in settings search; they are not what
+ *  someone choosing a typeface wants to read, because "System" alone says
+ *  nothing about what they are about to get. Second names are dropped where the
+ *  family is unambiguous ("Grotesk", "Helvetica") so the longest label still
+ *  fits the trigger — a picker whose current value reads "Space — Space Mono /
+ *  Space Gr…" tells you less than one that fits. */
+export const UI_TYPEFACE_LABELS: Record<UiTypeface, string> = {
+  space: "Space Mono / Grotesk",
+  system: "SF Mono / SF Pro",
+  classic: "Menlo / Helvetica",
+};
+
 export interface TestRecord {
   id: string;
   name: string;
@@ -307,6 +347,10 @@ export interface TestRecord {
    *  `"unapplied"`: edited steps were saved but the script wasn't regenerated
    *  from them. Absent on older records — read that as `"parse"`. */
   stepsDivergedReason?: "parse" | "unapplied";
+  /** true when the user dismissed the divergence banner (mirrors main
+   *  TestRecord). Cleared backend-side whenever divergence is established
+   *  afresh, so the banner returns for a NEW divergence only. */
+  stepsDivergedDismissed?: boolean;
   /** Per-test screenshot-capture preference (mirrors main TestRecord). */
   recordLogs?: boolean;
   captureArtifacts?: boolean;
@@ -465,6 +509,12 @@ export interface RunRecord {
   batchId?: string;
   /** how many steps run-time Auto-Heal got past by substituting a locator. */
   healedSteps?: number;
+  /** how many steps Auto-Heal TRIED to rescue and could not. The opposite
+   *  evidence to `healedSteps` and the more informative half — a step that
+   *  healed says the locator was stale, a step that could not says the element
+   *  is gone. Nothing recorded this before 2026-08-07, so absent means UNKNOWN
+   *  and never 0 (mirrors main/recorder/types.ts). */
+  healFailedSteps?: number;
   /** accessibility-check cost, and steps with unaccepted violations. */
   a11yMs?: number;
   a11yChecks?: number;
@@ -558,8 +608,15 @@ export interface RunReplay {
   finishedAt: number;
   failedIndex: number | null;
   visualThreshold?: number;
+  /** Findings banners the user has waved off for THIS run (mirrors main
+   *  RunReplay). Persisted with the run, so it survives selecting another. */
+  dismissedNotices?: RunNoticeKind[];
   steps: ReplayStep[];
 }
+
+/** The two non-failing findings a run reports, each of which the user can
+ *  either accept (resolve for good) or dismiss (acknowledge for this run). */
+export type RunNoticeKind = "visual" | "a11y";
 
 export interface RunReplaySummary {
   testId: string;
@@ -719,6 +776,18 @@ export interface RecorderSettings {
   defaultCaptureArtifacts: boolean;
   defaultRecordLogs: boolean;
   recordAllHeaders: boolean;
+  /**
+   * Fetch a third-party favicon for each site in the library instead of drawing
+   * the generated monogram (default false).
+   *
+   * OFF IS THE HONEST DEFAULT AND HAS TO STAY THAT WAY. Turning it on sends the
+   * hostname of every test in the library to icons.duckduckgo.com, on every
+   * render of the sidebar — see `SiteIcon` and REDESIGN §3.5. This app's stated
+   * egress posture is one opt-in summary-only webhook, so this is the second
+   * outbound channel in the product and the only reason it is acceptable is
+   * that the user asked for it by name.
+   */
+  siteIconsFromWeb: boolean;
   keepRunningAiDebugJobs: boolean;
   /** default value of the per-test "Run headless" toggle (default false). */
   defaultRunHeadless: boolean;
@@ -754,6 +823,14 @@ export interface RecorderSettings {
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];
+  /** How big the app's interface is drawn (default 1 = 100%). A zoom factor
+   *  applied to the app's own windows in the main process — not a font size,
+   *  and never applied to the training browser. */
+  uiScale: UiScale;
+  /** Which typeface pairing the interface is set in (default "space"). Read by
+   *  `lib/typeface.ts`, which writes it to `data-gl-typeface` on the document
+   *  element; the families themselves live in `renderer/theme/tokens.css`. */
+  uiTypeface: UiTypeface;
 }
 
 /** A single alternative locator the Auto-Heal engine found for a failed step.
@@ -763,6 +840,38 @@ export interface HealCandidate {
   description: string;
   score: number;
   matchedPastRun: boolean;
+}
+
+/** One element a failing locator resolved to. Mirror of main/recorder/types.ts
+ *  StepMatch. */
+export interface StepMatch {
+  index: number;
+  tag: string;
+  id?: string;
+  testid?: string;
+  ariaLabel?: string;
+  text?: string;
+  classes: string[];
+  ancestors: string[];
+  visible: boolean;
+  enabled: boolean;
+  rect?: { x: number; y: number; w: number; h: number };
+}
+
+/** One failing step's page structure. Mirror of main/recorder/types.ts
+ *  StepStructure — already rebuilt from page-authored input by
+ *  `buildStepStructures` before it crosses IPC. `matches` is what the locator
+ *  literally resolved to; `candidates` is what Auto-Heal thought resembled the
+ *  element we wanted. */
+export interface StepStructure {
+  stepIndex: number;
+  stepLabel: string;
+  method?: string;
+  originalLocator?: Locator;
+  matchCount?: number;
+  matches: StepMatch[];
+  outcome?: "exhausted" | "no-candidates";
+  candidates: HealCandidate[];
 }
 
 /** Result of a heal attempt for a single failed step. Mirror of backend
@@ -833,7 +942,13 @@ export interface RecorderState {
   assertMode: AssertKind | null;
   stepCount: number;
   testId: string | null;
+  /** where the recording STARTS — what gets saved as the test's URL and what
+   *  the opening `goto` step replays */
   url: string | null;
+  /** where the page is NOW. Separate from `url` on purpose: tracking the live
+   *  location in that field would rewrite every saved test's starting point to
+   *  wherever the user happened to stop. Null outside a session. */
+  liveUrl: string | null;
   name: string | null;
   editing: boolean;
   assertSoft: boolean;
@@ -847,8 +962,6 @@ export interface RecorderState {
   pageReady: boolean;
   /** true while the training browser window is opening but hasn't shown yet. */
   loading: boolean;
-  /** set when the training window failed to open within the timeout. */
-  loadFailed: boolean;
 }
 
 // ── Batch (suite) runs ────────────────────────────────────────────────

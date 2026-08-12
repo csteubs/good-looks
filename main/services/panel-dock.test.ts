@@ -23,6 +23,7 @@ import {
   boundsEqual,
   computeDock,
   computePanelFollow,
+  computeParkedPanel,
   computeUndock,
   isDuplicateApply,
   type Bounds,
@@ -310,6 +311,82 @@ describe("computePanelFollow", () => {
       // Flush to one edge or the other, never across the browser.
       const flush = panel.x === right(browser) || right(panel) === browser.x;
       expect(flush).toBe(true);
+    }
+  });
+});
+
+// Where the panel opens when `computeDock` said no. The bug this exists to stop
+// is not an arithmetic one: the caller used to pass no coordinates at all, and
+// the window layer centres a coordinate-less window ON THE DISPLAY — which is
+// on top of the page under test. Every assertion below is about a rectangle
+// that used to be chosen by nobody.
+describe("computeParkedPanel", () => {
+  /** The reproducing case: a 1280-wide window-size preset on a laptop display.
+   *  1280 + 360 exceeds the work area, so the pair cannot be docked at all. */
+  const LAPTOP: Bounds = { x: 0, y: 33, width: 1512, height: 871 };
+  const PRESET: Bounds = { x: 116, y: 72, width: 1280, height: 832 };
+
+  it("does not open over the middle of the page under test", () => {
+    expect(computeDock(PRESET, PANEL_WIDTH, LAPTOP, "right", { preserveBrowserWidth: true })).toBeNull();
+
+    const panel = computeParkedPanel(PRESET, PANEL_WIDTH, LAPTOP);
+    const browserMiddle = PRESET.x + PRESET.width / 2;
+    expect(panel.x <= browserMiddle && right(panel) >= browserMiddle).toBe(false);
+  });
+
+  it("stays inside the work area", () => {
+    const panel = computeParkedPanel(PRESET, PANEL_WIDTH, LAPTOP);
+    expect(panel.x).toBeGreaterThanOrEqual(LAPTOP.x);
+    expect(panel.y).toBeGreaterThanOrEqual(LAPTOP.y);
+    expect(right(panel)).toBeLessThanOrEqual(right(LAPTOP));
+    expect(bottom(panel)).toBeLessThanOrEqual(bottom(LAPTOP));
+  });
+
+  it("keeps the docked geometry it would have had — same top, same height", () => {
+    const panel = computeParkedPanel(PRESET, PANEL_WIDTH, LAPTOP);
+    expect(panel.y).toBe(PRESET.y);
+    expect(panel.height).toBe(PRESET.height);
+    expect(panel.width).toBe(PANEL_WIDTH);
+  });
+
+  it("takes the edge that covers less of the browser", () => {
+    // Browser flush left, so the right edge of the display is the far side.
+    const leftHugging: Bounds = { x: 0, y: 33, width: 1280, height: 832 };
+    const panel = computeParkedPanel(leftHugging, PANEL_WIDTH, LAPTOP);
+    expect(right(panel)).toBe(right(LAPTOP));
+
+    // Mirror it: a browser flush RIGHT must be parked on the left, or the panel
+    // would sit over the page while the whole other side of the display is free.
+    const rightHugging: Bounds = { x: 232, y: 33, width: 1280, height: 832 };
+    const mirrored = computeParkedPanel(rightHugging, PANEL_WIDTH, LAPTOP);
+    expect(mirrored.x).toBe(LAPTOP.x);
+  });
+
+  it("prefers a real gap beside the browser over an edge that overlaps it", () => {
+    // A display too small for a USABLE pair (the browser floor) can still have
+    // room beside a narrow browser. Refusing to dock is not the same statement
+    // as "there is nowhere to put this".
+    const small: Bounds = { x: 0, y: 0, width: 800, height: 700 };
+    const narrow: Bounds = { x: 0, y: 0, width: 400, height: 700 };
+    expect(computeDock(narrow, PANEL_MIN_WIDTH, small)).toBeNull();
+
+    const panel = computeParkedPanel(narrow, PANEL_MIN_WIDTH, small);
+    expect(panel.x).toBe(right(narrow));
+    expect(panel.x).toBeGreaterThanOrEqual(right(narrow)); // no overlap at all
+  });
+
+  it("places a legal rectangle wherever the browser is and whatever side is asked", () => {
+    for (let x = -400; x <= 2200; x += 100) {
+      for (const side of ["right", "left"] as DockSide[]) {
+        const browser: Bounds = { x, y: 100, width: 1600, height: 900 };
+        const panel = computeParkedPanel(browser, PANEL_WIDTH, WORK_AREA, side);
+        expect(panel.x, `x ${x} side ${side}`).toBeGreaterThanOrEqual(WORK_AREA.x);
+        expect(right(panel), `x ${x} side ${side}`).toBeLessThanOrEqual(right(WORK_AREA));
+        expect(panel.y).toBeGreaterThanOrEqual(WORK_AREA.y);
+        expect(bottom(panel)).toBeLessThanOrEqual(bottom(WORK_AREA));
+        expect(panel.width).toBeGreaterThanOrEqual(PANEL_MIN_WIDTH);
+        expect(panel.height).toBeGreaterThan(0);
+      }
     }
   });
 });

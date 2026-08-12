@@ -12,6 +12,7 @@ import { render, screen, fireEvent, within, waitFor } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { RunRecord } from "../lib/recorder-types";
+import { DENSE_PAGE_SIZE } from "../lib/paginate";
 import { StatsView } from "./stats-view";
 
 let runs: RunRecord[] = [];
@@ -27,6 +28,20 @@ vi.mock("../lib/api", () => ({
       resetStats: async () => ({ removed: 0 }),
       deleteAll: async () => ({ removed: 0 }),
       deleteRange: async () => ({ removed: 0 }),
+      // The category board reads this. `null` rather than a report: the board
+      // OMITS a category whose query has not answered, so a null keeps these
+      // tests about the run table rather than about the board.
+      flake: async () => null,
+    },
+    // Two series the board added to this page. Both are answered emptily here —
+    // the board has its own test file, and a fixture rich enough to light it up
+    // would make every assertion below harder to read for no gain.
+    heals: { listAll: async () => [] },
+    artifacts: { list: async () => [] },
+    metrics: {
+      stepHealth: async () => null,
+      slowness: async () => null,
+      divergence: async () => null,
     },
     on: () => () => {},
   },
@@ -61,8 +76,26 @@ function renderView() {
  *  Synchronous: the table renders before the query resolves, so a plain
  *  findByRole("table") would return an empty body and read as "no runs". */
 function rowsNow(): HTMLElement[] {
-  const table = screen.getByRole("table");
+  const table = screen.getByRole("table", { name: /run history/i });
   return within(table).getAllByRole("row").slice(1) as HTMLElement[];
+}
+
+/** The run table's status filter.
+ *
+ *  THE ROLE CHANGED IN THE B7 RESKIN AND THAT IS WORTH STATING RATHER THAN
+ *  QUIETLY REWRITING. The SDK's `SegmentedControl` was a Radix ToggleGroup, so
+ *  its items announced as `radio` and activated on POINTER-DOWN — which is why
+ *  a plain `fireEvent.click` on one silently asserted against the previous
+ *  selection, a trap CLAUDE.md documents. The theme's `Segmented` is plain
+ *  buttons with `aria-pressed`, so `click` works, keyboard works, and the
+ *  stylesheet selects on the same attribute that is announced: the visual state
+ *  cannot disagree with the announced one, because there is no second `selected`
+ *  class to forget.
+ *
+ *  Queried by name AND pressed-ness rather than by role alone, so the helper
+ *  cannot start matching some other button that happens to say "Failed". */
+function statusFilter(name: string): HTMLElement {
+  return screen.getByRole("button", { name }) as HTMLElement;
 }
 
 /** Wait for the run query to resolve and rows to render. */
@@ -88,7 +121,11 @@ describe("run history table", () => {
     runs = [run({ id: "r1" }), run({ id: "r2", testName: "Beta", status: "failed" })];
     renderView();
     expect(await bodyRows()).toHaveLength(2);
-    expect(screen.getByText("Beta")).toBeTruthy();
+    // Scoped to the run table since C §6.4 — the Cost panel's spend-by-test
+    // table names the same tests on the same screen.
+    expect(
+      within(screen.getByRole("table", { name: /run history/i })).getByText("Beta"),
+    ).toBeTruthy();
   });
 
   it("puts the Browser column between Status and Started", async () => {
@@ -97,7 +134,7 @@ describe("run history table", () => {
     runs = [run({ id: "r1" })];
     renderView();
     await bodyRows();
-    const headers = within(screen.getByRole("table"))
+    const headers = within(screen.getByRole("table", { name: /run history/i }))
       .getAllByRole("columnheader")
       .map((h) => h.textContent?.trim());
     expect(headers.indexOf("Browser")).toBe(headers.indexOf("Status") + 1);
@@ -154,7 +191,7 @@ describe("filtering", () => {
   it("narrows the table by status", async () => {
     renderView();
     expect(await bodyRows()).toHaveLength(3);
-    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+    fireEvent.click(statusFilter("Failed"));
     await expectRows(2);
   });
 
@@ -165,7 +202,7 @@ describe("filtering", () => {
     await bodyRows();
     const totalBefore = screen.getByText("Total runs").parentElement?.textContent;
 
-    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+    fireEvent.click(statusFilter("Failed"));
     await expectRows(2);
 
     expect(screen.getByText("Total runs").parentElement?.textContent).toBe(totalBefore);
@@ -176,7 +213,7 @@ describe("filtering", () => {
     await bodyRows();
     expect(screen.queryByRole("button", { name: /clear/i })).toBeNull();
 
-    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+    fireEvent.click(statusFilter("Failed"));
     expect(await screen.findByRole("button", { name: /clear/i })).toBeTruthy();
   });
 
@@ -184,7 +221,7 @@ describe("filtering", () => {
     runs = [run({ id: "r1", status: "passed" })];
     renderView();
     await bodyRows();
-    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+    fireEvent.click(statusFilter("Failed"));
     expect(await screen.findByText(/no runs match these filters/i)).toBeTruthy();
   });
 
@@ -197,18 +234,20 @@ describe("filtering", () => {
     renderView();
     expect(await bodyRows()).toHaveLength(2);
 
-    fireEvent.click(screen.getByRole("radio", { name: "Passed" }));
+    fireEvent.click(statusFilter("Passed"));
     const rows = await expectRows(1);
     expect(within(rows[0]).queryByText("Pinned")).toBeNull();
   });
 });
 
 describe("pagination", () => {
-  it("shows at most 50 rows and pages the rest", async () => {
+  it("shows at most one dense page of rows and pages the rest", async () => {
     runs = Array.from({ length: 120 }, (_, i) => run({ id: `r${i}`, testName: `Test ${i}` }));
     renderView();
-    await expectRows(50);
-    expect(screen.getByText(/page 1 of 3/i)).toBeTruthy();
+    await expectRows(DENSE_PAGE_SIZE);
+    expect(DENSE_PAGE_SIZE).toBe(25);
+    expect(screen.getByText(/page 1 of 5/i)).toBeTruthy();
+    expect(screen.getByText(/1–25 of 120 runs/)).toBeTruthy();
   });
 
   it("hides the pager when everything fits on one page", async () => {
@@ -224,15 +263,17 @@ describe("pagination", () => {
     await bodyRows();
 
     fireEvent.click(screen.getByRole("button", { name: /next page/i }));
-    expect(await screen.findByText(/page 2 of 3/i)).toBeTruthy();
-    // Page 2 holds the 51st row onward.
-    expect(screen.getByText("Test 50")).toBeTruthy();
+    expect(await screen.findByText(/page 2 of 5/i)).toBeTruthy();
+    // Page 2 holds the 26th row onward.
+    expect(screen.getByText("Test 25")).toBeTruthy();
     expect(screen.queryByText("Test 0")).toBeNull();
   });
 
   it("lands on real rows when a filter narrows the list under you", async () => {
     // THE interaction: without clamping, page 3 of a 120-row table becomes an
-    // empty table the moment a filter cuts it to 10 rows.
+    // empty table the moment a filter cuts it to 10 rows. The pager's own size
+    // has to match the slice's for this to hold — a Pager still counting in
+    // fifties would report "page 1 of 1" over five real pages.
     runs = [
       ...Array.from({ length: 110 }, (_, i) => run({ id: `p${i}`, testName: `Pass ${i}` })),
       ...Array.from({ length: 10 }, (_, i) =>
@@ -244,9 +285,9 @@ describe("pagination", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /next page/i }));
     fireEvent.click(screen.getByRole("button", { name: /next page/i }));
-    expect(await screen.findByText(/page 3 of 3/i)).toBeTruthy();
+    expect(await screen.findByText(/page 3 of 5/i)).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("radio", { name: "Failed" }));
+    fireEvent.click(statusFilter("Failed"));
 
     await expectRows(10);
     expect(screen.getByText("Fail 0")).toBeTruthy();
@@ -304,7 +345,7 @@ describe("layout keeps the page's last controls reachable", () => {
     renderView();
     await bodyRows(1);
     const content = scrollContent();
-    const chart = screen.getByText(/pass \/ fail/i).closest("div")!;
+    const chart = screen.getByText(/pass \/ fail/i).closest('[data-gl="panel"]')!;
     const cards = screen.getByText("Pass rate").closest("div")!;
     const kids = Array.from(content.children);
     const idx = (el: Element) => kids.findIndex((k) => k.contains(el));
@@ -316,17 +357,18 @@ describe("layout keeps the page's last controls reachable", () => {
     // All three must coexist: a layout that hides any one of them is the bug.
     renderView();
     await bodyRows(1);
-    expect(screen.getByRole("radio", { name: "All" })).toBeTruthy();
-    expect(screen.getByRole("table")).toBeTruthy();
+    expect(statusFilter("All")).toBeTruthy();
+    expect(screen.getByRole("table", { name: /run history/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /next page/i })).toBeTruthy();
   });
 
   it("keeps the pager reachable on the last page too", async () => {
     renderView();
     await bodyRows(1);
-    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
-    fireEvent.click(screen.getByRole("button", { name: /next page/i }));
-    expect(await screen.findByText(/page 3 of 3/i)).toBeTruthy();
+    for (let i = 0; i < 4; i++) {
+      fireEvent.click(screen.getByRole("button", { name: /next page/i }));
+    }
+    expect(await screen.findByText(/page 5 of 5/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /previous page/i })).toBeTruthy();
   });
 });

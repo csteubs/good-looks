@@ -105,6 +105,24 @@ const crtSource = readFileSync(join(THEME, "primitives/crt.tsx"), "utf-8");
     // and neither number is wrong on its own.
     `the CRT (${z}) sits above the atmosphere layers (${atmo}), so the overlays do not fall on it`,
   );
+
+  // …and a MODAL sits above the CRT, which is the other end of the same
+  // relationship. Radix dialogs ship at Tailwind's `z-50`, so before
+  // `--gl-z-modal` existed every dialog opened on the Visual screen was drawn
+  // BEHIND the bezel: description clipped mid-sentence, confirm button behind a
+  // screenshot. Nothing else can catch that — the dialog mounts, the
+  // accessibility tree lists its buttons, every test passes — so the ordering is
+  // asserted here rather than left to whoever next raises one of the numbers.
+  const modal = Number(/--gl-z-modal:\s*(\d+)/.exec(tokens)?.[1] ?? Number.NaN);
+  assert(Number.isFinite(modal), "tokens.css declares --gl-z-modal");
+  assert(
+    modal > z,
+    `a modal (${modal}) sits above the CRT (${z}), so a dialog is never drawn behind a screenshot`,
+  );
+  assert(
+    /\.gl-z-modal\s*\{[^}]*z-index:\s*var\(--gl-z-modal\)/.test(primitives),
+    "the .gl-z-modal class reads the token rather than repeating the number",
+  );
 }
 
 // ── The component renders no overlay of its own ───────────────────────

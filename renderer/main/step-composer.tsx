@@ -1,13 +1,31 @@
-// Manually add a trainer step without interacting with the page — mabl's
-// "Add step" menu. One dialog renders the fields for the chosen kind and returns
-// a RawStep that the trainer inserts at the current cursor.
+// Compose a trainer step by hand, IN THE LIST, at the insert cursor.
+// REDESIGN §6.2 — this was `add-step-dialog.tsx` until 2026-08-12.
+//
+// One panel renders the fields for the chosen kind and returns RawSteps the
+// trainer inserts at the cursor. What changed in §6.2 is only the frame around
+// that: the panel opens between the two steps the new one will sit between,
+// rather than over the top of everything.
+//
+// WHY THAT IS WORTH A PR ON ITS OWN. A modal hides the list you are adding to.
+// The insert cursor was added precisely so a step could be placed somewhere
+// other than the end — and then the control for placing it covered up the
+// answer to "where is it going?". Composing in place makes the position part of
+// what you are looking at while you fill the fields in, which is the whole
+// reason the cursor exists.
+//
+// WHAT THE PLAN EXPECTED AND WHAT ACTUALLY HAPPENED. §6.2 says this "removes
+// 1,170 lines and a modal". It removes the modal. It does not remove the lines,
+// and it should not: the length here is ten step kinds times their fields —
+// the three-checkbox wait, the CSS-property assert that refuses a malformed
+// name, the element-state expansion that emits several rows — every one of
+// which is behaviour with a test behind it. Deleting them to hit a line count
+// would be deleting the feature. The modal was the part that was wrong.
 
 import * as React from "react";
 import {
   Badge,
   Button,
   Checkbox,
-  Dialog,
   Field,
   Input,
   SegmentedControl,
@@ -20,6 +38,8 @@ import {
   Text,
 } from "@ui";
 import { Crosshair, X } from "lucide-react";
+
+import { Btn } from "../theme";
 
 import {
   CSS_ASSERT_PROPS,
@@ -437,10 +457,9 @@ function CheckOption({
   );
 }
 
-export function AddStepDialog({
-  open,
+export function StepComposer({
   kind,
-  onOpenChange,
+  onCancel,
   onAdd,
   picked,
   onStartPick,
@@ -452,11 +471,13 @@ export function AddStepDialog({
   prefillValue,
   currentTestId,
 }: {
-  open: boolean;
   kind: AddStepKind;
   /** The test being edited, so it can't be offered as a flow to call itself. */
   currentTestId?: string;
-  onOpenChange: (open: boolean) => void;
+  /** Dismiss without adding. The composer holds no "open" state of its own —
+   *  it is mounted while composing and unmounted when not, so every open is a
+   *  fresh one and there is no stale draft to reset. */
+  onCancel: () => void;
   onAdd: (steps: RawStep[]) => void;
   /** Element the user picked in the training browser via the Target Element flow, if any. */
   picked: PickedElement | null;
@@ -511,13 +532,24 @@ export function AddStepDialog({
   const [captureAttr, setCaptureAttr] = React.useState("");
   const [flowId, setFlowId] = React.useState("");
 
-  // Reset transient fields whenever a fresh dialog opens. When opened from the
-  // right-click menu, seed the assert kind / wait mode / text / value from the
-  // context action so the dialog opens already targeted at the right-clicked
-  // element.
+  // Seed the fields from whatever the caller preselected.
+  //
+  // There is no `open` to guard on now: the composer is MOUNTED while composing
+  // and unmounted when not, and both call sites key it on the kind and the
+  // picked element — so a fresh open, and a re-target from the right-click
+  // menu, are both fresh mounts. There is no stale draft to clear.
+  //
+  // AND IT DELIBERATELY DOES NOT TOUCH `locator`, which it used to. `locator`
+  // is seeded by `TargetElementPicker` — a CHILD — from the best candidate of
+  // the picked element, and a child's effects run before its parent's. Resetting
+  // it here therefore lands after the picker's seed and wipes it, leaving the
+  // composer with no target for a step that needs one. That was survivable in
+  // the modal, whose confirm button was always enabled and whose submit simply
+  // did nothing; the inline panel disables the button when the step will not
+  // build, so the same state shows up as a control that cannot be pressed.
+  // `useState(null)` on a fresh mount is the reset, and it happens first.
   React.useEffect(() => {
-    if (open) {
-      setLocator(null);
+    {
       setAssert(initialAssert ?? "visible");
       setCond("visible");
       setText(prefillText ?? "");
@@ -548,14 +580,13 @@ export function AddStepDialog({
       setCaptureAttr("");
       setFlowId("");
     }
-  }, [open, kind, initialAssert, initialWaitMode, initialState, prefillText, prefillValue]);
+  }, [kind, initialAssert, initialWaitMode, initialState, prefillText, prefillValue]);
 
-  // Flows available to call from here. Fetched when the dialog opens rather
-  // than held by the parent, so a flow created in another window shows up
-  // without a reload.
+  // Flows available to call from here. Fetched on mount rather than held by the
+  // parent, so a flow created in another window shows up without a reload.
   const [flows, setFlows] = React.useState<{ id: string; name: string; flowParams: string[] }[]>([]);
   React.useEffect(() => {
-    if (!open || kind !== "runFlow") return;
+    if (kind !== "runFlow") return;
     let live = true;
     void api.tests
       .listFlows(currentTestId)
@@ -568,7 +599,7 @@ export function AddStepDialog({
     return () => {
       live = false;
     };
-  }, [open, kind, currentTestId]);
+  }, [kind, currentTestId]);
 
   const opt = ASSERT_OPTIONS.find((o) => o.value === assert)!;
   const condOpt = CONDITION_OPTIONS.find((c) => c.value === cond)!;
@@ -711,23 +742,51 @@ export function AddStepDialog({
     }
   }
 
+  const steps = build();
+  // The panel is inline, so it can say what it would add BEFORE you press
+  // anything — a modal with a permanently-enabled confirm can afford to fail
+  // silently on submit because it stays open; a panel sitting in the list
+  // cannot, and should not have to.
+  const ready = steps !== null && steps.length > 0;
+
   function submit() {
-    const steps = build();
-    if (!steps || steps.length === 0) return;
-    onAdd(steps);
-    onOpenChange(false);
+    if (!ready) return;
+    onAdd(steps!);
+    onCancel();
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title={ADD_STEP_LABEL[kind]}
-      size="large"
-      onConfirm={submit}
-      confirmLabel="Add step"
+    <div
+      className="gl-composer"
+      data-gl="step-composer"
+      // A form, so Enter submits from any field — which is what a panel in a
+      // list should do and what a modal's confirm button was standing in for.
+      role="form"
+      aria-label={ADD_STEP_LABEL[kind]}
+      onKeyDown={(e) => {
+        // Escape closes, from anywhere inside. The dialog got this from Radix;
+        // an inline panel has to say so itself, and without it the only way out
+        // of a half-filled composer is the mouse.
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          onCancel();
+        }
+      }}
     >
-      <div className="flex flex-col gap-3">
+      <div className="gl-composer-head">
+        <span className="gl-section-title">{ADD_STEP_LABEL[kind]}</span>
+        <button
+          type="button"
+          className="gl-icon-btn gl-composer-close"
+          onClick={onCancel}
+          aria-label="Cancel"
+          title="Cancel"
+        >
+          <X className="size-3.5" />
+        </button>
+      </div>
+      <div className="gl-composer-body">
         {kind === "goto" ? (
           <Field label="URL" orientation="vertical">
             <Input
@@ -1164,7 +1223,22 @@ export function AddStepDialog({
           </>
         ) : null}
       </div>
-    </Dialog>
+      <div className="gl-composer-foot">
+        {/* Disabled until the step is actually buildable, and the reason is
+            worth a sentence: `build()` returns null for a half-filled form —
+            a wait with no element, a capture with no variable name, a CSS
+            assert whose property is malformed — and the modal answered that
+            by doing nothing when confirmed. In a panel that stays where it is,
+            a button that silently declines is indistinguishable from a broken
+            one. */}
+        <Btn tone="go" onClick={submit} disabled={!ready}>
+          Add step
+        </Btn>
+        <Btn tone="ghost" onClick={onCancel}>
+          Cancel
+        </Btn>
+      </div>
+    </div>
   );
 }
 

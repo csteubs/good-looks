@@ -67,20 +67,51 @@ function declaredTokens(css: string): Map<string, number> {
   return counts;
 }
 
+/**
+ * The same, PER SELECTOR BLOCK.
+ *
+ * The duplicate rule below has to be block-scoped, and the distinction is not a
+ * technicality. Twice inside one `:root` is a silent overwrite — the second
+ * wins, the first is dead code, and both look right in review. Once in `:root`
+ * and once in `:root[data-gl-typeface="classic"]` is the opposite: it is how a
+ * theme variant is expressed at all, and a whole-file count cannot tell the two
+ * apart. It called the typeface setting a bug on the day it shipped.
+ *
+ * Comments are stripped first, so a token name inside prose is not a block.
+ * tokens.css is flat — no `@media`, no nesting — so a non-greedy `{…}` scan is
+ * exact here rather than an approximation of a CSS parser.
+ */
+function declaredPerBlock(css: string): Array<{ selector: string; counts: Map<string, number> }> {
+  const noComments = css.replace(/\/\*[\s\S]*?\*\//g, "");
+  const blocks: Array<{ selector: string; counts: Map<string, number> }> = [];
+  for (const m of noComments.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    blocks.push({ selector: m[1].trim().replace(/\s+/g, " "), counts: declaredTokens(m[2]) });
+  }
+  return blocks;
+}
+
 const tokensSrc = readFileSync(TOKENS_CSS, "utf-8");
 const declared = declaredTokens(tokensSrc);
 
 assert(declared.size > 0, `tokens.css declares ${declared.size} tokens (zero here means the regex rotted)`);
 
 {
-  // A token declared twice in one `:root` is a silent overwrite: the second
-  // wins, the first is dead, and both look right in review.
-  const dupes = [...declared.entries()].filter(([, n]) => n > 1).map(([t, n]) => `${t} ×${n}`);
+  const blocks = declaredPerBlock(tokensSrc);
+  // The scan itself can rot: a regex that stops matching finds no blocks, and
+  // no blocks have no duplicates, so the rule would go green by going blind.
+  assert(blocks.length > 0, `scanned ${blocks.length} selector blocks (zero here means the scan rotted)`);
+
+  const dupes: string[] = [];
+  for (const block of blocks) {
+    for (const [token, n] of block.counts) {
+      if (n > 1) dupes.push(`${token} ×${n} in ${block.selector}`);
+    }
+  }
   assert(
     dupes.length === 0,
     dupes.length === 0
-      ? "no token is declared twice"
-      : `declared more than once, so the earlier value is dead:\n     ${dupes.join("\n     ")}`,
+      ? `no token is declared twice within one selector (${blocks.length} blocks)`
+      : `declared more than once in the same selector, so the earlier value is dead:\n     ${dupes.join("\n     ")}`,
   );
 }
 
@@ -246,7 +277,15 @@ function walk(dir: string, out: string[] = []): string[] {
 // so that is the one edge to check.
 {
   const styles = readFileSync(STYLES_CSS, "utf-8");
-  for (const sheet of ["tokens.css", "fonts.css", "atmosphere.css", "primitives.css"]) {
+  for (const sheet of [
+    "tokens.css",
+    "fonts.css",
+    "atmosphere.css",
+    "primitives.css",
+    "shell.css",
+    "shared.css",
+    "screens.css",
+  ]) {
     assert(
       new RegExp(`@import\\s+"\\./theme/${sheet.replace(".", "\\.")}"`).test(styles),
       `renderer/styles.css imports theme/${sheet}`,

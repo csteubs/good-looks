@@ -955,6 +955,17 @@ function writeStored(key: string | undefined, suffix: string, value: number | bo
 }
 
 type SplitViewProps = {
+  /** A band across the top of every pane, INSIDE the context.
+   *
+   *  The redesign's top strip spans the whole window — wordmark over the rail,
+   *  breadcrumb over the content — so it cannot be a child of the primary pane,
+   *  and rendering it as a sibling ABOVE the SplitView would put it outside
+   *  `SplitViewContext`, where `SplitView.SidebarToggle` throws. Hoisting the
+   *  collapse state into the caller to work around that would move persistence
+   *  (the `storageKey` reads and writes, and ⌃⌘S) out of the one component that
+   *  owns it. A slot inside the provider costs one wrapper and keeps all of
+   *  that where it is. */
+  header?: React.ReactNode;
   sidebar?: React.ReactNode;
   sidebarSize?: SlotSize;
   sidebarCollapsed?: boolean;
@@ -1005,6 +1016,7 @@ function ResizeHandle({
 }
 
 function SplitViewRoot({
+  header,
   sidebar,
   sidebarSize,
   sidebarCollapsed: sidebarCollapsedProp,
@@ -1120,7 +1132,13 @@ function SplitViewRoot({
 
   return (
     <SplitViewContext.Provider value={ctx}>
-      <div className={cn("flex h-full min-h-0 w-full overflow-hidden", className)}>
+      <div className={cn("flex h-full min-h-0 w-full flex-col overflow-hidden", className)}>
+        {header}
+        {/* The panes. Their own row, so the header spans all of them. `min-h-0`
+            or the row refuses to shrink and the panes overflow the window by
+            exactly the header's height — the same failure `check:scroll-layout`
+            exists for, one level up. */}
+        <div className="flex min-h-0 w-full flex-1 overflow-hidden">
         {sidebar && !sidebarCollapsed && (
           <>
             <div style={{ width: sidebarWidth }} className="h-full shrink-0 overflow-hidden">
@@ -1171,6 +1189,7 @@ function SplitViewRoot({
             </div>
           </>
         )}
+        </div>
       </div>
     </SplitViewContext.Provider>
   );
@@ -1183,14 +1202,23 @@ type ToggleButtonProps = Omit<ButtonProps, "aria-label" | "aria-pressed" | "chil
 };
 
 const SidebarToggle = React.forwardRef<HTMLButtonElement, ToggleButtonProps>(function SidebarToggle(
-  { "aria-label": ariaLabel = "Toggle sidebar", children, pinned: _pinned, className, ...props },
+  { "aria-label": ariaLabel = "Toggle sidebar", children, pinned = true, className, ...props },
   ref,
 ) {
   const { sidebarCollapsed, toggleSidebar, registerPinnedToggle } = useSplitView();
-  // Tell the pane a pinned toggle is here, so its Toolbar can reserve the
-  // space this button occupies. Without it the button lands on top of the
-  // title — see `TOGGLE_INSET`.
-  React.useEffect(() => registerPinnedToggle(), [registerPinnedToggle]);
+  // `pinned` USED TO BE ACCEPTED AND IGNORED. It is real now, because the
+  // redesign's shell has somewhere better to put this button: the top strip's
+  // leading slot, in flow, where it is the rail's handle rather than a box
+  // floating over whatever the pane draws underneath.
+  //
+  // Registration follows the position and must. `hasPinnedToggle` is what a
+  // Toolbar reads to indent its title by 44px, and a toggle that is NOT
+  // overlapping the pane needs no space reserved — an unconditional register
+  // would leave every title in the app indented for a button that moved.
+  React.useEffect(() => {
+    if (!pinned) return;
+    return registerPinnedToggle();
+  }, [pinned, registerPinnedToggle]);
   return (
     <Button
       ref={ref}
@@ -1202,7 +1230,7 @@ const SidebarToggle = React.forwardRef<HTMLButtonElement, ToggleButtonProps>(fun
       onClick={toggleSidebar}
       className={cn(
         // Pinned: fixed at the frame's leading edge, clear of the traffic lights.
-        "absolute left-2 top-2 z-30",
+        pinned && "absolute left-2 top-2 z-30",
         className,
       )}
       {...props}

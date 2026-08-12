@@ -64,10 +64,6 @@ beforeEach(() => {
   settings = { ...SETTINGS_DEFAULTS, batchOrder: [] };
   (window as unknown as { glazeAPI: Record<string, unknown> }).glazeAPI = {
     glaze: { ipc: { invoke: closeSettings } },
-    nativeTheme: {
-      getInfo: vi.fn(async () => ({ themeSource: "system", shouldUseDarkColors: false })),
-      setThemeSource: vi.fn(async () => {}),
-    },
   };
 });
 
@@ -80,10 +76,10 @@ async function renderSettings() {
   await screen.findByRole("switch", { name: /ai thinking gif/i });
 }
 
-/** `SidebarListItem` activates on MOUSE-DOWN, not a bare click — see
- *  settings-nav.test.tsx. */
+/** Click, not mouse-down: the rows are `RailRow` since B4 — see
+ *  settings-nav.test.tsx for why that distinction has its own comment. */
 async function goToPane(title: string) {
-  fireEvent.mouseDown(screen.getByRole("button", { name: new RegExp(title, "i") }));
+  fireEvent.click(screen.getByRole("button", { name: new RegExp(title, "i") }));
   await screen.findByRole("heading", { name: new RegExp(title, "i") });
 }
 
@@ -128,7 +124,8 @@ describe("navigation", () => {
       "Storage",
       "AI",
       "Alerts",
-      "Advanced",
+      "Diagnostics",
+      "Experiments",
       "Appearance",
     ]) {
       await goToPane(title);
@@ -288,11 +285,26 @@ describe("the reset footer", () => {
     // exhaustive key list precisely so a credential added here later fails
     // loudly rather than being quietly resettable.
     expect(Object.keys(patch).slice().sort()).toEqual([
-      "alertWebhookEnabled",
       "notifyOnAiDebugDone",
       "notifyOnBatchDone",
       "notifyOnRunIssues",
     ]);
+  });
+
+  it("never touches a credential on the Integrations pane either", async () => {
+    // The pane the guarantee matters most on: it holds THREE credentials — the
+    // Linear key, the webhook URL and the GitHub token — and none of them is a
+    // `RecorderSettings` key, so none may appear in a reset patch. The
+    // exhaustive list is the point: a credential wired up as a setting later
+    // fails here rather than becoming quietly resettable from a window that
+    // cannot even read it back.
+    settings = { ...settings, alertWebhookEnabled: true };
+    await renderSettings();
+    await goToPane("Integrations");
+    fireEvent.click(await screen.findByRole("button", { name: /reset section/i }));
+    await waitFor(() => expect(setSettings).toHaveBeenCalled());
+    const patch = setSettings.mock.calls[0][0];
+    expect(Object.keys(patch)).toEqual(["alertWebhookEnabled"]);
   });
 
   it("is hidden while a search is running", async () => {

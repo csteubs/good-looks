@@ -2,7 +2,6 @@ import * as React from "react";
 import { useNavigate, useParams, useRouterState } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Button,
   CustomContextMenu,
   CustomContextMenuContent,
   CustomContextMenuItem,
@@ -11,25 +10,24 @@ import {
   CustomContextMenuSubContent,
   CustomContextMenuSubTrigger,
   CustomContextMenuTrigger,
-  Sidebar,
-  SidebarFooter,
-  SidebarList,
-  SidebarListItem,
   Slider,
   Status,
   Text,
   toast,
 } from "@ui";
-import { Plus, FolderOpen, Gauge, EyeOff, BarChart3, GitBranch, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
+import { Plus, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
 
-import { SiteIcon } from "../theme";
+import { ChromeButton, Rail, RailEmpty, RailGroup, RailRow, SiteIcon } from "../theme";
 import { api } from "../lib/api";
 import { aggregateStatus, type SessionLike } from "../lib/ai-debug-sessions";
 import { toneFor } from "../lib/ai-debug-status";
+import { verdictsByTest, type RunVerdictTone } from "../lib/run-verdict";
 import type { LlmProvider } from "../lib/llm-types";
-import type { RunRecord, TestRecord } from "../lib/recorder-types";
+import type { TestRecord } from "../lib/recorder-types";
 import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/duplicate-warnings";
+import { nativeShell } from "../lib/native-shell";
+import { BranchesRailRow } from "./branches-rail-row";
 import { useAiDebug } from "./ai-debug-store";
 import { NewRecordingDialog } from "./new-recording-dialog";
 import { GenerateTestDialog } from "./generate-test-dialog";
@@ -37,12 +35,6 @@ import { ImportGitDialog } from "./import-git-dialog";
 import { TagsDialog } from "./tags-dialog";
 import { DuplicateTestDialog } from "./duplicate-test-dialog";
 
-interface NativeShell {
-  showItemInFolder: (fullPath: string) => void;
-}
-function nativeShell(): NativeShell {
-  return (window as unknown as { glazeAPI: { shell: NativeShell } }).glazeAPI.shell;
-}
 
 /** Slider embedded in the "Adjust Test Speed" submenu — snaps to the named
  * speeds rather than an arbitrary ms value, since that's what a Playwright
@@ -131,15 +123,20 @@ function hostOf(url: string): string {
  * `SiteIcon` (REDESIGN §3.5) is the answer and was built for exactly this: the
  * monogram is deterministic per host, needs no network, and is a complete
  * design rather than a degraded one — it was already what reserved names like
- * `localhost` fell back to. Third-party favicons stay available as an
- * explicitly opt-in setting whose copy has to say what it sends and where; that
- * setting lands with the settings work (REDESIGN §B4), and until it exists the
- * honest default is the one that sends nothing.
+ * `localhost` fell back to.
+ *
+ * THE OPT-IN LANDED IN B4 and is what `fromWeb` carries: Appearance → "Fetch
+ * site icons from the web", off by default, with a `risk` block naming the
+ * third party and what it learns. `fromWeb` is a required prop rather than one
+ * defaulting to `false`, so re-enabling the fetch is a decision somebody has to
+ * write at this call site instead of something a missing prop does quietly.
+ * Reserved hosts (`localhost`, `*.local`, bare IPs) stay on the monogram even
+ * when it is on — `SiteIcon` decides that, not this.
  *
  * Guarded by `check:renderer-egress`, so the next one of these is a build
  * failure rather than a discovery. */
-function Favicon({ url }: { url: string }) {
-  return <SiteIcon host={hostOf(url)} size={16} />;
+function Favicon({ url, fromWeb }: { url: string; fromWeb: boolean }) {
+  return <SiteIcon host={hostOf(url)} size={16} favicon={fromWeb} />;
 }
 
 // Native popup menu bridge. The sidebar header action renders as a native
@@ -224,19 +221,17 @@ function AiConnectionFooter() {
         : `Checking ${label} connection`;
 
   return (
-    <SidebarFooter>
-      <button
-        type="button"
-        onClick={openSettingsWindow}
-        title={state === "disconnected" ? label : undefined}
-        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-fill-secondary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <Status variant={variant} aria-label={ariaLabel} />
-        <Text variant="small" color="secondary" className="truncate">
-          {state === "connected" ? label : label.split(" — ")[0]}
-        </Text>
-      </button>
-    </SidebarFooter>
+    // A RailRow, not bespoke markup: the footer is one more row in the rail's
+    // vocabulary — icon, label, click — and the neutral hover/selection rules
+    // apply to it for the same reason they apply to the list.
+    <RailRow
+      icon={<Status variant={variant} aria-label={ariaLabel} />}
+      title={state === "connected" ? label : label.split(" — ")[0]}
+      onClick={openSettingsWindow}
+      // `hint` (the native title): the error detail has to be reachable
+      // without hover-openable chrome (jsdom cannot open a Radix tooltip).
+      hint={state === "disconnected" ? label : undefined}
+    />
   );
 }
 
@@ -247,17 +242,19 @@ function AiConnectionFooter() {
  *  minimized job stays findable from the LIST of tests, not just from inside
  *  the one test the user happens to have open. The dot is the latest run's
  *  verdict — the sidebar answers "which of my tests are broken?" at a glance
- *  instead of one detail-view visit per test. */
+ *  instead of one detail-view visit per test — on the five-way green→red scale
+ *  in lib/run-verdict.ts, so a three-browser batch that lost one browser reads
+ *  differently from one that lost all three. */
 function RowIndicators({
   sessions,
-  lastRun,
+  verdict,
 }: {
   sessions: SessionLike[];
-  lastRun: RunRecord | undefined;
+  verdict: RunVerdictTone | undefined;
 }) {
   const agg = aggregateStatus(sessions);
   const tone = agg === null ? null : toneFor(agg);
-  if (!tone && !lastRun) return null;
+  if (!tone && !verdict) return null;
   return (
     <span className="flex shrink-0 items-center gap-1.5">
       {tone ? (
@@ -267,14 +264,12 @@ function RowIndicators({
           className={`size-3.5 ${tone.className} ${tone.busy ? "animate-pulse" : ""}`}
         />
       ) : null}
-      {lastRun ? (
+      {verdict ? (
         <span
           role="img"
-          aria-label={lastRun.status === "passed" ? "Last run passed" : "Last run failed"}
-          title={lastRun.status === "passed" ? "Last run passed" : "Last run failed"}
-          className={`size-2 rounded-full ${
-            lastRun.status === "passed" ? "bg-support-green" : "bg-support-red"
-          }`}
+          aria-label={verdict.label}
+          title={verdict.label}
+          className={`size-2 rounded-full ${verdict.className}`}
         />
       ) : null}
     </span>
@@ -312,17 +307,25 @@ export function LibrarySidebar() {
     staleTime: Infinity,
   }).data?.available === true;
   // Shares the ["runs"] cache with Stats and the detail view, so the per-row
-  // verdict dots are usually free. One pass to keep the newest run per test —
-  // runs:list makes no ordering promise worth leaning on.
+  // verdict dots are usually free. The cache is invalidated by RecorderProvider
+  // when a run finishes — without that the dot here keeps showing the verdict
+  // the list had when the sidebar mounted, which is the exact failure of a
+  // re-run that fixed the test and left the dot red.
   const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
-  const lastRunByTest = React.useMemo(() => {
-    const m = new Map<string, RunRecord>();
-    for (const r of runsQuery.data ?? []) {
-      const prev = m.get(r.testId);
-      if (!prev || r.startedAt > prev.startedAt) m.set(r.testId, r);
-    }
-    return m;
-  }, [runsQuery.data]);
+  // Only for the site-icon opt-in. Shares the ["recorder-settings"] key with the
+  // batch and detail views, so on any screen that already reads settings this
+  // costs nothing — and while it is loading `data` is undefined, which resolves
+  // to the monogram. Undefined meaning "don't fetch" is the right way round for
+  // an egress switch: the failure mode is a plainer icon, not a silent request.
+  const settingsQuery = useQuery({
+    queryKey: ["recorder-settings"],
+    queryFn: () => api.recorder.getSettings(),
+  });
+  const siteIconsFromWeb = settingsQuery.data?.siteIconsFromWeb === true;
+  const verdictByTest = React.useMemo(
+    () => verdictsByTest(runsQuery.data ?? []),
+    [runsQuery.data],
+  );
   // AI-debug sessions grouped per test, for the row sparkle.
   const { sessions } = useAiDebug();
   const sessionsByTest = React.useMemo(() => {
@@ -406,40 +409,81 @@ export function LibrarySidebar() {
   };
 
   return (
-    <Sidebar
+    <Rail
+      title="Library"
       footer={<AiConnectionFooter />}
       actions={
-        <Button
-          iconOnly
-          variant="transparent"
-          size="small"
-          onClick={openAddMenu}
-          aria-label="Add test"
-        >
-          <Plus className="size-4" />
-        </Button>
+        <ChromeButton label="Add test" onClick={openAddMenu}>
+          <Plus aria-hidden="true" />
+        </ChromeButton>
+      }
+      nav={
+        // OUTSIDE the scrolling body, structurally. The views used to be an
+        // `mt-auto` block at the end of the library list, which pins them to
+        // the bottom only while the library is SHORT — with more tests than
+        // fit, Stats/Visual/Batch/Heals scrolled away with the list and the
+        // app's own views became something you hunt for. See rail.tsx.
+        <RailGroup label="Views">
+          <RailRow
+            icon={<BarChart3 aria-hidden="true" />}
+            title="Stats"
+            subtitle="Run history & logs"
+            selected={pathname === "/stats"}
+            onClick={() => navigate({ to: "/stats" })}
+          />
+          <RailRow
+            icon={<Images aria-hidden="true" />}
+            title="Visual"
+            subtitle="Screenshot replay"
+            selected={pathname === "/visual"}
+            onClick={() => navigate({ to: "/visual" })}
+          />
+          <RailRow
+            icon={<ListChecks aria-hidden="true" />}
+            title="Batch"
+            subtitle="Run many tests"
+            selected={pathname === "/batch"}
+            onClick={() => navigate({ to: "/batch" })}
+          />
+          <RailRow
+            icon={<Wand2 aria-hidden="true" />}
+            title="Heals"
+            subtitle="Locators Auto-Heal changed"
+            selected={pathname === "/heals"}
+            onClick={() => navigate({ to: "/heals" })}
+          />
+          {/* Only when the app is running from a git checkout of its own
+              repository — never in a packaged build, never in the browser
+              preview. Hidden rather than disabled: this is a tool for whoever
+              is building the app, and a permanently greyed row would be a
+              standing question for everyone else. */}
+          {branchesAvailable ? (
+            <BranchesRailRow
+              selected={pathname === "/branches"}
+              onOpenBranches={() => navigate({ to: "/branches" })}
+            />
+          ) : null}
+        </RailGroup>
       }
     >
       {tests.length === 0 ? (
-        <div className="px-3 py-2">
-          <Text variant="small" color="secondary">
-            No tests yet. Click + to train, generate, import, or clone your first one.
-          </Text>
-        </div>
+        <RailEmpty>
+          No tests yet. Click + to train, generate, import, or clone your first one.
+        </RailEmpty>
       ) : (
-        <SidebarList>
+        <>
           {tests.map((t) => (
             <CustomContextMenu key={t.id}>
               <CustomContextMenuTrigger asChild>
-                <SidebarListItem
-                  icon={<Favicon url={t.url} />}
+                <RailRow
+                  icon={<Favicon url={t.url} fromWeb={siteIconsFromWeb} />}
                   title={t.name}
                   subtitle={hostOf(t.url)}
                   selected={t.id === selectedId}
                   accessory={
                     <RowIndicators
                       sessions={sessionsByTest.get(t.id) ?? []}
-                      lastRun={lastRunByTest.get(t.id)}
+                      verdict={verdictByTest.get(t.id)}
                     />
                   }
                   onClick={() => navigate({ to: "/test/$id", params: { id: t.id } })}
@@ -487,59 +531,8 @@ export function LibrarySidebar() {
               </CustomContextMenuContent>
             </CustomContextMenu>
           ))}
-        </SidebarList>
+        </>
       )}
-      <div className="mt-auto pt-2">
-        <div className="px-2 pb-1 pt-2">
-          <Text variant="small" color="secondary" className="font-medium">
-            Views
-          </Text>
-        </div>
-        <SidebarList>
-          <SidebarListItem
-            icon={<BarChart3 className="size-4" />}
-            title="Stats"
-            subtitle="Run history & logs"
-            selected={pathname === "/stats"}
-            onClick={() => navigate({ to: "/stats" })}
-          />
-          <SidebarListItem
-            icon={<Images className="size-4" />}
-            title="Visual"
-            subtitle="Screenshot replay"
-            selected={pathname === "/visual"}
-            onClick={() => navigate({ to: "/visual" })}
-          />
-          <SidebarListItem
-            icon={<ListChecks className="size-4" />}
-            title="Batch"
-            subtitle="Run many tests"
-            selected={pathname === "/batch"}
-            onClick={() => navigate({ to: "/batch" })}
-          />
-          <SidebarListItem
-            icon={<Wand2 className="size-4" />}
-            title="Heals"
-            subtitle="Locators Auto-Heal changed"
-            selected={pathname === "/heals"}
-            onClick={() => navigate({ to: "/heals" })}
-          />
-          {/* Only when the app is running from a git checkout of its own
-              repository — never in a packaged build, never in the browser
-              preview. Hidden rather than disabled: this is a tool for whoever
-              is building the app, and a permanently greyed row would be a
-              standing question for everyone else. */}
-          {branchesAvailable ? (
-            <SidebarListItem
-              icon={<GitBranch className="size-4" />}
-              title="Branches"
-              subtitle="Run a PR of this app"
-              selected={pathname === "/branches"}
-              onClick={() => navigate({ to: "/branches" })}
-            />
-          ) : null}
-        </SidebarList>
-      </div>
       <NewRecordingDialog open={dialogOpen} onOpenChange={setDialogOpen} />
       <GenerateTestDialog open={generateOpen} onOpenChange={setGenerateOpen} />
       <ImportGitDialog open={gitDialogOpen} onOpenChange={setGitDialogOpen} />
@@ -562,6 +555,6 @@ export function LibrarySidebar() {
           if (!o) setTagsFor(null);
         }}
       />
-    </Sidebar>
+    </Rail>
   );
 }

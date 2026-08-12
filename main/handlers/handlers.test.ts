@@ -89,6 +89,10 @@ describe("handler registration", () => {
       "batch:list",
       "alerts:setWebhookUrl",
       "alerts:status",
+      "issues:status",
+      "issues:connect",
+      "issues:disconnect",
+      "issues:setDefaults",
       "recorder:listCookies",
       "recorder:setCookie",
       "recorder:getSettings",
@@ -262,6 +266,66 @@ describe("alerts — the webhook URL is validated and never read back", () => {
   });
 });
 
+describe("issues — the key never comes back, and the patch keeps its shape", () => {
+  // `connect` verifies, and verification is a network call. Stubbed so this
+  // suite makes no outbound request: a unit test that reaches api.linear.app is
+  // slow, flaky, and sends a fake credential to a third party on every CI run.
+  // The provider looks `fetch` up per request precisely so this works.
+  const realFetch = globalThis.fetch;
+  beforeAll(() => {
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { viewer: { name: "Sam" }, organization: { name: "Northwind" } } }),
+    })) as unknown as typeof fetch;
+  });
+  afterAll(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it("reports only whether a key exists and whose it is, never the key", async () => {
+    const status = await invokeHandler<{ hasKey: boolean }>("issues:connect", {
+      key: "lin_api_SECRET-TOKEN",
+    });
+    expect(status.hasKey).toBe(true);
+    expect(JSON.stringify(status)).not.toContain("SECRET-TOKEN");
+
+    const read = await invokeHandler("issues:status");
+    expect(JSON.stringify(read)).not.toContain("SECRET-TOKEN");
+  });
+
+  it("keeps `omitted` and `null` distinct across IPC", async () => {
+    // The distinction the whole defaults API rests on: omitting a field means
+    // "leave it alone", passing null means "clear it". A handler that spread
+    // its params, or defaulted a missing key to null, would collapse the two —
+    // and clearing a default would become impossible to express while looking
+    // like it worked.
+    await invokeHandler("issues:setDefaults", { containerId: "t1", subContainerId: "p1" });
+
+    const omitted = await invokeHandler<{ containerId: string | null; subContainerId: string | null }>(
+      "issues:setDefaults",
+      { containerId: "t1" },
+    );
+    expect(omitted.subContainerId).toBe("p1");
+
+    const cleared = await invokeHandler<{ subContainerId: string | null }>("issues:setDefaults", {
+      subContainerId: null,
+    });
+    expect(cleared.subContainerId).toBeNull();
+  });
+
+  it("clears the defaults when the key is removed", async () => {
+    // A team id is only meaningful inside the workspace that key opened.
+    await invokeHandler("issues:connect", { key: "lin_api_ANOTHER" });
+    await invokeHandler("issues:setDefaults", { containerId: "t9", subContainerId: "p9" });
+    await invokeHandler("issues:disconnect");
+    expect(await invokeHandler("issues:getDefaults")).toEqual({
+      containerId: null,
+      subContainerId: null,
+    });
+  });
+});
+
 describe("recorder:setSettings — persistence and validation", () => {
   it("round-trips a setting", async () => {
     await invokeHandler("recorder:setSettings", { defaultRunBrowser: "webkit" });
@@ -274,6 +338,59 @@ describe("recorder:setSettings — persistence and validation", () => {
     await invokeHandler("recorder:setSettings", { defaultRunBrowser: "netscape" });
     const s = await invokeHandler<{ defaultRunBrowser: string }>("recorder:getSettings");
     expect(s.defaultRunBrowser).toBe("webkit");
+  });
+
+  // ── The appearance settings ─────────────────────────────────────────
+  //
+  // `uiScale` is the one setting in this file whose bad values are not merely
+  // ignored downstream: it is handed to `webContents.setZoomFactor` for every
+  // app window, so a `0` or a `1e9` that got through would draw the whole app —
+  // INCLUDING the Settings window that is the only way to change it back — at a
+  // size from which nothing can be read or clicked. There is no recovery path
+  // in the UI, which is why the validator is membership in a set of four and
+  // not a clamp, and why these cases are pinned by name.
+
+  it("round-trips a scale it recognises", async () => {
+    await invokeHandler("recorder:setSettings", { uiScale: 1.25 });
+    const s = await invokeHandler<{ uiScale: number }>("recorder:getSettings");
+    expect(s.uiScale).toBe(1.25);
+  });
+
+  it("refuses a scale that would make the app unusable", async () => {
+    await invokeHandler("recorder:setSettings", { uiScale: 1.1 });
+    for (const bad of [0, -1, NaN, 1e9, Infinity, "large", "1.25", null, {}, []]) {
+      await invokeHandler("recorder:setSettings", { uiScale: bad });
+      const s = await invokeHandler<{ uiScale: number }>("recorder:getSettings");
+      expect(s.uiScale, String(bad)).toBe(1.1);
+    }
+  });
+
+  it("refuses a scale that is merely between two it allows", async () => {
+    // The separate case because it is the one a range clamp would accept: 1.05
+    // is in bounds and would round to something plausible. The set is closed so
+    // the pane and the store cannot disagree about what a size means.
+    await invokeHandler("recorder:setSettings", { uiScale: 1 });
+    await invokeHandler("recorder:setSettings", { uiScale: 1.05 });
+    const s = await invokeHandler<{ uiScale: number }>("recorder:getSettings");
+    expect(s.uiScale).toBe(1);
+  });
+
+  it("round-trips a typeface it recognises", async () => {
+    await invokeHandler("recorder:setSettings", { uiTypeface: "classic" });
+    const s = await invokeHandler<{ uiTypeface: string }>("recorder:getSettings");
+    expect(s.uiTypeface).toBe("classic");
+  });
+
+  it("refuses a typeface that is not one of the three", async () => {
+    // The string is written into a `data-` attribute the stylesheet selects on.
+    // A rejected value is invisible either way — an unmatched selector styles
+    // nothing — so the refusal has to happen here, where it can be seen.
+    await invokeHandler("recorder:setSettings", { uiTypeface: "system" });
+    for (const bad of ["comic sans", 'space"] {}', "Space", "", 42, null, ["space"]]) {
+      await invokeHandler("recorder:setSettings", { uiTypeface: bad });
+      const s = await invokeHandler<{ uiTypeface: string }>("recorder:getSettings");
+      expect(s.uiTypeface, String(bad)).toBe("system");
+    }
   });
 
   it("a partial update preserves the other settings", async () => {
@@ -650,6 +767,105 @@ describe("tests:updateSteps — steps, script, and whether they agree", () => {
     expect(fs.readFileSync(updated.scriptPath, "utf-8")).toBe(HAND_EDITED);
     expect(updated.scriptEdited).toBe(true);
     expect(updated.stepsDiverged).toBe(true);
+  });
+});
+
+// Silencing the divergence warning, and — the part that carries the risk —
+// knowing when to stop silencing it.
+//
+// A dismissal that outlived the divergence it acknowledged would hide the NEXT
+// one, and the next one is the case the warning exists for: an applied AI-debug
+// fix whose script doesn't come back as steps, so the Steps tab is quietly
+// describing something other than what runs. That failure is completely silent
+// on screen, which is why it is pinned here rather than left to the renderer.
+describe("tests:dismissDiverged — silencing the warning, and re-arming it", () => {
+  /** A spec with a statement the parser cannot classify, which is what makes a
+   *  re-parse report `skipped > 0` and set the "parse" divergence. */
+  const UNPARSEABLE =
+    "import { test } from '@playwright/test';\n" +
+    "test('t', async ({ page }) => {\n" +
+    "  await page.goto('https://example.com');\n" +
+    "  await page.evaluate(() => window.scrollBy(0, 500));\n" +
+    "});\n";
+
+  it("records the dismissal without pretending the test agrees with its script", async () => {
+    const rec = seedTest("t-dismiss", { stepsDiverged: true, stepsDivergedReason: "parse" });
+    const updated = await invokeHandler<TestRecord>("tests:dismissDiverged", { id: rec.id });
+
+    expect(updated.stepsDivergedDismissed).toBe(true);
+    // The distinction the whole feature rests on: the two really ARE out of
+    // sync, and everything else reading the flag — the run comparison, the MCP
+    // — must keep saying so. Only the banner is silenced.
+    expect(updated.stepsDiverged).toBe(true);
+    expect(testStore.get(rec.id)?.stepsDivergedDismissed).toBe(true);
+  });
+
+  it("comes back for a divergence the user hasn't seen", async () => {
+    const rec = seedTest("t-dismiss-rearm", {
+      stepsDiverged: true,
+      stepsDivergedReason: "parse",
+      stepsDivergedDismissed: true,
+    });
+
+    // The AI-debug apply path: a new script that won't fully parse back.
+    const updated = await invokeHandler<TestRecord>("tests:updateScript", {
+      id: rec.id,
+      source: UNPARSEABLE,
+    });
+
+    expect(updated.stepsDiverged).toBe(true);
+    expect(updated.stepsDivergedReason).toBe("parse");
+    expect(updated.stepsDivergedDismissed).toBeUndefined();
+  });
+
+  it("comes back when saved steps are left out of the script", async () => {
+    const rec = seedTest("t-dismiss-unapplied", {
+      scriptEdited: true,
+      stepsDiverged: true,
+      stepsDivergedReason: "unapplied",
+      stepsDivergedDismissed: true,
+    });
+    testStore.writeScript(rec.id, "// hand-written\n");
+
+    const updated = await invokeHandler<TestRecord>("tests:updateSteps", {
+      id: rec.id,
+      steps: [{ id: "s1", timestamp: 1, type: "goto", url: "https://new.test/" } as Step],
+    });
+
+    // Same rule, other cause: these are different edits from the ones that were
+    // acknowledged, so the user has not seen this divergence either.
+    expect(updated.stepsDiverged).toBe(true);
+    expect(updated.stepsDivergedDismissed).toBeUndefined();
+  });
+
+  it("clears the dismissal when the divergence is resolved", async () => {
+    // Nothing to acknowledge any more. Leaving a stale `true` on the record is
+    // how the next real divergence gets silenced by a click made months ago.
+    const rec = seedTest("t-dismiss-resolved", {
+      stepsDiverged: true,
+      stepsDivergedReason: "unapplied",
+      stepsDivergedDismissed: true,
+    });
+
+    const updated = await invokeHandler<TestRecord>("tests:updateSteps", {
+      id: rec.id,
+      steps: [{ id: "s1", timestamp: 1, type: "goto", url: "https://resolved.test/" } as Step],
+    });
+
+    expect(updated.stepsDiverged).toBe(false);
+    expect(updated.stepsDivergedDismissed).toBeUndefined();
+  });
+
+  it("takes `dismissed: false` as the way back", async () => {
+    const rec = seedTest("t-dismiss-undo", {
+      stepsDiverged: true,
+      stepsDivergedDismissed: true,
+    });
+    const updated = await invokeHandler<TestRecord>("tests:dismissDiverged", {
+      id: rec.id,
+      dismissed: false,
+    });
+    expect(updated.stepsDivergedDismissed).toBeUndefined();
   });
 });
 

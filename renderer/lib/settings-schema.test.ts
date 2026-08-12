@@ -73,15 +73,18 @@ describe("pane definitions", () => {
 
   it("keeps the two ungrouped stretches apart", () => {
     // THE reason segments exist. Appearance sits above the titled groups and
-    // Advanced below them. Bucketing by group value instead of by run would
-    // merge them and render Advanced at the top, directly under Appearance —
-    // which looks like a sort bug and puts a developer pane in the first
-    // position.
+    // the developer panes below them. Bucketing by group value instead of by
+    // run would merge them and render Diagnostics at the top, directly under
+    // Appearance — which looks like a sort bug and puts a developer pane in the
+    // first position.
     const segments = paneSegments();
     const ungrouped = segments.filter((s) => s.group === null);
     expect(ungrouped).toHaveLength(2);
     expect(segments[0].panes.map((p) => p.id)).toEqual(["appearance"]);
-    expect(segments[segments.length - 1].panes.map((p) => p.id)).toEqual(["advanced"]);
+    expect(segments[segments.length - 1].panes.map((p) => p.id)).toEqual([
+      "diagnostics",
+      "experiments",
+    ]);
   });
 
   it("gives every titled segment a distinct heading", () => {
@@ -490,7 +493,8 @@ describe("pane ids used by the tests above all exist", () => {
     "storage",
     "ai",
     "alerts",
-    "advanced",
+    "diagnostics",
+    "experiments",
   ];
   it.each(used)("%s", (id) => {
     expect(paneById(id)).toBeDefined();

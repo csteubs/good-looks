@@ -130,19 +130,19 @@ describe("the details disclosure", () => {
 
 describe("danger rows never hide their warning", () => {
   it("renders the badge", () => {
-    render(<SettingRow id="x" label="Include all headers" danger="stores credentials" />);
+    render(<SettingRow id="x" label="Include all headers" flag="stores credentials" />);
     expect(screen.getByText("stores credentials")).toBeTruthy();
   });
 
   it("keeps the whole explanation on screen with no disclosure", () => {
     // THE assertion. A credential warning behind a click is a warning nobody
-    // reads, so `danger` refuses the disclosure outright rather than trusting
+    // reads, so `flag` refuses the disclosure outright rather than trusting
     // every future caller to leave `details` unset.
     render(
       <SettingRow
         id="x"
         label="Include all headers"
-        danger="stores credentials"
+        flag="stores credentials"
         summary="Stores Authorization and Cookie."
         details="Should never be hidden."
       />,
@@ -154,22 +154,65 @@ describe("danger rows never hide their warning", () => {
     expect(screen.queryByText("Should never be hidden.")).toBeNull();
   });
 
-  it("draws the accent rule", () => {
-    const { container } = render(<SettingRow id="x" label="L" danger="risky" />);
-    const row = container.querySelector('[data-setting-row="x"]');
-    expect(row?.className).toContain("border-l-red-9");
-  });
-
-  it("squares the corners on the accent rule", () => {
-    // A single-sided border with rounded corners renders as a detached arc.
-    const { container } = render(<SettingRow id="x" label="L" danger="risky" />);
-    expect(container.querySelector('[data-setting-row="x"]')?.className).toContain("rounded-none");
+  it("draws the accent rule as an INSET SHADOW, not a border", () => {
+    // A border participates in layout, so a list where some rows have one and
+    // some do not jumps by 2px per flagged row. Same motif and same reasoning
+    // as every other status rail in this design.
+    //
+    // jsdom does NOT normalise `box-shadow` (it does normalise `color`), so the
+    // hex reads back as written — see CLAUDE.md. Asserting either notation
+    // keeps this honest if that ever changes.
+    const { container } = render(<SettingRow id="x" label="L" flag="risky" />);
+    const row = container.querySelector('[data-setting-row="x"]') as HTMLElement;
+    const shadow = row.style.boxShadow.toLowerCase();
+    expect(shadow).toContain("inset");
+    expect(shadow.includes("#ff4d61") || shadow.includes("rgb(255, 77, 97)")).toBe(true);
   });
 
   it("draws no badge or rule on an ordinary row", () => {
     const { container } = render(<SettingRow id="x" label="L" summary="S." />);
-    const row = container.querySelector('[data-setting-row="x"]');
-    expect(row?.className ?? "").not.toContain("border-l-red-9");
+    const row = container.querySelector('[data-setting-row="x"]') as HTMLElement;
+    expect(row.style.boxShadow).toBe("");
+  });
+});
+
+describe("risk copy", () => {
+  it("renders unconditionally, with no way to collapse it", () => {
+    // THE POINT OF SPLITTING IT OUT OF `summary`. A security consequence in the
+    // description competes with thirty ordinary ones and reads as one of them;
+    // behind the disclosure it is a warning most people never see. `risk` has
+    // no closed state to be in.
+    render(
+      <SettingRow
+        id="x"
+        label="L"
+        summary="One line."
+        risk="The value is written to disk in plain text."
+      />,
+    );
+    expect(screen.getByText(/written to disk in plain text/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /more/i })).toBeNull();
+  });
+
+  it("takes the red rail, like every other warning in the app", () => {
+    const { container } = render(<SettingRow id="x" label="L" risk="Costs you something." />);
+    const block = container.querySelector(".gl-setting-risk") as HTMLElement;
+    const shadow = block.style.boxShadow.toLowerCase();
+    expect(shadow).toContain("inset");
+    expect(shadow.includes("#ff4d61") || shadow.includes("rgb(255, 77, 97)")).toBe(true);
+  });
+
+  it("is separate from `doc`, which answers a different question", () => {
+    // "How does this work?" and "what will this cost me?" are different
+    // questions. One link for both means the second gets skipped by anyone who
+    // thinks they already know the first.
+    const onOpen = vi.fn();
+    render(
+      <SettingRow id="x" label="L" risk="Costs you something." doc={{ label: "How it works", onOpen }} />,
+    );
+    expect(screen.getByText(/costs you something/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "How it works" }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -178,21 +221,27 @@ describe("nested rows", () => {
     const { container } = render(<SettingRow id="x" label="Child" nested />);
     const row = container.querySelector('[data-setting-row="x"]');
     expect(row?.className).toContain("ml-4");
-    expect(row?.className).toContain("border-l-2");
   });
 
   it("uses the danger rule when the nested row is itself dangerous", () => {
     // record-all-headers is both nested under its parent AND a credential
     // risk; the accent must be the red one, not the neutral dependency rule.
-    const { container } = render(<SettingRow id="x" label="Child" nested danger="risky" />);
-    expect(container.querySelector('[data-setting-row="x"]')?.className).toContain("border-l-red-9");
+    const { container } = render(<SettingRow id="x" label="Child" nested flag="risky" />);
+    const shadow = (
+      container.querySelector('[data-setting-row="x"]') as HTMLElement
+    ).style.boxShadow.toLowerCase();
+    expect(shadow.includes("#ff4d61") || shadow.includes("rgb(255, 77, 97)")).toBe(true);
   });
 
   it("uses the neutral rule when it is not", () => {
+    // A nested row is a DEPENDENT setting, not a dangerous one, and the two
+    // must not look the same.
     const { container } = render(<SettingRow id="x" label="Child" nested />);
-    const cls = container.querySelector('[data-setting-row="x"]')?.className ?? "";
-    expect(cls).toContain("border-l-separator");
-    expect(cls).not.toContain("border-l-red-9");
+    const shadow = (
+      container.querySelector('[data-setting-row="x"]') as HTMLElement
+    ).style.boxShadow.toLowerCase();
+    expect(shadow).toContain("inset");
+    expect(shadow.includes("#ff4d61") || shadow.includes("rgb(255, 77, 97)")).toBe(false);
   });
 
   it("does not indent a top-level row", () => {

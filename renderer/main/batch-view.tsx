@@ -9,41 +9,11 @@
 import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertDialog,
-  Badge,
-  Button,
-  Checkbox,
-  EmptyState,
-  ScrollArea,
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-  Text,
-  Toolbar,
-  ToolbarActions,
-  ToolbarContent,
-  ToolbarDescription,
-  ToolbarTitle,
-  toast,
-} from "@ui";
-import {
-  Check,
-  CircleDashed,
-  Eye,
-  EyeOff,
-  GripVertical,
-  Play,
-  Square,
-  X,
-  SkipForward,
-  Loader,
-} from "lucide-react";
+import { AlertDialog, Checkbox, ScrollArea, toast } from "@ui";
+import { ChevronDown, ChevronRight, GripVertical, Play, Square } from "lucide-react";
 
+import { Btn, Menu, MenuItem, Panel, StatusChip, TONE, toneSurface } from "../theme";
 import { api } from "../lib/api";
-import { BrowserIcon } from "../lib/browser-icons";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts } from "../lib/test-tags";
 import { LogInspector } from "./log-inspector";
@@ -57,6 +27,7 @@ import {
 } from "../lib/batch-order";
 import {
   BATCH_CONCURRENCY_CHOICES,
+  batchConcurrencyConsequence,
   batchConcurrencyLabel,
   choiceFromSetting,
   needsHeadedParallelWarning,
@@ -76,6 +47,12 @@ import {
   toggleRowBrowser,
   type RowOptionsMap,
 } from "../lib/batch-run-plan";
+import {
+  batchOutcome,
+  batchOutcomeLabel,
+  batchOutcomeTitle,
+  batchOutcomeTone,
+} from "../lib/batch-outcome";
 import type {
   BatchRecord,
   BatchState,
@@ -101,43 +78,42 @@ function fmtDuration(ms: number): string {
   return `${m}m ${Math.round(s % 60)}s`;
 }
 
+/** Two letters per engine, not a logo.
+ *
+ *  Three browser logos at 14px are three coloured blobs — recognisable if you
+ *  already know them, meaningless if you do not — and, more to the point, a
+ *  logo cannot carry a per-engine RESULT. This cell has to be able to say
+ *  "chromium passed, webkit failed" on one row, and two letters can be tinted
+ *  where a brand mark cannot. */
+const ENGINE_CODE: Record<RunBrowser, string> = {
+  chromium: "CR",
+  firefox: "FF",
+  webkit: "WK",
+};
+
+/** The batch's five row states as the design's one chip shape.
+ *
+ *  `running` takes the holo treatment rather than a hue, and that is the
+ *  primitive's rule rather than this screen's: running is the ABSENCE of an
+ *  outcome, so a row still in flight must not look like a row that has
+ *  finished and reported something. `queued` and `skipped` are neutral for the
+ *  same reason — neither is a result. */
 function StatusBadge({ status, note }: { status: BatchTestStatus; note?: string }) {
   switch (status) {
     case "passed":
-      return (
-        <Badge color="green">
-          <Check className="size-3" />
-          Passed
-        </Badge>
-      );
+      return <StatusChip tone="phos">Passed</StatusChip>;
     case "failed":
-      return (
-        <Badge color="red">
-          <X className="size-3" />
-          Failed
-        </Badge>
-      );
+      return <StatusChip tone="red">Failed</StatusChip>;
     case "running":
       return (
-        <Badge color="secondary">
-          <Loader className="size-3 animate-spin" />
+        <StatusChip running animated>
           Running
-        </Badge>
+        </StatusChip>
       );
     case "skipped":
-      return (
-        <Badge color="secondary" title={note}>
-          <SkipForward className="size-3" />
-          Skipped
-        </Badge>
-      );
+      return <StatusChip title={note}>Skipped</StatusChip>;
     default:
-      return (
-        <Badge color="secondary">
-          <CircleDashed className="size-3" />
-          Queued
-        </Badge>
-      );
+      return <StatusChip>Queued</StatusChip>;
   }
 }
 
@@ -163,6 +139,9 @@ export function BatchView() {
   // A finished row's badge opens that run's console output — the row that made
   // you curious shouldn't need a detour through Stats to answer "why".
   const [logRun, setLogRun] = React.useState<{ id: string; title: string } | null>(null);
+  // Which past batch has its drawer open. One at a time: the drawer lists every
+  // test in that batch, and two open at once turns the history into a wall.
+  const [expandedBatchId, setExpandedBatchId] = React.useState<string | null>(null);
   React.useEffect(() => {
     if (rowsInited || !settingsQuery.data) return;
     setRowOptions(settingsQuery.data.batchTestOptions ?? {});
@@ -409,64 +388,46 @@ export function BatchView() {
   }, [batch]);
 
   return (
-    <div className="flex h-full flex-col">
-      <Toolbar>
-        <ToolbarContent>
-          <ToolbarTitle>Batch run</ToolbarTitle>
-          <ToolbarDescription>
-            {running
-              ? liveCounts.inFlight > 1
-                ? // Parallel: an ordinal would be a lie, so report progress and
-                  // how many are in flight.
-                  `${liveCounts.settled} of ${liveCounts.total} done · ${liveCounts.inFlight} running`
-                : // Sequential: unchanged wording. `settled + 1` is the same
-                  // number the old `currentIndex + 1` produced, since with one
-                  // test in flight everything before it has finished.
-                  `Running ${Math.min(liveCounts.settled + 1, liveCounts.total)} of ${
-                    liveCounts.total
-                  }…`
-              : summary && shown
-                ? `${summary.passed} passed · ${summary.failed} failed${
-                    summary.skipped > 0 ? ` · ${summary.skipped} skipped` : ""
-                  } · ${fmtDuration(summary.durationMs)}`
-                : `${selectedIds.length} of ${tests.length} selected${
-                    // Runs and tests differ as soon as one row has two engines,
-                    // and the run count is what the batch actually does — a
-                    // silent 3× is exactly the surprise worth naming.
-                    plan.plannedRuns !== selectedIds.length ? ` · ${plan.plannedRuns} runs` : ""
-                  }${tagFilter !== ALL_TAGS ? ` · showing ${visibleTests.length}` : ""}`}
-          </ToolbarDescription>
-        </ToolbarContent>
-        <ToolbarActions>
-          {/* The batch-wide browser picker used to live here. It moved into the
-              rows: a suite that has to run one test on WebKit and the rest on
-              Chromium was not expressible with a single choice, and every row
-              now always resolves to at least one engine, so a global one would
-              have nothing left to decide. */}
-          {/* Parallelism, next to the option it most interacts with. Off is the
-              default and is byte-for-byte the old sequential behaviour. */}
-          <Select
-            value={String(concurrency)}
-            onValueChange={(v) => setConcurrency(v === "all" ? "all" : Number(v))}
-            disabled={running}
-          >
-            <SelectTrigger
-              variant="filled"
-              size="small"
-              className="w-32"
-              aria-label="How many tests to run at once"
-            >
-              <SelectValue placeholder="Off" />
-            </SelectTrigger>
-            <SelectContent>
-              {BATCH_CONCURRENCY_CHOICES.map((c) => (
-                <SelectItem key={String(c)} value={String(c)}>
-                  {batchConcurrencyLabel(c)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+    <div className="gl-batch">
+      {/* THE TOOLBAR IS GONE, like every other reskinned screen: the top strip's
+          breadcrumb already says BATCH. What is left is the controls, and the
+          status line that used to be the toolbar's description — same strings,
+          because they are what the tests and the user both read. */}
+      <div className="gl-batch-controls">
+        {/* Parallelism, and the one control on this screen that stopped being a
+            native menu. The SDK `Select` is kept everywhere else — but a native
+            menu item is a STRING, and the whole point here is the second line.
+            "8" cannot say "a laptop will thrash and report failures it caused",
+            which is a failure mode that looks exactly like a flaky suite from
+            the run report. REDESIGN §8.2 names this swap, and the upside is
+            that the options are finally real DOM. */}
+        <Menu
+          value={batchConcurrencyLabel(concurrency)}
+          label="How many tests to run at once"
+          disabled={running}
+          width={132}
+        >
+          {(close) =>
+            BATCH_CONCURRENCY_CHOICES.map((c) => (
+              <MenuItem
+                key={String(c)}
+                label={batchConcurrencyLabel(c)}
+                consequence={batchConcurrencyConsequence(c)}
+                selected={String(c) === String(concurrency)}
+                onSelect={() => {
+                  setConcurrency(c);
+                  close();
+                }}
+              />
+            ))
+          }
+        </Menu>
+
+        {/* One bordered box, two cells: both answer "how should this batch
+            run?", and two loose checkboxes in a row read as two unrelated
+            questions. */}
+        <div className="gl-batch-cluster">
+          <label className="gl-batch-cluster-cell" data-on={runHeadless ? "" : undefined}>
             {/* MASTER for the per-row toggles: flipping it overwrites every row.
                 The overwrite lives HERE, in the event handler, and must never
                 move into an effect keyed on `runHeadless` — the init effect
@@ -485,7 +446,7 @@ export function BatchView() {
             />
             Headless
           </label>
-          <label className="flex cursor-pointer select-none items-center gap-1.5 pr-1 text-small text-secondary">
+          <label className="gl-batch-cluster-cell" data-on={captureArtifacts ? "" : undefined}>
             {/* Independent of Headless, same as the per-test toggle: headless
                 Chromium screenshots exactly as well, and for a batch it's the
                 more useful combination — capture a whole suite without a browser
@@ -498,23 +459,44 @@ export function BatchView() {
             />
             Capture screenshots
           </label>
-          {running ? (
-            <Button variant="destructive" onClick={() => void api.batch.stop()}>
-              <Square className="size-4" />
-              Stop
-            </Button>
-          ) : (
-            <Button
-              variant="accent"
-              onClick={requestBatch}
-              disabled={selectedIds.length === 0}
-            >
-              <Play className="size-4" />
-              Run {selectedIds.length === tests.length ? "all" : selectedIds.length}
-            </Button>
-          )}
-        </ToolbarActions>
-      </Toolbar>
+        </div>
+
+        {running ? (
+          <Btn tone="stop" onClick={() => void api.batch.stop()}>
+            <Square aria-hidden="true" />
+            Stop
+          </Btn>
+        ) : (
+          <Btn tone="go" onClick={requestBatch} disabled={selectedIds.length === 0}>
+            <Play aria-hidden="true" />
+            Run {selectedIds.length === tests.length ? "all" : selectedIds.length}
+          </Btn>
+        )}
+
+        <span className="gl-batch-note">
+          {running
+            ? liveCounts.inFlight > 1
+              ? // Parallel: an ordinal would be a lie, so report progress and
+                // how many are in flight.
+                `${liveCounts.settled} of ${liveCounts.total} done · ${liveCounts.inFlight} running`
+              : // Sequential: unchanged wording. `settled + 1` is the same
+                // number the old `currentIndex + 1` produced, since with one
+                // test in flight everything before it has finished.
+                `Running ${Math.min(liveCounts.settled + 1, liveCounts.total)} of ${
+                  liveCounts.total
+                }…`
+            : summary && shown
+              ? `${summary.passed} passed · ${summary.failed} failed${
+                  summary.skipped > 0 ? ` · ${summary.skipped} skipped` : ""
+                } · ${fmtDuration(summary.durationMs)}`
+              : `${selectedIds.length} of ${tests.length} selected${
+                  // Runs and tests differ as soon as one row has two engines,
+                  // and the run count is what the batch actually does — a
+                  // silent 3× is exactly the surprise worth naming.
+                  plan.plannedRuns !== selectedIds.length ? ` · ${plan.plannedRuns} runs` : ""
+                }${tagFilter !== ALL_TAGS ? ` · showing ${visibleTests.length}` : ""}`}
+        </span>
+      </div>
 
       {/* min-h-0 flex-1, NOT h-full. In a flex column h-full resolves to 100% of
           the PARENT, but the Toolbar above has already consumed part of that —
@@ -525,11 +507,10 @@ export function BatchView() {
       <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto flex max-w-3xl flex-col gap-4 p-5 pb-10">
           {tests.length === 0 ? (
-            <EmptyState
-              className="py-16"
-              title="No tests to run"
-              description="Record or import a test first — batch runs execute the tests in your library one after another."
-            />
+            <p className="gl-note" style={{ padding: "40px 0", textAlign: "center" }}>
+              No tests to run. Record or import a test first — a batch runs the tests in your
+              library, in the order this list shows.
+            </p>
           ) : (
             <>
               <TagCluster
@@ -539,10 +520,9 @@ export function BatchView() {
                 disabled={running}
               />
 
-              <div className="flex items-center gap-3">
-                <Button
-                  variant="glass"
-                  size="small"
+              <div className="gl-batch-controls">
+                <Btn
+                  tone="ghost"
                   disabled={running}
                   onClick={() =>
                     // Ticks the visible tests rather than replacing the whole
@@ -552,23 +532,21 @@ export function BatchView() {
                   }
                 >
                   {tagFilter === ALL_TAGS ? "Select all" : "Select these"}
-                </Button>
-                <Button
-                  variant="glass"
-                  size="small"
+                </Btn>
+                <Btn
+                  tone="ghost"
                   disabled={running}
                   onClick={() =>
                     commitRows(setSelection(rowOptions, visibleTests, rowDefaults, false))
                   }
                 >
                   {tagFilter === ALL_TAGS ? "Select none" : "Deselect these"}
-                </Button>
+                </Btn>
                 {/* Drag-to-reorder is otherwise a one-way door: there'd be no
                     way back to library order once you'd rearranged things. */}
                 {isCustomOrder(tests, order) ? (
-                  <Button
-                    variant="glass"
-                    size="small"
+                  <Btn
+                    tone="ghost"
                     disabled={running}
                     onClick={() => {
                       // Clearing the stored order lets the drift effect rewrite
@@ -578,16 +556,16 @@ export function BatchView() {
                     }}
                   >
                     Reset order
-                  </Button>
+                  </Btn>
                 ) : null}
-                <Text variant="small" color="tertiary">
+                <span className="gl-batch-note">
                   {effectiveConcurrency > 1
                     ? `${effectiveConcurrency} tests run at a time, starting in this order.`
                     : "Tests run one at a time, in this order."}
-                </Text>
+                </span>
               </div>
 
-              <div className="rounded-lg border border-separator bg-panel">
+              <Panel title="Checklist">
                 {visibleTests.map((t) => {
                   const results = resultsFor.get(t.id) ?? [];
                   const status = rowStatus(results);
@@ -616,13 +594,12 @@ export function BatchView() {
                       onDragEnter={running ? undefined : () => setOverId(t.id)}
                       onDragOver={running ? undefined : (e) => e.preventDefault()}
                       onDrop={running ? undefined : (e) => e.preventDefault()}
-                      className={`group/row flex items-center gap-3 border-b border-separator px-3 py-2 last:border-b-0 ${
-                        isCurrent ? "bg-accent/10" : ""
-                      } ${
-                        overId === t.id && dragId !== null && dragId !== t.id
-                          ? "border-t-2 border-t-accent"
-                          : ""
-                      } ${dragId === t.id ? "opacity-50" : ""}`}
+                      className="gl-batch-row"
+                      data-running={isCurrent ? "" : undefined}
+                      data-dragging={dragId === t.id ? "" : undefined}
+                      data-drop-target={
+                        overId === t.id && dragId !== null && dragId !== t.id ? "" : undefined
+                      }
                     >
                       {/* Matches the trainer's step list: grip appears on hover,
                           only the handle is draggable so row clicks still work. */}
@@ -630,14 +607,11 @@ export function BatchView() {
                         draggable={!running}
                         onDragStart={running ? undefined : () => setDragId(t.id)}
                         onDragEnd={running ? undefined : commitDrag}
-                        className={`shrink-0 text-tertiary ${
-                          running
-                            ? "opacity-20"
-                            : "cursor-grab opacity-0 group-hover/row:opacity-100 active:cursor-grabbing"
-                        }`}
+                        className="gl-batch-grip"
+                        data-locked={running ? "" : undefined}
                         aria-label={`Drag to reorder ${t.name}`}
                       >
-                        <GripVertical className="size-4" />
+                        <GripVertical aria-hidden="true" />
                       </span>
                       <Checkbox
                         checked={row.selected}
@@ -645,50 +619,36 @@ export function BatchView() {
                         disabled={running}
                         aria-label={`Include ${t.name} in the batch`}
                       />
-                      {/* `basis-32` with a `min-w-24` floor, NOT a bare
-                          `min-w-0 flex-1`.
-
-                          Every other cell in this row is `shrink-0`, so the name
-                          was the only thing that could give — and `min-w-0` let
-                          it give all the way to `width: 0`. The row then looked
-                          like it had no name at all rather than a shortened one,
-                          which is worse than the overflow it was avoiding: a
-                          truncated name still identifies the test, and an absent
-                          one makes the checkbox beside it meaningless.
-
-                          The floor makes the name the last thing to yield
-                          instead of the first. `truncate` still does the
-                          shortening; this only stops the shortening reaching
-                          zero. */}
+                      {/* The one cell that gives, and it keeps a floor. As the
+                          only flexible cell in a row of fixed furniture it took
+                          the entire squeeze and reached width zero — a row with
+                          no name at all, which makes the checkbox beside it
+                          meaningless. See screens.css. */}
                       <button
                         type="button"
-                        className="min-w-24 basis-32 grow truncate text-left text-small font-medium hover:underline"
+                        className="gl-batch-name"
                         title={t.name}
                         onClick={() => navigate({ to: "/test/$id", params: { id: t.id } })}
                       >
                         {t.name}
                       </button>
-                      {(t.tags ?? []).length > 0 ? (
-                        <span className="flex shrink-0 items-center gap-1">
-                          {(t.tags ?? []).slice(0, 2).map((tag) => (
-                            <Badge key={tag.toLowerCase()} color="secondary">
-                              {tag}
-                            </Badge>
-                          ))}
-                          {(t.tags ?? []).length > 2 ? (
-                            <Text variant="small" color="tertiary">
-                              +{(t.tags ?? []).length - 2}
-                            </Text>
-                          ) : null}
-                        </span>
-                      ) : null}
-                      {/* Engines, icon-only. Deselected stays VISIBLE at low
-                          opacity rather than hidden — an engine you can't see
-                          is one you can't add back. aria-pressed is the real
-                          contract here: it's what a screen reader announces and
-                          the only thing worth asserting, since a class name
-                          just pins today's styling. */}
-                      <span className="flex shrink-0 items-center gap-0.5">
+                      <span className="gl-batch-tags">
+                        {(t.tags ?? []).slice(0, 2).map((tag) => (
+                          <span key={tag.toLowerCase()} className="gl-chip">
+                            {tag}
+                          </span>
+                        ))}
+                        {(t.tags ?? []).length > 2 ? (
+                          <span className="gl-batch-time">+{(t.tags ?? []).length - 2}</span>
+                        ) : null}
+                      </span>
+                      {/* Engines as two-letter codes. Deselected stays VISIBLE
+                          at low contrast rather than hidden — an engine you
+                          can't see is one you can't add back. `aria-pressed` is
+                          the real contract: it's what a screen reader announces
+                          and what the stylesheet selects on, so there is no
+                          second class that could disagree. */}
+                      <span className="gl-batch-engines">
                         {RUN_BROWSERS.map((b) => {
                           const on = row.browsers.includes(b);
                           const engineResult = resultByKey.get(
@@ -709,112 +669,97 @@ export function BatchView() {
                                   }),
                                 )
                               }
-                              className={`rounded border p-1 transition-opacity ${
-                                on
-                                  ? "border-accent bg-control-subtle opacity-100"
-                                  : "border-transparent opacity-40 hover:opacity-70"
-                              } ${running ? "cursor-default" : ""}`}
+                              className="gl-batch-engine"
+                              // Tinted by this engine's OWN outcome, so a row
+                              // running three engines can report "chromium
+                              // passed, webkit failed" without three rows.
+                              style={
+                                engineResult?.status === "failed"
+                                  ? { color: TONE.red, opacity: 1 }
+                                  : engineResult?.status === "passed"
+                                    ? { color: TONE.phos, opacity: 1 }
+                                    : undefined
+                              }
                             >
-                              {/* Tinted by this engine's own outcome, so a row
-                                  running three engines can show "chromium
-                                  passed, webkit failed" without three rows. */}
-                              <BrowserIcon
-                                browser={b}
-                                labelled={false}
-                                className={`size-3.5 shrink-0 ${
-                                  engineResult?.status === "failed"
-                                    ? "text-support-red"
-                                    : engineResult?.status === "passed"
-                                      ? "text-support-green"
-                                      : ""
-                                }`}
-                              />
+                              {ENGINE_CODE[b]}
                             </button>
                           );
                         })}
                       </span>
-                      {/* Per-row headed/headless. The toolbar checkbox is the
-                          master that overwrites all of these at once. */}
+                      {/* HEADED IS AMBER — the one place on this row where a hue
+                          marks a setting rather than a result, and it earns it:
+                          a headed batch opens a real window per test and takes
+                          focus as each launches. That is caution. */}
                       <button
                         type="button"
                         aria-pressed={row.headless}
                         disabled={running}
                         aria-label={`Run ${t.name} headless`}
-                        title={row.headless ? "Headless" : "Headed"}
+                        title={row.headless ? "Headless" : "Headed — a real window opens"}
                         onClick={() =>
                           commitRows(
                             setRow(rowOptions, t, rowDefaults, { headless: !row.headless }),
                           )
                         }
-                        className={`shrink-0 rounded border p-1 transition-opacity ${
-                          row.headless
-                            ? "border-accent bg-control-subtle opacity-100"
-                            : "border-transparent opacity-40 hover:opacity-70"
-                        } ${running ? "cursor-default" : ""}`}
+                        className="gl-batch-window"
+                        style={row.headless ? undefined : toneSurface(TONE.amber)}
                       >
-                        {row.headless ? (
-                          <EyeOff className="size-3.5 shrink-0" />
-                        ) : (
-                          <Eye className="size-3.5 shrink-0" />
-                        )}
+                        {row.headless ? "Headless" : "Headed"}
                       </button>
-                      {durationMs !== undefined ? (
-                        <Text variant="small" color="tertiary">
-                          {fmtDuration(durationMs)}
-                        </Text>
-                      ) : null}
-                      {status ? (
-                        logRunId ? (
-                          <button
-                            type="button"
-                            aria-label={`Open console output for ${t.name}`}
-                            title="Open this run's console output"
-                            className="shrink-0 cursor-pointer"
-                            onClick={() =>
-                              setLogRun({ id: logRunId, title: `${t.name} — console output` })
-                            }
-                          >
-                            <StatusBadge status={status} note={note} />
-                          </button>
-                        ) : (
-                          <StatusBadge status={status} note={note} />
-                        )
-                      ) : null}
+                      <span className="gl-batch-time">
+                        {durationMs !== undefined ? fmtDuration(durationMs) : null}
+                      </span>
+                      {logRunId ? (
+                        <button
+                          type="button"
+                          aria-label={`Open console output for ${t.name}`}
+                          title="Open this run's console output"
+                          className="gl-batch-status"
+                          data-clickable=""
+                          onClick={() =>
+                            setLogRun({ id: logRunId, title: `${t.name} — console output` })
+                          }
+                        >
+                          <StatusBadge status={status!} note={note} />
+                        </button>
+                      ) : (
+                        <span className="gl-batch-status">
+                          {status ? <StatusBadge status={status} note={note} /> : null}
+                        </span>
+                      )}
                     </div>
                   );
                 })}
-              </div>
+              </Panel>
 
               {shown && !running && summary ? (
-                <div className="rounded-lg border border-separator bg-panel p-4">
-                  <Text variant="small" className="mb-1 block font-medium">
-                    {shown.stopped
-                      ? "Batch stopped"
-                      : summary.failed > 0
-                        ? "Batch finished with failures"
-                        : "Batch passed"}
-                  </Text>
-                  <Text variant="small" color="secondary">
+                <Panel
+                  title={batchOutcomeTitle(batchOutcome(shown))}
+                  // The verdict was previously carried by the heading ALONE, so
+                  // the one moment the view most needs a colour — the batch
+                  // finishing — was the one place it had none.
+                  right={
+                    <StatusChip tone={batchOutcomeTone(batchOutcome(shown)) ?? undefined}>
+                      {batchOutcomeLabel(shown)}
+                    </StatusChip>
+                  }
+                  pad
+                >
+                  <p className="gl-note">
                     {fmtDateTime(shown.startedAt)} · {summary.passed} passed · {summary.failed}{" "}
                     failed · {summary.skipped} skipped · {fmtDuration(summary.durationMs)} total.
                     Each test also appears in Stats as its own run.
-                  </Text>
-                </div>
+                  </p>
+                </Panel>
               ) : null}
 
               {history.length > 0 ? (
-                <div>
-                  <div className="mb-2 flex items-center gap-2">
-                    <Text variant="small" className="font-medium">
-                      Previous batches
-                    </Text>
-                    <Text variant="small" color="tertiary">
-                      {history.length}
-                    </Text>
-                    <Button
-                      variant="glass"
-                      size="small"
-                      className="ml-auto"
+                <Panel
+                  title="Previous batches"
+                  id={String(history.length)}
+                  right={
+                    <Btn
+                      tone="ghost"
                       disabled={running}
                       onClick={async () => {
                         try {
@@ -834,40 +779,93 @@ export function BatchView() {
                       }}
                     >
                       Clear history
-                    </Button>
-                  </div>
-                  <div className="rounded-lg border border-separator bg-panel">
-                    {history.map((b: BatchRecord) => (
-                      <button
-                        key={b.batchId}
-                        type="button"
-                        disabled={running}
-                        onClick={() => setBatch(b)}
-                        className={`flex w-full items-center gap-3 border-b border-separator px-3 py-2 text-left last:border-b-0 hover:bg-control-subtle disabled:opacity-50 ${
-                          b.batchId === shown?.batchId ? "bg-control-subtle" : ""
-                        }`}
-                      >
-                        <Text variant="small" color="secondary" className="w-32 shrink-0">
-                          {fmtDateTime(b.startedAt)}
-                        </Text>
-                        {/* Same floor as the test rows above: the only flexible
-                            cell in a row of `shrink-0` furniture will otherwise
-                            take the entire squeeze and reach zero. */}
-                        <Text variant="small" className="min-w-24 grow basis-32 truncate">
-                          {b.summary.total} {b.summary.total === 1 ? "test" : "tests"} ·{" "}
-                          {fmtDuration(b.summary.durationMs)}
-                        </Text>
-                        {b.stopped ? (
-                          <Badge color="secondary">Stopped</Badge>
-                        ) : b.summary.failed > 0 ? (
-                          <Badge color="red">{b.summary.failed} failed</Badge>
-                        ) : (
-                          <Badge color="green">{b.summary.passed} passed</Badge>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                    </Btn>
+                  }
+                >
+                  {history.map((b: BatchRecord) => {
+                    const expanded = expandedBatchId === b.batchId;
+                    return (
+                      <React.Fragment key={b.batchId}>
+                        <button
+                          type="button"
+                          disabled={running}
+                          // The row does TWO things and they are deliberately
+                          // the same gesture: it expands the drawer AND makes
+                          // that batch the one the checklist above is showing
+                          // results for. Splitting them into a caret and a row
+                          // would be two affordances for "look at this batch".
+                          onClick={() => {
+                            setBatch(b);
+                            setExpandedBatchId(expanded ? null : b.batchId);
+                          }}
+                          aria-expanded={expanded}
+                          className="gl-batch-history-row"
+                          data-selected={b.batchId === shown?.batchId ? "" : undefined}
+                        >
+                          <span className="gl-batch-history-caret" aria-hidden="true">
+                            {expanded ? (
+                              <ChevronDown className="size-3" />
+                            ) : (
+                              <ChevronRight className="size-3" />
+                            )}
+                          </span>
+                          <span className="gl-batch-history-when">
+                            {fmtDateTime(b.startedAt)}
+                          </span>
+                          <span className="gl-batch-history-what">
+                            {b.summary.total} {b.summary.total === 1 ? "test" : "tests"} ·{" "}
+                            {fmtDuration(b.summary.durationMs)}
+                          </span>
+                          <span className="gl-batch-status">
+                            {/* Amber vs red is what tells a suite with a
+                                problem in it apart from a suite that never ran
+                                — scanning history, that is the difference
+                                between one bad test and a broken base URL. */}
+                            <StatusChip tone={batchOutcomeTone(batchOutcome(b)) ?? undefined}>
+                              {batchOutcomeLabel(b)}
+                            </StatusChip>
+                          </span>
+                        </button>
+                        {/* The drawer. Presentation over data `batch-history-store`
+                            already keeps: what that batch ran and what it ran
+                            under. Before this, the settings a past batch used
+                            were simply not visible anywhere — "it passed last
+                            week" and "it passed last week HEADLESS" are
+                            different facts, and only one of them was on screen. */}
+                        {expanded ? (
+                          <div className="gl-batch-drawer">
+                            {/* WHAT IS NOT HERE, and why: the design asks the
+                                drawer to show "the settings it ran under" as
+                                well, on the stated grounds that
+                                `batch-history-store` already keeps them. It does
+                                not — `BatchRecord` has no `captureArtifacts` and
+                                no `concurrency`, so there is nothing to render
+                                and inventing a plausible line would be worse
+                                than omitting one. What the record DOES carry per
+                                result is the engine, which is the most useful
+                                half of that question and was previously not
+                                visible for a past batch at all. The rest wants a
+                                backend field; see DECISIONS. */}
+                            {b.results.map((r, i) => (
+                              <div key={`${r.testId}-${r.browser ?? ""}-${i}`} className="gl-batch-drawer-row">
+                                <span className="gl-batch-drawer-name">{r.testName}</span>
+                                {r.browser ? (
+                                  <span className="gl-chip">{ENGINE_CODE[r.browser]}</span>
+                                ) : null}
+                                <span className="gl-batch-time">
+                                  {r.durationMs !== undefined ? fmtDuration(r.durationMs) : null}
+                                </span>
+                                <span className="gl-batch-status">
+                                  <StatusBadge status={r.status} note={r.note} />
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null}
+                      </React.Fragment>
+                    );
+                  })}
+                </Panel>
               ) : null}
             </>
           )}

@@ -44,6 +44,13 @@ const updateSteps = vi.fn(
 // the AI-apply path override this to model that; everything else keeps the
 // inert default.
 const updateScript = vi.fn(async (_id: string, _source: string) => ({}) as TestRecord);
+/** Models the real handler: it SAVES the flag and hands back the stored record,
+ *  which is what keeps the banner down after the view reconciles. A mock that
+ *  returned a bare object would let a purely optimistic implementation pass. */
+const dismissDiverged = vi.fn(async (_id: string) => {
+  test_ = { ...(test_ as TestRecord), stepsDivergedDismissed: true };
+  return test_;
+});
 
 vi.mock("./recorder-store", () => ({
   // Mirrors the real store's contract: calling run() bumps runEpoch, which the
@@ -81,6 +88,7 @@ vi.mock("../lib/api", () => ({
       rename: async () => ({}) as TestRecord,
       updateScript: (...a: Parameters<typeof updateScript>) => updateScript(...a),
       updateSteps: (...a: Parameters<typeof updateSteps>) => updateSteps(...a),
+      dismissDiverged: (...a: Parameters<typeof dismissDiverged>) => dismissDiverged(...a),
     },
     recorder: { getSettings: async () => settings as RecorderSettings },
     runs: {
@@ -335,16 +343,15 @@ describe("run controls", () => {
     await screen.findByText("Checkout");
     const block = screen
       .getByLabelText(/run this test headless/i)
-      .closest("div.grid") as HTMLElement | null;
+      .closest(".gl-run-options") as HTMLElement | null;
     expect(block).not.toBeNull();
-    // Two columns, but NOT via `grid-cols-2`. That shorthand is
-    // `repeat(2, minmax(0, 1fr))`, and the 0 floor let a column shrink below
-    // its own text; since these labels are overflow:visible the text then
-    // painted across its neighbour instead of clipping. Explicit `auto` tracks
-    // floor each column at min-content, so they still wrap but cannot spill.
-    // Asserted as the class because the dom project runs with `css: false` —
-    // no computed grid geometry exists here to measure.
-    expect(block!.className).toMatch(/grid-cols-\[[^\]]+_[^\]]+\]/);
+    // The TRACK SIZING moved into `.gl-run-options` (screens.css) in B5a, and
+    // `check:narrow-layout` reads it from the stylesheet — it has to, because
+    // the dom project runs with `css: false` and there is no computed grid
+    // geometry here to measure. What this test still owns is the other half,
+    // which the stylesheet cannot answer: that all four toggles are actually
+    // INSIDE the block. A checkbox that escapes the grid breaks the
+    // gang-of-four layout while every CSS assertion stays green.
     expect(block!.className).not.toContain("grid-cols-2");
     // All four toggles live in the same block — a checkbox that escapes the
     // grid silently breaks the gang-of-four layout without failing anything.
@@ -483,6 +490,28 @@ describe("diverged steps warning", () => {
     renderView();
     expect(await screen.findByText(/saved without regenerating/i)).toBeTruthy();
     expect(screen.queryByText(/couldn't be parsed back into steps/i)).toBeNull();
+  });
+
+  it("can be waved off, and says so to the backend", async () => {
+    test_ = record({ stepsDiverged: true });
+    renderView();
+    await screen.findByText(/may not reflect the script/i);
+    fireEvent.click(screen.getByLabelText("Dismiss this warning"));
+    // Both halves matter. The banner has to go NOW — the click is an
+    // acknowledgement, and one that leaves the warning up reads as broken — and
+    // it has to be recorded, or it comes back on the next visit.
+    await waitFor(() => expect(screen.queryByText(/may not reflect the script/i)).toBeNull());
+    expect(dismissDiverged).toHaveBeenCalledWith("t1");
+  });
+
+  it("stays quiet for a divergence already dismissed", async () => {
+    // The persisted half: the record is STILL diverged, and that is correct —
+    // everything else that reads the flag must keep saying so. Only the banner
+    // is silenced.
+    test_ = record({ stepsDiverged: true, stepsDivergedDismissed: true });
+    renderView();
+    await screen.findByText("Checkout");
+    expect(screen.queryByText(/may not reflect the script/i)).toBeNull();
   });
 
   it("doesn't tell an imported test to regenerate, which it can never do", async () => {

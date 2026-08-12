@@ -9,22 +9,49 @@
 // exact confusion that hid a broken axe fixture for months.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import type { A11yResult, ReplayStep, RunRecord, RunReplay, TestRecord } from "../lib/recorder-types";
+import { clearToastCalls, toastCalls } from "../__tests__/sonner-stub";
+
+import type {
+  A11yResult,
+  ReplayStep,
+  RunNoticeKind,
+  RunRecord,
+  RunReplay,
+  TestRecord,
+} from "../lib/recorder-types";
 import { A11yPanel } from "./a11y-panel";
 
 let runs: RunRecord[] = [];
 let replay: RunReplay | null = null;
 
+// The dismiss pair patches the replay the way the real handlers do, so the
+// panel re-renders from the object the backend would hand back.
+const dismissNotice = vi.fn(async (_testId: string, _runId: string, kind: RunNoticeKind) => {
+  if (replay) {
+    replay.dismissedNotices = [...new Set<RunNoticeKind>([...(replay.dismissedNotices ?? []), kind])];
+  }
+  return replay;
+});
+const restoreNotice = vi.fn(async (_testId: string, _runId: string, kind: RunNoticeKind) => {
+  if (replay) replay.dismissedNotices = (replay.dismissedNotices ?? []).filter((k) => k !== kind);
+  return replay;
+});
+const acceptRun = vi.fn(async () => replay);
+
 vi.mock("../lib/api", () => ({
   api: {
     runs: { list: async () => runs },
-    artifacts: { getReplay: async () => replay },
+    artifacts: {
+      getReplay: async () => replay,
+      dismissNotice: (...a: Parameters<typeof dismissNotice>) => dismissNotice(...a),
+      restoreNotice: (...a: Parameters<typeof restoreNotice>) => restoreNotice(...a),
+    },
     a11y: {
       acceptStep: async () => replay,
-      acceptRun: async () => replay,
+      acceptRun: (...a: unknown[]) => acceptRun(...(a as [])),
       resetBaseline: async () => ({ cleared: 0 }),
     },
   },
@@ -105,6 +132,8 @@ function renderPanel(test: TestRecord = record()) {
 }
 
 beforeEach(() => {
+  vi.clearAllMocks();
+  clearToastCalls();
   runs = [];
   replay = null;
 });
@@ -204,4 +233,109 @@ describe("when the check ran", () => {
     renderPanel();
     await waitFor(() => expect(screen.getByText("color-contrast")).toBeTruthy());
   });
+});
+
+// Dismissing the "not accepted yet" banner.
+//
+// Same distinction the Visual view draws, and it matters more here because this
+// tab is where the issues are actually READ: accepting pins them onto the test
+// record and changes what every later run reports, dismissing says "seen" about
+// this run and leaves the list below untouched. Before this, the only way to
+// stop the banner nagging was to accept issues you might not have read.
+describe("waving the banner off, as opposed to accepting it", () => {
+  beforeEach(() => {
+    runs = [runRecord({ a11yMs: 900, a11yChecks: 5 })];
+    replay = replayOf([step({ stepId: "s1", a11y: result() })]);
+  });
+
+  it("dismisses the banner without accepting a single issue", async () => {
+    renderPanel();
+    await screen.findByText(/accessibility issues that aren’t/i);
+    fireEvent.click(screen.getByLabelText("Dismiss accessibility issues for this run"));
+
+    await waitFor(() =>
+      expect(screen.queryByText(/accessibility issues that aren’t/i)).toBeNull(),
+    );
+    expect(dismissNotice).toHaveBeenCalledWith("t1", "r1", "a11y");
+    // The two assertions that separate this from "Accept all in this run".
+    expect(acceptRun).not.toHaveBeenCalled();
+    expect(replay?.steps[0].a11y?.newKeys).toEqual(["color-contrast|.cta-button"]);
+  });
+
+  it("keeps listing the issues it just stopped nagging about", async () => {
+    // A dismiss that also hid the violations would be an accept wearing a
+    // different label — the whole point is that the findings stay readable.
+    renderPanel();
+    await screen.findByText(/accessibility issues that aren’t/i);
+    fireEvent.click(screen.getByLabelText("Dismiss accessibility issues for this run"));
+
+    await waitFor(() =>
+      expect(screen.queryByText(/accessibility issues that aren’t/i)).toBeNull(),
+    );
+    expect(screen.getByText("color-contrast")).toBeTruthy();
+    expect(screen.getByText("Accept all in this run")).toBeTruthy();
+  });
+
+  it("stays dismissed on a replay that already carries the flag", async () => {
+    // Read off the replay, not component state — otherwise the banner returns
+    // the moment the user leaves the tab and comes back.
+    replay = { ...replayOf([step({ stepId: "s1", a11y: result() })]), dismissedNotices: ["a11y"] };
+    renderPanel();
+    await screen.findByText("color-contrast");
+    expect(screen.queryByText(/accessibility issues that aren’t/i)).toBeNull();
+  });
+
+  it("offers a way back", async () => {
+    renderPanel();
+    await screen.findByText(/accessibility issues that aren’t/i);
+    fireEvent.click(screen.getByLabelText("Dismiss accessibility issues for this run"));
+    await waitFor(() => expect(dismissNotice).toHaveBeenCalled());
+
+    const undo = toastCalls
+      .map((c) => c.options as { action?: { label: string; onClick: () => void } } | undefined)
+      .find((o) => o?.action?.label === "Undo");
+    expect(undo).toBeTruthy();
+    act(() => undo!.action!.onClick());
+
+    await waitFor(() => expect(restoreNotice).toHaveBeenCalledWith("t1", "r1", "a11y"));
+    expect(await screen.findByText(/accessibility issues that aren’t/i)).toBeTruthy();
+  });
+
+  it("does not offer to dismiss a check that completed nothing", async () => {
+    // That banner reports a BROKEN CHECK, not a finding about the page. There
+    // is nothing to have seen and accepted, and letting it be waved off is how
+    // a silently broken axe fixture hides for another few months.
+    runs = [runRecord({ a11yMs: 900, a11yChecks: 0 })];
+    replay = replayOf([step({ stepId: "s1" })]);
+    renderPanel();
+    await screen.findByText(/completed none/i);
+    expect(screen.queryByLabelText("Dismiss accessibility issues for this run")).toBeNull();
+  });
+});
+
+describe("the banner slot", () => {
+  // One slot, four mutually exclusive states. Centring only the orange one
+  // would make the banner look like it jumps alignment as a run's verdict
+  // changes, which reads as a rendering bug rather than as a layout choice.
+  const cases = [
+    { name: "a check that completed nothing", checks: 0, a11y: undefined, match: /completed none/i },
+    { name: "a clean page", checks: 5, a11y: undefined, match: /No accessibility issues found/i },
+    {
+      name: "clean against the baseline",
+      checks: 5,
+      a11y: result({ newKeys: [], acceptedCount: 1 }),
+      match: /Nothing new/i,
+    },
+    { name: "unaccepted issues", checks: 5, a11y: result(), match: /aren’t\s+accepted yet/i },
+  ];
+
+  for (const c of cases) {
+    it(`centres its copy for ${c.name}`, async () => {
+      runs = [runRecord({ a11yMs: 900, a11yChecks: c.checks })];
+      replay = replayOf([step({ stepId: "s1", ...(c.a11y ? { a11y: c.a11y } : {}) })]);
+      renderPanel();
+      const copy = await screen.findByText(c.match);
+      expect(copy.className).toContain("text-center");
+    });
+  }
 });

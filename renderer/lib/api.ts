@@ -14,6 +14,7 @@ import type {
   AiDebugSession,
   DebugEntry,
   RunLogs,
+  StepStructure,
   LogSearchResult,
   Locator,
   RawStep,
@@ -30,6 +31,7 @@ import type {
   LiveCookie,
   RunBrowser,
   RunComparison,
+  RunNoticeKind,
   RunReplay,
   RunReplaySummary,
   VisualMask,
@@ -38,8 +40,24 @@ import type {
   TestSpeed,
 } from "./recorder-types";
 import type { BranchStatus, BranchSummary, PullRequestSummary } from "./branch-types";
+import type {
+  ConnectionStatus,
+  CreatedIssue,
+  DefectSource,
+  IssueContainer,
+  IssueDefaults,
+  IssueDraft,
+  IssueLabel,
+  IssueLink,
+  IssueSubContainer,
+  ProviderVocabulary,
+} from "./issue-types";
 import type { TriageResult } from "../../shared/triage.mjs";
-import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
+import type {
+  StepDurationRow,
+  StepHealthRow,
+  TestDurationTrend,
+} from "../../shared/metrics-query.mjs";
 import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
 import type {
   LlmChatParams,
@@ -70,6 +88,11 @@ export const api = {
   trainerPanel: {
     dock: () => ipc().invoke<{ docked: boolean }>("trainerPanel:dock"),
     undock: () => ipc().invoke<{ docked: boolean }>("trainerPanel:undock"),
+    /** The current state, for a panel that just mounted. The push announcing a
+     *  refused dock is sent before this window's page exists, so a panel that
+     *  opened undocked can only find out by asking. */
+    getState: () =>
+      ipc().invoke<{ docked: boolean; reason: string | null }>("trainerPanel:getState"),
   },
   recorder: {
     start: (
@@ -82,6 +105,12 @@ export const api = {
     resume: () => ipc().invoke<RecorderState>("recorder:resume"),
     setAssert: (mode: AssertKind | null, soft = false) =>
       ipc().invoke<RecorderState>("recorder:setAssert", { mode, soft }),
+    /** Open a URL assertion prefilled with the training page's live URL. Called
+     *  from the training browser's URL strip. */
+    assertUrl: (kind: AssertKind) =>
+      ipc().invoke<RecorderState>("recorder:assertUrl", { kind }),
+    getTrainingUrl: () =>
+      ipc().invoke<{ url: string; loading: boolean }>("recorder:getTrainingUrl"),
     deleteStep: (stepId: string) =>
       ipc().invoke<RecorderState>("recorder:deleteStep", { stepId }),
     insertStep: (step: RawStep, index?: number) =>
@@ -158,6 +187,11 @@ export const api = {
         steps,
         regenerate: opts?.regenerate === true,
       }),
+    /** Silence the "steps and script disagree" banner. The record stays
+     *  diverged — this only says the user has seen it, until the next
+     *  divergence is established. Pass `false` to bring the banner back. */
+    dismissDiverged: (id: string, dismissed = true) =>
+      ipc().invoke<TestRecord>("tests:dismissDiverged", { id, dismissed }),
     createFromPrompt: (params: {
       name: string;
       url: string;
@@ -280,6 +314,50 @@ export const api = {
     status: () => ipc().invoke<{ hasUrl: boolean; host: string | null }>("alerts:status"),
     test: () => ipc().invoke<{ ok: boolean }>("alerts:test"),
   },
+  issues: {
+    /** Local and cheap — never touches the network. Pair with `verify` when the
+     *  question is "does the key still work?" rather than "is one saved?". */
+    status: () => ipc().invoke<ConnectionStatus>("issues:status"),
+    /** The provider's own words for its concepts, so views don't hardcode them. */
+    vocabulary: () => ipc().invoke<ProviderVocabulary>("issues:vocabulary"),
+    /** Save a key and immediately prove it. Resolves with the resulting status
+     *  rather than throwing on a bad key — a rejected key is a state the pane
+     *  renders, not an exception it catches. */
+    connect: (key: string) => ipc().invoke<ConnectionStatus>("issues:connect", { key }),
+    verify: () => ipc().invoke<ConnectionStatus>("issues:verify"),
+    disconnect: () => ipc().invoke<ConnectionStatus>("issues:disconnect"),
+    /** Throws when there is no key or the provider refuses — the caller is a
+     *  list that has nothing to show, so the failure has to be visible. */
+    listContainers: () => ipc().invoke<IssueContainer[]>("issues:listContainers"),
+    listSubContainers: () => ipc().invoke<IssueSubContainer[]>("issues:listSubContainers"),
+    listLabels: () => ipc().invoke<IssueLabel[]>("issues:listLabels"),
+    /** The pre-filled issue for one defect. Null when its evidence is gone —
+     *  a pruned run, a re-recorded step — which the dialog reports rather than
+     *  opening onto an empty form. */
+    buildDraft: (source: DefectSource) =>
+      ipc().invoke<IssueDraft | null>("issues:buildDraft", { source }),
+    /** File it. `attachmentFiles` names which images the user kept; the bytes
+     *  are re-read backend-side, so nothing image-shaped travels this way. */
+    createIssue: (params: {
+      source: DefectSource;
+      title: string;
+      body: string;
+      attachmentFiles: string[];
+      containerId: string;
+      subContainerId: string | null;
+      labelIds: string[];
+    }) => ipc().invoke<CreatedIssue>("issues:createIssue", params),
+    /** Every issue already filed against a test, so a list badges itself in one
+     *  read rather than one call per row. */
+    linksForTest: (testId: string) => ipc().invoke<IssueLink[]>("issues:linksForTest", { testId }),
+    /** Report a recurrence onto the existing issue instead of filing a second. */
+    commentRecurrence: (source: DefectSource, attachmentFiles: string[]) =>
+      ipc().invoke<IssueLink>("issues:commentRecurrence", { source, attachmentFiles }),
+    getDefaults: () => ipc().invoke<IssueDefaults>("issues:getDefaults"),
+    /** Omit a field to leave it alone; pass null to clear it. */
+    setDefaults: (patch: Partial<IssueDefaults>) =>
+      ipc().invoke<IssueDefaults>("issues:setDefaults", patch),
+  },
   runner: {
     run: (
       id: string,
@@ -329,6 +407,9 @@ export const api = {
         rows: StepDurationRow[];
         slowed: StepDurationRow[];
         cost: CostBreakdown;
+        /** The named test's own duration trend (C §6.3). Null when no test was
+         *  named — the suite-wide call has no single test to trend. */
+        testTrend: TestDurationTrend | null;
       }>("metrics:slowness", { testId }),
     divergence: (testId?: string) =>
       ipc().invoke<{ available: boolean; steps: DivergentStep[] }>("metrics:divergence", {
@@ -339,6 +420,13 @@ export const api = {
     list: () => ipc().invoke<RunReplaySummary[]>("artifacts:list"),
     getReplay: (testId: string, runId: string) =>
       ipc().invoke<RunReplay | null>("artifacts:getReplay", { testId, runId }),
+    /** Wave off one of a run's findings banners. Unlike the accept calls, this
+     *  changes nothing about the finding or about future runs — it records that
+     *  the user has seen it, on this run only. */
+    dismissNotice: (testId: string, runId: string, kind: RunNoticeKind) =>
+      ipc().invoke<RunReplay | null>("artifacts:dismissNotice", { testId, runId, kind }),
+    restoreNotice: (testId: string, runId: string, kind: RunNoticeKind) =>
+      ipc().invoke<RunReplay | null>("artifacts:restoreNotice", { testId, runId, kind }),
     readShot: (testId: string, runId: string, file: string) =>
       ipc().invoke<string | null>("artifacts:readShot", { testId, runId, file }),
     /** Recorded console + network for one run (null when it recorded none).
@@ -347,6 +435,12 @@ export const api = {
       ipc().invoke<RunLogs | null>("artifacts:getLogs", { testId, runId }),
     hasLogs: (testId: string, runId: string) =>
       ipc().invoke<{ hasLogs: boolean }>("artifacts:hasLogs", { testId, runId }),
+    /** The page structure Auto-Heal recorded around steps it could not rescue.
+     *  Rebuilt from page-authored input backend-side before this returns. */
+    getStructure: (testId: string, runId: string) =>
+      ipc().invoke<StepStructure[]>("artifacts:getStructure", { testId, runId }),
+    hasStructure: (testId: string, runId: string) =>
+      ipc().invoke<{ hasStructure: boolean }>("artifacts:hasStructure", { testId, runId }),
     usage: () => ipc().invoke<ArtifactUsage>("artifacts:usage"),
     pruneNow: () => ipc().invoke<RetentionResult>("artifacts:pruneNow"),
   },

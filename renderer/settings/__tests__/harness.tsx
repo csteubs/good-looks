@@ -32,9 +32,6 @@ export function makeController(overrides: Partial<SettingsController> = {}): Set
     loaded: true,
     save: vi.fn(async () => {}),
 
-    themeSource: "system",
-    setTheme: vi.fn(async () => {}),
-
     provider: "ollama",
     model: null,
     llmStatus: null,
@@ -64,6 +61,31 @@ export function makeController(overrides: Partial<SettingsController> = {}): Set
     saveWebhookUrl: vi.fn(async () => true),
     clearWebhookUrl: vi.fn(async () => {}),
     testWebhook: vi.fn(async () => {}),
+
+    // Disconnected by default, which is the state most pane tests want to start
+    // from: it is what a fresh install shows, and the connected case is the one
+    // worth spelling out in the test that is about it.
+    issuesStatus: { provider: "linear", hasKey: false, account: null, error: null },
+    issuesVocabulary: {
+      name: "Linear",
+      container: "Team",
+      subContainer: "Project",
+      keyHelpUrl: "https://linear.app/settings/api",
+      keyPlaceholder: "lin_api_…",
+    },
+    issuesBusy: false,
+    issueContainers: [],
+    issueSubContainers: [],
+    issueDefaults: { containerId: null, subContainerId: null },
+    connectIssues: vi.fn(async () => true),
+    verifyIssues: vi.fn(async () => {}),
+    disconnectIssues: vi.fn(async () => {}),
+    setIssueDefaults: vi.fn(async () => {}),
+
+    hasGithubToken: false,
+    githubBusy: false,
+    saveGithubToken: vi.fn(async () => true),
+    clearGithubToken: vi.fn(async () => {}),
 
     artifactUsage: null,
     pruning: false,

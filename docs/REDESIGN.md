@@ -1,11 +1,19 @@
 # The indie redesign — an implementation plan
 
-**Status: Phase A in progress.** A1 (browser preview), A2 (tokens, fonts,
-atmosphere) and A3 (the fifteen primitives) are done — see the ✅ marks in §4 and
-§8.3. **A4 (shell) and A5 (retire the SDK on shared components) are next, and
-nothing in Phase B onwards exists yet.** The foundation is deliberately
-unconsumed: no screen reads the theme layer, so the app still looks exactly as it
-did. Where the rest of this says "would", it means would.
+**Status: Phase A is done; Phase B has reached every screen.** A1–A5 are landed,
+and so are **B1 (Home)**, **B2 (Heals)**, **B3 (Batch)**, **B4 (Settings)**,
+**B5a (Test detail, parity)**, **B6 (Recorder)**, **B7 (Stats)**, **B8 (Visual,
+first slice)** and **B9 (AI debug — the status contract and the Sending strip)**
+— see the ✅ marks in §4, §5 and §8.3. The app's frame is the redesign, so are
+the five components every screen embeds, and every screen has been reached.
+
+**Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
+its frame rail, threshold-against-frames and the masks/baselines reskin.
+**Phase C is most of the way in: §6.1, §6.2, §6.3, §6.4, §6.7 and §6.9 landed
+2026-08-12, and §6.6's first slice with them** — the five non-failure run-state summaries (which were B5b), the
+inline step composer, change temp against real medians, Stats → Cost, the ⌘K
+command palette, and the boot sequence.
+Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -291,8 +299,11 @@ degraded one.
 > app sent Google the hostname of every site under test. `SiteIcon` replaced it
 > (2026-08-08), and `check:renderer-egress` now judges every absolute URL in the
 > renderer against an allowlist of specific strings with written reasons.
-> **The opt-in setting is still outstanding** and lands with §B4; until then the
-> default is the one that sends nothing.
+> **The opt-in setting landed with §B4** (2026-08-10): Appearance → "Fetch site
+> icons from the web", off by default on both sides of the IPC boundary, with a
+> `flag` badge and a `risk` block naming icons.duckduckgo.com and saying the
+> hostname is what gets sent. `check:renderer-egress` pins the defaults, the
+> disclosure copy, and that no call site hardcodes the fetch on.
 
 **The textures are 75MB.** With texture fixed at the `ember` default, the app
 needs `acid-25.jpg` (4.2MB) and the grain plate `super-light-1.png` (4.2MB). Both
@@ -355,15 +366,44 @@ CRT-content-is-untreated — all three as `check:*` scripts, plus a fourth
 (the narrow set a `var()` cannot express) and `renderer/dev/specimen.tsx`, every
 primitive in every state at `/?view=specimen`. See DECISIONS 2026-08-08.
 
-**A4. Shell.** Top strip (wordmark, breadcrumb, ⌘K affordance, job ticker slot,
-settings gear), the rail restyle over `SplitView`, the views nav pinned to the
-bottom, the rail handle. Retire `useTheme()` and the light theme; Appearance pane
-becomes "Dark only for now".
+**A4. Shell.** ✅ **Done, 2026-08-10.** `renderer/theme/shell/` (`TopStrip`,
+`ChromeButton`, the `Rail` family) + `shell.css`, wired up by
+`renderer/main/app-strip.tsx`; the rail restyle over `SplitView`, the views nav
+pinned to the bottom, the rail handle. `<Atmosphere />` finally mounts.
+`useTheme()` and the light theme are gone — with the `nativeTheme:*` IPC, the
+preload bridge and the `nativeTheme:updated` push, since nothing called them any
+more — and the Appearance pane reads "Dark only for now".
 
-**A5. Retire the SDK on the shared surfaces.** `step-row.tsx`, `pager.tsx`,
-`tag-cluster.tsx`, `log-inspector.tsx`, `heals-panel.tsx` — the components every
-screen embeds. Doing these before the screens means Phase B's per-screen PRs are
-about layout, not about swapping buttons.
+Four things resolved in the building. The strip is a new `header` SLOT on
+`SplitView` rather than a sibling above it, because the rail handle reads that
+context and hoisting the collapse state out would take `storageKey` persistence
+and ⌃⌘S with it; the pinned `SidebarToggle` retires with it, which gives every
+view title its 44px back. **The ⌘K and job-ticker slots render nothing** — an
+affordance for a feature that does not exist teaches a shortcut that answers with
+silence, so §6.7 and §6.8 land in props that are already there. The breadcrumb
+takes `recording` explicitly, because the trainer replaces the outlet without
+navigating and a router-derived trail would name the wrong screen. And the views
+nav moving out of the scroller is a bug fix, not a restyle: `mt-auto` pinned it
+to the bottom only while the library was short. See DECISIONS 2026-08-10.
+
+**A5. Retire the SDK on the shared surfaces.** ✅ **Done, 2026-08-10.**
+`step-row.tsx`, `pager.tsx`, `tag-cluster.tsx`, `log-inspector.tsx`,
+`heals-panel.tsx` — the components every screen embeds — plus
+`renderer/theme/shared.css`, the third stylesheet (primitives are what a screen
+is built out of, `shell.css` is what it sits inside, this is what it embeds).
+
+Three things worth carrying forward. The chips split by whether a label reports
+an OUTCOME — `.gl-chip-tone` via `toneSurface()` for "Applied to the test",
+neutral `.gl-chip` for "soft" or "During a run" — and neither is a `StatusChip`,
+whose fixed width is a contract about columns these are not part of. The step
+row KEEPS its own structure: drag, inline edit, replay and the run flash belong
+to the step list's own reskin (§B5/§B6), so only the SDK left. And the tag
+delete stopped turning red on hover, because an outcome hue on a hover state
+reads as a result — the confirm dialog states the danger instead.
+
+**`check:sdk-retired` ships with it** and is the point rather than an extra: the
+premise erodes silently, one `import { Button }` at a time, in diffs where
+nobody is looking at the import block. See DECISIONS 2026-08-10.
 
 ---
 
@@ -376,7 +416,7 @@ answer, updated only where a query genuinely changed.
 Ordered by risk-adjusted value: the screens with the most existing test coverage
 and the least new layout go first, so the pattern is proven before the hard ones.
 
-### B1. Home — `home-view.tsx`
+### B1. Home — `home-view.tsx` ✅ **Done, 2026-08-10**
 
 Smallest screen, and the `BlackHole` loader already exists in the tree.
 
@@ -387,12 +427,43 @@ Smallest screen, and the `BlackHole` loader already exists in the tree.
 | — | Three stat readouts (tests / green last 7d / heals to review) |
 | Buttons | `Btn go` "Run a test", `Btn ghost` "Generate from prompt" |
 
-New: the texture plate, the stat row (data already available from existing
-queries), the wordmark treatment.
+Landed with `renderer/theme/screens.css` (the fourth stylesheet — what one
+screen IS) and four decisions worth carrying into B2–B9:
 
-### B2. Heals — `heals-view.tsx` + `heals-panel.tsx`
+- **A number nothing supports renders as `—`, never `0`.** "0% green" with no
+  runs in the window is a claim about a week that did not happen. Both
+  directions are pinned, because over-correcting hides a suite that really is
+  all red.
+- **The readouts share the app's own query keys**, so they cost nothing and can
+  never disagree with the screen you click through to.
+- **`Btn go` reads "Record a test"**, not the mockup's "Run a test": nothing is
+  selected on Home, so "run" has no object.
+- **`echo` is ghosting in one ink**, not red/cyan fringing — that would spend
+  two status hues on decoration at the largest type size in the product. Drawn
+  as pseudo-elements so the wordmark is announced once.
 
-395 lines, two-pane, well covered.
+**The texture plate shipped without its art.** `acid-25.jpg` is still not in the
+repo (open question 6); the radial falloff and an ember wash carry the plate,
+and the photograph drops into one `background-image` when it arrives.
+`--gl-ember` is its own token and deliberately not `--gl-amber` — a texture is
+not a status. See DECISIONS 2026-08-10.
+
+### B2. Heals — `heals-view.tsx` + `heals-panel.tsx` ✅ **Done, 2026-08-10**
+
+395 lines, two-pane, well covered. (`heals-panel.tsx` came earlier, with A5.)
+
+The first screen where the fixed status width does real work — this list is the
+only column in the app reporting four genuinely different states — and **only
+two of the four take a hue**: `Accepted` is an outcome and `Applied` is the one
+that should catch the eye, while `Suggested` is the open item (cyan) and
+`Reverted` is settled with nothing to report. Two neutral chips is deliberate:
+the width is fixed so they read as a column, and the WORD reports the state.
+
+The toolbar went with the reskin — the strip's breadcrumb already says HEALS, so
+the count moved to the journal panel's `id` slot and "Clear history" to its
+`right` slot. The was/now block, the candidate rows and the amber notice are the
+`.gl-heal-*` classes A5 already built, found in `shared.css` rather than copied.
+See DECISIONS 2026-08-10.
 
 | Today | Redesign |
 |---|---|
@@ -402,9 +473,9 @@ queries), the wordmark treatment.
 | — | Amber warning block: "A heal that succeeded is not the same as a heal that was right" |
 | Candidates list | Same, with a `use` affordance per row |
 
-### B3. Batch — `batch-view.tsx` + `tag-cluster.tsx`
+### B3. Batch — `batch-view.tsx` + `tag-cluster.tsx` ✅ **Done, 2026-08-10**
 
-887 lines. The redesign keeps the information architecture the current view
+905 lines. The redesign keeps the information architecture the current view
 already has (per-row engines and headedness landed 2026-08-07) and restyles it.
 
 | Today | Redesign |
@@ -416,33 +487,62 @@ already has (per-row engines and headedness landed 2026-08-07) and restyles it.
 | Headless + screenshots | One bordered two-cell cluster at header height |
 | History rows | Same rows, now expandable — drawer shows the batch's own per-test results and the settings it ran under |
 
-New in B3: the concurrency menu copy, the history drawer. Both are presentation
-over data the app already stores (`batch-history-store`).
+New in B3: the concurrency menu copy, the history drawer.
 
-### B4. Settings — `settings-view.tsx`, `settings-nav.tsx`, `setting-row.tsx`, 8 panes
+**One correction to the line above, found in the building: the history drawer is
+NOT all presentation over stored data.** `BatchRecord.results` carries every
+test, its engine, duration and outcome — none of which was visible for a past
+batch before — but there is no `captureArtifacts` and no `concurrency` on the
+record, so "the settings it ran under" has nothing behind it. The drawer ships
+with what exists; making the other half real is a backend field plus a decision
+about records written before it, which is not a reskin.
 
-The IA is already right — eight panes plus search landed 2026-08-07. This is
-mostly a restyle, plus two renames and one split the redesign argues for:
+Also landed: **`Menu`**, the box `MenuItem` always implied. The SDK `Select`
+stays native everywhere else — but a native menu item is a string, and the whole
+point here is the second line. See DECISIONS 2026-08-10.
 
-- **Advanced → Diagnostics.** `advanced-pane.tsx` is the debug-screenshot
+### B4. Settings — `settings-view.tsx`, `settings-nav.tsx`, `setting-row.tsx`, 9 panes ✅ **Done, 2026-08-10**
+
+**Shipped 2026-08-10.** The IA was already right — eight panes plus search
+landed 2026-08-07 — so this was mostly a restyle, plus two renames and one split:
+
+- **Advanced → Diagnostics.** ✅ `advanced-pane.tsx` is the debug-screenshot
   shortcut and a capture button — tools for handing this app's state to whoever
-  is helping you. That is diagnostics, not experiments.
-- **Experimental section out of the AI pane → its own Experiments pane.** A flag
-  that changes how a run behaves does not belong buried inside AI settings.
-- **New pane: Keys & creds.** Currently scattered (Anthropic key in AI, secrets
-  handling implicit). The redesign collects them.
+  is helping you. That is diagnostics, not experiments. "Advanced" is a promise
+  about difficulty, and it attracts everything nobody could place.
+- **Experimental section out of the AI pane → its own Experiments pane.** ✅ Both
+  flags change how a RUN behaves, and a section heading is invisible from the
+  sidebar, so its caveat only reached someone already reading the AI pane.
+- **New pane: Keys & creds.** ⏳ **Deferred, with a reason.** Collecting the
+  credentials means moving the Anthropic key and the LM Studio token away from
+  the controls that VALIDATE them — the connection test and the model list, both
+  in the AI pane, are how you find out a key works. A credentials pane that
+  cannot tell you whether the credential is good is a worse home than the pane
+  that can. This waits for a design that moves the validation too.
 
-The row treatment is the valuable part: `risk` copy gets its own bordered block
-with a red inset rail, `flag` renders as a red uppercase badge next to the label,
-`doc` is a separate link for the *mechanism* rather than the warning. The current
-`SettingRow` already refuses `details` on `danger` rows — keep that rule and
-extend it: **a row with `risk` renders the risk unconditionally, never behind a
-disclosure.**
+The row treatment was the valuable part and shipped whole: ✅ `risk` copy gets its
+own bordered block with a red inset rail, `flag` renders as a red uppercase badge
+next to the label, `doc` is a separate link for the *mechanism* rather than the
+warning. `SettingRow` still refuses `details` on a `flag` row, and **a row with
+`risk` renders it unconditionally** — structurally, because `risk` has no closed
+state to be in. One thing only visible on screen: a flagged row that ALSO has a
+risk block drops the row-level rail, because two red rails at two indents read as
+a rendering glitch rather than as emphasis.
+
+Also shipped with it, though neither is in the mockup: the **site-icon opt-in**
+owed since §3.5, and the `gl-*` half of `check:renderer-classes` — the class
+audit only ever looked at Tailwind's prefixes, so every class this theme layer
+has added since A2 was unguarded.
 
 Also: the rail becomes the settings nav while in settings (the panes *are* the
-navigation), and the library list hides. Same surface, two jobs.
+navigation), and the library list hides. Same surface, two jobs. ✅ **with a
+caveat** — Settings is its own `BrowserWindow` here, so there is no library list
+to hide and no single element to repurpose. What the sentence actually buys is
+recognition, so `SettingsNav` is built from `Rail`/`RailGroup`/`RailRow`, the
+same components the main window's library uses, with the search field in the
+rail's pinned `search` slot.
 
-### B5. Test detail — `test-detail-view.tsx` + `step-row.tsx` + `run-output.tsx` + `script-view.tsx` + `run-triage.tsx`
+### B5. Test detail — `test-detail-view.tsx` + `step-row.tsx` + `run-output.tsx` + `script-view.tsx` + `run-triage.tsx` — **B5a done, 2026-08-10**
 
 823 lines plus satellites. The most-visited screen and the biggest reskin.
 
@@ -467,7 +567,28 @@ This is more than a reskin and it is why B5 is late in the order. Split it:
 **B5a** = reskin the failed/console path to parity; **B5b** = the other five
 state summaries (Phase C, §6.1).
 
-### B6. Recorder — `recording-view.tsx` + `cookies-panel.tsx` + `add-step-dialog.tsx`
+**B5a shipped 2026-08-10.** ✅ The step list's status is an inset rail rather
+than a tinted row, and selection went neutral with it. ✅ The verdict is a
+`StatusChip`, with `running` on the holo treatment rather than a hue. ✅ The raw
+log is a full-black console, and it now EXPANDS to take the pane — a drawer, not
+a modal, because the verdict, the triage line and the log are one thought. ✅ The
+triage line is the `Verdict` primitive, whose `tone` became optional so that
+"evidence both ways" and "not enough evidence" can stay colourless. Toolbar,
+tabs, checkboxes and the script bar are on the theme layer.
+
+Two items in the table above are deliberately NOT in B5a, because neither is
+parity: the **Console/Timeline layout switch** with its three breakpoints, and
+**`BrowserDeck`** (the engine picker as a fanning card stack). The screenshot
+`CRT` bezel is also still to come — the failed/console path does not show one,
+and Visual (§B8) is where captured frames actually live.
+
+One thing B5a needed that the plan did not anticipate: **the browser preview
+could not finish a run**, so the failed path — this section's entire subject —
+had no way to be looked at outside a packaged build on a Mac. The preview bridge
+gained a push bus and a scripted, fixture-determined run; `?test=t-login` is now
+a stable address for the failed console path.
+
+### B6. Recorder — `recording-view.tsx` + `cookies-panel.tsx` + `add-step-dialog.tsx` ✅ **Reskin done, 2026-08-10**
 
 1,084 lines. The redesign's version is close to what exists (status row, tools,
 step list, three-tab console) with three changes:
@@ -484,7 +605,44 @@ Retiring `add-step-dialog.tsx` for an inline composer removes 1,170 lines and a
 modal. Worth doing, but it is a behaviour change — keep it in Phase C (§6.2) and
 reskin the existing dialog in B6.
 
+**Shipped 2026-08-10, the reskin half.** ✅ The session-state chip, the tools
+row, the refine banner and the three-tab console are on the theme layer. Two
+things in it are more than restyling. The state chip: `Recording` was the SDK's
+`error` variant — RED, the colour this palette spends on a failed run — on the
+one screen where nothing has run yet; Recording / Editing / Replaying / Running
+now take the holo `running` treatment and Paused goes neutral, because none of
+them is an outcome. And Hard/Soft moved to the theme's `Segmented`, which is
+plain buttons with `aria-pressed` rather than a pointer-down Radix control, so
+the choice is assertable in a test for the first time.
+
+Still Phase C, and deliberately: the four **`ToolTile`s**, the **inline composer**
+that replaces the 1,170-line add-step modal, the **assertion bottom sheet**, and
+`InsertGap` between every pair of steps (the existing `CursorGap` already covers
+the cursor half of that). The tab strip's rules moved from `.gl-detail-tabs` to
+`.gl-tabs` in `shared.css` when this screen became their second consumer —
+that is the rule the four-stylesheet split states, applied.
+
+One thing B6 needed that the plan did not anticipate: **the trainer had no
+address in the browser preview.** `RootShell` swaps the outlet for
+`RecordingView` only while `state.recording`, and nothing in a tab can make that
+true, so a fifth of the app's UI could not be looked at outside a packaged
+build. `?view=recorder` reports a live session over a fixture test's steps.
+
 ### B7. Stats — `stats-view.tsx` + `flake-panel.tsx` + `suite-cost-panel.tsx` + `step-health-panel.tsx` + `divergence-panel.tsx`
+
+> **The reskin is done, 2026-08-10.** All five files are on the theme layer, with
+> a Stats section in `renderer/theme/screens.css`. Every existing test survived; two queries changed, none were
+> deleted. The reskin also found and closed a hole in `check:status-width`: a
+> width a flex row can take back is not a fixed width, and the run table's status
+> cell was squeezing the chip until the row reported a heal and dropped the
+> outcome.
+>
+> **Two things in this section are NOT done.** The page-level scope + range is
+> deferred — it cannot be honest until the flake and metrics handlers take a time
+> window, or it scopes half the page and misreports the other half (DECISIONS).
+> And `docs/plans/stats-categories.md` supersedes the "one page, three modes"
+> shape below: the board of categories replaces it, and Cost and Report become
+> two more categories rather than two more modes.
 
 975 lines plus five panels. Everything the current view has is in the redesign's
 `health` mode: chart, KPI counts, capture overhead, stability, log search, run
@@ -503,7 +661,7 @@ Two structural moves:
 
 `Cost` and `Report` modes are new — Phase C (§6.4, §6.5).
 
-### B8. Visual — `visual-view.tsx`
+### B8. Visual — `visual-view.tsx` — **first slice done, 2026-08-10**
 
 1,548 lines, the largest file in the renderer, and the screen where the redesign
 adds the most. Current view has Current/Baseline/Diff, page-vs-element scope,
@@ -522,6 +680,54 @@ into rail + viewer + inspector.
 
 B8 reskins the existing five capabilities. Wipe, Blink, region breakdown,
 baseline provenance and drift are Phase C (§6.6).
+
+**First slice shipped 2026-08-10.** ✅ Captured frames are in the `CRT` bezel —
+the primitive this screen is the reason for. ✅ The compare-mode switch is the
+theme's `Segmented`, whose active item is neutral, which matters more here than
+anywhere else: an accent-coloured segment sitting on a screenshot is a colour
+the page did not put there. ✅ The browser preview now serves a captured run, so
+the screen is reviewable at all — it previously rendered only its empty state,
+which is why this slice is scoped the way it is rather than attempting 1,548
+lines blind.
+
+✅ **The frame rail, 2026-08-10.** Every frame now carries its diff PERCENTAGE
+and there is a "changed only" filter. The percentage is the substantive part: a
+run with forty frames and three real changes was a row of near-identical bars —
+the strip could say THAT a frame changed but never by how much, so a 0.01%
+antialiasing shift and a 40% layout break looked identical and triage meant
+clicking through one frame at a time. The filter is offered only when it would
+do something, and it always keeps the SELECTED frame even when that frame did
+not change: dropping it while the viewer above still shows it would leave the
+rail disagreeing with the picture, and the user with no handle to move off it.
+The bars take the palette (phos/red for the two real outcomes, neutral for a
+frame that was never attempted, an amber inset rail to mark a change — caution,
+not an outcome, since the frame still passed).
+
+✅ **The threshold, drawn against the frames, 2026-08-11.** The slider used to be
+a number with no consequence on screen — "0.20%" says nothing about whether
+moving it silences the change you are looking at or every change you have. It
+now reads `flags 1 of 2` beside itself, counted over THIS run's frames and
+updated from the drag rather than the committed value, so it answers while you
+move it. The comparison is strictly-greater, matching the comparator that
+produced the ratios: a preview that disagreed with the next run by one frame
+would be worse than none, because it would be believed. Pinned by four tests on
+the pure `framesOverThreshold`.
+
+✅ **The masks / baselines manager, 2026-08-11.** It already existed as a
+capability — `MasksBaselinesDialog` is the per-test managed view, and masks are
+already drawn in the frame by the ignore-region editor — so this was a reskin:
+square hairline rows on `--gl-panel` instead of rounded bordered cards (the SDK
+weight read as a card, which is wrong for something you scan a dozen of), mono
+micro-label headings, neutral chips (neither "which steps" nor "has geometry" is
+a result), and amber on the mask glyph because a mask is a CAUTION about the
+comparison — pixels deliberately not judged — rather than an outcome.
+
+Doing it surfaced a fixture bug worth recording: `visual:listBaselines` was
+answering with bare step ids under a `: string[]` annotation. That type-checked,
+because the annotation was the thing being checked rather than `api.ts`'s actual
+`BaselineEntry[]` — so the manager rendered four rows with no label and "Invalid
+Date", which is exactly the "looks like a broken feature" failure the bridge's
+own header warns about. **With this, §B8 is complete and so is Phase B.**
 
 **One implementation note carried over from the mockup and worth keeping:** the
 diff region boxes are *measured after layout*, never authored as percentages,
@@ -554,44 +760,274 @@ not-cancel, the stale-script warning, the suggested-fix diff, follow-ups. The
 genuinely new element — and it is a *privacy* affordance, so it should ship with
 the reskin rather than waiting for Phase C.
 
+**Shipped 2026-08-10.** ✅ The four tones map onto the pre-redesign contract
+exactly, and — the substantive change — the mapping is now **checkable**:
+`toneFor` returns the palette tone as data, so the contract is asserted by value
+instead of only by label. A wrong colour with a right label used to pass
+everything in this repo. ✅ `ai-debug-icons.test.tsx` extended, plus a guard the
+per-status assertions cannot make: the four meanings must stay in four DIFFERENT
+colours, since two collapsing onto one is the failure that stops the icon
+carrying information at all. ✅ The Sending strip, derived from the same `ctx`
+the prompt is built from, with a drift test that fails if the builder attaches a
+payload the strip does not name. Sizes are characters, not tokens — a token count
+is a guess dressed as a measurement.
+
+✅ **And the panel's chrome, in a follow-up the same day.** Ten icon-only SDK
+buttons became `.gl-icon-btn` — the SDK was spending two different greys
+(`muted`/`transparent`) on one job. "Send to AI" and "Send this data" take
+`tone="ai"`, the holo border, because AI is not an outcome and because that is
+the button which actually sends the payload the strip above it just itemised.
+The prompt preview and code blocks became `.gl-console` on `--gl-black`: a
+prompt is evidence of what was sent, the same category as run output and a
+captured frame, and it should not look like our chrome.
+
 ---
 
 ## 6. Phase C — the redesign's new features
 
 Each is its own PR, each independently useful, ordered by value.
 
-**6.1 The six run states** (from B5). Five new summary panels in test detail.
-Data is already present in `RunRecord` and the heal journal.
+**6.1 The six run states** (from B5). ✅ **Done, 2026-08-12.** Five new summary
+panels in test detail, from data already present in `RunRecord` and the heal
+journal. The state decision and its arithmetic are pure
+(`renderer/lib/run-summary.ts`), the rendering is `run-summary-panel.tsx`, and
+`RunOutput` now shows the six-state chip rather than pass/fail.
 
-**6.2 Inline step composer** (from B6). Retires `add-step-dialog.tsx`. The
-`InsertGap` cursor is the prerequisite and the reason it can be moved.
+Four things the plan did not anticipate, all of which changed the shipped shape:
 
-**6.3 Change temp against real medians.** Wire `Temp` to `metrics-store`
-per-test and per-step medians. Turns a decoration into a measurement.
+- **"retry" had to be translated.** The plan calls it "attempt 1 vs attempt 2",
+  which presumes a runner with `retries` configured. This app configures none —
+  every run is one attempt — so the two attempts are two RUNS. The question
+  survives intact and the answer comes only from what `RunRecord` stores. When
+  NOTHING differed, that is the most useful reading available and the one a user
+  is least likely to reach alone: same engine, same pacing, same budget, opposite
+  outcome, so the test is flaky rather than fixed.
+- **Two of the six passed and are not phos.** `healed` is amber because a
+  mis-heal usually succeeds (clicking the wrong button rarely throws), and a
+  flaky `retry` is amber for the same reason. Reporting either as a plain pass
+  is the app agreeing with the substitution.
+- **The panel now renders with no live run.** It used to appear only once
+  something had executed in this session, so opening a test cold said nothing
+  whatsoever about it. That was invisible while the panel was about failure and
+  indefensible once it was about state.
+- **`.gl-heal-row` already existed** in `shared.css`, used by `heals-panel.tsx`,
+  and the new rows silently inherited it (and leaked into that panel). This is
+  the failure mode `check:renderer-classes` cannot see — the class resolves, to
+  the wrong rule. Renamed to `.gl-run-heal-*`.
 
-**6.4 Stats → Cost mode.** CI spend, manual QA avoided, return on spend, waste
-on flake, regressions caught; spend-by-test table with an earning/review verdict;
-CI minutes trend. Needs a cost-per-minute setting and a "minutes per manual run"
-assumption, both of which must be visible and editable — a number nobody can
-check is a number nobody believes.
+**6.2 Inline step composer** (from B6). ✅ **Done, 2026-08-12.**
+`add-step-dialog.tsx` is now `step-composer.tsx`, and the panel opens BETWEEN
+the two steps the new one will sit between, at the insert cursor, in both the
+main window and the trainer panel.
+
+**The line-count claim in this plan does not survive contact, and should not.**
+§B6 says retiring the dialog "removes 1,170 lines and a modal". It removes the
+modal. The lines are ten step kinds times their fields — the three-checkbox
+wait, the CSS assert that refuses a malformed property, the element-state
+expansion that emits several rows — every one of them behaviour with a test
+behind it. Deleting them to hit a number would be deleting the feature. So the
+forms are untouched and their tests are the same ones; what changed is the frame
+around them.
+
+What the frame had to grow back, having lost Radix:
+
+- **Escape closes it**, bound on the panel. Without it the only way out of a
+  half-filled composer is the mouse.
+- **Add is disabled until the step will actually build.** The modal could afford
+  a permanently-enabled confirm that did nothing — it stayed open, so "nothing
+  happened" read as "I have not finished". A panel sitting in the list cannot: a
+  button that silently declines is indistinguishable from a broken one.
+- **A cap on the form's measure.** The dialog was `size="large"`; the panel
+  inherits the width of the step list, which is most of the window, and an
+  uncapped form puts a label and its control at opposite ends of a thousand
+  pixels.
+
+And one bug the change exposed rather than caused: the composer's reset effect
+was clearing `locator`, which `TargetElementPicker` — a CHILD — had just seeded
+from the picked element. A child's effects run before its parent's, so the reset
+landed second and won. Invisible behind an always-enabled confirm; immediately
+visible as a button that cannot be pressed. The reset is unnecessary now anyway,
+because both call sites `key` the composer on the kind and the picked element,
+so every open and every re-target is a fresh mount.
+
+**6.3 Change temp against real medians.** ✅ **Done, 2026-08-12.** `Temp` now
+reads `metrics-store`, per test and per step, and the step list is where it
+earns its keep: forty durations, one lit row.
+
+- **Per step, BOTH numbers are medians** — recent p50 against the p50 before it,
+  not this run against a median. A single run's duration for a single step is
+  noise (a GC pause, a slow DNS answer), and colouring it would light half the
+  list on every run for reasons that are not about the test. What gets a colour
+  is the step having CHANGED.
+- **Per test, the metrics median is PREFERRED over the one §6.1 derives from run
+  history, and the reason is retention.** `run-history.json` is pruned; the
+  metrics DB is rolled up *before* retention runs, so after a prune it holds
+  strictly more of a test's past. A median is exactly the statistic that
+  degrades when its sample is silently truncated — the number stays plausible
+  and stops being true. It falls back to the history median rather than to no
+  median when metrics are unavailable: losing the better source must not mean
+  losing the answer.
+- **`testDurationTrend` counts PASSED runs only.** A run that died on step two
+  is fast and one that timed out is as slow as the budget; either poisons a
+  median being used to say whether a pass was unusual.
+
+New: `testDurationTrend` in `shared/metrics-query.mjs`, returned on the existing
+`metrics:slowness` channel when a test is named — the step list and the run
+summary are one screen asking one question, and two channels would let them
+answer it from two different reads of a database being written to while they
+look.
+
+**6.4 Stats → Cost mode.** ✅ **Done, 2026-08-12.** CI spend, manual testing
+avoided, return on spend, failures caught and what flake cost — over a
+spend-by-test table with an earning/review verdict. `renderer/lib/cost-model.ts`
+holds the arithmetic; `renderer/main/cost-panel.tsx` renders it into Stats.
+
+**The assumptions are ON THE PANEL, and that is the answer to this section's own
+question.** A Settings row satisfies the letter of "visible and editable" and
+defeats the point: a reader looking at "48m avoided" would have to know the
+assumption exists, guess that Settings is where it lives, and go and find it,
+before they could judge whether the figure means anything. The two inputs sit
+directly under the numbers they produce, so the derivation is part of the
+reading. They are also **not persisted** — they are a lens rather than a
+preference, and storing them would put a third thing in the settings file to
+migrate and back up in exchange for saving one number-typing.
+
+Three refusals shaped the rest:
+
+- **Time is never converted to money.** That needs a third assumption — an
+  hourly rate for whoever would have done the testing — and it is the one this
+  app has no business guessing: it varies by an order of magnitude, nobody would
+  notice a bad default, and a currency figure carries far more authority than
+  the guess behind it deserves. So spend is money, value is TIME, and the ratio
+  is stated in its own unit (hours avoided per unit spent).
+- **No currency symbol anywhere.** The rate is whatever the user typed, in
+  whatever currency they think in; the app is never told which.
+- **"Failures caught", not "regressions caught".** Whether a given failure was a
+  regression, a broken test or flake is exactly what triage and the flake
+  analysis answer probabilistically. Naming it what it is costs one word.
+
+Flake is counted with §6.1's rule, reused rather than re-derived — a failure
+directly followed by a pass with none of the recorded run settings changed. Two
+definitions of flake in one app is how two surfaces end up disagreeing in front
+of a user.
 
 **6.5 Stats → Report mode.** The weekly digest preview, the channel list, and
 exports (PDF / CSV / JUnit XML / public link). **This overlaps heavily with the
 MCP plan's Phase 5 emit adapters** — see §7.3. Build the emitters once, surface
 them here.
 
-**6.6 Visual triage.** Wipe, Blink, region breakdown, baseline provenance, drift.
+**6.6 Visual triage.** **Wipe, Blink and baseline provenance done, 2026-08-12.**
+Region breakdown and drift are what is left — B8 was split the
+same way and for the same reason, that `visual-view.tsx` is the largest file in
+the renderer and the one where a change is most easily made blind.
 
-**6.7 Command palette (⌘K).** Does not exist in any form today. Run a test, run a
-tag, open a view, debug the last failure, record, generate. Straightforward over
-the existing router and query layer.
+**Why these two first.** A diff map is exact and nearly useless for triage: it
+lights every changed pixel with equal weight, so a font-smoothing shift and a
+button that moved 40px look identical. Wipe and Blink put the two frames in the
+same PLACE instead and let the eye do the comparison it is very good at — which
+is the question the three existing modes cannot answer.
+
+- **Neither frame is treated.** Wipe CLIPS rather than fading, and Blink swaps a
+  whole frame rather than cross-dissolving. The premise of both modes is that
+  any difference on screen is a difference in the page, and a partly-transparent
+  layer invents one. `check:crt-untreated` already pinned the rule; it binds
+  hardest here.
+- **Reduced motion makes Blink a MANUAL toggle rather than turning it off.** The
+  alternation is not decoration on top of the information, it IS the
+  information — a Blink that does not blink is a mode that does nothing. But it
+  is also involuntary repeating full-frame motion, which is what somebody
+  turning reduced motion on is asking not to be shown. Both are true, so the
+  capability stays and only the involuntariness goes: the user swaps the frames
+  at their own pace and gets the same comparison.
+- **The wipe divider never reaches an edge.** Flush to one there is no handle
+  left in the frame to drag it back with, and the mode reads as broken. It is
+  also keyboard-driven, since it is the one control on this screen that
+  otherwise needs a steady hand.
+- **The modes are offered only when both frames exist.** A mode whose empty
+  state is "both have to exist" is a mode that should not have been offered.
+
+**Baseline provenance, and the three fields that do not exist.** This section
+asks for "run, commit, browser, viewport, who accepted, when". Three of the six
+are not in this app and were not invented: nothing reads the user's repository,
+so there is no COMMIT in the picture at all; it is a single-user desktop app
+with no identity, so WHO ACCEPTED would read back the same name forever; and
+VIEWPORT is genuinely not on `RunRecord` — a test can carry `viewport` steps
+that resize mid-run, so there is no single viewport for a run to report and
+quoting the first would be wrong for any test that resizes. Fabricating them
+would make the comparison less judgeable while looking like it makes it more.
+
+What ships is the run, when it was pinned, the engine, headed-or-headless,
+whether the baseline is element-scoped — and the one nobody would think to ask
+for: **whether that run still exists.** Retention prunes run history and a
+baseline outlives it, so a baseline can be perfectly valid and no longer
+traceable to anything, which is a fact about how far the comparison can be
+trusted. It says "run since pruned" rather than dropping the field, because a
+provenance line missing a field reads as a rendering bug. It renders in `CRT`'s
+`caption` — a prop that has existed since A3 documented as "what this frame IS"
+and had no consumer until now.
+
+**6.7 Command palette (⌘K).** ✅ **Done, 2026-08-12.** Run a test, run a tag,
+open a view, record, generate, reach the last failure. Ranking in
+`renderer/lib/command-palette.ts`, overlay in `renderer/main/command-palette.tsx`,
+and the strip's `command` slot is filled at last — half the debt
+`top-strip.tsx` describes is discharged.
+
+Four things the line above does not say:
+
+- **"Debug the last failure" became "OPEN the last failure".** An AI debug
+  session needs the script and the run output `test-detail-view` assembles, and
+  a palette reaching across that boundary to fake the context would open a
+  session about the wrong run. The row is named for what it does; the sparkle is
+  one click away and already the right colour.
+- **The scoring is deliberately small** — title prefix, then word prefix, then
+  subsequence, with keyword matches always below every title match, and a
+  shortness term that is a tie-break INSIDE a tier and can never cross between
+  them. A palette's only real failure mode is a wrong FIRST row, because nobody
+  reads the list: they type three letters and press Enter. A general fuzzy
+  matcher guesses, and a palette that guesses is one where the top row moves for
+  reasons the user cannot see.
+- **Groups stop mattering the moment there is a query.** Browsed, the list is
+  blocked into Actions / Tests / Tags / Views; searched, it is flat, because its
+  order IS the answer and re-grouping would destroy what the search produced.
+- **⌘K is the one shortcut in the app that does not exempt text fields.**
+  `HistoryNav`'s ⌘[ does, because `[` is a character somebody might be typing;
+  ⌘K produces none, and a palette you cannot open from the log search is one you
+  learn not to trust.
+
+Still unfilled: `ticker` (§6.8). An affordance for a feature that does not exist
+teaches a shortcut that answers with silence.
 
 **6.8 Job ticker.** The top-strip live readout — one shape, five readings (one
 run / several / batch / failed / idle-hidden). Needs a global run-state
 subscription the app does not currently expose to the shell.
 
-**6.9 Boot sequence.** 2.6s glitch-plate splash. Cheap, and the first thing
-anyone sees. Should respect reduced motion by rendering statically.
+**6.9 Boot sequence.** ✅ **Done, 2026-08-12.** The 2.6s glitch plate, on the
+palette's only true black, wearing the same `echo` treatment as the Home
+wordmark over a phosphor rule that fills for the hold
+(`renderer/theme/shell/boot-plate.tsx`).
+
+Three departures from the one-line brief, each of which the brief implies
+without saying:
+
+- **It is skippable, on any key or any click.** 2.6 seconds is right the first
+  time and wrong the two-hundredth, and a splash you cannot get out of is the
+  reason splashes have a bad name. The skip is deliberately not advertised — an
+  on-screen "Skip" would make the plate look like something being endured — but
+  it is the first thing anyone tries.
+- **It covers the app rather than delaying it.** Everything below is mounted and
+  interactive the whole time; the plate is a curtain over a running show, not a
+  loading screen holding one up. It is inert to the pointer for the same reason,
+  so the skip never reads as the app dropping input.
+- **Reduced motion gets a different DURATION, not just a stiller plate** —
+  900ms. "Render statically" taken literally is a motionless black rectangle
+  held for 2.6 seconds, which does not read as a splash; it reads as a hang. The
+  plate is a performance, and with the performance removed there is less to
+  watch. The fill rule is drawn full and still rather than left empty, because a
+  bar stuck at zero for the whole hold reads as stalled.
+
+The `echo` treatment moved from `screens.css` to `shared.css` and is keyed on
+`.gl-echo` rather than on `.gl-home-mark`: a second screen wanted it, which is
+exactly the rule the four-stylesheet split states.
 
 ---
 
@@ -720,7 +1156,7 @@ Known from this repo's own recorded gotchas:
   install that `step-replayer.dom.test.ts` already does. Without it the measured
   boxes are all zero and the test proves nothing while passing.
 
-### 8.3 New guards — four `check:*` scripts
+### 8.3 New guards — five `check:*` scripts
 
 The visual contract needs source-level guards, because the failure mode is silent
 and neither type-check nor jsdom observes it. Modelled on `check:text-color`,
@@ -732,6 +1168,8 @@ which exists for exactly this reason.
 | `check:status-width` ✅ | **Shipped in A3.** Every status chip uses `STATUS_W`. A ragged status column is the exact thing the fixed width exists to prevent, and it degrades one row at a time. Also pins that `78px` is written down in exactly one file — a second copy will not be changed with the first. |
 | `check:selection-neutral` ✅ | **Shipped in A3.** No selection treatment uses a status hue. Two tiers, from the palette's own token list: the outcome hues and violet are banned from any selection, hover or active state; `--gl-cyan` is declared "running / live / **focus**", so it is allowed on a caret or focus ring but never on a selection. |
 | `check:crt-untreated` ✅ | **Shipped in A3.** No scanline, grain, vignette, filter, blend mode or shadow inside a `CRT` (the caption is exempt — it is chrome, not evidence). The z-index is asserted as a RELATIONSHIP to `--gl-z-atmo`, not as the number 610, so raising the overlays without raising the bezel fails. |
+
+| `check:sdk-retired` ✅ | **Shipped in A5.** The surfaces already moved onto the theme layer import only structural or native-backed pieces from `@ui`. Not a style rule — a guard against erosion: a Phase B PR needs a button, `Button` is one import away and is what eighty other files still use, and a rounded control among square ones is invisible to jsdom, to type-check and to a reviewer reading a 400-line reskin diff. It asserts the mirror too (every retired surface must actually read the theme), because `pager.tsx` imports nothing from `@ui` at all and would otherwise pass vacuously. |
 
 Plus one extension: **`check:text-color` widens** from `Text`'s colour to the
 retired-SDK surfaces, or is retired itself as those surfaces stop using `Text`.
@@ -767,16 +1205,16 @@ catches it.
 
 | # | Work | Depends on | Rough size |
 |---|---|---|---|
-| A1 | Port `dev:web` to `main` | — | 1 day |
-| A2 | Tokens, fonts, atmosphere, reduced-motion floor | A1 | 1 day |
-| A3 | Fifteen primitives + tests | A2 | 3–4 days |
-| A4 | Shell: top strip, rail, views nav; retire light theme | A3 | 2 days |
-| A5 | Retire SDK on shared components | A3 | 2 days |
+| A1 | Port `dev:web` to `main` | — | 1 day ✅ |
+| A2 | Tokens, fonts, atmosphere, reduced-motion floor | A1 | 1 day ✅ |
+| A3 | Fifteen primitives + tests | A2 | 3–4 days ✅ |
+| A4 | Shell: top strip, rail, views nav; retire light theme | A3 | 2 days ✅ |
+| A5 | Retire SDK on shared components | A3 | 2 days ✅ |
 | B1–B9 | Parity reskin, one screen per PR | A4, A5 | 2–4 days each; B5 and B8 at the top of that range |
 | C | Nine new features, independently | their screen's B | 1–4 days each |
 | D | Routines, groups, emit adapters, capture parity | C where noted | per ROUTINES.md and the MCP plan |
 
-Phase A is ~9 days and unlocks everything. Phase B is the bulk. Phase C and D are
+Phase A landed on 2026-08-10 and unlocks everything. Phase B is the bulk. Phase C and D are
 separable and can be reprioritised freely once the foundation is in.
 
 ---
@@ -785,22 +1223,28 @@ separable and can be reprioritised freely once the foundation is in.
 
 Not blocking, but each will need an answer before the PR it affects.
 
-1. **Cost mode's inputs** (§6.4). Cost per CI minute and minutes-saved-per-manual-run
-   are assumptions. Settings rows, or hardcoded with a visible "edit these"
-   affordance?
+1. ~~**Cost mode's inputs** (§6.4)~~ — ✅ **Answered 2026-08-12: hardcoded
+   defaults with a visible "edit these" affordance, in the Cost panel itself.**
+   Not Settings rows. The reasoning is in §6.4 and in DECISIONS: a figure whose
+   assumption lives on another screen is one the reader has to go looking for
+   before they can judge it, which is the failure the requirement was written
+   against.
 2. **The `job` ticker's data source** (§6.8). The shell needs a global run-state
    subscription. Does that come from `recorder-store`, a new provider, or a
    query?
 3. **Report mode's "Where it goes"** (§7.3). Confirmed as emit-only? If any of it
    ever sends, that is a new egress path and needs its own decision entry.
-4. **`check:text-color`'s fate** (§8.3).
+4. ~~**`check:text-color`'s fate** (§8.3)~~ — answered for now in A5: **keep it**.
+   The five shared components no longer render `Text`, but forty-odd files still
+   do, so its subject is not gone until they are. Ask again per Phase B PR.
 5. ~~**CLAUDE.md's directory map is stale**~~ — ✅ **Resolved in A2.**
    `renderer/components/` had already gone by the time A2 landed;
    `renderer/theme/` and the undocumented `renderer/trainer/` were added, and the
    test counts refreshed.
 6. **The `ember` texture plate needs source art** (§3.5). `acid-25.jpg` is in the
-   mockup zip, which is not checked in. Blocks B1's full-bleed plate, nothing
-   earlier — the three global overlay layers do not depend on it.
+   mockup zip, which is not checked in. **No longer blocking**: B1 shipped the
+   plate without it — the radial falloff plus an ember wash — and the photograph
+   is now a one-rule addition rather than a prerequisite. Still worth supplying.
 
 ---
 

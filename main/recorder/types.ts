@@ -317,6 +317,39 @@ export function isRunBrowser(v: unknown): v is RunBrowser {
   return typeof v === "string" && (RUN_BROWSERS as string[]).includes(v);
 }
 
+/** How big the app's own interface is drawn, as a zoom factor.
+ *
+ *  A CLOSED SET, and the validator below is membership rather than a range
+ *  clamp — on purpose. This number is handed to `webContents.setZoomFactor`
+ *  for every app window (see `main/services/ui-scale.ts`), and a `0`, a `NaN`
+ *  or a `1e9` arriving through `recorder:setSettings` does not degrade, it
+ *  makes every window unreadable — INCLUDING the Settings window, which is the
+ *  only place the value can be changed back. A clamp would still accept a
+ *  garbage type and round it into range; four allowed values cannot be wedged. */
+export type UiScale = 0.9 | 1 | 1.1 | 1.25;
+
+export const UI_SCALES: UiScale[] = [0.9, 1, 1.1, 1.25];
+
+export function isUiScale(v: unknown): v is UiScale {
+  return typeof v === "number" && (UI_SCALES as number[]).includes(v);
+}
+
+/** Which typeface pairing the interface is set in.
+ *
+ *  A NAME, never a font family. The name is what crosses IPC and what is
+ *  stored; the families themselves live in `renderer/theme/tokens.css` and are
+ *  selected by a `data-gl-typeface` attribute. A free-text family would be a
+ *  string from an IPC caller landing inside a `font-family` declaration, and
+ *  there is no useful way to validate one — an enum of three has nothing to
+ *  validate against a stylesheet at all. */
+export type UiTypeface = "space" | "system" | "classic";
+
+export const UI_TYPEFACES: UiTypeface[] = ["space", "system", "classic"];
+
+export function isUiTypeface(v: unknown): v is UiTypeface {
+  return typeof v === "string" && (UI_TYPEFACES as string[]).includes(v);
+}
+
 export interface TestRecord {
   id: string;
   name: string;
@@ -353,6 +386,15 @@ export interface TestRecord {
    *  run — is missing those edits. Absent on records written before the reason
    *  was tracked; treat that as `"parse"`, the only cause that existed then. */
   stepsDivergedReason?: "parse" | "unapplied";
+  /** true when the user has waved the divergence warning off. Kept on the record
+   *  rather than in renderer state so it survives leaving the test — a warning
+   *  you can only silence until you click away is one you learn to read past.
+   *
+   *  Cleared whenever divergence is ESTABLISHED AFRESH — an apply whose script
+   *  won't fully parse back into steps, or a step edit saved without
+   *  regenerating. So the banner returns for a new divergence and stays gone for
+   *  the one already acknowledged, which is the whole distinction. */
+  stepsDivergedDismissed?: boolean;
   /** Visual-diff sensitivity for capture runs (Phase 3): the percent of pixels
    *  (0–100) allowed to change vs the pinned baseline before a step is flagged
    *  "visual change detected". Absent → DEFAULT_VISUAL_THRESHOLD. */
@@ -910,6 +952,247 @@ export function normalizePickedElement(input: unknown): PickedElement | null {
   };
 }
 
+/** One element the failing locator actually resolved to. Every field is
+ *  page-authored — see normalizeStepStructures. */
+export interface StepMatch {
+  index: number;
+  tag: string;
+  id?: string;
+  testid?: string;
+  ariaLabel?: string;
+  text?: string;
+  classes: string[];
+  /** ancestors that could scope a locator (testid, id or landmark), nearest first */
+  ancestors: string[];
+  visible: boolean;
+  enabled: boolean;
+  rect?: { x: number; y: number; w: number; h: number };
+}
+
+/** One failing step's page structure, rebuilt for a prompt. Two independent
+ *  records of the same moment, and the difference between them is the whole
+ *  point: `matches` is what the locator LITERALLY resolved to, `candidates` is
+ *  what Auto-Heal thought RESEMBLED the element we wanted. An ambiguous locator
+ *  is answered by the first; a stale one by the second.
+ *  The renderer mirror is in renderer/lib/recorder-types.ts. */
+export interface StepStructure {
+  stepIndex: number;
+  stepLabel: string;
+  /** the Locator action that failed (`click`, `fill`, …) */
+  method?: string;
+  originalLocator?: Locator;
+  /** how many elements matched, before `matches` was capped */
+  matchCount?: number;
+  matches: StepMatch[];
+  /** absent when Auto-Heal never got as far as ranking (the step healed, or
+   *  only the match record exists) */
+  outcome?: "exhausted" | "no-candidates";
+  candidates: HealCandidate[];
+}
+
+/** Failing steps whose Auto-Heal candidates are worth showing, capped. Each
+ *  entry describes real elements, so this is where the per-step budget is
+ *  spent — see MAX_STRUCTURE_CANDIDATES. */
+export const MAX_STRUCTURE_STEPS = 10;
+export const MAX_STRUCTURE_CANDIDATES = 20;
+
+/**
+ * Rebuild the page structure Auto-Heal recorded for the steps it could not
+ * rescue (`heal-failures.json`).
+ *
+ * This is the same boundary as the step queue, one remove further out. The
+ * probe runs INSIDE the page and its `description` and `locator` fields are
+ * built from whatever the site's DOM says — so a hostile page picks every
+ * string here. They are read off disk rather than off `data-pw-queue`, which
+ * changes nothing: `writeHealFailures` persists the fixture's JSON verbatim,
+ * and what it persists is page-authored.
+ *
+ * Rebuilt, not filtered, per the rule the other normalizers in this file
+ * follow: spreading the input would carry every unknown key into a prompt the
+ * moment someone adds a field to HealFailure.
+ */
+export function normalizeStepStructures(input: unknown): StepStructure[] {
+  if (!Array.isArray(input)) return [];
+  const out: StepStructure[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const f = raw as Record<string, unknown>;
+    const outcome = oneOf(f.outcome, ["exhausted", "no-candidates"] as const);
+    if (!outcome) continue;
+    const candidates: HealCandidate[] = [];
+    if (Array.isArray(f.candidates)) {
+      for (const c of f.candidates) {
+        if (!c || typeof c !== "object") continue;
+        const cand = c as Record<string, unknown>;
+        const locator = normalizeLocator(cand.locator);
+        if (!locator) continue;
+        candidates.push({
+          locator,
+          description: str(cand.description) ?? "",
+          // A score outside 0–1 is not a score. Dropped to 0 rather than
+          // clamped: a made-up 1 would sort a hostile candidate to the top of
+          // a list the model reads as ranked.
+          score:
+            typeof cand.score === "number" && Number.isFinite(cand.score) &&
+            cand.score >= 0 && cand.score <= 1
+              ? cand.score
+              : 0,
+          matchedPastRun: cand.matchedPastRun === true,
+        });
+        if (candidates.length >= MAX_STRUCTURE_CANDIDATES) break;
+      }
+    }
+    const entry: StepStructure = {
+      stepIndex: int(f.stepIndex, 0, 100_000) ?? 0,
+      stepLabel: str(f.stepLabel) ?? "",
+      outcome,
+      matches: [],
+      candidates,
+    };
+    const method = str(f.method);
+    if (method !== undefined) entry.method = method;
+    const originalLocator = normalizeLocator(f.originalLocator);
+    if (originalLocator !== undefined) entry.originalLocator = originalLocator;
+    out.push(entry);
+    if (out.length >= MAX_STRUCTURE_STEPS) break;
+  }
+  return out;
+}
+
+/** Elements described per failing step. Deliberately smaller than the fixture's
+ *  own cap: this is a list to be PICKED FROM, and one longer than this is one
+ *  nobody reads. `matchCount` reports the true total either way. */
+export const MAX_STRUCTURE_MATCHES = 20;
+/** Ancestors and class names kept per element. Both are page-authored lists of
+ *  unbounded length; three of each is enough to tell two matches apart. */
+const MAX_MATCH_ANCESTORS = 3;
+const MAX_MATCH_CLASSES = 3;
+/** Longest page-authored string kept in a match descriptor. Far under
+ *  MAX_STEP_STRING_LENGTH on purpose — twenty of these go into one prompt, and
+ *  8000 characters of button text each would be the whole context window. */
+const MAX_MATCH_TEXT = 200;
+
+function shortStr(v: unknown): string | undefined {
+  return typeof v === "string" && v.length > 0 ? v.slice(0, MAX_MATCH_TEXT) : undefined;
+}
+
+function strList(v: unknown, max: number): string[] {
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const item of v) {
+    const s = shortStr(item);
+    if (s !== undefined) out.push(s);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+/**
+ * Rebuild what the failing locator actually resolved to (`matches.json`).
+ *
+ * Same boundary as everything else here, and the most directly page-authored of
+ * the lot: these fields ARE the site's DOM — its text, its ids, its class
+ * names, read straight off the elements. They go into a prompt whose answer the
+ * user can apply to their script with one click, so a page can put whatever it
+ * likes in a button's `aria-label` and have the model read it. Naming the data
+ * untrusted in the payload is the mitigation for that; this function's job is
+ * the shape and the size.
+ */
+export function normalizeStepMatches(input: unknown): StepStructure[] {
+  if (!Array.isArray(input)) return [];
+  const out: StepStructure[] = [];
+  for (const raw of input) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const f = raw as Record<string, unknown>;
+    const matches: StepMatch[] = [];
+    if (Array.isArray(f.matches)) {
+      for (const m of f.matches) {
+        if (!m || typeof m !== "object") continue;
+        const el = m as Record<string, unknown>;
+        const tag = shortStr(el.tag);
+        // A descriptor with no tag is not an element description. Dropped
+        // rather than defaulted: "" would render as a blank line the model
+        // would count among the candidates it is choosing between.
+        if (!tag) continue;
+        const match: StepMatch = {
+          index: int(el.index, 0, 100_000) ?? matches.length,
+          tag,
+          classes: strList(el.classes, MAX_MATCH_CLASSES),
+          ancestors: strList(el.ancestors, MAX_MATCH_ANCESTORS),
+          visible: el.visible === true,
+          // Defaults to ENABLED, matching the DOM: `disabled` is the property
+          // that exists, and a missing field meaning "disabled" would have the
+          // payload tell the model an element it can click cannot be clicked.
+          enabled: el.enabled !== false,
+        };
+        const id = shortStr(el.id);
+        const testid = shortStr(el.testid);
+        const ariaLabel = shortStr(el.ariaLabel);
+        const text = shortStr(el.text);
+        if (id !== undefined) match.id = id;
+        if (testid !== undefined) match.testid = testid;
+        if (ariaLabel !== undefined) match.ariaLabel = ariaLabel;
+        if (text !== undefined) match.text = text;
+        if (el.rect && typeof el.rect === "object") {
+          const r = el.rect as Record<string, unknown>;
+          const nums = [r.x, r.y, r.w, r.h].map((n) => int(n, -1_000_000, 1_000_000));
+          // All four or none: a partial rect would read as a real measurement.
+          if (nums.every((n) => n !== undefined)) {
+            match.rect = { x: nums[0]!, y: nums[1]!, w: nums[2]!, h: nums[3]! };
+          }
+        }
+        matches.push(match);
+        if (matches.length >= MAX_STRUCTURE_MATCHES) break;
+      }
+    }
+    const entry: StepStructure = {
+      stepIndex: int(f.stepIndex, 0, 100_000) ?? 0,
+      stepLabel: str(f.stepLabel) ?? "",
+      matches,
+      candidates: [],
+    };
+    const matchCount = int(f.matchCount, 0, 1_000_000);
+    if (matchCount !== undefined) entry.matchCount = matchCount;
+    const method = str(f.method);
+    if (method !== undefined) entry.method = method;
+    const originalLocator = normalizeLocator(f.originalLocator);
+    if (originalLocator !== undefined) entry.originalLocator = originalLocator;
+    out.push(entry);
+    if (out.length >= MAX_STRUCTURE_STEPS) break;
+  }
+  return out;
+}
+
+/**
+ * One record per failing step, from the two files that describe one.
+ *
+ * They are written by the same fixture at the same moment but are not the same
+ * question, and either can exist without the other: a step whose locator was
+ * ambiguous and then HEALED leaves a match record and no heal failure, while a
+ * run from before this existed leaves the reverse. Joined on step index, with
+ * the matches taking the identity fields — both wrote them from the same
+ * `entry`, so they agree, and preferring one avoids a merge that has to decide.
+ */
+export function buildStepStructures(healFailures: unknown, matchSets: unknown): StepStructure[] {
+  const byIndex = new Map<number, StepStructure>();
+  for (const m of normalizeStepMatches(matchSets)) byIndex.set(m.stepIndex, m);
+  for (const h of normalizeStepStructures(healFailures)) {
+    const existing = byIndex.get(h.stepIndex);
+    if (!existing) {
+      byIndex.set(h.stepIndex, h);
+      continue;
+    }
+    existing.outcome = h.outcome;
+    existing.candidates = h.candidates;
+    if (existing.originalLocator === undefined) existing.originalLocator = h.originalLocator;
+    if (!existing.stepLabel) existing.stepLabel = h.stepLabel;
+    if (existing.method === undefined) existing.method = h.method;
+  }
+  return [...byIndex.values()]
+    .sort((a, b) => a.stepIndex - b.stepIndex)
+    .slice(0, MAX_STRUCTURE_STEPS);
+}
+
 /** Every usable step from one drain of the capture queue, capped. */
 export function normalizeRawSteps(input: unknown): RawStep[] {
   if (!Array.isArray(input)) return [];
@@ -1269,6 +1552,14 @@ export interface RecorderSettings {
    *  caching, which is what headers are usually wanted for; this is the
    *  explicit escape hatch for anything else, and it can capture credentials. */
   recordAllHeaders: boolean;
+  /** Draw each library row's icon by fetching a third-party favicon instead of
+   *  the generated monogram (default false).
+   *
+   *  AN EGRESS SWITCH, so `false` is a security default and not a taste one:
+   *  turning it on tells icons.duckduckgo.com the hostname of every test in the
+   *  library, every time the sidebar draws. See `SiteIcon` and REDESIGN §3.5;
+   *  `check:renderer-egress` pins both defaults and the disclosure copy. */
+  siteIconsFromWeb: boolean;
   /** default value of the per-test "Check accessibility" toggle (default
    *  false). Off by default because axe typically costs more per step than
    *  everything else the step does. */
@@ -1342,6 +1633,22 @@ export interface RecorderSettings {
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];
+  /** How big the app's interface is drawn (default 1 = 100%).
+   *
+   *  A ZOOM FACTOR AND NOT A FONT SIZE, which is the whole design of this
+   *  setting: the theme is tuned in whole pixels (9.5px labels inside 24px
+   *  controls inside a 34px strip), so growing the text alone overflows the
+   *  chrome around it in about a dozen places. Zoom scales both together and
+   *  the proportions survive. Applied to the app's own windows only — never to
+   *  the training browser. See `main/services/ui-scale.ts`. */
+  uiScale: UiScale;
+  /** Which typeface pairing the interface is set in (default "space").
+   *
+   *  "space" is the bundled Space Mono / Space Grotesk pairing the redesign was
+   *  drawn in; "system" and "classic" are faces macOS already has. Nothing here
+   *  is fetched — see the header of `renderer/theme/fonts.css` for why this app
+   *  does not load fonts over the network. */
+  uiTypeface: UiTypeface;
 }
 
 /** What a successful Auto-Heal is allowed to do to the stored test. */
@@ -1420,7 +1727,13 @@ export interface RecorderState {
   assertMode: AssertKind | null;
   stepCount: number;
   testId: string | null;
+  /** where the recording STARTS — what gets saved as the test's URL and what
+   *  the opening `goto` step replays */
   url: string | null;
+  /** where the page is NOW. Separate from `url` on purpose: tracking the live
+   *  location in that field would rewrite every saved test's starting point to
+   *  wherever the user happened to stop. Null outside a session. */
+  liveUrl: string | null;
   name: string | null;
   /** true when continuing/extending an existing test rather than recording a new one */
   editing: boolean;
@@ -1444,9 +1757,6 @@ export interface RecorderState {
    *  The renderer shows a loading modal with copy explaining the load; if this
    *  stays true past the timeout, the session is cancelled and an error shown. */
   loading: boolean;
-  /** set when the training window failed to open within the timeout; the
-   *  renderer shows an error dialog prompting the user to try again. */
-  loadFailed: boolean;
 }
 
 // ── Batch (suite) runs ────────────────────────────────────────────────

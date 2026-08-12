@@ -10,7 +10,32 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 
 import type { Step, StepType } from "../lib/recorder-types";
+import { SEL_RING, TONE, hexToRgb } from "../theme";
 import { StepRow } from "./step-row";
+
+/** jsdom normalises an inline `color` to `rgb(r, g, b)`, so a hex assertion
+ *  never matches what reads back. (`box-shadow` is NOT normalised — see
+ *  CLAUDE.md; that difference has cost time here before.) */
+function rgb(hex: string): string {
+  const c = hexToRgb(hex);
+  return `rgb(${c![0]}, ${c![1]}, ${c![2]})`;
+}
+
+/**
+ * Does this row carry the status rail in `tone`?
+ *
+ * CHECKS BOTH NOTATIONS, and that is not belt-and-braces. jsdom leaves
+ * `box-shadow` exactly as written, so today `inset 2px 0 0 0 #ff4d61` reads back
+ * with the hex — but the same string run through anything that normalises it
+ * comes back as `rgb(...)`, and an assertion pinned to one notation would then
+ * report a working rail as missing. The rule in CLAUDE.md is about the NEGATIVE
+ * case, which is worse: `not.toContain("rgb(...)")` can never fire against a
+ * shadow written in hex, so it passes against the very thing it forbids.
+ */
+function hasRail(el: HTMLElement, hex: string): boolean {
+  const shadow = el.style.boxShadow;
+  return shadow.includes(hex) || shadow.includes(rgb(hex));
+}
 
 function step(partial: Partial<Step> & { type: StepType }): Step {
   return { id: "s1", timestamp: 0, ...partial } as Step;
@@ -59,21 +84,78 @@ describe("rendering", () => {
   });
 });
 
+describe("the type chip is not a verdict", () => {
+  it("draws the step type with the theme's chip", () => {
+    // The SDK `Badge` this replaced mapped `assert` onto its GREEN colour —
+    // the pass hue — on every assertion in every list, so a step list read as
+    // a list of results. `TypeChip`'s palette is deliberately separate from
+    // the status palette: a step's type is not an outcome.
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "assert", locator: LOCATOR })} />,
+    );
+    const chip = container.querySelector('[data-gl="type-chip"]') as HTMLElement;
+    expect(chip).not.toBeNull();
+    expect(chip.dataset.type).toBe("assert");
+    for (const [name, hex] of Object.entries(TONE)) {
+      expect(chip.style.color, name).not.toBe(rgb(hex));
+    }
+  });
+});
+
 describe("run status", () => {
-  it("marks a passed step", () => {
+  it("colours the glyph with the tone the palette declares for it", () => {
+    // COLOUR MEANS OUTCOME, and this glyph is the one thing on the row
+    // reporting one. `running` is cyan — the token's own definition is
+    // "running / live / focus" — and it used to be the SDK's accent, which is
+    // a different blue that means nothing in this palette.
+    for (const [status, hex] of [
+      ["running", TONE.cyan],
+      ["passed", TONE.phos],
+      ["failed", TONE.red],
+    ] as const) {
+      const { container } = render(
+        <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} runStatus={status} />,
+      );
+      const glyph = container.querySelector(`[aria-label="Step ${status}"]`) as HTMLElement;
+      expect(glyph, status).not.toBeNull();
+      expect(glyph.style.color, status).toBe(rgb(hex));
+    }
+  });
+
+  it("marks a passed step with the leading rail, not a fill", () => {
+    // A RAIL SINCE B5a. It was a tinted background plus a ring, which in this
+    // palette makes the row itself the largest coloured surface on screen — a
+    // list with four failures reads as mostly-red before a word is scanned —
+    // and put the colour UNDER the description, which is the text it is about.
     const { container } = render(
       <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} runStatus="passed" />,
     );
-    // Asserted via the accent class rather than an icon name — the point is
-    // that the row is visually distinguished at all.
-    expect(container.innerHTML).toMatch(/support-green|green/);
+    const row = container.firstElementChild as HTMLElement;
+    expect(hasRail(row, TONE.phos)).toBe(true);
+    // The fill is the half that had to go; a rail beside a green row is the
+    // same bug wearing a smaller coat.
+    expect(row.style.background).toBe("");
   });
 
-  it("marks a failed step", () => {
+  it("marks a failed step with the leading rail, not a fill", () => {
     const { container } = render(
       <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} runStatus="failed" />,
     );
-    expect(container.innerHTML).toMatch(/support-red|red/);
+    const row = container.firstElementChild as HTMLElement;
+    expect(hasRail(row, TONE.red)).toBe(true);
+    expect(row.style.background).toBe("");
+  });
+
+  it("marks a running step in cyan, which is not one of the outcomes", () => {
+    // Running is the ABSENCE of a result. Giving it phos or red would make a
+    // step still in flight look like one that has finished and reported.
+    const { container } = render(
+      <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} runStatus="running" />,
+    );
+    const row = container.firstElementChild as HTMLElement;
+    expect(hasRail(row, TONE.cyan)).toBe(true);
+    expect(hasRail(row, TONE.phos)).toBe(false);
+    expect(hasRail(row, TONE.red)).toBe(false);
   });
 
   it("looks different from an unrun step", () => {
@@ -135,7 +217,7 @@ describe("newly-added highlight", () => {
     );
     expect(row(container).getAttribute("data-new-step")).toBe("true");
     expect(row(container).className).toContain("step-new");
-    expect(container.innerHTML).toMatch(/support-red|red/);
+    expect(hasRail(row(container), TONE.red)).toBe(true);
   });
 
   it("keeps the passed run highlight on a step that is also new", () => {
@@ -143,21 +225,43 @@ describe("newly-added highlight", () => {
       <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} runStatus="passed" isNew />,
     );
     expect(row(container).className).toContain("step-new");
-    expect(container.innerHTML).toMatch(/support-green|green/);
+    expect(hasRail(row(container), TONE.phos)).toBe(true);
   });
 
   it("keeps the selection ring on a step that is also new", () => {
+    // NEUTRAL SINCE B5a, and that is the palette rule rather than a restyle:
+    // colour means outcome, so a selected row in the accent competes with what
+    // the rail beside it is reporting. `check:selection-neutral` pins that no
+    // selection in this app is drawn in a status hue.
     const plain = render(
       <StepRow index={0} step={step({ type: "click", locator: LOCATOR })} selected onSelect={() => {}} />,
     );
-    const selectedClasses = row(plain.container).className;
-    expect(selectedClasses).toContain("ring-accent");
+    expect(row(plain.container).style.boxShadow).toContain(SEL_RING);
+    expect(row(plain.container).className).not.toContain("ring-accent");
 
     const { container } = render(
       <StepRow index={1} step={step({ type: "click", locator: LOCATOR })} selected onSelect={() => {}} isNew />,
     );
-    expect(row(container).className).toContain("ring-accent");
+    expect(row(container).style.boxShadow).toContain(SEL_RING);
     expect(row(container).className).toContain("step-new");
+  });
+
+  it("shows the rail and the selection lift at once on a selected failing row", () => {
+    // The single most interesting row on a failed run's step list. They are
+    // both box-shadows, so they compose in one declaration — earlier drafts had
+    // one property replacing the other and whichever rendered last won.
+    const { container } = render(
+      <StepRow
+        index={0}
+        step={step({ type: "click", locator: LOCATOR })}
+        runStatus="failed"
+        selected
+        onSelect={() => {}}
+      />,
+    );
+    const el = row(container);
+    expect(hasRail(el, TONE.red)).toBe(true);
+    expect(el.style.boxShadow).toContain(SEL_RING);
   });
 
   it("leaves the drag-over drop indicator intact", () => {
@@ -427,7 +531,7 @@ describe("the replay pass/fail flash", () => {
   });
 
   it("leaves the run-status highlight alone", () => {
-    // The run highlight is a `ring-*` box-shadow and the flash is an outline,
+    // The run highlight is an inset box-shadow and the flash is an outline,
     // which is the entire reason they are different CSS properties: a failing
     // step that just replayed should show both, not whichever one rendered
     // last.
@@ -439,8 +543,44 @@ describe("the replay pass/fail flash", () => {
         replayFlash="fail"
       />,
     );
-    const row = container.firstElementChild!;
+    const row = container.firstElementChild as HTMLElement;
     expect(row.className).toContain("step-replay-fail");
-    expect(row.className).toContain("ring-support-red/40");
+    expect(hasRail(row, TONE.red)).toBe(true);
+  });
+});
+
+// ── Change temp, against real medians (C §6.3) ──────────────────────────
+//
+// The step list's whole job in this design is to let someone find the row that
+// is UNUSUAL without reading forty durations. Two ways that fails silently: a
+// temp that lights on a single run's noise (a GC pause, a slow DNS answer), and
+// one that colours confidently against a median it does not have.
+
+describe("the step's change temp", () => {
+  const temp = () => document.querySelector('[data-gl="temp"]') as HTMLElement | null;
+
+  it("renders nothing when metrics have no timings for this step", () => {
+    render(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} />);
+    expect(temp()).toBeNull();
+    render(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} trend={{ recentP50Ms: null, previousP50Ms: 900 }} />);
+    expect(temp()).toBeNull();
+  });
+
+  it("measures the recent median against the earlier one, not against a run", () => {
+    // Both numbers are medians on purpose. A single run's duration for a single
+    // step is noise, and colouring it would light half the list on every run
+    // for reasons that are not about the test.
+    render(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} trend={{ recentP50Ms: 2400, previousP50Ms: 900 }} />);
+    expect(temp()?.dataset.mode).toBe("rule");
+    expect(temp()?.getAttribute("title")).toContain("vs median");
+  });
+
+  it("goes neutral rather than confident when there is nothing to compare against", () => {
+    // `Temp` falls to `off` on a missing median by itself — this pins that the
+    // call site does not paper over it with a substituted number, and that the
+    // row says WHY instead of just showing a colourless figure.
+    render(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} trend={{ recentP50Ms: 2400, previousP50Ms: null }} />);
+    expect(temp()?.dataset.mode).toBe("off");
+    expect(temp()?.getAttribute("title")).toContain("no earlier runs to compare against");
   });
 });

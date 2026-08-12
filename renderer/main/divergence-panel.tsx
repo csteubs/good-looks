@@ -13,9 +13,9 @@
 // "only ever tried on chromium" is exactly the thing this panel should nudge
 // about, and hiding it entirely would make a one-engine suite look clean.
 
-import { Text } from "@ui";
 import { Columns3 } from "lucide-react";
 
+import { Panel, TONE } from "../theme";
 import type { DivergentStep } from "../../shared/step-insights.mjs";
 
 /** The sentence for each verdict. Exported so tests assert the copy the user
@@ -45,63 +45,62 @@ export function DivergencePanel({
   if (diverging.length === 0 && untested === 0) return null;
 
   return (
-    <div className="rounded-lg border border-separator bg-panel">
-      <div className="flex items-baseline gap-2 border-b border-separator px-3 py-2">
-        <Text variant="small-strong">Cross-browser divergence</Text>
-        <Text variant="small" color="tertiary">
-          {/* "No step disagrees" is a claim about a COMPARISON, and it may only
-              be made when one happened. A suite that has only ever run on
-              Chromium has compared nothing, and saying it agrees across engines
-              there is the most misleading thing this panel could do — so the
-              reassurance is withheld and the count below carries the message. */}
-          {diverging.length > 0
-            ? `${diverging.length} step${diverging.length === 1 ? "" : "s"} disagree`
-            : steps.some((s) => s.verdict === "clean")
-              ? "no step disagrees across engines"
-              : "nothing has been compared across engines yet"}
-        </Text>
-      </div>
-
+    <Panel
+      title="Cross-browser divergence"
+      // "No step disagrees" is a claim about a COMPARISON, and it may only be
+      // made when one happened. A suite that has only ever run on Chromium has
+      // compared nothing, and saying it agrees across engines there is the most
+      // misleading thing this panel could do — so the reassurance is withheld
+      // and the count below carries the message.
+      id={
+        diverging.length > 0
+          ? `${diverging.length} step${diverging.length === 1 ? "" : "s"} disagree`
+          : steps.some((s) => s.verdict === "clean")
+            ? "no step disagrees across engines"
+            : "nothing has been compared across engines yet"
+      }
+    >
       {diverging.map((s) => (
-        <div
-          key={`${s.testId}:${s.stepId}`}
-          className="flex items-start gap-2 border-b border-separator/50 px-3 py-2"
-        >
-          <Columns3
-            className={`mt-0.5 size-3.5 shrink-0 ${
-              s.verdict === "single-engine" ? "text-accent" : "text-support-orange"
-            }`}
-          />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-small" title={s.label ?? s.stepId}>
+        <div key={`${s.testId}:${s.stepId}`} className="gl-diverge-row">
+          {/* Cyan for the single-engine case is deliberate and is the one hue
+              the selection rule allows outside an outcome: the palette declares
+              it "running / live / focus", and this mark is pointing at a
+              comparison rather than reporting a result. Amber for the rest,
+              which ARE reporting one. */}
+          <span
+            className="gl-diverge-icon"
+            style={{ color: s.verdict === "single-engine" ? TONE.cyan : TONE.amber }}
+          >
+            <Columns3 aria-hidden="true" />
+          </span>
+          <div className="gl-rowline">
+            <div className="gl-rowline-main" title={s.label ?? s.stepId}>
               {s.label ?? s.stepId}
             </div>
-            <Text variant="small" color="tertiary" className="block truncate">
-              {s.testName ?? s.testId}
-            </Text>
-            <Text variant="small" className="block text-secondary">
+            <div className="gl-rowline-sub">{s.testName ?? s.testId}</div>
+            <p className="gl-diverge-verdict">
               {VERDICT_COPY[s.verdict]}
               {": "}
               {/* Both sides named. "Fails on webkit" alone leaves the reader
                   asking "compared with what?", and the answer is the evidence. */}
-              <span className="text-support-red">{s.failingBrowsers.join(", ")}</span>
+              <span className="gl-fail-list">{s.failingBrowsers.join(", ")}</span>
               {s.passingBrowsers.length > 0 ? (
                 <>
                   {" · passes on "}
-                  <span className="text-support-green">{s.passingBrowsers.join(", ")}</span>
+                  <span className="gl-pass-list">{s.passingBrowsers.join(", ")}</span>
                 </>
               ) : null}
-            </Text>
+            </p>
           </div>
         </div>
       ))}
 
       {untested > 0 ? (
-        <Text variant="small" color="tertiary" className="block px-3 py-2">
+        <p className="gl-panel-note">
           {untested} step{untested === 1 ? " has" : "s have"} only ever run on one engine, so
           nothing can be said about {untested === 1 ? "it" : "them"} either way.
-        </Text>
+        </p>
       ) : null}
-    </div>
+    </Panel>
   );
 }

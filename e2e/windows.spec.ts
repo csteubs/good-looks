@@ -7,10 +7,14 @@
 // screen.
 //
 // The window is opened by invoking the channel directly rather than by clicking
-// the sidebar's gear. That entry point goes through `Menu.popup`, a real macOS
-// menu whose items never enter the DOM — deliberately, and documented as such.
-// Driving the channel tests the half that is actually testable; the menu
-// template itself is covered at the unit level.
+// the settings gear. That was once forced — the entry point went through
+// `Menu.popup`, a real macOS menu whose items never enter the DOM — and since
+// A4 the gear is an ordinary button in the top strip, so the click IS
+// available. Driving the channel is still what this test wants: it isolates the
+// half only an end-to-end run can check (a second real window being created and
+// not duplicated) from the half that is just a click. That the gear is
+// reachable at all, under two full-viewport overlays, is asserted in
+// `chrome-clickable.spec.ts`.
 
 import { test, expect } from "./fixtures.js";
 

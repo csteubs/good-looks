@@ -4,7 +4,7 @@
 
 import type { LlmMessage } from "./llm-types";
 import type { Locator, TestSpeed } from "./recorder-types";
-import { LOG_REQUEST_PROTOCOL } from "./ai-log-request";
+import { logRequestProtocol, type LogRequestNeed } from "./ai-log-request";
 // The runner's own table, not a copy of it. The model is told what the run
 // ACTUALLY did, so a stale number here is the app confidently stating a wrong
 // fact to something reasoning from it — quieter than the MCP's copy was, and
@@ -54,6 +54,65 @@ export interface DebugContext {
    *  told it may ask for them — offering data that doesn't exist wastes a round
    *  trip and teaches the model to ask for things nobody can supply. */
   logsAvailable?: boolean;
+  /** Whether this run recorded the page structure Auto-Heal probed for. Same
+   *  rule as logsAvailable, and separately true: Auto-Heal and console
+   *  recording are independent settings, so either can be the only one on. */
+  structureAvailable?: boolean;
+}
+
+/** One item in the "Sending" strip: what is attached, and how big it is. */
+export interface SendingItem {
+  label: string;
+  /** Rough size, in characters of prompt text. `null` for a fact rather than a
+   *  payload — the URL is one line, and quoting a byte count for it is noise. */
+  chars: number | null;
+}
+
+/**
+ * What this app is about to send to a model, itemised.
+ *
+ * A PRIVACY AFFORDANCE, WHICH IS WHY IT SHIPS WITH THE RESKIN RATHER THAN
+ * WAITING FOR PHASE C (REDESIGN §B9). "Debug with AI" can send a user's script
+ * and a run's console output to a hosted provider, and until now the only way
+ * to know what left the machine was to read this function's source. A test
+ * script routinely contains staging hostnames, seeded credentials and
+ * customer-shaped fixture data; run output contains whatever the page logged.
+ * Someone deciding whether to press the button deserves the list.
+ *
+ * DERIVED FROM THE SAME `ctx` THE PROMPT IS BUILT FROM, deliberately. A
+ * hand-maintained second list is a list that eventually describes a prompt the
+ * app no longer sends — and an inaccurate privacy disclosure is worse than
+ * none, because it is trusted. Guarded by a test that fails when the builder
+ * gains a payload this does not name.
+ *
+ * Sizes are CHARACTERS, not tokens. A token count would be a guess dressed as a
+ * measurement — it depends on the tokenizer, which depends on the provider and
+ * the model — and the question being answered here is "how much of my stuff",
+ * for which characters are honest and sufficient.
+ */
+export function describeSending(ctx: DebugContext): SendingItem[] {
+  const items: SendingItem[] = [
+    { label: "Test name", chars: ctx.testName.length },
+    { label: "Target URL", chars: null },
+    {
+      label: ctx.script.length > MAX_SCRIPT_CHARS ? "Test script (truncated)" : "Test script",
+      chars: Math.min(ctx.script.length, MAX_SCRIPT_CHARS),
+    },
+    { label: "Run output", chars: ctx.output.length },
+  ];
+  // Only when the run actually recorded them AND the model is told it may ask.
+  // Listing a capability the prompt does not offer would overstate what leaves
+  // the machine, which is the same failure as understating it.
+  if (ctx.logsAvailable) {
+    items.push({ label: "Console & network, if the model asks for them", chars: null });
+  }
+  return items;
+}
+
+/** Total attached payload, in characters. Separate from the list because the
+ *  strip shows one number and the list is behind it. */
+export function sendingTotalChars(items: SendingItem[]): number {
+  return items.reduce((sum, item) => sum + (item.chars ?? 0), 0);
 }
 
 export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
@@ -83,10 +142,16 @@ export function buildDebugMessages(ctx: DebugContext): LlmMessage[] {
       : null,
   ].filter((line): line is string => line !== null);
 
+  const available: LogRequestNeed[] = [
+    ...(ctx.logsAvailable ? (["console", "network"] as const) : []),
+    ...(ctx.structureAvailable ? (["structure"] as const) : []),
+  ];
+  const protocol = logRequestProtocol(available);
+
   return [
     {
       role: "system",
-      content: ctx.logsAvailable ? `${SYSTEM_PROMPT}\n\n${LOG_REQUEST_PROTOCOL}` : SYSTEM_PROMPT,
+      content: protocol ? `${SYSTEM_PROMPT}\n\n${protocol}` : SYSTEM_PROMPT,
     },
     {
       role: "user",
@@ -173,6 +238,16 @@ This app's generated specs always follow these conventions — follow them exact
 - Start every test by navigating to the requested URL with await page.goto(...).
 - If a browser viewport is specified in the user message, the very first line inside the test(...) body (before goto) must be await page.setViewportSize({ width: <w>, height: <h> }) using the exact dimensions given. Never substitute your own default viewport size.
 - Add assertions that verify the user's intent, not just that actions ran.
+
+The spec is also read back into the app's own step list, which is what the trainer edits and replays. Statements outside the vocabulary below still RUN, but they cannot become steps — so write the flow as a flat sequence of the supported calls:
+- Write each action as one self-contained statement: \`await page.<locatorBuilder>(...).<action>(...);\`. Do NOT assign a locator to a variable and act on it later, and do NOT chain refinements like .first(), .nth(), .filter() or .or() onto a locator.
+  Bad:  const submit = page.getByRole('button', { name: 'Submit' }); await submit.click();
+  Good: await page.getByRole('button', { name: 'Submit' }).click();
+- Supported actions: .click(), .fill(), .selectOption(), .check(), .uncheck(), .press(), .hover(), .focus(), .waitFor({ state }). Plus page.goto(), page.setViewportSize(), page.keyboard.press().
+- Every expect() must take a locator or \`page\` as its subject: expect(page.getByText('Welcome')).toBeVisible(), expect(page).toHaveURL(...). Never expect() a JavaScript value.
+- Do NOT read data out of the page (.textContent(), .allTextContents(), .isVisible() into a variable), and do NOT use if/ternary branching, loops, or intermediate variables to decide what to assert. Assert the expected state directly.
+- Do NOT wrap the flow in test.step(...) blocks — write the statements directly in the test body.
+- Comments and console.log() calls are welcome and are ignored by the step reader — use them to label the phases of the flow.
 
 Output format:
 - Output ONLY the complete spec file inside a single fenced code block with a "ts" language tag. No prose before or after the block.

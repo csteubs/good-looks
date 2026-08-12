@@ -22,7 +22,6 @@ import type { IpcRendererEvent } from "electron";
 import type {
   MessageBoxOptions,
   MessageBoxResult,
-  NativeThemeInfo,
   OpenDialogOptions,
   OpenDialogResult,
   PopupOptions,
@@ -35,7 +34,6 @@ import type {
 export type {
   MessageBoxOptions,
   MessageBoxResult,
-  NativeThemeInfo,
   OpenDialogOptions,
   OpenDialogResult,
   SaveDialogOptions,
@@ -91,6 +89,15 @@ const glazeAPI = {
     showItemInFolder(fullPath: string): void {
       void ipcRenderer.invoke("shell:showItemInFolder", fullPath).catch(() => {});
     },
+
+    // Opens a URL in the user's real browser; used by the branch menu's
+    // pull-request icon. NOT a general "open anything" — the main side accepts
+    // https on github.com and refuses everything else, because the alternative
+    // is handing an arbitrary scheme to Launch Services. See
+    // `main/shell/external-url.ts`.
+    openExternal(url: string): void {
+      void ipcRenderer.invoke("shell:openExternal", url).catch(() => {});
+    },
   },
 
   // ── Clipboard — used to copy failed-run output for external LLMs ────
@@ -99,20 +106,6 @@ const glazeAPI = {
       void ipcRenderer.invoke("clipboard:writeText", text).catch(() => {});
     },
     readText: (): Promise<string> => ipcRenderer.invoke("clipboard:readText"),
-  },
-
-  // ── Native theme ────────────────────────────────────────────────────
-  nativeTheme: {
-    getInfo: (): Promise<NativeThemeInfo> => ipcRenderer.invoke("nativeTheme:getInfo"),
-
-    setThemeSource: (source: "system" | "light" | "dark"): Promise<boolean> =>
-      ipcRenderer.invoke("nativeTheme:setThemeSource", source),
-
-    getShouldUseDarkColors: (): Promise<boolean> =>
-      ipcRenderer.invoke("nativeTheme:getShouldUseDarkColors"),
-
-    getThemeSource: (): Promise<"system" | "light" | "dark"> =>
-      ipcRenderer.invoke("nativeTheme:getThemeSource"),
   },
 
   // ── Native menus (popup answers with the picked commandId) ──────────

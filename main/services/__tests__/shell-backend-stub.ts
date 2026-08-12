@@ -138,6 +138,54 @@ export class BrowserWindow {
     return { x: 0, y: 0, width: 1200, height: 820 };
   }
   async loadURL(_url: string): Promise<void> {}
+  contentView = { addChildView(_view?: unknown): void {}, removeChildView(_view?: unknown): void {} };
+}
+
+/**
+ * Inert `WebContentsView` stand-in, same contract as the window above: it exists
+ * so a check that imports `recorder-service.ts` can link, not so anything runs.
+ * The recorder's page now lives in one of these, so a check reaching the real
+ * class would try to spawn a renderer inside a plain node bundle.
+ */
+export class WebContentsView {
+  constructor(_options?: unknown) {}
+  webContents = {
+    id: 0,
+    on(): void {},
+    once(): void {},
+    removeAllListeners(): void {},
+    setWindowOpenHandler(): void {},
+    getURL(): string {
+      return "";
+    },
+    getZoomFactor(): number {
+      return 1;
+    },
+    setZoomFactor(_factor: number): void {},
+    focus(): void {},
+    isDestroyed(): boolean {
+      return true;
+    },
+    close(): void {},
+    async loadURL(_url: string): Promise<void> {},
+    async executeJavaScriptInIsolatedWorld(): Promise<unknown> {
+      return undefined;
+    },
+    sendInputEvent(_event?: unknown): void {},
+    session: {
+      setPermissionRequestHandler(): void {},
+      setPermissionCheckHandler(): void {},
+      cookies: {
+        async get() {
+          return [];
+        },
+        async set() {},
+        async remove() {},
+      },
+    },
+  };
+  setBounds(_bounds?: unknown): void {}
+  setBackgroundColor(_color?: string): void {}
 }
 
 const STUB_DISPLAY = {

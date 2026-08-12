@@ -6,12 +6,16 @@ import "../styles.css";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { TooltipProvider, Toaster } from "@ui";
 import { initLogging } from "../lib/logging";
-
-declare const __APP_DISPLAY_NAME__: string | undefined;
+import { startTypeface } from "../lib/typeface";
 
 initLogging();
+// Each window is its own document, so each one applies the typeface itself.
+startTypeface();
 
-document.title = __APP_DISPLAY_NAME__ || document.title;
+// The main window is deliberately untitled — no `document.title` here. A page
+// title becomes the window's title bar, and the app's name is already in the
+// menu bar and the Dock. main/index.ts refuses page titles for the same
+// reason; both ends are pinned by `check:app-identity`.
 
 // Get the root element
 const rootElement = document.getElementById("root");

@@ -191,13 +191,50 @@ describe("HealsView", () => {
   });
 
   it("says whether the stored test was actually changed", async () => {
+    // The words are the design's four (B2), and they are shorter than the
+    // "Suggestion only" / "Applied to the test" they replaced because the chip
+    // is a FIXED WIDTH — the column's one edge is the contract, and a chip that
+    // sizes to its own sentence is what breaks it.
     journal = [heal({ applied: false })];
     renderView();
     fireEvent.click(await screen.findByText('getByTestId("submit-v1").click()'));
-    expect(await screen.findByText("Suggestion only")).toBeTruthy();
+    // The row and the detail both carry the chip; both must agree.
+    await waitFor(() => expect(screen.getAllByText("Suggested").length).toBeGreaterThan(0));
+    expect(screen.queryByText("Applied")).toBeNull();
     // And labels the action by what it will do.
     expect(screen.getByRole("button", { name: /apply/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /dismiss/i })).toBeTruthy();
+  });
+
+  it("gives each of the four states its own chip, and only two of them a hue", async () => {
+    // ONLY TWO OF THE FOUR ARE OUTCOMES. `Accepted` is a result and `Applied`
+    // is the one that should catch the eye — the stored test has already
+    // changed and nobody has looked. `Suggested` is the open item (cyan is the
+    // palette's "live / focus"), and `Reverted` is settled with nothing to
+    // report, so it takes no tone at all.
+    //
+    // Asserted on `data-tone` rather than on colour: the dom project runs with
+    // `css: false`, so a computed-style check reads "" for every one of them
+    // and would pass against a column drawn entirely in green.
+    journal = [
+      heal({ id: "a", status: "pending", applied: true }),
+      heal({ id: "b", status: "pending", applied: false }),
+      heal({ id: "c", status: "accepted" }),
+      heal({ id: "d", status: "reverted" }),
+    ];
+    renderView();
+    await screen.findByText("Applied");
+
+    const tones = new Map(
+      [...document.querySelectorAll('[data-gl="status-chip"]')].map((el) => [
+        el.textContent ?? "",
+        (el as HTMLElement).dataset.tone,
+      ]),
+    );
+    expect(tones.get("Applied")).toBe("amber");
+    expect(tones.get("Suggested")).toBe("cyan");
+    expect(tones.get("Accepted")).toBe("phos");
+    expect(tones.get("Reverted")).toBe("neutral");
   });
 
   it("accepts and reverts the selected heal", async () => {

@@ -47,9 +47,14 @@ export function PaneSection({
     matched === null || ids.length === 0 || ids.some((id) => matched.indexOf(id) !== -1);
   if (!visible) return null;
 
+  // The two classes carry the B4 reskin (screens.css): a square hairline box on
+  // `--gl-panel` instead of the SDK's rounded translucent card, and a mono
+  // uppercase legend instead of a bold sentence. Applied here as class names on
+  // OUR components rather than by restyling the SDK's emitted Tailwind, so
+  // `check:renderer-classes` can prove both resolve to real rules.
   return (
-    <FieldSet title={title} description={description}>
-      <FieldGroup>{children}</FieldGroup>
+    <FieldSet className="gl-setting-set" title={title} description={description}>
+      <FieldGroup className="gl-setting-group">{children}</FieldGroup>
     </FieldSet>
   );
 }

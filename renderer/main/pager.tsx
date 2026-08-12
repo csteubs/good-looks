@@ -6,57 +6,60 @@
 // list reads "page 1 of 1" not "of 0", and a page number that outlives its list
 // clamps to real rows instead of rendering an empty table.
 
-import { Button, Text } from "@ui";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
-import { clampPage, pageCount, pageRange } from "../lib/paginate";
+import { Btn } from "../theme";
+import { PAGE_SIZE, clampPage, pageCount, pageRange } from "../lib/paginate";
 
 export function Pager({
   page,
   total,
   onPage,
   label,
+  // The page size the list is actually sliced with. Defaults to PAGE_SIZE, but a
+  // caller paging at a different size MUST pass it too: the counts here are
+  // computed, not received, so a mismatch silently reports the wrong page count
+  // and hides real rows behind a Next button that never enables.
+  size = PAGE_SIZE,
 }: {
   page: number;
   total: number;
   onPage: (page: number) => void;
   label: string;
+  size?: number;
 }) {
-  const pages = pageCount(total);
+  const pages = pageCount(total, size);
   if (pages <= 1) return null;
-  const safe = clampPage(page, total);
-  const range = pageRange(safe, total);
+  const safe = clampPage(page, total, size);
+  const range = pageRange(safe, total, size);
   return (
-    <div className="flex items-center justify-between gap-2 border-t border-separator px-3 py-2">
-      <Text variant="small" color="tertiary">
+    <div className="gl-pager">
+      <span className="gl-pager-count">
         {range ? `${range.from}–${range.to} of ${total} ${label}` : `0 ${label}`}
-      </Text>
-      <div className="flex items-center gap-2">
-        <Button
-          variant="glass"
-          size="small"
+      </span>
+      <div className="gl-pager-controls">
+        <Btn
+          tone="ghost"
           disabled={safe <= 1}
           onClick={() => onPage(safe - 1)}
           aria-label="Previous page"
         >
-          <ChevronLeft className="size-4" />
+          <ChevronLeft aria-hidden="true" />
           Prev
-        </Button>
-        <Text variant="small" color="secondary" className="tabular-nums">
+        </Btn>
+        <span className="gl-pager-page">
           Page {safe} of {pages}
-        </Text>
-        <Button
-          variant="glass"
-          size="small"
+        </span>
+        <Btn
+          tone="ghost"
           disabled={safe >= pages}
           onClick={() => onPage(safe + 1)}
           aria-label="Next page"
         >
           Next
-          <ChevronRight className="size-4" />
-        </Button>
+          <ChevronRight aria-hidden="true" />
+        </Btn>
       </div>
     </div>
   );
 }
-

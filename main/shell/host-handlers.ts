@@ -18,6 +18,7 @@ import {
 } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 
+import { checkExternalUrl } from "./external-url.js";
 import { logger } from "./logger.js";
 
 /** Renderer-side native menu item (see NativeMenu in the views): a plain-data
@@ -35,13 +36,6 @@ interface PopupOptions {
   items?: PopupItem[];
   x?: number;
   y?: number;
-}
-
-function themeInfo() {
-  return {
-    shouldUseDarkColors: nativeTheme.shouldUseDarkColors,
-    themeSource: nativeTheme.themeSource,
-  };
 }
 
 export function registerHostHandlers(): void {
@@ -67,6 +61,25 @@ export function registerHostHandlers(): void {
   ipcMain.handle("shell:showItemInFolder", (_e, fullPath: string) => {
     if (typeof fullPath === "string" && fullPath) shell.showItemInFolder(fullPath);
   });
+  // Opens a pull request in the user's real browser. The URL arrives from the
+  // renderer having originated in a GitHub API response, so it is checked here
+  // rather than trusted — see `external-url.ts` for what the OS would otherwise
+  // do with a scheme we didn't expect. Refusals are logged and swallowed: the
+  // renderer's icon has nothing useful to do with the error, and the honest
+  // report of a URL this app won't open belongs in the main log.
+  ipcMain.handle("shell:openExternal", async (_e, url: string) => {
+    const verdict = checkExternalUrl(url);
+    if (!verdict.ok) {
+      logger.warn("shell", "Refused to open a URL externally", { problem: verdict.problem });
+      return;
+    }
+    try {
+      // `verdict.href`, NOT `url` — the checked value is the only one opened.
+      await shell.openExternal(verdict.href);
+    } catch (err) {
+      logger.warn("shell", "The OS refused to open a URL", { err: String(err) });
+    }
+  });
 
   // ── Clipboard ───────────────────────────────────────────────────────
   ipcMain.handle("clipboard:writeText", (_e, text: string) => {
@@ -75,24 +88,24 @@ export function registerHostHandlers(): void {
   ipcMain.handle("clipboard:readText", () => clipboard.readText());
 
   // ── Native theme ────────────────────────────────────────────────────
-  ipcMain.handle("nativeTheme:getInfo", () => themeInfo());
-  ipcMain.handle("nativeTheme:getShouldUseDarkColors", () => nativeTheme.shouldUseDarkColors);
-  ipcMain.handle("nativeTheme:getThemeSource", () => nativeTheme.themeSource);
-  ipcMain.handle("nativeTheme:setThemeSource", (_e, source: "system" | "light" | "dark") => {
-    if (source === "system" || source === "light" || source === "dark") {
-      nativeTheme.themeSource = source;
-      return true;
-    }
-    return false;
-  });
-  // Push theme flips to every window (the settings window is not part of the
-  // sendToMain fan-out, and the theme is the one signal both need live).
-  nativeTheme.on("updated", () => {
-    const info = themeInfo();
-    for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send("nativeTheme:updated", info);
-    }
-  });
+  //
+  // THIS APP IS DARK ONLY AND SAYS SO (REDESIGN §0). The palette is near-black
+  // with phosphor accents over two texture layers; a light variant is a second
+  // design rather than a token swap, and the CRT treatment has no light reading
+  // at all. So there is one line here instead of four handlers and a broadcast.
+  //
+  // It is set rather than left alone because `themeSource` is what Electron's
+  // OWN chrome reads — the native menus this app pops up for every Select and
+  // dropdown, the file pickers, the message boxes. Following the OS from here
+  // would put a white menu on top of a black app for anyone whose Mac is in
+  // light mode, which is the one part of the window we do not draw ourselves.
+  //
+  // The renderer no longer asks: `useTheme()` is gone, `.dark` is applied
+  // unconditionally by each window's entry HTML, and the `nativeTheme:*`
+  // handlers, the preload bridge and the `nativeTheme:updated` push went with
+  // it. Nothing was left registered-but-unused — an IPC surface nobody calls is
+  // indistinguishable from one that is about to be needed again.
+  nativeTheme.themeSource = "dark";
 
   // ── Native menus (renderer-driven popups) ───────────────────────────
   //

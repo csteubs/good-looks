@@ -30,6 +30,9 @@
 @import "./theme/fonts.css";
 @import "./theme/atmosphere.css";
 @import "./theme/primitives.css";
+@import "./theme/shell.css";
+@import "./theme/shared.css";
+@import "./theme/screens.css";
 
 /* Tell Tailwind to scan all local renderer window files for class names */
 @source "./**/*.{ts,tsx}";
@@ -327,6 +330,48 @@
 @media (prefers-reduced-motion: reduce) {
   .step-replay-pass,
   .step-replay-fail {
+    animation: none;
+  }
+}
+
+/**
+ * The step that just ARRIVED in the list.
+ *
+ * Cyan, not an outcome hue: nothing has been judged here, a step simply landed.
+ * It is the same cyan as the insert cursor two rules down in shared.css, and
+ * deliberately so — the row is answering the caret. The palette declares cyan
+ * "running / live / focus", which is what makes it legal on something that is
+ * not a result (`check:selection-neutral` draws that line).
+ *
+ * Fades to nothing rather than to a dimmer outline, unlike the replay flash: a
+ * captured step is an ordinary row a second later, and a permanent marker on
+ * "the last one" would accumulate into a list where several rows look special.
+ * The class itself lingers until the next step arrives; the animation ending on
+ * transparent is what makes that harmless.
+ */
+@keyframes step-just-added {
+  0% {
+    outline-color: var(--gl-cyan);
+  }
+  60% {
+    outline-color: var(--gl-cyan);
+  }
+  100% {
+    outline-color: transparent;
+  }
+}
+
+.step-just-added {
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  animation: step-just-added 2.5s ease-out 1 forwards;
+}
+
+/* No motion, no marker: the row scrolled itself into view, which is the part
+   that actually finds it, and a static cyan outline that never expires would
+   claim "live" about a step that is merely the most recent. */
+@media (prefers-reduced-motion: reduce) {
+  .step-just-added {
     animation: none;
   }
 }

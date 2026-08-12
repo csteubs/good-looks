@@ -47,6 +47,44 @@ test("the sidebar's + button is not covered by anything", async ({ window }) => 
   expect(hit, "the topmost element over the + button").toBe("the button");
 });
 
+test("the top strip's controls are not covered by the atmosphere overlays", async ({ window }) => {
+  // NEW IN A4, AND THE ONE THING ONLY THIS SUITE CAN ANSWER ABOUT IT.
+  //
+  // `<Atmosphere />` mounts two full-viewport `position: fixed` layers —
+  // portalled to `document.body`, at `z-index: 600`, painted above every piece
+  // of chrome in the window. They carry `pointer-events: none`, which is the
+  // only reason the app is usable at all, and `check:theme-tokens` pins that in
+  // the stylesheet. But a stylesheet assertion is a claim about text: it cannot
+  // say whether the rule reached the element, whether something later in the
+  // cascade overrode it, or whether a third layer arrives without it.
+  //
+  // The failure would be total and would look like nothing: a transparent sheet
+  // over the whole app, every click landing on it, no error anywhere — the same
+  // shape as the `drag-region` overlay this file was written for, except across
+  // the entire window instead of its top 52px.
+  //
+  // jsdom cannot see it (no layout engine, and the dom project runs with
+  // `css: false`), and the browser preview does not run the real shell. So:
+  // here, against real layout, on the two controls the strip owns.
+  const layers = await window.locator("[data-gl-atmo]").count();
+  expect(layers, "the atmosphere layers are actually mounted").toBeGreaterThan(0);
+
+  for (const name of ["Hide library", "Settings"]) {
+    const control = window.getByRole("button", { name });
+    await expect(control).toBeVisible();
+    await control.click({ trial: true });
+
+    const hit = await control.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      if (!top) return "nothing (the point is outside the viewport)";
+      if (top === el || el.contains(top)) return "the control";
+      return `${top.tagName.toLowerCase()}.${top.className}`;
+    });
+    expect(hit, `the topmost element over "${name}"`).toBe("the control");
+  }
+});
+
 test("buttons show the pointer cursor on hover", async ({ window }) => {
   // `body` sets `cursor: default` app-wide and Tailwind v4's preflight sets the
   // same on `button`, so this is not inherited from anywhere — `@ui`'s Button

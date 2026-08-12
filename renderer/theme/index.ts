@@ -40,6 +40,24 @@ export {
 } from "./tokens";
 export type { ToneName } from "./tokens";
 
+// ── Shell (A4) ────────────────────────────────────────────────────────
+export { TopStrip, ChromeButton, WORDMARK } from "./shell/top-strip";
+export type { TopStripProps, ChromeButtonProps, Crumb } from "./shell/top-strip";
+export { Rail, RailGroup, RailRow, RailEmpty } from "./shell/rail";
+export type { RailProps, RailRowProps } from "./shell/rail";
+export { RailFlyout } from "./shell/rail-flyout";
+export type { RailFlyoutProps, RailFlyoutTriggerProps } from "./shell/rail-flyout";
+export {
+  BootPlate,
+  bootDurationMs,
+  bootFadeMs,
+  resetBootPlateForTests,
+  BOOT_MS,
+  BOOT_MS_STILL,
+  BOOT_FADE_MS,
+} from "./shell/boot-plate";
+export type { BootPlateProps } from "./shell/boot-plate";
+
 // ── Primitives (A3) ───────────────────────────────────────────────────
 export { Panel } from "./primitives/panel";
 export type { PanelProps } from "./primitives/panel";
@@ -62,6 +80,8 @@ export type { CRTProps } from "./primitives/crt";
 export { KeyValue } from "./primitives/key-value";
 export type { KeyValueProps, KeyValueRow } from "./primitives/key-value";
 export { MenuItem } from "./primitives/menu-item";
+export { Menu } from "./primitives/menu";
+export type { MenuProps } from "./primitives/menu";
 export type { MenuItemProps } from "./primitives/menu-item";
 export { SiteIcon, monogramLetters, monogramHue } from "./primitives/site-icon";
 export type { SiteIconProps } from "./primitives/site-icon";

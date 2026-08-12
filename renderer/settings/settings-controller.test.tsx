@@ -82,10 +82,6 @@ beforeEach(() => {
   artifactsUsage = async () => ({ bytes: 1024, runs: 1, tests: 1 });
   (window as unknown as { glazeAPI: Record<string, unknown> }).glazeAPI = {
     glaze: { ipc: { invoke: vi.fn(async () => {}) } },
-    nativeTheme: {
-      getInfo: vi.fn(async () => ({ themeSource: "dark", shouldUseDarkColors: true })),
-      setThemeSource: vi.fn(async () => {}),
-    },
   };
 });
 
@@ -107,9 +103,17 @@ describe("loading", () => {
     expect(result.current.settings).toEqual({});
   });
 
-  it("loads the theme source", async () => {
+  it("asks the host nothing about the theme", async () => {
+    // The app is dark only (REDESIGN §0), so the controller no longer loads a
+    // theme source — and the `nativeTheme` preload surface it used is gone.
+    // Asserted as a NEGATIVE on the bridge rather than on a removed field,
+    // because the failure this guards is the load being restored quietly: it
+    // would throw on a bridge that no longer has the method, and the controller
+    // swallows its load errors, so nothing would surface but a missing setting.
+    const bridge = (window as unknown as { glazeAPI: Record<string, unknown> }).glazeAPI;
+    expect("nativeTheme" in bridge).toBe(false);
     const { result } = renderHook(() => useSettingsControllerState());
-    await waitFor(() => expect(result.current.themeSource).toBe("dark"));
+    await waitFor(() => expect(result.current.loaded).toBe(true));
   });
 
   it("keeps loading the rest when one surface THROWS synchronously", async () => {

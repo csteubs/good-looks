@@ -12,16 +12,10 @@
 
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Badge,
-  Button,
-  Callout,
-  ScrollArea,
-  Text,
-  toast,
-} from "@ui";
+import { ScrollArea, toast } from "@ui";
 import { Check, RotateCcw, Wand2 } from "lucide-react";
 
+import { Btn, TONE, insetRail, toneSurface } from "../theme";
 import { api } from "../lib/api";
 import { formatLocator } from "./refine-selector-dialog";
 import type { HealEntry, Locator, TestRecord } from "../lib/recorder-types";
@@ -62,78 +56,88 @@ function HealRow({
   );
 
   return (
-    <div className="flex flex-col gap-2 rounded-md border border-separator p-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Wand2 className="size-4 text-tertiary" />
-        <Text weight="medium" className="min-w-0 truncate">
+    <div className="gl-heal-row">
+      <div className="gl-heal-head">
+        {/* Violet, because AI-adjacent chrome is the one thing that is not a
+            status — Auto-Heal is a mechanism, and what it DID is reported by
+            the toned chips beside it. */}
+        <span className="gl-heal-head-icon">
+          <Wand2 aria-hidden="true" />
+        </span>
+        <span className="gl-heal-title">
           {entry.stepLabel || `Step ${entry.stepIndex + 1}`}
-        </Text>
-        <Badge variant="secondary">{entry.source === "run" ? "During a run" : "In the trainer"}</Badge>
-        {/* The distinction that matters most: was the saved test changed? */}
+        </span>
+        {/* Neutral: where the heal happened is a fact, not a result. */}
+        <span className="gl-chip">{entry.source === "run" ? "During a run" : "In the trainer"}</span>
+        {/* The distinction that matters most: was the saved test changed? These
+            ARE outcomes, so they take a tone — derived through `toneSurface()`,
+            the one place that derivation happens, rather than a hex written
+            into the stylesheet. Not `StatusChip`: that is fixed at the status
+            width so a COLUMN of them has one edge, and these are inline labels
+            of deliberately different lengths in a wrapping row. */}
         {entry.applied ? (
-          <Badge color="orange">Applied to the test</Badge>
+          <span className="gl-chip-tone" style={toneSurface(TONE.amber)}>
+            Applied to the test
+          </span>
         ) : (
-          <Badge color="blue">Suggestion only</Badge>
+          <span className="gl-chip-tone" style={toneSurface(TONE.cyan)}>
+            Suggestion only
+          </span>
         )}
-        {entry.status === "accepted" ? <Badge color="green">Accepted</Badge> : null}
-        {entry.status === "reverted" ? <Badge variant="secondary">Reverted</Badge> : null}
-        <div className="flex-1" />
-        <Text size="small" className="text-tertiary">
-          {fmtWhen(entry.at)}
-        </Text>
+        {entry.status === "accepted" ? (
+          <span className="gl-chip-tone" style={toneSurface(TONE.phos)}>
+            Accepted
+          </span>
+        ) : null}
+        {entry.status === "reverted" ? <span className="gl-chip">Reverted</span> : null}
+        <span className="gl-heal-when">{fmtWhen(entry.at)}</span>
       </div>
 
-      <div className="flex flex-col gap-1 font-mono text-xs">
+      <div className="gl-heal-locs">
         {entry.originalLocator ? (
-          <div className="flex items-center gap-2">
-            <span className="w-14 shrink-0 font-sans text-tertiary">was</span>
-            <code className="min-w-0 truncate line-through text-tertiary">
+          <div className="gl-heal-loc">
+            <span className="gl-heal-loc-key">was</span>
+            <code className="gl-mono-value gl-heal-was">
               {formatLocator(entry.originalLocator)}
             </code>
           </div>
         ) : null}
-        <div className="flex items-center gap-2">
-          <span className="w-14 shrink-0 font-sans text-tertiary">now</span>
-          <code className="min-w-0 truncate text-primary">
-            {formatLocator(entry.appliedLocator)}
-          </code>
+        <div className="gl-heal-loc">
+          <span className="gl-heal-loc-key">now</span>
+          <code className="gl-mono-value gl-heal-now">{formatLocator(entry.appliedLocator)}</code>
         </div>
       </div>
 
       {!settled ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="small" disabled={busy} onClick={() => onAccept()}>
-            <Check className="size-4" />
+        <div className="gl-heal-actions">
+          {/* `go` on the affirmative one only. Two lit buttons on a row is the
+              design smell `Btn` documents: the tone is for the action that
+              causes the thing the hue means. */}
+          <Btn tone="go" disabled={busy} onClick={() => onAccept()}>
+            <Check aria-hidden="true" />
             {entry.applied ? "Keep" : "Apply"}
-          </Button>
-          <Button size="small" variant="secondary" disabled={busy} onClick={onRevert}>
-            <RotateCcw className="size-4" />
+          </Btn>
+          <Btn tone="ghost" disabled={busy} onClick={onRevert}>
+            <RotateCcw aria-hidden="true" />
             {entry.applied ? "Revert" : "Dismiss"}
-          </Button>
+          </Btn>
           {alternatives.length > 0 ? (
-            <Button size="small" variant="ghost" onClick={() => setShowAll((v) => !v)}>
+            <Btn tone="ghost" onClick={() => setShowAll((v) => !v)}>
               {showAll ? "Hide" : `${alternatives.length} other candidate${alternatives.length === 1 ? "" : "s"}`}
-            </Button>
+            </Btn>
           ) : null}
         </div>
       ) : null}
 
       {showAll ? (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1.5">
           {alternatives.map((c, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <code className="min-w-0 flex-1 truncate font-mono text-xs text-secondary">
-                {formatLocator(c.locator)}
-              </code>
-              {c.matchedPastRun ? <Badge variant="secondary">seen before</Badge> : null}
-              <Button
-                size="small"
-                variant="ghost"
-                disabled={busy}
-                onClick={() => onAccept(c.locator)}
-              >
+            <div key={i} className="gl-heal-alt">
+              <code className="gl-mono-value flex-1">{formatLocator(c.locator)}</code>
+              {c.matchedPastRun ? <span className="gl-chip">seen before</span> : null}
+              <Btn tone="ghost" disabled={busy} onClick={() => onAccept(c.locator)}>
                 Use this
-              </Button>
+              </Btn>
             </div>
           ))}
         </div>
@@ -187,27 +191,28 @@ export function HealsPanel({ test }: { test: TestRecord }) {
     <ScrollArea className="h-full">
       <div className="flex flex-col gap-4 p-4">
         {appliedPending > 0 ? (
-          <Callout color="orange">
+          // The amber inset rail, not a filled banner: it is the same motif
+          // every other status in this design uses, so a warning does not need
+          // a shape of its own to be read as one.
+          <p className="gl-notice" style={{ boxShadow: insetRail(TONE.amber) }}>
             {appliedPending} step{appliedPending === 1 ? " has" : "s have"} already been changed by
             Auto-Heal. Review below — a heal that succeeded is not the same as a heal that was
             right.
-          </Callout>
+          </p>
         ) : null}
 
         <div className="flex items-center gap-2">
-          <Text weight="medium">Needs review</Text>
-          {pending.length > 0 ? <Badge color="blue">{pending.length}</Badge> : null}
+          <span className="gl-section-title">Needs review</span>
+          {pending.length > 0 ? <span className="gl-chip">{pending.length}</span> : null}
         </div>
 
         {heals.isLoading ? (
-          <Text size="small" className="text-tertiary">
-            Loading…
-          </Text>
+          <p className="gl-note">Loading…</p>
         ) : pending.length === 0 ? (
-          <Text size="small" className="text-tertiary">
+          <p className="gl-note">
             Nothing to review. Auto-Heal records every locator it changes here, with a way to put it
             back.
-          </Text>
+          </p>
         ) : (
           <div className="flex flex-col gap-2">
             {pending.map((e) => (
@@ -225,16 +230,15 @@ export function HealsPanel({ test }: { test: TestRecord }) {
         {settled.length > 0 ? (
           <>
             <div className="flex items-center gap-2 pt-2">
-              <Text weight="medium">History</Text>
+              <span className="gl-section-title">History</span>
               <div className="flex-1" />
-              <Button
-                size="small"
-                variant="ghost"
+              <Btn
+                tone="ghost"
                 disabled={clearSettled.isPending}
                 onClick={() => clearSettled.mutate()}
               >
                 Clear history
-              </Button>
+              </Btn>
             </div>
             <div className="flex flex-col gap-2">
               {settled.map((e) => (

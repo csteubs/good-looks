@@ -16,6 +16,7 @@ import { render, screen, within, fireEvent, waitFor } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type {
+  BatchRecord,
   BatchRowOptions,
   RecorderSettings,
   RunBrowser,
@@ -23,6 +24,10 @@ import type {
 } from "../lib/recorder-types";
 // Safe above the vi.mock calls below: Vitest hoists vi.mock above imports, so
 // the mocks are registered before this module is evaluated.
+import {
+  BATCH_CONCURRENCY_CHOICES,
+  batchConcurrencyConsequence,
+} from "../lib/batch-parallel";
 import { BatchView } from "./batch-view";
 
 // ── Mocks ────────────────────────────────────────────────────────────
@@ -37,6 +42,9 @@ const batchRun = vi.fn(
 
 let library: TestRecord[] = [];
 let settings: Partial<RecorderSettings> = {};
+// Stored batch history, same idiom as `library`: resolved inside the mock so a
+// test can reassign it before the view mounts.
+let history: BatchRecord[] = [];
 // Live backend pushes, so a test can put the view into a mid-batch state
 // without a backend. Keyed by channel, same shape as the real api.on.
 const listeners = new Map<string, ((payload: unknown) => void)[]>();
@@ -60,7 +68,7 @@ vi.mock("../lib/api", () => ({
     },
     runs: { getLog: (id: string) => getLog(id) },
     batch: {
-      list: async () => [],
+      list: async () => history,
       status: async () => null,
       run: (ids: string[], opts?: Record<string, unknown>) => batchRun(ids, opts),
       stop: async () => {},
@@ -167,6 +175,7 @@ beforeEach(() => {
   listeners.clear();
   library = [test_("a", "Alpha"), test_("b", "Beta"), test_("c", "Gamma")];
   settings = { batchOrder: [], defaultRunBrowser: "chromium" };
+  history = [];
 });
 
 describe("BatchView per-row engines", () => {
@@ -610,7 +619,7 @@ describe("BatchView parallel runs", () => {
   it("defaults to off, and runs one at a time", async () => {
     renderView();
     await rowNames();
-    const trigger = screen.getByRole("combobox", { name: /how many tests to run at once/i });
+    const trigger = screen.getByRole("button", { name: /how many tests to run at once/i });
     await waitFor(() => expect(trigger.textContent).toContain("Off"));
 
     fireEvent.click(runButton());
@@ -623,7 +632,7 @@ describe("BatchView parallel runs", () => {
     settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 2 };
     renderView();
     await rowNames();
-    const trigger = screen.getByRole("combobox", { name: /how many tests to run at once/i });
+    const trigger = screen.getByRole("button", { name: /how many tests to run at once/i });
     await waitFor(() => expect(trigger.textContent).toContain("2 at once"));
 
     fireEvent.click(runButton());
@@ -645,12 +654,75 @@ describe("BatchView parallel runs", () => {
     settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 16 };
     renderView();
     await rowNames();
-    const trigger = screen.getByRole("combobox", { name: /how many tests to run at once/i });
+    const trigger = screen.getByRole("button", { name: /how many tests to run at once/i });
     await waitFor(() => expect(trigger.textContent).toContain("All at once"));
 
     fireEvent.click(runButton());
     await waitFor(() => expect(batchRun).toHaveBeenCalled());
     expect(runOpts()?.concurrency).toBe(3);
+  });
+});
+
+describe("BatchView concurrency menu", () => {
+  // THIS IS THE COVERAGE §8.2 PROMISED. The picker was the SDK's `Select`,
+  // which is backed by a real macOS menu — its options never enter the DOM, so
+  // for its whole life the only thing testable here was the displayed value and
+  // what reached IPC. The redesign draws its own menu, because a native menu
+  // item is a string and the whole point is the SECOND line. So for the first
+  // time the choice can be made the way a user makes it.
+  it("opens, lists every choice, and applies the one that is picked", async () => {
+    renderView();
+    await rowNames();
+    const trigger = screen.getByRole("button", { name: /how many tests to run at once/i });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    const items = screen.getAllByRole("menuitem").map((i) => i.textContent ?? "");
+    expect(items).toHaveLength(BATCH_CONCURRENCY_CHOICES.length);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: /4 at once/ }));
+    // Closes on choosing — a menu that stays open reads as though the choice
+    // did not take.
+    await waitFor(() => expect(screen.queryByRole("menuitem")).toBeNull());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /how many tests to run at once/i }).textContent,
+      ).toContain("4 at once"),
+    );
+  });
+
+  it("states the cost of every choice, in the menu, while choosing", async () => {
+    // The reason this menu exists at all. "8" cannot say that a laptop will
+    // thrash and report failures it caused — a failure that looks exactly like
+    // a flaky suite from the run report. The copy is not a tooltip and not a
+    // disclosure: it renders unconditionally.
+    renderView();
+    await rowNames();
+    fireEvent.click(screen.getByRole("button", { name: /how many tests to run at once/i }));
+    for (const choice of BATCH_CONCURRENCY_CHOICES) {
+      expect(screen.getByText(batchConcurrencyConsequence(choice)), String(choice)).toBeTruthy();
+    }
+  });
+
+  it("closes on Escape without applying anything", async () => {
+    renderView();
+    await rowNames();
+    const trigger = screen.getByRole("button", { name: /how many tests to run at once/i });
+    fireEvent.click(trigger);
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("menuitem")).toBeNull());
+    expect(trigger.textContent).toContain("Off");
+  });
+
+  it("closes on a pointer-down elsewhere", async () => {
+    // `pointerdown`, not `click`: a click fires after the pointer comes back up,
+    // so a menu that closes on click is still covering the thing being pressed.
+    renderView();
+    await rowNames();
+    fireEvent.click(screen.getByRole("button", { name: /how many tests to run at once/i }));
+    fireEvent.pointerDown(document.body);
+    await waitFor(() => expect(screen.queryByRole("menuitem")).toBeNull());
   });
 });
 
@@ -699,6 +771,122 @@ describe("BatchView live progress", () => {
 
     emit("batch:progress", progress(["passed", "running", "running"]));
     await waitFor(() => expect(screen.getByText(/1 of 3 done · 2 running/)).toBeTruthy());
+  });
+});
+
+describe("BatchView finished-batch verdict", () => {
+  // A batch that finished with SOME passes and SOME failures is a different
+  // situation from one where nothing passed, and both used to be red. The tone
+  // is the whole signal here — the words "2 failed" are identical in both — so
+  // these read `data-tone`, which is what the chip derives its colour from.
+  // Asserting the colour itself would prove nothing: the dom project runs with
+  // `css: false`, so there is no cascade to ask.
+
+  /** A batch:done payload with the given counts. */
+  const done = (passed: number, failed: number, stopped = false) => ({
+    batchId: "b1",
+    running: false,
+    startedAt: 0,
+    currentIndex: -1,
+    stopped,
+    results: [],
+    summary: {
+      total: passed + failed,
+      passed,
+      failed,
+      skipped: 0,
+      ok: failed === 0,
+      durationMs: 1000,
+    },
+  });
+
+  /** The verdict chip in the finished-batch panel, found via the panel's own
+   *  heading so the history chips below cannot answer for it. */
+  function verdictChip(title: string): HTMLElement {
+    const panel = screen.getByText(title).closest("section");
+    if (!panel) throw new Error(`no panel around "${title}"`);
+    const chip = panel.querySelector('[data-gl="status-chip"]');
+    if (!chip) throw new Error(`no status chip in the "${title}" panel`);
+    return chip as HTMLElement;
+  }
+
+  it("goes AMBER when two of three failed and one passed", async () => {
+    renderView();
+    await rowNames();
+    emit("batch:done", done(1, 2));
+
+    const chip = await waitFor(() => verdictChip("Batch finished with failures"));
+    expect(chip.getAttribute("data-tone")).toBe("amber");
+    expect(chip.textContent).toBe("2 failed");
+  });
+
+  it("stays RED when nothing passed at all", async () => {
+    // The distinction the amber exists for: three failures and no passes is a
+    // suite that isn't running, not a suite with a bug in it.
+    renderView();
+    await rowNames();
+    emit("batch:done", done(0, 3));
+
+    const chip = await waitFor(() => verdictChip("Batch failed"));
+    expect(chip.getAttribute("data-tone")).toBe("red");
+  });
+
+  it("stays PHOSPHOR when everything passed", async () => {
+    renderView();
+    await rowNames();
+    emit("batch:done", done(3, 0));
+
+    const chip = await waitFor(() => verdictChip("Batch passed"));
+    expect(chip.getAttribute("data-tone")).toBe("phos");
+    expect(chip.textContent).toBe("3 passed");
+  });
+
+  it("claims no verdict for a batch the user stopped mid-flight", async () => {
+    // Two had already failed when Stop was pressed. Tinting that amber would
+    // report a mixed RESULT for a run that never finished.
+    renderView();
+    await rowNames();
+    emit("batch:done", done(1, 2, true));
+
+    const chip = await waitFor(() => verdictChip("Batch stopped"));
+    expect(chip.getAttribute("data-tone")).toBe("neutral");
+    expect(chip.textContent).toBe("Stopped");
+  });
+});
+
+describe("BatchView history verdicts", () => {
+  const record = (batchId: string, passed: number, failed: number): BatchRecord =>
+    ({
+      batchId,
+      startedAt: 0,
+      stopped: false,
+      results: [],
+      summary: {
+        total: passed + failed,
+        passed,
+        failed,
+        skipped: 0,
+        ok: failed === 0,
+        durationMs: 1000,
+      },
+    }) as unknown as BatchRecord;
+
+  it("tells a partly-failing past batch apart from a totally-failing one", async () => {
+    // Scanning history is where this matters most: the two rows say "1 failed"
+    // and "3 failed", and without the tone the difference between "one flaky
+    // test" and "the suite never started" is a number you have to do maths on.
+    history = [record("mixed", 2, 1), record("total", 0, 3)];
+    renderView();
+    await rowNames();
+
+    const rows = await screen.findAllByRole("button", { expanded: false });
+    const chips = rows
+      .map((r) => r.querySelector('[data-gl="status-chip"]'))
+      .filter((c): c is Element => c !== null);
+
+    const tones = chips.map((c) => c.getAttribute("data-tone"));
+    expect(tones).toContain("amber");
+    expect(tones).toContain("red");
   });
 });
 

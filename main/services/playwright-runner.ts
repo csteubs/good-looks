@@ -548,6 +548,35 @@ function isHealFailure(e: HealEvent): e is HealEvent & HealFailure {
  * evidence about one run, keyed by step. See `recordFailure` in
  * heal-fixture-source.ts for why they are worth keeping at all.
  */
+/**
+ * Persist what each failing locator actually resolved to.
+ *
+ * Called from `collectRunHeals` rather than beside it, and that is the whole
+ * point: that function owns the scratch dir and removes it on EVERY path out,
+ * including the early ones where no heal was recorded but a match set may
+ * still have been. As a sibling call this was one statement order away from
+ * writing nothing, forever, with no error — so the function that deletes the
+ * directory is the one that reads it.
+ *
+ * Independent of whether anything healed: a step whose ambiguous locator was
+ * then rescued leaves a match record and no heal failure, and the ambiguity is
+ * the thing worth reporting either way.
+ */
+function collectRunMatches(testId: string, runId: string, healDir: string): number {
+  if (!healDir) return 0;
+  try {
+    const raw = fs.readFileSync(path.join(healDir, "matches.json"), "utf-8");
+    const sets = JSON.parse(raw);
+    if (!Array.isArray(sets) || sets.length === 0) return 0;
+    artifactStore.writeStepMatches(testId, runId, sets);
+    return sets.length;
+  } catch {
+    // The common case is that the file does not exist — nothing failed to
+    // resolve. A corrupt one is the same answer: no match data for this run.
+    return 0;
+  }
+}
+
 function collectRunHeals(
   testId: string,
   runId: string,
@@ -556,6 +585,10 @@ function collectRunHeals(
 ): { healed: number; failed: number } {
   const none = { healed: 0, failed: 0 };
   if (!healDir) return none;
+  // First, and unconditionally: every path below this line can reach
+  // `discardScratch`, and a run that failed to resolve a locator without
+  // healing anything is exactly the run whose matches are worth keeping.
+  collectRunMatches(testId, runId, healDir);
   // The fixture's scratch dir, removed on EVERY path out of here. It used to be
   // cleaned only on the heals path; once failures became recordable, a run that
   // failed to heal and healed nothing would have left it behind for good.

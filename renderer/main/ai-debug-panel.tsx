@@ -30,14 +30,21 @@ import {
   parseLogRequest,
   stripLogRequest,
   type LogRequest,
+  type LogRequestNeed,
 } from "../lib/ai-log-request";
 import { diffLines, diffSummary, type DiffLine } from "../lib/line-diff";
 import { friendlyError } from "../lib/llm-errors";
 import type { LlmMessage, LlmModel } from "../lib/llm-types";
-import { buildDebugMessages, buildStepDebugMessages } from "../lib/llm-prompts";
+import {
+  buildDebugMessages,
+  buildStepDebugMessages,
+  describeSending,
+  sendingTotalChars,
+} from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
 import type { AiDebugStatus } from "../lib/recorder-types";
 import { useDisabledEnhancements } from "../lib/use-disabled-enhancements";
+import { Btn } from "../theme";
 import { useAiDebug, useAiDebugContent } from "./ai-debug-store";
 
 // Common failure reasons a user can toggle into the "additional context" box
@@ -153,11 +160,11 @@ export function CodeBlock({ lang, content }: { lang: string; content: string }) 
     <div className="my-1 overflow-hidden rounded-md border border-separator">
       <div className="flex items-center justify-between border-b border-separator bg-control-subtle px-3 py-1">
         <span className="text-small text-secondary">{lang || "code"}</span>
-        <Button iconOnly size="small" variant="transparent" onClick={copy} aria-label="Copy code" title="Copy code">
+        <button type="button" className="gl-icon-btn" onClick={copy} aria-label="Copy code" title="Copy code">
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </Button>
+        </button>
       </div>
-      <pre className="text-small-mono overflow-x-auto whitespace-pre-wrap break-words p-3 text-primary">{content}</pre>
+      <pre className="gl-console">{content}</pre>
     </div>
   );
 }
@@ -493,16 +500,12 @@ function dialogTitle(
 /** Follow-the-stream toggle, sitting with the other response controls. */
 function AutoScrollToggle({ on, onChange }: { on: boolean; onChange: (next: boolean) => void }) {
   return (
-    <Button
-      iconOnly
-      size="small"
-      variant={on ? "muted" : "transparent"}
-      onClick={() => onChange(!on)}
+    <button type="button" className="gl-icon-btn" onClick={() => onChange(!on)}
       aria-label={on ? "Auto-scroll on" : "Auto-scroll off"}
       title={on ? "Auto-scroll on — click to stop following" : "Auto-scroll off — click to follow"}
     >
       <ArrowDownToLine className={`size-3.5 ${on ? "" : "opacity-50"}`} />
-    </Button>
+    </button>
   );
 }
 
@@ -513,26 +516,18 @@ function SessionControls({ sessionKey }: { sessionKey: string }) {
   const { minimize, discard } = useAiDebug();
   return (
     <>
-      <Button
-        iconOnly
-        size="small"
-        variant="muted"
-        onClick={minimize}
+      <button type="button" className="gl-icon-btn" onClick={minimize}
         aria-label="Minimize"
         title="Minimize — the job keeps running"
       >
         <Minimize2 className="size-3.5" />
-      </Button>
-      <Button
-        iconOnly
-        size="small"
-        variant="transparent"
-        onClick={() => discard(sessionKey)}
+      </button>
+      <button type="button" className="gl-icon-btn" onClick={() => discard(sessionKey)}
         aria-label="Discard session"
         title="Discard — stops the job and forgets it"
       >
         <Trash2 className="size-3.5" />
-      </Button>
+      </button>
     </>
   );
 }
@@ -548,7 +543,8 @@ function LogRequestCard({
   request,
   payload,
   fulfilled,
-  logsMissing,
+  unavailableNeed,
+  availableNeed,
   onFetch,
   onSend,
   onDecline,
@@ -556,7 +552,10 @@ function LogRequestCard({
   request: LogRequest;
   payload: LogPayload | null;
   fulfilled: boolean;
-  logsMissing: boolean;
+  /** Requested needs this run has nothing to answer with. */
+  unavailableNeed: LogRequestNeed[];
+  /** Requested needs that can be sent. Empty means the whole ask is a no. */
+  availableNeed: LogRequestNeed[];
   onFetch: () => void;
   onSend: () => void;
   onDecline: () => void;
@@ -571,16 +570,15 @@ function LogRequestCard({
     );
   }
 
-  // Recording is off by default, so this is the common first-time case and it
-  // needs to say what to DO — reporting "no logs" would read as "the page was
-  // silent", which is a different and misleading thing.
-  if (logsMissing) {
+  // Neither source records by default, so this is the common first-time case
+  // and it needs to say what to DO — reporting "no logs" would read as "the
+  // page was silent", which is a different and misleading thing.
+  if (availableNeed.length === 0) {
     return (
       <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
         <Callout.Text>
-          The model asked for {describeNeed(request.need)}, but this run didn&apos;t record it. Turn
-          on &ldquo;Record console &amp; network&rdquo; in the toolbar and run the test again to
-          give the model this data.
+          The model asked for {describeNeed(request.need)}, but this run didn&apos;t record it.{" "}
+          <MissingHint need={unavailableNeed} />
         </Callout.Text>
       </Callout>
     );
@@ -600,14 +598,31 @@ function LogRequestCard({
         </div>
       </div>
 
+      {unavailableNeed.length > 0 ? (
+        <Text variant="small" color="secondary">
+          This run has no {describeNeed(unavailableNeed)} — only{" "}
+          {describeNeed(availableNeed)} can be sent.
+        </Text>
+      ) : null}
+
       {payload ? (
         <>
           <Text variant="small" color="secondary">
-            {payload.consoleCount} console {payload.consoleCount === 1 ? "entry" : "entries"} (
-            {payload.consoleErrors} errors/warnings) · {payload.networkCount}{" "}
-            {payload.networkCount === 1 ? "request" : "requests"} ({payload.networkFailures} failed)
-            · about {payload.approxTokens.toLocaleString()} tokens
-            {payload.omitted > 0 ? ` · ${payload.omitted} not included` : ""}
+            {[
+              availableNeed.includes("console")
+                ? `${payload.consoleCount} console ${payload.consoleCount === 1 ? "entry" : "entries"} (${payload.consoleErrors} errors/warnings)`
+                : null,
+              availableNeed.includes("network")
+                ? `${payload.networkCount} ${payload.networkCount === 1 ? "request" : "requests"} (${payload.networkFailures} failed)`
+                : null,
+              availableNeed.includes("structure")
+                ? `${payload.structureCandidates} ${payload.structureCandidates === 1 ? "element" : "elements"} across ${payload.structureSteps} ${payload.structureSteps === 1 ? "step" : "steps"}`
+                : null,
+              `about ${payload.approxTokens.toLocaleString()} tokens`,
+              payload.omitted > 0 ? `${payload.omitted} not included` : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
           </Text>
           <button
             type="button"
@@ -627,20 +642,44 @@ function LogRequestCard({
       ) : null}
 
       <div className="flex items-center justify-end gap-2">
-        <Button size="small" variant="muted" onClick={onDecline}>
+        <Btn onClick={onDecline}>
           Decline
-        </Button>
+        </Btn>
         {payload ? (
-          <Button size="small" variant="accent" onClick={onSend}>
+          <Btn tone="ai" onClick={onSend}>
             <Send className="size-3.5" /> Send this data
-          </Button>
+          </Btn>
         ) : (
-          <Button size="small" variant="glass" onClick={onFetch}>
+          <Btn onClick={onFetch}>
             Show me what it would send
-          </Button>
+          </Btn>
         )}
       </div>
     </div>
+  );
+}
+
+/** What to turn on to have this data next time. Each source has its own switch
+ *  in a different place, so naming the wrong one sends the user hunting through
+ *  Settings for a toggle that would not have helped. */
+function MissingHint({ need }: { need: LogRequestNeed[] }) {
+  const wantsLogs = need.some((n) => n === "console" || n === "network");
+  const wantsStructure = need.includes("structure");
+  return (
+    <>
+      {wantsLogs ? (
+        <>
+          Turn on “Record console &amp; network” in the toolbar and run the test again to give the
+          model this data.{" "}
+        </>
+      ) : null}
+      {wantsStructure ? (
+        <>
+          The page structure comes from Auto-Heal, which records what it found whenever it
+          can&apos;t rescue a step — turn on Auto-Heal in Settings and run the test again.
+        </>
+      ) : null}
+    </>
   );
 }
 
@@ -660,9 +699,9 @@ function CapacityNotice({
         would just wait.
       </Callout.Text>
       {decision.oldestStreamingKey ? (
-        <Button size="small" variant="muted" onClick={onStopOldest}>
+        <Btn onClick={onStopOldest}>
           Stop the oldest and send
-        </Button>
+        </Btn>
       ) : null}
     </Callout>
   );
@@ -709,6 +748,7 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
   // it. Payload stays null until then — fetching is itself a decision.
   const [logPayload, setLogPayload] = React.useState<LogPayload | null>(null);
   const [logsMissing, setLogsMissing] = React.useState(false);
+  const [structureMissing, setStructureMissing] = React.useState(false);
   const { modelName, models, confirmModel, currentModel } = useModelPicker(open);
   const disabledEnhancements = useDisabledEnhancements();
   const thinkingGifEnabled = !disabledEnhancements.has("aiThinkingGif");
@@ -730,6 +770,34 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
             imported: runCtx.imported,
             speed: runCtx.speed,
             failedStepIndex: runCtx.failedStepIndex,
+            // Without these the protocol is never appended and the model has
+            // no way to ask for anything — it falls back to requesting logs,
+            // screenshots and HTML in prose, which nothing can act on. They
+            // were computed and passed into this panel but never reached the
+            // prompt builder, so the request block was unreachable in the app
+            // while its parser, card and fulfilment cap all worked.
+            logsAvailable: runCtx.logsAvailable,
+            structureAvailable: runCtx.structureAvailable,
+          })
+        : [],
+    [runCtx],
+  );
+
+  // WHAT LEAVES THIS MACHINE, itemised. Derived from the same `runCtx` the
+  // prompt is built from, so it cannot describe a request the app no longer
+  // sends — see `describeSending`, and the drift test beside it.
+  const sending = React.useMemo(
+    () =>
+      runCtx
+        ? describeSending({
+            testName: runCtx.testName,
+            testUrl: runCtx.testUrl,
+            script: runCtx.script,
+            output: runCtx.output,
+            imported: runCtx.imported,
+            speed: runCtx.speed,
+            failedStepIndex: runCtx.failedStepIndex,
+            logsAvailable: runCtx.logsAvailable,
           })
         : [],
     [runCtx],
@@ -834,22 +902,58 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
   const showLogRequest = Boolean(logRequest) && !declined && !atFulfilmentCap;
   // Known up front when the run recorded nothing: make the user click "show me"
   // only to be told there is nothing to show would be a pointless round trip.
-  const noLogsRecorded = logsMissing || runCtx?.logsAvailable === false || !runCtx?.recordId;
+  //
+  // Split by SOURCE rather than answered with one boolean, because the two are
+  // independent settings: a run can have Auto-Heal data and no console
+  // recording, or the reverse. A single flag would refuse a request for
+  // structure because the console wasn't recorded, which is a "no" to a
+  // question nobody asked.
+  const noRun = !runCtx?.recordId;
+  const requested = React.useMemo(() => logRequest?.need ?? [], [logRequest]);
+  const logsUnavailable = noRun || logsMissing || runCtx?.logsAvailable === false;
+  const structureUnavailable = noRun || structureMissing || runCtx?.structureAvailable === false;
+  const unavailableNeed = React.useMemo(
+    () =>
+      requested.filter((n) => (n === "structure" ? structureUnavailable : logsUnavailable)),
+    [requested, structureUnavailable, logsUnavailable],
+  );
+  const availableNeed = React.useMemo(
+    () => requested.filter((n) => !unavailableNeed.includes(n)),
+    [requested, unavailableNeed],
+  );
 
   const fetchLogPayload = React.useCallback(async () => {
-    if (!logRequest || !runCtx?.recordId || !session) return;
-    try {
-      const logs = await api.artifacts.getLogs(session.testId, runCtx.recordId);
-      if (!logs) {
-        setLogsMissing(true);
-        return;
-      }
-      setLogsMissing(false);
-      setLogPayload(buildLogPayload(logs, logRequest.need));
-    } catch {
-      setLogsMissing(true);
-    }
-  }, [logRequest, runCtx?.recordId, session]);
+    if (!logRequest || !runCtx?.recordId || !session || availableNeed.length === 0) return;
+    const wantLogs = availableNeed.some((n) => n === "console" || n === "network");
+    const wantStructure = availableNeed.includes("structure");
+    // Each source fails on its own. One throw used to abandon the whole
+    // payload, which with two sources would throw away data the user can have
+    // because data they can't happened to be asked for in the same breath.
+    const logs = wantLogs
+      ? await api.artifacts
+          .getLogs(session.testId, runCtx.recordId)
+          .catch(() => null)
+      : null;
+    const structure = wantStructure
+      ? await api.artifacts
+          .getStructure(session.testId, runCtx.recordId)
+          .catch(() => null)
+      : null;
+    if (wantLogs && !logs) setLogsMissing(true);
+    if (wantStructure && (!structure || structure.length === 0)) setStructureMissing(true);
+    if ((wantLogs && !logs) && (!wantStructure || !structure || structure.length === 0)) return;
+    setLogPayload(
+      buildLogPayload(
+        { logs, structure },
+        // Built for what was actually FETCHED, not what was asked for: a
+        // section header promising console output above an empty fence reads
+        // as "the page logged nothing", which is a different claim.
+        availableNeed.filter((n) =>
+          n === "structure" ? Boolean(structure && structure.length > 0) : Boolean(logs),
+        ),
+      ),
+    );
+  }, [logRequest, runCtx?.recordId, session, availableNeed]);
 
   const sendLogPayload = React.useCallback(async () => {
     if (!logPayload || !logRequest) return;
@@ -900,28 +1004,20 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
         <span className="inline-flex items-center gap-2">
           {session?.testName ?? ""}
           {status === "streaming" ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="muted"
-              onClick={() => store.stopStream(sessionKey)}
+            <button type="button" className="gl-icon-btn" onClick={() => store.stopStream(sessionKey)}
               aria-label="Stop"
               title="Stop"
             >
               <Square className="size-3.5" />
-            </Button>
+            </button>
           ) : null}
           {!reviewing && status !== "streaming" && !readOnly ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="muted"
-              onClick={() => setDraft({ reviewing: true })}
+            <button type="button" className="gl-icon-btn" onClick={() => setDraft({ reviewing: true })}
               aria-label="Regenerate"
               title="Regenerate"
             >
               <RotateCcw className="size-3.5" />
-            </Button>
+            </button>
           ) : null}
           {!reviewing && correctedScript && runCtx?.onApplyScript ? (
             <Button size="small" variant="accent" disabled={draft.applied} onClick={applyScript}>
@@ -929,16 +1025,12 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
             </Button>
           ) : null}
           {!reviewing && content ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="transparent"
-              onClick={copyResponse}
+            <button type="button" className="gl-icon-btn" onClick={copyResponse}
               aria-label="Copy response"
               title="Copy response"
             >
               {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-            </Button>
+            </button>
           ) : null}
           {!reviewing ? (
             <AutoScrollToggle
@@ -982,6 +1074,43 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                 Review the prompt that will be sent to the model, then add any context you want and
                 confirm to send. Nothing is sent until you confirm.
               </Text>
+              {/* THE SENDING STRIP. A privacy affordance, which is why it ships
+                  with the reskin rather than waiting for Phase C (REDESIGN §B9):
+                  this button can send a script and a run's console output to a
+                  hosted provider, and until now the only way to know what left
+                  the machine was to read the prompt builder's source. A test
+                  script routinely carries staging hostnames, seeded credentials
+                  and customer-shaped fixture data.
+
+                  Above the prompt preview, not below it — the preview is long,
+                  and a disclosure the user reaches by scrolling past the thing
+                  it is about is one most people never see. Same reasoning as
+                  `risk` on a settings row. */}
+              {sending.length > 0 ? (
+                <div className="gl-sending" data-gl="sending">
+                  <span className="gl-section-title">Sending</span>
+                  <ul className="gl-sending-list">
+                    {sending.map((item) => (
+                      <li key={item.label} className="gl-sending-item">
+                        <span>{item.label}</span>
+                        {item.chars !== null ? (
+                          <span className="gl-sending-size">
+                            {item.chars.toLocaleString()} chars
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {/* Characters, not tokens. A token count is a guess dressed as
+                      a measurement — it depends on the tokenizer, which depends
+                      on the provider — and the question here is "how much of my
+                      stuff", for which characters are honest. */}
+                  <p className="gl-sending-total">
+                    {sendingTotalChars(sending).toLocaleString()} characters in total, to the
+                    provider configured in Settings.
+                  </p>
+                </div>
+              ) : null}
               <div className="flex flex-wrap items-center gap-1.5">
                 {QUICK_CONTEXT_REASONS.map((reason) => {
                   const active = isReasonActive(draft.additionalContext, reason);
@@ -1012,12 +1141,14 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                 />
               </Field>
               <div className="flex items-center justify-end gap-2">
-                <Button size="small" variant="muted" onClick={store.minimize}>
-                  Cancel
-                </Button>
-                <Button size="small" variant="accent" onClick={() => void send()}>
+                <Btn onClick={store.minimize}>Cancel</Btn>
+                {/* `ai`, the holo border — AI is not an outcome, so it takes a
+                    TREATMENT rather than a colour. It is also the button that
+                    actually sends the payload the strip above just itemised,
+                    which is the moment worth marking. */}
+                <Btn tone="ai" onClick={() => void send()}>
                   <Send className="size-3.5" /> Send to AI
-                </Button>
+                </Btn>
               </div>
               <ScrollArea
                 className="max-h-[56vh] flex-1 min-h-0 rounded-md border border-separator"
@@ -1029,7 +1160,7 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                       <Text variant="small-strong" color="secondary">
                         {m.role === "system" ? "System prompt" : m.role === "user" ? "User prompt" : "Assistant"}
                       </Text>
-                      <pre className="text-small-mono overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-control-subtle p-2 text-primary">
+                      <pre className="gl-console">
                         {m.content}
                       </pre>
                     </div>
@@ -1136,7 +1267,8 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                         request={logRequest}
                         payload={logPayload}
                         fulfilled={alreadySent}
-                        logsMissing={noLogsRecorded}
+                        unavailableNeed={unavailableNeed}
+                        availableNeed={availableNeed}
                         onFetch={() => void fetchLogPayload()}
                         onSend={() => void sendLogPayload()}
                         onDecline={declineLogRequest}
@@ -1253,40 +1385,28 @@ export function StepAiDebugDialog({ sessionKey }: { sessionKey: string }) {
         <span className="inline-flex items-center gap-2">
           {session?.label ?? "Step"}
           {status === "streaming" ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="muted"
-              onClick={() => store.stopStream(sessionKey)}
+            <button type="button" className="gl-icon-btn" onClick={() => store.stopStream(sessionKey)}
               aria-label="Stop"
               title="Stop"
             >
               <Square className="size-3.5" />
-            </Button>
+            </button>
           ) : null}
           {status !== "streaming" && !readOnly ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="muted"
-              onClick={() => void runDiagnosis()}
+            <button type="button" className="gl-icon-btn" onClick={() => void runDiagnosis()}
               aria-label="Regenerate"
               title="Regenerate"
             >
               <RotateCcw className="size-3.5" />
-            </Button>
+            </button>
           ) : null}
           {content ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="transparent"
-              onClick={copyResponse}
+            <button type="button" className="gl-icon-btn" onClick={copyResponse}
               aria-label="Copy response"
               title="Copy response"
             >
               {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-            </Button>
+            </button>
           ) : null}
           <AutoScrollToggle on={autoScroll} onChange={setAutoScroll} />
           <SessionControls sessionKey={sessionKey} />

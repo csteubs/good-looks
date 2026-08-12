@@ -1,35 +1,16 @@
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Badge,
-  Button,
   Dialog,
-  EmptyState,
-  Field,
-  Input,
   NativeDatePickerRoot,
   NativeDatePickerTrigger,
   NativeDatePickerValue,
   ScrollArea,
-  SegmentedControl,
-  SegmentedControlItem,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-  Text,
-  Toolbar,
-  ToolbarActions,
-  ToolbarContent,
-  ToolbarDescription,
-  ToolbarTitle,
   toast,
 } from "@ui";
 import {
@@ -45,17 +26,25 @@ import {
   Wand2,
 } from "lucide-react";
 
+import { useNavigate } from "@tanstack/react-router";
+
+import { Btn, Panel, Segmented, StatusChip, TONE, toneSurface } from "../theme";
 import { api } from "../lib/api";
+import { summariseAll } from "../lib/stats-categories";
+import { CategoryBoard } from "./stats/category-board";
+import { BUILT } from "./stats/stats-category-view";
 import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
 import { FlakePanel } from "./flake-panel";
 import { StepHealthPanel } from "./step-health-panel";
 import { SuiteCostPanel } from "./suite-cost-panel";
+import { CostPanel } from "./cost-panel";
 import { DivergencePanel } from "./divergence-panel";
 import { LogInspector } from "./log-inspector";
 import { Pager } from "./pager";
 import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS, TEST_SPEED_LABELS } from "../lib/recorder-types";
-import { pageSlice } from "../lib/paginate";
+import { DENSE_PAGE_SIZE, pageSlice } from "../lib/paginate";
+import { nativeShell } from "../lib/native-shell";
 import {
   NO_FILTERS,
   filtersActive,
@@ -85,10 +74,6 @@ interface NativeMenu {
 }
 function nativeMenu(): NativeMenu {
   return (window as unknown as { glazeAPI: { Menu: NativeMenu } }).glazeAPI.Menu;
-}
-function nativeShell(): { showItemInFolder: (p: string) => void } {
-  return (window as unknown as { glazeAPI: { shell: { showItemInFolder: (p: string) => void } } })
-    .glazeAPI.shell;
 }
 // ── Formatting helpers ─────────────────────────────────────────────────
 function fmtDateTime(ms: number): string {
@@ -159,16 +144,10 @@ function buildDailyBuckets(runs: RunRecord[]): DayBucket[] {
 
 function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
-    <div className="flex flex-col gap-1 rounded-lg border border-separator bg-panel px-4 py-3">
-      <Text variant="small" color="tertiary">
-        {label}
-      </Text>
-      <Text className="text-[22px] font-semibold leading-none">{value}</Text>
-      {hint ? (
-        <Text variant="small" color="secondary">
-          {hint}
-        </Text>
-      ) : null}
+    <div className="gl-kpi">
+      <span className="gl-kpi-label">{label}</span>
+      <span className="gl-kpi-value">{value}</span>
+      {hint ? <span className="gl-kpi-hint">{hint}</span> : null}
     </div>
   );
 }
@@ -193,18 +172,16 @@ function CaptureOverheadPanel({ summary }: { summary: CaptureOverheadSummary }) 
       ? summary.meanCapturedDurationMs - summary.meanUncapturedDurationMs
       : null;
   return (
-    <div className="rounded-lg border border-separator bg-panel p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <Text variant="small" className="font-medium">
-          Capture overhead
-        </Text>
-        <Text variant="small" color="tertiary">
-          {summary.capturedRuns > 0
-            ? `${summary.capturedRuns} captured ${summary.capturedRuns === 1 ? "run" : "runs"} · ${summary.totalShots} screenshots`
-            : `${summary.a11yRuns} accessibility ${summary.a11yRuns === 1 ? "run" : "runs"}`}
-        </Text>
-      </div>
-      <div className="grid grid-cols-3 gap-3">
+    <Panel
+      title="Capture overhead"
+      id={
+        summary.capturedRuns > 0
+          ? `${summary.capturedRuns} captured ${summary.capturedRuns === 1 ? "run" : "runs"} · ${summary.totalShots} screenshots`
+          : `${summary.a11yRuns} accessibility ${summary.a11yRuns === 1 ? "run" : "runs"}`
+      }
+      pad={10}
+    >
+      <div className="gl-kpis">
         {summary.capturedRuns > 0 ? (
           <StatCard
             label="Screenshot time per run"
@@ -243,58 +220,59 @@ function CaptureOverheadPanel({ summary }: { summary: CaptureOverheadSummary }) 
         />
         ) : null}
       </div>
-    </div>
+    </Panel>
   );
 }
 
 function PassFailChart({ buckets }: { buckets: DayBucket[] }) {
   const maxTotal = Math.max(1, ...buckets.map((b) => b.passed + b.failed));
   return (
-    <div className="rounded-lg border border-separator bg-panel p-4">
-      <div className="mb-3 flex items-center justify-between">
-        <Text variant="small" className="font-medium">
-          Pass / fail over time
-        </Text>
-        <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1.5">
-            <span className="size-2.5 rounded-sm bg-support-green" />
-            <Text variant="small" color="secondary">
-              Passed
-            </Text>
+    <Panel
+      title="Pass / fail over time"
+      pad={10}
+      right={
+        <div className="gl-legend">
+          <span className="gl-legend-item">
+            <span className="gl-legend-dot" style={{ background: TONE.phos }} />
+            Passed
           </span>
-          <span className="flex items-center gap-1.5">
-            <span className="size-2.5 rounded-sm bg-support-red" />
-            <Text variant="small" color="secondary">
-              Failed
-            </Text>
+          <span className="gl-legend-item">
+            <span className="gl-legend-dot" style={{ background: TONE.red }} />
+            Failed
           </span>
         </div>
-      </div>
-      <div className="flex h-40 gap-1.5 overflow-x-auto">
+      }
+    >
+      <div className="gl-chart">
         {buckets.map((b) => {
           const total = b.passed + b.failed;
           const totalPct = (total / maxTotal) * 100;
           const passPct = total > 0 ? (b.passed / total) * 100 : 0;
           return (
-            <div key={b.key} className="flex min-w-[14px] flex-1 flex-col items-center gap-1">
-              <div className="flex w-full flex-1 items-end">
-                <div
-                  className="flex w-full flex-col justify-end overflow-hidden rounded-sm"
-                  style={{ height: `${totalPct}%` }}
-                  title={`${b.label}: ${b.passed} passed, ${b.failed} failed`}
-                >
-                  <div className="w-full bg-support-red" style={{ height: `${100 - passPct}%` }} />
-                  <div className="w-full bg-support-green" style={{ height: `${passPct}%` }} />
-                </div>
+            <div key={b.key} className="gl-chart-col">
+              <div className="gl-chart-plot">
+                {total > 0 ? (
+                  <div
+                    className="gl-chart-stack"
+                    style={{ height: `${totalPct}%` }}
+                    title={`${b.label}: ${b.passed} passed, ${b.failed} failed`}
+                  >
+                    <div style={{ height: `${100 - passPct}%`, background: TONE.red }} />
+                    <div style={{ height: `${passPct}%`, background: TONE.phos }} />
+                  </div>
+                ) : (
+                  // A day with no runs draws its floor rather than nothing, so
+                  // the gap reads as "nothing happened" and not as a chart that
+                  // failed to render.
+                  <div className="gl-chart-floor" title={`${b.label}: no runs`} />
+                )}
               </div>
-              <Text variant="small" color="tertiary" className="text-[10px]">
-                {b.label}
-              </Text>
+              <span className="gl-chart-tick">{b.label}</span>
             </div>
           );
         })}
       </div>
-    </div>
+    </Panel>
   );
 }
 
@@ -303,6 +281,7 @@ function PassFailChart({ buckets }: { buckets: DayBucket[] }) {
 
 export function StatsView() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
   const runs = React.useMemo(() => runsQuery.data ?? [], [runsQuery.data]);
 
@@ -368,6 +347,36 @@ export function StatsView() {
     queryKey: ["metrics", "divergence"],
     queryFn: () => api.metrics.divergence(),
   });
+
+  // The two series the board needs that the panels below do not. Both reuse the
+  // key their own screen already caches — ["heals","all"] is the Heals view's
+  // and ["replays"] is the Visual view's — so the board costs a round trip only
+  // on the first visit, and drilling into a category costs none at all.
+  const healsQuery = useQuery({ queryKey: ["heals", "all"], queryFn: () => api.heals.listAll() });
+  const replaysQuery = useQuery({ queryKey: ["replays"], queryFn: api.artifacts.list });
+
+  // Every category that has an answer yet. One that has not resolved is OMITTED
+  // rather than given a state — see the note in stats-categories.ts on why
+  // "loading" must not render as "you have never switched this on".
+  const summaries = React.useMemo(
+    () =>
+      summariseAll({
+        runs: runsQuery.data,
+        flake: flakeQuery.data,
+        heals: healsQuery.data,
+        replays: replaysQuery.data,
+        stepHealth: stepHealthQuery.data,
+        slowness: slownessQuery.data,
+      }),
+    [
+      runsQuery.data,
+      flakeQuery.data,
+      healsQuery.data,
+      replaysQuery.data,
+      stepHealthQuery.data,
+      slownessQuery.data,
+    ],
+  );
 
   // Runs whose test still exists. Everything that NAMES a test works from this
   // — the table, the test filter, log search — while the summary cards, the
@@ -494,42 +503,54 @@ export function StatsView() {
 
   return (
     <div className="flex h-full flex-col">
-      <Toolbar className="pt-2">
-        <ToolbarContent>
-          <ToolbarTitle>Stats</ToolbarTitle>
-          <ToolbarDescription>
-            {realRuns.length} run{realRuns.length === 1 ? "" : "s"} recorded
-            {runs.length !== realRuns.length
-              ? ` · ${runs.length - realRuns.length} baseline update${
-                  runs.length - realRuns.length === 1 ? "" : "s"
-                }`
-              : ""}
-          </ToolbarDescription>
-        </ToolbarContent>
-        <ToolbarActions>
-          <Button variant="glass" size="small" onClick={openManageMenu}>
-            <MoreHorizontal className="size-4" />
+      <header className="gl-stats-head">
+        <span className="gl-stats-title">Stats</span>
+        <span className="gl-stats-meta">
+          {realRuns.length} run{realRuns.length === 1 ? "" : "s"} recorded
+          {runs.length !== realRuns.length
+            ? ` · ${runs.length - realRuns.length} baseline update${
+                runs.length - realRuns.length === 1 ? "" : "s"
+              }`
+            : ""}
+        </span>
+        <div className="gl-stats-actions">
+          <Btn tone="ghost" onClick={openManageMenu}>
+            <MoreHorizontal aria-hidden="true" />
             Manage data
-          </Button>
-        </ToolbarActions>
-      </Toolbar>
+          </Btn>
+        </div>
+      </header>
 
       {/* min-h-0 flex-1, NOT h-full. In a flex column h-full resolves to 100% of
-          the PARENT, but the Toolbar above has already consumed part of that —
+          the PARENT, but the header above has already consumed part of that —
           so the scroll region extended past the bottom of the window by the
-          toolbar's height and its last child (the pager) was cut off. flex-1
+          header's height and its last child (the pager) was cut off. flex-1
           claims only the remaining space; min-h-0 is required with it, or a
-          flex item refuses to shrink below its content and overflows again. */}
+          flex item refuses to shrink below its content and overflows again.
+          Both are read at source level by check:scroll-layout. */}
       <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto flex max-w-4xl flex-col gap-5 p-5 pb-10">
           {runs.length === 0 && !runsQuery.isLoading ? (
-            <EmptyState
-              className="py-16"
-              title="No runs yet"
-              description="Run a test from its detail page to start collecting pass/fail stats and console logs here."
-            />
+            <div className="gl-empty">
+              <span className="gl-empty-title">No runs yet</span>
+              <p className="gl-empty-note">
+                Run a test from its detail page to start collecting pass/fail stats and console logs
+                here.
+              </p>
+            </div>
           ) : (
             <>
+              {/* The category board FIRST, and the chart's own argument is why:
+                  the shape of the last week is what you can read without
+                  reading. The board is that same idea one level up — it answers
+                  "is anything wrong?" across every category, where the chart
+                  answers it for outcomes alone. */}
+              <CategoryBoard
+                summaries={summaries}
+                openable={BUILT}
+                onOpen={(id) => navigate({ to: "/stats/$category", params: { category: id } })}
+              />
+
               {/* Chart FIRST. The shape of the last week is the thing you can
                   read without reading — a rising red band answers "is something
                   wrong?" before any number does, and it was previously below
@@ -537,7 +558,7 @@ export function StatsView() {
               {buckets.length > 0 ? <PassFailChart buckets={buckets} /> : null}
 
               {/* Summary cards */}
-              <div className="grid grid-cols-4 gap-3">
+              <div className="gl-kpis">
                 <StatCard label="Total runs" value={String(realRuns.length)} />
                 <StatCard label="Pass rate" value={`${passRate}%`} />
                 <StatCard label="Passed" value={String(passed)} />
@@ -563,6 +584,12 @@ export function StatsView() {
                 />
               ) : null}
 
+              {/* What it COSTS, above where its time goes (§6.4). Two questions
+                  that read as one and are not: this one is about money and
+                  what it bought, `SuiteCostPanel` is about which switches are
+                  spending the minutes. */}
+              <CostPanel runs={realRuns} />
+
               {slownessQuery.data ? (
                 <SuiteCostPanel
                   cost={slownessQuery.data.cost}
@@ -581,50 +608,45 @@ export function StatsView() {
 
               {/* Search */}
               <div className="flex flex-col gap-2">
-                <div className="relative">
-                  <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-tertiary" />
-                  <Input
-                    variant="filled"
+                <div className="gl-search">
+                  <span className="gl-search-icon">
+                    <Search aria-hidden="true" />
+                  </span>
+                  <input
+                    className="gl-search-input"
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
                     placeholder="Search raw logs (errors, selectors, output)…"
-                    className="pl-8"
                   />
                 </div>
 
                 {searching ? (
-                  <div className="rounded-lg border border-separator bg-panel">
+                  <Panel>
                     {searchQuery.isLoading ? (
-                      <Text variant="small" color="tertiary" className="block p-3">
-                        Searching…
-                      </Text>
+                      <p className="gl-panel-note">Searching…</p>
                     ) : searchResults.length === 0 ? (
-                      <Text variant="small" color="tertiary" className="block p-3">
-                        No logs match “{debounced}”.
-                      </Text>
+                      <p className="gl-panel-note">No logs match “{debounced}”.</p>
                     ) : (
                       pageSlice(searchResults, searchPage).map((r) => (
                         <button
                           key={r.runId}
                           type="button"
+                          className="gl-result"
                           onClick={() =>
                             setLogRun({ id: r.runId, title: `${r.testName} — ${fmtDateTime(r.startedAt)}` })
                           }
-                          className="flex w-full flex-col gap-1 border-b border-separator px-3 py-2 text-left last:border-b-0 hover:bg-control-subtle"
                         >
-                          <div className="flex items-center gap-2">
-                            <Badge color={r.status === "passed" ? "green" : "red"}>{r.status}</Badge>
-                            <Text variant="small" className="font-medium">
-                              {r.testName}
-                            </Text>
-                            <Text variant="small" color="tertiary">
+                          <span className="gl-result-head">
+                            <StatusChip tone={r.status === "passed" ? "phos" : "red"}>
+                              {r.status}
+                            </StatusChip>
+                            <span className="gl-result-name">{r.testName}</span>
+                            <span className="gl-result-when">
                               {fmtDateTime(r.startedAt)} · {r.matchCount} match
                               {r.matchCount === 1 ? "" : "es"}
-                            </Text>
-                          </div>
-                          <Text variant="small" color="secondary" className="line-clamp-1 font-mono">
-                            {r.snippet}
-                          </Text>
+                            </span>
+                          </span>
+                          <span className="gl-result-snippet">{r.snippet}</span>
                         </button>
                       ))
                     )}
@@ -634,7 +656,7 @@ export function StatsView() {
                       onPage={setSearchPage}
                       label="results"
                     />
-                  </div>
+                  </Panel>
                 ) : null}
               </div>
 
@@ -642,43 +664,48 @@ export function StatsView() {
               {!searching ? (
                 <div>
                   <div className="mb-2 flex flex-wrap items-center gap-2">
-                    <Text variant="small" className="font-medium">
-                      Run history
-                    </Text>
-                    <Text variant="small" color="tertiary">
+                    <span className="gl-stats-label">Run history</span>
+                    <span className="gl-stats-meta">
                       {filtersActive(filters)
                         ? `${filteredRuns.length} of ${liveRuns.length}`
                         : `${liveRuns.length} run${liveRuns.length === 1 ? "" : "s"}`}
-                    </Text>
+                    </span>
                     {/* Says out loud why "Total runs" above is bigger than the
                         list below. Without it the two numbers just disagree,
                         and a disagreement with no explanation reads as a bug in
                         whichever one the reader trusts less. */}
                     {hiddenRuns > 0 ? (
-                      <Text variant="small" color="tertiary">
+                      <span className="gl-stats-meta">
                         · {hiddenRuns} from deleted test{hiddenRuns === 1 ? "" : "s"} counted above,
                         not listed
-                      </Text>
+                      </span>
                     ) : null}
 
                     <div className="ml-auto flex flex-wrap items-center gap-2">
-                      <SegmentedControl
-                        size="small"
+                      {/* Plain buttons with aria-pressed, not a Radix
+                          ToggleGroup. The SDK's SegmentedControl activated on
+                          pointer-down, which is why so many tests in this repo
+                          have to drive it with fireEvent.mouseDown; these
+                          respond to a real click, so the tests can say what
+                          they mean. The role changes from radio to button, and
+                          that is the query change this reskin costs. */}
+                      <Segmented
+                        label="Filter runs by status"
                         value={filters.status}
-                        onValueChange={(v) => {
-                          // allowEmpty is off, but Radix still emits "" if the
-                          // selected item is re-pressed — ignore that.
-                          if (!v) return;
-                          setFilters((f) => ({ ...f, status: v as StatusFilter }));
-                        }}
-                        aria-label="Filter runs by status"
-                      >
-                        <SegmentedControlItem value="all">All</SegmentedControlItem>
-                        <SegmentedControlItem value="passed">Passed</SegmentedControlItem>
-                        <SegmentedControlItem value="failed">Failed</SegmentedControlItem>
-                        <SegmentedControlItem value="baseline">Baselines</SegmentedControlItem>
-                      </SegmentedControl>
+                        onChange={(v) => setFilters((f) => ({ ...f, status: v as StatusFilter }))}
+                        options={[
+                          { value: "all", label: "All" },
+                          { value: "passed", label: "Passed" },
+                          { value: "failed", label: "Failed" },
+                          { value: "baseline", label: "Baselines" },
+                        ]}
+                      />
 
+                      {/* Native-menu-backed and staying that way (REDESIGN §1):
+                          the redesign draws the trigger box, the menu itself is
+                          the OS's. Its options never enter the DOM, so a
+                          selection cannot be driven in jsdom — persistence is
+                          covered at the IPC layer instead. */}
                       <Select
                         value={filters.tag}
                         onValueChange={(v) => setFilters((f) => ({ ...f, tag: v as TagFilter }))}
@@ -717,37 +744,51 @@ export function StatsView() {
                       </Select>
 
                       {filtersActive(filters) ? (
-                        <Button
-                          variant="glass"
-                          size="small"
-                          onClick={() => setFilters(NO_FILTERS)}
-                        >
-                          <X className="size-4" />
+                        <Btn tone="ghost" onClick={() => setFilters(NO_FILTERS)}>
+                          <X aria-hidden="true" />
                           Clear
-                        </Button>
+                        </Btn>
                       ) : null}
                     </div>
                   </div>
-                  <div className="overflow-x-hidden">
-                    <Table className="table-fixed">
-                      <TableHeader sticky>
-                        <TableRow>
-                          <TableHead>Test</TableHead>
-                          <TableHead className="w-20">Status</TableHead>
-                          <TableHead className="w-20">Browser</TableHead>
-                          <TableHead className="w-28">Started</TableHead>
-                          <TableHead className="w-28">Tags</TableHead>
-                          <TableHead className="w-24 text-right">Duration</TableHead>
-                          <TableHead className="w-20 text-right">Log</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {pageSlice(filteredRuns, runsPage).map((r) => {
+                  <div className="gl-table-wrap">
+                    {/* NAMED, since C §6.4 put a second table on this screen. Two unnamed
+                        tables are ambiguous to a screen reader and to every
+                        `getByRole("table")` in this file's tests — which is how
+                        the ambiguity was found. */}
+                    <table className="gl-table gl-table-runs" aria-label="Run history">
+                      <thead>
+                        <tr>
+                          <th>Test</th>
+                          {/* Wide enough for the fixed-width status chip AND a
+                              "healed" chip beside it. The old SDK badge sized
+                              itself to its own text, so 80px was plenty; a chip
+                              that is contractually `--gl-status-w` is not
+                              something a column can be narrower than, and the
+                              cell clips rather than wraps. */}
+                          <th style={{ width: 160 }}>Status</th>
+                          <th style={{ width: 52 }}>Browser</th>
+                          <th style={{ width: 96 }}>Started</th>
+                          <th style={{ width: 104 }}>Tags</th>
+                          <th style={{ width: 76 }} className="gl-num">
+                            Duration
+                          </th>
+                          <th style={{ width: 64 }} className="gl-num">
+                            Log
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {pageSlice(filteredRuns, runsPage, DENSE_PAGE_SIZE).map((r) => {
                           const isBaseline = r.kind === "baseline-update";
                           return (
-                            <TableRow
+                            <tr
                               key={r.id}
-                              className={isBaseline ? "" : "cursor-pointer"}
+                              // A baseline update is not a run and has no log to
+                              // open, so it is not clickable. The two row kinds
+                              // the data already distinguishes must not read
+                              // identically (REDESIGN §B7).
+                              data-clickable={isBaseline ? undefined : ""}
                               onClick={() => {
                                 if (isBaseline) return;
                                 setLogRun({
@@ -756,82 +797,86 @@ export function StatsView() {
                                 });
                               }}
                             >
-                              <TableCell
-                                className="truncate font-medium"
-                                title={r.testName}
-                              >
+                              <td data-strong="" title={r.testName}>
                                 {r.testName}
-                              </TableCell>
-                              <TableCell>
+                              </td>
+                              <td>
                                 {isBaseline ? (
-                                  <Badge color="secondary">
-                                    <Stamp className="size-3" />
-                                    Baseline
-                                  </Badge>
+                                  <StatusChip>
+                                    <span className="flex items-center gap-1">
+                                      <Stamp aria-hidden="true" className="gl-mini-icon" />
+                                      Baseline
+                                    </span>
+                                  </StatusChip>
                                 ) : (
                                   <span className="flex items-center gap-1">
-                                    <Badge color={r.status === "passed" ? "green" : "red"}>
+                                    <StatusChip tone={r.status === "passed" ? "phos" : "red"}>
                                       {r.status}
-                                    </Badge>
+                                    </StatusChip>
                                     {/* A run that only passed because Auto-Heal
                                         substituted a locator is not the same
                                         evidence as one that passed outright, so
                                         it must not read identically. */}
                                     {r.healedSteps ? (
-                                      <Badge color="orange" title={`${r.healedSteps} step${r.healedSteps === 1 ? "" : "s"} healed during this run`}>
-                                        <Wand2 className="size-3" />
+                                      <span
+                                        className="gl-chip-tone"
+                                        style={toneSurface(TONE.amber)}
+                                        title={`${r.healedSteps} step${r.healedSteps === 1 ? "" : "s"} healed during this run`}
+                                      >
+                                        <Wand2 aria-hidden="true" className="gl-mini-icon me-[3px]" />
                                         healed
-                                      </Badge>
+                                      </span>
                                     ) : null}
                                   </span>
                                 )}
-                              </TableCell>
+                              </td>
                               {/* Icon-only: the engine is a glance-level fact,
                                   and the name would cost a third of the row's
                                   width to repeat on every line. */}
-                              <TableCell>
+                              <td>
                                 {isBaseline ? (
-                                  <span className="text-tertiary">—</span>
+                                  <span style={{ color: "var(--gl-tx-3)" }}>—</span>
                                 ) : (
-                                  <BrowserIcon
-                                    browser={runBrowserOf(r)}
-                                    className="size-4 shrink-0 text-secondary"
-                                  />
+                                  <span style={{ color: "var(--gl-tx-2)" }}>
+                                    <BrowserIcon
+                                      browser={runBrowserOf(r)}
+                                      className="size-4 shrink-0"
+                                    />
+                                  </span>
                                 )}
-                              </TableCell>
-                              <TableCell
-                                className="truncate text-secondary"
-                                title={fmtDateTime(r.startedAt)}
-                              >
-                                {fmtDateTime(r.startedAt)}
-                              </TableCell>
-                              <TableCell>
+                              </td>
+                              <td title={fmtDateTime(r.startedAt)}>{fmtDateTime(r.startedAt)}</td>
+                              <td>
                                 {isBaseline ? (
-                                  <span className="text-tertiary">—</span>
+                                  <span style={{ color: "var(--gl-tx-3)" }}>—</span>
                                 ) : (
                                   <span className="flex items-center gap-1">
                                     {/* Mode icon + engine icon, no words. The
                                         engine has its own column now, so the
                                         name here would be pure duplication —
-                                        but the badge keeps the glyph so the
+                                        but the chip keeps the glyph so the
                                         tag filter's browser options still have
                                         something to point at. */}
-                                    <Badge color="secondary">
+                                    <span className="gl-chip">
                                       {r.runHeadless ? (
                                         <MonitorOff
-                                          className="size-3"
+                                          className="gl-mini-icon"
                                           role="img"
                                           aria-label="Headless"
                                         />
                                       ) : (
-                                        <Globe className="size-3" role="img" aria-label="Headed" />
+                                        <Globe
+                                          className="gl-mini-icon"
+                                          role="img"
+                                          aria-label="Headed"
+                                        />
                                       )}
                                       <BrowserIcon
                                         browser={runBrowserOf(r)}
-                                        className="size-3 shrink-0"
+                                        className="gl-mini-icon ms-[3px]"
                                         labelled={false}
                                       />
-                                    </Badge>
+                                    </span>
                                     {/* Speed this run executed at. Shown only when
                                         the run RECORDED one: runs predating the field
                                         could have been at any speed, and a badge
@@ -839,62 +884,64 @@ export function StatsView() {
                                         comparison this is here to support — whether a
                                         slower speed actually passes more often.
 
-                                        This one KEEPS its word, unlike the badge
+                                        This one KEEPS its word, unlike the chip
                                         above. The engine dropped its name because it
                                         has its own column and the word was duplication;
                                         speed has no other column, and four speeds
                                         cannot be told apart by one timer glyph. */}
                                     {r.speed ? (
-                                      <Badge
-                                        color="secondary"
+                                      <span
+                                        className="gl-chip"
                                         title={
                                           r.speed === "crawl"
                                             ? "Crawl: waited for the page to load and settle after every step"
                                             : `Playback speed: ${TEST_SPEED_LABELS[r.speed]}`
                                         }
                                       >
-                                        <Timer className="size-3" />
+                                        <Timer aria-hidden="true" className="gl-mini-icon me-[3px]" />
                                         {TEST_SPEED_LABELS[r.speed]}
-                                      </Badge>
+                                      </span>
                                     ) : null}
                                     {/* Capture is a filterable tag, so it needs to be
                                         visible here — icon-only to fit the column. */}
                                     {r.captureArtifacts ? (
                                       <Camera
-                                        className="size-3 shrink-0 text-tertiary"
+                                        className="gl-mini-icon"
+                                        style={{ color: "var(--gl-tx-3)" }}
                                         aria-label="Screenshots captured"
                                       />
                                     ) : null}
                                   </span>
                                 )}
-                              </TableCell>
-                              <TableCell className="text-right text-secondary">
+                              </td>
+                              <td className="gl-num">
                                 {isBaseline ? (
-                                  <span className="text-tertiary" title={r.note}>
+                                  <span style={{ color: "var(--gl-tx-3)" }} title={r.note}>
                                     {r.note ?? "—"}
                                   </span>
                                 ) : (
                                   fmtDuration(r.durationMs)
                                 )}
-                              </TableCell>
-                              <TableCell className="text-right text-tertiary">
+                              </td>
+                              <td className="gl-num" style={{ color: "var(--gl-tx-3)" }}>
                                 {isBaseline ? "—" : fmtBytes(r.logBytes)}
-                              </TableCell>
-                            </TableRow>
+                              </td>
+                            </tr>
                         );
                       })}
-                    </TableBody>
-                  </Table>
+                    </tbody>
+                  </table>
                   {filteredRuns.length === 0 ? (
-                    <Text variant="small" color="tertiary" className="block px-3 py-6 text-center">
+                    <p className="gl-panel-note" style={{ textAlign: "center", padding: "18px 10px" }}>
                       No runs match these filters.
-                    </Text>
+                    </p>
                   ) : null}
                   <Pager
                     page={runsPage}
                     total={filteredRuns.length}
                     onPage={setRunsPage}
                     label="runs"
+                    size={DENSE_PAGE_SIZE}
                   />
                   </div>
                 </div>
@@ -952,22 +999,26 @@ export function StatsView() {
         onConfirm={runRangeDelete}
       >
         <div className="flex items-end gap-3">
-          <Field label="From" orientation="vertical" className="p-0">
+          {/* The picker itself is native-backed and stays; what left with the
+              SDK is `Field`, whose label is one <label> and a gap. */}
+          <label className="flex flex-col gap-1">
+            <span className="gl-kpi-label">From</span>
             <NativeDatePickerRoot value={rangeFrom} onValueChange={setRangeFrom} type="date">
               <NativeDatePickerTrigger>
-                <Calendar className="size-4 text-tertiary" />
+                <Calendar className="size-4" style={{ color: "var(--gl-tx-3)" }} />
                 <NativeDatePickerValue placeholder="Start date" />
               </NativeDatePickerTrigger>
             </NativeDatePickerRoot>
-          </Field>
-          <Field label="To" orientation="vertical" className="p-0">
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="gl-kpi-label">To</span>
             <NativeDatePickerRoot value={rangeTo} onValueChange={setRangeTo} type="date">
               <NativeDatePickerTrigger>
-                <Calendar className="size-4 text-tertiary" />
+                <Calendar className="size-4" style={{ color: "var(--gl-tx-3)" }} />
                 <NativeDatePickerValue placeholder="End date" />
               </NativeDatePickerTrigger>
             </NativeDatePickerRoot>
-          </Field>
+          </label>
         </div>
       </Dialog>
     </div>

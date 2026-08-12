@@ -16,6 +16,1171 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — Baseline provenance, and the three fields this app does not get to invent (C §6.6)
+
+The Visual screen asks the user to judge a frame against a baseline and, until now, told them nothing whatsoever about the baseline. That gap matters more than it sounds: "these two frames differ" is a completely different statement depending on whether the baseline was pinned yesterday from the same engine or four months ago from WebKit while the current run is Chromium. Without provenance every difference looks equally like a regression.
+
+**§6.6 asks for six fields and three of them do not exist here.** *Commit* — nothing in this product reads the user's repository; a baseline is pinned from a run of a recorded test against a live site, and there is no commit in the picture at all. *Who accepted* — a single-user desktop app with no identity; the field would read back the same name forever. *Viewport* — genuinely not on `RunRecord`, and a test can carry `viewport` steps that resize mid-run, so there is no single viewport for a run to report and quoting the first one would be wrong for any test that resizes. Inventing plausible values for those would be worse than omitting them, because this line's entire job is to make a comparison judgeable and a fabricated provenance makes it less so while looking like it makes it more.
+
+**The field nobody asks for and everybody needs is whether the run still exists.** Retention prunes run history; a baseline outlives it. A baseline pinned from a pruned run is still a perfectly valid baseline and is no longer traceable to anything — which is a fact about how far the comparison can be trusted, and one no other surface in the app would ever tell you. It reads "run since pruned" rather than dropping the engine, because a provenance line missing a field reads as a rendering bug rather than as information.
+
+**Two states that must not look alike.** For a run that EXISTS, an absent `runBrowser` really does mean chromium — every run predating the picker used it, and that is history rather than a default being chosen. For a run that is GONE we know nothing. Defaulting both to "chromium" would be the easy shape and would state a fact about a run nobody can check.
+
+**It goes in `CRT`'s `caption`.** That prop has existed since A3, documented as "what this frame IS: which run, which viewport, which engine", with no consumer at all. This is what it was for.
+
+**And it appears only where the baseline does.** Under the current frame or the diff map the caption would be attributing one frame's history to another; in Blink it shows on the baseline half only, or it would swap the claim twice a second while the frames alternate. Stale (30 days) marks the line amber and never the frame: an old baseline is not a fault — a stable page should have one — so it is a prompt to look rather than a verdict, which is what amber means everywhere else here.
+
+### 2026-08-12 — Wipe and Blink, and what reduced motion means when the motion IS the information (C §6.6)
+
+The Visual screen had three compare modes and none of them answered the question triage actually asks. Current and Baseline show one frame each, so comparing them means holding an image in your head while you look at another. Diff is exact and nearly useless for judging: it lights every changed pixel with equal weight, so a font-smoothing shift and a button that moved 40px look the same. Wipe and Blink put the two frames in the same PLACE and let the eye do the comparison it is extremely good at.
+
+**Neither frame may be treated, and here that is not a style rule.** Wipe clips with `clip-path` rather than fading, and Blink swaps a whole frame rather than cross-dissolving. The premise of both modes is that any difference the user sees between the two images is a difference in the PAGE — an opacity, a filter or a blend mode on either layer manufactures one, and the user files a bug against their own site. `check:crt-untreated` already pinned the rule for the bezel; these two modes are where it binds hardest, and the tests assert it on the inline styles as well.
+
+**Reduced motion turns Blink into a manual toggle rather than switching it off, and that distinction took the longest to get right.** The house rule (`resolveAtmo`) is that motion which reports something survives `calm`. Here the alternation is not decoration layered on the information — it IS the information, and a Blink that does not blink is a mode that does nothing at all. But it is equally true that this is involuntary, repeating, full-frame motion, which is exactly what somebody turning reduced motion on is asking not to be shown. Turning it off loses a capability; leaving it on ignores a request. Neither is necessary: the user swaps the frames themselves, at their own pace, and gets the identical comparison. Nothing is lost except the part they asked not to have.
+
+**The divider never reaches an edge.** Flush to one, the last sliver of the other frame is gone and so is any handle inside the frame to drag it back with — the control vanishes into the bezel and the mode reads as broken. A 2% margin costs nothing (there is no comparison anybody was making at 0%) and keeps it always grabbable. It is also keyboard-driven, because it is the one control on this screen that otherwise requires a steady hand.
+
+**Two guards that look like defensive coding and are not.** `wipeFromPointer` checks for a zero-width box: the frame is an image, and for one paint before it loads its box really is zero-wide — dividing by that yields Infinity, which the clamp pins to the right-hand margin, so the first drag of every session would jump. And `clampWipe` centres on a non-finite input rather than clamping it, for the same reason.
+
+**And both modes are offered only when a current frame exists.** A mode whose empty state reads "both have to exist" is a mode that should not have been in the switch. When the BASELINE is missing the mode is still offered — the switch is gated on a baseline record existing, which is a different fact — and it says which frame it could not load rather than rendering one and letting it read as a result.
+
+**Split into two slices, like B8.** Region breakdown, baseline provenance and drift are the rest of §6.6. `visual-view.tsx` is the largest file in the renderer and the one where a change is most easily made blind; the same reasoning that scoped B8 scopes this.
+
+### 2026-08-12 — Cost mode, and the three numbers it refuses to make up (C §6.4)
+
+§6.4's own requirement was that the assumptions be "visible and editable — a number nobody can check is a number nobody believes". The open question was whether that meant Settings rows. It does not, and the distinction is the whole feature: a Settings row makes the value editable *somewhere*, and leaves a reader looking at "48 minutes of manual testing avoided" having to know an assumption exists, guess where it lives, and go and find it before they can judge the figure. The two inputs sit directly under the numbers they produce. The derivation is part of the reading.
+
+They are also **not persisted**. They are a lens, not a preference: you set them to your team's real numbers, read the panel, and the question is answered. Storing them would add a third thing to the settings file that has to be migrated, backed up and reasoned about, in exchange for saving one number-typing on a rare visit.
+
+**Three things it refuses to compute, and each refusal is the design.**
+
+*Time is never converted to money.* That needs an hourly rate for whoever would otherwise have done the testing, and it is the one assumption this app has no business guessing — it varies by an order of magnitude between users, nobody would notice a bad default, and a currency figure carries far more authority than the guess behind it deserves. So spend is money (a CI minute has a price), value is TIME (hours of manual testing not done), and the ratio between them is stated in its own honest unit. A reader who wants a currency figure multiplies by their own rate, which is a calculation they can check.
+
+*No currency symbol is ever printed.* The rate is whatever the user typed, in whatever currency they think in. Stamping a `$` on it would be the app asserting something it was never told.
+
+*"Failures caught", not "regressions caught".* The plan's phrase overclaims: whether a given failure was a regression in the site, a broken test, or flake is exactly the question `triage` and the flake analysis exist to answer, and they only answer it probabilistically. Naming it what it is costs one word.
+
+**And two things it deliberately counts asymmetrically.** Spend counts every run *including failures* — CI bills for those, and a cost figure that quietly excluded them would be the flattering kind, which is what this panel must not be. Manual time is credited only for *passes*, because a run that failed did not verify the flow and stands in for nothing.
+
+**Flake is §6.1's definition, reused.** A failure directly followed by a pass with none of the recorded run settings changed. Re-deriving it here would have been easy and is how two surfaces in one app end up disagreeing about the same test in front of the same user.
+
+**One guard worth writing down, because the obvious version of it is wrong.** `coerceAssumption` has to survive someone clearing the field to retype it. `Number("abc")` is NaN and a `Number.isFinite` check catches that — but `Number("")` is **0**, which is finite, so the obvious guard lets an empty box through as a legitimate rate of nothing, and the panel then reports a confident `0.00` spend for a suite that has been running all week. The test for it was written first and failed on exactly that.
+
+**And adding a second table to Stats made `getByRole("table")` ambiguous**, taking down nineteen existing tests at once. The fix is not scoping in the tests: two unnamed tables on one screen are ambiguous to a screen reader too. Both carry an `aria-label` now.
+
+### 2026-08-12 — The step composer comes out of the modal, and the line count it was supposed to delete (C §6.2)
+
+The insert cursor exists so a step can be placed somewhere other than the end of the list. The control for placing it was a modal, which covered up the list — so while you filled in the fields that decide WHAT goes in, you could not see WHERE. Composing in place fixes that, and it is the whole feature.
+
+**The plan's line-count claim does not survive contact, and should not.** §B6 says retiring the dialog "removes 1,170 lines and a modal". It removes the modal. The lines are ten step kinds times their fields: the three-checkbox wait that emits one step per ticked box, the CSS assert that refuses a malformed property name rather than emitting an assert that checks nothing, the element-state expansion that turns one pick into several rows. Every one of those is behaviour with a test behind it. Deleting them to hit a number would be deleting the feature and calling it a cleanup. So the forms are untouched, their tests are the same tests, and what changed is the frame — which is what was wrong.
+
+**Three things the frame had to grow back, having lost Radix.** Escape, bound on the panel, because without it the only way out of a half-filled composer is the mouse. A max-width on the body, because the dialog was `size="large"` and the panel inherits the width of the step list — uncapped, a label and its control sit at opposite ends of a thousand pixels, which reads as a broken layout rather than a wide one. And **Add disabled until the step will actually build**: a modal can afford a permanently-enabled confirm that does nothing, because it stays open and "nothing happened" reads as "I have not finished yet". A panel sitting in the list cannot — it has no such alibi, and a button that silently declines is indistinguishable from a broken one.
+
+**That last one exposed a bug rather than causing one.** With the button gated on `build()`, the element-state composer came up permanently un-pressable. The cause: the composer's reset effect cleared `locator`, which `TargetElementPicker` — a CHILD — had just seeded from the best candidate of the picked element, and a child's effects run before its parent's, so the reset landed second and won. Behind an always-enabled confirm this was survivable; the submit simply did nothing and the user tried again. The fix is not to reorder anything: the reset is unnecessary, because both call sites now `key` the composer on the kind and the picked element, so every open and every re-target is a fresh mount and `useState(null)` is the reset — and it happens first by construction.
+
+**`composerAt(index)`, not one element hoisted out of the list.** "Between step 3 and step 4" is a position in the list's map, not a place in the component tree, so the composer is a function of the gap index that renders at most once — `state.cursor` is a single index. It has a home in the empty list as well, which is not an edge case: it is the only way to put a step into a session that has captured nothing.
+
+**And three tests moved rather than went.** `trainer-panel-view.test.tsx` asserted `getByRole("dialog")` to pin which WINDOW acts on a right-click in the training browser — the regression that whole addressing mechanism exists for. The behaviour is unchanged; only the surface stopped being a dialog. They query `[data-gl="step-composer"]` now.
+
+### 2026-08-12 — The training browser gets a real URL bar, and the URL assertion gets a default
+
+**The URL bar already existed and had never once worked.** `updateTitle()` wrote `Recording — <url>` into the training window's native title on every `did-navigate`, described in its own comment as "the trainer's stand-in for an address bar, since an externally-loaded page can't host an app-owned toolbar". Electron's default handling of `page-title-updated` copies `document.title` onto the window, and that fires after the navigation — so the page won the race every time, on every site with a `<title>`. The window said "Ritual" where it was meant to say where you were. The setting to turn it off worked; the thing it turned on did not.
+
+**Which made a URL assertion a trip outside the app.** The trainer panel's header shows `state.url`, which is the session's START url and is never reassigned — correct for what that field means, and stale from the first navigation onward. So the three URL assert kinds opened with an empty field and no legible copy of the current URL anywhere in the product. The actual user workflow was: leave the app, look at the URL in a different browser, come back, type it.
+
+**A stand-in was not fixable into a URL bar, so the page moved into a child view.** `recWindow.webContents` was the page; it is now a `WebContentsView`, with an app-owned strip in a second view above it. This is the first `WebContentsView` in the codebase and it is a real cost — the partition, the navigation guards, the denied `openExternal` permission, the capture injection, the drains, the cookies, the input host and the focus call all had to move from the window to the page, and **every one of those fails silently if it is left behind**. A drain pointed at the strip returns nothing and the trainer records no steps. A guard attached to the window protects a webContents that never navigates. The partition on the window still creates a partition — just not the one the site loads in, so every recording would quietly inherit the last one's cookies. None of it throws.
+
+**So the rule is lexical and enforced: `recWindow.webContents` may not appear in `recorder-service.ts`.** `pageWc()` is the only way to reach the page, and `check:recorder-views` fails the build on the direct form. A type would have been better and was not available — both are `WebContents`, the same type doing two different jobs.
+
+**The hazard that would have shipped is the viewport.** `useContentSize` made the window's content box *be* the recorded viewport, which is what `page.setViewportSize` replays at. Insert a 36pt strip into that box and the page renders 36pt shorter than the step, the generated spec and the real run all claim — and nothing measures it, because the step is written from the preset rather than from the page. The window is created at `viewport.height + strip` and a replayed `viewport` step goes through `pageResizeHost()`, an adapter that adds the strip on the way in and subtracts it on the way out so `resize-service.ts` never learns the training browser grew a toolbar. Verified against a real window: preset 900×600 → content 900×636 → page view at y=36, height 600.
+
+**The bar is deliberately read-only.** A real address bar is the obvious next request and it is the wrong feature. Every navigation in a recording is either the opening `goto` or a consequence of a recorded interaction; a navigation the user performs by typing is one the recorder does not capture, so the spec would replay a different journey than the one on screen — silently, which is the only kind of wrong that matters here. It is selectable and copyable, because *reading* the URL was the need.
+
+**`liveUrl` is a separate field from `url`, and nearly was not.** The first draft updated `session.url` on every navigation, which reads as the obvious fix and would have rewritten every saved test's starting point to wherever the user happened to stop — `finalize()` writes `session.url` to `TestRecord.url`, and that is what the opening `goto` replays.
+
+**The prefill is per-kind because the kinds mean different things.** `urlIs` generates an exact whole-URL match, so it gets the absolute URL; anything shorter can never pass. `url` and `urlEndsWith` get the path, because the origin is what differs between staging and production and asserting it is the reason those two kinds exist beside `urlIs`. At a site root the path is `/`, which as a "contains" assertion is satisfied by every URL on every host — a green assertion testing nothing — so that case falls back to the host. One implementation in `shared/url-assert.mjs`, because four call sites that disagreed about what "URL contains" means would teach the user to distrust the suggestion, which is worse than not offering one.
+
+**Two things the split broke that tests caught rather than users.** `debug-capture.ts` captured `win.webContents`, which is now blank — the training browser had silently dropped out of every debug capture, skipped by an `isEmpty()` guard, and it is the window you most want a picture of. And the strip's first draft gave it its own `partition`; `protocol.handle` registers `app://` on the DEFAULT session only, so the load failed with no exception and no useful event, rendering as a blank band above a page that otherwise worked perfectly. `e2e/ui-scale.spec.ts` found that one, because it was extended to assert the strip scales with the app while the page never does — a distinction the split made delicate, since both now live one point apart in the same window and the natural implementation (scale the window) gets the strip right and the page wrong.
+
+### 2026-08-12 — Change temp stops guessing, and two numbers that are both medians (C §6.3)
+
+`Temp` shipped in A3 with a note admitting what it was: a component that reads a timing against a median, with no median to read. It fell to `off` and rendered neutral everywhere, which was the current behaviour rendered honestly rather than a feature. This wires it to `metrics-store`, and two of the three decisions are about refusing to colour something.
+
+**On a step row, both numbers are medians.** Recent p50 against the p50 before it — not this run against a median. The obvious design is the other one, and it is wrong here: a single run's duration for a single step is noise, a garbage collection or a slow DNS answer, and colouring it would light half the list on every run for reasons that have nothing to do with the test. What earns a colour is the step having CHANGED, which is a claim two medians can support and one sample cannot. §3.4's dead band exists for the same reason at one level down — a table where every row is lit says nothing at all.
+
+**For the test's own median, metrics beats run history, and the reason is retention.** §6.1 computes a median from `api.runs.list()`, which is `run-history.json` — and retention prunes that file. The metrics DB is rolled up BEFORE retention runs (CLAUDE.md says why: after it, retention costs you pictures rather than history), so once a prune has happened it holds strictly more of a test's past. A median is exactly the statistic that degrades when its sample is silently truncated: the number stays plausible, keeps rendering, and stops being true. Nothing about the screen changes when that happens, which is what makes it worth the extra query.
+
+**But it falls back rather than failing.** The metrics DB is a derived shadow that is allowed to be unavailable — a runtime without `node:sqlite`, a failed open — and every method in it swallows its own errors by design. So `summariseRun`'s `medianMs` is preferred when present and the history-derived median is used when it is not. Losing the better source must not mean losing the answer.
+
+**`testDurationTrend` counts passed runs only.** A run that died on step two is fast; one that timed out is exactly as slow as the budget. Either poisons a median whose entire job is to say whether a PASS was unusual. `baseline-update` rows are excluded for the reason they are excluded everywhere else: accepting screenshots is an audit event, not an execution.
+
+**It rides the existing channel rather than taking its own.** `metrics:slowness` already answers per-test when given a `testId`, so the trend goes on that response. The step list and the run summary are one screen asking one question, and two channels would let them answer it from two different reads of a database that is being written to while they look.
+
+**And the check is real SQL against a real database, deliberately.** `stepDurations` once computed its percentiles with `LIMIT 1 OFFSET <expression over aggregates>`, which SQLite accepted for p95 and refused for p50 — and because `all()` swallows a throw by contract, the broken half came back as `null` and read exactly like "this step was never timed". A pure test of the arithmetic would have passed. The same trap applies here, so the same kind of test guards it.
+
+### 2026-08-12 — Filing a defect: the payload, the consent, and three invisible bugs
+
+Phases 2–6 of the issue-tracker integration, on top of the connection that
+landed in #87. A visual difference, an accessibility violation or a failed step
+becomes a Linear issue; the same defect seen again comments on the issue it
+already has; and every issue carries a `goodlooks://` link back.
+
+**The renderer never handles the evidence.** It names a coordinate — this test,
+this run, this step — and the BACKEND loads the screenshots, console lines and
+error text itself. That is what makes the leak check meaningful: if the renderer
+carried the evidence across IPC and handed it back to be sent, `check:issue-payload`
+could only verify what it was given. It also means the sending direction of IPC
+carries no image data at all — the dialog returns filenames, and the bytes are
+re-read from the same coordinate the draft was built from.
+
+**What the check actually guarantees is narrower than "no logs", and the
+distinction is the whole point.** The raw Playwright log never appears, because
+its only redaction is for declared secrets while it carries DOM snippets,
+assertion diffs and unscrubbed URLs; what goes instead is `errorSignature`'s
+reduction of its first line. Console lines DO go, for a failure only, filtered to
+errors and page errors — that is where a diagnosis lives. Network entries go only
+when the run had its headers filtered, and are dropped **whole** otherwise rather
+than narrowed: `GLAZE_RECORD_ALL_HEADERS=1` produces exactly the run someone
+debugging an auth failure would have, and not reading those entries is a stronger
+guarantee than remembering to strip them.
+
+**Screenshots are consented to, not filtered.** They cannot be redacted, so the
+mitigation is the thumbnail strip: all three images shown at a size you can
+actually read, above the button, each removable. The dialog is `2xl` rather than
+`large` for that reason alone — at `max-w-lg` the strip wraps to one per row and
+the consent it exists to obtain stops meaning anything.
+
+**Links are keyed without the run id.** A visual difference reappears on every
+run, so a run-keyed link reports "not filed" every time and the feature produces
+one duplicate per run — which is how it would become the one everyone mutes. The
+exception is a failure that blamed no step: nothing identifies it but its run,
+and keying those together would comment a new failure onto an unrelated issue.
+
+**Three bugs found here were invisible, and all three are the same shape.**
+
+The first: `SettingRow` drops `details` on a flagged row by design, so copy
+written there compiled, type-checked and rendered nowhere. The second:
+`new URL()` **resolves `..` rather than preserving it**, so a deep-link
+validator inspecting parsed segments can never see a traversal — by then it has
+been applied, silently changing which target the link resolves to. Dot segments
+are now rejected on the raw string, before parsing. The third was the worst: the
+issue-link store built its key in two places, and the two `join` separators
+**rendered identically in every editor, grep and diff** while being different
+characters. Every save succeeded, every lookup missed, and the feature reported
+"not filed yet" for defects it had just filed. There is now one derivation, and
+it joins on a visible `::`.
+
+None of the three throws, none shows up in type-check, and two of them were found
+only because a test was written for the behaviour rather than the code.
+
+### 2026-08-12 — ⌘K, and why its scoring is three tiers rather than a fuzzy library (C §6.7)
+
+**A palette has exactly one failure mode that matters: a wrong first row.** Nobody reads the list. They type three letters and press Enter, and whatever was at the top happens. Everything below follows from that.
+
+**So the scoring is small enough to predict.** Title prefix, then a word prefix inside the title, then a subsequence anywhere — with every keyword match ranked below every title match, and a shortness term that tie-breaks INSIDE a tier and is capped so it can never cross between them. A general fuzzy matcher does more, and everything it does more of is a guess; a palette that guesses is one where the top row moves for reasons the user cannot see, which is worse than one that occasionally ranks something second. The keyword rule is the same principle applied to hidden text: a test whose URL happens to contain "stats" must never outrank the Stats view, because a hostname is context and a name is a name.
+
+**Groups stop mattering the moment there is a query.** Browsed, the list is blocked into Actions / Tests / Tags / Views. Searched, it is flat. Keeping the blocks under a query would mean someone who typed `sta` and meant Stats has to scroll past four tests to reach it, because Tests is the earlier block — the search produced an order, and re-grouping destroys exactly the information it produced.
+
+**A combobox, not a dialog.** The SDK's `Dialog` is kept elsewhere for its focus trap, but a palette has one focusable element and its rows are never tabbed to. `role="combobox"` over a `role="listbox"` with `aria-activedescendant` is the only version a screen reader reads correctly — rows that take focus announce themselves as the focused thing and leave the query behind — and it is the more testable one, because the selection is an attribute rather than `document.activeElement`.
+
+**⌘K deliberately does not exempt text fields**, and it is the only shortcut in this app that does not. `HistoryNav`'s ⌘[ must, because `[` is a character somebody might be typing. ⌘K produces none, and a palette you cannot open while the cursor is in the log search is a palette you learn not to trust.
+
+**"Debug the last failure" shipped as "OPEN the last failure", and the rename is the honest part.** An AI debug session needs the script and the run output that `test-detail-view` assembles. A palette reaching across that boundary to synthesise the context would open a session about the wrong run — confidently, and with no way to tell. The row is named for what it does; the sparkle is one click further on and already the right colour.
+
+**Two things the guards caught, both worth keeping.** `check:renderer-classes` rejected `id="gl-cmd-listbox"`: `gl-*` is the theme's CLASS namespace and the guard audits every `gl-` string the renderer writes by asking the emitted stylesheet whether a rule exists for it — so a DOM id borrowing the prefix reads as a class that styles nothing, which is precisely what it is. The ids are `cmdrow-*` / `cmd-listbox` now. And a selection clamp written inline in the component turned out to be **untestable from the keyboard**: typing resets the selection to the top, so no keystroke can leave it past the end of the list. Rather than keep an assertion that could never fire, the clamp moved into the pure module with the case it actually guards written down — a background refetch shortening the live `["tests"]` query while the palette is open, with no input at all.
+
+### 2026-08-12 — The boot plate, and the three things "2.6s splash" does not say (C §6.9)
+
+The plan's whole brief for this is one line: *2.6s glitch-plate splash. Cheap, and the first thing anyone sees. Should respect reduced motion by rendering statically.* Building it honestly needed three answers the line does not give.
+
+**It covers the app rather than delaying it.** The plate is mounted alongside everything else and everything else is live underneath it the whole time — a curtain over a running show, not a loading screen holding one up. The alternative would have been to gate the first paint on it, which is how a 2.6-second splash turns into a 2.6-second *wait*, and it would have made the app measurably slower to start in exchange for nothing.
+
+**It is skippable, on any key or any click, and the skip is not advertised.** 2.6 seconds is the right length the first time somebody launches this and the wrong length the two-hundredth; a splash you cannot get out of is the entire reason splashes have a bad name. An on-screen "Skip" was rejected: a control offering escape frames the plate as something being endured rather than shown, and pressing something is the first thing anyone tries anyway. The corollary is that the plate must be `pointer-events: none` — a plate that swallowed the click it is being dismissed by would read as the app dropping input, on the one screen where the user has no other evidence it works.
+
+**"Render statically" taken literally is a hang.** The house rule is that `prefers-reduced-motion` clamps motion and never content (`resolveAtmo`), so the reflex answer is to keep the 2.6 seconds and stop the animation. That leaves a motionless black rectangle held for 2.6 seconds, which does not read as a splash — it reads as the app having failed to start, which is worse than any motion it removes. The still version is 900ms instead, and 900 is not a fraction of 2600: 2.6s is how long the glitch cycle takes to be worth watching, and 900ms is how long a title card needs to be read. Two different questions. The fill rule is drawn full and still rather than left empty for the same reason — a bar stuck at zero width for the whole hold reads as stalled.
+
+**The `echo` treatment moved rather than being copied.** It was `screens.css`, keyed on `.gl-home-mark`. The plate wears the same glitch on the same word, and the four-stylesheet split states the rule: a rule a SECOND screen wants moves to `shared.css`. It is keyed on `.gl-echo` now, applied by both marks, so the treatment is named once and the two keep their own type and layout.
+
+**One bug worth writing down, because it looked correct for 2.6 seconds.** The hold and the fade started as a single effect with `phase` in its dependencies. The moment it set `phase` to `"out"` it re-ran, its own cleanup cleared the fade timer it had just set, and the plate sat at zero opacity over the app forever. Everything about the first 2.6 seconds was right; the app simply never came back. Two effects, and the tests that caught it are the two most obvious ones — "it goes away on its own" and "it goes away on any key".
+
+**And the once-per-window flag is set when the plate FINISHES, not when it mounts.** Set on mount, StrictMode's mount/unmount/remount cycle consumes it before the plate has ever played, so it would never appear in development — the one environment where it is being worked on.
+
+### 2026-08-12 — The run panel stops being about failure (C §6.1)
+
+The detail view was shaped around one run state. A verdict chip, a triage line, a log: exactly right for the run you arrived at because something broke, and wrong for every other one. A passed run's panel was a green word over an eight-line window of Playwright's own chatter — it answered nothing anybody came to ask, and it was the panel most users saw most often.
+
+**Five new panels, one shape.** Each answers the question its reader actually has: what pressing Run would do, how far in a run is, what held, what Auto-Heal substituted, what was different between the failure and the pass. They are not five layouts — a headline sentence, an optional facts grid, at most one action — because someone who learns where the numbers are on a passed run should not relearn it on a healed one.
+
+**"Attempt 1 vs attempt 2" needed translating, and survived it.** The plan's name for the `retry` state presumes a runner with `retries` configured. This app configures none: every run is one attempt, so the two attempts are two RUNS of the same test. The question is unchanged and the answer comes only from what `RunRecord` actually stores — engine, headless, pacing, capture, a11y, dataset row. **When nothing differed, that is the finding**, and the one a user is least likely to reach alone: same engine, same pacing, same budget, opposite outcome, so the test is flaky rather than fixed. The alternative — say nothing when there is no difference — hides exactly the case where the user is about to go hunting for a fix that does not exist.
+
+**Two of the six passed and are not phos.** `healed` is amber, and a `retry` where nothing differed is amber. The reasoning is the one already written down for the heal journal: a mis-heal usually SUCCEEDS, because clicking the wrong button rarely throws, so the step is marked passed and the test quietly stops testing what it was written to test. A healed pass is therefore the run most worth distrusting and the one that looks most trustworthy, and reporting it as a plain pass is the app agreeing with the substitution. This is not a violation of "colour means outcome" — it is that rule applied to the outcome that actually occurred, which is "passed, conditionally".
+
+**The panel now renders with no live run at all.** It used to appear only once something had executed in this session. That is defensible while the panel is a log viewer and indefensible once it is a state report: opening a test cold said nothing whatsoever about it, not that it had failed half an hour ago, not that it had never run. It now summarises the most recent RECORD, identified by id rather than by "the newest one" — a batch writes other tests' runs in between, and newest-wins would have the panel describe a stranger.
+
+**The decision is pure and the rendering is not.** `renderer/lib/run-summary.ts` takes records and returns facts; `run-summary-panel.tsx` draws them. That split is what makes the claims that would be silent if wrong testable as arithmetic: healed beats retry, an absent `healFailedSteps` is null and never 0 ("it never tried" and "it tried and failed nothing" are different claims and only one is evidence), an absent `speed` is Unknown and never fast, and one previous run is not a median — a distance from a single sample is a measurement claim with no measurement behind it, and `Temp` falls to `off` rather than colouring a fabricated one.
+
+**Two traps this cost, both worth writing down.** First: `.gl-heal-row` **already existed** in `shared.css`, used by `heals-panel.tsx`. The new rows silently adopted its border and background, and the new rules leaked back into that panel. Nothing catches this — `check:renderer-classes` asks whether a class resolves, and it did, to the wrong rule. It was caught by looking at the screen. Renamed to `.gl-run-heal-*`. Second: the summary's height cap was written as `max-height: 60%`, and with no log the panel is `flex: 0 0 auto`, so its own height is content-driven and **indefinite** — against which a percentage `max-height` resolves to `none` and does nothing at all. The symptom is a panel that looks correct and is cut off at the window's edge, with the scrollbar that would have revealed the rest never appearing. `vh` is definite everywhere.
+
+**And one guard earned its keep on the way through.** `check:selection-neutral` rejected an amber `:hover` on the review button. It is right: this app spends its four hues on outcomes, and a control that goes amber under the pointer is indistinguishable from one reporting a warning.
+
+### 2026-08-11 — `app.isPackaged` made the branch switcher unreachable in the only way anyone runs this app from source
+
+**Found by running the app and looking at it, which is the step in CLAUDE.md that exists for exactly this.** Every automated gate was green; the Branches row simply was not in the sidebar, and opening the view said *"This is a packaged build … Run the app from a checkout (`npm run dev`)"* — to a user who had run `npm run dev`.
+
+**`isPackaged` is not "was this shipped".** Electron derives it from the name of the executable: anything not called `Electron` counts as packaged. And `npm run dev` deliberately runs a **branded, re-signed clone of Electron.app called "Good Looks!"**, because macOS reads an app's name and icon from its bundle (`scripts/dev-app-bundle.mjs`, and never `app.setName` — that would move userData). So every dev run reported itself as packaged. The two facts are individually documented and had never been put together.
+
+**It was worse than a hidden row.** `relaunchOnto` relaunches the same binary, so a user who did reach the feature and switched onto a branch arrived at a Branches view telling them branch switching was unavailable — with the way back to their own checkout inside it. The escape was to quit and re-run `npm run dev`.
+
+**So availability is decided by what the feature actually requires: a git repository to check a branch out of.** `readRepoInfo` already answers that, and answers it correctly for a dev run, for a branch build, and for a shipped `.app` in /Applications, which has no repository above it and fails exactly as it did before. `isPackaged` is kept **only to choose the wording** of that failure, which is the one thing it is reliable for — a packaged build is the case where "no repository" has a specific, actionable explanation.
+
+**Two existing tests only passed because of the short-circuit.** Both set `packaged` and asserted unavailability, while the stub's default app path is this project — a real checkout. The old code returned before anything looked at it. Their setups now say what they mean, which is that a packaged build has no repository above it.
+
+### 2026-08-11 — The app can open a URL now, and the ban that said it never would
+
+**`check:recorder-navigation` asserted that no file in `main/` calls `shell.openExternal`, on the stated grounds that nothing needed it and "its absence is far easier to keep than its correctness."** The branch menu's pull-request icon needs it. The choice was to delete that assertion or to narrow it, and deleting it would have thrown away the reasoning along with the rule — so it is now a one-file allowlist naming `main/shell/host-handlers.ts`, plus a second assertion that the allowed file still contains the call. An allowlist entry for code that has since been deleted is a guard that passes vacuously forever.
+
+**The validator is the second layer, not the first.** `ipcMain.handle` registers a channel process-wide: every renderer holding the preload bridge can invoke it, so the real question is whether the trainer's arbitrary untrusted website can. It cannot, because **the training window has no preload** and therefore no `glazeAPI` object — and that fact was load-bearing and completely unpinned before this. It is asserted now, twice over (no `getPreloadPath` anywhere in `recorder-service.ts`, and no `preload:` in the window's `webPreferences`), because a preload added there for some unrelated debugging convenience would hand an arbitrary site the entire host surface, and nothing else in the toolchain would mention it.
+
+**`checkExternalUrl` returns the href it approved, and that is the whole shape of the thing.** The first version returned a reason string and the handler opened its own argument — which is two values that merely usually agree. The WHATWG parser strips leading whitespace, resolves dot segments and lowercases the host, so `"   https://github.com/…"` passes a hostname test performed on a string that nobody subsequently opens. Returning `parsed.href` means there is only one URL in play. This was found by a check case asserting whitespace was *rejected*; rejecting it would have been the wrong fix for a real bug.
+
+**Allowlist, not blocklist, and https-on-github.com only.** The URL passed is a PR's `html_url` out of a GitHub API response — network input, the same category as the recorder's page JSON and an imported project's relative specifiers. `shell.openExternal` is not "show a web page": it is Launch Services, where `file://` opens a document and any scheme another installed app has registered starts that application with an argument this app chose. The four host traps in `check:open-external` are there because each defeats a check somebody would plausibly write instead — `startsWith` loses to `github.com.evil.com`, `endsWith` loses to `evilgithub.com`, and both lose to `https://github.com@evil.com`, which a human reads left-to-right and stops at the wrong label.
+
+### 2026-08-11 — Connecting to Linear, and one pane for everything that leaves
+
+Phase 1 of sending a defect to an issue tracker: the connection only. Nothing
+files an issue yet, and the `IssueProvider` interface has no `createIssue` on
+purpose — a half-implemented interface that looks finished is worse than an
+obviously incomplete one.
+
+**A personal API key, not OAuth.** OAuth needs a registered app, a redirect
+handler in the shell and refresh-token storage, none of which this app has any
+precedent for. `createEncryptedSecretStore` already gives the exact contract
+wanted — encrypted at rest, write-only from the renderer — so the key is a
+fourth instance of a mechanism that already works. **One workspace**, by
+decision rather than by limitation: the filename is provider-specific, so a
+second workspace is a keyed collection later, not a migration.
+
+**The interface is designed against two APIs, not one.** Multi-provider was
+chosen up front, and the known failure of that is an interface that quietly
+becomes "Linear, renamed" and then fits the second tracker badly. The defence
+was to write the GitHub Issues mapping on paper first and let its disagreements
+drive the shape: REST vs GraphQL forced methods that express intent; a
+repo-scoped integer vs a UUID-plus-`ENG-42` forced an opaque id **and** a
+display string, because one field cannot be both without a caller guessing;
+string labels vs node ids forced "take names, let the provider resolve";
+repo→milestone vs team→project forced provider-supplied vocabulary rather than a
+hardcoded "Team". Only Linear is implemented. If a future provider needs an
+escape hatch through this interface, that is the signal the abstraction was
+premature and Linear should have been built directly.
+
+**"Saved" and "works" are separate claims, and the pane makes both.** Collapsing
+them fails in one direction or the other and there is no third option: keying
+off "a key is stored" keeps saying Connected for a key revoked last week, and
+keying off a live probe calls a perfectly good key broken whenever Settings is
+opened offline. So `status()` is local and never touches the network, `verify()`
+is the only thing that does, and the verified account is cached **in process and
+never persisted** — a claim about right now, read off disk at launch, is exactly
+the bug. `connect()` **saves before it verifies and does not roll back**: a good
+key pasted on a dead network should not have to be pasted again.
+
+**Errors may never carry the key**, and the enforcement is deliberate rather
+than incidental. A raw `fetch` rejection can carry the request, and for a
+provider authenticating by header that is one refactor from carrying the header;
+a raw response body is written by a remote server. So the provider never
+forwards what it caught — every throw is an `IssueProviderError` built from a
+status code plus, at most, a scrubbed and bounded GraphQL message, and the
+service refuses to display the message of anything that is not one. The scrub is
+belt-and-braces: the key travels in a header and Linear has nothing to echo, but
+the file promises the invariant and one line makes the promise enforceable
+instead of a piece of reasoning that has to stay correct.
+
+Two Linear specifics that cost real debugging elsewhere and are pinned by tests:
+personal API keys go in `Authorization` **raw**, with no `Bearer` prefix, and a
+bad key comes back as a **200 with an `errors` array** rather than a 401 — a
+status-code check alone reports it as a parse failure and sends someone off to
+debug their network.
+
+**The Integrations pane absorbs the webhook and the GitHub token — but not the
+notifications.** The point of the pane is that "what does this app talk to?" has
+one answer in one place, and the GitHub token had no settings UI at all before
+(it was reachable only from inside the branch switcher, where nobody auditing
+the app would look). The three local notification rows stayed in Alerts: they
+send nothing anywhere, and listing three non-integrations weakens the claim the
+pane exists to make. Alerts now says, per row, that everything on it is local,
+and `alerts-pane.test.tsx` asserts the pane holds no credential field at all —
+the regression that test exists for is the webhook drifting back in.
+
+**Two silent-failure traps this hit while being built**, both worth knowing
+because neither errors. `SettingRow` **drops `details` on a flagged row** — by
+design, so a credential warning can never be one click away — so the "nothing
+goes to Linear on its own" sentence written as `details` compiled, type-checked
+and rendered nowhere; it belongs in `summary`. And `check:renderer-egress`
+flagged `https://linear.app/settings/api` in the pane's fallback vocabulary. It
+was only ever displayed as text, so an allowlist entry would have been
+defensible — but the URL already has one source of truth in the provider, a
+transcribed copy is right the day it is written and silently wrong afterwards,
+and allowlisting a decorative URL trains the next person to allowlist a real
+one. The fallback carries an empty string instead.
+
+### 2026-08-10 — The trainer records into an existing test, and says where
+
+Reported as "re-training a test only shows Paused and Editing, and it doesn't record any manual page interaction". Capture was never off. Reproduced against the real app (`e2e/retrain-capture.spec.ts`, which drives `_electron` and clicks in the actual training browser): the click is captured, the count grows, both trainers render the row. Three things then conspire to make that invisible, and one of them also makes it wrong.
+
+**The insert cursor was only half-implemented.** `initialCursor` (2026-08-06) put a continued session's cursor just past the `goto`, on the correct principle that the cursor marks WHERE THE BROWSER IS — opening a session executes exactly one thing, the navigation. What was missing is that a replay executes more. Nothing moved the cursor for the rest of the session, so the user's actual flow — replay to reach the state you want to extend, then act — spliced the new step in at index 1, BEFORE the steps that reach the state it was recorded in. Same silent failure as the end-of-list cursor that fix replaced, in the other direction: nothing errors, every step is present, the order is wrong until the test is run. `cursorPastReplayed` now advances it from all four replay paths, and the rule is one sentence rather than two: **the cursor tracks how far the replay got.**
+
+**Only on the way through.** A step that FAILS does not advance it, and that is a feature rather than caution: the page state after a failure is unknown, and leaving the cursor at the failed index puts the user's next recorded step exactly where the flow broke, which is where they are about to work. Skipped steps — disabled, or a conditional block whose condition was false — do advance it, because "how far did the replay get" is the question being answered and it got past those.
+
+**A single-step replay moves it too.** Considered exempting it: the ▸ on a row is often a locator spot-check in the middle of a list, and relocating the insert point is a side effect nobody asked for. Rejected, because a rule with an exception in it is a rule nobody can predict, and the exempt version is not even more conservative — it just makes the cursor's meaning depend on which button you pressed. The browser really is past that step.
+
+**The other half is that the trainers scrolled away from the row that changed.** Both step lists passed `autoScrollToBottom` unconditionally, keyed on `liveSteps.length`, which is exactly right while the cursor is at the end (every new recording) and exactly wrong otherwise: capture a step mid-list and the view jumps to the bottom, away from the one row that moved, with no highlight on it — captured steps deliberately get no `.step-new` glow, since that means "an AI put this here". Off-screen, unhighlighted, and the view actively leaving is indistinguishable from nothing having been recorded. Now `autoScrollToBottom={cursorAtEnd}`, and the arriving row scrolls ITSELF into view (`StepRow.justAdded`, `block: "nearest"` so a row already visible does not make the list jump) with a one-shot cyan fade. Cyan and not an outcome hue because nothing has been judged — it is the insert cursor's own colour, and the row is answering the caret.
+
+**`lastAddedStepId` is a claim about recency, not provenance**, which is why it is not `newStepIds`. That set means "the AI added these" and holds until the list changes again; scrolling on it would fight the user's own scrolling for the whole of an AI batch. The new pointer is null until a step actually ARRIVES — the first list of a session is the test showing up, not steps being added, and pointing at its last row would scroll on every session open and claim a capture that never happened.
+
+**The status chip said "Editing" while capture was live**, which is the literal sentence in the report. It is now "Recording" in both trainers whenever capture is on. That an existing test is being continued is already said twice, by the view's "Editing recording" title and by the "Save Test" button; the one indicator whose entire job is whether the trainer is listening must not be the place that carries it.
+
+**Kept, deliberately: a step recorded without replaying still lands at the cursor, not the end.** Pinned by its own e2e case so it is not "fixed" later into an append. Nothing has been replayed, the browser is on the first page, and a step recorded there belongs where the browser is. What was missing was never the position — it was any way to see it, which is now a labelled cursor ("NEW STEPS GO HERE", in the left gutter in line with the step-index column) plus the arriving row bringing itself into view.
+
+**Guarded by `check:insert-cursor`**, because every part of this is invisible to a rendered test. jsdom has no layout engine, so `scrollTop = scrollHeight` is `0 = 0` there and the broken and fixed versions of the auto-scroll are literally indistinguishable; and a replay path that forgets the cursor produces no error at all. The check pins both halves in both trainers — the two are one step list rendered twice, so a fix present in only one of them is a bug that appears or not depending on which window you happen to be looking at. Mutation-tested: neutering `cursorPastReplayed` fails 2 e2e cases, restoring the "Editing" chip / dropping `justAdded` / dropping the cursor label each fail their own component test in both trainers, and dropping the session reset fails the store's.
+
+### 2026-08-10 — The app can be resized and re-set, without a second sizing system
+
+**"Font size" is a zoom factor, and the row says so.** The obvious implementation — a `--gl-font-scale` multiplier threaded through the theme's `font-size` declarations — was rejected on the count: 108 of them across `renderer/theme/*.css`, plus 83 Tailwind `text-*` call sites, against chrome whose heights are fixed in whole pixels (9.5px uppercase labels inside 24px controls inside a 34px `--gl-strip-h`). Growing text inside boxes that do not grow is not a legibility feature; it clips, and the first thing to go is the status column. `webContents.setZoomFactor` re-lays the page out in larger CSS pixels so the type and the boxes scale together, every proportion the redesign was drawn with survives, and there is no second sizing system to keep in step with the first. The honest cost is that it scales the whole interface rather than only the type, so the pane's summary says that in its first sentence rather than burying it in `details`.
+
+**The training browser is excluded, and that is the load-bearing line in `ui-scale.ts`.** It renders the arbitrary site under test. Zooming it is not a display preference, it is an edit to the thing being recorded: layout is viewport-width dependent, so a responsive site at 125% may serve a different DOM, a click may land on a different element, and a baseline captured at one scale will never match one captured at another. A reading preference must not rewrite a test. So the service takes a window as an argument and names the three app windows; it never imports `BrowserWindow`, which is what makes `getAllWindows()` — the one-line "fix" that would silently pick the recorder's window up — unreachable rather than merely unwritten. `ui-scale.test.ts` asserts that on the imports, not on the string, because the file's own header comment mentions the call.
+
+**`uiScale` is an allowlist of four, not a clamped number.** It is the only setting in the store whose bad values are unrecoverable from inside the app: a `0` or a `1e9` reaching `setZoomFactor` draws every window — including the Settings window, the only place it can be changed back — at a size from which nothing can be read or clicked. A clamp still accepts a garbage type and rounds it into range. Four allowed values cannot be wedged, and `1.05` is refused for the same reason `"large"` is: the pane and the store must not be able to disagree about what a size means.
+
+**Zoom needs re-applying on `did-finish-load`.** Chromium resets the factor across a navigation, so a window that reloads — the dev server's full reload, a renderer crash recovery — snaps back to 100%. Silently, and only sometimes, which is the hardest kind of report to believe. That listener is why `attachUiScale` (once, at window creation) is separate from `applyUiScaleToAllWindows` (on every save): registering it on save instead would stack one listener per save.
+
+**A window's minimum size turned out to be a CSS-pixel measurement wearing physical points.** `main/index.ts` fixes the main window's floor at 960 with a comment naming the number it came from: the widest toolbar needs 688px beside a 240px sidebar, so below ~928 the run controls — `Run test` itself — leave the viewport with nowhere to scroll them back from. Under zoom, 960 points is 768 CSS pixels at 125%, so the promise that comment makes silently stops holding at exactly the setting someone turns up because they cannot read the app. Every window floor is now declared in CSS pixels and scaled into points, at creation and again on every change. The Settings window fails the same way and sooner, because it also *opens* at a fixed size: 760 points is 608 CSS pixels, under its own 620 minimum.
+
+**And `setMinimumSize` does not resize a window that is already smaller.** It constrains dragging; on macOS an open window under its new floor just stays there. So a Settings window open while the scale went up — which is *every* real case, since nobody changes the size and then opens Settings — sat at 608 CSS pixels while a newly-opened one was correct, and the e2e case covering the newly-opened path passed throughout. Fixed by growing a window found under its floor, never shrinking one above it: going bigger than the minimum is the user's business. Found by measuring the running app, and worth recording how it was nearly missed twice — the screenshot that first suggested it also suggested the fix had not worked, because **Playwright captures a zoomed Electron window as a crop at the pre-zoom device scale**, so a correct 620px viewport photographs as a clipped one. The renderer's own `clientWidth`/`scrollWidth` is the thing to assert on; the image is not evidence here.
+
+**The trainer panel's width is latched for the session rather than read live.** Its 360 is dock geometry, not a layout floor: the same number is used by the initial dock, by the follower on every browser move, by the parked placement, and by `computeUndock`, which hands the browser back exactly the width the dock took. Re-reading the setting mid-session would let those four disagree — the follower placing a wider panel against a browser split for a narrower one, and an undock then returning the wrong number of points, permanently. So the panel resolves its width when it opens and picks up a new scale on the next recording, latched exactly as `preserveBrowserWidth` already is.
+
+**The typeface list is closed, and what crosses IPC is a name.** Three pairings: the bundled Space Mono / Space Grotesk the redesign was drawn in, and two sets of faces macOS already has. Enumerating the machine's installed fonts was the alternative and it fails twice over — Electron has no font-enumeration API, so it would mean Chromium's Local Font Access behind a permission prompt; and it would put a free-text family string from an IPC caller inside a `font-family` declaration, with nothing meaningful to validate it against. An enum of three has nothing to validate. Fetching a family from Google Fonts was never on the table: `fonts.css` already records why this app self-hosts with no network fallback, and a typeface picker is exactly the feature that would quietly add a second egress path to a product whose only one is an opt-in webhook.
+
+**The `--gl-track-label` conditional came back.** The mockup carried it — .22em normally, .12em when the Space pairing is active, because Space Mono is a wide face and .22em pushes a 78px chip past its column — and it was baked to .12em *because the typeface was fixed*. Making the typeface choosable reopens precisely the condition that comment described, so it is a token override on the two alternatives rather than a branch at 30-odd call sites. Verified in the preview: no letterspaced element overflows its box in any of the three faces, and the status chips stay 78px.
+
+**Body copy follows the choice, but only once one has been made.** The theme layer sets `font-family` on what it draws, which is the whole main window; what it does not set is the component library's text — a Settings row's label and description, a dialog's body copy — which inherits the system stack from `body`. Left alone, picking "Classic" reskinned the Settings window's legends and left its labels in SF: half-changed, which reads as a bug. So `body` follows `--gl-sans`, scoped to the two non-default faces. The asymmetry is the point rather than an oversight: "Space" means the app as designed, and the app as designed has system-font body copy. A `:root` rule would have restyled every dialog and settings row for everyone who never opens the setting — a redesign, not a preference.
+
+**The Settings window applies the typeface itself, because the push does not reach it.** `sendToMain` fans out to the main window and registered aux windows, and only the trainer panel registers. Registering Settings would start delivering ~50 unrelated recorder pushes to a window that wants one of them. So the pane calls `applyTypeface` on save — otherwise the one window the user is looking at while they change the setting is the one window that does not change. Font size has the same problem and the opposite answer: it is applied in the backend, where all three windows are equally reachable by name.
+
+**The native-menu `Select` turned out to be drivable in jsdom after all, and the note that says otherwise needs qualifying.** Its *options* genuinely never enter the DOM, so nothing in Testing Library can reach them — but the menu is opened through `glazeAPI.Menu.popup`, an ordinary promise a test can answer with the `commandId` of the item it wants, at which point the component runs exactly the handler a real click would. That was worth the scaffolding here for one reason: the typeface handler is the only one in the app that does something the store cannot do for it — it applies the change to *its own* document, because the Settings window receives no push — so "the Select is untestable" would have left the single line that stops this setting looking broken uncovered. Font size is still a `Segmented` rather than a `Select`: the control that decides whether the app is legible should be one a plain click drives, for whoever debugs it later as much as for the test. And font size remains the one thing here the browser preview cannot show at all — there is no main process in a tab to zoom a `webContents` — which the pane's own file comment says, so the next person does not conclude it is broken.
+
+### 2026-08-10 — A batch that partly passed stops looking like one that never ran
+
+**Every finished batch with a failure in it was red.** Three tests where two failed and one passed, and three tests where all three failed, produced the same chip in the same colour. Those are different situations: the first is a suite with a problem in it, the second is usually a suite that is not running at all — a bad base URL, a dead fixture, an expired login — and the second is the one you want to stop and look at before reading any individual failure. The tone is the only thing carrying that distinction, because both chips say "N failed".
+
+**`mixed` is amber, and amber already meant this.** `TONE.amber` is documented as "flaky / healed / caution" and is what Heals, the flake panel and the Stats category board already use for "needs a look". Adding a fifth hue for partial batches would have been a new vocabulary word for a meaning the palette already had.
+
+**The rule deliberately does NOT match `rowStatus`, which stays worst-first.** They look like the same roll-up and are not. A ROW is one test fanned across engines: failing on webkit makes it a broken test no matter how chromium did, so worst-first is right and a "partly passed" test would be a lie. A BATCH is a set of independent tests, where the mix is the information. Applying one rule to both was considered and rejected — it would have made a genuinely failing test look survivable to gain consistency with a screen it does not share a meaning with.
+
+**Skipped tests are excluded from the verdict entirely.** A skipped test reported nothing, so it can neither make a batch mixed nor keep it clean. Counting a skip as a non-pass would take every tag-filtered suite amber, which is the fastest way to teach people the colour means nothing.
+
+**A stopped batch gets no verdict at all — not even a mixed one.** It is untinted, as it was before. Tests after the stop never ran, so the counts are a partial sample; tinting them amber reports a mixed RESULT for a run that has none. Same reasoning that keeps `running` out of the tone set in `StatusChip`.
+
+**The verdict chip was added to the finished-batch panel, which had no colour at all.** The outcome lived in the panel's heading text alone, so the single moment the view most needs a signal — the batch finishing — was the one place it had none. The words stay two tokens long (`2 failed`, not `2 failed · 1 passed`) because `StatusChip` is fixed at `--gl-status-w` and does not grow: a longer label is a clipped chip, and jsdom cannot see that. `check:status-width` caught the literal `78px` being copied into a comment in the new module during this work, which is exactly the drift it exists for.
+
+**The preview could not show any of this, so it got fixtures.** `batch:list` answered `[]`, which meant the Previous batches panel and the finished-batch panel above it had never been visible in `npm run dev:web` at all — and those are the two surfaces where the tone IS the signal. `BATCHES` now carries one record per verdict, with the mixed one at 2 failed / 1 passed, since that is the case an all-red reading gets wrong.
+### 2026-08-10 — `Btn`'s icons get a size, and the fix is not on the screen that reported it
+
+Reported as "the trash icons are too large on Heals". They are, but nothing about the Heals view causes it: **`.gl-btn` never sized its `svg` children at all**, so every icon in every `Btn` in the app was rendering at lucide's 24px default next to a 10px letterspaced label in a 30px box. Measured in the preview — Apply's check, Dismiss's rotate and Delete's trash all came back at exactly 24px.
+
+**Trash2 is where it gets reported because Trash2 is the heaviest shape at that size**, not because Heals is special. Fixing it locally would have left the same defect on every other screen and added a second mechanism for a size that should have exactly one. The rule goes on the primitive.
+
+**13px, matching `.gl-icon-btn`** — the icon-only sibling of this button. Picking a fresh number would have made two buttons that sit next to each other disagree about what an icon is.
+
+### 2026-08-10 — The home screen's three numbers become three doors
+
+**A count is a question, and the app already had the answer one click away.** "16 heals to review" is only ever read as *which sixteen* — and B1 had put that number on the first screen anyone sees while leaving it inert, so the reading ended at the rail, hunting for the entry that means the same thing. Each readout now navigates to the view that explains it: Tests → Batch, Green · 7d → Stats, Heals to review → Heals.
+
+**Tests goes to Batch, not to the library.** The rail already lists every test one click away, so the count adds nothing as a way to *find* one. What "22 tests" suggests is something to DO with twenty-two tests, and running them together is the only action the number itself implies.
+
+**One table, `STAT_DESTINATIONS`, because this mapping is expected to move.** What the home screen surfaces will change as the app does, and a readout wired to the wrong view fails in the quietest way available — it still renders, still presses, and simply lands you somewhere else, which reads as a confusing app rather than as a bug. Keeping the pairing in one `as const` means the destination is a route literal TanStack Router type-checks: a path that stops existing is a `type-check` failure rather than a dead click. Verified by pointing one at `/bogus` and watching `tsc` name every registered route.
+
+**`<button>`, not a div with an `onClick`, and the test asserts the ELEMENT.** The two render identically, and only one of them is in tab order, responds to Enter and Space, announces a role, and takes a focus ring. A mouse-click test passes over either — so `home-view.test.tsx` pins `tagName === "BUTTON"` and `type="button"` alongside the route, because that tag *is* the keyboard behaviour. Confirmed by swapping the button back to a div: ten assertions fail, and the click test is not among them.
+
+**The accessible name carries the destination, because the visible text cannot.** "22 Tests" read aloud is a fact, not a control — a button whose whole name is a statistic gives no reason to press it. The name is `"Tests: 22, opens the Batch view"`: label first, so the readout identifies itself before reading a number that means nothing without it.
+
+**They stay pressable while the value is still "—".** Gating on a resolved query, or on a non-zero count, is the easy version and it teaches people the control is not there — an empty library is exactly when someone presses "0 tests" looking for what to do next. Pinned in both directions: the em-dash case and a genuine zero.
+
+**The readouts are separately asserted to reach three DIFFERENT views**, by clicking all three and comparing what the router was handed. A copy-paste that points two of them at one route passes every per-readout assertion — each really does navigate, and really does land somewhere that works.
+
+**Follow-up, same day: a new accessible name broke an e2e locator, and the local gate could not have said so.** `app-launch.spec.ts` asked the whole WINDOW for a button whose name starts with "Heals"; the home screen then grew "Heals to review: 0, opens the Heals view", two elements matched, and Playwright's strict mode failed the run. The red reads as *the rail lost its Heals entry* — the opposite of what happened. Fixed by scoping the loop to the rail's `role="group"` named "Views", which is both the structure a screen-reader user navigates by and the claim the test's own name makes: these four are reachable FROM THE SIDEBAR, which a home-screen shortcut does not satisfy. **The general lesson is about where this was caught.** `test:all` does not run `e2e/`, so a full green local gate says nothing about window-wide locators, and every accessible name added anywhere is a new candidate to collide with one. Broad `getByRole` matches over the whole window are the liability; scope them to the region the test is actually about.
+
+### 2026-08-10 — Findings you can wave off, and a warning that knows when to come back
+
+**Three banners, one missing verb.** The Visual screen reported visual changes and accessibility issues; the test detail screen reported that a test's steps and its script disagree. Between them they offered exactly one exit — "Accept all for this run", on the accessibility banner alone. Everything else was permanent.
+
+**Accepting is not a way to clear a screen, and it was being used as one.** Accepting a visual finding re-pins baselines; accepting an accessibility finding writes keys onto the `TestRecord`. Both change what every LATER run reports. So a banner with accept as its only exit makes signing off on findings you have not looked at the cheapest way to stop being nagged — and the cost lands months later, on a run that quietly compares against a frame nobody checked. Dismiss now sits beside accept and does the opposite: it changes one run's banner and nothing else. `check:visual-pipeline` asserts exactly that — after a dismissal the diffs, the pinned baseline and the unaccepted violations are all still there — because from the screen the two look identical, and a dismiss that quietly resolved anything would be invisible.
+
+**Visual got the run-wide accept the accessibility banner already had.** Re-pinning a twenty-step run was twenty clicks, and the backend `visual:acceptRun` had existed unused since Phase 3. Two banners side by side teaching contradictory mental models was the worse half of that.
+
+**Dismissals are stored where the thing they describe lives.** A run's notice goes in its `replay.json` (`dismissedNotices`); the divergence acknowledgement goes on the `TestRecord`. Renderer state was the obvious cheaper option and it is wrong for the same reason in both places: a banner that returns when you select another run, or click into another test, has not been dismissed. Pinning a run's dismissal to the run is sound because a finished run's findings are frozen — a re-run writes its own replay, with its own banners. The two notices carry SEPARATE flags: one shared flag would hide an accessibility regression because somebody waved off a pixel diff.
+
+**`stepsDiverged` stays true when the banner is dismissed.** The record really is out of sync, and the run comparison and the MCP must keep saying so. Only the banner is silenced, by a second field — the alternative, clearing `stepsDiverged` itself, would have made the UI's convenience into a lie the rest of the app then repeats.
+
+**The re-arm rule is the whole risk of this feature.** A dismissal that outlives the divergence it acknowledged silences the NEXT one, and the next one is the case the warning exists for: an applied AI-debug fix whose script does not come back as steps, so the Steps tab quietly describes something other than what runs. Every handler that establishes divergence afresh — an `updateScript` re-parse that skips statements, an `updateSteps` save left out of the script — clears the flag, as does resolving it. A stale `true` is the failure mode, so the flag is cleared on more paths than strictly necessary rather than fewer. Verified by reverting each clear and watching the matching test fail.
+
+**Undo, because dismiss sits one click from something irreversible.** The dismiss control is a bare × next to an accept that re-pins every baseline in the run. Without a way back the two read as equally dangerous and the user reaches for neither, so the dismiss toast carries an Undo that calls `restoreRunNotice`.
+
+**A dialog was being drawn underneath a screenshot, and had been for a while.** `.gl-crt` sits at z-index 610 to escape the atmosphere overlays (600) — a frame the user is asked to judge must not be tinted by our own chrome. Radix dialogs ship at Tailwind's `z-50`, so on the Visual screen every modal opened BEHIND the bezel: description clipped mid-sentence, confirm button behind a screenshot. The existing accessibility accept-all had shipped that way; adding a second dialog to the same screen is what made it worth chasing. Nothing catches this class of bug — the dialog mounts, the accessibility tree lists its buttons, every test passes while the user can neither read nor press them; it is visible only by looking. Fixed with `--gl-z-modal: 700` and a `.gl-z-modal` class on the Dialog/AlertDialog overlay and content. A theme-owned class rather than a Tailwind `z-*` because the number it has to beat is one the theme introduced.
+
+**The Accessibility tab shares the dismissal, it does not get its own.** The same banner exists on the test view's Accessibility tab, and it is arguably the more important one — that tab is where the issues are actually READ, so "stop nagging me" and "I accept these" are furthest apart there. It reads the same run's replay as the Visual view, so it writes the same `dismissedNotices` flag. A second, panel-local flag was the easier change and would have produced the worst outcome available: dismiss it on the tab, then meet the identical finding about the identical run still flagged one screen over. Only the ORANGE banner takes a dismiss — the red "the check completed none" one reports a broken check rather than a finding about the page, and there is nothing to have seen and accepted about it; making it dismissible is how a silently broken axe fixture hides for another few months.
+
+**All four states of that banner slot centre their copy, not just the one that gained a dismiss.** They are one slot showing four mutually exclusive verdicts, and they swap as a run's outcome changes — centring only the orange one would make the banner appear to jump alignment by itself, which reads as a rendering bug rather than as a layout choice.
+
+**The preview's replay fixture had no accessibility finding at all**, so `?view=visual` rendered neither the accessibility banner nor the per-step violation list — a fifth of that screen had no address. It has one now, and `a11yNewSteps` in the summary is DERIVED from the steps rather than hard-coded, so the list marker and the banner cannot disagree about a fact this screen exists to report.
+
+**`preview-bridge.test.ts` was blind to an entire namespace.** Its channel-name oracle matched `"[a-zA-Z]+:[a-zA-Z]+"`, which excludes every `a11y:` channel — so a preview handler for one was reported as INVENTED while a missing one went unnoticed. A drift guard blind to a namespace is worse than none.
+
+### 2026-08-10 — The app wears its own name and icon in development, and stops titling its window
+
+**The complaint was about the app; the cause was the bundle.** In development the app is not its own macOS bundle — `electron .` runs `node_modules/electron/dist/Electron.app` and hands it this directory. macOS reads the Dock icon and the first menu bar title from *the bundle that is running*, so dev showed the Electron atom under an "Electron" menu no matter what the app called itself. A packaged build was already correct; nobody had noticed that the two answers come from different places.
+
+**`app.setName()` is not the fix, and calling it would have been a bug.** It renames the About panel, notifications and — the part that matters — `app.getPath("userData")`. That is exactly the redirection `main/shell/user-data.ts` exists to undo: the port once opened with an empty library, zero runs and no API keys because the data directory moved with the name. The menu bar title is `CFBundleName` from the running bundle's `Info.plist`, and no runtime call reaches it.
+
+**So dev launches a branded clone of Electron.app** (`scripts/dev-app-bundle.mjs`): `cp -Rc` into `node_modules/.cache/dev-app`, rewrite the plist, drop `build-icon.icns` over the bundle's icon, re-sign, launch that. The APFS clone makes it ~0.15s and ~0 bytes, and a stamp file (Electron version + the icon's size and mtime) keeps it to once.
+
+**Two of its steps look redundant and are not, both established by measurement rather than reasoning.** Setting `CFBundleName` alone still says "Electron" — macOS falls back to `CFBundleExecutable` for the process name, so the executable has to be renamed too. And editing `Info.plist` invalidates the ad-hoc signature Electron ships with, which on Apple Silicon means the kernel refuses to run the binary at all; `codesign --force --sign -` is what makes the bundle launchable. `check:app-identity` builds the real bundle and reads the plist back rather than scanning the script, because a source scan passes the version that forgets the executable.
+
+**Every failure returns null and dev falls back to plain `electron .`** A wrong-looking icon is a cosmetic problem; an app that will not start because its icon could not be branded is not. The check refuses to treat a missing Electron install as a pass for the same reason in reverse — a guard that goes quiet when it cannot look is worse than no guard.
+
+**The window title is a separate change with the same shape: both ends or neither.** The window is created with `title: ""` *and* refuses `page-title-updated`. Chromium pushes a document's title up to the window on every change, so the empty title survived only until the renderer entry set `document.title` from `__APP_DISPLAY_NAME__` — which it did, on line 14. Removing that line would have been enough today and would have quietly stopped being enough the first time any library set a title, so the refusal is what makes "untitled" a property of the window. `e2e/window-title.spec.ts` covers it, because `getTitle()` does not exist in jsdom and the interesting half is what happens *after* a page tries. It deliberately does not use `expect.poll`: the title arrives asynchronously, so a poll passes on its first call — before the update it is meant to reject could even have been delivered — and goes on passing after the guard is removed. Verified by reverting the refusal and watching it fail.
+### 2026-08-10 — The AI status contract becomes checkable, and the app finally says what it sends
+
+**B9 of the redesign (REDESIGN §B9), the two parts the plan names.** This is the reskin the plan calls highest-risk, and the risk is specific: the status icon's colour IS the contract of a minimized job, a wrong colour is silent, and the panel works perfectly while the icon lies — the user walks away from a finished answer or waits on a dead one.
+
+**The mapping was untestable, and that was the actual problem.** The colour was a Tailwind class string, and jsdom has no computed styles worth trusting, so the only thing a test could pin was the LABEL. A wrong colour with a right label passed every check in this repo. `toneFor` now returns the palette tone as data alongside the class, so the contract §B9 specifies — blue→cyan, orange→amber, green→phos, red→red — is asserted by value rather than written down and hoped for. Verified by collapsing "thinking" onto "finished" and watching two tests fail.
+
+**The class names are semantic, never hues.** `.gl-ai-busy`, not `.gl-ai-amber`. Retuning which colour "thinking" takes must not turn a class name into a lie, and this is the one place in the app where a name that lies about its meaning IS the bug.
+
+**Four test files had the old colours hardcoded**, and they all failed the moment the mapping moved — which is the file doing its job rather than an inconvenience. Consumers now derive the expected class from `toneFor` so the two cannot drift; only `ai-debug-status.test.ts`, which is the mapping's own unit test and therefore its source of truth, still pins literals.
+
+**One new guard the per-status assertions cannot make:** that the four meanings stay in four DIFFERENT colours. The catastrophic failure is not one wrong hue, it is two states collapsing onto one — at which point the icon stops carrying information at all, and a per-status test still passes for every individual state.
+
+**The "Sending" strip ships with the reskin because it is a privacy affordance, not decoration.** "Debug with AI" can send a user's script and a run's console output to a hosted provider, and until now the only way to know what left the machine was to read the prompt builder's source. A test script routinely carries staging hostnames, seeded credentials and customer-shaped fixture data. It is **derived from the same `ctx` the prompt is built from** — a hand-maintained second list eventually describes a request the app no longer sends, and an inaccurate privacy disclosure is worse than none because it is trusted. A drift test fails if the builder attaches a payload the strip does not name.
+
+Sizes are CHARACTERS, not tokens: a token count is a guess dressed as a measurement (it depends on the tokenizer, which depends on the provider), and the question being answered is "how much of my stuff", for which characters are honest and sufficient. The strip sits ABOVE the prompt preview — a disclosure you reach by scrolling past the thing it is about is one most people never see, the same reasoning as `risk` on a settings row.
+
+### 2026-08-10 — Visual gets the bezel it was designed for, and a fixture that makes the screen exist
+
+**B8 of the redesign (REDESIGN §B8), first slice.** Visual is 1,548 lines, the largest file in the renderer.
+
+**The screen could not be looked at, so the fixture came first.** `artifacts:list` returned `[]` in the browser preview — honest for a fake backend that cannot run Playwright, and it meant every capability the screen has (frame selection, current/baseline/diff, masks, the threshold slider) sat behind an empty state. Reskinning 1,548 lines I could not see is exactly the situation that produced the nested-CSS defect earlier today, so the run fixture is the prerequisite rather than a nicety. It carries **one step of each diff state** — match, changed-over-threshold, new-baseline, unable, and one uncaptured step — because a fixture where everything matches exercises one branch of the viewer and hides four.
+
+**The frames are generated SVG data URIs.** A real PNG would be a binary blob nobody can diff in review; a remote image would be an egress path this repo bans outright (`check:renderer-egress`); and what is being judged here is the CHROME around the frame, for which a legible placeholder that names itself beats a photograph. Each frame states its own identity, so a mode switch that shows the wrong one is visible rather than plausible.
+
+**The frame goes in `CRT`, which is the one rule in this design system about correctness rather than taste.** Every image on this screen is evidence; the entire question being asked is "does this look right?"; and an amber cast from our own chrome is indistinguishable from an amber cast in the page under test — a user would file the bug against their own site. The bezel sits at z-index 610 precisely so the global atmosphere overlays at 600 cannot fall on it.
+
+**Which immediately broke the compare-mode switch, and that is worth recording.** The switch was `z-10`, laid over the frame. Against a bezel at 610 it rendered behind and vanished — the compare-mode switch, invisible, on the compare screen. Caught by looking at the screenshot, not by any test, and the fix is a stacking rule with the reasoning attached. The CRT's actual rule is that nothing may be drawn INSIDE the screen; a control sitting above the bezel's border is outside it, so lifting the chrome to 620 respects the constraint rather than working around it.
+
+### 2026-08-10 — What the locator actually matched, and one artifact with two consumers
+
+The `structure` request shipped answering an *approximate* question. Auto-Heal's
+probe ranks what RESEMBLES the element the step wanted, which is the right
+answer for a stale locator and the wrong one for an ambiguous one: asked "which
+of the ten Pause buttons", it replies with what looks most like a Pause button.
+So the fixture now also records what the failing locator LITERALLY resolved to.
+
+**Recorded for every resolve failure, not just the ambiguous ones.** "Matched 0"
+and "matched 10" are opposite diagnoses — one is fixed by a different locator,
+the other by a narrower one — and the count is the only thing that separates
+them. One `evaluateAll` covers both, so there was no reason to gate it on
+parsing Playwright's error text.
+
+**`evaluateAll`, not `all()` plus a per-element evaluate.** One round trip
+instead of N, and it does not enforce strictness — which is the point, since the
+locator being described is one that just failed *for* being ambiguous.
+
+**Two records, one join, and both halves of it are load-bearing.** Either file
+can exist without the other: a locator that was ambiguous and then healed leaves
+matches and no heal failure, and a run from before this existed leaves the
+reverse. `buildStepStructures` unions them on step index, and neither side
+invents the other's fields — a match-only record reports no `outcome`, because
+claiming "no similar element was found" would describe a probe that never ran.
+
+**The collection moved inside the function that deletes the directory.**
+`collectRunMatches` was originally a sibling call before `collectRunHeals`, with
+a comment explaining that the order mattered. It mattered a great deal:
+`collectRunHeals` removes the scratch dir on every path out of it, including the
+early ones, so a single statement reordered would have written nothing, forever,
+with no error. A comment is not a mechanism. The function that owns the
+directory's lifetime now owns the read, and the ordering cannot be got wrong.
+
+**The renderer reads both lists defensively even though the type requires them.**
+This arrives over IPC, where a type is a promise rather than a check. The cost of
+being wrong is not a missing section — it is a throw inside the payload builder,
+which takes the whole answer down with it. Found the honest way: an integration
+fixture without the new field crashed the panel.
+
+**`get_step_matches` is the same artifact, second consumer** — and the reason
+`check:run-logs` now asserts parity between the two readers. The MCP server is
+plain `.mjs` and cannot import the app's compiled TypeScript, so the join is
+implemented twice. Neither side would throw when they drift: the app would show
+a card missing half its evidence while the MCP answered a model with the other
+half. The check writes the files once and asserts both readers agree, field for
+field. Reverting one line of the MCP's copy turns it red, which is the whole
+point of writing it. `mcp/artifacts.mjs` gained a hand-written `.d.mts` so the
+TypeScript caller keeps `type-check` as a real gate over it, per the pairing
+CLAUDE.md describes for `shared/`.
+
+**The descriptor is built inside the page, and so is tested inside a fake one.**
+`heal-fixture.test.ts` grew a small object graph — elements with parents,
+attributes and rects — rather than a canned `evaluateAll` result. The ancestor
+walk and the class splitting are the only logic in this change that runs in the
+browser, and handing the test a fixed answer would have exercised the plumbing
+around code that had never executed.
+
+**What it steers the model toward is part of the payload, deliberately.** The
+reflex fix for an ambiguous locator is `.first()`, which picks by DOM order and
+breaks the next time the page reorders. The scoping ancestors that make a real
+fix possible are right there in the list, so the payload names the alternative
+rather than leaving the model to reach for the reflex.
+
+**Still gated on Auto-Heal.** The record is written by the heal fixture, which is
+only installed when Auto-Heal is on for the test — so a run with it off has no
+structure to offer, and the panel's "how to get this next time" copy says so.
+Patching locators from the capture fixture instead would make it independent of
+that setting at the cost of a second patching layer over the same prototype;
+not worth it while the two settings are both one toggle away.
+
+### 2026-08-10 — The AI can ask what the page looked like, and the protocol that lets it ask finally ships
+
+A model debugging a failed run was shown the spec and the run output. For a
+strict-mode violation that is not enough and cannot be made enough: "resolved to
+10 elements" says how many matched and nothing about what they are, so the model
+can name the problem exactly and still not name the fix. What it did instead was
+ask — in prose — for a screenshot or the page's HTML, an ask nothing in the app
+could act on, which left the user to type the page's structure back in by hand.
+
+**The answer was already on disk.** Run-time Auto-Heal writes `heal-failures.json`
+for every step it could not rescue, and the heal fixture's `isResolveFailure`
+already matches `strict mode violation` — so an ambiguous locator was *already*
+sending the probe into the live page to walk the DOM and rank the elements it
+found. The candidates were persisted, read by nothing but the metrics roll-up,
+and never offered to the thing that was asking for exactly them. So this adds no
+capture: `need:"structure"` is a file read, on the same path `console` and
+`network` already take.
+
+**Text, not pixels — and that is not a compromise.** The obvious reading of "the
+model wants a screenshot" is to send it one, which means multimodal message
+content across three providers, a per-model capability check, and a 4B local
+model asked to map a region of an image back to a DOM node it cannot query. What
+the model actually needs is not a picture but an *addressable* answer, so the
+payload renders every candidate through `locatorToPrompt`: a ranked list of
+locators to pick from. A picture would have to be translated back into one of
+these before it was worth anything.
+
+**`LOG_REQUEST_PROTOCOL` became `logRequestProtocol(available)`.** Console
+recording and Auto-Heal are independent settings, so a run can have either, both
+or neither — a const string describing all three values would advertise data the
+app cannot produce, and the cost of that lands on the user as a round trip to be
+told no. Same reason the panel splits availability by SOURCE rather than
+answering with one boolean: a request for console *and* structure when only
+structure exists sends the half it has, and builds the section headers from what
+was actually fetched. `Console (0 recorded):` over an empty fence is not a
+neutral omission — it is a claim that the page was silent.
+
+**The protocol had never once reached a model.** `logsAvailable` was computed in
+`test-detail-view.tsx`, threaded through `AiDebugRunContext`, used by the panel
+to decide what the card should say — and never passed to `buildDebugMessages`,
+so the branch appending the instructions was dead for the entire life of the
+feature. Everything downstream worked: the strict parser, the card, the payload
+builder, the fulfilment cap, the decline state. All of it waiting on a block no
+model had been told how to write. It is worth being precise about why this
+survived: the unit tests called the prompt builder directly with the flag set,
+which proves the builder appends the protocol and says nothing about whether
+anything passes the flag. The regression test added here asserts on what is
+actually SENT to `llm:chat`. A feature whose only failure mode is "the model
+didn't do the thing" is indistinguishable from a bad model, which is why nobody
+went looking.
+
+**Rejected: giving the local model MCP tools.** The MCP server already exposes
+run data, so making the in-app model an MCP client sounds like the general
+version of this change. It is the wrong shape twice. It removes the approval
+gate — the whole design of `ai-log-request` is that a false positive must never
+ship page text to a hosted provider on the strength of a sentence, and a tool
+loop fetches whatever it asks for, whenever. And tool-calling at 4B is not
+reliable, which is a large part of why the protocol is a strict fenced block in
+the first place. The external path is unchanged and is where MCP belongs; the
+same artifact can be exposed there without any of this.
+
+**The probe's output is page-authored, and is now prompt input.** Everything in
+`heal-failures.json` — descriptions, accessible names, testids — was chosen by
+the site, because the probe runs inside it. Reading it off disk rather than off
+`data-pw-queue` changes nothing: `writeHealFailures` persists the fixture's JSON
+verbatim. So it goes through `normalizeStepStructures` in `main/recorder/types.ts`
+with the other boundary rebuilds, in the handler, at the last point before it can
+reach a UI or a prompt — the same place `readLogs` redacts secrets. Two details
+worth the lines they cost: it REBUILDS rather than spreads, so a field added to
+`HealFailure` later cannot ride into a prompt untouched; and an out-of-range
+score is dropped to zero rather than clamped to 1, because the payload presents
+these as ranked and a made-up 1 would sort an attacker's candidate to the top of
+a list the model is reading as "best match first".
+
+### 2026-08-10 — The trainer stops being red, and the tab strip becomes shared furniture
+
+**B6 of the redesign (REDESIGN §B6), the reskin half.** The inline composer, the `ToolTile`s and the assertion bottom sheet stay in Phase C — those are behaviour changes, and the plan says so. Three decisions here.
+
+**"Recording" was red, and it should never have been.** The SDK's `Status variant="error"` drew it, which in this palette is the colour spent on a failed run — on the one screen in the app where nothing has run yet and nothing can fail. Recording, Editing, Replaying and Running are all IN FLIGHT, which is precisely what `StatusChip`'s holo `running` treatment means: a treatment says "this is not a result". Paused and the two loading states go neutral — real, not live, not outcomes. That leaves the four in-flight states distinguished by their WORD rather than their colour, which is the split the palette explicitly asks for and which the word was already carrying anyway.
+
+**Hard/Soft moved off the SDK's `SegmentedControl`, and the reason is testability rather than looks.** That one is Radix-backed and activates on pointer-down — the documented trap in this repo where `fireEvent.click` leaves the control untouched and the assertion then reports "0 calls", reading as a dead handler rather than the wrong event. The theme's `Segmented` is plain buttons with `aria-pressed`, so the choice is assertable at the component level for the first time; before this, the only place hard-vs-soft could be pinned was the IPC layer. Two tests now cover it, including the live case where the strictness has to re-arm an assertion already being picked — the one where being wrong records a hard assertion the user asked to be soft.
+
+**The tab strip moved to `shared.css`.** It was `.gl-detail-tabs` in `screens.css`, written for the test-detail screen; the trainer's Console/Step details/Cookies is the second consumer, and the four-stylesheet split's own rule is that a rule a second screen wants is by definition not one screen's own. It is still targeted by `role` + `data-state` — the documented exception, same as the settings switch — and still scoped under an opted-in `gl-*` ancestor.
+
+**Also: the trainer had no address in the browser preview.** `RootShell` swaps the whole outlet for `RecordingView` only while `state.recording`, and nothing in a browser tab can make that true — there is no training window to record. So a fifth of this app's UI could not be looked at outside a packaged build on a Mac, which is the same gap B4 found for Settings and B5a found for a finished run. `?view=recorder` reports a live session over a fixture test's steps. `pageReady: true` is part of that and not a detail: the view renders a "Loading page…" chip and disables every control until it is, so a half-seeded state would show the trainer's inert shell and nothing else — which is why there is a test for it.
+
+### 2026-08-10 — A bad merge nested a whole screen's CSS inside a tab, and nothing caught it
+
+**A defect I introduced and shipped**, found while starting B6. Recording it because the interesting part is not the mistake — it is that five independent guards had nothing to say about it.
+
+**What happened.** Resolving B5a's conflict with B7 (Stats), `screens.css` had two conflict hunks whose boundaries fell *inside* CSS rules. I resolved both by keeping each side in turn, which is right for an append and wrong here: the concatenation left `.gl-detail-tabs [role="tab"] {` open, dropped the entire Stats section inside it, and — because `.gl-stats-label` and that tab rule declare almost the same six properties — spliced their bodies together so convincingly that the result read as ordinary code.
+
+**Why everything passed.** The merged tree was green on `lint`, `type-check`, 50 checks, 2,195 tests and `build`, and I merged it on that evidence.
+
+- **It is valid CSS.** Nesting is supported, so the build succeeded and emitted a stylesheet.
+- **`check:renderer-classes` passed**, and this is the instructive one. Its oracle asks whether a selector containing the class appears in the emitted sheet. `.gl-stats-head` *did* appear — nested, applying to a `.gl-stats-head` inside a tab, which never exists. The audit was answering "is this name in the file" when the question is "does this name paint".
+- **Nothing else can see CSS at all.** jsdom runs with `css: false`, so no component test has a cascade to ask; lint and type-check see strings.
+
+The only symptom was the Stats screen rendering unstyled — which reads as "the reskin didn't land", not as a merge artifact. I found it by accident, exactly as the three prior instances of this bug family were found.
+
+**The fix, and the guard.** `screens.css` was rebuilt from the two clean parents rather than hand-patched: both sides' sections are pure appends over an identical 926-line base, so reconstructing is exact where repairing a splice is guesswork. The new assertion is that **no theme stylesheet nests a style rule inside another style rule** — at-rule nesting (`@media`, `@supports`, `@keyframes`) is fine and used, so the walk tracks which kind of block it is inside rather than banning depth. Verified against the broken file: it names the rule and the line.
+
+**The lesson worth keeping is about the oracle, not the merge.** An audit that matches text in the output can only prove a name is *present*. Presence and effect are different questions, and the gap between them is exactly where a valid-but-inert stylesheet lives. That is also why the guard is source-level: the emitted sheet has already flattened the nesting away, so the only place the mistake is visible is the file somebody wrote.
+
+### 2026-08-10 — Step health and the run history page at 25
+
+Step health rendered every row the query returned — 200 of them on a suite with real history, each two lines tall with six numeric columns. A table nobody can reach the bottom of is one nobody reads the top of either, so it paged, and the run history moved to the same size while it was in hand.
+
+**A second constant rather than lowering `PAGE_SIZE`.** `DENSE_PAGE_SIZE` is 25; `PAGE_SIZE` stays 50 for the raw-log search results and the Heals list. Those are one-line rows and are *scanned* — halving them just doubles the clicking. The two dense tables are read.
+
+**Sort first, then page.** The obvious inversion — page the received rows, sort what's on screen — renders identically on page 1 and is wrong everywhere: clicking "Heals" would rank 25 rows out of 200 while the header claims to have ranked the suite, and the worst step in it stays invisible. `metrics-panels.test.tsx` pins it with a row that only surfaces if the sort saw all 200, and the mutation was run to confirm that test fails against the page-then-sort version. Changing the sort also returns to page 1, because every row has moved and the old page number no longer refers to anything.
+
+**`Pager` had to learn a `size`.** It computes its own counts from `PAGE_SIZE` rather than receiving them, so a caller slicing at 25 while the pager counts in 50 reports "page 1 of 4" over 8 real pages and buries half the rows behind a Next button that disables early — no error, no empty state, just rows that are not there. The prop defaults to `PAGE_SIZE` so the existing call sites are unchanged, and `check:paginate` now pins the dense size independently of the components.
+
+### 2026-08-10 — Test detail: status becomes a rail, the log becomes a drawer, and the preview learns to finish a run
+
+**B5a of the redesign (REDESIGN §B5), the fifth reskinned screen and the most-visited one.** Parity only — the five non-failure run-state summaries are B5b. Four decisions.
+
+**A step's run status is a 2px leading rail, not a tinted row.** It was `bg-support-red/15 ring-1 ring-inset ring-support-red/40` and two siblings, which is three problems at once in this palette. A filled row is the largest coloured surface on the screen, so a list with four failures reads as mostly-red before a word of it is scanned. A ring draws on all four sides, so a column of rows stops being a list and becomes a stack of boxes. And the fill sat *under the description* — the text the colour is actually about. The rail says the same thing at the edge and leaves the row alone. An inset shadow rather than a border, because a border participates in layout and these land live, step by step, during a run: a list that jumps 2px per status is a list that moves while you are reading it.
+
+**The replay flash keeps its fill, and that is not an inconsistency.** It is a 2.5-second answer to something the user just clicked, not a persistent property of the row, and it has to be findable without hunting for a 2px edge. Run status is the opposite — it arrives on every row at once and stays. Same reasoning that keeps `.step-new` an outline: three different claims about one row, three CSS properties, so none of them can silently replace another.
+
+**Two of the four triage verdicts get no colour at all.** `site` is amber and `runner` is red because those are calls. "Evidence both ways" and "not enough evidence" are the classifier *declining* to call it, and painting either one would have the component assert something the reasoning behind it refused to. So `Verdict`'s `tone` became optional with a neutral dot — the contract `StatusChip` already had for a state that is real but is not a result. Nothing here is ever phos: the run has already failed, and a green dot anywhere on that panel reads as a pass no matter what the sentence beside it says.
+
+**The log expands.** 224px is about eight lines of console — enough to see that something failed and never enough to read the stack that says why, so diagnosing a failure meant scrolling a viewport the size of a business card while the step list above sat idle. Expanded it takes the whole pane. `flex: 1 1 auto` rather than a tall fixed height, so it grows to what the window actually has; a drawer rather than a modal, because the verdict, the triage line and the log are one thought and a modal would make the user choose between the explanation and the evidence for it; and not persisted, because a panel that stayed expanded would hide the step list on the next test opened, for a run nobody had looked at yet.
+
+**The browser preview can finish a run now, and until this it could not.** `on` was a no-op, so nothing that arrives by push existed there — and in this app everything with a *result* arrives by push. "Run test" started a run that never finished; the run panel was reachable only in its Running state; the failed console path, which is the entire subject of B5a, could not be looked at. So the bridge got a listener map and `startFakeRun`, which emits the real channels on a timer. Two details in it were bugs first and are worth the comments they carry: listeners are called `(event, payload)` because `api.on` unwraps `args[1]` — emitting the payload alone calls every subscriber with `undefined`, renders nothing, throws nothing and records no miss — and the payload key is `id`, not `testId`. The outcome comes from the FIXTURE rather than `Math.random()`, so `?test=t-login` is a stable address for "show me the failed path"; a random one would mean a screenshot nobody can ask for twice.
+
+**The `gl-*` class audit caught its first real bug one PR after it landed.** `gl-detail` and `gl-detail-head` were written in this change and styled nothing — the exact `bg-muted` failure in our own namespace, and `check:renderer-classes` failed the build over it before it could reach a screenshot. Worth recording because the audit was added in B4 partly on principle; this is the evidence.
+
+**Also**: the run-options grid's track sizing moved from a Tailwind class into `.gl-run-options`, and `check:narrow-layout` moved with it — the same shape as `.gl-home` (B1) and `.gl-batch-name` (B3), and for the same reason: a stylesheet the check can read beats a class string it has to pattern-match. It now asserts both halves independently (the rule resolves, *and* the view still carries the class), because renaming the class in the `.tsx` leaves the rule perfect and unreferenced. The view's tab strip and run-option checkboxes are styled by `role` + `data-state` under a `gl-*` ancestor, the same documented exception the settings switch takes.
+
+### 2026-08-10 — The Stats category board, and the app's first Back button
+
+The board from `docs/plans/stats-categories.md`: a verdict band over seven
+tiles, each a category, each opening its own dashboard, each dashboard drilling
+one level further and exiting to the object it names. Stability and Auto-Heal
+have dashboards; the other five show their headline and say why they do not open
+yet.
+
+**The rule the whole thing is built around is that zero is not "never
+measured".** `display` is `null` in both non-measured states, so nothing
+downstream has a number to print, and `unmeasured` (you never switched this on)
+is separate from `unavailable` (the metrics DB cannot answer) because only one of
+them is the user's to fix. This is not a new idea here — `a11y-panel.tsx` opens
+with it and every `metrics:*` response carries an `available` flag — but it is
+the first time it has been enforced across seven surfaces at once, and the tests
+for it were written first and verified to fail against a naive implementation
+that sums an empty list to `0`.
+
+**The verdict band counts categories in a state and never touches their values,**
+which is the condition that treatment shipped under. Fourteen unaccepted
+accessibility steps, three flaky tests and nine healed locators are different
+units; a total across them means nothing while looking authoritative, and a band
+is the most natural place in the design for one to appear —
+"2 categories need attention" is one small edit from "17 issues". Two guards, not
+one: a unit test that asserts two boards with wildly different numbers and the
+same states produce the identical sentence, and `check:stats-categories`, which
+bans cross-category arithmetic under `renderer/main/stats/` outright.
+
+**Stats reports; Heals and Visual act.** The same check bans accept, revert,
+delete and clear from every Stats surface, and asserts the positive half too —
+that a leaf can actually reach the test it names. A dashboard that mutated
+nothing and linked nowhere would satisfy the rule while being a dead end, which
+is the failure drill-downs actually have.
+
+**The app had no Back button, and that is why this needed one.** The plan claimed
+⌘[ / ⌘] would work "because back and forward are the router's own". That was
+false, and it took driving the real thing to notice: the router runs on
+`createMemoryHistory()`, so there is no browser history behind it, the window's
+own gestures move nothing, and **nothing in the app was wired to `router.history`
+at all.** It had never mattered — every screen was one level deep and the rail
+selected among them — so a drill-down is the first thing in this app with
+somewhere to go back *to*.
+
+`HistoryNav` in `app-strip.tsx` is that: two controls in the top strip plus the
+shortcuts. Two things about it are decisions rather than defaults. **Back is not
+the breadcrumb** — the trail goes UP to the parent of what is on screen, and back
+returns to where you came FROM; they coincide while you descend and stop the
+moment you leave, which is exactly the case the routed design exists for (drill
+to a verdict, open the failing test, and "up" is Home while "back" is the verdict
+you were reading). And **Forward is offered because it can be answered
+honestly**: the history API has `canGoBack()` and no `canGoForward()`, which
+nearly made this back-only, but memory history stamps `__TSR_index` into each
+entry so `index < length - 1` disables the control truthfully rather than
+shipping one that is always enabled and sometimes does nothing — the failure
+`top-strip.tsx` already argues against for the ⌘K slot.
+
+**Two smaller things worth the record.** The facet ids reach the URL and were
+reaching the breadcrumb with them, so the trail read "Stats / Stability /
+CHANGED-SINCE" — an implementation detail on screen. `FACET_LABELS` fixes it, at
+the cost of a second copy of the verdict names (the first is `VERDICT_COPY`,
+which lives beside the component that renders it and cannot be imported by a
+node-project test or a source-level check); the check compares them
+string-for-string, the same answer `check:flake-analysis` gives for the
+renderer's mirror of the analysis. And the preview's flake fixture answered
+`tests: []` — a legitimate shape, and the one shape that makes the Stability
+panel, the dashboard and the drill ALL render their empty states, which meant the
+populated design had never been looked at by anyone. It is populated now.
+
+### 2026-08-10 — Stats is the first Phase B screen, and it found a hole in the status-width contract
+
+The parity reskin of Stats (REDESIGN §B7) — `stats-view.tsx` plus `flake-panel`,
+`suite-cost-panel`, `step-health-panel` and `divergence-panel` onto `Panel`,
+`Segmented`, `StatusChip`, `Btn` and a Stats section in
+`renderer/theme/screens.css`. Same
+behaviour, new chrome: all 21 existing view tests and all 33 panel tests still
+pass, two of them with changed queries and none deleted.
+
+Five things in it were decisions rather than translation.
+
+**The chrome went into `screens.css`, which B1 had already invented.** This was
+written first as its own `stats.css`, on the reasoning that a pass/fail chart is
+none of the three existing scopes — not a primitive, not the frame, not
+something every screen embeds — and that nine Phase B screens each wanting a
+dozen such rules needs somewhere to put them. That reasoning was right and the
+file was redundant: B1 had already added `renderer/theme/screens.css` with the
+same argument in its header and a section per screen. Converged on it during the
+rebase. The rule both headers state is the one that keeps it from becoming a
+junk drawer: a rule a SECOND screen turns out to want moves to `shared.css`
+rather than being copied — that move is the signal a component is being born,
+and making it late is much cheaper than inventing the component early.
+
+**The page's layout stays in Tailwind; only its treatment moved.** This is the
+pattern A5 already set — `heals-panel.tsx` carries `flex flex-col gap-2` beside
+its `gl-*` classes — but here it is load-bearing rather than incidental.
+`check:scroll-layout` reads the page's `ScrollArea className="min-h-0 flex-1"`
+and its `mx-auto … pb-10` content container AT SOURCE LEVEL, because jsdom has
+no layout engine and the SDK's ScrollArea exposes no stable DOM marker. Moving
+those two class lists into CSS would have left the check with nothing to read,
+and what it guards is a bug this exact screen has had: `h-full` in a flex column
+resolves against the parent, so the scroll region ran past the bottom of the
+window by the header's height and the pager was in the DOM and unclickable.
+
+**A width a flex row can take back is not a fixed width.** `--gl-status-w`
+exists so a column of status chips has one edge, and `check:status-width` pinned
+that nothing *re-sizes* the chip. It did not pin that nothing *compresses* it —
+a different question, and flex items shrink by default. The run-history table's
+status cell holds a `StatusChip` and, on a healed run, an amber "healed" chip
+beside it; the first render of B7 squeezed the status chip to nothing, and
+`overflow: hidden` ate the word. **The row reported the heal and silently
+dropped the outcome** — precisely the one-row-at-a-time failure the check's own
+header describes, arriving through a property it never mentioned. Fixed with
+`flex-shrink: 0` on the primitive (not `flex: 0 0 <width>`, which would put the
+width in a second place), a widened column, and a `min-width` on the run table
+so a narrow window scrolls rather than scaling the column down. The check now
+pins both directions, and both new assertions were verified to fail when broken.
+
+**The keep-list is counted in families, not symbols.** Adding Stats to
+`check:sdk-retired` meant admitting `SelectTrigger`, `SelectContent`,
+`SelectValue`, `TooltipTrigger`, `TooltipContent` and the three
+`NativeDatePicker` parts — eight names for three decisions already taken. The
+old flat set was capped at 30 symbols to make growth visible, and this would
+have blown it, teaching exactly the "raise the cap" reflex the cap exists to
+prevent. So the unit became the decision: `KEEP_FAMILIES` groups members under a
+stated reason, the cap counts families, and each family must carry a reason
+string. A new family is a real choice and wants an entry here.
+
+**Flaky and data-dependent now share amber.** They were orange and yellow. The
+palette has four status hues meaning pass, running, caution and fail, and
+inventing a fifth to separate two shades of caution would spend a colour on a
+distinction the WORD already makes — in the one panel whose entire premise is
+that the word is what you act on. The label is unchanged and still asserted.
+
+**The verdict chip is deliberately NOT a `StatusChip`.** Its labels run to
+"Consistently failing", which the fixed width would clip. The label *is* the
+finding here, so truncating it to satisfy a layout contract this row is not part
+of would remove the thing the panel exists to say; `.gl-chip-tone` is the
+variable-width tinted chip for exactly this, and `shared.css` already draws that
+line for the heal chips.
+
+**What was deferred, and why it is not a shortcut.** REDESIGN §B7 also asks for
+a page-level scope and range stated once in the header. It is not here, because
+it cannot yet be honest: `runs:flake` takes no test id, and *none* of the flake,
+slowness, step-health, divergence or capture-overhead handlers takes a time
+window. A range control would scope the chart, the KPIs and the run table while
+Stability, Cost and Step health quietly kept describing all history — one
+control lying about half the page, which is the inverse of the "two controls for
+one question" problem the move exists to prevent. It lands with the `sinceMs`
+parameters that make it true.
+### 2026-08-10 — Settings: one warning prop becomes three, Advanced becomes Diagnostics, and the favicon opt-in finally lands
+
+**B4 of the redesign (REDESIGN §B4), the fourth reskinned screen.** The information architecture was already right — eight panes plus search landed 2026-08-07 — so most of this is treatment. Four things in it were real decisions.
+
+**`danger` was one prop doing three jobs, and the jobs disagree.** It gave a row a badge and an accent rule together, which was fine for the two rows that had it. But "stores credentials" is a FACT ABOUT THE ROW, "the value is written to disk and read by every run" is a CONSEQUENCE YOU NEED BEFORE DECIDING, and "here is how the allowlist works" is a MECHANISM — three different sentences with three different urgencies. So: `flag` (short uppercase badge beside the label), `risk` (a block of copy, always visible), `doc` (a link). The valuable half is `risk` having no closed state to be in: the old row got the same guarantee by REFUSING `details` on a `danger` row, which worked only for as long as everyone remembered why. Now the rule is structural. `flag` keeps the refusal anyway, for rows that carry a badge and no risk block.
+
+**A flagged row with a `risk` block does not also get the row-level rail.** Both draw the same red inset rail; at two different indents they read as a rendering glitch rather than as emphasis, and the inner one is the more useful of the two because it marks the sentence rather than the whole row. Found by looking at it — the two rules are in different files and nothing about either one predicts the stacking.
+
+**Advanced → Diagnostics, and "Experimental" out of the AI pane into its own.** "Advanced" is a promise about difficulty, and a pane named for difficulty attracts everything nobody could place: it becomes where settings go to be lost, and a user reading it cannot tell whether the contents are dangerous, experimental or merely obscure. What is actually in there is a screenshot shortcut and a capture button — tools for producing evidence for whoever is helping you. Naming that *Diagnostics* is what stops the next unplaceable setting landing there by default, because there is now somewhere else for it to go. The two AI flags moved for a different reason: both change how a RUN behaves, and someone asking "why did my script change?" has no reason to open a pane about which model answers questions. As a SECTION the caveat was also invisible from the sidebar and only reached someone already reading that pane top to bottom.
+
+**The site-icon opt-in, outstanding since the favicon egress fix (2026-08-08).** It is in Appearance, not in a credentials pane, because what the user is choosing between is two ways the sidebar can LOOK; the cost is what `risk` is for. Off by default on both sides of the IPC boundary, and `check:renderer-egress` now pins four things rather than one: that no call site hardcodes the fetch on (a bare `favicon` or `favicon={true}` — an opt-in's exact regression, dressed as an opt-in), that both defaults are `false`, and that the row's always-visible copy names icons.duckduckgo.com AND says the hostname is what gets sent. The check previously banned every call site outright, which was correct while there was no setting and would have been the wrong thing to keep once there was one.
+
+**Keys & creds is deferred, not forgotten.** REDESIGN §B4 asks for a pane collecting the credentials. Building it means moving the Anthropic key and the LM Studio token away from the controls that VALIDATE them — the connection test and the model list live in the AI pane and are how you find out a key works. A credentials pane that cannot tell you whether the credential is good is a worse home than the pane that can, so this waits for a design that moves the validation too.
+
+**The `gl-*` layer got the class audit it never had.** `check:renderer-classes` only looked at Tailwind's colour- and type-bearing prefixes — the right scope for the bug it was written for (`bg-muted`, the `border-token-*` family, twenty-eight SDK names) and no scope at all for the vocabulary the redesign has been accumulating since A2. `className="gl-setting-groupp"` compiles, lints, type-checks and renders as an unstyled div. It is the same bug in our own namespace, and it now fails the build. The second pass carries a liveness assertion, because an audit that silently matches nothing reports a clean pass forever.
+
+**Also**: the settings sidebar is the `Rail` now, which changes row activation from `mouseDown` to `click` (a press dragged off a row no longer selects the pane) and moves selection announcement to `RailRow`'s `aria-current="true"`. Switches are neutral rather than blue — blue is not in this palette at all, and colour means outcome — but their ON track is BRIGHTER than `--gl-sel-bg`: that token is tuned for a row where the lift must not compete with the status colour beside it, and at 0.055 the two switch states differed by the knob's x-position alone. Hueless is the rule the palette makes; one alpha for every surface is not. And `?view=settings` now exists in the browser preview, because Settings is a separate `BrowserWindow` and this change had no way to be looked at otherwise.
+
+### 2026-08-10 — Batch gets fixed columns, and the concurrency menu stops making you guess
+
+**B3 of the redesign (REDESIGN §5), the third reskinned screen.** The information architecture is unchanged — per-row engines and headedness landed 2026-08-07 and were right. What changed is that the row is now a set of FIXED COLUMNS, the engines are readable, and the one control that could not explain itself does.
+
+**Fixed columns, because a checklist is read DOWN.** Every cell but the name is a fixed width. The row this replaces sized each cell to its own content, so one test's engines sat under the next one's tags and nothing lined up — and the questions people actually ask of this screen ("which of these are headed?", "which have three engines?") are exactly the ones a column you have to re-find on every row cannot answer. The name is the one cell that gives, and it keeps a floor: as the only flexible cell in a row of fixed furniture it absorbs the entire squeeze, and `min-width: 0` bottoms out at width ZERO — a row with no name at all, which makes the checkbox beside it meaningless. That was a real bug once; `check:narrow-layout` moved with the property from a Tailwind class to the `.gl-batch-name` rule, and still checks the view carries the class.
+
+**`CR` / `FF` / `WK`, not browser logos.** Three brand marks at 14px are three coloured blobs — recognisable if you already know them, meaningless if you do not — and, decisively, a logo cannot carry a per-engine RESULT. This cell has to be able to say "chromium passed, webkit failed" on one row without becoming three rows, and two letters can be tinted where a brand mark cannot. An engine that is OFF stays visible at low contrast rather than hidden: an engine you cannot see is one you cannot add back.
+
+**Headed is amber, and it is the one hue on this row that marks a setting rather than a result.** It earns the exception: a headed batch opens a real window per test and each takes focus as it launches, so the machine stops being usable until the suite finishes. That is caution, which is what amber means. Headless is the quiet default and says so by being quiet.
+
+**The concurrency picker stopped being a native menu, and that is the point of the change.** The SDK's `Select` is kept everywhere else in this app and should be — it is backed by a real macOS menu. But a native menu item is a STRING, and the entire reason `MenuItem` exists is the second line. "8" cannot say *a laptop will thrash and report failures it caused*, and that failure mode is indistinguishable from a flaky suite in the run report: nothing about it says "you asked for this". REDESIGN §8.2 names this swap and the three screens that need it.
+
+- **The copy lives in `batch-parallel.ts`, not in the view.** It is copy with a rule behind it, and a test can read it — the same reason the headed-parallel warning threshold already lives there.
+- **The upside §8.2 predicted arrived.** The options are real DOM now, so for the first time the choice can be driven the way a user makes it: four new tests open the menu, list every option, pick one, and check it closes on Escape and on an outside pointer-down. Previously the only testable things were the displayed value and what reached IPC, because a native menu's items never enter the DOM at all.
+- **`Menu` is a new primitive, and it is the box `MenuItem` always implied.** Not Radix's `DropdownMenu` from `@ui` — that one renders its items to `null` and hands a plain-data template to the native popup, so composing `MenuItem` into it would produce an empty menu with no error anywhere. What it owns is the four things a hand-rolled dropdown gets half-right: Escape closes AND returns focus to the trigger, an outside **pointer-down** closes it (a `click` fires after the pointer comes up, so a click-closed menu is still covering the thing being pressed), the trigger reports `aria-expanded`, and choosing closes.
+- **It opens toward the leading edge.** End-anchored, a 268px popover hanging off a control near the left of the pane lands on top of the rail — a menu covering the navigation is a menu you dismiss by accident.
+
+**The history drawer ships without half of what the design asked for, and that half was never there.** §B3 describes the drawer as showing "the batch's own per-test results and the settings it ran under", on the stated grounds that `batch-history-store` already keeps both. It keeps the first: `BatchRecord.results` carries every test, its engine, its duration and its outcome, and none of that was visible for a past batch before now. It does NOT keep `captureArtifacts` or `concurrency` — there is no field. So the drawer shows what exists and omits what does not, rather than rendering a plausible line the record cannot support. Making that half real is a backend change (a field, plus what to show for records written before it), which is not a presentation reskin and does not belong in this PR.
+
+**Expanding a row and selecting it are one gesture, deliberately.** Clicking a history row both opens its drawer and makes that batch the one the checklist above is showing. A separate caret would be two affordances for "look at this batch", and the row already did the second thing before this change.
+
+### 2026-08-10 — Heals is two panels and four words, and only two of the words are coloured
+
+**B2 of the redesign (REDESIGN §5), the second reskinned screen.** A journal and a detail, both `Panel`s, with the four heal states finally drawn as `StatusChip`s at the fixed status width — which is the first place in the app where that contract does any work, because this list is the only one where a column of chips reports four genuinely different things.
+
+**Only two of the four take a hue, and the mapping is the decision.** `Accepted` is an outcome — you approved the change — so it is phosphor. `Applied` is the one that should catch your eye: the stored test has ALREADY been changed and nobody has looked at it, which is caution, which is amber. `Suggested` takes cyan, the palette's "running / live / **focus**": a suggestion is the open item waiting on you rather than a verdict. `Reverted` takes no tone at all, because it is settled and there is nothing left to report.
+
+- **Two states sharing "no hue" is deliberate, not a gap.** `StatusChip`'s width is fixed so these read as a column, and the chip's own header says it: THE WORD reports the state. Inventing a fifth colour so every row is lit would spend the palette on chrome and leave the two that matter competing with two that do not.
+- **Pinned on `data-tone`, not on colour.** The dom project runs with `css: false`, so a computed-style assertion reads `""` for all four and would pass against a column drawn entirely in green.
+
+**The toolbar is gone and its two jobs moved.** The top strip's breadcrumb already says HEALS, so a title bar under it was the screen's name twice. The count went into the journal panel's `id` slot — it counts the journal — and "Clear history" into its `right` slot, because it clears that list. What is left is two panels and no chrome above them, which is what the design draws.
+
+**The 330px journal is set in CSS, and `Panel`'s `flex` prop is why.** That prop writes `flex: 1 1 auto` INLINE on the section as well as the body, and an inline style beats the class — so the journal quietly grew to half the window. It did not look broken; it looked like a layout somebody had chosen, which is the worst kind of wrong. The body still needs to fill what the header leaves, so that half is a descendant rule instead.
+
+**A5's `.gl-heal-*` classes carried straight over, and that is the `shared.css` rule paying off.** The was/now block, the candidate rows and the amber notice were built for the per-test Heals *panel*; the *view* wants exactly the same three things, found them already there, and grew no copy. This is the case screens.css's header describes in the other direction: a rule a second screen wants belongs in `shared.css`, and here the move had already been made.
+
+**The amber warning is shown only where its sentence is true.** "A heal that succeeded is not the same as a heal that was right" is about a heal that was APPLIED and passed — the case with no other signal, because a mis-heal usually succeeds (clicking the wrong button rarely throws). On a suggestion nothing has been applied and the sentence is noise, which is precisely how a warning becomes something people learn to click past.
+
+**One test changed its strings, and none was deleted.** "Suggestion only" / "Applied to the test" became "Suggested" / "Applied" — the design's four words, and short because the chip is a fixed width and a chip that sizes to its own sentence is what breaks the column. The test's subject is unchanged (does the screen say whether the stored test was altered?), and it gained a sibling that pins all four tones at once.
+
+### 2026-08-10 — Home is the first reskinned screen, and the first number the app shows had better be true
+
+**B1 of the redesign (REDESIGN §5), and the start of Phase B.** One screen, same purpose, new chrome — plus the three things the design adds: the plate, the wordmark treatment, and three readouts.
+
+**A number nothing supports renders as an em dash, never as zero.** This is the whole risk of putting statistics on the landing screen, and it is silent in both directions. "0% green" with no runs in the last week is a claim about a week that did not happen, and it sends someone looking for a failure that never happened; "0 tests" flashed before the query resolves tells a person with a full library that their library is gone. So every readout distinguishes *absent* from *zero*, and `greenRate()` returns `null` rather than `0` for an empty window. Both directions are pinned, including the mirror: a week that genuinely was all red still reads `0%`, because the failure mode of over-correcting is a broken suite that renders as "no data".
+
+- **The readouts share the app's own query keys** — `["tests"]`, `["runs"]`, `["heals", "all"]`. They cost nothing (the rail and the views have already filled those caches) and, more importantly, they cannot disagree with the screen you land on after clicking through. A home screen with its own count of anything is a home screen that is eventually wrong.
+- **Baseline updates are excluded from the rate**, exactly as Stats excludes them. Accepting a new screenshot is not a run and has no verdict; counted, one afternoon of baseline work would drag the week's number down with no failing test anywhere.
+
+**The `go` button says "Record a test" where the mockup says "Run a test".** A deliberate deviation, and the reason is that the mockup's label is a control this screen cannot honour: nothing is selected on Home, so "run" has no object — it would need a test picker the design does not draw, or it would do nothing. Recording is the primary action from an empty home, it is what this screen's copy has always told people to do, and it is the entry point the whole app is built around. Both buttons open the same two dialogs the rail's `+` menu opens, mounted a second time rather than hoisted: they are fully controlled and render nothing while closed, so a second instance costs one boolean, where lifting them would put two screens' state into a component that is neither.
+
+**`echo` is ghosting, not chromatic aberration, and the name is the argument.** An echo is the same signal arriving twice, so the two offset copies of the wordmark are drawn in the SAME ink at low alpha. The obvious alternative — red and cyan fringes — would spend two status hues on decoration, on the app's own name, at the largest type size in the product, on a screen with no status vocabulary to interpret them. They are pseudo-elements (`content: attr(data-text)`) rather than markup, so a screen reader says "GOOD LOOKS!" once instead of three times, and there is a test that fails if anyone refactors them into real elements — a change that would look identical in every screenshot.
+
+**The texture art is still missing, and the plate ships anyway.** REDESIGN §3.5 fixes `texture: ember` and its plate is `acid-25.jpg`, which lives in the mockup zip and has never been checked in (open question 6 names this as the one thing blocking B1). What shipped is the part that does not need it: the radial falloff, which is the plate's actual job, plus an ember wash for the warmth. When the art arrives it is one `background-image` on `.gl-home-plate` and the gradients stay underneath.
+
+- **`--gl-ember` is a new token and is deliberately NOT `--gl-amber`.** Amber means flaky / healed / caution. A wash of it behind the home screen would be the largest coloured surface in the app claiming a status, on the one screen with nothing to interpret it against. A texture is not a status, so it gets a colour that cannot be mistaken for one.
+
+**The loader went from 440px to 280px, and that is a layout fix rather than taste.** The column is centred but scrolls when it outgrows the pane; at a 700px window the old size pushed both buttons below the fold, which puts the screen's entire purpose behind a scroll on an ordinary laptop. It also makes the wordmark the largest thing on the screen, which is what the design asks for.
+
+**`check:scroll-layout` moved with the properties it guards.** It pinned Home's `overflow-y-auto` and `min-h-full` as Tailwind class names in the markup; both are named rules in `screens.css` now. The contract is unchanged and so is the reasoning — the floor is what stops a too-tall hero being centred half off-screen — so the check reads the stylesheet instead, and additionally asserts the view still CARRIES both class names, because a rule nothing uses is a guard that passes over a screen it no longer describes. Verified by breaking both halves.
+
+### 2026-08-10 — The five components every screen embeds leave the SDK, and a check so they stay left
+
+**A5 of the redesign (REDESIGN §4), landing right behind A4.** `step-row.tsx`, `pager.tsx`, `tag-cluster.tsx`, `log-inspector.tsx` and `heals-panel.tsx` are the components every screen embeds. Doing them BEFORE the screens is the whole point: it means each Phase B PR has one review question — "does this screen still do everything it did?" — instead of two, with a button swap and a layout change tangled in the same diff.
+
+**A third stylesheet, split by scope rather than by taste.** `primitives.css` is what a screen is built out of, `shell.css` is what a screen sits inside, `shared.css` is what a screen embeds. The five components stay in `renderer/main/` because each is wired to queries and IPC the theme layer must not know about; what moves is their chrome.
+
+**Two chip rules, and the distinction is not cosmetic.** `.gl-chip` is neutral and `.gl-chip-tone` takes its border, fill and text from `toneSurface()`, and which one a label gets is decided by a single question: does it report an OUTCOME? "Applied to the test" and "Accepted" do, so they are toned. "During a run", "soft", "disabled", "seen before" do not — they are facts about how something is configured or where it happened — so they are neutral. Get that backwards and every configured step reads as a verdict.
+
+- **Neither is a `StatusChip`, deliberately.** That one is fixed at `--gl-status-w` so a COLUMN of them has one edge; these are inline labels in a wrapping row whose lengths differ by design, and forcing "Applied to the test" into 78px would truncate it to satisfy a contract it is not part of.
+- **The SDK `Badge` this replaced mapped `assert` onto GREEN** — the pass hue — on every assertion in every step list, so a list of steps read as a list of results. `TypeChip`'s palette is separate from the status palette for exactly this reason, and there is now a test that fails if a type chip is ever drawn in a tone.
+
+**The tag delete stopped turning red on hover.** It did, and under this palette that is wrong: an outcome hue on a hover state reads as the row reporting something, which is precisely what `check:selection-neutral` bans. The destructive fact belongs where it can be stated rather than implied — the confirm dialog already names how many tests lose the tag and that it cannot be undone, and ITS confirm button is the red one. The X brightens instead.
+
+**The step row keeps its own structure, and that is not a shortcut.** It carries drag-to-reorder, inline editing, per-step replay, the run-status flash and the `.step-new` outline; folding all of that into the `StepRow` primitive is the step list's own reskin (§B5/§B6), and doing it here would have made A5 a layout change to the most-used component in the app. What left is the SDK: badges → `TypeChip`, buttons → `.gl-icon-btn`, `Text` → `.gl-mono-value`, `Input` → `.gl-input`. The status glyph now takes the palette's tones, and `running` is `--gl-cyan` where it used to be the SDK accent — a different blue that means nothing here.
+
+**`check:sdk-retired` is the point of the PR, not an extra.** The failure it guards is not a bug, it is erosion: a Phase B PR touching one of these files needs a button, `Button` is one import away and is what eighty other files still use, and the result compiles, renders, passes every test and looks *almost* right. A rounded control among square ones is invisible to jsdom (the dom suite runs with `css: false`), invisible to type-check, and invisible to a reviewer reading a 400-line reskin diff one import line at a time.
+
+- **It asserts the mirror as well, because the obvious version passes vacuously.** `pager.tsx` now imports NOTHING from `@ui`, so "imports only keep-list symbols" says nothing about it whatsoever — a file that rendered plain unstyled markup would pass. So every retired surface must also be shown to read the theme layer.
+- **The parser is proved before it is trusted.** A regex that stops matching harvests nothing and an empty set trivially has no offenders, so the check first asserts it can still see the imports in a file that definitely has some, by name and count. Same failure mode `check:push-consumers` was written against.
+- **The keep-list is four families with reasons, and its size is asserted.** There is no way to enforce that a reason exists, so the next best thing is to notice the list growing: the fix for a red run must not become "add the symbol to KEEP", which is indistinguishable from the bug. Anything beyond Dialog / ScrollArea / the native-menu families / toast wants an entry here rather than a line there.
+- **Verified by breaking it**: putting a `Button` back into `pager.tsx` goes red and names the file and the symbol.
+
+**`check:text-color` stays as it is** (REDESIGN §8.3 asks for a decision per PR). These five surfaces no longer render `Text`, but forty-odd files still do, and its subject is not gone until they are.
+
+### 2026-08-10 — The shell lands, and the light theme goes with it
+
+**A4 of the redesign (REDESIGN §4).** The foundation had been sitting unconsumed since 2026-08-08 — tokens, fonts, atmosphere and fifteen primitives, none of it reachable from the app. This is the PR where the app starts looking like the design, and where the two-theme world ends.
+
+**The strip is a `SplitView` slot, not a sibling, and that was the whole design question.** The top strip spans the window: wordmark over the rail, breadcrumb over the content. So it cannot be a child of the primary pane. Rendered as a sibling ABOVE the SplitView it lands outside `SplitViewContext`, where the rail handle's `useSplitView()` throws — and the fix for that, hoisting the collapse state into `RootShell`, moves `storageKey` persistence and the ⌃⌘S shortcut out of the one component that owns them, leaving the caller to reconstruct a localStorage key format it has no business knowing. A `header` slot inside the provider costs one wrapper div and keeps all of it where it is.
+
+- **The pinned toggle is retired by the same change, and that is a fix.** `SplitView.SidebarToggle` was `absolute left-2 top-2` over the primary pane, which is why `Toolbar` carries `TOGGLE_INSET` — 44px of reserved space so the button did not land on the first letter of every view title. The handle is now in-flow in the strip's leading slot, so there is nothing to reserve for and every title moves back to the left edge. `pinned` was a prop the component ACCEPTED AND IGNORED; it is real now, and it gates the `registerPinnedToggle` call as well as the positioning — registering unconditionally would leave every toolbar in the app indented for a button that had moved.
+- **The empty toolbar on Home went with it.** It held one non-breaking space, no text and no controls: it existed to reserve the toggle's band. With the toggle gone it was a blank 52px under a strip that already names the screen. The other views keep theirs — those carry a title and controls, and folding them into the breadcrumb is each screen's own Phase B reskin.
+
+**The ⌘K affordance ships as an empty slot, deliberately.** A4's brief lists it, and the command palette is Phase C (§6.7). A hint that opens no palette teaches a shortcut that answers with silence; a disabled one ships a permanently greyed control for a feature nobody has asked for. Neither is better than nothing, so `command` and `ticker` are props with nowhere to be filled from yet, and a test pins that the tail renders zero children — otherwise "we will fill it in later" becomes a placeholder nobody removes. Same reasoning one size down inside the breadcrumb: the trailing segment is never a button, because a link to the page you are on is a control that does nothing.
+
+**The breadcrumb names what is on screen, not what the URL says.** They differ in exactly one place and it is the one that matters: while recording, `RootShell` swaps the entire outlet for the trainer **without navigating**, so the route still reads `/stats` under a screen showing the recorder. A trail derived purely from the router would confidently name the wrong screen, which is worse than naming none — hence the explicit `recording` prop. A second, smaller version of the same rule: the crumb for an open test says "Test" until the name loads rather than showing the id, because an id that becomes a name is two different sentences in the same place. And the Home crumb is a real navigation: the rail lists tests and views and has never had a Home row, so before this the home screen was reachable only by un-selecting a test.
+
+**The views nav moving out of the scroller is a bug fix wearing a restyle's clothes.** It was an `mt-auto` block at the END of the library list, which pins it to the bottom only while the library is SHORT. With more tests than fit, Stats/Visual/Batch/Heals scrolled away with them and the app's own views became something to hunt for. It is its own slot below the scrolling body now, so "pinned" is structural. **This cannot be tested by rendering**: jsdom has no layout engine, an overflowing list and a short one produce identical zero boxes, and a "is it visible at the bottom?" assertion would pass in the broken case too. The test is structural — the nav is not inside the scroller — which is the only question that has an answer here.
+
+**Rows activate on `click` now, and that is a behaviour change rather than a test edit.** `SidebarListItem` fires on `mouseDown` — the AppKit idiom, and a documented trap in this repo: `fireEvent.click` does nothing to it and the assertion reports "0 calls", which reads as a dead handler rather than as the wrong event. `RailRow` is an ordinary button. REDESIGN §8.2 predicted exactly this swap and asked for it to be called out: a press that lands on a row and is dragged off it no longer navigates. Both directions are pinned, including the negative.
+
+**Dark only, and the IPC went too.** The palette is near-black with phosphor accents over two texture layers; a light variant is a second design rather than a token swap, and the CRT bezel has no light reading (REDESIGN §0, §11). So: `useTheme()` deleted, `.dark` applied unconditionally in all four entry HTMLs (including the preview — a preview that followed the reviewer's OS would render a light variant of a design that has none), and `nativeTheme.themeSource` pinned to `"dark"` in the shell.
+
+- **The pin is not cosmetic.** `themeSource` is what Electron's OWN chrome reads, and this app pops a native menu for every `Select` and dropdown. Following the OS from there would put a white menu on top of a black app for anyone whose Mac is in light mode — the one part of the window we do not draw ourselves.
+- **The four `nativeTheme:*` handlers, the preload bridge, `NativeThemeInfo` and the `nativeTheme:updated` push are deleted, not left registered.** An IPC surface nobody calls is indistinguishable from one that is about to be needed again, and the push in particular would have become an orphan the moment its only subscriber (`useTheme`) went — which `check:push-consumers` would have caught, correctly, a day later.
+- **The Appearance row stays where the control was.** "Dark only for now" is a sentence someone who had pinned Light needs to read; a row that simply vanished would read as a bug in a window whose whole job is to enumerate what can be changed. It is still indexed under "light" and "auto" in the settings search, because the words people will search for are the ones for the thing that is gone. Its four tests were not deleted with the control — they now assert the retirement, including that no radio can come back without a controller method to wire it to.
+
+**Verified by breaking it.** The nav-outside-the-scroller assertion and both halves of the click/mouseDown pair were reverted deliberately and confirmed red (3 and 4 failures respectively) before being put back.
+
+### 2026-08-09 — The sidebar's run dot: a stale colour, and a scale wide enough to describe three browsers
+
+**The stale dot.** A test that failed, was re-run and passed kept a red dot in
+the sidebar until the window was reopened. Nothing about the run or its record
+was wrong — the dot is drawn from the shared `["runs"]` React Query cache, and
+nothing invalidated it. The `runs:changed` push has existed since run history
+did, but its only subscribers were `StatsView` and `VisualView`, both ROUTE
+components: on any other route nobody was listening. So the failure needed the
+user to be looking at the sidebar (i.e. not at Stats) — exactly the case the dot
+exists for. It is also the quietest possible failure: the run panel one pane
+over showed the pass at the same moment, so the app looked like it disagreed
+with itself, and the dot is the half people trust.
+
+The subscription moved to `RecorderProvider`, which is mounted for the whole
+session in both windows. Subscribing to `runs:changed` rather than to
+`runner:done` was deliberate: it also covers history being deleted from Stats
+and records written by a batch, and it fires after the record is on disk, so the
+refetch cannot race the write.
+
+**The scale.** A dot with two colours cannot describe a batch run across
+chromium, firefox and webkit. Two of three passing and none of three passing
+both came out red, which is the same signal for "one engine is broken" and "the
+test is broken" — and the first one you can often ship around. `run-verdict.ts`
+grades the whole cohort instead: green, green-yellow (passed, but leaning on
+more than three Auto-Heal substitutions), yellow-orange (a third or less
+failed), orange-red (more than a third, not all), red (all).
+
+Three decisions inside that:
+
+- **Cohort, not last run.** A three-browser batch writes three records; the
+  newest is whichever browser finished last. Read alone it reports the batch
+  green when webkit passed and the other two failed. The verdict widens the
+  newest run to its `batchId` siblings.
+- **Ratio, not "1 of 3".** The browser set is the user's to choose, so a cohort
+  can be two runs or four. `failed * 3 <= total` is the yellow-orange band,
+  which at the size people actually run is exactly one browser of three, and it
+  keeps an ordinary single failing run at plain red rather than turning every
+  failure into a blend.
+- **Nothing is sticky.** The brief asked for the colour to reset the instant a
+  later run passes, from anywhere in the app, and to go red again on a failing
+  reproduction attempt. Both fall out of recomputing from the newest cohort
+  every time; a remembered "was failing" flag would need a clearing rule for
+  every path that can run a test, and the one that got missed would be a dot
+  stuck on a colour with no way back.
+
+The three blends are declared as tokens (`--support-green-yellow`,
+`--support-yellow-orange`, `--support-orange-red`) mixed from the existing four
+status colours, for the reason the rest of this repo declares its own tokens: a
+`bg-` class Tailwind has no key for emits nothing and throws nothing, and a
+verdict dot with no background is a verdict that silently disappeared.
+
+### 2026-08-09 — A generated test had two steps and a 37-line script, and the trainer offered to fix that backwards
+
+**Symptom:** "Generate from prompt" produced a good spec — readable comments, useful `console.log` output — and the test opened with a Steps count of 2. The trainer had nothing to work with, and "Edit in Trainer" warned it would regenerate the script from the recorded steps, i.e. replace the whole script with a `viewport` + `goto` stub.
+
+**The translation was not missing — the vocabulary was.** `tests:createFromPrompt` has parsed the generated source into steps since 2026-08-05. But `spec-parser.ts` is the reverse of `script-generator.ts`, and it reads the vocabulary this app EMITS: one self-contained `await page.<builder>(…).<action>(…)` per statement. A model asked for a readable spec writes a JavaScript program instead — locators in `const`s, `test.step(…)` phases, values read out of the page with `.textContent()` and asserted with `expect(value).toBeDefined()`. Only the first two statements were in the vocabulary, so only two became steps.
+
+Three things came out of that, and the ordering between them is the decision:
+
+- **Widen the parser where the shape is honestly translatable.** A locator bound to a `const` and used later is the same step as the inline form; it just needs a variable map. That it was previously LOST is worse than a miscount — the declaration counted a skip but the `await submit.click()` matched no branch at all and was walked past character by character, contributing neither a step nor a skip. Same failure mode as the nested-`page.*` paths fixed earlier, and the same fix: claim it, or count it.
+- **Count what cannot be translated, never approximate it.** A refined chain (`.first()`, `.filter()`, `.or()`) could be stored as its base locator — and would then regenerate a selector that matches a *different element*, which passes review and fails at run time. Rejected: it is recorded as unclassified, which surfaces as `stepsDiverged` and a warning the user can see. `expect(<jsValue>)` gets the same treatment for the same reason.
+- **Constrain the generator rather than chase the parser.** The remaining gap (extraction, branching, `.or()` composition) is not a parser bug — the step model has no vocabulary for "read a value into a variable and assert on it", and inventing one to satisfy a prompt would be a data-model change driven by an LLM's habits. So `GENERATE_SYSTEM_PROMPT` now states the round-trippable vocabulary outright. **Comments and `console.log` are explicitly kept welcome** — they are what made the output readable, and `spec-parser.ts` already consumes both WITHOUT counting a skip, so they cost nothing. A rule that tightened the output by taking those away would have fixed the step count by making the script worse.
+
+`test.step(…)` was a separate, opposite bug found while probing this: `extractTestBodies` matched the wrapper as a test body of its own, and since the scan already walks straight through it inside the enclosing `test(...)` body, **every step in a `test.step` block was emitted twice**. Silent — the list just showed the flow twice — and it lands on exactly the specs a model writes when it is also writing good comments.
+
+**The two prompts are a matched pair with nothing connecting them in the type system**, which is why `llm-prompts.test.ts` does more than assert copy: it parses a spec written to the prompt's own rules and asserts every action becomes a step with zero skips. A copy edit that drops a rule, or a parser change that narrows the vocabulary, fails there instead of in a generated test the user has to notice is wrong.
+
+### 2026-08-09 — Radio buttons touched their own labels, because `Label` was typography only
+
+**Symptom:** in Settings → AI, the AI provider options read as `◯Ollama ◉LM Studio ◯Claude` — each circle jammed against its text, close enough to look like an overlap. Appearance → Theme (Auto / Light / Dark) had it too; the panes were built the same way and both shipped it.
+
+**The port dropped a layout rule from a component whose name suggests it has none.** `Label` is used two ways: pointing at a control with `htmlFor`, and *wrapping* one — `<Label><RadioGroupItem/>Ollama</Label>`, which is the shape every radio row in Settings uses. Only the second needs the element to be a flex box with a gap, and the ported `Label` carried nothing but typography, so the radio and its text became adjacent inline boxes with no space at all between them. Fixed on `Label` (`inline-flex items-center gap-2`) rather than on the two panes, because the next pane to wrap a control would have inherited the bug.
+
+- **`inline-flex`, not `flex`.** The upstream is `flex`; `inline-flex` keeps a label from stretching to its container's width in the non-wrapping usages (`FieldLabel`), which is a change this fix has no reason to make. Callers that want block behaviour still win — `setting-row.tsx` already passes `flex flex-wrap items-center gap-2`, and tailwind-merge collapses the display group to the caller's choice rather than emitting both. Pinned by a test, since the two classes silently coexisting is exactly how this would come back.
+- **`RadioGroup` went `gap-3` → `gap-4` in the same change.** With the intra-option gap fixed at 8px, a 12px gap between options is barely larger — the text of one option still reads as attached to the next option's circle. The invariant, and what the test asserts, is *between > within*, not either number.
+- **`RadioGroupItem` gained `shrink-0`.** It is now a flex item beside text; `Checkbox` already had it. Without it a long option label squashes the circle into an ellipse, which is the same bug wearing a different shape.
+- **Asserted on class names, and that is not laziness.** The dom project runs with `css: false`, so Tailwind emits no values into jsdom and `getComputedStyle(...).gap` reads `""` for the broken and fixed markup alike — a spacing assertion there passes vacuously forever. `check:renderer-classes` is the half that proves the names emit real rules; `renderer/ui/label-gap.test.tsx` is the half that proves they are applied. Neither alone would have caught this.
+- **Why no test caught it:** the pane tests find each option by accessible name, and the accessible name is correct whether or not there is a pixel between the circle and the word.
+
+
+### 2026-08-09 — Two more pushes nobody was listening to, and a check so there is never a third
+
+**Follow-up to the entry below**, which fixed `trainerPanel:viewportNarrowed` and noted two other unsubscribed channels as a deferred cleanup. Sweeping them properly turned up something the first pass got wrong.
+
+**`recorder:loadFailed` was not redundant. The error dialog had never once opened.** The previous entry called it harmless on the grounds that the renderer reads `state.loadFailed` off `recorder:state`. It does — and that field is *always false*. The service sets `session.loadFailed = true`, tears the session down (`session = null`), and only then calls `broadcastState()`; `currentState()` reads `session?.loadFailed ?? false`. There is a second, independent reason it could not have worked: `root-view.tsx` mounts `RecordingView` only while `state.recording`, which is `!!session` — also false by then — so the component hosting the dialog is unmounted at the exact moment the dialog is meant to appear. The push was the only carrier and had no listener, and the service's own comment on that path calls the dialog "the primary feedback". A training window that fails to open therefore tore the session down and said nothing.
+
+- **The consumer had to move, not just exist.** `load-failed-dialog.tsx` is mounted from `RootView` *outside* `RootShell`, holds the message from the push rather than reading session state, and is what the push now reaches. Putting a subscription in `RecordingView` would have satisfied a "channel has a consumer" check while changing nothing — the component is not there when it fires.
+- **`RecorderState.loadFailed` is gone.** A field that can never arrive true is worse than no field: the obvious repair for the dialog is to re-gate on it, which is how it was written the first time. `Session.loadFailed` stays — it is real and gates `loading`.
+- **Two dead things found underneath it.** "Check Stats" navigated by assigning `window.location.hash = "#/stats"`, which selects nothing under this router's memory history; it now uses the router, like `onFinished`. And "Check Stats" was wired to `destructiveAction`, so it drew as a red destructive button on a dialog that is already about a failure. Neither had ever been seen.
+- **`recorder:healSuggestion` genuinely was redundant, and is deleted.** Of the four callers of `tryHeal`, only `replayFromCurrent` passes its `heal` onward — on the `recorder:replayLog` step event, which is what the Console renders. The other three keep `okWithHeal` and drop the candidates. So for those paths the candidates live in the journal (the Heals view) and nowhere on screen. That is a missing feature, not a missing push: reviving a channel no window listens on would not have put them anywhere either. Deleting is behaviour-preserving; building the surface is a separate decision.
+
+**The check does not have an allowlist, and that is the whole design.** An "expected orphans" list is exactly the artefact that would have hidden both bugs — the fix for a red check becomes "add the channel to the list", which is indistinguishable from the bug. If a push should have no consumer, it should not be a push.
+
+- **The scanner has to be able to fail two ways, so both are pinned.** It could go *blind* — a regex that stops matching harvests nothing, and an empty set trivially has no orphans, so the harvest is floored and one channel per parsing path is pinned by name. And it could *miss a send*: `sendToMain` is not always called with a literal (`branch-switcher.ts` passes a const; `batch-runner.ts` injects `emit: (channel, payload) => sendToMain(channel, payload)`). An indirection the scanner cannot follow **fails** rather than being skipped, because a dropped channel takes its orphan-hood with it. A forwarder counts as resolved only when its channels were recovered from literal `emit("…")` calls in the same file.
+- **The generic is why this is not a regex.** `api.on<{ status: "begin" | "end" }>("recorder:replayStep", …)` — take the first string literal after `api.on` and you read `begin` as the channel, then report `recorder:replayStep` as an orphan. A false failure sends whoever is holding it looking for a bug in working code, so the parser skips a balanced `<…>` before the call parens, and `recorder:replayStep` is pinned as the case that proves it.
+- **Verified by breaking it four ways:** removing the new subscription, adding a fresh unsubscribed push, making a channel unresolvable, and blinding the scanner itself. Each goes red with a message naming what to do.
+
+### 2026-08-09 — The warning that docking narrows the training viewport was never shown
+
+**Symptom:** none. That is the entry. Docking the trainer panel takes 360pt off the training browser, a responsive site re-lays-out at the new width, and the user is recording against a layout they did not choose and cannot see they did not choose. The run that eventually fails blames the locator rather than the width.
+
+**The mitigation was designed, built halfway, and never connected.** The 2026-08-06 entry below commits to exactly this: shrinking rather than overlaying costs a mid-session re-layout, "made visible rather than silent via a one-per-session `trainerPanel:viewportNarrowed` push". The push was written. `noteViewportChange` guards it correctly — once per session, and never when `preserveBrowserWidth` meant nothing actually narrowed. Nothing in the renderer ever subscribed. `grep -rn viewportNarrowed main renderer` returned one hit, the sender.
+
+- **Subscribing in the panel would have looked right and fixed nothing.** `noteViewportChange` runs inside `openTrainerPanel` *before* `await panelWindow.loadURL(url)`. The panel is registered as an aux window by then, so the message is delivered — to a `webContents` with no page and therefore no listeners, and dropped. On the ordinary path (a panel that opens already docked) the panel is the one window that structurally cannot hear this. Worse, the mistake is self-concealing: a component test that emits into a mounted panel passes, so the bug would be invisible in exactly the place anyone would look for it. **This is the same root cause as "the panel could not find out it was undocked" in the entry below** — a push aimed at a window that does not exist yet — found again on a second channel, which is the argument for treating it as a property of the panel's startup rather than a one-off.
+- **So `RecordingView` carries it, and the panel subscribes too.** The main window has been loaded since the session started and is the receiver that can be relied on. The panel is not redundant: `dock()` sends the same push on the re-dock path with both windows alive, and that is the moment the user is most owed an answer, having just pressed the button that caused it. Both windows showing it is the same mirroring the step list already does.
+- **The notice does not auto-dismiss.** It is raised at the instant focus moves to the training browser and the panel beside it, so a four-second toast in the main window would count down entirely behind another window — silence with extra steps. The condition lasts as long as the session stays docked, so the notice lasts until dismissed. Pinned by a test, because `duration` is the kind of option a later tidy-up removes as noise.
+- **The width is in the title, not just "something changed".** Whether 1080pt matters is a question only the user's own breakpoints can answer, and a notice that withholds the number cannot be acted on.
+- **Deferred: a `check:*` guard that every `sendToMain` channel has a renderer subscriber.** It would have caught this, and the sweep found two more unsubscribed channels — `recorder:loadFailed` and `recorder:healSuggestion`. Deferred to a follow-up rather than shipped half-enforced or with an allowlist that hides the very thing it looks for. *(Landed the same day, along with a correction: `recorder:loadFailed` was called redundant here on the strength of the renderer reading `state.loadFailed`, and it is not — that field is nulled out before the broadcast, so the failure had no other carrier at all. See the entry above.)*
+
+### 2026-08-09 — A dialog button was laid out outside its dialog, and Cancel was the button that pushed it there
+
+The trainer's exit dialog ("Save changes to this test?") rendered
+**"Discard Edits" outside the dialog**, over the step list behind it — on both
+the Discard and the Save Test paths, since both raise the same confirm.
+
+**The mechanism is `justify-end`, and it is why nobody caught this by reading
+the CSS.** `DialogFooter` was `flex items-center justify-end gap-2`. Every
+button in it is `whitespace-nowrap`, and a flex item's default `min-width: auto`
+means none of them can shrink — so the row is laid out at its intrinsic width
+whatever the container is. When that exceeds the container, `justify-end`
+anchors the row's END to the box and the surplus hangs off the **LEFT**, i.e.
+away from the direction anyone looks when they think about overflow.
+
+The numbers are small and entirely specific to one window. The trainer panel is
+`PANEL_WIDTH` 360 DIP; the dialog is `w-[calc(100vw-4rem)]` capped at
+`max-w-md`, so 296px, with 264px of content inside `p-4`.
+"Discard Edits · Cancel · Save & Exit" needs about 282px. **The same dialog in
+the main window is fine** — its 928px floor (see 2026-08-09, narrow layout)
+gives the dialog its full 448px, and 282 fits with room to spare. That is why
+this shipped: the component was correct everywhere it was looked at.
+
+**Two independent fixes, because either alone is temporary.**
+
+`flex-wrap` on the footer is the real one. It makes the failure *structurally*
+impossible rather than arithmetically unlikely: buttons that do not fit cost a
+second row instead of leaving the box, at any width, for any label. Removing
+Cancel alone would only have bought headroom until the next label was longer —
+and the ask was explicitly that a re-added button must not bring the bug back.
+
+Dropping **Cancel** is the second, and it is a real simplification rather than a
+width trick. Every composed dialog renders the close "X" (`showCloseButton`
+defaults on, and no caller turns it off), and Radix already closes on Escape and
+on the overlay click. Cancel was a fourth way to do the same thing, costing
+~75px of a 264px row. The property it was there for — *a dialog must offer a way
+out that is not the thing it is asking you to agree to* — is unchanged and still
+asserted; it now points at the X. Two existing tests were asserting the button
+rather than the property and were rewritten to the X, which is the whole reason
+they are worth keeping.
+
+**Rejected: letting the buttons shrink.** `min-w-0` plus `overflow-hidden` would
+also keep them inside the box, by clipping their labels. A destructive action
+reading "Discard Ed…" is a worse outcome than a second row, and it fails
+silently — nothing about a clipped label says the layout is wrong.
+
+**The footer became its own exported component (`DialogActions`) to make the
+layout testable.** The set of buttons, their order and the `mr-auto` on the
+destructive one *are* the thing under test; a footer rebuilt by hand inside a
+spec would keep passing while the real one overflowed. That is not a
+hypothetical here — see below.
+
+**Three layers of guard, because the obvious one cannot see the bug.**
+`renderer/ui/dialog-actions.test.tsx` renders this exact footer, and every
+assertion in it passed for the whole life of the bug: jsdom has no layout engine
+and the dom project runs with `css: false`, so `flex-wrap` never produces a
+second row there and a `getBoundingClientRect` assertion reads zeros in both the
+fixed and the broken case. It pins what it *can* — no Cancel, an exhaustive list
+of the actions, the X still dismisses, and `flex-wrap` as a class proxy.
+`check:dialog-footer` is the fast source-level guard, in the same tradition as
+`check:narrow-layout` and `check:clickable-chrome`.
+
+`e2e/dialog-footer.spec.ts` is the one that could actually have caught it. It
+server-renders the real `DialogActions` and injects it into the **running app's
+renderer**, so the measurement uses the real stylesheet, the real self-hosted
+fonts and a real layout engine, then checks every button's box against the
+panel's content box. Two things it does deliberately:
+
+- **A nowrap CONTROL.** The same markup is measured a second time with wrapping
+  forced off, and that one *must* overflow. Without it, shortening a label until
+  the row happened to fit would turn the real assertion green for a reason that
+  has nothing to do with the fix — the vacuous pass this repo keeps finding. Its
+  failure message says so in those words.
+- **A separate process for the fixture** (`e2e/dialog-footer-fixtures.tsx`).
+  Playwright compiles the TSX it loads with its own component-testing JSX
+  runtime, so `renderToStaticMarkup(<DialogActions/>)` inside a spec dies with
+  "Objects are not valid as a React child". Running it under `tsx` is what keeps
+  the fixture the real component instead of markup copied into a spec.
+
+The panel geometry the spec reconstructs (296px) is derived, not asserted:
+`check:dialog-footer` recomputes it from `PANEL_WIDTH` and the real
+`dialogPanelClass` and fails if they stop agreeing. A layout test measuring a box
+the app never renders is worse than no layout test, because it is green.
+
+### 2026-08-09 — Packaging from a bootstrapped worktree shipped an app that fails every test run, and exited 0
+
+`npm run bootstrap` gives a worktree its `node_modules` as a symlink at the main checkout's tree. Everything in this repo resolves modules the way Node does — lint, type-check, `test:all`, `build`, `dev` — so the shortcut has been free. **electron-builder does not.** It collects the dependency tree by reading `node_modules` itself, and through the link it finds the direct dependencies and nothing beneath them. It says so, at length:
+
+    cannot find path for dependency dependencies=["zod@undefined","playwright@undefined", …]
+
+and then **exits 0**. Measured on this branch: 18 direct dependencies bundled, **175 transitive packages missing**. Chief among them `playwright` and `playwright-core` — `@playwright/test` was present, and it requires `playwright` internally, and `main/services/playwright-runner.ts` spawns the CLI out of the bundle's own tree. So the app builds, installs, opens, and looks correct; the first thing that fails is pressing Run.
+
+**The existing note did not cover it.** `bootstrap-worktree.mjs` said to replace the link "if you change dependencies on this branch", which is a rule about *lockfile divergence*. Here the lockfiles were identical and the tree was byte-for-byte the right one — the failure is that electron-builder cannot traverse a link, so no statement about dependency *contents* could ever have caught it.
+
+**Two guards, and the second is the one that matters.** The preflight refusal is the cheap half: it names the cause before a multi-minute build, at the moment the fix costs one command. But a guard that only knows about symlinks goes green on every other way a bundle can come out incomplete — a `files` pattern that excludes too much, a dependency moved to `devDependencies`, a future electron-builder that drops something new. So `--verify` re-asks the finished `.app` the runtime question directly and is what the exit code now depends on. It also runs in CI after `electron-builder`, where the install is real: that is the only place the assertion is regularly exercised against a bundle that is *supposed* to pass, so a guard that started rejecting good builds surfaces as a red gate instead of as a local mystery.
+
+**Resolve, don't compare listings.** The verify half walks the closure and asks whether each package is resolvable *from the directory that needs it*, by Node's own walk-up rule, rather than checking that a path exists where the source tree had one. npm hoists most packages to the top level and nests the ones it cannot; both layouts are correct, and a path comparison reports the nested case as a broken build. It follows `dependencies` only — `devDependencies` are never shipped, and an `optionalDependency` that was legitimately pruned must not read as a failure.
+
+**The fixture had to have a transitive level, or it proved nothing.** The bug shipped *every* direct dependency. A check whose fixture only had direct dependencies would pass against the exact bundle being guarded against, so `check:package-integrity` builds a miniature project three levels deep and omits only the deep ones. It also nests a package in the source tree and hoists it in the bundle, which is what keeps a future rewrite from turning the resolution into a path comparison. Verified in both directions for real, not just on fixtures: packaged from the symlinked worktree the verify half reports **175 packages missing** and exits 1; after `rm node_modules && npm install --include=dev` the same command reports **193 runtime packages across 580 dependency edges, all resolvable**, and `npm run package` exits 0 with `playwright` and `playwright-core` present.
+
+**One assertion in the check was vacuous and shipped green in draft** — worth recording because it is the failure mode CLAUDE.md warns about and it still got written. The docs half was pinned with `/packag/i`, which matches `package-lock.json`; that string has been in `bootstrap-worktree.mjs` since it was written, so the assertion would have passed before the note existed and would keep passing if it were deleted. It now matches `npm run package` literally, in both that file and CLAUDE.md.
+
+**`scripts/switch-branch.mjs` was checked and is fine.** It gives branch worktrees the same symlink, but it never packages — it runs the branch's own `npm run build` (Vite and esbuild, which resolve like Node), and the app it launches finds the Playwright CLI through the link at runtime because `fs.existsSync` follows symlinks (confirmed against the runner's exact lookups). Adding a real install there would cost minutes per switch and buy nothing. Said so in its header, since "why does the other worktree script get away with this" is otherwise a question that has to be re-derived.
+
+### 2026-08-09 — The trainer panel opened on top of the page it exists to keep visible
+
+**Symptom:** start a training session at a window-size preset and the trainer does not dock — it opens in the middle of the training browser, over the page. Reported against Chrome; it has nothing to do with which browser (see the last point).
+
+**The refusal was correct; the fallback was never written.** `computeDock` returns `null` when a preset browser plus a 360pt panel exceeds the display — deliberately, since the preset is the width the recorded test replays at and shrinking it would record against a layout the run never sees (2026-08-06 above). `openTrainerPanel` handles that by opening the panel undocked, and "undocked" was expressed as *passing no coordinates*: `x: layout?.panel.x`. A `BrowserWindow` with no x/y is **centred on the display** by the window layer — which is where the training browser is. So the one path that exists to keep the panel off the page put it exactly on it. Nothing threw, nothing logged, and every geometry test passed, because in that branch the geometry was never computed.
+
+**How ordinary the case is:** the pair needs `browser + 360` points of work area. On a 14" MacBook (1512pt) that rules out **Desktop 1280×800 and Laptop 1440×900 — two of the four presets on offer**. The default ("Default", no preset) docks fine, which is why this survived: the first thing anyone tries works.
+
+- **`computeParkedPanel` chooses the rectangle instead.** Flush beside the browser when a whole panel fits there — refusing to dock and having nowhere to be are different questions, and `computePanelFollow` already answers the second — otherwise against the work-area edge that covers *less* of the browser. Some overlap is unavoidable by then (a pair that fitted would have docked); which half of the page it eats is not. Same top and height as a dock, so a parked panel reads as the panel that would be docked.
+- **Rejected: docking anyway by clamping.** That is the mabl behaviour 2026-08-06 turned down for the follower, for the same reason — a panel over the page under test is the one outcome the feature exists to prevent. Also rejected: falling back to the splitting dock (silently changes the recorded viewport, which is the exact divergence the preset exists to prevent) and shrinking the panel to fit (1512 − 1280 = 232, below the 300pt readability floor, and it does not save the 1440 preset at any size).
+- **The panel could not find out it was undocked.** `trainerPanel:undocked` is pushed while the panel window is still loading its page, so the renderer that most needs it — the one that opened undocked — never receives it, and the control kept its optimistic "docked" default. It then offered **Undock** for a panel that is not docked, and pressing it called `undock()` on an already-undocked panel: a dead button on the exact arrangement the user wants fixed. Fixed with `trainerPanel:getState` and an ask on mount, the `recorder:getSteps` lesson (2026-08-06) applied to a second piece of state a late-opening window cannot be told. The reply is the INITIAL value only — a push that lands while it is in flight wins, or a slow round trip silently rolls the button back to a state that is no longer true.
+- **The tooltip now says which of the two it is.** "No room to dock at this window size" is actionable; an undocked panel with no explanation is indistinguishable from a broken feature — which is how this was reported.
+- **Verified live, which is what was missing.** 2026-08-06 shipped this feature "not yet live-verified — every behaviour here is native window geometry, which a terminal cannot observe". `e2e/trainer-dock.spec.ts` observes it: the real app, real windows, bounds read from the main process. It sizes its own too-wide preset from the display it finds, so the case reproduces on a laptop and a CI runner alike. Reverting the fix fails it with the actual rectangles in the message.
+- **The browser choice is not involved.** The trainer always runs in the Electron (Chromium) window: there is no Firefox or WebKit trainer, `defaultRunBrowser` is documented as affecting runs only, and the training window explicitly *denies* the `openExternal` permission, so a training URL never reaches Chrome or Safari. Confirmed by running the same session under all three settings — byte-identical geometry.
+
 ### 2026-08-09 — The AI debug follow-up send moved inside the textarea, and is a raw button on purpose
 
 Small change, three decisions in it that all read as sloppiness later if they are not written down.

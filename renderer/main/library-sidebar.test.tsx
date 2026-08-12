@@ -26,13 +26,16 @@ let secretStatus: SecretStatus[] = [];
 let runRecords: RunRecord[] = [];
 
 const navigate = vi.fn();
+/** The open test, as the router reports it. Mutable so a test can put one in
+ *  the address bar — selection is derived from it. */
+let routeParams: { id?: string } = {};
 const duplicate = vi.fn(
   async (id: string): Promise<TestRecord> => ({ ...record({ id: "copy" }), name: "Login [2]", id: `${id}-copy` }),
 );
 
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => navigate,
-  useParams: () => ({}),
+  useParams: () => routeParams,
   useRouterState: () => "/",
 }));
 
@@ -109,6 +112,7 @@ async function chooseDuplicate() {
 
 beforeEach(() => {
   tests = [record()];
+  routeParams = {};
   secretStatus = [];
   runRecords = [];
   navigate.mockClear();
@@ -168,6 +172,61 @@ describe("LibrarySidebar — the row icon sends nothing", () => {
   });
 });
 
+describe("LibrarySidebar — the rail", () => {
+  it("keeps the views nav out of the scrolling list", async () => {
+    // A4's structural fix. The views used to be an `mt-auto` block at the END
+    // of the library list, so they were at the bottom only while the library
+    // was short — with more tests than fit, Stats/Visual/Batch/Heals scrolled
+    // away with them and the app's own views became something to hunt for.
+    //
+    // Structural, because jsdom has no layout engine: an overflowing list and a
+    // short one produce identical (zero) boxes here, so a rendered "is it
+    // visible at the bottom?" test would pass in the broken case too.
+    tests = [record({ id: "a", name: "A" }), record({ id: "b", name: "B" })];
+    renderSidebar();
+    await screen.findByText("A");
+
+    const body = document.querySelector(".gl-rail-body") as HTMLElement;
+    const nav = document.querySelector(".gl-rail-nav") as HTMLElement;
+    expect(body.textContent).toContain("A");
+    expect(nav.textContent).toContain("Stats");
+    expect(body.contains(nav)).toBe(false);
+  });
+
+  it("navigates from a test row on a plain click", async () => {
+    // The SDK's `SidebarListItem` fired on mouseDown, so `fireEvent.click` did
+    // nothing to it — a documented trap in this repo, and the reason
+    // REDESIGN §8.2 called this swap out as a real change rather than a test
+    // edit. `RailRow` is an ordinary button.
+    renderSidebar();
+    fireEvent.click(await screen.findByText("Login"));
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({ to: "/test/$id", params: { id: "t1" } }),
+    );
+  });
+
+  it("navigates from a views row on a plain click", async () => {
+    renderSidebar();
+    fireEvent.click(await screen.findByText("Stats"));
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/stats" }));
+  });
+
+  it("marks the open test as selected, and nothing else", async () => {
+    // Neutral selection is invisible to jsdom (no cascade, `css: false`), so
+    // the attribute the stylesheet selects on IS the assertion — and it is the
+    // one `check:selection-neutral` reads too.
+    tests = [record({ id: "t1", name: "Login" }), record({ id: "t2", name: "Signup" })];
+    routeParams = { id: "t1" };
+    renderSidebar();
+    await screen.findByText("Login");
+
+    const rows = [...document.querySelectorAll(".gl-rail-row")] as HTMLElement[];
+    const selected = rows.filter((r) => r.hasAttribute("data-selected"));
+    expect(selected).toHaveLength(1);
+    expect(selected[0].textContent).toContain("Login");
+  });
+});
+
 describe("LibrarySidebar — run verdict dots", () => {
   it("dots a test with its LATEST run's verdict, not an older one's", async () => {
     // Two runs, newer one failed. A dot driven by list order instead of
@@ -180,6 +239,36 @@ describe("LibrarySidebar — run verdict dots", () => {
     await screen.findByText("Login");
     expect(await screen.findByLabelText("Last run failed")).toBeTruthy();
     expect(screen.queryByLabelText("Last run passed")).toBeNull();
+  });
+
+  it("blends the dot across a three-browser batch instead of flattening it", async () => {
+    // Two of three browsers passing is a different fact from all three
+    // failing, and the dot is the only place the difference is visible from
+    // the library. Both the CLASS and the label are pinned: jsdom has no
+    // cascade to ask, so the class is the colour, and the label is the part a
+    // screen reader gets.
+    runRecords = [
+      run({ id: "r-c", batchId: "b1", runBrowser: "chromium", status: "passed", startedAt: 10 }),
+      run({ id: "r-f", batchId: "b1", runBrowser: "firefox", status: "passed", startedAt: 11 }),
+      run({ id: "r-w", batchId: "b1", runBrowser: "webkit", status: "failed", startedAt: 12 }),
+    ];
+    renderSidebar();
+    await screen.findByText("Login");
+    const dot = await screen.findByLabelText("2 of 3 runs passed");
+    expect(dot.className).toContain("bg-support-yellow-orange");
+    expect(dot.className).not.toContain("bg-support-red");
+  });
+
+  it("marks a passing batch that leaned on Auto-Heal", async () => {
+    runRecords = [
+      run({ id: "r-c", batchId: "b1", status: "passed", startedAt: 10, healedSteps: 2 }),
+      run({ id: "r-f", batchId: "b1", status: "passed", startedAt: 11, healedSteps: 2 }),
+      run({ id: "r-w", batchId: "b1", status: "passed", startedAt: 12, healedSteps: 0 }),
+    ];
+    renderSidebar();
+    await screen.findByText("Login");
+    const dot = await screen.findByLabelText("All 3 runs passed — 4 steps auto-healed");
+    expect(dot.className).toContain("bg-support-green-yellow");
   });
 
   it("shows no dot for a test that has never run", async () => {
@@ -279,12 +368,15 @@ describe("LibrarySidebar — Duplicate Test", () => {
     );
   });
 
-  it("does nothing when the dialog is cancelled", async () => {
+  it("does nothing when the dialog is dismissed", async () => {
     tests = [record({ variables: [{ name: "user", kind: "plain", value: "ada" }] })];
     renderSidebar();
     await chooseDuplicate();
 
-    fireEvent.click(await screen.findByRole("button", { name: /cancel/i }));
+    // Dismissed by the close "X": the composed dialog's footer no longer
+    // carries a Cancel button (renderer/ui/dialog-actions.test.tsx). What must
+    // not change is that dismissing copies nothing.
+    fireEvent.click(await screen.findByLabelText("Close"));
 
     await waitFor(() => expect(screen.queryByText(/Duplicate “Login”\?/)).toBeNull());
     expect(duplicate).not.toHaveBeenCalled();

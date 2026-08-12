@@ -3,8 +3,11 @@
 // all locator strategies (testid/role/label/placeholder/text/css/xpath) plus
 // context from past-run debug logs, then returns ranked candidates. The caller
 // (recorder-service) re-runs the step with the best candidate; if it succeeds
-// the candidate is auto-applied. All candidates are also surfaced to the user
-// via `recorder:healSuggestion` so they can pick any/all from a menu.
+// the candidate is auto-applied. Every heal is written to the journal, and
+// `replayFromCurrent` also streams its candidates to the Console on the
+// `recorder:replayLog` step event — see `tryHeal` for which callers do and do
+// not, and for the `recorder:healSuggestion` push that was removed because no
+// window ever listened on it.
 //
 // The probe runs as an injected JS string (like buildReplayScript) so it can
 // inspect the live DOM in the training window. It reuses the shared DOM_HELPERS

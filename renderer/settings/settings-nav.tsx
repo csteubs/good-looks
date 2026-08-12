@@ -10,18 +10,33 @@
 // number of MATCHES in that pane; with no search it shows how many of that
 // pane's settings differ from their default. Both answer "is what I'm looking
 // for in here", which is the only question a settings sidebar is asked.
+//
+// DRAWN AS THE RAIL SINCE B4. The redesign's line is "the rail becomes the
+// settings nav while in settings — same surface, two jobs" (REDESIGN §B4).
+// Settings is its own WINDOW here, so there is no library list to hide and no
+// single element to repurpose; what the sentence actually asks for is that a
+// user who opens Settings recognises the strip down the left as the same
+// object. So this is `Rail`/`RailGroup`/`RailRow`, the same components the main
+// window's library is built from, and the search field goes in the rail's
+// pinned `search` slot rather than into the scroller.
+//
+// TWO BEHAVIOUR CHANGES COME WITH THAT, both improvements and both worth
+// knowing about:
+//   • Rows activate on CLICK. `SidebarListItem` fired on `mouseDown` (the
+//     AppKit idiom, and a documented trap in this repo — `fireEvent.click` does
+//     nothing to it and the assertion reports "0 calls").
+//   • Selection is announced via `RailRow`'s own `aria-current`, so the
+//     explicit `aria-current="page"` this file used to pass by hand is gone.
+//     `RailRow` says `"true"` rather than `"page"`: these rows switch panes
+//     inside one window, and the rail says the same thing about the library.
 
-import {
-  Badge,
-  Sidebar,
-  SidebarList,
-  SidebarListGroup,
-  SidebarListItem,
-} from "@ui";
+import { Input } from "@ui";
 import {
   Bandage,
   Bell,
+  FlaskConical,
   HardDrive,
+  Plug,
   Palette,
   Settings2,
   Sparkles,
@@ -31,6 +46,7 @@ import {
 import { Fragment } from "react";
 import type { ComponentType } from "react";
 
+import { Rail, RailGroup, RailRow } from "../theme";
 import type { PaneDef, PaneId } from "../lib/settings-schema";
 import { modifiedKeys, paneSegments } from "../lib/settings-schema";
 import type { RecorderSettings } from "../lib/recorder-types";
@@ -43,7 +59,9 @@ const PANE_ICONS: Record<PaneId, ComponentType<{ className?: string }>> = {
   storage: HardDrive,
   ai: Sparkles,
   alerts: Bell,
-  advanced: Wrench,
+  integrations: Plug,
+  diagnostics: Wrench,
+  experiments: FlaskConical,
 };
 
 export interface SettingsNavProps {
@@ -77,12 +95,18 @@ export function SettingsNav({
     }
     if (!loaded) return undefined;
     const count = modifiedKeys(settings, pane).length;
-    // A dot, not a number: "3 changed" invites the question "which three",
-    // which the pane itself answers. The badge is only a pointer.
+    // A count, not a sentence: "3 changed" invites the question "which three",
+    // which the pane itself answers. The chip is only a pointer.
+    //
+    // NEUTRAL SINCE B4, and that is the palette rule rather than taste. It was
+    // `Badge color="blue"`, and blue is not in this design's palette at all —
+    // colour means OUTCOME here (pass / running / flaky / fail), so a coloured
+    // count beside a pane name would be claiming something about a result. See
+    // `--gl-sel-bg` in tokens.css for the same reasoning applied to selection.
     return count > 0 ? (
-      <Badge color="blue" size="small" aria-label={`${count} changed from default`}>
+      <span className="gl-chip" aria-label={`${count} changed from default`}>
         {count}
-      </Badge>
+      </span>
     ) : undefined;
   };
 
@@ -92,46 +116,45 @@ export function SettingsNav({
     // narrowed anything.
     if (searching && !matchCounts[pane.id]) return null;
     const Icon = PANE_ICONS[pane.id];
-    const isSelected = selected === pane.id;
     return (
-      <SidebarListItem
+      <RailRow
         key={pane.id}
         icon={<Icon className="size-4" />}
         title={pane.title}
         accessory={accessoryFor(pane.id)}
-        selected={isSelected}
-        // `selected` only styles the row — the SDK puts no selection state on
-        // the element, so a screen reader is told nothing about which pane is
-        // showing. These rows navigate between views of one window, which is
-        // what aria-current="page" is for.
-        aria-current={isSelected ? "page" : undefined}
+        selected={selected === pane.id}
         onClick={() => onSelect(pane.id)}
       />
     );
   };
 
   return (
-    <Sidebar
-      searchable
-      searchPlaceholder="Search settings"
-      searchValue={search}
-      onSearchChange={onSearchChange}
+    <Rail
+      title="Settings"
+      search={
+        <Input
+          className="gl-input w-full"
+          type="search"
+          aria-label="Search settings"
+          placeholder="Search settings"
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+        />
+      }
     >
-      <SidebarList>
-        {paneSegments().map((segment, index) => {
-          const rows = segment.panes.map(renderItem).filter(Boolean);
-          if (rows.length === 0) return null;
-          // An ungrouped segment renders as bare rows, with no header. Keyed by
-          // index because two of them share the group value `null`.
-          return segment.group === null ? (
-            <Fragment key={`ungrouped-${index}`}>{rows}</Fragment>
-          ) : (
-            <SidebarListGroup key={segment.group} title={segment.group}>
-              {rows}
-            </SidebarListGroup>
-          );
-        })}
-      </SidebarList>
-    </Sidebar>
+      {paneSegments().map((segment, index) => {
+        const rows = segment.panes.map(renderItem).filter(Boolean);
+        if (rows.length === 0) return null;
+        // An ungrouped segment renders as bare rows, with no header. Keyed by
+        // index because two of them share the group value `null`.
+        return segment.group === null ? (
+          <Fragment key={`ungrouped-${index}`}>{rows}</Fragment>
+        ) : (
+          <RailGroup key={segment.group} label={segment.group}>
+            {rows}
+          </RailGroup>
+        );
+      })}
+    </Rail>
   );
 }

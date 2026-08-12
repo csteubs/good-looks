@@ -23,18 +23,20 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@ui";
+
+import { Btn, CRT, Segmented, TONE, usePrefersReducedMotion, withAlpha } from "../theme";
 import {
   Accessibility,
   Check,
   ChevronLeft,
   ChevronRight,
   CircleSlash,
-  Diff,
   Eye,
   ImageOff,
   MessageSquare,
   Pencil,
   RefreshCw,
+  Send,
   SquareDashed,
   Stamp,
   TriangleAlert,
@@ -43,12 +45,16 @@ import {
 
 import { api } from "../lib/api";
 import { countA11ySteps } from "../lib/a11y-format";
+import { blinkIntervalMs, wipeAfterKey, wipeFromPointer } from "../lib/visual-compare";
+import { baselineProvenance, isStale, provenanceLine } from "../lib/baseline-provenance";
 import { A11yBadge, A11yViolationList } from "./a11y-violations";
+import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import type {
   A11yResult,
   Annotation,
   ReplayStep,
   ReplayStepStatus,
+  RunNoticeKind,
   RunReplay,
   RunReplaySummary,
   VisualDiff,
@@ -76,14 +82,17 @@ function fmtPct(ratio: number): string {
 }
 
 // ── Status → colors/labels ─────────────────────────────────────────────
-function statusBar(status: ReplayStepStatus): string {
+/** The frame rail's bar colour. COLOUR MEANS OUTCOME, so only the two real
+ *  outcomes get a hue — an unrun or skipped frame stays neutral rather than
+ *  borrowing one, because "not attempted" is not a result. */
+function statusBarColor(status: ReplayStepStatus): string {
   switch (status) {
     case "passed":
-      return "bg-support-green";
+      return TONE.phos;
     case "failed":
-      return "bg-support-red";
+      return TONE.red;
     default:
-      return "bg-control-subtle";
+      return "rgba(255, 255, 255, 0.14)";
   }
 }
 
@@ -200,7 +209,220 @@ export function DiffBadge({ diff }: { diff: VisualDiff }) {
 }
 
 // ── Screenshot pane (current / baseline / diff-overlay) ─────────────────
-type ShotMode = "current" | "baseline" | "diff";
+/** The five compare modes (§6.6 added the last two).
+ *
+ *  `wipe` and `blink` are the only two that need BOTH frames at once, which is
+ *  why they get their own component rather than a branch inside
+ *  `StepScreenshot` — that one resolves a single `src` from the mode, and
+ *  threading a second query through it would make every single-image mode pay
+ *  for a fetch it does not use. */
+type ShotMode = "current" | "baseline" | "diff" | "wipe" | "blink";
+
+/**
+ * What this step's baseline IS, as one line. REDESIGN §6.6.
+ *
+ * Rendered into `CRT`'s `caption` — a prop that has existed since A3 documented
+ * as "what this frame IS: which run, which viewport, which engine" and had no
+ * consumer until now. It is shown on every frame the BASELINE participates in,
+ * because "these two differ" means something completely different depending on
+ * whether the baseline was pinned yesterday from the same engine or months ago
+ * from another one, and until now the screen said nothing at all about it.
+ *
+ * Returns undefined rather than a placeholder when there is no baseline record:
+ * a caption reading "unknown" under a frame is worse than no caption, because
+ * it looks like a fact.
+ */
+function useBaselineCaption(testId: string, stepId: string): React.ReactNode {
+  const baselines = useQuery({
+    queryKey: ["baselines", testId],
+    queryFn: () => api.visual.listBaselines(testId),
+    staleTime: 60 * 1000,
+  }).data;
+  // Shares the ["runs"] cache the rest of the app already holds, so joining a
+  // baseline to the run it came from costs nothing.
+  const runs = useQuery({ queryKey: ["runs"], queryFn: api.runs.list }).data;
+
+  const entry = baselines?.find((b) => b.stepId === stepId);
+  if (!entry) return undefined;
+  const p = baselineProvenance(entry, runs ?? [], Date.now());
+  return (
+    <span data-gl="baseline-provenance" data-stale={isStale(p) ? "" : undefined}>
+      {provenanceLine(p)}
+    </span>
+  );
+}
+
+/**
+ * Wipe and Blink — the two modes that need BOTH frames at once. REDESIGN §6.6.
+ *
+ * A diff map is exact and nearly useless for triage: it lights every changed
+ * pixel with equal weight, so a font-smoothing shift and a button that moved
+ * 40px look the same. These put the two frames in the same PLACE instead and
+ * let the eye do the comparison it is very good at.
+ *
+ * BOTH FRAMES GO IN A `CRT` AND NEITHER IS TREATED — the same rule the rest of
+ * this screen obeys, and it binds harder here. The whole premise is that any
+ * difference the user sees between the two images is a difference in the page;
+ * a filter, a blend mode or an opacity on either layer would manufacture one.
+ * Wipe therefore CLIPS rather than fading, and Blink swaps a whole frame rather
+ * than cross-dissolving. `check:crt-untreated` pins it.
+ */
+function CompareShot({
+  testId,
+  runId,
+  step,
+  mode,
+  children,
+}: {
+  testId: string;
+  runId: string;
+  step: ReplayStep;
+  mode: "wipe" | "blink";
+  children?: React.ReactNode;
+}) {
+  const reduced = usePrefersReducedMotion();
+  const caption = useBaselineCaption(testId, step.stepId);
+  const [wipe, setWipe] = React.useState(50);
+  const [showBaseline, setShowBaseline] = React.useState(false);
+  const [dragging, setDragging] = React.useState(false);
+  const boxRef = React.useRef<HTMLDivElement>(null);
+
+  const currentQuery = useQuery({
+    queryKey: ["shot", testId, runId, step.screenshot],
+    queryFn: () => api.artifacts.readShot(testId, runId, step.screenshot as string),
+    enabled: Boolean(step.screenshot),
+    staleTime: 5 * 60 * 1000,
+  });
+  const baselineQuery = useQuery({
+    queryKey: ["baselineShot", testId, step.stepId],
+    queryFn: () => api.visual.baselineShot(testId, step.stepId),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const interval = blinkIntervalMs(reduced);
+  React.useEffect(() => {
+    // `interval === null` is reduced motion, and it is a MANUAL toggle rather
+    // than a stopped one — see `blinkIntervalMs`. Nothing is scheduled; the
+    // button below does the swapping.
+    if (mode !== "blink" || interval === null) return;
+    const t = setInterval(() => setShowBaseline((v) => !v), interval);
+    return () => clearInterval(t);
+  }, [mode, interval]);
+
+  const current = currentQuery.data;
+  const baseline = baselineQuery.data;
+
+  if (currentQuery.isLoading || baselineQuery.isLoading) {
+    return <div className="h-full w-full animate-pulse rounded-md bg-control-subtle" />;
+  }
+  if (!current || !baseline) {
+    // Both modes need both frames by definition, so this says which is missing
+    // rather than rendering half a comparison the user would read as a result.
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+        <ImageOff className="size-8 text-tertiary" />
+        <Text color="secondary">
+          {current ? "No baseline for this step" : "No screenshot for this step"}
+        </Text>
+        <Text variant="small" color="tertiary">
+          Wipe and Blink compare two frames — both have to exist.
+        </Text>
+      </div>
+    );
+  }
+
+  if (mode === "blink") {
+    return (
+      <div className="relative flex h-full w-full flex-col items-center justify-center gap-2 overflow-hidden">
+        <CRT
+          className="gl-visual-frame"
+          src={showBaseline ? baseline : current}
+          alt={`${showBaseline ? "Baseline" : "Current"} frame for step ${step.index + 1}`}
+          // Only under the baseline: the caption describes THAT frame, and
+          // leaving it up while the current frame is showing would attribute
+          // one frame's provenance to the other twice a second.
+          caption={showBaseline ? caption : undefined}
+        />
+        {/* The label is not decoration: with the frames alternating, "which one
+            am I looking at" is otherwise unanswerable, and a user who cannot
+            answer it cannot say which direction the change went. */}
+        <div className="gl-visual-blink-bar">
+          <span className="gl-visual-blink-which">{showBaseline ? "Baseline" : "Current"}</span>
+          {interval === null ? (
+            <button
+              type="button"
+              className="gl-cost-edit"
+              onClick={() => setShowBaseline((v) => !v)}
+            >
+              Swap
+            </button>
+          ) : null}
+        </div>
+        {children}
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative flex h-full w-full items-center justify-center overflow-hidden">
+      <div ref={boxRef} className="gl-visual-wipe" data-gl="wipe">
+        <CRT
+          className="gl-visual-frame"
+          src={baseline}
+          alt={`Baseline for step ${step.index + 1}`}
+          caption={caption}
+        />
+        {/* The current frame on top, clipped. `clip-path` and not opacity: the
+            premise of this mode is that any difference on screen is a
+            difference in the page, and a partly-transparent layer invents one. */}
+        <div
+          className="gl-visual-wipe-top"
+          style={{ clipPath: `inset(0 ${100 - wipe}% 0 0)` }}
+          aria-hidden
+        >
+          <CRT className="gl-visual-frame" src={current} alt="" />
+        </div>
+        <div
+          className="gl-visual-wipe-handle"
+          style={{ left: `${wipe}%` }}
+          role="slider"
+          tabIndex={0}
+          aria-label="Wipe between the current frame and the baseline"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(wipe)}
+          aria-valuetext={`${Math.round(wipe)}% current`}
+          data-dragging={dragging ? "" : undefined}
+          onKeyDown={(e) => {
+            const next = wipeAfterKey(wipe, e.key, e.shiftKey);
+            if (next === null) return;
+            e.preventDefault();
+            setWipe(next);
+          }}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            (e.target as HTMLElement).setPointerCapture(e.pointerId);
+            setDragging(true);
+          }}
+          onPointerMove={(e) => {
+            if (!dragging) return;
+            const box = boxRef.current?.getBoundingClientRect();
+            if (box) setWipe(wipeFromPointer(e.clientX, box));
+          }}
+          onPointerUp={(e) => {
+            (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+            setDragging(false);
+          }}
+        />
+        {/* Which side is which, on the frame. Without it the mode is a picture
+            with a line through it. */}
+        <span className="gl-visual-wipe-label gl-visual-wipe-left">Current</span>
+        <span className="gl-visual-wipe-label gl-visual-wipe-right">Baseline</span>
+      </div>
+      {children}
+    </div>
+  );
+}
 
 function StepScreenshot({
   testId,
@@ -218,6 +440,9 @@ function StepScreenshot({
    *  with normalized mask coordinates. */
   children?: React.ReactNode;
 }) {
+  // Only in `baseline` mode — the caption says what the BASELINE is, and under
+  // the current frame or the diff map it would be describing something else.
+  const caption = useBaselineCaption(testId, step.stepId);
   // Resolve the image source for the active view mode.
   const file =
     mode === "diff" ? (step.diff?.diffFile ?? null) : mode === "current" ? step.screenshot : null;
@@ -278,12 +503,22 @@ function StepScreenshot({
       : mode === "diff"
         ? `Visual diff for step ${step.index + 1}`
         : `Screenshot for step ${step.index + 1}`;
+  // THE BEZEL IS `CRT`, AND WHAT IS INSIDE IT IS NEVER TREATED. This is the one
+  // rule in the design system that is about correctness rather than taste, and
+  // this screen is the reason it exists: every frame here is EVIDENCE, the whole
+  // question being asked is "does this look right?", and an amber cast from our
+  // own chrome is indistinguishable from an amber cast in the page under test —
+  // a user would file the bug against their own site. The primitive sits at
+  // z-index 610, above the global atmosphere at 600, because those overlays are
+  // fixed and full-viewport so anything below them is tinted by definition.
+  // `check:crt-untreated` pins that nothing here gains a filter or blend mode.
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden">
-      <img
+      <CRT
+        className="gl-visual-frame"
         src={src}
         alt={alt}
-        className="block max-h-full max-w-full rounded-md object-contain shadow-sm ring-1 ring-inset ring-[var(--color-border-separator)]"
+        caption={mode === "baseline" ? caption : undefined}
       />
       {children}
     </div>
@@ -423,7 +658,27 @@ function nearestPresetIndex(value: number | undefined): number {
   return best;
 }
 
-function ThresholdControl({ testId }: { testId: string }) {
+/**
+ * How many of THIS RUN's frames a threshold would flag.
+ *
+ * Pure and exported so the arithmetic is testable without a slider: the whole
+ * value of the readout is that the number is right, and an off-by-one on a
+ * boundary ratio is invisible on screen.
+ *
+ * STRICTLY GREATER, matching the comparator that produced these ratios — a
+ * frame exactly AT the threshold is not flagged. Guessing `>=` here would make
+ * the preview disagree with the next run by one frame, which is worse than no
+ * preview at all because it would be believed.
+ */
+export function framesOverThreshold(
+  steps: { diff?: { ratio?: number } }[],
+  thresholdPct: number,
+): number {
+  return steps.filter((s) => s.diff?.ratio !== undefined && s.diff.ratio * 100 > thresholdPct)
+    .length;
+}
+
+function ThresholdControl({ testId, steps }: { testId: string; steps: ReplayStep[] }) {
   const qc = useQueryClient();
   const thresholdQuery = useQuery({
     queryKey: ["visualThreshold", testId],
@@ -456,6 +711,14 @@ function ThresholdControl({ testId }: { testId: string }) {
   const pct = THRESHOLD_PRESETS[index];
   const label = THRESHOLD_LABELS[index];
 
+  // DRAWN AGAINST THE ACTUAL FRAMES (REDESIGN §B8). The slider used to be a
+  // number with no consequence on screen: "0.20%" says nothing about whether
+  // moving it silences the change you are looking at or every change you have.
+  // Counting THIS run's frames makes the setting concrete, and it updates from
+  // local `index` rather than the committed value so it answers while you drag.
+  const flagged = framesOverThreshold(steps, pct);
+  const measured = steps.filter((s) => s.diff?.ratio !== undefined).length;
+
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -477,6 +740,16 @@ function ThresholdControl({ testId }: { testId: string }) {
             disabled={thresholdQuery.isLoading}
             className="w-44"
           />
+          {/* Only once something has been measured. On a run with no captured
+              comparison this would read "0 of 0", which looks like a broken
+              readout rather than an empty one. */}
+          {measured > 0 ? (
+            <span className="gl-threshold-readout" data-flagged={flagged > 0 ? "" : undefined}>
+              {flagged === 0
+                ? `silences all ${measured}`
+                : `flags ${flagged} of ${measured}`}
+            </span>
+          ) : null}
         </div>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-[220px] leading-snug">
@@ -651,26 +924,26 @@ function MasksBaselinesDialog({
       <div className="flex flex-col gap-5">
         {/* Ignore regions */}
         <section className="flex flex-col gap-2">
-          <Text variant="small" className="font-medium">
-            Ignore regions ({masks.length})
-          </Text>
+          <span className="gl-section-title">Ignore regions ({masks.length})</span>
           {masks.length === 0 ? (
-            <Text variant="small" color="tertiary">
+            <p className="gl-note">
               None yet. Open a captured run, click “Ignore regions”, and drag over anything that
               changes on its own — a clock, a carousel, an ad slot.
-            </Text>
+            </p>
           ) : (
             <div className="flex flex-col gap-1">
               {masks.map((m) => (
                 <div
                   key={m.id}
-                  className="flex items-center gap-2 rounded-md border border-separator px-2 py-1.5"
+                  className="gl-mask-row"
                 >
-                  <SquareDashed className="size-3.5 shrink-0 text-support-orange" />
+                  {/* Amber: a mask is a CAUTION about the comparison — pixels
+                      deliberately not judged — rather than an outcome. */}
+                  <SquareDashed className="size-3.5 shrink-0" style={{ color: TONE.amber }} />
                   {labelDraft?.id === m.id ? (
                     <Input
                       autoFocus
-                      className="h-7 flex-1"
+                      className="gl-input flex-1"
                       value={labelDraft.text}
                       placeholder="Name this region"
                       onChange={(e) => setLabelDraft({ id: m.id, text: e.target.value })}
@@ -692,23 +965,22 @@ function MasksBaselinesDialog({
                       </Text>
                     </button>
                   )}
-                  <Badge color="secondary" className="shrink-0">
+                  <span className="gl-chip">
                     {m.stepId === null
                       ? "All steps"
                       : (stepLabelById.get(m.stepId) ?? "One step")}
-                  </Badge>
-                  <Text variant="small-mono" color="tertiary" className="shrink-0 tabular-nums">
+                  </span>
+                  <span className="gl-mask-size">
                     {Math.round(m.w * 100)}×{Math.round(m.h * 100)}%
-                  </Text>
-                  <Button
-                    iconOnly
-                    size="small"
-                    variant="glass"
+                  </span>
+                  <button
+                    type="button"
+                    className="gl-icon-btn"
                     aria-label="Delete ignore region"
                     onClick={() => saveMasks.mutate(masks.filter((x) => x.id !== m.id))}
                   >
                     <X className="size-3.5" />
-                  </Button>
+                  </button>
                 </div>
               ))}
             </div>
@@ -717,41 +989,33 @@ function MasksBaselinesDialog({
 
         {/* Pinned baselines */}
         <section className="flex flex-col gap-2">
-          <Text variant="small" className="font-medium">
-            Pinned baselines ({baselines.length})
-          </Text>
+          <span className="gl-section-title">Pinned baselines ({baselines.length})</span>
           {baselines.length === 0 ? (
-            <Text variant="small" color="tertiary">
+            <p className="gl-note">
               None yet. The first run that captures screenshots pins one per step.
-            </Text>
+            </p>
           ) : (
             <div className="flex flex-col gap-1">
               {baselines.map((b) => (
                 <div
                   key={b.stepId}
-                  className="flex items-center gap-2 rounded-md border border-separator px-2 py-1.5"
+                  className="gl-mask-row"
                 >
-                  <Stamp className="size-3.5 shrink-0 text-tertiary" />
+                  <Stamp className="size-3.5 shrink-0" style={{ color: "var(--gl-tx-3)" }} />
                   <Text variant="small-mono" className="min-w-0 flex-1 truncate" title={b.label}>
                     {b.label}
                   </Text>
                   {b.rect ? (
-                    <Badge color="secondary" className="shrink-0">
-                      has geometry
-                    </Badge>
+                    <span className="gl-chip">has geometry</span>
                   ) : null}
-                  <Text variant="small" color="tertiary" className="shrink-0">
-                    {fmtDateTime(b.at)}
-                  </Text>
-                  <Button
-                    size="small"
-                    variant="glass"
+                  <span className="gl-mask-size">{fmtDateTime(b.at)}</span>
+                  <Btn
                     className="shrink-0"
                     disabled={clearBaseline.isPending}
                     onClick={() => clearBaseline.mutate(b.stepId)}
                   >
                     Unpin
-                  </Button>
+                  </Btn>
                 </div>
               ))}
             </div>
@@ -964,6 +1228,10 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   // Step IDs whose baseline was accepted in this session — used to hide the
   // per-step "Accept New Baseline" button after a run- or step-level accept.
   const [acceptedSteps, setAcceptedSteps] = React.useState<Set<string>>(() => new Set());
+  // Which step the compose dialog is filing. One at a time — a visual change is
+  // one defect on one step, and a bulk send would file issues nobody looked at.
+  const [sendingStepId, setSendingStepId] = React.useState<string | null>(null);
+  const onSendToTracker = (stepId: string) => setSendingStepId(stepId);
   // When a run first loads, jump straight to the failure — the main debugging
   // value — or to the first step for a passing run. Guard on runId so later
   // replay mutations (e.g. accepting a baseline) don't yank the user away from
@@ -977,6 +1245,16 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   }, [replay]);
 
   const steps = replay?.steps ?? [];
+
+  // The frame rail's filter (B8). UP HERE WITH THE OTHER HOOKS, above the
+  // `if (!replay || steps.length === 0)` early return below — a `useState`
+  // placed after it runs on some renders and not others, which React reports as
+  // "Rendered more hooks than during the previous render" and which takes the
+  // whole view down. Nothing static caught that: type-check, lint and
+  // `check:renderer-classes` were all green on the broken version, and only
+  // opening the screen showed it.
+  const [changedOnly, setChangedOnly] = React.useState(false);
+
   const clamp = React.useCallback(
     (i: number) => Math.max(0, Math.min(steps.length - 1, i)),
     [steps.length],
@@ -1018,6 +1296,47 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
       toast.success("Screenshot pinned as new baseline. Logged in Stats.");
     },
   });
+  const acceptVisualRun = useMutation({
+    mutationFn: () => api.visual.acceptRun(summary.testId, summary.runId),
+    onSuccess: (replay) => {
+      patchReplay(replay);
+      // Every step is pinned, so hide every per-step accept button at once —
+      // the buttons are keyed off this set and the replay's diffs now read
+      // "match", which would otherwise leave them offering a no-op.
+      setAcceptedSteps(new Set(steps.map((s) => s.stepId)));
+      toast.success("Every screenshot in this run pinned as the new baseline. Logged in Stats.");
+    },
+  });
+
+  // Waving a banner off, as opposed to signing off on what it reports. The
+  // undo is not a nicety: dismissing is one click on a control that sits beside
+  // an irreversible one, and without a way back the two read as equally
+  // dangerous.
+  const restoreNotice = useMutation({
+    mutationFn: (kind: RunNoticeKind) =>
+      api.artifacts.restoreNotice(summary.testId, summary.runId, kind),
+    onSuccess: (replay) => patchReplay(replay),
+  });
+  const dismissNotice = useMutation({
+    mutationFn: (kind: RunNoticeKind) =>
+      api.artifacts.dismissNotice(summary.testId, summary.runId, kind),
+    onSuccess: (replay, kind) => {
+      patchReplay(replay);
+      toast.success(
+        kind === "visual"
+          ? "Visual changes dismissed for this run."
+          : "Accessibility issues dismissed for this run.",
+        {
+          description: "Nothing was accepted — the findings are still on the run's steps.",
+          action: {
+            label: "Undo",
+            onClick: () => restoreNotice.mutate(kind),
+          },
+        },
+      );
+    },
+    onError: (err) => toast.error(`Couldn't dismiss: ${err}`),
+  });
 
   if (replayQuery.isLoading) {
     return (
@@ -1038,11 +1357,24 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   }
 
   const idx = clamp(current);
+
+
   const step = steps[idx];
   // Test-wide masks (stepId null) plus any pinned to this step.
   const stepMasks = allMasks.filter((m) => m.stepId === null || m.stepId === step.stepId);
   const changedCount = steps.filter((s) => s.diff?.state === "changed").length;
+  // The SELECTED frame is always kept, even when it does not match the filter:
+  // dropping it from the rail while the viewer above still shows it would leave
+  // the two disagreeing, and the user with no handle to move off it.
+  const visibleSteps =
+    changedOnly && changedCount > 0
+      ? steps.filter((s) => s.diff?.state === "changed" || s.index === idx)
+      : steps;
   const a11yCount = countA11ySteps(steps);
+  // Read off the replay, not component state: the banner has to stay gone after
+  // the user selects another run and comes back, which is where a local flag
+  // would quietly reset.
+  const dismissed = new Set(replay.dismissedNotices ?? []);
   const canDiff = Boolean(step.diff?.diffFile);
   const hasBaselineView =
     step.diff !== undefined && step.diff.state !== "unable" && Boolean(step.screenshot);
@@ -1102,7 +1434,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         >
           Masks & baselines
         </Button>
-        <ThresholdControl testId={summary.testId} />
+        <ThresholdControl testId={summary.testId} steps={steps} />
         <div className="flex shrink-0 items-center gap-1">
           <Button
             iconOnly
@@ -1166,16 +1498,40 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         </div>
       ) : null}
 
-      {/* Visual-change banner */}
-      {changedCount > 0 ? (
+      {/* Visual-change banner.
+          Two exits, and they mean different things — which is the reason both
+          are here. "Accept all" REPINS every baseline and changes what every
+          later run compares against; dismissing changes nothing but the banner.
+          Offering only the first would have made signing off blind the cheapest
+          way to clear the screen. */}
+      {changedCount > 0 && !dismissed.has("visual") ? (
         <div className="px-4 pt-3">
           <Callout
             color="orange"
             icon={<Eye className="size-4" />}
+            onDismiss={() => dismissNotice.mutate("visual")}
+            dismissLabel="Dismiss visual changes for this run"
           >
-            Visual change detected in {changedCount} {changedCount === 1 ? "step" : "steps"} (over{" "}
-            {fmtPct((replay.visualThreshold ?? 0) / 100)} threshold). Use the per-step "Accept New
-            Baseline" button to re-pin a step.
+            <div className="flex flex-wrap items-center gap-2">
+              <span>
+                Visual change detected in {changedCount} {changedCount === 1 ? "step" : "steps"}{" "}
+                (over {fmtPct((replay.visualThreshold ?? 0) / 100)} threshold). Use the per-step
+                "Accept New Baseline" button to re-pin a step.
+              </span>
+              <AlertDialog
+                trigger={
+                  <Button size="small" variant="glass" disabled={acceptVisualRun.isPending}>
+                    <Stamp className="size-3.5" />
+                    Accept all for this run
+                  </Button>
+                }
+                title="Pin every screenshot in this run as the new baseline?"
+                description="Every step's current screenshot replaces its baseline, including steps that matched. Later runs are compared against these frames, so anything wrong in them becomes the expected result."
+                confirmLabel="Accept all"
+                confirmVariant="accent"
+                onConfirm={() => acceptVisualRun.mutate()}
+              />
+            </div>
           </Callout>
         </div>
       ) : null}
@@ -1183,9 +1539,14 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
       {/* Accessibility, as its own callout rather than folded into the visual
           one: they are different kinds of finding, and a run can easily have
           one without the other. Never affects the run's pass/fail. */}
-      {a11yCount > 0 ? (
+      {a11yCount > 0 && !dismissed.has("a11y") ? (
         <div className="px-4 pt-3">
-          <Callout color="orange" icon={<Accessibility className="size-4" />}>
+          <Callout
+            color="orange"
+            icon={<Accessibility className="size-4" />}
+            onDismiss={() => dismissNotice.mutate("a11y")}
+            dismissLabel="Dismiss accessibility issues for this run"
+          >
             <div className="flex flex-wrap items-center gap-2">
               <span>
                 {a11yCount} {a11yCount === 1 ? "step has" : "steps have"} accessibility issues that
@@ -1240,59 +1601,96 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           ) : null}
           {/* View-mode toggle — only when there's a baseline to compare against */}
           {hasBaselineView ? (
-            <div className="absolute right-3 top-3 z-10">
-              <SegmentedControl
-                type="single"
-                size="small"
-                variant="glass"
+            // ABOVE THE BEZEL. `CRT` sits at z-index 610 so the global
+            // atmosphere overlays (600) cannot tint a frame the user is judging;
+            // this control is chrome laid ON that frame, so it has to clear the
+            // same bar. At `z-10` it rendered behind the bezel and vanished —
+            // which is not a styling nit, it is the compare-mode switch on the
+            // compare screen.
+            <div className="gl-visual-modes absolute right-3 top-3">
+              {/* The theme's `Segmented`: its active item is NEUTRAL, which
+                  matters more here than anywhere else in the app. This control
+                  sits on top of a frame the user is being asked to judge, and an
+                  accent-coloured segment over a screenshot is a colour the page
+                  did not put there. */}
+              <Segmented
+                label="Compare mode"
                 value={effectiveMode}
-                onValueChange={(v) => v && setMode(v as ShotMode)}
-              >
-                <SegmentedControlItem value="current">Current</SegmentedControlItem>
-                <SegmentedControlItem value="baseline">Baseline</SegmentedControlItem>
-                {canDiff ? (
-                  <SegmentedControlItem value="diff">
-                    <Diff className="size-3.5" />
-                    Diff
-                  </SegmentedControlItem>
-                ) : null}
-              </SegmentedControl>
+                onChange={(v) => setMode(v as ShotMode)}
+                options={[
+                  { value: "current", label: "Current" },
+                  { value: "baseline", label: "Baseline" },
+                  ...(canDiff ? [{ value: "diff", label: "Diff" }] : []),
+                  // §6.6. Offered only when there is a CURRENT frame to compare
+                  // against the baseline — `hasBaselineView` already guarantees
+                  // the other half. A mode that opens on "both have to exist"
+                  // is a mode that should not have been offered.
+                  ...(step.screenshot
+                    ? [
+                        { value: "wipe", label: "Wipe" },
+                        { value: "blink", label: "Blink" },
+                      ]
+                    : []),
+                ]}
+              />
             </div>
           ) : null}
-          <StepScreenshot
-            testId={summary.testId}
-            runId={summary.runId}
-            step={step}
-            mode={effectiveMode}
-          >
-            {step.rect && elementSteps.has(step.stepId) ? (
-              <div
-                className="pointer-events-none absolute border-2 border-accent"
-                style={{
-                  left: pctStr(step.rect.x),
-                  top: pctStr(step.rect.y),
-                  width: pctStr(step.rect.w),
-                  height: pctStr(step.rect.h),
-                }}
-                title="Only this region is compared"
-              />
-            ) : null}
-            <MaskLayer
-              masks={stepMasks}
-              editing={masking}
-              onAdd={(rect) =>
-                saveMasks.mutate([
-                  ...allMasks,
-                  {
-                    id: crypto.randomUUID(),
-                    stepId: maskAllSteps ? null : step.stepId,
-                    ...rect,
-                  },
-                ])
-              }
-              onRemove={(id) => saveMasks.mutate(allMasks.filter((m) => m.id !== id))}
-            />
-          </StepScreenshot>
+          {/* The overlays that ride ON the frame — the element-scope box and
+              the mask layer — are the same in every mode, so they are built
+              once and handed to whichever frame component the mode selects.
+              Duplicating them into both branches is how the two would drift. */}
+          {(() => {
+            const overlays = (
+              <>
+                  {step.rect && elementSteps.has(step.stepId) ? (
+                    <div
+                      className="pointer-events-none absolute border-2 border-accent"
+                      style={{
+                        left: pctStr(step.rect.x),
+                        top: pctStr(step.rect.y),
+                        width: pctStr(step.rect.w),
+                        height: pctStr(step.rect.h),
+                      }}
+                      title="Only this region is compared"
+                    />
+                  ) : null}
+                  <MaskLayer
+                    masks={stepMasks}
+                    editing={masking}
+                    onAdd={(rect) =>
+                      saveMasks.mutate([
+                        ...allMasks,
+                        {
+                          id: crypto.randomUUID(),
+                          stepId: maskAllSteps ? null : step.stepId,
+                          ...rect,
+                        },
+                      ])
+                    }
+                    onRemove={(id) => saveMasks.mutate(allMasks.filter((m) => m.id !== id))}
+                  />
+              </>
+            );
+            return effectiveMode === "wipe" || effectiveMode === "blink" ? (
+              <CompareShot
+                testId={summary.testId}
+                runId={summary.runId}
+                step={step}
+                mode={effectiveMode}
+              >
+                {overlays}
+              </CompareShot>
+            ) : (
+              <StepScreenshot
+                testId={summary.testId}
+                runId={summary.runId}
+                step={step}
+                mode={effectiveMode}
+              >
+                {overlays}
+              </StepScreenshot>
+            );
+          })()}
         </div>
         {masking ? (
           <Text variant="small" color="tertiary" className="mt-2 block text-center">
@@ -1339,6 +1737,23 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         ) : null}
         {step.diff ? <DiffBadge diff={step.diff} /> : null}
         {step.a11y ? <A11yBadge result={step.a11y} /> : null}
+        {/* Beside "Accept New Baseline", because they are the two answers to
+            the same question: this changed, was it meant to? Accepting says
+            yes; filing says no, and hands someone the three pictures that
+            show it. Only offered for a CHANGED step — there is nothing to
+            report about a step that matched. */}
+        {step.diff?.state === "changed" && onSendToTracker ? (
+          <Button
+            size="small"
+            variant="glass"
+            className="shrink-0"
+            aria-label={`Send step ${step.index + 1}'s visual change to the issue tracker`}
+            onClick={() => onSendToTracker(step.stepId)}
+          >
+            <Send className="size-3.5" />
+            Send
+          </Button>
+        ) : null}
         {step.screenshot && step.diff?.state === "changed" && !acceptedSteps.has(step.stepId) ? (
           <AlertDialog
             trigger={
@@ -1360,6 +1775,25 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         )}
       </div>
 
+      <IssueComposeDialog
+        source={
+          sendingStepId
+            ? {
+                kind: "visual",
+                testId: summary.testId,
+                runId: summary.runId,
+                stepId: sendingStepId,
+              }
+            : null
+        }
+        open={sendingStepId !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setSendingStepId(null);
+        }}
+        onFiled={(issue) => toast.success(`Filed as ${issue.identifier}.`)}
+        onCommented={(link) => toast.success(`Added to ${link.identifier}.`)}
+      />
+
       {/* Accessibility, under the step row: reported, never fatal — the run's
           pass/fail is decided purely by its assertions. */}
       {step.a11y ? (
@@ -1379,11 +1813,40 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         onSave={(text) => upsertAnnotation.mutate({ stepId: step.stepId, text })}
       />
 
-      {/* Timeline scrubber */}
-      <div className="border-t border-separator px-4 py-3">
+      {/* THE FRAME RAIL (B8). Every captured frame, its outcome, and — new here —
+          its diff PERCENTAGE, plus a filter that drops everything unchanged.
+
+          The percentage is the point. A run with forty frames and three real
+          changes was previously a row of forty near-identical bars: the strip
+          could say THAT a frame changed but never BY HOW MUCH, so triage meant
+          clicking through frames one at a time to find the one that mattered.
+          A 0.01% antialiasing shift and a 40% layout break looked the same. */}
+      <div className="gl-frame-rail">
+        <div className="gl-frame-rail-head">
+          <span className="gl-section-title">Frames</span>
+          <span className="gl-note">
+            {changedCount === 0
+              ? "None changed"
+              : `${changedCount} of ${steps.length} changed`}
+          </span>
+          {/* Only offered when it would DO something. A filter that is always
+              present and usually a no-op teaches people it does nothing. */}
+          {changedCount > 0 ? (
+            <Segmented
+              className="ml-auto"
+              label="Which frames to show"
+              value={changedOnly ? "changed" : "all"}
+              onChange={(v) => setChangedOnly(v === "changed")}
+              options={[
+                { value: "all", label: "All" },
+                { value: "changed", label: "Changed" },
+              ]}
+            />
+          ) : null}
+        </div>
         <ScrollArea className="w-full">
           <div className="flex items-end gap-1 pb-1">
-            {steps.map((s) => {
+            {visibleSteps.map((s) => {
               const active = s.index === idx;
               const failed = s.index === replay.failedIndex;
               const changed = s.diff?.state === "changed";
@@ -1401,33 +1864,42 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
                   title={`${s.index + 1}. ${s.label}${changed ? " · visual change" : ""}${
                     a11yNew ? " · accessibility" : ""
                   }${noted ? " · note" : ""}`}
-                  className={`group flex min-w-[22px] shrink-0 flex-col items-center gap-1 rounded-md px-1 pb-1 pt-0.5 ${
-                    active ? "bg-accent-10 ring-1 ring-inset ring-accent" : "hover:bg-control-subtle"
-                  }`}
+                  className="gl-frame-btn"
+                  data-selected={active ? "" : undefined}
                 >
                   <span className="flex h-4 items-center justify-center">
                     {failed ? (
-                      <TriangleAlert className="size-3.5 text-support-red" />
+                      <TriangleAlert className="size-3.5" style={{ color: TONE.red }} />
                     ) : changed ? (
-                      <Eye className="size-3.5 text-support-orange" />
+                      <Eye className="size-3.5" style={{ color: TONE.amber }} />
                     ) : a11yNew ? (
-                      <Accessibility className="size-3.5 text-support-orange" />
+                      <Accessibility className="size-3.5" style={{ color: TONE.amber }} />
                     ) : noted ? (
                       <MessageSquare className="size-3.5 text-tertiary" />
                     ) : null}
                   </span>
                   <span
-                    className={`w-full rounded-sm ${statusBar(s.status)} ${
-                      failed || changed ? "h-7" : "h-5"
-                    } ${changed && !failed ? "ring-1 ring-inset ring-support-orange" : ""}`}
+                    className="gl-frame-bar"
+                    style={{
+                      background: statusBarColor(s.status),
+                      height: failed || changed ? 28 : 20,
+                      // Amber marks a CHANGE, which is caution rather than an
+                      // outcome — the frame still passed. An inset rail, so it
+                      // does not resize the bar it sits on.
+                      boxShadow:
+                        changed && !failed ? `inset 0 0 0 1px ${withAlpha(TONE.amber, "bf")}` : undefined,
+                    }}
                   />
-                  <Text
-                    variant="small-mono"
-                    color={active ? "primary" : "tertiary"}
-                    className="text-[10px] tabular-nums"
-                  >
+                  <span className="gl-frame-index" data-active={active ? "" : undefined}>
                     {s.index + 1}
-                  </Text>
+                  </span>
+                  {/* THE NUMBER THIS RAIL EXISTED WITHOUT. Only on a changed
+                      frame: printing "0%" under forty unchanged ones would bury
+                      the three that matter in noise, which is the problem this
+                      is here to solve rather than restate. */}
+                  {changed && s.diff?.ratio !== undefined ? (
+                    <span className="gl-frame-pct">{fmtPct(s.diff.ratio)}</span>
+                  ) : null}
                 </button>
               );
             })}

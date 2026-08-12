@@ -29,6 +29,7 @@ import { Accessibility, RotateCcw, Stamp, TriangleAlert } from "lucide-react";
 import { api } from "../lib/api";
 import { countA11ySteps, latestA11yRun } from "../lib/a11y-format";
 import { A11yBadge, A11yViolationList } from "./a11y-violations";
+import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import type { ReplayStep, RunReplay, TestRecord } from "../lib/recorder-types";
 
 function fmtWhen(ms: number): string {
@@ -44,10 +45,15 @@ function StepViolations({
   step,
   onAccept,
   busy,
+  onSend,
+  filed,
 }: {
   step: ReplayStep;
   onAccept: () => void;
   busy: boolean;
+  /** Absent when there is no run to file against. */
+  onSend?: (stepId: string, ruleId: string) => void;
+  filed?: Record<string, string>;
 }) {
   if (!step.a11y) return null;
   return (
@@ -74,13 +80,20 @@ function StepViolations({
           />
         ) : null}
       </div>
-      <A11yViolationList result={step.a11y} />
+      <A11yViolationList
+        result={step.a11y}
+        filing={onSend ? { onSend: (ruleId) => onSend(step.stepId, ruleId), filed } : undefined}
+      />
     </div>
   );
 }
 
 export function A11yPanel({ test }: { test: TestRecord }) {
   const qc = useQueryClient();
+  // Which violation the compose dialog is open for. One at a time: each
+  // violation becomes its own issue, so they are independently assignable and
+  // closable, which is what a11y work actually looks like.
+  const [sending, setSending] = React.useState<{ stepId: string; ruleId: string } | null>(null);
   // Shares the ["runs"] key with Stats, so opening this tab usually costs no
   // round trip at all.
   const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
@@ -88,6 +101,23 @@ export function A11yPanel({ test }: { test: TestRecord }) {
     () => latestA11yRun(runsQuery.data ?? [], test.id),
     [runsQuery.data, test.id],
   );
+  // One read badges every row. Keyed on the test so filing one violation
+  // refreshes the whole list rather than only the row that was clicked.
+  const linksQuery = useQuery({
+    queryKey: ["issueLinks", test.id],
+    queryFn: () => api.issues.linksForTest(test.id),
+  });
+  const filedByStep = React.useMemo(() => {
+    const out = new Map<string, Record<string, string>>();
+    for (const l of linksQuery.data ?? []) {
+      if (l.kind !== "a11y") continue;
+      const row = out.get(l.stepId) ?? {};
+      row[l.ruleId] = l.identifier;
+      out.set(l.stepId, row);
+    }
+    return out;
+  }, [linksQuery.data]);
+
   const replayQuery = useQuery({
     queryKey: ["replay", test.id, latest?.id],
     queryFn: () => api.artifacts.getReplay(test.id, latest?.id as string),
@@ -117,6 +147,27 @@ export function A11yPanel({ test }: { test: TestRecord }) {
     onSuccess: (next) => {
       patch(next);
       toast.success("Accessibility issues accepted for this run.");
+    },
+    onError: (err: unknown) => toast.error(String(err)),
+  });
+
+  // Waving the banner off, as opposed to accepting what it reports. Same
+  // distinction as the Visual view's, and deliberately the SAME STORE: this
+  // panel reads the same run's replay, so "I've seen this run's accessibility
+  // findings" is one fact. Two flags would let the user dismiss it here and
+  // still be nagged about the identical finding one screen over.
+  const restoreNotice = useMutation({
+    mutationFn: () => api.artifacts.restoreNotice(test.id, latest?.id as string, "a11y"),
+    onSuccess: patch,
+  });
+  const dismissNotice = useMutation({
+    mutationFn: () => api.artifacts.dismissNotice(test.id, latest?.id as string, "a11y"),
+    onSuccess: (next) => {
+      patch(next);
+      toast.success("Accessibility issues dismissed for this run.", {
+        description: "Nothing was accepted — the issues are still listed below.",
+        action: { label: "Undo", onClick: () => restoreNotice.mutate() },
+      });
     },
     onError: (err: unknown) => toast.error(String(err)),
   });
@@ -163,6 +214,10 @@ export function A11yPanel({ test }: { test: TestRecord }) {
   const steps = (replay?.steps ?? []).filter((s) => s.a11y);
   const newSteps = countA11ySteps(replay?.steps ?? []);
   const checks = latest.a11yChecks ?? 0;
+  // Read off the replay rather than component state, for the reason the Visual
+  // view reads it there: a banner that comes back when you leave the tab and
+  // return has not been dismissed.
+  const a11yDismissed = (replay?.dismissedNotices ?? []).includes("a11y");
 
   return (
     <ScrollArea className="h-full">
@@ -206,27 +261,44 @@ export function A11yPanel({ test }: { test: TestRecord }) {
           />
         </div>
 
-        {/* The check ran and produced nothing. Reported as the fault it is:
-            "no issues found" here would be the most confident possible way of
-            being wrong, and is exactly how a broken check hid for months. */}
+        {/* One slot, four states — so the copy is centred in ALL of them. These
+            swap as a run's verdict changes, and centring only the orange one
+            would make the banner appear to jump alignment on its own. */}
         {checks === 0 ? (
           <Callout color="red" icon={<TriangleAlert className="size-4" />}>
-            The check ran on this run but completed none — no results were produced. Open this run in
-            Stats and read its output for the reason.
+            {/* The check ran and produced nothing. Reported as the fault it is:
+                "no issues found" here would be the most confident possible way
+                of being wrong, and is exactly how a broken check hid for
+                months. NOT dismissible, unlike the orange one below: this is a
+                broken check, not a finding about the page, and there is nothing
+                to have "seen and accepted" about it. */}
+            <span className="block text-center">
+              The check ran on this run but completed none — no results were produced. Open this run
+              in Stats and read its output for the reason.
+            </span>
           </Callout>
         ) : steps.length === 0 ? (
           <Callout color="green" icon={<Accessibility className="size-4" />}>
-            No accessibility issues found on this run.
+            <span className="block text-center">No accessibility issues found on this run.</span>
           </Callout>
         ) : newSteps === 0 ? (
           <Callout color="secondary" icon={<Accessibility className="size-4" />}>
-            Nothing new. Every issue below has been accepted for this test — the run is clean against
-            your baseline, not against the page.
+            <span className="block text-center">
+              Nothing new. Every issue below has been accepted for this test — the run is clean
+              against your baseline, not against the page.
+            </span>
           </Callout>
-        ) : (
-          <Callout color="orange" icon={<Accessibility className="size-4" />}>
-            {newSteps} {newSteps === 1 ? "step has" : "steps have"} accessibility issues that aren’t
-            accepted yet. This never affects whether the test passes.
+        ) : a11yDismissed ? null : (
+          <Callout
+            color="orange"
+            icon={<Accessibility className="size-4" />}
+            onDismiss={() => dismissNotice.mutate()}
+            dismissLabel="Dismiss accessibility issues for this run"
+          >
+            <span className="block text-center">
+              {newSteps} {newSteps === 1 ? "step has" : "steps have"} accessibility issues that
+              aren’t accepted yet. This never affects whether the test passes.
+            </span>
           </Callout>
         )}
 
@@ -236,9 +308,36 @@ export function A11yPanel({ test }: { test: TestRecord }) {
             step={s}
             busy={busy}
             onAccept={() => acceptStep.mutate(s.stepId)}
+            onSend={
+              latest ? (stepId, ruleId) => setSending({ stepId, ruleId }) : undefined
+            }
+            filed={filedByStep.get(s.stepId)}
           />
         ))}
       </div>
+
+      <IssueComposeDialog
+        source={
+          sending && latest
+            ? {
+                kind: "a11y",
+                testId: test.id,
+                runId: latest.id,
+                stepId: sending.stepId,
+                ruleId: sending.ruleId,
+              }
+            : null
+        }
+        open={sending !== null}
+        onOpenChange={(open) => {
+          if (!open) setSending(null);
+        }}
+        onFiled={(issue) => {
+          toast.success(`Filed as ${issue.identifier}.`);
+          void qc.invalidateQueries({ queryKey: ["issueLinks", test.id] });
+        }}
+        onCommented={(link) => toast.success(`Added to ${link.identifier}.`)}
+      />
     </ScrollArea>
   );
 }

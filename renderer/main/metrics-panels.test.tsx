@@ -20,6 +20,7 @@ import { render, screen, fireEvent, within } from "@testing-library/react";
 
 import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
 import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
+import { DENSE_PAGE_SIZE } from "../lib/paginate";
 import { StepHealthPanel, formatMs } from "./step-health-panel";
 import { SuiteCostPanel, trendUnavailableReason } from "./suite-cost-panel";
 import { DivergencePanel, VERDICT_COPY } from "./divergence-panel";
@@ -106,6 +107,77 @@ describe("step health", () => {
 
     fireEvent.click(screen.getByLabelText("Sort by Heals"));
     expect(labels()[0]).toContain("Beta");
+  });
+
+  // A 200-row table was the state before paging: everything on one page.
+  const many = (n: number) =>
+    Array.from({ length: n }, (_, i) =>
+      health({ stepId: `s${i}`, label: `Step ${String(i).padStart(3, "0")}`, heals: n - i }),
+    );
+  const bodyRows = () => screen.getAllByRole("row").slice(1);
+
+  it("shows at most one page of steps, with the total still on the panel", () => {
+    render(<StepHealthPanel rows={many(200)} available />);
+    expect(bodyRows()).toHaveLength(DENSE_PAGE_SIZE);
+    expect(DENSE_PAGE_SIZE).toBe(25);
+    // The count in the panel header is the whole set, not the page — otherwise
+    // paging looks like history disappearing.
+    expect(screen.getByText("200 steps")).toBeTruthy();
+    expect(screen.getByText(/Page 1 of 8/)).toBeTruthy();
+    expect(screen.getByText(/1–25 of 200 steps/)).toBeTruthy();
+  });
+
+  it("pages through to the rows the first page doesn't hold", () => {
+    render(<StepHealthPanel rows={many(200)} available />);
+    expect(screen.queryByText("Step 025")).toBeNull();
+
+    fireEvent.click(screen.getByLabelText("Next page"));
+    expect(screen.getByText("Step 025")).toBeTruthy();
+    expect(screen.queryByText("Step 024")).toBeNull();
+    expect(bodyRows()).toHaveLength(DENSE_PAGE_SIZE);
+
+    fireEvent.click(screen.getByLabelText("Previous page"));
+    expect(screen.getByText("Step 024")).toBeTruthy();
+  });
+
+  it("sorts across every row, not just the page on screen", () => {
+    // The failure this pins: sorting the 25 visible rows rather than all 200
+    // ranks the wrong set, so the worst step in the suite stays invisible while
+    // the column header claims to have ranked it.
+    render(<StepHealthPanel rows={many(200)} available />);
+    fireEvent.click(screen.getByLabelText("Sort by Heals")); // desc — most heals first
+    expect(bodyRows()[0].textContent).toContain("Step 000");
+
+    fireEvent.click(screen.getByLabelText("Sort by Heals")); // asc — fewest heals first
+    // Step 199 has the fewest heals and lives on the last received page.
+    expect(bodyRows()[0].textContent).toContain("Step 199");
+  });
+
+  it("returns to page 1 when the sort changes", () => {
+    render(<StepHealthPanel rows={many(200)} available />);
+    fireEvent.click(screen.getByLabelText("Next page"));
+    expect(screen.getByText(/Page 2 of 8/)).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText("Sort by Heals"));
+    expect(screen.getByText(/Page 1 of 8/)).toBeTruthy();
+  });
+
+  it("hides the pager when everything fits on one page", () => {
+    render(<StepHealthPanel rows={many(25)} available />);
+    expect(screen.queryByLabelText("Next page")).toBeNull();
+    expect(bodyRows()).toHaveLength(25);
+  });
+
+  it("clamps a page that outlives its rows instead of rendering an empty table", () => {
+    // Retention prunes and the row count drops under the page you were on.
+    const { rerender } = render(<StepHealthPanel rows={many(200)} available />);
+    fireEvent.click(screen.getByLabelText("Next page"));
+    fireEvent.click(screen.getByLabelText("Next page"));
+    expect(screen.getByText(/Page 3 of 8/)).toBeTruthy();
+
+    rerender(<StepHealthPanel rows={many(30)} available />);
+    expect(screen.getByText(/Page 2 of 2/)).toBeTruthy();
+    expect(bodyRows()).toHaveLength(5);
   });
 });
 

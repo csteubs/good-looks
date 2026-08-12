@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Tighter than the other three entries' CSP on purpose.
+
+      This document is the ONLY app-owned surface inside the training browser —
+      a window whose other occupant is an arbitrary untrusted site. The strip
+      never loads a remote image, font or stylesheet and never opens a socket,
+      so every off-origin source the other windows allow is dropped here rather
+      than left open for the sake of symmetry. `http://localhost:*` stays for
+      the dev server, which is where the bundle itself comes from under
+      `npm run dev`.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; base-uri 'self'; object-src 'none'; script-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:*; style-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:*; img-src 'self' data:; font-src 'self' data:; connect-src 'self' http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; frame-src 'none'"
+    />
+    <title>Training browser chrome</title>
+    <!-- Dark unconditionally, for the reason spelled out in trainer-window.html:
+         the app has one theme, and a class applied on a condition that can be
+         false is a light rendering of a design with no light mode. -->
+    <script>
+      document.documentElement.classList.add("dark");
+    </script>
+    <style>
+      /* The strip is flush against the top of the window and against the page
+         below it, so it carries no page-level margin and never scrolls: it is
+         exactly as tall as the bounds the backend gave it. An overflow here
+         would either clip the page or paint over it. */
+      html,
+      body {
+        height: 100%;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- Preload is injected via webPreferences.preload (see main/windows/window-paths.ts) -->
+    <script type="module" src="./renderer/recorder-chrome/index.tsx"></script>
+  </body>
+</html>

@@ -5,9 +5,6 @@ import {
   Checkbox,
   Dialog,
   ScrollArea,
-  SegmentedControl,
-  SegmentedControlItem,
-  Status,
   Tabs,
   TabsContent,
   TabsRoot,
@@ -20,18 +17,21 @@ import {
 } from "@ui";
 import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plus, RotateCcw, Sparkles, Wand2, X } from "lucide-react";
 
+import { Btn, Segmented, StatusChip, TONE } from "../theme";
 import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step, WaitDialogMode } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
+import { urlAssertPrefill } from "../../shared/url-assert.mjs";
 import { locatorToPrompt } from "../lib/llm-prompts";
 import { useRecorder, type ReplayRun } from "./recorder-store";
-import { CursorGap, StepRow } from "./step-row";
-import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "./add-step-dialog";
+import { CursorGap, INSERT_HERE, StepRow } from "./step-row";
+import { StepComposer, ADD_STEP_LABEL, type AddStepKind } from "./step-composer";
 import { stepSessionKey, useAiDebug } from "./ai-debug-store";
 import { parseSessionKey } from "../lib/ai-debug-sessions";
 import { toneFor } from "../lib/ai-debug-status";
 import { GenerateStepsDialog } from "./generate-steps-dialog";
 import { RefineSelectorDialog, formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 import { CookiesPanel } from "./cookies-panel";
+import { useViewportNarrowedNotice } from "./viewport-narrowed-notice";
 
 // Assertions that can be captured by clicking an element in the page. Operand
 // assertions (value/attribute/count/url/title) need typed input, so they live in
@@ -253,16 +253,16 @@ function DebugPanel({
   const logCount = consoleSteps.reduce((n, s) => n + s.logs.length, 0);
 
   return (
-    <div className="flex h-56 flex-col border-t border-separator">
+    <div className="gl-trainer-console">
       <TabsRoot value={tab} onValueChange={onTabChange} className="flex min-h-0 flex-1 flex-col">
-        <div className="flex items-center justify-between gap-2 px-3 pt-2">
+        <div className="gl-tabs gl-trainer-console-head">
           <Tabs variant="filled" size="small">
             <TabsTrigger value="console">Console</TabsTrigger>
             <TabsTrigger value="steps">Step details</TabsTrigger>
             <TabsTrigger value="cookies">Cookies</TabsTrigger>
           </Tabs>
           {tab === "console" ? (
-            <label className="flex shrink-0 cursor-pointer select-none items-center gap-1.5 pr-1 text-[11px] text-secondary">
+            <label className="gl-run-option shrink-0">
               <Checkbox
                 checked={autoScroll}
                 onCheckedChange={(v) => onAutoScrollChange(v === true)}
@@ -281,8 +281,13 @@ function DebugPanel({
 
         {/* Console: live run output. */}
         <TabsContent value="console" className="flex min-h-0 flex-1 flex-col">
-          <div className="flex items-center gap-2 border-b border-separator px-3 py-1.5">
-            {replayRun?.running ? <Loader2 className="size-3.5 shrink-0 animate-spin text-accent" /> : null}
+          <div className="gl-trainer-console-bar">
+            {replayRun?.running ? (
+              // Cyan — "running / live / focus", the token's own definition. It
+              // was the SDK accent, which is a different blue that means
+              // nothing in this palette.
+              <Loader2 className="size-3.5 shrink-0 animate-spin" style={{ color: TONE.cyan }} />
+            ) : null}
             <Text variant="small" color="secondary" className="min-w-0 truncate">
               {!replayRun
                 ? "No run yet — click “Replay from current step”."
@@ -451,6 +456,7 @@ export function RecordingView() {
     stepsLoaded,
     liveSteps,
     newStepIds,
+    lastAddedStepId,
     pause,
     resume,
     stop,
@@ -554,6 +560,11 @@ export function RecordingView() {
     prefillValue?: string;
   } | null>(null);
 
+  // Docking the panel narrows the training browser. This window is the one that
+  // can be relied on to hear about it: the push is sent before the panel's page
+  // loads, so the panel misses it on the ordinary path. See the notice module.
+  useViewportNarrowedNotice();
+
   // A right-click test-tools action arrives from the backend: open the Add-step
   // dialog prefilled. "refine" opens the Refine Selector flow for that element
   // instead (it updates an existing step, not the Add-step dialog).
@@ -644,6 +655,12 @@ export function RecordingView() {
   // backend sent means nothing without the rows it points between.
   const controlsDisabled = !state.pageReady || !stepsLoaded || running;
 
+  // Whether the next captured step will land under the last row. True for the
+  // whole of an ordinary new recording, and that is why "scroll to the bottom"
+  // looked like the right rule for years — it is, right up until the session is
+  // a continued test, where the cursor opens mid-list.
+  const cursorAtEnd = state.cursor >= liveSteps.length;
+
   // Drag-to-reorder bookkeeping.
   const [dragId, setDragId] = React.useState<string | null>(null);
   const [overIndex, setOverIndex] = React.useState<number | null>(null);
@@ -666,8 +683,19 @@ export function RecordingView() {
     } else if (res.commandId >= 100) {
       const urlKind = ASSERT_URL[res.commandId - 100];
       if (urlKind) {
-        // URL assertions need a typed string — open the Add-step dialog prefilled.
-        setContextPick({ picked: null, assert: urlKind.kind });
+        // Prefilled with where the page actually is. This used to open with an
+        // EMPTY field, which meant the user had to know the URL — and the only
+        // legible copy of it was outside the app, because the trainer showed
+        // the session's start URL and the training window's title showed the
+        // site's own `document.title`. `urlAssertPrefill` decides what each
+        // kind gets (a path for the substring kinds, the whole URL for `is`),
+        // and it is the same function the training browser's own URL strip and
+        // right-click menu call.
+        setContextPick({
+          picked: null,
+          assert: urlKind.kind,
+          prefillValue: urlAssertPrefill(urlKind.kind, state.liveUrl ?? state.url ?? ""),
+        });
         setAddKind("assertion");
       }
     }
@@ -701,6 +729,60 @@ export function RecordingView() {
   // Indentation level for each row, so conditional block bodies nest visually.
   const stepDepths = computeStepDepths(liveSteps);
 
+  // The composer, rendered AT THE CURSOR rather than over the list (§6.2).
+  //
+  // A function of the gap index rather than one element hoisted out of the
+  // list: the panel has to sit between the two steps the new one will land
+  // between, and "between" is a position in this map, not a place in the tree.
+  // It renders at most once — `state.cursor` is a single index.
+  const composerAt = (index: number) =>
+    addKind !== null && state.cursor === index ? (
+      <StepComposer
+        // Remounts when the caller re-targets it from the context menu, so a
+        // half-filled draft for one element never carries over to another.
+        key={`${addKind}:${contextPick?.picked?.description ?? ""}`}
+        kind={addKind}
+        currentTestId={state?.testId ?? undefined}
+        onCancel={() => {
+          setAddKind(null);
+          // Leaving the composer: tear down any in-flight pick and the
+          // context-menu prefill state.
+          if (addStepPicking) {
+            setAddStepPicking(false);
+            endRefine();
+            clearPicked();
+          }
+          setContextPick(null);
+        }}
+        onAdd={(steps: RawStep[]) => {
+          steps.forEach((s) => insertStep(s));
+          if (addStepPicking) {
+            setAddStepPicking(false);
+            endRefine();
+            clearPicked();
+          }
+          setContextPick(null);
+        }}
+        // Use the context-menu's pre-resolved element when present (it was
+        // captured at the right-click point); otherwise the in-panel picker.
+        picked={contextPick?.picked ?? (addStepPicking ? picked : null)}
+        onStartPick={() => {
+          setAddStepPicking(true);
+          startRefine(null);
+        }}
+        onClearPick={() => {
+          setAddStepPicking(false);
+          endRefine();
+          clearPicked();
+        }}
+        initialAssert={contextPick?.assert}
+        initialWaitMode={contextPick?.waitMode}
+        initialState={contextPick?.elementState}
+        prefillText={contextPick?.prefillText}
+        prefillValue={contextPick?.prefillValue}
+      />
+    ) : null;
+
   return (
     <div className="flex h-full flex-col">
       <Toolbar>
@@ -708,8 +790,12 @@ export function RecordingView() {
           <ToolbarTitle>{state.editing ? "Editing recording" : "Recording"}</ToolbarTitle>
         </ToolbarContent>
         <ToolbarActions>
-          <Button
-            variant="destructive"
+          {/* `go`, not `stop`. This button ENDS the recording, which reads as
+              destructive, but what it does is produce the test — the affirmative
+              action the whole session exists for. The SDK variant it replaces
+              was `destructive`, i.e. red, which in this palette means FAILED. */}
+          <Btn
+            tone="go"
             onClick={() => {
               // No recorded steps = nothing to lose: save/exit directly without
               // the confirmation warning. Otherwise open the warning so the
@@ -722,48 +808,63 @@ export function RecordingView() {
             }}
           >
             {state.editing ? "Save Test" : "Generate Test"}
-          </Button>
+          </Btn>
         </ToolbarActions>
       </Toolbar>
 
-      <div className="flex items-center gap-3 border-b border-separator px-4 py-3">
+      {/* NONE OF THESE STATES IS AN OUTCOME, so none of them takes a status
+          hue. That is a real change: `Recording` was the SDK's `error` variant,
+          i.e. RED — the colour this palette spends on a failed run — on the one
+          screen where nothing has run yet. Recording, Replaying and Running are
+          all IN FLIGHT, which is exactly what `StatusChip`'s `running` treatment
+          means ("a treatment says this is not a result"); the word is what
+          separates them, and the word is the primary signal anyway. Paused and
+          the two loading states are neutral: real, not results, not live. */}
+      <div className="gl-trainer-status">
         {!state.pageReady ? (
-          <Status variant="warning">Loading page…</Status>
+          <StatusChip>Loading page…</StatusChip>
         ) : !stepsLoaded ? (
           // Disabled controls with a "Recording" badge reads as the trainer
           // being broken. Name the wait instead.
-          <Status variant="warning">Loading steps…</Status>
+          <StatusChip>Loading steps…</StatusChip>
         ) : running ? (
           // "Replaying" rather than "Running" when the backend says a replay
           // owns the window: it is the state that explains why capture is off
           // and why the controls are inert, and it is the one the user just
           // caused. "Running" stays for a real Playwright run.
-          <Status variant="loading">{state.replaying ? "Replaying" : "Running"}</Status>
+          <StatusChip running animated>
+            {state.replaying ? "Replaying" : "Running"}
+          </StatusChip>
+        ) : state.paused ? (
+          <StatusChip>Paused</StatusChip>
         ) : (
-          <Status variant={state.paused ? "warning" : "error"}>
-            {state.paused ? "Paused" : state.editing ? "Editing" : "Recording"}
-          </Status>
+          // "Recording" WHETHER OR NOT this session is continuing an existing
+          // test, and that is a fix rather than a simplification. It used to
+          // read "Editing" for a continued session — while capture was fully
+          // live — so the one indicator whose job is to say whether the trainer
+          // is listening said it was not. Reported as "it doesn't record any
+          // manual page interaction". That this is an existing test is said
+          // twice already, by the title above and by "Save Test" beside it.
+          <StatusChip running animated>
+            Recording
+          </StatusChip>
         )}
-        <Text variant="small" color="secondary" truncate className="min-w-0">
-          {state.url}
-        </Text>
+        <span className="gl-mono-value min-w-0 truncate">{state.url}</span>
         <div className="ml-auto shrink-0">
           {controlsDisabled ? null : state.paused ? (
-            <Button size="small" onClick={resume}>
-              <Play className="size-4" /> Resume
-            </Button>
+            <Btn onClick={resume}>
+              <Play className="size-3.5" /> Resume
+            </Btn>
           ) : (
-            <Button size="small" onClick={pause}>
-              <Pause className="size-4" /> Pause
-            </Button>
+            <Btn onClick={pause}>
+              <Pause className="size-3.5" /> Pause
+            </Btn>
           )}
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-separator px-4 py-2">
-        <Button
-          size="small"
-          variant="muted"
+      <div className="gl-trainer-tools">
+        <Btn
           onClick={onReplayFromCurrent}
           disabled={controlsDisabled}
           aria-label="Replay from the current step"
@@ -773,105 +874,121 @@ export function RecordingView() {
               wear a different glyph in the two trainers. Here a text label
               disambiguates it from Pause/Resume; in the panel nothing does. */}
           <RotateCcw className="size-3.5" /> Replay from current step
-        </Button>
-        {replayStatus ? (
-          <Text variant="small" color="secondary" className="shrink-0">
-            {replayStatus}
-          </Text>
-        ) : null}
-        <Button
-          size="small"
-          variant="muted"
+        </Btn>
+        {replayStatus ? <span className="gl-note shrink-0">{replayStatus}</span> : null}
+        <Btn
           onClick={openAssertMenu}
           disabled={controlsDisabled}
           title="Add an assertion step by picking an element in the browser"
         >
           {state.assertMode ? ASSERT_LABEL[state.assertMode] : "New Assertion"}
           <ChevronDown className="size-3.5" />
-        </Button>
-        <SegmentedControl
-          size="small"
+        </Btn>
+        {/* The theme's `Segmented`, which is plain buttons with `aria-pressed`
+            rather than a Radix control: `fireEvent.click` works on it, so the
+            hard/soft choice can be driven in a test instead of asserted at the
+            IPC layer. Its active item is neutral, like every selection here. */}
+        <Segmented
+          label="Assertion strictness"
           value={soft ? "soft" : "hard"}
-          onValueChange={onSoftChange}
-          disabled={controlsDisabled}
-        >
-          <SegmentedControlItem
-            value="hard"
-            title="Hard — a failed assertion stops the test run immediately. Use for conditions the test depends on."
-          >
-            Hard
-          </SegmentedControlItem>
-          <SegmentedControlItem
-            value="soft"
-            title="Soft — a failed assertion is reported but the run continues. Use for non-critical checks."
-          >
-            Soft
-          </SegmentedControlItem>
-        </SegmentedControl>
+          onChange={(v) => onSoftChange(v)}
+          options={[
+            {
+              value: "hard",
+              label: "Hard",
+              disabled: controlsDisabled,
+              title:
+                "Hard — a failed assertion stops the test run immediately. Use for conditions the test depends on.",
+            },
+            {
+              value: "soft",
+              label: "Soft",
+              disabled: controlsDisabled,
+              title:
+                "Soft — a failed assertion is reported but the run continues. Use for non-critical checks.",
+            },
+          ]}
+        />
         {state.assertMode ? (
           <>
-            <Text variant="small" color="blue" className="shrink-0">
-              Click an element in the browser…
-            </Text>
-            <Button
-              iconOnly
-              variant="transparent"
-              size="small"
+            {/* CYAN, not the SDK's blue. The palette declares cyan as
+                "running / live / focus", and this line is exactly that: the app
+                is waiting on the user to click something in the other window. */}
+            <span className="gl-trainer-prompt shrink-0">Click an element in the browser…</span>
+            <button
+              type="button"
+              className="gl-icon-btn"
               onClick={() => setAssert(null)}
               aria-label="Cancel assertion"
             >
-              <X className="size-4" />
-            </Button>
+              <X className="size-3.5" />
+            </button>
           </>
         ) : null}
 
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          <Button
-            size="small"
-            variant="muted"
-            onClick={openAddStepMenu}
-            disabled={controlsDisabled}
-          >
+          <Btn onClick={openAddStepMenu} disabled={controlsDisabled}>
             <Plus className="size-3.5" /> Add step
-          </Button>
-          <Button
-            size="small"
-            variant="muted"
-            onClick={() => setAiOpen(true)}
-            disabled={controlsDisabled}
-          >
+          </Btn>
+          {/* `ai`, the holo border. AI is not an outcome, so it gets a
+              treatment rather than a colour — and this is the one button in the
+              row that hands the job to a model. */}
+          <Btn tone="ai" onClick={() => setAiOpen(true)} disabled={controlsDisabled}>
             <Wand2 className="size-3.5" /> AI steps
-          </Button>
+          </Btn>
         </div>
       </div>
 
       {state.refineMode ? (
-        <div className="flex items-center gap-2 border-b border-separator bg-accent/5 px-4 py-2">
-          <Crosshair className="size-4 text-accent" />
-          <Text variant="small" color="blue" className="min-w-0">
+        <div className="gl-notice gl-trainer-refine">
+          <Crosshair className="size-4 shrink-0" style={{ color: TONE.cyan }} />
+          <span className="min-w-0">
             Refine selector active — hover a component in the browser and click it to capture its
             selector. The page won’t respond to clicks.
-          </Text>
-          <Button size="small" variant="transparent" className="ml-auto" onClick={endRefine}>
-            <X className="size-4" /> Cancel
-          </Button>
+          </span>
+          <Btn className="ml-auto shrink-0" onClick={endRefine}>
+            <X className="size-3.5" /> Cancel
+          </Btn>
         </div>
       ) : null}
 
-      <ScrollArea className="min-h-0 flex-1" autoScrollToBottom autoScrollDeps={[liveSteps.length]}>
+      <ScrollArea
+        className="min-h-0 flex-1"
+        // Follow the bottom only while the bottom IS the insert point. A
+        // continued test opens its cursor just past the navigation, so a
+        // captured step lands mid-list — and a view that jumps to the end on
+        // every capture scrolls away from the one row that changed, which is
+        // indistinguishable from nothing having been recorded. When the cursor
+        // is elsewhere the arriving row scrolls itself into view instead
+        // (StepRow's `justAdded`), and these two must never both be on.
+        autoScrollToBottom={cursorAtEnd}
+        autoScrollDeps={[liveSteps.length]}
+      >
         <div className="flex flex-col p-3">
           {liveSteps.length === 0 ? (
-            <div className="flex flex-col items-start gap-2 px-2 py-1">
-              <Text variant="small" color="secondary">
-                Interact with the site — steps appear here as you go.
-              </Text>
-              <Text variant="small" color="tertiary">
-                Or use <ListPlus className="inline size-3.5 align-text-bottom" /> “Add step” / “AI steps”.
-              </Text>
-            </div>
+            <>
+              {/* The empty list has no gaps to sit between, and the composer
+                  still has to land somewhere — it is the ONLY way to put a step
+                  into a session where nothing has been captured yet. */}
+              {composerAt(0)}
+              <div className="flex flex-col items-start gap-2 px-2 py-1">
+                <Text variant="small" color="secondary">
+                  Interact with the site — steps appear here as you go.
+                </Text>
+                <Text variant="small" color="tertiary">
+                  Or use <ListPlus className="inline size-3.5 align-text-bottom" /> “Add step” / “AI steps”.
+                </Text>
+              </div>
+            </>
           ) : (
             <>
-              <CursorGap active={state.cursor === 0} onClick={() => setCursor(0)} disabled={controlsDisabled} />
+              <CursorGap
+                active={state.cursor === 0}
+                onClick={() => setCursor(0)}
+                disabled={controlsDisabled}
+                label={INSERT_HERE}
+              />
+              {composerAt(0)}
               {liveSteps.map((s, i) => (
                 <React.Fragment key={s.id}>
                   <StepRow
@@ -886,6 +1003,7 @@ export function RecordingView() {
                     runStatus={replayStepStatus[i]}
                     replayFlash={replayFlash[i]}
                     isNew={newStepIds.has(s.id)}
+                    justAdded={s.id === lastAddedStepId}
                     indent={stepDepths[i]}
                     drag={controlsDisabled ? undefined : {
                       onDragStart: () => setDragId(s.id),
@@ -895,7 +1013,13 @@ export function RecordingView() {
                       isOver: overIndex === i && dragId !== null && dragId !== s.id,
                     }}
                   />
-                  <CursorGap active={state.cursor === i + 1} onClick={() => setCursor(i + 1)} disabled={controlsDisabled} />
+                  <CursorGap
+                    active={state.cursor === i + 1}
+                    onClick={() => setCursor(i + 1)}
+                    disabled={controlsDisabled}
+                    label={i + 1 === liveSteps.length ? undefined : INSERT_HERE}
+                  />
+                  {composerAt(i + 1)}
                 </React.Fragment>
               ))}
             </>
@@ -927,52 +1051,6 @@ export function RecordingView() {
         onApplyHeal={applyHeal}
       />
 
-      {addKind ? (
-        <AddStepDialog
-          open={addKind !== null}
-          kind={addKind}
-          currentTestId={state?.testId ?? undefined}
-          onOpenChange={(o) => {
-            if (!o) {
-              setAddKind(null);
-              // Leaving the Add-step dialog: tear down any in-flight pick and
-              // the context-menu prefill state.
-              if (addStepPicking) {
-                setAddStepPicking(false);
-                endRefine();
-                clearPicked();
-              }
-              setContextPick(null);
-            }
-          }}
-          onAdd={(steps: RawStep[]) => {
-            steps.forEach((s) => insertStep(s));
-            if (addStepPicking) {
-              setAddStepPicking(false);
-              endRefine();
-              clearPicked();
-            }
-            setContextPick(null);
-          }}
-          // Use the context-menu's pre-resolved element when present (it was
-          // captured at the right-click point); otherwise the in-dialog picker.
-          picked={contextPick?.picked ?? (addStepPicking ? picked : null)}
-          onStartPick={() => {
-            setAddStepPicking(true);
-            startRefine(null);
-          }}
-          onClearPick={() => {
-            setAddStepPicking(false);
-            endRefine();
-            clearPicked();
-          }}
-          initialAssert={contextPick?.assert}
-          initialWaitMode={contextPick?.waitMode}
-          initialState={contextPick?.elementState}
-          prefillText={contextPick?.prefillText}
-          prefillValue={contextPick?.prefillValue}
-        />
-      ) : null}
       <GenerateStepsDialog
         open={aiOpen}
         url={state.url}
@@ -1017,37 +1095,11 @@ export function RecordingView() {
         </div>
       ) : null}
 
-      {/* Load-failed error dialog: the training window didn't open within the
-          10s timeout. The failure is logged to Stats; prompt the user to try
-          again or check the run history for details. */}
-      <Dialog
-        open={state.loadFailed}
-        onOpenChange={() => {
-          /* non-dismissible until the user acknowledges via the button */
-        }}
-        title="Couldn't open the training browser"
-        description="The training window couldn't open. This can happen on a slow network, a redirect loop, or if the site is unreachable."
-        confirmLabel="Try again"
-        confirmVariant="accent"
-        onConfirm={() => {
-          // Reset by navigating away and back — the user can click Edit in
-          // Trainer / New recording again.
-          stop();
-        }}
-        destructiveAction={{
-          label: "Check Stats",
-          onClick: () => {
-            stop();
-            // Navigate to Stats via the router (the sidebar handles this).
-            window.location.hash = "#/stats";
-          },
-        }}
-      >
-        <Text variant="small" color="secondary">
-          The failure has been logged to Stats → Run history. You can try
-          again, or check the logs for more details.
-        </Text>
-      </Dialog>
+      {/* The load-failed dialog used to be here, gated on `state.loadFailed`.
+          It has moved to `load-failed-dialog.tsx`, mounted from RootView and
+          driven by the `recorder:loadFailed` push — this component is unmounted
+          by the time a failed load reports itself, and that field never arrives
+          true. See the note at the top of that file. */}
 
       {/* Exit confirmation: shown only when there are unsaved training edits
           (live steps). Two options: discard the edits (close without saving) or

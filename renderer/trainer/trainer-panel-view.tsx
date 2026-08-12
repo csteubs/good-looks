@@ -50,11 +50,29 @@ import {
 import { api } from "../lib/api";
 import type { AssertKind, PickedElement, RawStep, WaitDialogMode } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
+import { urlAssertPrefill } from "../../shared/url-assert.mjs";
 import { useRecorder } from "../main/recorder-store";
-import { CursorGap, StepRow } from "../main/step-row";
-import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "../main/add-step-dialog";
+import { CursorGap, INSERT_HERE, StepRow } from "../main/step-row";
+import { StepComposer, ADD_STEP_LABEL, type AddStepKind } from "../main/step-composer";
 import { GenerateStepsDialog } from "../main/generate-steps-dialog";
 import { RefineSelectorDialog } from "../main/refine-selector-dialog";
+import { useViewportNarrowedNotice } from "../main/viewport-narrowed-notice";
+
+/**
+ * Copy for the dock control's tooltip.
+ *
+ * Exported because a Radix tooltip cannot be opened in jsdom — its trigger
+ * tracks pointers with APIs jsdom does not implement — so the only way to test
+ * this copy is to assert against the constant. `noRoom` is the one that has to
+ * exist: a panel that opens beside the browser instead of docked to it looks
+ * like the feature not working, and "the display is too small for this window
+ * size" is the difference between a bug and a choice the user can act on.
+ */
+export const DOCK_TOOLTIP = {
+  docked: "Undock from the training browser",
+  undocked: "Dock to the training browser",
+  noRoom: "No room to dock at this window size — the display is too narrow for both windows",
+} as const;
 
 /** Assertions capturable by clicking an element — same set as the main trainer. */
 const ASSERT_PICKABLE: { kind: AssertKind; label: string }[] = [
@@ -66,6 +84,21 @@ const ASSERT_PICKABLE: { kind: AssertKind; label: string }[] = [
   { kind: "disabled", label: "Is disabled" },
   { kind: "checked", label: "Is checked" },
   { kind: "unchecked", label: "Is unchecked" },
+];
+
+/**
+ * URL assertions, which need a typed value rather than an element click.
+ *
+ * The panel had no URL assertion at all until now — its assert menu offered
+ * only the element kinds above, so the one trainer sitting against the training
+ * browser was the one place you could not assert on the location. Offered here
+ * with the live URL prefilled, same as the main window and the browser's own
+ * URL strip.
+ */
+const ASSERT_URL: { kind: AssertKind; label: string }[] = [
+  { kind: "url", label: "URL contains" },
+  { kind: "urlEndsWith", label: "URL ends with" },
+  { kind: "urlIs", label: "URL is" },
 ];
 
 /** Order matters: index === commandId in the native "+ Add step" menu. */
@@ -136,6 +169,7 @@ export function TrainerPanelView() {
     stepsLoaded,
     liveSteps,
     newStepIds,
+    lastAddedStepId,
     pause,
     resume,
     stop,
@@ -169,6 +203,8 @@ export function TrainerPanelView() {
   const [replayStatus, setReplayStatus] = React.useState<string | null>(null);
   const [addStepPicking, setAddStepPicking] = React.useState(false);
   const [docked, setDocked] = React.useState(true);
+  /** Why the panel is not docked, when the backend has told us. */
+  const [dockReason, setDockReason] = React.useState<string | null>(null);
   const [contextPick, setContextPick] = React.useState<{
     picked: PickedElement | null;
     assert?: AssertKind;
@@ -193,17 +229,61 @@ export function TrainerPanelView() {
   // backend sent means nothing without the rows it points between.
   const controlsDisabled = !state.pageReady || !stepsLoaded || running;
 
+  // See the mirror of this in recording-view.tsx: follow the bottom only while
+  // the bottom is where the next captured step will actually land.
+  const cursorAtEnd = state.cursor >= liveSteps.length;
+
   // Dock state is owned by the backend (it moves real windows), so the button
   // reflects what actually happened rather than an optimistic local guess —
   // docking can legitimately be REFUSED when the display is too small.
+  //
+  // ASK as well as listen. The first state is decided while this window is
+  // still loading, so a session that opened undocked has already missed the
+  // push that said so — and this control would then read "Undock" beside a
+  // panel that is not docked, doing nothing when pressed. Same lesson as the
+  // step list needing `recorder:getSteps`.
   React.useEffect(() => {
-    const offDocked = api.on("trainerPanel:docked", () => setDocked(true));
-    const offUndocked = api.on("trainerPanel:undocked", () => setDocked(false));
+    let live = true;
+    // The ask supplies the INITIAL value only. It was answered before it
+    // resolved here, so a push that lands while it is in flight is the newer
+    // fact — letting the reply win would undo a real dock change with a
+    // snapshot taken before it happened.
+    let pushed = false;
+    void api.trainerPanel
+      .getState()
+      .then((s) => {
+        if (!live || pushed) return;
+        setDocked(s.docked);
+        setDockReason(s.docked ? null : s.reason);
+      })
+      .catch(() => {
+        /* the pushes below still carry every later change */
+      });
+    const offDocked = api.on("trainerPanel:docked", () => {
+      pushed = true;
+      setDocked(true);
+      setDockReason(null);
+    });
+    const offUndocked = api.on<{ reason?: string } | undefined>(
+      "trainerPanel:undocked",
+      (payload) => {
+        pushed = true;
+        setDocked(false);
+        setDockReason(payload?.reason ?? null);
+      },
+    );
     return () => {
+      live = false;
       offDocked();
       offUndocked();
     };
   }, []);
+
+  // Docking narrows the training browser. This window only ever hears the push
+  // on the re-dock path — when the panel opens already docked it is sent before
+  // this page exists — which is why the main window subscribes too, and why a
+  // passing test here is not evidence the user was told. See the notice module.
+  useViewportNarrowedNotice();
 
   // A right-click test-tools action from the training browser. The backend
   // addresses it to whichever trainer should handle it; ignoring the ones meant
@@ -270,11 +350,33 @@ export function TrainerPanelView() {
       // View-relative, not screen: absolute coordinates put the menu on the
       // primary display regardless of which one the panel is on.
       coordinateSpace: "view",
-      items: ASSERT_PICKABLE.map((a, i) => ({ label: a.label, commandId: i })),
+      // Offset by 100 for the URL group, the same encoding `recording-view.tsx`
+      // uses — the two menus stay readable against each other, and a commandId
+      // cannot silently mean an element assert in one and a URL assert in the
+      // other.
+      items: [
+        ...ASSERT_PICKABLE.map((a, i) => ({ label: a.label, commandId: i })),
+        { type: "separator" as const },
+        ...ASSERT_URL.map((a, i) => ({ label: a.label, commandId: 100 + i })),
+      ],
     });
     if (typeof res.commandId !== "number") return;
-    const chosen = ASSERT_PICKABLE[res.commandId];
-    if (chosen) setAssert(chosen.kind, false);
+    if (res.commandId < 100) {
+      const chosen = ASSERT_PICKABLE[res.commandId];
+      if (chosen) setAssert(chosen.kind, false);
+      return;
+    }
+    const urlKind = ASSERT_URL[res.commandId - 100];
+    if (!urlKind) return;
+    // A URL assertion takes a typed value, so it opens the Add-step dialog
+    // rather than arming the element picker — prefilled from where the page is
+    // now, via the one helper all three surfaces share.
+    setContextPick({
+      picked: null,
+      assert: urlKind.kind,
+      prefillValue: urlAssertPrefill(urlKind.kind, state.liveUrl ?? state.url ?? ""),
+    });
+    setAddKind("assertion");
   };
 
   const openAddStepMenu = async (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -308,6 +410,51 @@ export function TrainerPanelView() {
 
   const stepDepths = computeStepDepths(liveSteps);
 
+  // The composer, at the cursor rather than over the list (§6.2). Same shape as
+  // the main window's — see recording-view.tsx for why it is a function of the
+  // gap index rather than one element hoisted out of the list.
+  const composerAt = (index: number) =>
+    addKind !== null && state.cursor === index ? (
+      <StepComposer
+        key={`${addKind}:${contextPick?.picked?.description ?? ""}`}
+        kind={addKind}
+        currentTestId={state?.testId ?? undefined}
+        onCancel={() => {
+          setAddKind(null);
+          if (addStepPicking) {
+            setAddStepPicking(false);
+            endRefine();
+            clearPicked();
+          }
+          setContextPick(null);
+        }}
+        onAdd={(steps: RawStep[]) => {
+          steps.forEach((s) => insertStep(s));
+          if (addStepPicking) {
+            setAddStepPicking(false);
+            endRefine();
+            clearPicked();
+          }
+          setContextPick(null);
+        }}
+        picked={contextPick?.picked ?? (addStepPicking ? picked : null)}
+        onStartPick={() => {
+          setAddStepPicking(true);
+          startRefine(null);
+        }}
+        onClearPick={() => {
+          setAddStepPicking(false);
+          endRefine();
+          clearPicked();
+        }}
+        initialAssert={contextPick?.assert}
+        initialWaitMode={contextPick?.waitMode}
+        initialState={contextPick?.elementState}
+        prefillText={contextPick?.prefillText}
+        prefillValue={contextPick?.prefillValue}
+      />
+    ) : null;
+
   return (
     <div className="flex h-full flex-col bg-background">
       {/* Header. `drag-region` keeps the top strip draggable — with the traffic
@@ -321,8 +468,12 @@ export function TrainerPanelView() {
         ) : running ? (
           <Status variant="loading">{state.replaying ? "Replaying" : "Running"}</Status>
         ) : (
+          // "Recording", not "Editing", for a session continuing an existing
+          // test — capture is live in both, and the chip that says so is the
+          // wrong place to carry that distinction. The Save Test button below
+          // already does. See the mirror of this in recording-view.tsx.
           <Status variant={state.paused ? "warning" : "error"}>
-            {state.paused ? "Paused" : state.editing ? "Editing" : "Recording"}
+            {state.paused ? "Paused" : "Recording"}
           </Status>
         )}
         <Badge color="secondary">{liveSteps.length}</Badge>
@@ -344,15 +495,24 @@ export function TrainerPanelView() {
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {docked ? "Undock from the training browser" : "Dock to the training browser"}
+              {docked
+                ? DOCK_TOOLTIP.docked
+                : dockReason === "no-room"
+                  ? DOCK_TOOLTIP.noRoom
+                  : DOCK_TOOLTIP.undocked}
             </TooltipContent>
           </Tooltip>
         </div>
       </div>
 
+      {/* `liveUrl` — where the page IS — not `url`, which is where the recording
+          STARTED and is what gets saved as the test's URL. This line rendered
+          `url` for its whole life, so it was right until the first navigation
+          and quietly wrong from then on. `GenerateStepsDialog` below still
+          takes `url`, correctly: it is asking about the test, not the page. */}
       <div className="border-b border-separator px-3 py-1.5">
         <Text variant="small" color="secondary" truncate className="min-w-0">
-          {state.url}
+          {state.liveUrl ?? state.url}
         </Text>
       </div>
 
@@ -392,19 +552,30 @@ export function TrainerPanelView() {
         </div>
       ) : null}
 
-      <ScrollArea className="min-h-0 flex-1" autoScrollToBottom autoScrollDeps={[liveSteps.length]}>
+      <ScrollArea
+        className="min-h-0 flex-1"
+        autoScrollToBottom={cursorAtEnd}
+        autoScrollDeps={[liveSteps.length]}
+      >
         <div className="flex flex-col p-2">
           {liveSteps.length === 0 ? (
-            <Text variant="small" color="secondary" className="px-1 py-2">
-              Interact with the site — steps appear here as you go.
-            </Text>
+            <>
+              {/* No gaps to sit between yet, and the composer is the only way
+                  to put a step into a session that has captured nothing. */}
+              {composerAt(0)}
+              <Text variant="small" color="secondary" className="px-1 py-2">
+                Interact with the site — steps appear here as you go.
+              </Text>
+            </>
           ) : (
             <>
               <CursorGap
                 active={state.cursor === 0}
                 onClick={() => setCursor(0)}
                 disabled={controlsDisabled}
+                label={INSERT_HERE}
               />
+              {composerAt(0)}
               {liveSteps.map((s, i) => (
                 <React.Fragment key={s.id}>
                   <StepRow
@@ -419,6 +590,7 @@ export function TrainerPanelView() {
                     runStatus={replayStepStatus[i]}
                     replayFlash={replayFlash[i]}
                     isNew={newStepIds.has(s.id)}
+                    justAdded={s.id === lastAddedStepId}
                     indent={stepDepths[i]}
                     drag={
                       controlsDisabled
@@ -436,7 +608,9 @@ export function TrainerPanelView() {
                     active={state.cursor === i + 1}
                     onClick={() => setCursor(i + 1)}
                     disabled={controlsDisabled}
+                    label={i + 1 === liveSteps.length ? undefined : INSERT_HERE}
                   />
+                  {composerAt(i + 1)}
                 </React.Fragment>
               ))}
             </>
@@ -513,49 +687,6 @@ export function TrainerPanelView() {
           {state.editing ? "Save Test" : "Generate Test"}
         </Button>
       </div>
-
-      {addKind ? (
-        <AddStepDialog
-          open={addKind !== null}
-          kind={addKind}
-          currentTestId={state?.testId ?? undefined}
-          onOpenChange={(o) => {
-            if (!o) {
-              setAddKind(null);
-              if (addStepPicking) {
-                setAddStepPicking(false);
-                endRefine();
-                clearPicked();
-              }
-              setContextPick(null);
-            }
-          }}
-          onAdd={(steps: RawStep[]) => {
-            steps.forEach((s) => insertStep(s));
-            if (addStepPicking) {
-              setAddStepPicking(false);
-              endRefine();
-              clearPicked();
-            }
-            setContextPick(null);
-          }}
-          picked={contextPick?.picked ?? (addStepPicking ? picked : null)}
-          onStartPick={() => {
-            setAddStepPicking(true);
-            startRefine(null);
-          }}
-          onClearPick={() => {
-            setAddStepPicking(false);
-            endRefine();
-            clearPicked();
-          }}
-          initialAssert={contextPick?.assert}
-          initialWaitMode={contextPick?.waitMode}
-          initialState={contextPick?.elementState}
-          prefillText={contextPick?.prefillText}
-          prefillValue={contextPick?.prefillValue}
-        />
-      ) : null}
 
       <GenerateStepsDialog
         open={aiOpen}

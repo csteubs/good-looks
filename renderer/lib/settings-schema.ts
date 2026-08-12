@@ -23,11 +23,13 @@ export type PaneId =
   | "storage"
   | "ai"
   | "alerts"
-  | "advanced";
+  | "integrations"
+  | "diagnostics"
+  | "experiments";
 
 /** Sidebar grouping. `null` = ungrouped, rendered above the titled groups
- *  (Appearance) or below them (Advanced), which is where macOS puts the
- *  general-purpose and the developer-ish panes respectively. */
+ *  (Appearance) or below them (Diagnostics, Experiments), which is where macOS
+ *  puts the general-purpose and the developer-ish panes respectively. */
 export type PaneGroup = "Testing" | "Connections" | null;
 
 export interface PaneDef {
@@ -81,13 +83,41 @@ export const PANES: readonly PaneDef[] = [
   {
     id: "alerts",
     title: "Alerts",
-    subtitle: "Being told when a run goes wrong.",
+    // Says "on this Mac" since the webhook moved to Integrations: what is left
+    // here is three local notifications, and the pane's whole claim is now that
+    // none of it goes anywhere.
+    subtitle: "Being told when a run goes wrong, on this Mac.",
     group: "Connections",
   },
   {
-    id: "advanced",
-    title: "Advanced",
+    // The one place to answer "what does this app talk to?".
+    //
+    // Holds the webhook (moved from Alerts), the Linear connection, and the
+    // GitHub token — which had no settings UI at all before this and could only
+    // be set from inside the branch switcher, where nobody auditing the app
+    // would think to look.
+    //
+    // The local notification rows did NOT move with the webhook. They send
+    // nothing anywhere, and a pane whose subject is outbound connections is
+    // weaker for listing three things that aren't.
+    id: "integrations",
+    title: "Integrations",
+    subtitle: "Services this app connects to, and what leaves this Mac.",
+    group: "Connections",
+  },
+  {
+    id: "diagnostics",
+    title: "Diagnostics",
     subtitle: "Tools for handing this app's state to someone helping you.",
+    group: null,
+  },
+  {
+    // Its own pane since B4. A flag that changes how a RUN behaves does not
+    // belong buried inside AI settings, where nobody looking for "what might be
+    // affecting my results?" would ever think to check.
+    id: "experiments",
+    title: "Experiments",
+    subtitle: "Behaviour that is still being decided. Any of it can change.",
     group: null,
   },
 ];
@@ -108,10 +138,10 @@ export interface PaneSegment {
  * group, not one bucket per distinct group.
  *
  * The difference matters because two separate stretches are ungrouped:
- * Appearance at the top and Advanced at the bottom, which is where macOS puts
- * the general-purpose and the developer panes. Bucketing by group value would
- * collapse those into one section and render Advanced directly under
- * Appearance, at the top of the list.
+ * Appearance at the top, and Diagnostics + Experiments at the bottom, which is
+ * where macOS puts the general-purpose and the developer panes. Bucketing by
+ * group value would collapse those into one section and render the developer
+ * panes directly under Appearance, at the top of the list.
  */
 export function paneSegments(): readonly PaneSegment[] {
   const segments: PaneSegment[] = [];
@@ -146,7 +176,29 @@ export interface SettingIndexEntry {
 
 export const SETTING_INDEX: readonly SettingIndexEntry[] = [
   // Appearance
+  // Still indexed, and the keywords still name what someone would search for.
+  // "light" and "auto" especially: the row exists to answer where that control
+  // went, so the search has to be able to reach it by the name of the thing
+  // that is gone.
   { id: "theme", pane: "appearance", label: "Theme", keywords: "dark light auto system appearance colour color" },
+  // Keywords cover the words someone reaches for when the app is too small to
+  // read — "zoom", "scale", "bigger", "accessibility" — and not just the label.
+  // Whoever needs this setting most is the person least able to browse for it.
+  {
+    id: "ui-scale",
+    pane: "appearance",
+    label: "Font size",
+    keywords: "font text type size zoom scale bigger larger smaller legibility accessibility",
+    key: "uiScale",
+  },
+  {
+    id: "ui-typeface",
+    pane: "appearance",
+    label: "Typeface",
+    keywords:
+      "font family typeface mono monospace space grotesk sf pro menlo helvetica system classic",
+    key: "uiTypeface",
+  },
   // Both flourishes write the same key — it's one array of disabled ids, not a
   // field each. `paneKeys` dedupes, so the pane counts them as one setting and
   // "reset section" restores the whole array in a single write.
@@ -163,6 +215,16 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     label: "Home screen animation",
     keywords: "black hole ink drawing flourish aesthetic enhancement",
     key: "disabledAestheticEnhancements",
+  },
+  // Keywords name the thing that is SENT, not just the thing that is drawn:
+  // someone auditing this app searches "network", "privacy" or "duckduckgo",
+  // not "site icons".
+  {
+    id: "site-icons-from-web",
+    pane: "appearance",
+    label: "Fetch site icons from the web",
+    keywords: "favicon icon monogram network privacy egress duckduckgo hostname third party",
+    key: "siteIconsFromWeb",
   },
 
   // Recording
@@ -321,20 +383,6 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "lm studio bearer authentication unauthorized 401 credential secret",
   },
   { id: "llm-model", pane: "ai", label: "Model", keywords: "llm ollama claude sonnet opus haiku" },
-  {
-    id: "keep-running-ai-debug-jobs",
-    pane: "ai",
-    label: "Keep a running AI debug job when a test is re-run",
-    keywords: "experimental cancel session survive rerun",
-    key: "keepRunningAiDebugJobs",
-  },
-  {
-    id: "auto-accept-ai-debug-fixes",
-    pane: "ai",
-    label: "Apply AI debug fixes automatically",
-    keywords: "experimental auto accept apply suggestion corrected script",
-    key: "autoAcceptAiDebugFixes",
-  },
 
   // Alerts
   {
@@ -358,33 +406,82 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "notification macos banner ai debug llm answer ready local",
     key: "notifyOnAiDebugDone",
   },
+
+  // Integrations
+  //
+  // The webhook rows keep their ids across the move to this pane. The id is
+  // what `SettingRow` hides on, what search matches, and what every existing
+  // test addresses — renaming them to match the new pane would break all three
+  // to make the strings tidier.
+  {
+    id: "linear-connection",
+    pane: "integrations",
+    label: "Linear",
+    keywords: "issue tracker ticket bug api key connect linear team project workspace",
+  },
+  {
+    id: "linear-default-team",
+    pane: "integrations",
+    label: "Default team",
+    keywords: "linear team default destination triage",
+  },
+  {
+    id: "linear-default-project",
+    pane: "integrations",
+    label: "Default project",
+    keywords: "linear project default destination milestone",
+  },
   {
     id: "alert-webhook-enabled",
-    pane: "alerts",
+    pane: "integrations",
     label: "Send alerts to a webhook",
-    keywords: "slack discord post http remote",
+    keywords: "slack discord post http remote alerts",
     key: "alertWebhookEnabled",
   },
   {
     id: "alert-webhook-url",
-    pane: "alerts",
+    pane: "integrations",
     label: "Webhook URL",
-    keywords: "slack discord secret credential https endpoint",
+    keywords: "slack discord secret credential https endpoint alerts",
+  },
+  {
+    id: "github-token",
+    pane: "integrations",
+    label: "GitHub token",
+    keywords: "branch switcher pull request private repository rate limit credential",
   },
 
-  // Advanced
+  // Diagnostics
   {
     id: "debug-screenshots",
-    pane: "advanced",
+    pane: "diagnostics",
     label: "Debug screenshots",
     keywords: "mcp claude code capture window shortcut helper",
     key: "debugScreenshots",
   },
   {
     id: "debug-capture-now",
-    pane: "advanced",
+    pane: "diagnostics",
     label: "Capture now",
     keywords: "screenshot mcp immediate window",
+  },
+
+  // Experiments. The keywords still carry "ai" and "debug" because that is what
+  // someone looking for these will type — "experiments" is the pane they ended
+  // up in, not a word anyone would search for.
+  {
+    id: "keep-running-ai-debug-jobs",
+    pane: "experiments",
+    label: "Keep a running AI debug job when a test is re-run",
+    keywords: "experimental ai debug cancel session survive rerun",
+    key: "keepRunningAiDebugJobs",
+  },
+  {
+    id: "auto-accept-ai-debug-fixes",
+    pane: "experiments",
+    label: "Apply AI debug fixes automatically",
+    keywords: "experimental ai debug auto accept apply suggestion corrected script",
+    key: "autoAcceptAiDebugFixes",
   },
 ];
 
@@ -444,6 +541,7 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   defaultCaptureArtifacts: false,
   defaultRecordLogs: false,
   recordAllHeaders: false,
+  siteIconsFromWeb: false,
   keepRunningAiDebugJobs: false,
   defaultRunHeadless: false,
   defaultRunBrowser: "chromium",
@@ -463,6 +561,8 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   defaultA11yChecks: false,
   debugScreenshots: false,
   disabledAestheticEnhancements: [],
+  uiScale: 1,
+  uiTypeface: "space",
 };
 
 /** Structural equality for the three shapes a setting value actually takes:

@@ -14,7 +14,9 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 import type { RecorderState, Step, StepType } from "../lib/recorder-types";
 import { RecordingView } from "./recording-view";
+import { INSERT_HERE } from "./step-row";
 import { withAiDebug } from "../__tests__/ai-debug-harness";
+import { toastCalls, toastTexts, clearToastCalls } from "../__tests__/sonner-stub";
 
 function step(id: string, partial: Partial<Step> & { type: StepType }): Step {
   return { id, timestamp: 0, ...partial } as Step;
@@ -67,6 +69,15 @@ vi.mock("./recorder-store", () => ({
   useRecorder: () => store,
 }));
 
+/** Backend push listeners, keyed by channel, so a test can deliver an event the
+ *  way the backend would. Mirrors the panel's suite. */
+const listeners: Record<string, ((payload: unknown) => void)[]> = {};
+
+/** Deliver a backend push to whatever the view subscribed. */
+function emit(channel: string, payload: unknown = {}) {
+  for (const cb of listeners[channel] ?? []) cb(payload);
+}
+
 vi.mock("../lib/api", () => ({
   api: {
     recorder: { listCookies: async () => [], getSettings: async () => ({}) },
@@ -87,7 +98,12 @@ vi.mock("../lib/api", () => ({
       cancel: async () => {},
       isActive: async () => ({ active: false }),
     },
-    on: () => () => {},
+    on: (channel: string, cb: (payload: unknown) => void) => {
+      (listeners[channel] ??= []).push(cb);
+      return () => {
+        listeners[channel] = (listeners[channel] ?? []).filter((f) => f !== cb);
+      };
+    },
   },
 }));
 
@@ -124,6 +140,8 @@ function selectTab(name: RegExp) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  for (const key of Object.keys(listeners)) delete listeners[key];
+  clearToastCalls();
   setStore();
 });
 
@@ -209,6 +227,79 @@ describe("recording state", () => {
     render(withAiDebug(<RecordingView />));
     fireEvent.click(screen.getByRole("button", { name: /resume/i }));
     expect(actions.resume).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the session-state chip", () => {
+  // NONE OF THESE STATES IS AN OUTCOME, so none takes a status hue. That is a
+  // real change rather than a restyle: `Recording` was the SDK's `error`
+  // variant — RED, the colour this palette spends on a failed run — on the one
+  // screen where nothing has run yet.
+  const chip = () => document.querySelector('[data-gl="status-chip"]') as HTMLElement | null;
+
+  it("draws Recording as in-flight, not as an outcome", () => {
+    render(withAiDebug(<RecordingView />));
+    expect(chip()?.textContent).toBe("Recording");
+    expect(chip()?.dataset.tone).toBe("running");
+  });
+
+  it("never paints a session state in a status colour", () => {
+    // The rule, stated once over every state this row can be in. `running` is
+    // the holo treatment, and `neutral` is the absence of one — a hue here
+    // would be claiming a result.
+    for (const over of [
+      {},
+      { paused: true },
+      { replaying: true },
+      { pageReady: false },
+      { editing: true },
+    ]) {
+      const { unmount } = render(withAiDebug(<RecordingView />));
+      const tone = chip()?.dataset.tone;
+      expect(["running", "neutral"], JSON.stringify(over)).toContain(tone);
+      unmount();
+      setStore({ state: state(over) });
+    }
+  });
+
+  it("draws Paused as neutral — real, but not live and not a result", () => {
+    setStore({ state: state({ paused: true }) });
+    render(withAiDebug(<RecordingView />));
+    expect(chip()?.textContent).toBe("Paused");
+    expect(chip()?.dataset.tone).toBe("neutral");
+  });
+});
+
+describe("the hard/soft assertion choice", () => {
+  it("can be driven by a plain click", () => {
+    // WORTH ITS OWN TEST because it could not be done before B6. This was the
+    // SDK's `SegmentedControl`, a Radix control that activates on pointer-down
+    // — `fireEvent.click` left it untouched and the assertion then reported
+    // "0 calls", which reads as a dead handler rather than the wrong event
+    // (CLAUDE.md). The theme's `Segmented` is plain buttons with
+    // `aria-pressed`, so the choice is finally assertable at this level
+    // instead of only at the IPC layer.
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: "Soft" }));
+    expect(screen.getByRole("button", { name: "Soft" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Hard" }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("re-arms an active assertion with the new strictness", () => {
+    // The choice only reaches the backend while an assertion is being picked —
+    // otherwise it is a local default the next pick will use. Pinning the live
+    // case because that is the one where getting it wrong records a hard
+    // assertion the user asked to be soft.
+    setStore({ state: state({ assertMode: "visible" }) });
+    render(withAiDebug(<RecordingView />));
+    fireEvent.click(screen.getByRole("button", { name: "Soft" }));
+    expect(actions.setAssert).toHaveBeenCalledWith("visible", true);
+  });
+
+  it("reports the current choice through aria-pressed", () => {
+    render(withAiDebug(<RecordingView />));
+    expect(screen.getByRole("button", { name: "Hard" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button", { name: "Soft" }).getAttribute("aria-pressed")).toBe("false");
   });
 });
 
@@ -478,6 +569,120 @@ describe("a replay started in the docked panel", () => {
     // narrow docked panel uses.
     for (const name of [/add step/i, /replay from the current step/i]) {
       expect(screen.getByRole("button", { name }).hasAttribute("disabled")).toBe(true);
+    }
+  });
+});
+
+describe("the training viewport narrowing is not allowed to be silent", () => {
+  it("tells the user when the backend says the browser got narrower", async () => {
+    // THIS is the window that has to carry the notice. `noteViewportChange`
+    // fires while the trainer panel is still being created — before
+    // `panelWindow.loadURL` — so on the ordinary path (a panel that opens
+    // already docked) the panel's page does not exist yet and the push reaches
+    // a window with no listeners. The main window has been loaded since the
+    // session started, so a subscription only in the panel would be one that
+    // never fires in the real app while its own test passed.
+    render(withAiDebug(<RecordingView />));
+    emit("trainerPanel:viewportNarrowed", { width: 1080 });
+    await waitFor(() => {
+      const t = toastTexts().find((x) => x.title.includes("Training viewport narrowed"));
+      expect(t).toBeTruthy();
+      expect(t?.title).toContain("1080");
+    });
+  });
+
+  it("leaves the notice up instead of expiring it behind the training browser", async () => {
+    // Docking moves focus to the training browser and the panel beside it, so
+    // this toast is raised in a window the user is, at that exact moment, not
+    // looking at. A few seconds of auto-dismiss would run out behind another
+    // window and the warning would be gone before anyone saw it — which is the
+    // same silence the notice was added to end.
+    render(withAiDebug(<RecordingView />));
+    emit("trainerPanel:viewportNarrowed", { width: 1080 });
+    await waitFor(() => expect(toastCalls.length).toBeGreaterThan(0));
+    const opts = toastCalls[toastCalls.length - 1].options as { duration?: unknown };
+    expect(opts?.duration).toBe(Infinity);
+  });
+
+  it("stays quiet until the backend actually reports a narrowing", () => {
+    // The one-per-session guarantee and the "not when the width was preserved"
+    // rule both live in the backend. The renderer must not manufacture a notice
+    // on its own — mounting the view is not evidence anything narrowed.
+    render(withAiDebug(<RecordingView />));
+    expect(toastTexts().some((x) => x.title.includes("Training viewport narrowed"))).toBe(false);
+  });
+});
+
+describe("continuing an existing test: where a captured step goes", () => {
+  // Mirror of the block in trainer-panel-view.test.tsx, and it has to be a
+  // mirror: the two trainers are two renderings of one step list, so a fix
+  // present in only one of them is a bug that appears or not depending on
+  // which window the user happens to be looking at.
+  //
+  // The report: "I only see the Paused and Editing options in the trainer
+  // window, and it doesn't appear to record any manual page interaction."
+  // Capture was live throughout. The insert cursor sits where the browser is —
+  // just past the navigation for a continued test — so a captured step landed
+  // near the TOP of the list while the view scrolled to the bottom.
+
+  function continuedSession(over: Record<string, unknown> = {}) {
+    setStore({
+      state: state({ editing: true, cursor: 1 }),
+      liveSteps: [
+        step("s0", { type: "goto", url: "https://example.com" }),
+        step("s1", { type: "click", locator: { k: "text", v: "One" } }),
+        step("s2", { type: "click", locator: { k: "text", v: "Two" } }),
+        step("s3", { type: "click", locator: { k: "text", v: "Three" } }),
+      ],
+      ...over,
+    });
+  }
+
+  it("says Recording, because capture is live", () => {
+    continuedSession();
+    render(withAiDebug(<RecordingView />));
+    expect(screen.getByText("Recording")).toBeTruthy();
+    // "Editing recording" is the view's TITLE and stays — that is the right
+    // place for the distinction. The status chip is not.
+    expect(screen.queryByText("Editing")).toBe(null);
+  });
+
+  it("names the insert point when it is not at the end of the list", () => {
+    continuedSession();
+    render(withAiDebug(<RecordingView />));
+    expect(screen.getAllByText(INSERT_HERE).length).toBeGreaterThan(0);
+  });
+
+  it("says nothing at the end of the list, where steps appear under the last row", () => {
+    continuedSession({ state: state({ editing: true, cursor: 4 }) });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.queryByText(INSERT_HERE)).toBe(null);
+  });
+
+  it("scrolls the arriving step into view", () => {
+    const scrolled: Element[] = [];
+    const spy = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(function (this: Element) {
+        scrolled.push(this);
+      });
+    try {
+      continuedSession({
+        liveSteps: [
+          step("s0", { type: "goto", url: "https://example.com" }),
+          step("new", { type: "click", locator: { k: "text", v: "Just captured" } }),
+          step("s1", { type: "click", locator: { k: "text", v: "One" } }),
+          step("s2", { type: "click", locator: { k: "text", v: "Two" } }),
+        ],
+        lastAddedStepId: "new",
+      });
+      render(withAiDebug(<RecordingView />));
+      expect(
+        scrolled.some((el) => el.getAttribute("data-just-added") === "true"),
+        "the arriving row scrolled itself into view",
+      ).toBe(true);
+    } finally {
+      spy.mockRestore();
     }
   });
 });

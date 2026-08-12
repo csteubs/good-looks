@@ -80,6 +80,58 @@ export function readRunLogs(dataDir, testId, runId) {
   };
 }
 
+/**
+ * What each failing locator resolved to, and what Auto-Heal ranked beside it.
+ *
+ * The two files answer different questions and either can exist alone: a
+ * locator that was ambiguous and then healed writes matches and no heal
+ * failure, and a run from before matches existed writes the reverse. Returned
+ * as one list per step, joined on step index — the same shape the app builds,
+ * because a caller reasoning about "which element did this match" should not
+ * have to know it came from two files.
+ *
+ * Deliberately NOT normalized here. This process cannot redact secrets (see
+ * readRunLogs), and unlike console text these fields are structural — but they
+ * are still page-authored, so the tool that returns them says so.
+ */
+export function readStepStructures(dataDir, testId, runId) {
+  const dir = runDir(dataDir, testId, runId);
+  const heals = readJson(path.join(dir, "heal-failures.json"));
+  const matches = readJson(path.join(dir, "step-matches.json"));
+  if (!heals && !matches) return null;
+
+  const byIndex = new Map();
+  for (const m of matches?.entries ?? []) {
+    byIndex.set(m.stepIndex, {
+      stepIndex: m.stepIndex,
+      stepLabel: m.stepLabel,
+      method: m.method,
+      originalLocator: m.originalLocator,
+      matchCount: m.matchCount,
+      matches: m.matches ?? [],
+      candidates: [],
+    });
+  }
+  for (const h of heals?.entries ?? []) {
+    const existing = byIndex.get(h.stepIndex);
+    if (!existing) {
+      byIndex.set(h.stepIndex, {
+        stepIndex: h.stepIndex,
+        stepLabel: h.stepLabel,
+        method: h.method,
+        originalLocator: h.originalLocator,
+        matches: [],
+        outcome: h.outcome,
+        candidates: h.candidates ?? [],
+      });
+      continue;
+    }
+    existing.outcome = h.outcome;
+    existing.candidates = h.candidates ?? [];
+  }
+  return [...byIndex.values()].sort((a, b) => a.stepIndex - b.stepIndex);
+}
+
 /** Run ids with an artifact directory for this test, newest first. */
 export function listRunDirs(dataDir, testId) {
   const dir = path.join(artifactsRoot(dataDir), testId);

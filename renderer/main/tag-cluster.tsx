@@ -19,7 +19,7 @@
 
 import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertDialog, Badge, Text, toast } from "@ui";
+import { AlertDialog, toast } from "@ui";
 import { Tag, X } from "lucide-react";
 
 import { api } from "../lib/api";
@@ -52,27 +52,25 @@ function TagChip({
   trailing?: React.ReactNode;
 }) {
   return (
-    <span
-      className={`inline-flex items-stretch overflow-hidden rounded-pill border text-small transition-colors ${
-        active
-          ? "border-accent bg-accent/12 text-primary"
-          : "border-fill-secondary text-secondary hover:border-primary"
-      } ${disabled ? "opacity-50" : ""}`}
-    >
+    <span className="gl-tag" data-disabled={disabled ? "" : undefined}>
       <button
         type="button"
         onClick={onClick}
         disabled={disabled}
+        // `aria-pressed` is both the announcement and what the stylesheet
+        // selects on, so there is no second `active` class that could disagree
+        // with what a screen reader is told. It is also the selector
+        // `check:selection-neutral` reads: THE ACTIVE FILTER IS NEUTRAL, never
+        // a status hue, because a coloured one would compete with every result
+        // on the screen it is filtering.
         aria-pressed={active}
-        className={`py-0.5 pl-2.5 transition-colors hover:bg-control-subtle disabled:cursor-default ${
-          trailing ? "pr-2" : "pr-2.5"
-        }`}
+        className="gl-tag-btn"
       >
         {label} · {count}
       </button>
       {trailing ? (
         <>
-          <span aria-hidden="true" className="my-1 w-px shrink-0 bg-separator" />
+          <span aria-hidden="true" className="gl-tag-sep" />
           {trailing}
         </>
       ) : null}
@@ -85,8 +83,12 @@ function TagChip({
  *
  *  Visible at rest rather than revealed on hover: a hover-only X on a pill this
  *  small is undiscoverable, and it's the entire affordance. Muted, though — it
- *  sits beside the count, which is what you're usually reading. The red wash on
- *  its own hover is what says "destructive", so it can stay quiet until then. */
+ *  sits beside the count, which is what you're usually reading.
+ *
+ *  IT NO LONGER GOES RED ON HOVER (A5). Under this palette an outcome hue on a
+ *  hover state reads as a result rather than as an affordance. The destructive
+ *  fact is stated instead of implied: the confirm below names how many tests
+ *  lose the tag and that it cannot be undone, and its confirm button is red. */
 function DeleteTagButton({
   tag,
   tests,
@@ -111,9 +113,9 @@ function DeleteTagButton({
           disabled={disabled}
           aria-label={`Delete tag ${tag}`}
           title={`Delete “${tag}” from every test`}
-          className="flex items-center px-1.5 text-tertiary transition-colors hover:bg-support-red-10 hover:text-support-red disabled:cursor-default disabled:opacity-40"
+          className="gl-tag-del"
         >
-          <X className="size-3" />
+          <X aria-hidden="true" />
         </button>
       }
       size="small"
@@ -129,20 +131,18 @@ function DeleteTagButton({
     >
       {tests.length > 0 ? (
         <div className="flex flex-col gap-2">
-          <Text variant="small" color="tertiary">
+          <span className="gl-section-title">
             {tests.length === 1 ? "Tagged test" : `Tagged tests · ${tests.length}`}
-          </Text>
+          </span>
           <div className="flex flex-wrap items-center gap-1.5">
             {shown.map((t) => (
-              <Badge key={t.id} color="secondary">
+              // Neutral, not toned: a test name here is not reporting an
+              // outcome, it is naming what the delete will touch.
+              <span key={t.id} className="gl-chip">
                 {t.name}
-              </Badge>
+              </span>
             ))}
-            {rest > 0 ? (
-              <Text variant="small" color="tertiary">
-                +{rest} more
-              </Text>
-            ) : null}
+            {rest > 0 ? <span className="gl-note">+{rest} more</span> : null}
           </div>
         </div>
       ) : null}
@@ -209,8 +209,10 @@ export function TagCluster({
   if (tags.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5 rounded-card border border-fill-secondary bg-well px-2 py-1.5">
-      <Tag className="mx-0.5 size-3.5 shrink-0 text-tertiary" aria-hidden="true" />
+    <div className="gl-tag-row">
+      <span className="gl-tag-row-icon">
+        <Tag aria-hidden="true" />
+      </span>
       <TagChip
         label="All"
         count={tests.length}

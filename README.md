@@ -156,9 +156,12 @@ Vitest has two projects. **`node`** covers `main/**/*.test.ts`,
 and the Auto-Heal probe.
 
 The `check:*` scripts predate Vitest and are deliberately kept: plain assertions
-and a non-zero exit, no runner. Two of them are source-level
-(`check:ai-debug-scroll`, `check:scroll-layout`) because they guard layout
-contracts that jsdom cannot observe.
+and a non-zero exit, no runner. Several of them are source-level
+(`check:ai-debug-scroll`, `check:scroll-layout`, `check:narrow-layout`,
+`check:clickable-chrome`, `check:dialog-footer`) because they guard layout
+contracts that jsdom cannot observe at all — occlusion and overflow both render
+as zeros there, so the test that looks like the right one passes either way.
+The real measurements live in `e2e/`, against the running app.
 
 New features ship with tests. Most bugs found in this codebase so far have been
 silent — wrong behaviour that threw no error and looked correct on screen.

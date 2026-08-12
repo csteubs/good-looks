@@ -197,7 +197,7 @@ export function TestDefaultsPane() {
           <SettingRow
             id="record-all-headers"
             label="Include all request headers"
-            danger="stores credentials"
+            flag="stores credentials"
             nested
             summary="Turns off the safe allowlist. Stores Authorization, Cookie and anything else the page sends. By default only content type, caching and CORS headers are stored, and every other header is recorded by name with its value omitted."
           >

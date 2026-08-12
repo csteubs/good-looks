@@ -18,14 +18,30 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { toast } from "@ui";
-import type { NativeThemeInfo } from "../lib/host-types";
 
 import { api } from "../lib/api";
 import type { LlmProvider, LlmProviderStatus } from "../lib/llm-types";
+import type {
+  ConnectionStatus,
+  IssueContainer,
+  IssueDefaults,
+  IssueSubContainer,
+  ProviderVocabulary,
+} from "../lib/issue-types";
 import type { ArtifactUsage, RecorderSettings } from "../lib/recorder-types";
 import { formatBytes } from "../lib/settings-schema";
 
-export type ThemeSource = "system" | "light" | "dark";
+/** Before the status load resolves, and if it never does. Disconnected is the
+ *  safe direction to be wrong in: it offers a key field, where the opposite
+ *  error would claim a connection that isn't there. */
+const DISCONNECTED: ConnectionStatus = {
+  provider: "linear",
+  hasKey: false,
+  account: null,
+  error: null,
+};
+
+const NO_DEFAULTS: IssueDefaults = { containerId: null, subContainerId: null };
 
 export interface WebhookStatus {
   hasUrl: boolean;
@@ -43,9 +59,6 @@ export interface SettingsController {
    *  and leaves the optimistic value in place — same as before the split.
    *  Rolling back would fight the user's next keystroke. */
   save: (patch: Partial<RecorderSettings>) => Promise<void>;
-
-  themeSource: ThemeSource;
-  setTheme: (source: string) => Promise<void>;
 
   provider: LlmProvider;
   model: string | null;
@@ -72,6 +85,31 @@ export interface SettingsController {
   saveWebhookUrl: (url: string) => Promise<boolean>;
   clearWebhookUrl: () => Promise<void>;
   testWebhook: () => Promise<void>;
+
+  /** Issue tracker. `issuesStatus.hasKey` and `issuesStatus.account` answer
+   *  different questions — a key is saved, and the key works — so the pane can
+   *  say "saved, but not reachable" instead of picking one and being wrong. */
+  issuesStatus: ConnectionStatus;
+  /** The provider's own words. Null until the load resolves; the pane falls
+   *  back rather than rendering "undefined Team". */
+  issuesVocabulary: ProviderVocabulary | null;
+  issuesBusy: boolean;
+  issueContainers: IssueContainer[];
+  issueSubContainers: IssueSubContainer[];
+  issueDefaults: IssueDefaults;
+  /** Resolves true when the key was accepted, so the pane knows whether to
+   *  clear its input — same contract as `saveWebhookUrl`. */
+  connectIssues: (key: string) => Promise<boolean>;
+  verifyIssues: () => Promise<void>;
+  disconnectIssues: () => Promise<void>;
+  setIssueDefaults: (patch: Partial<IssueDefaults>) => Promise<void>;
+
+  /** GitHub token, used by the branch switcher. Had no settings UI before the
+   *  Integrations pane — it could only be set from inside `/branches`. */
+  hasGithubToken: boolean;
+  githubBusy: boolean;
+  saveGithubToken: (token: string) => Promise<boolean>;
+  clearGithubToken: () => Promise<void>;
 
   artifactUsage: ArtifactUsage | null;
   pruning: boolean;
@@ -105,8 +143,6 @@ export function useSettingsControllerState(): SettingsController {
   const [settings, setSettings] = useState<Partial<RecorderSettings>>({});
   const [loaded, setLoaded] = useState(false);
 
-  const [themeSource, setThemeSource] = useState<ThemeSource>("system");
-
   const [provider, setProvider] = useState<LlmProvider>("ollama");
   const [model, setModel] = useState<string | null>(null);
   const [llmStatus, setLlmStatus] = useState<LlmProviderStatus | null>(null);
@@ -121,6 +157,18 @@ export function useSettingsControllerState(): SettingsController {
   // backend — only whether one exists, and its host.
   const [webhookStatus, setWebhookStatus] = useState<WebhookStatus>({ hasUrl: false, host: null });
   const [webhookBusy, setWebhookBusy] = useState(false);
+
+  // Same contract as the webhook above: the key travels renderer→backend only,
+  // and what comes back is whether one is stored and who it belongs to.
+  const [issuesStatus, setIssuesStatus] = useState<ConnectionStatus>(DISCONNECTED);
+  const [issuesVocabulary, setIssuesVocabulary] = useState<ProviderVocabulary | null>(null);
+  const [issuesBusy, setIssuesBusy] = useState(false);
+  const [issueContainers, setIssueContainers] = useState<IssueContainer[]>([]);
+  const [issueSubContainers, setIssueSubContainers] = useState<IssueSubContainer[]>([]);
+  const [issueDefaults, setIssueDefaultsState] = useState<IssueDefaults>(NO_DEFAULTS);
+
+  const [hasGithubToken, setHasGithubToken] = useState(false);
+  const [githubBusy, setGithubBusy] = useState(false);
 
   const [artifactUsage, setArtifactUsage] = useState<ArtifactUsage | null>(null);
   const [pruning, setPruning] = useState(false);
@@ -188,6 +236,22 @@ export function useSettingsControllerState(): SettingsController {
       setWebhookStatus,
     );
     load(
+      () => api.issues.status(),
+      (next) => setIssuesStatus(next ?? DISCONNECTED),
+    );
+    load(
+      () => api.issues.vocabulary(),
+      setIssuesVocabulary,
+    );
+    load(
+      () => api.issues.getDefaults(),
+      (next) => setIssueDefaultsState(next ?? NO_DEFAULTS),
+    );
+    load(
+      () => api.branches.status(),
+      (next) => setHasGithubToken(!!next?.hasToken),
+    );
+    load(
       () => api.artifacts.usage(),
       setArtifactUsage,
     );
@@ -205,34 +269,6 @@ export function useSettingsControllerState(): SettingsController {
       toast.error(`Failed to save setting: ${error}`);
     }
   }, []);
-
-  // ── Theme ─────────────────────────────────────────────────────────────────
-
-  const refreshThemeInfo = useCallback(async () => {
-    try {
-      const info: NativeThemeInfo = await window.glazeAPI.nativeTheme.getInfo();
-      setThemeSource((info?.themeSource as ThemeSource) ?? "system");
-    } catch (error) {
-      toast.error(`Failed to get theme info: ${error}`);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refreshThemeInfo();
-  }, [refreshThemeInfo]);
-
-  const setTheme = useCallback(
-    async (value: string) => {
-      const source = value as ThemeSource;
-      try {
-        await window.glazeAPI.nativeTheme.setThemeSource(source);
-        await refreshThemeInfo();
-      } catch (error) {
-        toast.error(`Failed to set theme: ${error}`);
-      }
-    },
-    [refreshThemeInfo],
-  );
 
   // ── LLM provider ──────────────────────────────────────────────────────────
 
@@ -467,6 +503,163 @@ export function useSettingsControllerState(): SettingsController {
     }
   }, []);
 
+  // ── Issue tracker ─────────────────────────────────────────────────────────
+
+  /** Teams and projects, fetched only when there is a verified connection to
+   *  fetch them with. Failures are swallowed: the pickers simply have nothing
+   *  to offer, and the connection row above already carries the reason. */
+  const loadIssueLists = useCallback(async () => {
+    try {
+      const [containers, subContainers] = await Promise.all([
+        api.issues.listContainers(),
+        api.issues.listSubContainers(),
+      ]);
+      setIssueContainers(containers ?? []);
+      setIssueSubContainers(subContainers ?? []);
+    } catch {
+      setIssueContainers([]);
+      setIssueSubContainers([]);
+    }
+  }, []);
+
+  const connectIssues = useCallback(
+    async (raw: string) => {
+      const key = raw.trim();
+      if (!key) return false;
+      setIssuesBusy(true);
+      try {
+        const next = await api.issues.connect(key);
+        setIssuesStatus(next);
+        if (next.account) {
+          toast.success(
+            next.account.workspaceName
+              ? `Connected to ${next.account.workspaceName}.`
+              : `Connected as ${next.account.accountName}.`,
+          );
+          await loadIssueLists();
+        } else {
+          // The key IS saved — connect stores before it verifies — so this is
+          // "saved, but not working", and saying only the second half would
+          // send someone off to paste it again for nothing.
+          toast.error(next.error ?? "Saved, but the key could not be verified.");
+        }
+        // True either way: the key was stored, so the field should clear. A
+        // verification that failed on a flaky network is not a reason to make
+        // someone paste it again.
+        return true;
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : `Failed to save the key: ${error}`);
+        return false;
+      } finally {
+        setIssuesBusy(false);
+      }
+    },
+    [loadIssueLists],
+  );
+
+  const verifyIssues = useCallback(async () => {
+    setIssuesBusy(true);
+    try {
+      const next = await api.issues.verify();
+      setIssuesStatus(next);
+      if (next.account) {
+        toast.success(
+          next.account.workspaceName
+            ? `Connected to ${next.account.workspaceName}.`
+            : `Connected as ${next.account.accountName}.`,
+        );
+        await loadIssueLists();
+      } else {
+        // Surfaced, not swallowed — the point of a test button is to find out
+        // that it doesn't work.
+        toast.error(next.error ?? "Could not verify the connection.");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : `Verification failed: ${error}`);
+    } finally {
+      setIssuesBusy(false);
+    }
+  }, [loadIssueLists]);
+
+  const disconnectIssues = useCallback(async () => {
+    setIssuesBusy(true);
+    try {
+      setIssuesStatus(await api.issues.disconnect());
+      // The backend clears the defaults with the key, because a team id only
+      // means something inside the workspace that key opened. Mirror it here
+      // rather than re-reading, so the pickers empty in the same paint.
+      setIssueDefaultsState(NO_DEFAULTS);
+      setIssueContainers([]);
+      setIssueSubContainers([]);
+      toast.success("Disconnected.");
+    } catch (error) {
+      toast.error(`Failed to disconnect: ${error}`);
+    } finally {
+      setIssuesBusy(false);
+    }
+  }, []);
+
+  const setIssueDefaults = useCallback(async (patch: Partial<IssueDefaults>) => {
+    try {
+      // Authoritative: the backend clears the sub-container when the container
+      // changes, so echoing the patch optimistically would leave a project
+      // showing under a team it no longer belongs to.
+      setIssueDefaultsState(await api.issues.setDefaults(patch));
+    } catch (error) {
+      toast.error(`Failed to save the destination: ${error}`);
+    }
+  }, []);
+
+  // Verify once per window, and only when a key is actually stored. Same shape
+  // as the LLM auto-probe above: the alternative is a pane that says "saved"
+  // and makes you click a button to learn the key was revoked last week.
+  const autoVerified = useRef(false);
+  useEffect(() => {
+    if (!issuesStatus.hasKey || autoVerified.current) return;
+    autoVerified.current = true;
+    (async () => {
+      try {
+        const next = await api.issues.verify();
+        setIssuesStatus(next);
+        if (next.account) await loadIssueLists();
+      } catch {
+        /* the row renders the stored status; a retry is one click away */
+      }
+    })();
+  }, [issuesStatus.hasKey, loadIssueLists]);
+
+  // ── GitHub token ──────────────────────────────────────────────────────────
+
+  const saveGithubToken = useCallback(async (raw: string) => {
+    const token = raw.trim();
+    if (!token) return false;
+    setGithubBusy(true);
+    try {
+      const { hasToken } = await api.branches.setToken(token);
+      setHasGithubToken(hasToken);
+      toast.success("GitHub token saved.");
+      return true;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : `Failed to save the token: ${error}`);
+      return false;
+    } finally {
+      setGithubBusy(false);
+    }
+  }, []);
+
+  const clearGithubToken = useCallback(async () => {
+    setGithubBusy(true);
+    try {
+      const { hasToken } = await api.branches.clearToken();
+      setHasGithubToken(hasToken);
+      toast.success("GitHub token removed.");
+    } catch (error) {
+      toast.error(`Failed to remove the token: ${error}`);
+    } finally {
+      setGithubBusy(false);
+    }
+  }, []);
+
   // ── Artifacts ─────────────────────────────────────────────────────────────
 
   const pruneNow = useCallback(async () => {
@@ -512,8 +705,6 @@ export function useSettingsControllerState(): SettingsController {
     settings,
     loaded,
     save,
-    themeSource,
-    setTheme,
     provider,
     model,
     llmStatus,
@@ -537,6 +728,20 @@ export function useSettingsControllerState(): SettingsController {
     saveWebhookUrl,
     clearWebhookUrl,
     testWebhook,
+    issuesStatus,
+    issuesVocabulary,
+    issuesBusy,
+    issueContainers,
+    issueSubContainers,
+    issueDefaults,
+    connectIssues,
+    verifyIssues,
+    disconnectIssues,
+    setIssueDefaults,
+    hasGithubToken,
+    githubBusy,
+    saveGithubToken,
+    clearGithubToken,
     artifactUsage,
     pruning,
     pruneNow,

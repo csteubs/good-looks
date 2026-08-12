@@ -9,8 +9,8 @@
 // The pure half — ranking, keying, counting — lives in renderer/lib/a11y-format.
 // This file is only the pixels.
 
-import { Badge, Text } from "@ui";
-import { Accessibility } from "lucide-react";
+import { Badge, Button, Text } from "@ui";
+import { Accessibility, Send } from "lucide-react";
 
 import { worstNewImpact } from "../lib/a11y-format";
 import type { A11yResult, A11yViolation } from "../lib/recorder-types";
@@ -54,8 +54,25 @@ export function A11yBadge({ result }: { result: A11yResult }) {
  *
  * Accepted violations are SHOWN rather than hidden: "6 issues, 6 accepted" is
  * useful and honest, while a step that looks empty claims the page is clean.
+ *
+ * `filing` is optional, and its absence is what keeps this component usable in
+ * the places where filing makes no sense. When present, each NEW violation gets
+ * a Send button — accepted ones do not, because filing a defect the team
+ * already decided to live with is the opposite of useful.
  */
-export function A11yViolationList({ result }: { result: A11yResult }) {
+export function A11yViolationList({
+  result,
+  filing,
+}: {
+  result: A11yResult;
+  filing?: {
+    /** Called with the axe rule id. The caller owns the run and step, so it can
+     *  build the coordinate — this component never sees one. */
+    onSend: (ruleId: string) => void;
+    /** Rule ids already filed, mapped to their issue identifier. */
+    filed?: Record<string, string>;
+  };
+}) {
   const newSet = new Set(result.newKeys);
   return (
     <div className="flex flex-col gap-2">
@@ -63,6 +80,7 @@ export function A11yViolationList({ result }: { result: A11yResult }) {
         const isNew = v.nodes.length
           ? v.nodes.some((t) => newSet.has(`${v.id}|${t}`))
           : newSet.has(`${v.id}|`);
+        const already = filing?.filed?.[v.id];
         return (
           <div
             key={i}
@@ -74,6 +92,22 @@ export function A11yViolationList({ result }: { result: A11yResult }) {
               <Badge color={IMPACT_COLOR[v.impact]}>{v.impact}</Badge>
               <code className="font-mono text-xs text-secondary">{v.id}</code>
               {!isNew ? <Badge color="secondary">accepted</Badge> : null}
+              {filing && isNew ? (
+                <div className="ml-auto">
+                  {already ? (
+                    <Badge color="secondary">Filed as {already}</Badge>
+                  ) : (
+                    <Button
+                      variant="muted"
+                      aria-label={`Send ${v.id} to the issue tracker`}
+                      onClick={() => filing.onSend(v.id)}
+                    >
+                      <Send className="size-3.5" />
+                      Send
+                    </Button>
+                  )}
+                </div>
+              ) : null}
             </div>
             <Text variant="small" className="pt-1">
               {v.help}

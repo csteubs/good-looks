@@ -119,6 +119,7 @@ function Probe() {
     deleteStep,
     run,
     runEpoch,
+    lastAddedStepId,
   } = useRecorder();
   // Stashed for the tests that need to invoke an action rather than observe
   // state; a button per action would drown the markup the other suites read.
@@ -129,6 +130,7 @@ function Probe() {
       <span data-testid="steps">{liveSteps.map((s) => s.id).join(",")}</span>
       <span data-testid="steps-loaded">{String(stepsLoaded)}</span>
       <span data-testid="new-steps">{[...newStepIds].sort().join(",")}</span>
+      <span data-testid="last-added">{String(lastAddedStepId)}</span>
       <span data-testid="run-epoch">{String(runEpoch)}</span>
       <span data-testid="run-lines">{(runs["t1"]?.lines ?? []).join("|")}</span>
       <span data-testid="run-running">{String(runs["t1"]?.running ?? "none")}</span>
@@ -286,6 +288,31 @@ describe("run output", () => {
     emit("runner:done", { runId: "t1", code: 0 });
     expect(text("run-running")).toBe("false");
     expect(text("run-code")).toBe("0");
+  });
+
+  it("refetches the run history when the backend says it changed", () => {
+    // The bug this pins: a failing test re-run until it passed kept a RED dot
+    // in the sidebar. Nothing was broken about the run or the record — the
+    // ["runs"] cache the dot is drawn from simply had no reason to refetch, so
+    // it kept serving the list from when the window opened. The `runs:changed`
+    // push existed the whole time; its only subscribers were two ROUTE
+    // components, so on every other route nobody was listening. Entirely
+    // silent: the run panel right next to it showed the pass.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    render(
+      <QueryClientProvider client={qc}>
+        <RecorderProvider>
+          <Probe />
+        </RecorderProvider>
+      </QueryClientProvider>,
+    );
+    invalidate.mockClear();
+
+    emit("runs:changed", {});
+
+    const keys = invalidate.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+    expect(keys).toContain(JSON.stringify(["runs"]));
   });
 });
 
@@ -589,5 +616,66 @@ describe("the ephemeral replay flash", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("which step just arrived", () => {
+  // `lastAddedStepId` is what lets a trainer scroll to the row that changed.
+  // It matters because of where a captured step LANDS: the insert cursor sits
+  // where the browser is, so continuing an existing test writes new steps into
+  // the middle of the list, off-screen from a view that follows the bottom.
+  // Getting this wrong is silent in the worst direction — the trainer looks
+  // like it recorded nothing.
+
+  it("points at nothing until a step actually arrives", async () => {
+    // The first list of a session is the TEST showing up, not steps being
+    // added. Pointing at its last row would scroll on every session open and
+    // claim something was captured when nothing was.
+    renderStore();
+    emit("recorder:steps", [
+      { id: "a", type: "goto" },
+      { id: "b", type: "click" },
+    ] as Step[]);
+    expect(text("last-added")).toBe("null");
+  });
+
+  it("points at a step inserted in the MIDDLE of the list, not the end", () => {
+    renderStore();
+    emit("recorder:steps", [{ id: "a" }, { id: "b" }, { id: "c" }] as Step[]);
+    emit("recorder:steps", [{ id: "a" }, { id: "new" }, { id: "b" }, { id: "c" }] as Step[]);
+    expect(text("last-added")).toBe("new");
+  });
+
+  it("points at the last of several that arrive together", () => {
+    // An AI batch lands as one push. The last one is the end of what was
+    // added, which is what a reader wants to be looking at.
+    renderStore();
+    emit("recorder:steps", [{ id: "a" }] as Step[]);
+    emit("recorder:steps", [{ id: "a" }, { id: "x" }, { id: "y" }] as Step[]);
+    expect(text("last-added")).toBe("y");
+  });
+
+  it("keeps pointing at the last arrival when a later push only REMOVES", () => {
+    // A delete is not an arrival. Clearing the pointer here would be harmless
+    // but re-pointing it would scroll the view somewhere nobody asked to go.
+    renderStore();
+    emit("recorder:steps", [{ id: "a" }] as Step[]);
+    emit("recorder:steps", [{ id: "a" }, { id: "new" }] as Step[]);
+    emit("recorder:steps", [{ id: "new" }] as Step[]);
+    expect(text("last-added")).toBe("new");
+  });
+
+  it("forgets the arrival when the session finishes", () => {
+    // The next session's list is a different test. A stale pointer into it
+    // would either miss (harmless) or hit an unrelated step (not).
+    renderStore();
+    emit("recorder:steps", [{ id: "a" }] as Step[]);
+    emit("recorder:steps", [{ id: "a" }, { id: "new" }] as Step[]);
+    expect(text("last-added")).toBe("new");
+    emit("recorder:finished", { testId: "t1" });
+    expect(text("last-added")).toBe("null");
+    // And the FIRST list of the next session is an arrival-free load again.
+    emit("recorder:steps", [{ id: "p" }, { id: "q" }] as Step[]);
+    expect(text("last-added")).toBe("null");
   });
 });

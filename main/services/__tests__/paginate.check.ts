@@ -11,6 +11,7 @@
 //   npm run check:paginate
 
 import {
+  DENSE_PAGE_SIZE,
   PAGE_SIZE,
   clampPage,
   pageCount,
@@ -93,6 +94,30 @@ assert(pageRange(1, 0) === null, "an empty list has no range label");
   assert(rSmall.from === 1 && rSmall.to === 7, "a partial first page stops at the total");
   const rOver = pageRange(99, 7)!;
   assert(rOver.from === 1 && rOver.to === 7, "an out-of-range page reports the clamped range");
+}
+
+// ── the dense page size ──────────────────────────────────────────────
+// Step health and the run history page at 25, not 50. Every helper takes the
+// size as an argument, so the failure mode is a call site that forgets it and
+// silently falls back to 50 — which reports too few pages and strands rows
+// behind a Next button that never enables. Pinned here as well as in the
+// component tests, because the helpers are where the default lives.
+assert(DENSE_PAGE_SIZE === 25, "the dense page size is 25");
+assert(DENSE_PAGE_SIZE * 2 === PAGE_SIZE, "and is half the list page size");
+assert(pageCount(200, DENSE_PAGE_SIZE) === 8, "200 dense rows → 8 pages");
+assert(pageCount(25, DENSE_PAGE_SIZE) === 1, "exactly one dense page → one page");
+assert(pageCount(26, DENSE_PAGE_SIZE) === 2, "one over → two pages");
+{
+  const all = items(200);
+  const p1 = pageSlice(all, 1, DENSE_PAGE_SIZE);
+  assert(p1.length === 25 && p1[24] === 25, "dense page 1 is items 1–25");
+  const p2 = pageSlice(all, 2, DENSE_PAGE_SIZE);
+  assert(p2[0] === 26 && p2[24] === 50, "dense page 2 is items 26–50");
+  const stitched = Array.from({ length: 8 }, (_, i) => pageSlice(all, i + 1, DENSE_PAGE_SIZE)).flat();
+  assert(stitched.join(",") === all.join(","), "dense pages cover every item exactly once");
+  const r = pageRange(8, 200, DENSE_PAGE_SIZE)!;
+  assert(r.from === 176 && r.to === 200, "the last dense page reads 176–200");
+  assert(clampPage(8, 30, DENSE_PAGE_SIZE) === 2, "a dense page past a shrunken list clamps");
 }
 
 if (failures > 0) {
