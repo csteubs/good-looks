@@ -16,6 +16,51 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-10 — Visual's run header was painting its outcome under the Re-run button
+
+Found by driving the browser preview at 1440×900 — an ordinary window, not a
+narrow one, which is why `minWindowWidth` never protected it.
+
+Visual's header is one flex row: a `min-w-0 flex-1` title column, then Re-run,
+Masks & baselines, the threshold slider and the pager, every one of them
+`shrink-0`. Those four take roughly 1000px of an 1140px pane, so the title
+column is squeezed to 141px while its own content needs 168. Inside it the test
+name truncated away to nothing and the two `shrink-0` badges spilled past the
+column's right edge — `elementFromPoint` at the end of the word returned the
+Re-run BUTTON. "1 visual change" read as "1 visual chang", and the missing word
+was underneath a control.
+
+This is the `.gl-status-chip` failure from 2026-08-09 in a second place: a
+status chip that silently drops its last word while looking entirely healthy.
+The `flex-shrink: 0` fix landed on the theme primitive, and these are ad-hoc
+`Badge` elements on the one screen B8 has not reskinned, so it never reached
+them.
+
+**Wrapping is the fix — a floor and `overflow: hidden` are both wrong here.**
+
+- A floor wide enough for both badges is about 240px. At this app's own minimum
+  window size the header has roughly 22px to give, so the floor would push the
+  pager out of the viewport: the exact bug `check:narrow-layout` §1 exists to
+  prevent, reintroduced *above* the floor where the window size protects
+  nothing. §2 already warns about this shape.
+- `overflow: hidden` stops the overlap and still eats the word. The name is the
+  cell that may give; the result never is.
+
+Wrap costs height only in the squeezed case and never hides anything. Measured
+after: at 1440 the row stacks and every word is readable, at 1728 it is a single
+20px line with the name untruncated.
+
+Pinned as §3 of `check:narrow-layout`, source-level for that file's usual
+reason — jsdom has no layout engine, so nothing rendered in a test can observe a
+badge painted under a button. The assertion is anchored on the div wrapping
+`{replay.testName}` rather than on a class substring: the first version keyed
+off `flex items-center` and stopped matching the moment the fix reordered the
+class list, which is a guard that goes green by no longer looking at anything.
+
+The real remedy is B8 finishing this toolbar — four `shrink-0` controls leaving
+141px for the run's identity is the underlying problem, and wrapping is a safety
+net under it, not a layout.
+
 ### 2026-08-10 — Visual gets the bezel it was designed for, and a fixture that makes the screen exist
 
 **B8 of the redesign (REDESIGN §B8), first slice.** Visual is 1,548 lines, the largest file in the renderer.

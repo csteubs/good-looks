@@ -1074,8 +1074,8 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
       {/* Header */}
       <div className="flex items-center gap-3 border-b border-separator px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <Text className="truncate font-medium">{replay.testName}</Text>
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <Text className="min-w-0 truncate font-medium">{replay.testName}</Text>
             <Badge color={replay.status === "passed" ? "green" : "red"} className="shrink-0">
               {replay.status}
             </Badge>
