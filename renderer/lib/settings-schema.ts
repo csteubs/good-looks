@@ -23,6 +23,7 @@ export type PaneId =
   | "storage"
   | "ai"
   | "alerts"
+  | "integrations"
   | "diagnostics"
   | "experiments";
 
@@ -82,7 +83,26 @@ export const PANES: readonly PaneDef[] = [
   {
     id: "alerts",
     title: "Alerts",
-    subtitle: "Being told when a run goes wrong.",
+    // Says "on this Mac" since the webhook moved to Integrations: what is left
+    // here is three local notifications, and the pane's whole claim is now that
+    // none of it goes anywhere.
+    subtitle: "Being told when a run goes wrong, on this Mac.",
+    group: "Connections",
+  },
+  {
+    // The one place to answer "what does this app talk to?".
+    //
+    // Holds the webhook (moved from Alerts), the Linear connection, and the
+    // GitHub token — which had no settings UI at all before this and could only
+    // be set from inside the branch switcher, where nobody auditing the app
+    // would think to look.
+    //
+    // The local notification rows did NOT move with the webhook. They send
+    // nothing anywhere, and a pane whose subject is outbound connections is
+    // weaker for listing three things that aren't.
+    id: "integrations",
+    title: "Integrations",
+    subtitle: "Services this app connects to, and what leaves this Mac.",
     group: "Connections",
   },
   {
@@ -386,18 +406,49 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "notification macos banner ai debug llm answer ready local",
     key: "notifyOnAiDebugDone",
   },
+
+  // Integrations
+  //
+  // The webhook rows keep their ids across the move to this pane. The id is
+  // what `SettingRow` hides on, what search matches, and what every existing
+  // test addresses — renaming them to match the new pane would break all three
+  // to make the strings tidier.
+  {
+    id: "linear-connection",
+    pane: "integrations",
+    label: "Linear",
+    keywords: "issue tracker ticket bug api key connect linear team project workspace",
+  },
+  {
+    id: "linear-default-team",
+    pane: "integrations",
+    label: "Default team",
+    keywords: "linear team default destination triage",
+  },
+  {
+    id: "linear-default-project",
+    pane: "integrations",
+    label: "Default project",
+    keywords: "linear project default destination milestone",
+  },
   {
     id: "alert-webhook-enabled",
-    pane: "alerts",
+    pane: "integrations",
     label: "Send alerts to a webhook",
-    keywords: "slack discord post http remote",
+    keywords: "slack discord post http remote alerts",
     key: "alertWebhookEnabled",
   },
   {
     id: "alert-webhook-url",
-    pane: "alerts",
+    pane: "integrations",
     label: "Webhook URL",
-    keywords: "slack discord secret credential https endpoint",
+    keywords: "slack discord secret credential https endpoint alerts",
+  },
+  {
+    id: "github-token",
+    pane: "integrations",
+    label: "GitHub token",
+    keywords: "branch switcher pull request private repository rate limit credential",
   },
 
   // Diagnostics

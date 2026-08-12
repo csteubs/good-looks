@@ -40,6 +40,13 @@ import type {
   TestSpeed,
 } from "./recorder-types";
 import type { BranchStatus, BranchSummary, PullRequestSummary } from "./branch-types";
+import type {
+  ConnectionStatus,
+  IssueContainer,
+  IssueDefaults,
+  IssueSubContainer,
+  ProviderVocabulary,
+} from "./issue-types";
 import type { TriageResult } from "../../shared/triage.mjs";
 import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
 import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
@@ -291,6 +298,27 @@ export const api = {
       ipc().invoke<{ hasUrl: boolean; host: string | null }>("alerts:clearWebhookUrl"),
     status: () => ipc().invoke<{ hasUrl: boolean; host: string | null }>("alerts:status"),
     test: () => ipc().invoke<{ ok: boolean }>("alerts:test"),
+  },
+  issues: {
+    /** Local and cheap — never touches the network. Pair with `verify` when the
+     *  question is "does the key still work?" rather than "is one saved?". */
+    status: () => ipc().invoke<ConnectionStatus>("issues:status"),
+    /** The provider's own words for its concepts, so views don't hardcode them. */
+    vocabulary: () => ipc().invoke<ProviderVocabulary>("issues:vocabulary"),
+    /** Save a key and immediately prove it. Resolves with the resulting status
+     *  rather than throwing on a bad key — a rejected key is a state the pane
+     *  renders, not an exception it catches. */
+    connect: (key: string) => ipc().invoke<ConnectionStatus>("issues:connect", { key }),
+    verify: () => ipc().invoke<ConnectionStatus>("issues:verify"),
+    disconnect: () => ipc().invoke<ConnectionStatus>("issues:disconnect"),
+    /** Throws when there is no key or the provider refuses — the caller is a
+     *  list that has nothing to show, so the failure has to be visible. */
+    listContainers: () => ipc().invoke<IssueContainer[]>("issues:listContainers"),
+    listSubContainers: () => ipc().invoke<IssueSubContainer[]>("issues:listSubContainers"),
+    getDefaults: () => ipc().invoke<IssueDefaults>("issues:getDefaults"),
+    /** Omit a field to leave it alone; pass null to clear it. */
+    setDefaults: (patch: Partial<IssueDefaults>) =>
+      ipc().invoke<IssueDefaults>("issues:setDefaults", patch),
   },
   runner: {
     run: (

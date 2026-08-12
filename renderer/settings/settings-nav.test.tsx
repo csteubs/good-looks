@@ -171,9 +171,11 @@ describe("search", () => {
   });
 
   it("hides a group heading whose panes all filtered away", () => {
+    // "slack" reaches the webhook rows, which live in Integrations since the
+    // pane split — Alerts keeps only the local notifications.
     const counts = matchCountByPane(searchSettings("slack"));
     renderNav({ search: "slack", matchCounts: counts });
-    expect(screen.getByText("Alerts")).toBeTruthy();
+    expect(screen.getByText("Integrations")).toBeTruthy();
     expect(screen.queryByText("Testing")).toBeNull();
   });
 

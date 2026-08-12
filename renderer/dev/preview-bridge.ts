@@ -65,6 +65,13 @@ import type {
 } from "../lib/recorder-types";
 import type { LlmConfig, LlmModel, LlmProviderStatus } from "../lib/llm-types";
 import type { BranchStatus } from "../lib/branch-types";
+import type {
+  ConnectionStatus,
+  IssueContainer,
+  IssueDefaults,
+  IssueSubContainer,
+  ProviderVocabulary,
+} from "../lib/issue-types";
 import type { TriageResult } from "../../shared/triage.mjs";
 import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
 import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
@@ -127,11 +134,30 @@ function seed() {
     heals: structuredClone(HEALS),
     settings: structuredClone(SETTINGS),
     llmConfig: structuredClone(LLM_CONFIG),
+    // Starts DISCONNECTED, so the preview opens on the state that actually
+    // needs looking at: the empty pane someone sees before they have a key.
+    // Connecting works and persists for the session, so both halves of the
+    // Integrations pane are reachable in a tab.
+    issues: {
+      connected: false,
+      error: null as string | null,
+      defaults: { containerId: null as string | null, subContainerId: null as string | null },
+    },
   };
 }
 
 function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> {
   const findTest = (id: unknown) => state.tests.find((t) => t.id === id) ?? null;
+
+  /** One place the connection state is shaped, since four handlers return it. */
+  const issuesStatus = (): ConnectionStatus => ({
+    provider: "linear",
+    hasKey: state.issues.connected,
+    account: state.issues.connected
+      ? { accountName: "Sam Rivera", workspaceName: "Northwind" }
+      : null,
+    error: state.issues.error,
+  });
 
   /** One step-health row per fixture test, so the panel has something to sort.
    *  The checkout step is the interesting one: it fails sometimes AND heals. */
@@ -689,6 +715,62 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "llm:hasLmStudioToken": () => ({ hasToken: false }),
     "llm:isActive": () => ({ active: false }),
     "alerts:status": () => ({ hasUrl: false, host: null }),
+
+    // ── Issue tracker ────────────────────────────────────────────────────
+    // Enough behaviour to exercise the pane's two states in a tab: a key that
+    // is empty is refused the way the real backend refuses it, and anything
+    // else connects. A preview cannot reach Linear, so "verify" is local — the
+    // thing being previewed is the pane, not the network.
+    "issues:status": (): ConnectionStatus => issuesStatus(),
+    "issues:vocabulary": (): ProviderVocabulary => ({
+      name: "Linear",
+      container: "Team",
+      subContainer: "Project",
+      keyHelpUrl: "https://linear.app/settings/api",
+      keyPlaceholder: "lin_api_…",
+    }),
+    "issues:connect": (p): ConnectionStatus => {
+      const key = typeof p?.key === "string" ? p.key.trim() : "";
+      state.issues.connected = key.length > 0;
+      state.issues.error = key.length > 0 ? null : "Linear API key is empty.";
+      return issuesStatus();
+    },
+    "issues:verify": (): ConnectionStatus => issuesStatus(),
+    "issues:disconnect": (): ConnectionStatus => {
+      state.issues.connected = false;
+      state.issues.error = null;
+      state.issues.defaults = { containerId: null, subContainerId: null };
+      return issuesStatus();
+    },
+    "issues:listContainers": (): IssueContainer[] => [
+      { id: "team-eng", name: "Engineering", key: "ENG" },
+      { id: "team-design", name: "Design", key: "DES" },
+      { id: "team-web", name: "Web Platform", key: "WEB" },
+    ],
+    "issues:listSubContainers": (): IssueSubContainer[] => [
+      { id: "proj-checkout", name: "Checkout revamp", containerId: "team-eng" },
+      { id: "proj-a11y", name: "Accessibility debt", containerId: null },
+      { id: "proj-design-sys", name: "Design system", containerId: "team-design" },
+    ],
+    "issues:getDefaults": (): IssueDefaults => state.issues.defaults,
+    "issues:setDefaults": (p): IssueDefaults => {
+      const patch = (p ?? {}) as Partial<IssueDefaults>;
+      const containerChanged =
+        patch.containerId !== undefined && patch.containerId !== state.issues.defaults.containerId;
+      state.issues.defaults = {
+        containerId:
+          patch.containerId !== undefined
+            ? (patch.containerId ?? null)
+            : state.issues.defaults.containerId,
+        subContainerId:
+          patch.subContainerId !== undefined
+            ? (patch.subContainerId ?? null)
+            : containerChanged
+              ? null
+              : state.issues.defaults.subContainerId,
+      };
+      return state.issues.defaults;
+    },
     // Only the Settings window asks for this, and only to print it inside a
     // description. The real value comes from the main process's accelerator
     // constant; this is the same string so the row reads correctly under

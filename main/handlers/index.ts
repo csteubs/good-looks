@@ -20,6 +20,7 @@ import { batchRunner } from "../services/batch-runner.js";
 import { batchHistoryStore } from "../services/batch-history-store.js";
 import { webhookUrlStore } from "../services/webhook-url-store.js";
 import { postWebhook } from "../services/alert-service.js";
+import { issueTrackerService } from "../services/issue-tracker/issue-tracker-service.js";
 import { playwrightRunner } from "../services/playwright-runner.js";
 import { runHistoryStore } from "../services/run-history-store.js";
 import { artifactStore } from "../services/artifact-store.js";
@@ -992,6 +993,43 @@ export function registerHandlers(): void {
     });
     return { ok: true };
   });
+
+  // ── Issue tracker handlers ──────────────────────────────────────────
+  // Same credential contract as the webhook above: the key travels
+  // renderer→backend only, and the renderer can learn whether one is stored and
+  // who it belongs to — never the key itself.
+  //
+  // `status` is local and cheap; `verify` is the one that touches the network.
+  // Keeping them separate is what lets the pane say "saved" while offline
+  // instead of "broken".
+  ipcMain.handle("issues:status", async () => issueTrackerService.status());
+  ipcMain.handle("issues:vocabulary", async () => issueTrackerService.vocabulary());
+  ipcMain.handle("issues:connect", async (_e, params: { key?: unknown }) => {
+    const key = typeof params?.key === "string" ? params.key : "";
+    return issueTrackerService.connect(key);
+  });
+  ipcMain.handle("issues:verify", async () => issueTrackerService.verify());
+  ipcMain.handle("issues:disconnect", async () => issueTrackerService.disconnect());
+  ipcMain.handle("issues:listContainers", async () => issueTrackerService.listContainers());
+  ipcMain.handle("issues:listSubContainers", async () => issueTrackerService.listSubContainers());
+  ipcMain.handle("issues:getDefaults", async () => issueTrackerService.defaults());
+  ipcMain.handle(
+    "issues:setDefaults",
+    async (_e, params: { containerId?: unknown; subContainerId?: unknown }) => {
+      // Rebuilt, not spread. `undefined` means "leave alone" and `null` means
+      // "clear", and both have to survive the trip — so a key that is absent
+      // stays absent rather than becoming an explicit null.
+      const patch: { containerId?: string | null; subContainerId?: string | null } = {};
+      if (params && "containerId" in params) {
+        patch.containerId = typeof params.containerId === "string" ? params.containerId : null;
+      }
+      if (params && "subContainerId" in params) {
+        patch.subContainerId =
+          typeof params.subContainerId === "string" ? params.subContainerId : null;
+      }
+      return issueTrackerService.setDefaults(patch);
+    },
+  );
 
   // ── Runner handlers ─────────────────────────────────────────────────
   ipcMain.handle(
