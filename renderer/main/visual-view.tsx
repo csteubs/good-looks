@@ -24,7 +24,7 @@ import {
   TooltipTrigger,
 } from "@ui";
 
-import { CRT, Segmented, TONE, withAlpha } from "../theme";
+import { Btn, CRT, Segmented, TONE, withAlpha } from "../theme";
 import {
   Accessibility,
   Check,
@@ -699,26 +699,26 @@ function MasksBaselinesDialog({
       <div className="flex flex-col gap-5">
         {/* Ignore regions */}
         <section className="flex flex-col gap-2">
-          <Text variant="small" className="font-medium">
-            Ignore regions ({masks.length})
-          </Text>
+          <span className="gl-section-title">Ignore regions ({masks.length})</span>
           {masks.length === 0 ? (
-            <Text variant="small" color="tertiary">
+            <p className="gl-note">
               None yet. Open a captured run, click “Ignore regions”, and drag over anything that
               changes on its own — a clock, a carousel, an ad slot.
-            </Text>
+            </p>
           ) : (
             <div className="flex flex-col gap-1">
               {masks.map((m) => (
                 <div
                   key={m.id}
-                  className="flex items-center gap-2 rounded-md border border-separator px-2 py-1.5"
+                  className="gl-mask-row"
                 >
-                  <SquareDashed className="size-3.5 shrink-0 text-support-orange" />
+                  {/* Amber: a mask is a CAUTION about the comparison — pixels
+                      deliberately not judged — rather than an outcome. */}
+                  <SquareDashed className="size-3.5 shrink-0" style={{ color: TONE.amber }} />
                   {labelDraft?.id === m.id ? (
                     <Input
                       autoFocus
-                      className="h-7 flex-1"
+                      className="gl-input flex-1"
                       value={labelDraft.text}
                       placeholder="Name this region"
                       onChange={(e) => setLabelDraft({ id: m.id, text: e.target.value })}
@@ -740,23 +740,22 @@ function MasksBaselinesDialog({
                       </Text>
                     </button>
                   )}
-                  <Badge color="secondary" className="shrink-0">
+                  <span className="gl-chip">
                     {m.stepId === null
                       ? "All steps"
                       : (stepLabelById.get(m.stepId) ?? "One step")}
-                  </Badge>
-                  <Text variant="small-mono" color="tertiary" className="shrink-0 tabular-nums">
+                  </span>
+                  <span className="gl-mask-size">
                     {Math.round(m.w * 100)}×{Math.round(m.h * 100)}%
-                  </Text>
-                  <Button
-                    iconOnly
-                    size="small"
-                    variant="glass"
+                  </span>
+                  <button
+                    type="button"
+                    className="gl-icon-btn"
                     aria-label="Delete ignore region"
                     onClick={() => saveMasks.mutate(masks.filter((x) => x.id !== m.id))}
                   >
                     <X className="size-3.5" />
-                  </Button>
+                  </button>
                 </div>
               ))}
             </div>
@@ -765,41 +764,33 @@ function MasksBaselinesDialog({
 
         {/* Pinned baselines */}
         <section className="flex flex-col gap-2">
-          <Text variant="small" className="font-medium">
-            Pinned baselines ({baselines.length})
-          </Text>
+          <span className="gl-section-title">Pinned baselines ({baselines.length})</span>
           {baselines.length === 0 ? (
-            <Text variant="small" color="tertiary">
+            <p className="gl-note">
               None yet. The first run that captures screenshots pins one per step.
-            </Text>
+            </p>
           ) : (
             <div className="flex flex-col gap-1">
               {baselines.map((b) => (
                 <div
                   key={b.stepId}
-                  className="flex items-center gap-2 rounded-md border border-separator px-2 py-1.5"
+                  className="gl-mask-row"
                 >
-                  <Stamp className="size-3.5 shrink-0 text-tertiary" />
+                  <Stamp className="size-3.5 shrink-0" style={{ color: "var(--gl-tx-3)" }} />
                   <Text variant="small-mono" className="min-w-0 flex-1 truncate" title={b.label}>
                     {b.label}
                   </Text>
                   {b.rect ? (
-                    <Badge color="secondary" className="shrink-0">
-                      has geometry
-                    </Badge>
+                    <span className="gl-chip">has geometry</span>
                   ) : null}
-                  <Text variant="small" color="tertiary" className="shrink-0">
-                    {fmtDateTime(b.at)}
-                  </Text>
-                  <Button
-                    size="small"
-                    variant="glass"
+                  <span className="gl-mask-size">{fmtDateTime(b.at)}</span>
+                  <Btn
                     className="shrink-0"
                     disabled={clearBaseline.isPending}
                     onClick={() => clearBaseline.mutate(b.stepId)}
                   >
                     Unpin
-                  </Button>
+                  </Btn>
                 </div>
               ))}
             </div>

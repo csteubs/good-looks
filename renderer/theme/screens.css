@@ -2404,3 +2404,24 @@
 .gl-threshold-readout[data-flagged] {
   color: var(--gl-amber);
 }
+
+/* A row in the masks / baselines manager. Square hairline on `--gl-panel`, like
+   every other list row in this design — the SDK's rounded bordered box read as
+   a card, which is the wrong weight for something you scan a dozen of. */
+.gl-mask-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  padding: 5px 8px;
+}
+
+.gl-mask-size {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}

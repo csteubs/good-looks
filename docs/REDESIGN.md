@@ -7,12 +7,10 @@ first slice)** and **B9 (AI debug — the status contract and the Sending strip)
 — see the ✅ marks in §4, §5 and §8.3. The app's frame is the redesign, so are
 the five components every screen embeds, and every screen has been reached.
 
-**One screen is partially done and says so in its own section**: B8 still owes
-its frame rail, mask list and threshold-against-frames. It was scoped that way
-deliberately — the first slice shipped the half with a contract riding on it (the
-`CRT` bezel) and left the half that is only a restyle. B9 is now complete, chrome
-included. **B5b** (the five non-failure run-state summaries) remains Phase C
-§6.1. Where the rest of this says "would", it means would.
+**Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
+its frame rail, threshold-against-frames and the masks/baselines reskin. **B5b**
+(the five non-failure run-state summaries) was always Phase C §6.1 and is where
+the remaining work starts. Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -712,9 +710,21 @@ produced the ratios: a preview that disagreed with the next run by one frame
 would be worse than none, because it would be believed. Pinned by four tests on
 the pure `framesOverThreshold`.
 
-**The mask list already existed** — `MasksBaselinesDialog` is the per-test
-managed view, and masks are already drawn in the frame by the ignore-region
-editor. What B8 leaves is a RESKIN of that dialog, not a capability.
+✅ **The masks / baselines manager, 2026-08-11.** It already existed as a
+capability — `MasksBaselinesDialog` is the per-test managed view, and masks are
+already drawn in the frame by the ignore-region editor — so this was a reskin:
+square hairline rows on `--gl-panel` instead of rounded bordered cards (the SDK
+weight read as a card, which is wrong for something you scan a dozen of), mono
+micro-label headings, neutral chips (neither "which steps" nor "has geometry" is
+a result), and amber on the mask glyph because a mask is a CAUTION about the
+comparison — pixels deliberately not judged — rather than an outcome.
+
+Doing it surfaced a fixture bug worth recording: `visual:listBaselines` was
+answering with bare step ids under a `: string[]` annotation. That type-checked,
+because the annotation was the thing being checked rather than `api.ts`'s actual
+`BaselineEntry[]` — so the manager rendered four rows with no label and "Invalid
+Date", which is exactly the "looks like a broken feature" failure the bridge's
+own header warns about. **With this, §B8 is complete and so is Phase B.**
 
 **One implementation note carried over from the mockup and worth keeping:** the
 diff region boxes are *measured after layout*, never authored as percentages,
