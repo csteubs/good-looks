@@ -16,6 +16,92 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — Routines, capability 1: a Routine is an entity (Phase D)
+
+`docs/ROUTINES.md` sequences the feature 1 → 2 → 3 — a saved named
+configuration, then a schedule, then a flow builder — and says 3 is useless
+without 1 and 2 is a trap without it. So this is 1, and only 1: the store, the
+types, the migration and the IPC. **No UI.** The Batch view becoming the
+Routine editor is the next slice, and shipping the entity first is what makes
+that a reskin of a screen over a real record rather than a screen inventing one.
+
+**The migration is the risky part, not the store.** A store that is wrong is
+empty and obvious. A migration that is wrong silently changes what somebody's
+suite does, and they find out on a run they were not watching. It is therefore
+pure, lives in `shared/routine-migration.mjs`, and is tested against the shapes
+the settings file actually contains.
+
+**The mistake worth recording: an absent entry is NOT selected.** The first
+draft of the migration read a missing `batchTestOptions` row as a working
+default — reasoning that an untouched row must be the default, and the default
+must be "in the batch". `defaultRow` in `batch-run-plan.ts` returns
+`selected: false`. Following the draft would have created, for every user who
+had ever opened the Batch view, a Routine named "Batch" containing **every test
+in their library**, scheduled later against capability 2. Caught by reading
+`defaultRow` instead of trusting the reasoning; the module now carries the
+mistake in a comment, because the next person to read that map will find it
+just as inviting. Given the real rule, `null` — no Routine at all — is the
+ordinary outcome for anyone who never ticked a row, and that is deliberately
+not an empty Routine: a saved job named "Batch" with nothing in it is the
+upgrade appearing in the library as if the user had made it.
+
+**Idempotent by a recorded flag, not by "is the list empty".** `routines.json`
+is an envelope carrying `migratedFromBatchAt` rather than a bare array. The two
+tests look equivalent and differ the moment somebody deletes the migrated
+Routine: with an emptiness test it returns on the next launch, and on every
+launch after that, and nothing the user can do removes it. The flag is written
+even when the migration produced nothing — which is the common case, so the
+cheap version of this is wrong for most users rather than for an edge case.
+The settings keys are left in place unread, per ROUTINES: a migration that also
+deletes its own source has no way back, and this one reads a field whose
+default is the opposite of how it looks.
+
+**No second ceiling on concurrency.** The first draft clamped it to 1–8 with a
+default of 2 — both numbers invented. Batch's own bound is
+`MAX_BATCH_CONCURRENCY` (16) and its own default is 1, so that draft would have
+quietly halved a twelve-lane suite and doubled the default for everyone else.
+`recorderSettingsStore.read()` already clamps at its own boundary; a bound
+declared here could only ever disagree with it. Rejecting a value that is not a
+lane count is all that is left. The constant is already transcribed three times
+in this repo (main types, renderer mirror, `mcp/run-pool.mjs`) and a fourth copy
+is worse than no copy.
+
+**Two steps naming one test collapse, at save time.** The batch runner keys a
+live run by `testId` and serialises every entry for one test into a single lane,
+so two such steps can never execute concurrently however the editor draws them.
+ROUTINES says to reject rather than silently serialise, because a builder
+drawing two parallel branches and running them sequentially is lying in a
+diagram. There is nothing a second step for one test can express that its
+`browsers` array cannot.
+
+**`markTestDeleted` marks, it does not remove** (ROUTINES open question 4). A
+step pointing at a deleted test renders as broken and the user takes it out.
+Silently shrinking a saved job is the same class of bug as the batch running
+fewer tests than it said, and the entire value of a saved job is that it stays
+what you built. Note the asymmetry with the Batch settings cleanup in the same
+handler: dropping a stale id from `batchOrder` is housekeeping over an implicit
+checklist; dropping a step out of a named job is destroying something.
+
+**`list()` is oldest first**, not most-recently-edited. The reflex ordering for
+a list of documents is wrong for a list of jobs: it reorders itself every time
+you save, and the row you are working on jumps to the top while you are looking
+at it.
+
+Rejected: renaming `batch:*` channels, `batch-history.json` or
+`RunRecord.batchId`. ROUTINES' rename table already argues this and it holds —
+those are internal and invisible, and renaming them costs a migration and an
+MCP integration break to buy a word. The word is worth having in the UI only.
+
+Covered by `main/services/routine-migration.test.ts` (22 tests, every one
+mutation-checked) and `npm run check:routine-store`. Two mutations survived the
+first pass and both revealed real problems: the ordering assertion edited the
+OLDER routine, which leaves "oldest first" and "recently edited first"
+agreeing, so it passed against the ordering it existed to rule out; and the
+`MAX_ROUTINES` guard carried a redundant `!existing` clause, since counting the
+cap over the OTHERS already makes an existing Routine always saveable — the
+second copy of the rule is the one that would rot and trap a user with jobs
+they could no longer fix.
+
 ### 2026-08-12 — The weekly digest, reinterpreted once its delivery was removed (C §6.5)
 
 The mockup drew a weekly DIGEST PREVIEW beside a list of delivery channels: a

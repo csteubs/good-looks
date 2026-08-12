@@ -32,6 +32,9 @@ import {
 } from "./services/debug-capture.js";
 import { applyRetention } from "./services/retention.js";
 import { batchHistoryStore } from "./services/batch-history-store.js";
+import { routineStore } from "./services/routine-store.js";
+import { recorderSettingsStore } from "./services/recorder-settings-store.js";
+import { testStore } from "./services/test-store.js";
 import { aiDebugStore } from "./services/ai-debug-store.js";
 import { metricsStore } from "./services/metrics-store.js";
 import { setPrunePreflight } from "./services/artifact-store.js";
@@ -83,6 +86,19 @@ registerHandlers();
   if (reconciled > 0) {
     logger.info("batch", "Reconciled interrupted batches at startup", { reconciled });
   }
+}
+
+// ── Routine migration ─────────────────────────────────────────────────
+// One-time: synthesise a Routine named "Batch" from the old per-row Batch
+// settings, so nobody loses a checklist they spent time on. Idempotent by a
+// flag in routines.json, not by "is the list empty" — the difference is
+// whether a Routine the user has since deleted comes back on the next launch.
+// The settings keys it reads are deliberately left in place for one release;
+// a migration that also removes its own source has no way back.
+{
+  const settings = recorderSettingsStore.get();
+  const knownTestIds = testStore.list().map((t) => t.id);
+  routineStore.ensureMigrated(settings, knownTestIds);
 }
 
 // ── AI debug session reconciliation ───────────────────────────────────

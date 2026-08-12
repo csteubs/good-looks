@@ -18,6 +18,7 @@ import {
 import { recorderService } from "../services/recorder-service.js";
 import { batchRunner } from "../services/batch-runner.js";
 import { batchHistoryStore } from "../services/batch-history-store.js";
+import { routineStore } from "../services/routine-store.js";
 import { webhookUrlStore } from "../services/webhook-url-store.js";
 import { postWebhook } from "../services/alert-service.js";
 import { issueTrackerService } from "../services/issue-tracker/issue-tracker-service.js";
@@ -312,6 +313,12 @@ export function registerHandlers(): void {
     // Tombstone the history: records kept for the aggregates, raw logs deleted.
     runHistoryStore.markTestDeleted(params.id);
     batchHistoryStore.markTestDeleted(params.id);
+    // A saved Routine keeps the step and shows it broken, rather than losing
+    // it: silently shrinking a job somebody built is the same class of bug as
+    // the batch running fewer tests than it said. Unlike the Batch settings
+    // below, this is not housekeeping — the step stays until the user removes
+    // it. See ROUTINES.md open question 4.
+    routineStore.markTestDeleted(params.id);
     // Really deleted — the model's answers quote the script and the run output,
     // and with the test gone there is no route left to reach or remove them.
     aiDebugStore.deleteTest(params.id);
@@ -1218,6 +1225,29 @@ export function registerHandlers(): void {
     batchHistoryStore.remove(params.batchId),
   );
   ipcMain.handle("batch:clearHistory", async () => batchHistoryStore.clear());
+
+  // ── Routines ────────────────────────────────────────────────────────
+  // Saved, named jobs. docs/ROUTINES.md capability 1.
+  //
+  // The channels are `routines:*` because they are new. The spec's rename table
+  // says NOT to rename the existing `batch:*` channels, `batch-history.json` or
+  // `RunRecord.batchId` — those are internal, invisible, and renaming them
+  // costs a migration to buy a word. The word is worth having in the UI.
+  //
+  // `save` takes UNKNOWN and returns what was stored. The store rebuilds the
+  // payload rather than trusting it, so what comes back is the job that will
+  // actually run — which is what the editor must render. Returning the input
+  // would let a step the store dropped stay on screen until the next reload.
+  ipcMain.handle("routines:list", async () => routineStore.list());
+  ipcMain.handle("routines:get", async (_e, params: { id: string }) =>
+    routineStore.get(params.id),
+  );
+  ipcMain.handle("routines:save", async (_e, params: { routine: unknown }) =>
+    routineStore.save(params.routine),
+  );
+  ipcMain.handle("routines:delete", async (_e, params: { id: string }) =>
+    routineStore.remove(params.id),
+  );
 
   ipcMain.handle("runner:stop", async (_e, params: { runId: string }) => {
     playwrightRunner.stop(params.runId);

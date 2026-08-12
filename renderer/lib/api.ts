@@ -26,6 +26,7 @@ import type {
   CaptureOverheadSummary,
   RetentionResult,
   BatchRecord,
+  Routine,
   BatchState,
   CookieSpec,
   LiveCookie,
@@ -307,6 +308,19 @@ export const api = {
     get: (batchId: string) => ipc().invoke<BatchRecord | null>("batch:get", { batchId }),
     remove: (batchId: string) => ipc().invoke<{ removed: number }>("batch:delete", { batchId }),
     clearHistory: () => ipc().invoke<{ removed: number }>("batch:clearHistory"),
+  },
+  /** Saved, named jobs. docs/ROUTINES.md.
+   *
+   *  `save` RETURNS the stored Routine, and callers should render that rather
+   *  than what they sent: the store rebuilds the payload — dropping a step with
+   *  no valid engine, collapsing two steps naming one test — so the two can
+   *  differ, and the returned one is the job that will actually run. `null`
+   *  means nothing usable was in it, or the index is full. */
+  routines: {
+    list: () => ipc().invoke<Routine[]>("routines:list"),
+    get: (id: string) => ipc().invoke<Routine | null>("routines:get", { id }),
+    save: (routine: Routine) => ipc().invoke<Routine | null>("routines:save", { routine }),
+    remove: (id: string) => ipc().invoke<{ removed: number }>("routines:delete", { id }),
   },
   alerts: {
     setWebhookUrl: (url: string) =>

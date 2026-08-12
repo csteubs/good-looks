@@ -1,8 +1,18 @@
 # Routines — a design spec for Batch v2
 
-**Status: not built.** This is a design document, written alongside the per-row
-Batch work of 2026-08-07 so that work doesn't paint the next version into a
-corner. Nothing described here exists. Where it says "would", it means would.
+**Status: capability 1 is partly built (2026-08-12).** This started as a design
+document, written alongside the per-row Batch work of 2026-08-07 so that work
+didn't paint the next version into a corner. Most of it is still design — where
+it says "would", it means would.
+
+What now exists: **the entity and the migration**, and nothing else.
+`main/services/routine-store.ts` persists Routines to
+`userData/recorder/routines.json`; `shared/routine-migration.mjs` synthesises
+the "Batch" Routine described under *A Routine is an entity*, once, at startup;
+`routines:*` IPC exposes list/get/save/delete. Of the step kinds below only
+`kind: "test"` is built. **There is no UI yet** — the Batch view is still the
+old checklist, and turning it into this Routine's editor is the next slice.
+Capabilities 2 (scheduling) and 3 (the flow builder) are untouched.
 
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for what exists today,
 [DECISIONS.md](DECISIONS.md) for why the current Batch is shaped the way it is,

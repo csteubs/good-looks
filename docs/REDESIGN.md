@@ -1268,10 +1268,18 @@ exactly the rule the four-stylesheet split states.
 The brief asks that already-planned features get design plans now, so they build
 into existing UI rather than bolting on. Four are outstanding.
 
-### 7.1 Routines (Batch v2) — [ROUTINES.md](ROUTINES.md), specified, not built
+### 7.1 Routines (Batch v2) — [ROUTINES.md](ROUTINES.md), capability 1 started
 
 Three independent capabilities, sequenced 1 → 2 → 3: a saved named
 configuration, a schedule, a flow builder.
+
+**Built as of 2026-08-12: the entity, and nothing visible.** A Routine is a
+record now (`routine-store.ts`, `shared/routine-migration.mjs`, `routines:*`
+IPC), the old Batch checklist migrates into one named "Batch" on first launch,
+and only `kind: "test"` steps exist. The UI below is unchanged and unstarted —
+Batch is still the single implicit checklist on screen. Doing it in this order
+is deliberate: it makes the next slice a reskin of a screen over a real record,
+rather than a screen that has to invent one.
 
 **Where it lands.** Batch becomes a *list of Routines* with one Routine open,
 rather than a single implicit checklist. Concretely, in the redesign's shell:
