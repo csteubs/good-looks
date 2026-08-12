@@ -30,6 +30,12 @@ export interface BranchStatus {
   /** The branch this process is running: the switched-to branch, or the
    *  checkout's own HEAD. */
   current?: string;
+  /** The USER'S CHECKOUT's own branch — normally `main`. Equals `current`
+   *  unless a branch build is running, which is exactly when it is needed:
+   *  `current` is then the built branch and the checkout's name is otherwise
+   *  unrecoverable from this object. The branch menu pins a "return to my
+   *  checkout" row and has to label it with something true. */
+  checkoutBranch?: string;
   /** True when a branch build is running rather than the user's checkout. */
   switched: boolean;
   /** Whether a GitHub token is saved. Never the token itself. */
