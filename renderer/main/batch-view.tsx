@@ -224,10 +224,11 @@ export function BatchView() {
     const offDone = api.on("batch:done", (payload) => {
       const state = payload as BatchState;
       setBatch(state);
-      // Each test wrote its own RunRecord, so Stats/history are now stale.
-      qc.invalidateQueries({ queryKey: ["runs"] });
-      qc.invalidateQueries({ queryKey: ["captureOverhead"] });
-      qc.invalidateQueries({ queryKey: ["batch-history"] });
+      // The cache invalidation that used to be here moved to `recorder-store`
+      // in §6.8, along with the live-batch subscription: doing it from a ROUTE
+      // component meant it only happened if the user was on this screen when
+      // the batch finished. The toasts stay — they are this view's own report
+      // of a batch it started, not a fact about the cache.
       if (state.stopped) {
         toast.info("Batch stopped.");
       } else if (state.summary.failed > 0) {

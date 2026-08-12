@@ -16,6 +16,70 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — The job ticker, and the open question the codebase had already answered (C §6.8)
+
+`top-strip.tsx` shipped two empty slots in A4 with an argument attached: an
+affordance for a feature that does not exist teaches a shortcut that answers with
+silence. §6.7 filled `command`. This fills `ticker`, and closes the debt.
+
+**The open question answered itself.** REDESIGN §10 asked whether the shell's
+global run-state subscription should come from `recorder-store`, a new provider,
+or a query. It is the store, and the store had already written the reasoning
+down: its `runs:changed` subscription carries a comment explaining that the push
+existed the whole time and its only subscribers were ROUTE components, so on
+every other route nobody was listening — which is why a failing test re-run until
+it passed kept a red dot in the sidebar. The ticker needs exactly that property,
+one level up.
+
+**Which turned the batch half into a bug fix rather than a feature.**
+`batch:progress` had one subscriber: `batch-view`. Start a batch, walk to any
+other screen, and the app had no idea it was running. Worse, the `batch:done`
+cache invalidation lived there too, so a batch that finished while the user was
+elsewhere left the sidebar's status dots stale — the identical silent failure
+`runs:changed` had been moved to fix. Both now live on the store. The view keeps
+its own `batch` state, because that variable answers a different question — "the
+record I am displaying", which can be a historical batch the user picked out of
+the list — and conflating the two is what made the invalidation view-local in the
+first place.
+
+**Idle renders nothing, and that is the reading that took the most deciding.** An
+"idle" chip is true and useless: it costs the same attention every time the user
+looks at the strip and pays it back only in the rare moment it changes. A passing
+run is the same — good news does not belong in the chrome. Rendering nothing
+makes the ticker's PRESENCE the signal, which is the only thing that makes a
+glance work, and it keeps the promise the empty slot was making.
+
+**A batch outranks its own member runs.** A batch executes tests, so its members
+show up in the run map; reporting "3 running" during a batch of eight would be a
+true statement about a smaller thing than the one the user started. Its failure
+is likewise the batch's rather than its last test's: three failures out of eight
+is one finding, and naming the last member to fail hides the other two.
+
+**Every label leads with its state, and that is a truncation rule.** The strip
+gives the ticker a couple of hundred pixels; test names exceed it. The first
+version put the verb last, so "Login — wrong password shows an error failed" lost
+FAILED first and left a red dot beside what read as an ordinary name. Found by
+looking at the strip, not by any test — the pure reading was correct in both
+versions.
+
+**A failure is a notice, not a status, so it expires** — twelve seconds, measured
+from when the run ENDED. `RunInfo` gained a `finishedAt` for it, and the reason
+is the whole correctness of the feature: measured from `startedAt`, a run longer
+than the hold window is already expired at the moment it finishes, so the exact
+notice this exists to give — a long run that failed while the user was on another
+screen — is the one it could never give. The component owns a one-second interval
+for the same reason: every other transition arrives as a push, but a hold has to
+end on a clock, and without a tick it would sit in the strip of an idle app
+forever.
+
+**The pulsing dot is deliberately not marked ambient.** `atmosphere.css` split
+motion into decorative (`data-gl-motion="ambient"`, stopped by `calm` and
+`still`) and state-reporting (unmarked, stopped only by `still`), and its comment
+names "a run status indicator that must still pulse" as the example. A
+`prefers-reduced-motion` rule here would have deleted the one thing separating a
+run IN PROGRESS from a run that stopped and left its readout up for its last few
+seconds. The first draft wrote that rule; the contract was already there.
+
 ### 2026-08-12 — "What moved", and the overlay bug it exposed (C §6.6)
 
 The last §6.6 piece and the only one needing analysis the backend did not have.
