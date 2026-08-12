@@ -10,7 +10,7 @@ the five components every screen embeds, and every screen has been reached.
 **Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
 its frame rail, threshold-against-frames and the masks/baselines reskin.
 **Phase C is most of the way in: §6.1, §6.2, §6.3, §6.4, §6.7 and §6.9 landed
-2026-08-12** — the five non-failure run-state summaries (which were B5b), the
+2026-08-12, and §6.6's first slice with them** — the five non-failure run-state summaries (which were B5b), the
 inline step composer, change temp against real medians, Stats → Cost, the ⌘K
 command palette, and the boot sequence.
 Where the rest of this says "would", it means would.
@@ -916,7 +916,35 @@ exports (PDF / CSV / JUnit XML / public link). **This overlaps heavily with the
 MCP plan's Phase 5 emit adapters** — see §7.3. Build the emitters once, surface
 them here.
 
-**6.6 Visual triage.** Wipe, Blink, region breakdown, baseline provenance, drift.
+**6.6 Visual triage.** **First slice done, 2026-08-12: Wipe and Blink.** Region
+breakdown, baseline provenance and drift are the second slice — B8 was split the
+same way and for the same reason, that `visual-view.tsx` is the largest file in
+the renderer and the one where a change is most easily made blind.
+
+**Why these two first.** A diff map is exact and nearly useless for triage: it
+lights every changed pixel with equal weight, so a font-smoothing shift and a
+button that moved 40px look identical. Wipe and Blink put the two frames in the
+same PLACE instead and let the eye do the comparison it is very good at — which
+is the question the three existing modes cannot answer.
+
+- **Neither frame is treated.** Wipe CLIPS rather than fading, and Blink swaps a
+  whole frame rather than cross-dissolving. The premise of both modes is that
+  any difference on screen is a difference in the page, and a partly-transparent
+  layer invents one. `check:crt-untreated` already pinned the rule; it binds
+  hardest here.
+- **Reduced motion makes Blink a MANUAL toggle rather than turning it off.** The
+  alternation is not decoration on top of the information, it IS the
+  information — a Blink that does not blink is a mode that does nothing. But it
+  is also involuntary repeating full-frame motion, which is what somebody
+  turning reduced motion on is asking not to be shown. Both are true, so the
+  capability stays and only the involuntariness goes: the user swaps the frames
+  at their own pace and gets the same comparison.
+- **The wipe divider never reaches an edge.** Flush to one there is no handle
+  left in the frame to drag it back with, and the mode reads as broken. It is
+  also keyboard-driven, since it is the one control on this screen that
+  otherwise needs a steady hand.
+- **The modes are offered only when both frames exist.** A mode whose empty
+  state is "both have to exist" is a mode that should not have been offered.
 
 **6.7 Command palette (⌘K).** ✅ **Done, 2026-08-12.** Run a test, run a tag,
 open a view, record, generate, reach the last failure. Ranking in

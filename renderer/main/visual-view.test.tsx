@@ -26,6 +26,7 @@ let replays: RunReplaySummary[] = [];
  *  test in this file leaves them null and never reaches the viewer. */
 let replayDetail: unknown = null;
 let shot: string | null = null;
+let baselineShot: string | null = null;
 
 // The four exits from a findings banner. Each returns the replay the way the
 // real handler does — patched, so the view re-renders from the same object the
@@ -67,7 +68,7 @@ vi.mock("../lib/api", () => ({
       getMasks: async () => [],
       setMasks: async () => [],
       listBaselines: async () => [],
-      baselineShot: async () => null,
+      baselineShot: async () => baselineShot,
       clearBaseline: async () => null,
       acceptStep: async () => null,
       acceptRun: (...a: unknown[]) => acceptVisualRun(...(a as [])),
@@ -560,5 +561,161 @@ describe("the threshold, drawn against the frames (B8)", () => {
 
   it("flags everything at a threshold of zero", () => {
     expect(framesOverThreshold(steps(0.0001, 0.5), 0)).toBe(2);
+  });
+});
+
+// ── Wipe and Blink (C §6.6) ─────────────────────────────────────────────
+//
+// The two modes that put both frames in the SAME PLACE, which is the comparison
+// a diff map cannot make: a diff lights every changed pixel with equal weight,
+// so a font-smoothing shift and a button that moved 40px look identical.
+//
+// Three things here would be silent if wrong. Offering a mode that cannot open
+// (only one frame exists). Rendering half a comparison and letting it read as a
+// result. And treating a frame — on the one screen where a tint from our own
+// chrome is indistinguishable from a tint in the page under test.
+
+describe("wipe and blink (C §6.6)", () => {
+  beforeEach(() => {
+    replays = [summary({ runId: "r1", stepCount: 1, changedSteps: 1 })];
+    replayDetail = {
+      testId: "t1",
+      runId: "r1",
+      testName: "Checkout",
+      status: "passed",
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_001_000,
+      failedIndex: null,
+      steps: [
+        {
+          index: 0,
+          stepId: "s1",
+          label: "goto example.com",
+          type: "goto",
+          status: "passed",
+          screenshot: "0.png",
+          diff: { state: "changed", ratio: 0.04, threshold: 0.2, diffFile: "0.diff.png" },
+        },
+      ],
+    } as never;
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+    baselineShot = "data:image/svg+xml;utf8,%3Csvg%20id%3D%22b%22%3E%3C/svg%3E";
+  });
+
+  afterEach(() => {
+    replayDetail = null;
+    shot = null;
+    baselineShot = null;
+  });
+
+  const modeButton = (name: RegExp) =>
+    screen.getAllByRole("button").find((b) => name.test(b.textContent ?? ""));
+
+  async function ready() {
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector(".gl-visual-modes")) throw new Error("not ready");
+    });
+  }
+
+  it("offers all five modes when both frames exist", async () => {
+    await ready();
+    for (const name of [/^Current$/, /^Baseline$/, /^Diff$/, /^Wipe$/, /^Blink$/]) {
+      expect(modeButton(name)).toBeTruthy();
+    }
+  });
+
+  it("does not offer them when there is no current frame to compare", async () => {
+    // A mode whose empty state is "both have to exist" is a mode that should
+    // not have been offered in the first place.
+    const detail = replayDetail as unknown as { steps: Record<string, unknown>[] };
+    replayDetail = {
+      ...detail,
+      steps: [{ ...detail.steps[0], screenshot: null }],
+    } as never;
+    renderVisual();
+    // Waiting on the step, not on the mode switch: with no captured frame the
+    // switch may not render at all, and waiting for it would time out on the
+    // very state this test is about.
+    await waitFor(() => {
+      if (!screen.queryByText(/goto example\.com/)) throw new Error("not ready");
+    });
+    expect(modeButton(/^Wipe$/)).toBeUndefined();
+    expect(modeButton(/^Blink$/)).toBeUndefined();
+  });
+
+  it("stacks both frames in wipe, each in its own untreated bezel", async () => {
+    await ready();
+    fireEvent.click(modeButton(/^Wipe$/)!);
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="wipe"]')) throw new Error("no wipe");
+    });
+    // TWO bezels: baseline underneath, current clipped on top. One would mean
+    // the mode is showing a single frame and calling it a comparison.
+    expect(document.querySelectorAll('[data-gl="crt"]').length).toBe(2);
+    for (const img of document.querySelectorAll(".gl-crt-img")) {
+      // The rule this whole screen exists under. An inline treatment here would
+      // manufacture a difference the page does not have.
+      expect((img as HTMLElement).style.filter).toBe("");
+      expect((img as HTMLElement).style.opacity).toBe("");
+      expect((img as HTMLElement).style.mixBlendMode).toBe("");
+    }
+  });
+
+  it("clips the wipe rather than fading it", async () => {
+    // `clip-path`, never opacity: a partly-transparent layer invents a
+    // difference, and this mode's whole premise is that it does not.
+    await ready();
+    fireEvent.click(modeButton(/^Wipe$/)!);
+    const top = await waitFor(() => {
+      const el = document.querySelector(".gl-visual-wipe-top") as HTMLElement | null;
+      if (!el) throw new Error("no top layer");
+      return el;
+    });
+    expect(top.style.clipPath).toContain("inset(");
+    expect(top.style.opacity).toBe("");
+  });
+
+  it("drives the wipe divider from the keyboard", async () => {
+    // Mouse-only would make the one control here that needs a steady hand
+    // unusable without one.
+    await ready();
+    fireEvent.click(modeButton(/^Wipe$/)!);
+    const handle = await waitFor(() => {
+      const el = document.querySelector(".gl-visual-wipe-handle") as HTMLElement | null;
+      if (!el) throw new Error("no handle");
+      return el;
+    });
+    expect(handle.getAttribute("aria-valuenow")).toBe("50");
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(handle.getAttribute("aria-valuenow")).toBe("55");
+    fireEvent.keyDown(handle, { key: "End" });
+    // Never flush to the edge — there would be no handle left in the frame to
+    // drag it back with.
+    expect(Number(handle.getAttribute("aria-valuenow"))).toBeLessThan(100);
+  });
+
+  it("says which frame blink is showing", async () => {
+    // With the frames alternating, "which one am I looking at" is otherwise
+    // unanswerable — and a user who cannot answer it cannot say which
+    // direction the change went.
+    await ready();
+    fireEvent.click(modeButton(/^Blink$/)!);
+    await waitFor(() => {
+      if (!document.querySelector(".gl-visual-blink-which")) throw new Error("no label");
+    });
+    expect(document.querySelector(".gl-visual-blink-which")?.textContent).toBe("Current");
+  });
+
+  it("refuses to show half a comparison when the baseline is missing", async () => {
+    baselineShot = null;
+    await ready();
+    // Wipe is still offered (a baseline RECORD exists, which is what the switch
+    // is gated on); the mode itself says which frame it could not load rather
+    // than rendering one and letting it read as a result.
+    fireEvent.click(modeButton(/^Wipe$/)!);
+    await waitFor(() => {
+      if (!screen.queryByText(/both have to exist/i)) throw new Error("no explanation");
+    });
   });
 });
