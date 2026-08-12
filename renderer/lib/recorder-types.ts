@@ -1116,6 +1116,47 @@ export interface BatchState {
  *  so a restored batch renders identically to a running one. */
 export type BatchRecord = BatchState;
 
+// ── Routines (mirror of main/recorder/types.ts) ──────────────────────
+// Batch v2: a saved, named job. docs/ROUTINES.md. A Routine composes RUNS;
+// `runFlow` composes STEPS — see the main-process copy for why that line
+// matters. Only `kind: "test"` is built; the rest of the union is designed
+// there and deliberately unwritten.
+
+export type FailurePolicy = "continue" | "stopRoutine" | "skipGroup";
+
+export interface RoutineTestStep {
+  kind: "test";
+  testId: string;
+  /** NEVER empty — an empty array is a step that queues nothing, so the
+   *  Routine silently runs fewer tests than it lists. */
+  browsers: RunBrowser[];
+  headless: boolean;
+  onFailure: FailurePolicy;
+  /** The test this step names has been deleted. Marked, not removed — the step
+   *  renders as broken and the user takes it out. */
+  testDeleted?: boolean;
+}
+
+export type RoutineStep = RoutineTestStep;
+
+export interface RoutineDefaults {
+  captureArtifacts: boolean;
+  concurrency: number;
+}
+
+export interface Routine {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  steps: RoutineStep[];
+  defaults: RoutineDefaults;
+}
+
+export const MAX_ROUTINES = 50;
+export const MAX_ROUTINE_STEPS = 200;
+export const MAX_ROUTINE_NAME = 80;
+
 // ── Cookies (mirror of main/recorder/types.ts) ───────────────────────
 
 export type CookieAction = "set" | "delete" | "clearAll";

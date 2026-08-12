@@ -1912,6 +1912,77 @@ export interface BatchRecord extends BatchState {
   summary: BatchSummary;
 }
 
+// ── Routines ──────────────────────────────────────────────────────────
+// Batch v2: a saved, named job. docs/ROUTINES.md. Mirror kept in
+// renderer/lib/recorder-types.ts.
+//
+// A ROUTINE COMPOSES RUNS; `runFlow` COMPOSES STEPS. That is the line the spec
+// calls the main design risk here, and it is why a `test` step names a testId
+// and nothing else: it runs that test as its own process, with its own
+// RunRecord and its own row in Stats. A Routine never reaches inside a test.
+//
+// Only `kind: "test"` exists in this first slice. `group`, `wait`, `notify` and
+// `branch` are designed in ROUTINES.md and deliberately unbuilt — the spec
+// sequences a saved configuration BEFORE a flow builder, because a builder with
+// nothing to save it into is the useless half. The union is written as a union
+// of one so adding the second kind is an additive change every `switch` on it
+// is already shaped for.
+
+/** What a Routine does when one of its steps fails. `continue` FIRST and the
+ *  default: it is Batch's current unwritten behaviour, so anything else changes
+ *  what a migrated job does on its first run. See ROUTINES.md — no `retry`
+ *  policy in v1, because a routine-level retry stacked on Auto-Heal makes a
+ *  flaky test look stable, which is the signal Stability exists to give. */
+export type FailurePolicy = "continue" | "stopRoutine" | "skipGroup";
+
+export interface RoutineTestStep {
+  kind: "test";
+  testId: string;
+  /** Engines this step runs on. NEVER empty — an empty array is a step that
+   *  produces no queue entries, so the Routine silently runs fewer tests than
+   *  it lists. Same invariant `batch-run-plan.ts` protects for a Batch row. */
+  browsers: RunBrowser[];
+  headless: boolean;
+  onFailure: FailurePolicy;
+  /** The test this step names has been deleted. MARKED, NOT REMOVED — ROUTINES
+   *  open question 4: silently shrinking a saved job is the same class of bug
+   *  as the batch running fewer tests than it said. The step renders as broken
+   *  and the user removes it, so the job they built is the job they see. */
+  testDeleted?: boolean;
+}
+
+export type RoutineStep = RoutineTestStep;
+
+export interface RoutineDefaults {
+  captureArtifacts: boolean;
+  /** Lanes. Clamped against the queue by `clampBatchConcurrency` at run time,
+   *  not here — a saved Routine's number is a preference, and the ceiling
+   *  depends on how many distinct tests it actually queues. */
+  concurrency: number;
+}
+
+export interface Routine {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  steps: RoutineStep[];
+  defaults: RoutineDefaults;
+}
+
+/** Ceiling on stored Routines. This is a local app and the whole index is
+ *  rewritten on every save; a person with more than this many saved jobs has a
+ *  different problem than the one Routines solves. */
+export const MAX_ROUTINES = 50;
+
+/** Ceiling on steps in one Routine. Bounds the file, and bounds what a single
+ *  IPC payload can ask the runner to queue. */
+export const MAX_ROUTINE_STEPS = 200;
+
+/** Longest a Routine's name may be. Long enough for a real sentence, short
+ *  enough that the list stays a list. */
+export const MAX_ROUTINE_NAME = 80;
+
 // ── Cookies ───────────────────────────────────────────────────────────
 // Mirror kept in renderer/lib/recorder-types.ts.
 

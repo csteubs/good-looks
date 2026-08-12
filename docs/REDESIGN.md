@@ -1268,10 +1268,29 @@ exactly the rule the four-stylesheet split states.
 The brief asks that already-planned features get design plans now, so they build
 into existing UI rather than bolting on. Four are outstanding.
 
-### 7.1 Routines (Batch v2) — [ROUTINES.md](ROUTINES.md), specified, not built
+### 7.1 Routines (Batch v2) — [ROUTINES.md](ROUTINES.md), capability 1 started
 
 Three independent capabilities, sequenced 1 → 2 → 3: a saved named
 configuration, a schedule, a flow builder.
+
+**Built as of 2026-08-12: capability 1, end to end.** A Routine is a record
+(`routine-store.ts`, `shared/routine-migration.mjs`, `routines:*` IPC), the old
+Batch checklist migrates into one named "Batch" on first launch, `routines:run`
+executes one through the SAME batch runner, and the Batch view is now that
+Routine's editor — a picker names the saved jobs and carries New/Delete, the
+name is inline-editable, and the checklist is the open Routine's body
+(`renderer/lib/routine-rows.ts`). Only `kind: "test"` steps exist, and
+`onFailure` is stored but not yet honoured: every step behaves as `continue`,
+which is what Batch already does.
+
+**Two pieces of the plan below are deliberately NOT built yet**, and both are
+placement rather than capability. The rail does not list Routines — that gives
+`library-sidebar.tsx`, which every screen shares, a third job, and the picker
+makes the feature usable without it. And **Previous batches is not scoped to the
+open Routine**: that wants a `routineId` on `BatchRecord`, which is an on-disk
+format change and belongs with whatever else needs one. Capabilities 2
+(scheduling) and 3 (the flow builder) are untouched, so there is no schedule
+chip to draw.
 
 **Where it lands.** Batch becomes a *list of Routines* with one Routine open,
 rather than a single implicit checklist. Concretely, in the redesign's shell:

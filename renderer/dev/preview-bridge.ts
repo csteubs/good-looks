@@ -30,6 +30,7 @@
 
 import {
   BATCHES,
+  ROUTINES,
   HEALS,
   SCRIPT_CHANGES,
   LLM_CONFIG,
@@ -52,6 +53,7 @@ import type {
   ArtifactUsage,
   BaselineEntry,
   BatchRecord,
+  Routine,
   BatchState,
   EmitResult,
   CaptureOverheadSummary,
@@ -187,6 +189,10 @@ function seed() {
     runs: [...structuredClone(RUNS), ...costFiller()],
     heals: structuredClone(HEALS),
     scriptChanges: structuredClone(SCRIPT_CHANGES),
+    // Edited in place, so a save made in the preview STICKS for the session — a
+    // bridge that forgot every save would make the Routine editor look broken
+    // in the one place a person can actually drive it.
+    routines: structuredClone(ROUTINES),
     settings: structuredClone(SETTINGS),
     llmConfig: structuredClone(LLM_CONFIG),
     // Starts DISCONNECTED, so the preview opens on the state that actually
@@ -1082,6 +1088,41 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     // that names a file nobody can open.
     "report:emit": (): EmitResult => ({ path: null, bytes: 0, count: 0, cancelled: true }),
     "batch:list": (): BatchRecord[] => structuredClone(BATCHES),
+
+    // ── Routines ─────────────────────────────────────────────────────────
+    // docs/ROUTINES.md. Backed by mutable session state (see `seed`), so an
+    // edit made in the preview sticks for the rest of the session.
+    "routines:list": (): Routine[] => structuredClone(state.routines),
+    "routines:get": (params?: unknown): Routine | null => {
+      const id = (params as { id?: string } | undefined)?.id;
+      return structuredClone(state.routines.find((r) => r.id === id) ?? null);
+    },
+    "routines:save": (params?: unknown): Routine | null => {
+      const sent = (params as { routine?: Routine } | undefined)?.routine;
+      if (!sent || typeof sent.id !== "string") return null;
+      // `updatedAt` MOVES on every save, as the real store's does — the editor
+      // keys its re-seed on it, so a bridge that left it alone would leave the
+      // screen showing what it sent instead of what was stored.
+      const next = { ...structuredClone(sent), updatedAt: Date.now() };
+      const i = state.routines.findIndex((r) => r.id === next.id);
+      if (i >= 0) state.routines[i] = next;
+      else state.routines.push(next);
+      return structuredClone(next);
+    },
+    "routines:delete": (params?: unknown): { removed: number } => {
+      const id = (params as { id?: string } | undefined)?.id;
+      const before = state.routines.length;
+      state.routines = state.routines.filter((r) => r.id !== id);
+      return { removed: before - state.routines.length };
+    },
+    /** The preview HAS a runner (see the run bridge above), so this answers the
+     *  way the real one does rather than pretending nothing happened. */
+    "routines:run": (): {
+      batchId: string;
+      alreadyRunning: boolean;
+      skipped: string[];
+      plannedRuns: number;
+    } => ({ batchId: `b-${Date.now()}`, alreadyRunning: false, skipped: [], plannedRuns: 0 }),
     /** `BatchState | null`, and idle is `null` — not a half-filled state
      *  object. A `{ running: false }` stand-in is missing every other field the
      *  view reads once it decides a batch exists. */

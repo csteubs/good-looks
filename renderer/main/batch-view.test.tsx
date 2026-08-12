@@ -19,6 +19,8 @@ import type {
   BatchRecord,
   BatchRowOptions,
   RecorderSettings,
+  Routine,
+  RoutineStep,
   RunBrowser,
   TestRecord,
 } from "../lib/recorder-types";
@@ -28,6 +30,7 @@ import {
   BATCH_CONCURRENCY_CHOICES,
   batchConcurrencyConsequence,
 } from "../lib/batch-parallel";
+import { toastTexts } from "../__tests__/sonner-stub";
 import { BatchView } from "./batch-view";
 
 // ── Mocks ────────────────────────────────────────────────────────────
@@ -39,8 +42,43 @@ const batchRun = vi.fn(
     alreadyRunning: false,
   }),
 );
+// Routines. The view is ONE Routine's editor now, so the Routine — not
+// `batchTestOptions` — is what decides which rows are ticked. `routineSave`
+// echoes its input back the way the real store does (returning what was
+// STORED, not what was sent), and mutates `routines` so a second render sees
+// the write: a mock that accepted saves and forgot them would let every
+// "persists across X" assertion pass vacuously.
+const routineRun = vi.fn(async (_id: string) => ({
+  batchId: "b1",
+  alreadyRunning: false,
+  skipped: [] as string[],
+  plannedRuns: 1,
+}));
+const routineSave = vi.fn(async (r: Routine) => {
+  const all = [...(routines ?? (routines = [everyTest()]))];
+  const i = all.findIndex((x) => x.id === r.id);
+  // `updatedAt` moves on every save, as the real store's does — the view keys
+  // its re-seed on it, so a mock that left it alone would hide that.
+  const stored = { ...r, updatedAt: r.updatedAt + 1 };
+  if (i >= 0) all[i] = stored;
+  else all.push(stored);
+  routines = all;
+  return stored;
+});
+const routineRemove = vi.fn(async (id: string) => {
+  const all = routines ?? (routines = [everyTest()]);
+  const before = all.length;
+  routines = all.filter((r) => r.id !== id);
+  return { removed: before - (routines?.length ?? 0) };
+});
 
 let library: TestRecord[] = [];
+// `null` means "the default": one Routine holding the whole library, which is
+// what a user who has used this view before has saved. Resolved INSIDE the mock
+// like `library` is, so a test can reassign `library` first and still get a
+// Routine built from it — building it in beforeEach would freeze the default
+// library into every test that replaces it.
+let routines: Routine[] | null = null;
 let settings: Partial<RecorderSettings> = {};
 // Stored batch history, same idiom as `library`: resolved inside the mock so a
 // test can reassign it before the view mounts.
@@ -67,6 +105,18 @@ vi.mock("../lib/api", () => ({
       setSettings: (u: Partial<RecorderSettings>) => setSettings(u),
     },
     runs: { getLog: (id: string) => getLog(id) },
+    routines: {
+      // A FRESH ARRAY EVERY CALL, like the real store — it re-reads the file.
+      // Handing back the same array that `save` mutated in place makes the
+      // cached data referentially equal to the new data, so React never
+      // re-renders and every "the edit survives" assertion fails for a reason
+      // that has nothing to do with the view.
+      list: async () => [...(routines ?? (routines = [everyTest()]))],
+      get: async (id: string) => (routines ?? []).find((r) => r.id === id) ?? null,
+      save: (r: Routine) => routineSave(r),
+      remove: (id: string) => routineRemove(id),
+      run: (id: string) => routineRun(id),
+    },
     batch: {
       list: async () => history,
       status: async () => null,
@@ -126,6 +176,53 @@ function allSelected(browsers: RunBrowser[] = ["chromium"]): Record<string, Batc
   return out;
 }
 
+/** One Routine containing the whole library — the state a user who has used
+ *  this view before has saved, and what `allSelected()` used to stand for
+ *  before the Routine became the authority on selection. */
+function routineOf(
+  steps: RoutineStep[],
+  over: Partial<Routine> = {},
+): Routine {
+  return {
+    id: "r-1",
+    name: "Batch",
+    createdAt: 1,
+    updatedAt: 1,
+    steps,
+    defaults: { captureArtifacts: false, concurrency: 1 },
+    ...over,
+  };
+}
+
+/** A Routine expressed the way `batchTestOptions` used to be: which tests are
+ *  in the job, on what engines, headed or not. Lets each test below state the
+ *  intent it always stated, against the store that now decides it. */
+function routineRows(
+  rows: Record<string, { browsers?: RunBrowser[]; headless?: boolean }>,
+): Routine {
+  return routineOf(
+    Object.entries(rows).map(([testId, r]) => ({
+      kind: "test" as const,
+      testId,
+      browsers: r.browsers ?? (["chromium"] as RunBrowser[]),
+      headless: r.headless ?? false,
+      onFailure: "continue" as const,
+    })),
+  );
+}
+
+function everyTest(browsers: RunBrowser[] = ["chromium"], headless = false): Routine {
+  return routineOf(
+    library.map((t) => ({
+      kind: "test" as const,
+      testId: t.id,
+      browsers,
+      headless,
+      onFailure: "continue" as const,
+    })),
+  );
+}
+
 /** Whether each engine toggle on a row is on, by engine label. Reads
  *  aria-pressed rather than a class name: that's what a screen reader
  *  announces, and a class assertion would just pin today's styling. */
@@ -175,6 +272,7 @@ beforeEach(() => {
   listeners.clear();
   library = [test_("a", "Alpha"), test_("b", "Beta"), test_("c", "Gamma")];
   settings = { batchOrder: [], defaultRunBrowser: "chromium" };
+  routines = null;
   history = [];
 });
 
@@ -189,6 +287,8 @@ describe("BatchView per-row engines", () => {
   it("pre-selects the test's OWN engine over the global default", async () => {
     library = [{ ...test_("a", "Alpha"), runBrowser: "webkit" } as TestRecord, test_("b", "Beta")];
     settings = { batchOrder: [], defaultRunBrowser: "firefox", batchTestOptions: {} };
+    // A row that is not in the routine — which is what "untouched" means now.
+    routines = [routineOf([])];
     renderView();
     await rowNames();
     expect(enginesFor("Alpha")).toEqual({ Chromium: false, Firefox: false, WebKit: true });
@@ -220,50 +320,48 @@ describe("BatchView per-row engines", () => {
     expect(enginesFor("Alpha").Chromium).toBe(true);
   });
 
-  it("hydrates rows from stored options rather than the defaults", async () => {
-    settings = {
-      batchOrder: [],
-      defaultRunBrowser: "chromium",
-      batchTestOptions: {
-        a: { selected: true, browsers: ["firefox", "webkit"], headless: true },
-      },
-    };
+  it("hydrates rows from the open routine rather than the defaults", async () => {
+    settings = { batchOrder: [], defaultRunBrowser: "chromium" };
+    routines = [routineRows({ a: { browsers: ["firefox", "webkit"], headless: true } })];
     renderView();
     await rowNames();
     expect(enginesFor("Alpha")).toEqual({ Chromium: false, Firefox: true, WebKit: true });
     expect(screen.getByLabelText("Run Alpha headless").getAttribute("aria-pressed")).toBe("true");
   });
 
-  it("sends one perTest entry per test, carrying its engines", async () => {
-    settings = {
-      batchOrder: [],
-      batchTestOptions: {
-        a: { selected: true, browsers: ["chromium", "webkit"], headless: true },
-        b: { selected: true, browsers: ["firefox"], headless: false },
-        c: { selected: false, browsers: ["chromium"], headless: false },
-      },
-    };
+  it("runs the SAVED routine, whose steps carry each test's engines", async () => {
+    // The per-test payload is built backend-side from the record now (see
+    // shared/routine-plan.mjs), so what this view is responsible for is that
+    // the record says the right thing and that Run names it. Asserting a
+    // payload the renderer no longer builds would pin fiction.
+    settings = { batchOrder: [] };
+    routines = [
+      routineRows({
+        a: { browsers: ["chromium", "webkit"], headless: true },
+        b: { browsers: ["firefox"] },
+      }),
+    ];
     renderView();
     await rowNames();
 
     fireEvent.click(runButton());
 
-    expect(batchRun.mock.calls[0][0]).toEqual(["a", "b"]);
-    expect(batchRun.mock.calls[0][1]?.perTest).toEqual([
-      { testId: "a", browsers: ["chromium", "webkit"], headless: true },
-      { testId: "b", browsers: ["firefox"], headless: false },
+    expect(routineRun.mock.calls[0][0]).toBe("r-1");
+    expect(routines[0].steps).toEqual([
+      { kind: "test", testId: "a", browsers: ["chromium", "webkit"], headless: true, onFailure: "continue" },
+      { kind: "test", testId: "b", browsers: ["firefox"], headless: false, onFailure: "continue" },
     ]);
   });
 
   it("reports runs, not just tests, once a row has two engines", async () => {
     // A silent 3× is exactly the surprise worth naming in the toolbar.
-    settings = {
-      batchOrder: [],
-      batchTestOptions: {
-        a: { selected: true, browsers: ["chromium", "firefox", "webkit"], headless: false },
-        b: { selected: true, browsers: ["chromium"], headless: false },
-      },
-    };
+    settings = { batchOrder: [] };
+    routines = [
+      routineRows({
+        a: { browsers: ["chromium", "firefox", "webkit"] },
+        b: { browsers: ["chromium"] },
+      }),
+    ];
     renderView();
     await rowNames();
     expect(await screen.findByText(/2 of 3 selected · 4 runs/)).toBeTruthy();
@@ -367,20 +465,32 @@ describe("BatchView ordering", () => {
     expect(await rowNames()).toEqual(["Alpha", "Beta", "Gamma"]);
   });
 
-  it("applies a stored custom order", async () => {
-    settings = { batchOrder: ["c", "a", "b"], defaultRunBrowser: "chromium" };
+  it("shows the open routine's steps in the routine's order", async () => {
+    // The order lives on the JOB now. `batchOrder` still arranges the rows the
+    // routine does not contain — see the next test.
+    settings = { batchOrder: [], defaultRunBrowser: "chromium" };
+    routines = [routineRows({ c: {}, a: {}, b: {} })];
     renderView();
     expect(await rowNames()).toEqual(["Gamma", "Alpha", "Beta"]);
   });
 
-  it("puts a test added since the order was saved at the TOP", async () => {
+  it("arranges the rows the routine does NOT contain by the stored order", async () => {
+    settings = { batchOrder: ["c", "a"], defaultRunBrowser: "chromium" };
+    routines = [routineRows({ b: {} })];
+    renderView();
+    expect(await rowNames()).toEqual(["Beta", "Gamma", "Alpha"]);
+  });
+
+  it("puts a test added since the order was saved at the TOP of the rest", async () => {
     // It used to be appended. On a library of any size that put a
     // just-recorded test off the bottom of the list, which reads as it not
     // having been created — the same complaint the selection fix addressed
     // from the other direction. The sidebar is newest-first; Batch disagreeing
-    // with it was the confusing part.
+    // with it was the confusing part. It leads the rows the routine does not
+    // contain, not the whole list: the job itself comes first now.
     settings = { batchOrder: ["c", "b", "a"], defaultRunBrowser: "chromium" };
     library = [test_("d", "Delta"), ...library];
+    routines = [routineOf([])];
     renderView();
     expect(await rowNames()).toEqual(["Delta", "Gamma", "Beta", "Alpha"]);
   });
@@ -390,24 +500,9 @@ describe("BatchView ordering", () => {
     // not reshuffle a suite someone arranged by hand.
     settings = { batchOrder: ["c", "b", "a"], defaultRunBrowser: "chromium" };
     library = [test_("d", "Delta"), ...library];
+    routines = [routineOf([])];
     renderView();
     expect((await rowNames()).slice(1)).toEqual(["Gamma", "Beta", "Alpha"]);
-  });
-
-  it("persists the new test's position rather than letting it drop next render", async () => {
-    // The view rewrites a drifted order. Leading the list is only worth
-    // anything if that placement is what gets written back — otherwise the test
-    // leads once and drops on the next render, which is worse than consistently
-    // trailing.
-    settings = { batchOrder: ["c", "b", "a"], defaultRunBrowser: "chromium" };
-    library = [test_("d", "Delta"), ...library];
-    renderView();
-    await rowNames();
-    await waitFor(() =>
-      expect(setSettings).toHaveBeenCalledWith(
-        expect.objectContaining({ batchOrder: ["d", "c", "b", "a"] }),
-      ),
-    );
   });
 
   it("still shows every test when the stored order references a deleted one", async () => {
@@ -447,21 +542,23 @@ describe("BatchView selection and filtering", () => {
     // The reversal: a test used to be ticked the moment it existed, so "Run
     // all" swept up recordings the user had never opted into.
     settings = { batchOrder: [], batchTestOptions: {} };
+    routines = [routineOf([])];
     renderView();
     await rowNames();
     expect(checkedByName()).toEqual({ Alpha: false, Beta: false, Gamma: false });
   });
 
-  it("persists a tick, so it survives the next session", async () => {
+  it("persists a tick to the ROUTINE, so it survives the next session", async () => {
+    // The tick puts a test INTO the job, so the job is what has to record it.
     settings = { batchOrder: [], batchTestOptions: {} };
+    routines = [routineOf([])];
     renderView();
     await rowNames();
 
     fireEvent.click(screen.getByLabelText("Include Beta in the batch"));
 
     await waitFor(() => expect(checkedByName().Beta).toBe(true));
-    const saved = lastRowWrite() as Partial<RecorderSettings>;
-    expect(saved.batchTestOptions?.b.selected).toBe(true);
+    await waitFor(() => expect(routines?.[0].steps.map((st) => st.testId)).toEqual(["b"]));
   });
 
   it("keeps a test selected across a tag-filter change", async () => {
@@ -489,16 +586,20 @@ describe("BatchView selection and filtering", () => {
     expect(await screen.findByRole("button", { name: /smoke · 2/i })).toBeTruthy();
   });
 
-  it("runs the tests in the order shown, not library order", async () => {
-    // The bug this guards: reordering rows visually while running the old order.
-    settings = { batchOrder: ["c", "b", "a"], defaultRunBrowser: "chromium" };
+  it("stores the steps in the order shown, not library order", async () => {
+    // The bug this guards: reordering rows visually while running the old
+    // order. What runs is the stored routine, so the assertion is on what got
+    // stored — the translation from steps to a queue is covered in
+    // routine-plan.test.ts.
+    settings = { batchOrder: [], defaultRunBrowser: "chromium" };
+    routines = [routineRows({ c: {}, b: {}, a: {} })];
     renderView();
     expect(await rowNames()).toEqual(["Gamma", "Beta", "Alpha"]);
 
     fireEvent.click(runButton());
 
-    expect(batchRun).toHaveBeenCalledTimes(1);
-    expect(batchRun.mock.calls[0][0]).toEqual(["c", "b", "a"]);
+    expect(routineRun).toHaveBeenCalledTimes(1);
+    expect(routines?.[0].steps.map((st) => st.testId)).toEqual(["c", "b", "a"]);
   });
 });
 
@@ -521,7 +622,7 @@ describe("BatchView newly created tests", () => {
     expect(checkedByName()).toEqual({ Alpha: true, Beta: true, Gamma: true, Delta: false });
   });
 
-  it("does NOT silently add the new test to the run", async () => {
+  it("does NOT silently add the new test to the job", async () => {
     const qc = renderView();
     await rowNames();
     library = [test_("d", "Delta"), ...library];
@@ -529,8 +630,8 @@ describe("BatchView newly created tests", () => {
     await waitFor(() => expect(screen.getAllByLabelText(/^Include /)).toHaveLength(4));
 
     fireEvent.click(runButton());
-    expect([...batchRun.mock.calls[0][0]].sort()).toEqual(["a", "b", "c"]);
-    expect(batchRun.mock.calls[0][0]).not.toContain("d");
+    expect(routineRun).toHaveBeenCalledTimes(1);
+    expect([...(routines ?? [])[0].steps.map((st) => st.testId)].sort()).toEqual(["a", "b", "c"]);
   });
 
   it("shows the new test's own default engine, ready to be ticked", async () => {
@@ -553,7 +654,9 @@ describe("BatchView newly created tests", () => {
     await qc.invalidateQueries({ queryKey: ["tests"] });
 
     await waitFor(() => expect(screen.getAllByLabelText(/^Include /)).toHaveLength(4));
-    expect(checkedByName()).toEqual({ Alpha: true, Beta: false, Gamma: true, Delta: false });
+    await waitFor(() =>
+      expect(checkedByName()).toEqual({ Alpha: true, Beta: false, Gamma: true, Delta: false }),
+    );
   });
 
   it("does not re-tick anything when the library merely refetches unchanged", async () => {
@@ -570,20 +673,27 @@ describe("BatchView newly created tests", () => {
     expect(checkedByName().Beta).toBe(false);
   });
 
-  it("drops stored rows for a test that no longer exists", async () => {
+  it("drops the scratch row for a test that no longer exists, on the next write", async () => {
     // Otherwise the map grows for the life of the app, and a re-imported test
-    // would inherit a choice nobody remembers making.
+    // would inherit a choice nobody remembers making. Pruned ON WRITE now
+    // rather than by an effect watching for drift: stateless, so it cannot
+    // loop, which is why this ticks something rather than only refetching.
     const qc = renderView();
     await rowNames();
     setSettings.mockClear();
 
     library = library.filter((t) => t.id !== "b");
     await qc.invalidateQueries({ queryKey: ["tests"] });
-
     await waitFor(() => expect(screen.getAllByLabelText(/^Include /)).toHaveLength(2));
-    const rowWrites = setSettings.mock.calls.filter((c) => "batchTestOptions" in c[0]);
-    const saved = rowWrites[rowWrites.length - 1][0] as Partial<RecorderSettings>;
-    expect(Object.keys(saved.batchTestOptions ?? {}).sort()).toEqual(["a", "c"]);
+
+    fireEvent.click(screen.getByLabelText("Include Alpha in the batch"));
+
+    await waitFor(() => {
+      const rowWrites = setSettings.mock.calls.filter((c) => "batchTestOptions" in c[0]);
+      expect(rowWrites.length).toBeGreaterThan(0);
+      const saved = rowWrites[rowWrites.length - 1][0] as Partial<RecorderSettings>;
+      expect(Object.keys(saved.batchTestOptions ?? {}).sort()).toEqual(["a", "c"]);
+    });
   });
 });
 
@@ -602,9 +712,15 @@ describe("BatchView run options", () => {
     fireEvent.click(capture);
 
     fireEvent.click(runButton());
-    const opts = batchRun.mock.calls[0][1] as { runHeadless?: boolean; captureArtifacts?: boolean };
-    expect(opts.runHeadless).toBe(true);
-    expect(opts.captureArtifacts).toBe(true);
+    // Both are the ROUTINE's now: headedness per step, capture on its defaults.
+    // Waited for rather than read straight away — these are two independent
+    // writes, and the point of the assertion is that the second does not undo
+    // the first, which only means anything once both have landed.
+    await waitFor(() => expect(routineRun).toHaveBeenCalled());
+    await waitFor(() => {
+      expect(routines?.[0].defaults.captureArtifacts).toBe(true);
+      expect(routines?.[0].steps.every((st) => st.headless)).toBe(true);
+    });
   });
 });
 
@@ -614,7 +730,8 @@ describe("BatchView parallel runs", () => {
   // therefore SEEDS the choice through settings (which is also how a user's
   // saved default arrives) and asserts on the displayed value and on what
   // reaches api.batch.run — the two things that actually matter.
-  const runOpts = () => batchRun.mock.calls[0]?.[1] as { concurrency?: number } | undefined;
+  /** The routine's stored lane count — where the choice lives now. */
+  const savedLanes = () => routines?.[0].defaults.concurrency;
 
   it("defaults to off, and runs one at a time", async () => {
     renderView();
@@ -623,25 +740,37 @@ describe("BatchView parallel runs", () => {
     await waitFor(() => expect(trigger.textContent).toContain("Off"));
 
     fireEvent.click(runButton());
-    await waitFor(() => expect(batchRun).toHaveBeenCalled());
-    expect(runOpts()?.concurrency).toBe(1);
+    await waitFor(() => expect(routineRun).toHaveBeenCalled());
+    expect(savedLanes()).toBe(1);
     expect(screen.getByText(/tests run one at a time/i)).toBeTruthy();
   });
 
-  it("shows a saved default and sends it with the batch", async () => {
-    settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 2 };
+  it("shows the ROUTINE's saved lane count", async () => {
+    // Not the global default: a saved job that forgot how many lanes it runs in
+    // is a saved job in name only.
+    routines = [{ ...everyTest(), defaults: { captureArtifacts: false, concurrency: 2 } }];
     renderView();
     await rowNames();
     const trigger = screen.getByRole("button", { name: /how many tests to run at once/i });
     await waitFor(() => expect(trigger.textContent).toContain("2 at once"));
 
     fireEvent.click(runButton());
-    await waitFor(() => expect(batchRun).toHaveBeenCalled());
-    expect(runOpts()?.concurrency).toBe(2);
+    await waitFor(() => expect(routineRun).toHaveBeenCalled());
+    expect(savedLanes()).toBe(2);
+  });
+
+  it("falls back to the global default for a user with no routine yet", async () => {
+    settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 2 };
+    routines = [];
+    renderView();
+    const trigger = await screen.findByRole("button", {
+      name: /how many tests to run at once/i,
+    });
+    await waitFor(() => expect(trigger.textContent).toContain("2 at once"));
   });
 
   it("says how many run at a time once parallel is on", async () => {
-    settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 2 };
+    routines = [{ ...everyTest(), defaults: { captureArtifacts: false, concurrency: 2 } }];
     renderView();
     await rowNames();
     await waitFor(() => expect(screen.getByText(/2 tests run at a time/i)).toBeTruthy());
@@ -649,17 +778,14 @@ describe("BatchView parallel runs", () => {
   });
 
   // "All at once" is capped by how many tests there ARE — with three in the
-  // library it must ask for three, not the hard ceiling.
-  it("never asks for more parallelism than there are tests", async () => {
-    settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 16 };
+  // library the note must promise three, not the hard ceiling.
+  it("never promises more parallelism than there are tests", async () => {
+    routines = [{ ...everyTest(), defaults: { captureArtifacts: false, concurrency: 16 } }];
     renderView();
     await rowNames();
     const trigger = screen.getByRole("button", { name: /how many tests to run at once/i });
     await waitFor(() => expect(trigger.textContent).toContain("All at once"));
-
-    fireEvent.click(runButton());
-    await waitFor(() => expect(batchRun).toHaveBeenCalled());
-    expect(runOpts()?.concurrency).toBe(3);
+    expect(await screen.findByText(/3 tests run at a time/i)).toBeTruthy();
   });
 });
 
@@ -959,7 +1085,11 @@ describe("BatchView headed parallel warning", () => {
 
   beforeEach(() => {
     library = bigLibrary();
-    settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 16 };
+    settings = { batchOrder: [], defaultRunBrowser: "chromium" };
+    // The lane count is the ROUTINE's now, so seeding the global default would
+    // be overridden by the open job and every assertion below would be about a
+    // one-at-a-time run.
+    routines = [{ ...everyTest(), defaults: { captureArtifacts: false, concurrency: 16 } }];
   });
 
   it("asks before opening more than ten visible browsers, and starts nothing yet", async () => {
@@ -973,7 +1103,7 @@ describe("BatchView headed parallel warning", () => {
     // the raw picker value.
     expect(within(dialog).getByText(/open 14 browser windows at once\?/i)).toBeTruthy();
     // Nothing may start while the question is on screen.
-    expect(batchRun).not.toHaveBeenCalled();
+    expect(routineRun).not.toHaveBeenCalled();
   });
 
   it("runs it anyway when confirmed, at the number it warned about", async () => {
@@ -984,10 +1114,11 @@ describe("BatchView headed parallel warning", () => {
     const dialog = await screen.findByRole("alertdialog");
     fireEvent.click(within(dialog).getByRole("button", { name: /run anyway/i }));
 
-    await waitFor(() => expect(batchRun).toHaveBeenCalled());
-    const opts = batchRun.mock.calls[0][1] as { concurrency?: number; runHeadless?: boolean };
-    expect(opts.concurrency).toBe(14);
-    expect(opts.runHeadless).toBe(false);
+    await waitFor(() => expect(routineRun).toHaveBeenCalled());
+    // The lane count reaching the runner is clamped backend-side against the
+    // distinct tests (see shared/routine-plan.mjs); what this view owns is the
+    // number it WARNED about, which is the one on the dialog above.
+    expect(routineRun.mock.calls[0][0]).toBe("r-1");
   });
 
   it("starts nothing when the warning is dismissed", async () => {
@@ -999,7 +1130,7 @@ describe("BatchView headed parallel warning", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: /cancel/i }));
 
     await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
-    expect(batchRun).not.toHaveBeenCalled();
+    expect(routineRun).not.toHaveBeenCalled();
   });
 
   // The whole reason the threshold is on headedness: nothing appears on screen,
@@ -1011,33 +1142,32 @@ describe("BatchView headed parallel warning", () => {
 
     fireEvent.click(runButton());
 
-    await waitFor(() => expect(batchRun).toHaveBeenCalled());
+    await waitFor(() => expect(routineRun).toHaveBeenCalled());
     expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect((batchRun.mock.calls[0][1] as { concurrency?: number }).concurrency).toBe(14);
   });
 
   // A big selection run a few at a time is the safe case. Nagging about it
   // would train people to click straight through the dialog that matters.
   it("does not ask when a big library runs only a few at a time", async () => {
-    settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 4 };
+    routines = [{ ...everyTest(), defaults: { captureArtifacts: false, concurrency: 4 } }];
     renderView();
     await rowNames();
 
     fireEvent.click(runButton());
 
-    await waitFor(() => expect(batchRun).toHaveBeenCalled());
+    await waitFor(() => expect(routineRun).toHaveBeenCalled());
     expect(screen.queryByRole("alertdialog")).toBeNull();
-    expect((batchRun.mock.calls[0][1] as { concurrency?: number }).concurrency).toBe(4);
+    expect(await screen.findByText(/4 tests run at a time/i)).toBeTruthy();
   });
 
   it("does not ask for a headed batch that runs one at a time", async () => {
-    settings = { batchOrder: [], defaultRunBrowser: "chromium", defaultBatchConcurrency: 1 };
+    routines = [{ ...everyTest(), defaults: { captureArtifacts: false, concurrency: 1 } }];
     renderView();
     await rowNames();
 
     fireEvent.click(runButton());
 
-    await waitFor(() => expect(batchRun).toHaveBeenCalled());
+    await waitFor(() => expect(routineRun).toHaveBeenCalled());
     expect(screen.queryByRole("alertdialog")).toBeNull();
   });
 });
@@ -1049,15 +1179,193 @@ describe("BatchView reset order", () => {
     expect(screen.queryByRole("button", { name: "Reset order" })).toBeNull();
   });
 
-  it("shows Reset order for a custom order and clears it", async () => {
-    settings = { batchOrder: ["c", "a", "b"], defaultRunBrowser: "chromium" };
+  it("shows Reset order for a custom order and puts the JOB back in library order", async () => {
+    // Clearing the scratch order alone would leave the button visible and
+    // inert: the routine's steps lead the list, so its own order is what has to
+    // change. A control that does nothing is worse than no control.
+    settings = { batchOrder: [], defaultRunBrowser: "chromium" };
+    routines = [routineRows({ c: {}, a: {}, b: {} })];
+    renderView();
+    expect(await rowNames()).toEqual(["Gamma", "Alpha", "Beta"]);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Reset order" }));
+
+    await waitFor(() => expect(routines?.[0].steps.map((st) => st.testId)).toEqual(["a", "b", "c"]));
+    expect(await rowNames()).toEqual(["Alpha", "Beta", "Gamma"]);
+  });
+});
+
+// ── The Routine editor ───────────────────────────────────────────────
+// REDESIGN §7.1 / docs/ROUTINES.md. This screen is one Routine's editor now,
+// and everything below is a way the translation could quietly describe a
+// different job from the one on screen.
+describe("BatchView as a Routine editor", () => {
+  it("opens the first saved routine and names it", async () => {
+    routines = [
+      routineOf([], { id: "r-a", name: "Smoke", createdAt: 1 }),
+      routineOf([], { id: "r-b", name: "Nightly", createdAt: 2 }),
+    ];
+    renderView();
+    const picker = await screen.findByRole("button", { name: /which routine to edit/i });
+    await waitFor(() => expect(picker.textContent).toContain("Smoke"));
+    expect((await screen.findByLabelText("Routine name")).getAttribute("value")).toBe("Smoke");
+  });
+
+  it("switches the checklist when another routine is opened", async () => {
+    routines = [
+      routineOf([{ kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" }], { id: "r-a", name: "Smoke", createdAt: 1 }),
+      routineOf([{ kind: "test", testId: "c", browsers: ["webkit"], headless: true, onFailure: "continue" }], { id: "r-b", name: "Nightly", createdAt: 2 }),
+    ];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(checkedByName()).toEqual({ Alpha: true, Beta: false, Gamma: false }));
+
+    fireEvent.click(screen.getByRole("button", { name: /which routine to edit/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Nightly/ }));
+
+    // The whole point of the feature: two configurations of the same library
+    // that could not previously coexist.
+    await waitFor(() => expect(checkedByName()).toEqual({ Alpha: false, Beta: false, Gamma: true }));
+    expect(enginesFor("Gamma")).toEqual({ Chromium: false, Firefox: false, WebKit: true });
+  });
+
+  it("renames on Enter and abandons the edit on Escape", async () => {
+    routines = [routineOf([], { id: "r-a", name: "Smoke" })];
+    renderView();
+    const field = await screen.findByLabelText("Routine name");
+
+    fireEvent.change(field, { target: { value: "Smoke suite" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(routines?.[0].name).toBe("Smoke suite"));
+
+    fireEvent.change(field, { target: { value: "half-typed" } });
+    fireEvent.keyDown(field, { key: "Escape" });
+    await waitFor(() =>
+      expect((screen.getByLabelText("Routine name") as HTMLInputElement).value).toBe("Smoke suite"),
+    );
+    expect(routines?.[0].name).toBe("Smoke suite");
+  });
+
+  it("refuses to save an empty name, and puts the old one back", async () => {
+    // An empty name is not a rename, it is a half-finished one — and a job with
+    // no name is a row in the picker that cannot be pointed at.
+    routines = [routineOf([], { id: "r-a", name: "Smoke" })];
+    renderView();
+    const field = await screen.findByLabelText("Routine name");
+
+    fireEvent.change(field, { target: { value: "   " } });
+    fireEvent.blur(field);
+
+    await waitFor(() =>
+      expect((screen.getByLabelText("Routine name") as HTMLInputElement).value).toBe("Smoke"),
+    );
+    expect(routineSave).not.toHaveBeenCalled();
+  });
+
+  it("does not write the routine merely because the view mounted", async () => {
+    // Opening a job must not re-date it: `updatedAt` is what the picker sorts
+    // by and what a schedule will one day compare against.
+    routines = [everyTest()];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(screen.getAllByLabelText(/^Include /)).toHaveLength(3));
+    expect(routineSave).not.toHaveBeenCalled();
+  });
+
+  it("creates a new routine EMPTY and opens it", async () => {
+    // Pre-filling would make the first thing a new job does be something the
+    // user has to undo.
+    routines = [routineOf([], { id: "r-a", name: "Smoke" })];
     renderView();
     await rowNames();
 
-    const reset = await screen.findByRole("button", { name: "Reset order" });
-    fireEvent.click(reset);
+    fireEvent.click(screen.getByRole("button", { name: /which routine to edit/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /New routine…/ }));
 
-    expect(setSettings).toHaveBeenCalledWith(expect.objectContaining({ batchOrder: [] }));
+    await waitFor(() => expect(routines).toHaveLength(2));
+    expect(routines?.[1].steps).toEqual([]);
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /which routine to edit/i }).textContent,
+      ).toContain("New routine"),
+    );
+    expect(checkedByName()).toEqual({ Alpha: false, Beta: false, Gamma: false });
+  });
+
+  it("deletes a routine only after confirming, and falls back to another", async () => {
+    routines = [
+      routineOf([], { id: "r-a", name: "Smoke", createdAt: 1 }),
+      routineOf([], { id: "r-b", name: "Nightly", createdAt: 2 }),
+    ];
+    renderView();
+    await rowNames();
+
+    fireEvent.click(screen.getByRole("button", { name: /which routine to edit/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Delete "Smoke"/ }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    // The tests are right there under the dialog with tick boxes beside them —
+    // it has to say they are not going anywhere.
+    expect(within(dialog).getByText(/tests in it are untouched/i)).toBeTruthy();
+    expect(routineRemove).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /delete routine/i }));
+
+    await waitFor(() => expect(routines?.map((r) => r.id)).toEqual(["r-b"]));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /which routine to edit/i }).textContent,
+      ).toContain("Nightly"),
+    );
+  });
+
+  it("reports steps whose tests are gone, and removes them on request", async () => {
+    // The store keeps them so a saved job never silently shrinks; the checklist
+    // cannot draw a row for a test that does not exist, so without this the job
+    // is one step longer than the screen and nothing says so.
+    routines = [
+      routineOf([
+        { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        { kind: "test", testId: "gone", browsers: ["chromium"], headless: false, onFailure: "continue", testDeleted: true },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+
+    expect(await screen.findByText(/one step names a test that no longer exists/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /^Remove it$/ }));
+
+    await waitFor(() => expect(routines?.[0].steps.map((st) => st.testId)).toEqual(["a"]));
+    await waitFor(() =>
+      expect(screen.queryByText(/names a test that no longer exists/i)).toBeNull(),
+    );
+  });
+
+  it("says what to do when there are no routines at all", async () => {
+    // The state the migration leaves anyone who never ticked a row. An empty
+    // screen with no way forward would read as the feature being broken.
+    routines = [];
+    renderView();
+    expect(await screen.findByText(/no routines yet/i)).toBeTruthy();
+  });
+
+  it("tells you when a run skipped steps rather than saying nothing", async () => {
+    // A note, not a failure — but silence is what would make the feature
+    // untrustworthy.
+    routineRun.mockResolvedValueOnce({
+      batchId: "b1",
+      alreadyRunning: false,
+      skipped: ["gone", "also-gone"],
+      plannedRuns: 1,
+    });
+    renderView();
+    await rowNames();
+
+    fireEvent.click(runButton());
+
+    await waitFor(() =>
+      expect(toastTexts().map((t) => t.title).join(" ")).toContain("2 steps skipped"),
+    );
   });
 });
 

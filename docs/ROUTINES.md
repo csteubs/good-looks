@@ -1,8 +1,26 @@
 # Routines — a design spec for Batch v2
 
-**Status: not built.** This is a design document, written alongside the per-row
-Batch work of 2026-08-07 so that work doesn't paint the next version into a
-corner. Nothing described here exists. Where it says "would", it means would.
+**Status: capability 1 is built (2026-08-12).** This started as a design
+document, written alongside the per-row Batch work of 2026-08-07 so that work
+didn't paint the next version into a corner. Most of it is still design — where
+it says "would", it means would.
+
+What now exists: **capability 1, end to end — the entity, the migration, the
+editor, and running one.**
+`main/services/routine-store.ts` persists Routines to
+`userData/recorder/routines.json`; `shared/routine-migration.mjs` synthesises
+the "Batch" Routine described under *A Routine is an entity*, once, at startup;
+`shared/routine-plan.mjs` turns a Routine into the batch runner's own payload;
+`routines:*` IPC exposes list/get/save/delete/run; and the Batch view is the
+open Routine's editor (`renderer/lib/routine-rows.ts` translates its checklist
+to and from steps). Of the step kinds below only `kind: "test"` is built, and
+`onFailure` is stored but not yet honoured — every step behaves as `continue`,
+which is what Batch already does, and nothing can set anything else. The MCP
+`run_routine` tool named in the rename table below is not built, the rail does
+not list Routines (REDESIGN §7.1 puts them there; the view's own picker stands
+in), and Previous batches is not yet scoped to the open Routine — that needs a
+`routineId` on `BatchRecord`. Capabilities 2 (scheduling) and 3 (the flow
+builder) are untouched.
 
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for what exists today,
 [DECISIONS.md](DECISIONS.md) for why the current Batch is shaped the way it is,
