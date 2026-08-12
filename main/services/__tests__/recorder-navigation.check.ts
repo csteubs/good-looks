@@ -121,9 +121,22 @@ assert(
 );
 
 // ── No other route out of the app ────────────────────────────────────
-// shell.openExternal hands a URL to the OS by definition. There is no use for
-// it on any path the trainer can reach, and its absence is far easier to keep
-// than its correctness.
+// shell.openExternal hands a URL to the OS by definition.
+//
+// This was a blanket ban, on the grounds that nothing needed the capability and
+// "its absence is far easier to keep than its correctness". The branch menu's
+// pull-request icon needed it, so the ban is now a ONE-FILE ALLOWLIST rather
+// than an exception someone can add a second entry to by editing a regex.
+//
+// What makes the exception safe is not the validator in `external-url.ts` —
+// that is pinned separately by `check:open-external`, and it is the second
+// layer. It is that THE TRAINING WINDOW HAS NO PRELOAD: `ipcMain.handle`
+// registers a channel every renderer can invoke, so the question this check
+// exists to answer is whether the untrusted page can reach it, and the answer
+// is that it has no `glazeAPI` object to reach it with. That fact was load-
+// bearing and unpinned before this handler existed; it is asserted below,
+// because a preload added to the training window for some unrelated debugging
+// convenience would hand an arbitrary website the whole host surface.
 function walk(dir: string): string[] {
   const out: string[] = [];
   for (const name of readdirSync(dir)) {
@@ -136,16 +149,62 @@ function walk(dir: string): string[] {
 }
 
 {
+  /** The single audited call site. Adding a second entry here is a decision,
+   *  not a fix — every other file in `main/` stays banned. */
+  const ALLOWED = ["main/shell/host-handlers.ts"];
+
   // A CALL, not the word: "openExternal" also names the permission we deny, and
   // matching the bare identifier would flag the very code doing the denying.
   const CALLS_OPEN_EXTERNAL = /(?:shell|Shell)\s*\.\s*openExternal\s*\(|(?<![."'`\w])openExternal\s*\(/;
-  const offenders = walk(mainDir).filter((file) => {
-    if (file.endsWith("recorder-navigation.check.ts")) return false;
-    return CALLS_OPEN_EXTERNAL.test(readFileSync(file, "utf8"));
-  });
+  const callers = walk(mainDir)
+    .filter((file) => !file.endsWith("recorder-navigation.check.ts"))
+    .filter((file) => CALLS_OPEN_EXTERNAL.test(readFileSync(file, "utf8")))
+    .map((file) => file.replace(mainDir, "main"));
+
+  const offenders = callers.filter((file) => !ALLOWED.includes(file));
   assert(
     offenders.length === 0,
-    `no main-process file CALLS openExternal (found: ${offenders.map((f) => f.replace(mainDir, "main")).join(", ") || "none"})`,
+    `only ${ALLOWED.join(", ")} may call openExternal (found: ${offenders.join(", ") || "none"})`,
+  );
+  // The allowlist entry is not permission to stop calling it: if the handler is
+  // deleted or renamed, this check should stop claiming to guard a call site
+  // that no longer exists rather than passing vacuously forever.
+  assert(
+    callers.includes(ALLOWED[0]),
+    `${ALLOWED[0]} still holds the one openExternal call this allowlist is for`,
+  );
+}
+
+// ── Why the one exception is safe: no preload on the trainer ─────────
+// `ipcMain.handle` is process-wide. A channel registered for the app's own
+// windows is invokable by ANY renderer that has the preload bridge, so the
+// training window's `webPreferences` is what decides whether an arbitrary
+// website can call `shell:openExternal`. It sets `partition` and nothing else,
+// and that omission is the whole guarantee.
+{
+  // Two assertions rather than one, because each covers the other's blind spot.
+  // The file-wide one cannot be dodged by nesting or reformatting but would miss
+  // a preload path built by hand; the block-scoped one reads the actual options
+  // but stops at the first `}`, so a nested object added above `preload` would
+  // hide it. `getPreloadPath` is the only supported way to name that file.
+  assert(
+    !/getPreloadPath/.test(service),
+    "recorder-service never reaches for the preload path at all",
+  );
+
+  const prefs = /webPreferences:\s*\{([\s\S]*?)\}/.exec(service)?.[1] ?? "";
+  assert(prefs.length > 0, "the training window's webPreferences block was found to check");
+  assert(
+    !/\bpreload\s*:/.test(prefs),
+    "the training window gets NO preload, so an untrusted page has no glazeAPI to invoke host channels with",
+  );
+  assert(
+    !/nodeIntegration\s*:\s*true/.test(prefs),
+    "…and no nodeIntegration",
+  );
+  assert(
+    !/contextIsolation\s*:\s*false/.test(prefs),
+    "…and context isolation is not turned off",
   );
 }
 

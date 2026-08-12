@@ -26,6 +26,7 @@ import type { LlmProvider } from "../lib/llm-types";
 import type { TestRecord } from "../lib/recorder-types";
 import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/duplicate-warnings";
+import { nativeShell } from "../lib/native-shell";
 import { useAiDebug } from "./ai-debug-store";
 import { NewRecordingDialog } from "./new-recording-dialog";
 import { GenerateTestDialog } from "./generate-test-dialog";
@@ -33,12 +34,6 @@ import { ImportGitDialog } from "./import-git-dialog";
 import { TagsDialog } from "./tags-dialog";
 import { DuplicateTestDialog } from "./duplicate-test-dialog";
 
-interface NativeShell {
-  showItemInFolder: (fullPath: string) => void;
-}
-function nativeShell(): NativeShell {
-  return (window as unknown as { glazeAPI: { shell: NativeShell } }).glazeAPI.shell;
-}
 
 /** Slider embedded in the "Adjust Test Speed" submenu — snaps to the named
  * speeds rather than an arbitrary ms value, since that's what a Playwright
