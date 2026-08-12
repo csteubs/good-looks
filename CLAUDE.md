@@ -32,7 +32,9 @@ main/services/llm/  local + hosted LLM chat integration (Ollama, LM Studio, Clau
 main/recorder/       recording-session logic (script injection, step capture)
 main/windows/        BrowserWindow creation/config
 renderer/main/       primary views (home, recording/trainer, script view, ai-debug-panel, stats)
-renderer/settings/   settings window UI
+renderer/settings/   settings window UI (panes/, one per sidebar row). A fresh window can be
+                     deep-linked onto a pane with `window:openSettings("<pane>")`, which
+                     travels as a URL fragment and is validated in the main process
 renderer/trainer/    the trainer window's own panel (runs the recorder store with no router)
 renderer/recorder-chrome/  the training browser's URL bar. Renders into a WebContentsView
                      docked above the untrusted page INSIDE the recorder window — not a

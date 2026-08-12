@@ -138,8 +138,10 @@ export function registerHandlers(): void {
   });
 
   // Settings window handlers
-  ipcMain.handle("window:openSettings", async (_event) => {
-    await openSettingsWindow();
+  // `pane` is optional and deep-links a FRESH window onto one pane — see
+  // `openSettingsWindow`, which validates it before it reaches a URL.
+  ipcMain.handle("window:openSettings", async (_event, pane?: string) => {
+    await openSettingsWindow(pane);
   });
 
   ipcMain.handle("window:closeSettings", async (_event) => {
@@ -276,6 +278,18 @@ export function registerHandlers(): void {
         uiScale: next.uiScale,
         uiTypeface: next.uiTypeface,
       });
+      // And the same argument once more, for everything else on this object.
+      //
+      // THE MAIN WINDOW CANNOT NOTICE THIS ON ITS OWN. It reads settings
+      // through react-query, whose focus refetch listens to `visibilitychange`
+      // only — and moving between two BrowserWindows of the same app never
+      // changes a window's visibility. The views that appeared to stay fresh
+      // were getting it from remount on route change; Stats does not, because
+      // Stats is the view the user is standing on while they correct the CI
+      // price in the other window. Payload-free on purpose: the listener
+      // re-fetches, so there stays exactly one path from stored settings to
+      // rendered ones.
+      sendToMain("settings:changed", null);
       return next;
     },
   );

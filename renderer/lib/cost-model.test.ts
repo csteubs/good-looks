@@ -13,14 +13,24 @@ import type { RunRecord } from "./recorder-types";
 import {
   COST_DEFAULTS,
   MIN_RUNS_FOR_NEVER_CAUGHT,
-  coerceAssumption,
+  assumptionsFromSettings,
   computeCost,
   flakeRuns,
   formatHours,
   formatMinutes,
+  formatRate,
   formatSpend,
   reviewReason,
 } from "./cost-model";
+import {
+  CI_RUNNER_PRESETS,
+  COST_CURRENCIES,
+  clampCostPerCiMinute,
+  clampMinutesPerManualRun,
+  currencySymbol,
+  rateForRunner,
+  runnerForRate,
+} from "../../shared/cost-units.mjs";
 
 const MIN = 60_000;
 
@@ -47,23 +57,90 @@ describe("the assumptions", () => {
     expect(COST_DEFAULTS.minutesPerManualRun).toBeGreaterThan(0);
   });
 
-  it("survives a cleared field rather than turning every figure into NaN", () => {
-    // `Number("")` is 0 and `Number("abc")` is NaN. Either renders as a
-    // confident "0.00" or "NaN" instead of as a mistake.
-    expect(coerceAssumption("costPerCiMinute", "")).toBe(COST_DEFAULTS.costPerCiMinute);
-    expect(coerceAssumption("costPerCiMinute", "abc")).toBe(COST_DEFAULTS.costPerCiMinute);
-    expect(coerceAssumption("minutesPerManualRun", "  ")).toBe(COST_DEFAULTS.minutesPerManualRun);
+  it("survives a missing or corrupt setting rather than turning every figure into NaN", () => {
+    // Both now arrive from a settings object, which can be empty (the query
+    // has not resolved) or hand-edited on disk. A NaN renders as a confident
+    // "$NaN" and a null as "$0.00" — neither reads as a mistake.
+    expect(assumptionsFromSettings({})).toEqual(COST_DEFAULTS);
+    expect(
+      assumptionsFromSettings({ costPerCiMinute: NaN, costMinutesPerManualRun: NaN }),
+    ).toEqual(COST_DEFAULTS);
+    expect(
+      assumptionsFromSettings({
+        costPerCiMinute: undefined as unknown as number,
+        costMinutesPerManualRun: undefined as unknown as number,
+      }),
+    ).toEqual(COST_DEFAULTS);
   });
 
   it("clamps rather than accepting a number that would dwarf every figure", () => {
-    expect(coerceAssumption("costPerCiMinute", "-5")).toBe(0);
-    expect(coerceAssumption("costPerCiMinute", "1e9")).toBe(100);
-    expect(coerceAssumption("minutesPerManualRun", "0")).toBe(0.5);
+    expect(clampCostPerCiMinute(-5)).toBe(0);
+    expect(clampCostPerCiMinute(1e9)).toBe(100);
+    expect(clampMinutesPerManualRun(0)).toBe(0.5);
+    expect(clampMinutesPerManualRun(1e9)).toBe(480);
   });
 
-  it("takes a legitimate edit through unchanged", () => {
-    expect(coerceAssumption("costPerCiMinute", "0.016")).toBe(0.016);
-    expect(coerceAssumption("minutesPerManualRun", "25")).toBe(25);
+  it("takes a legitimate value through unchanged, decimals and all", () => {
+    // The rounding the other settings clamps do would destroy this one: 0.008
+    // is a real CI price and `Math.round` makes it free.
+    expect(clampCostPerCiMinute(0.016)).toBe(0.016);
+    expect(clampCostPerCiMinute(0.008)).toBe(0.008);
+    expect(clampMinutesPerManualRun(25)).toBe(25);
+    expect(assumptionsFromSettings({ costPerCiMinute: 0.062 }).costPerCiMinute).toBe(0.062);
+  });
+
+  it("keeps a price of zero, because a self-hosted runner is free", () => {
+    // The `Number(raw) || fallback` idiom every other settings clamp uses would
+    // silently replace this with the app's 0.008 guess.
+    expect(clampCostPerCiMinute(0)).toBe(0);
+    expect(assumptionsFromSettings({ costPerCiMinute: 0 }).costPerCiMinute).toBe(0);
+  });
+});
+
+describe("the runner presets", () => {
+  it("round-trips every published rate back to the runner that has it", () => {
+    // The pane DERIVES the selected runner from the stored price rather than
+    // storing it, so a preset that does not come back out is a pane that reads
+    // "Custom" over a price it just wrote.
+    for (const preset of CI_RUNNER_PRESETS) {
+      if (preset.rate === null) continue;
+      expect(runnerForRate(preset.rate), preset.id).toBe(preset.id);
+      expect(rateForRunner(preset.id)).toBe(preset.rate);
+    }
+  });
+
+  it("reports the app's own shipped guess as Custom", () => {
+    // 0.008 deliberately matches no published runner — see COST_DEFAULTS.
+    expect(runnerForRate(COST_DEFAULTS.costPerCiMinute)).toBe("custom");
+    expect(runnerForRate(0.0071)).toBe("custom");
+    expect(runnerForRate(NaN)).toBe("custom");
+    expect(runnerForRate(undefined)).toBe("custom");
+  });
+
+  it("gives every published rate a distinct runner", () => {
+    // `runnerForRate` can only be unambiguous while this holds. A second runner
+    // priced at 0.006 would make the dropdown report the wrong hardware.
+    const rates = CI_RUNNER_PRESETS.map((p) => p.rate).filter((r) => r !== null);
+    expect(new Set(rates).size).toBe(rates.length);
+  });
+
+  it("survives a price the number input's own stepper produced", () => {
+    // These are not invented: the price field steps by 0.001, and repeatedly
+    // stepping up lands on 0.010000000000000002 and 0.06200000000000005 rather
+    // than on the published rates. Under a strict `===` the dropdown would read
+    // "Custom" over a price the user reached with its own spinner.
+    let stepped = 0;
+    const steps: number[] = [];
+    for (let i = 0; i < 62; i++) {
+      stepped += 0.001;
+      steps.push(stepped);
+    }
+    const windowsRate = steps.filter((n) => Math.abs(n - 0.01) < 1e-9)[0];
+    const macRate = steps.filter((n) => Math.abs(n - 0.062) < 1e-9)[0];
+    expect(windowsRate).not.toBe(0.01);
+    expect(macRate).not.toBe(0.062);
+    expect(runnerForRate(windowsRate)).toBe("windows-2");
+    expect(runnerForRate(macRate)).toBe("macos-3-4");
   });
 });
 
@@ -200,17 +277,52 @@ describe("the verdict", () => {
 });
 
 describe("formatting", () => {
-  it("never prints a currency symbol", () => {
-    // The rate is whatever the user typed, in whatever currency they think in.
-    // This app is never told which, and stamping a symbol on it would assert
-    // something it does not know.
-    expect(formatSpend(12.5)).not.toMatch(/[$£€]/);
-    expect(formatSpend(12.5)).toBe("12.50");
+  it("prints the symbol of the currency the user picked", () => {
+    expect(formatSpend(12.5, "usd")).toBe("$12.50");
+    expect(formatSpend(12.5, "eur")).toBe("€12.50");
+    expect(formatSpend(12.5, "gbp")).toBe("£12.50");
   });
 
-  it("says <0.01 rather than rounding a real cost to nothing", () => {
-    expect(formatSpend(0.004)).toBe("<0.01");
-    expect(formatSpend(0)).toBe("0.00");
+  it("keeps the three dollar currencies apart", () => {
+    // The app never converts, so all three rendering as a bare "$" would let a
+    // US figure be read as a Canadian one with nothing on screen to catch it.
+    expect(formatSpend(12.5, "cad")).toBe("CA$12.50");
+    expect(formatSpend(12.5, "aud")).toBe("A$12.50");
+    expect(formatSpend(12.5, "usd")).toBe("$12.50");
+  });
+
+  it("prints no symbol at all under `none`", () => {
+    // The original contract, still reachable: the panel claims nothing about
+    // currency for a user whose currency is not on the list.
+    expect(formatSpend(12.5, "none")).not.toMatch(/[$£€¥]/);
+    expect(formatSpend(12.5, "none")).toBe("12.50");
+    expect(formatSpend(0.004, "none")).toBe("<0.01");
+    expect(currencySymbol("none")).toBe("");
+  });
+
+  it("says <0.01 rather than rounding a real cost to nothing, symbol inside", () => {
+    // "<$0.01" is "less than a cent"; "$<0.01" reads as a typo.
+    expect(formatSpend(0.004, "usd")).toBe("<$0.01");
+    expect(formatSpend(0, "usd")).toBe("$0.00");
+  });
+
+  it("states a RATE without rounding it away", () => {
+    // The shipped 0.008 through `formatSpend` is "<$0.01" — a sentence whose
+    // whole job is to make the figures checkable, withholding the number.
+    expect(formatRate(0.008, "usd")).toBe("$0.008");
+    expect(formatRate(0.062, "usd")).toBe("$0.062");
+    expect(formatRate(0.008, "none")).toBe("0.008");
+    expect(formatRate(1, "usd")).toBe("$1");
+  });
+
+  it("gives every currency on the picker a symbol the formatter can use", () => {
+    // A currency added to the list with no symbol renders as a bare number and
+    // nothing throws — the same silent class of bug as a missing CSS class.
+    for (const c of COST_CURRENCIES) {
+      const out = formatSpend(1, c.id);
+      expect(out, c.id).toBe(`${c.symbol}1.00`);
+      if (c.id !== "none") expect(c.symbol.length, c.id).toBeGreaterThan(0);
+    }
   });
 
   it("keeps a decimal on short CI times, so the column is not all zeroes", () => {

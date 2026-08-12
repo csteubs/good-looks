@@ -34,6 +34,7 @@ import { Input } from "@ui";
 import {
   Bandage,
   Bell,
+  Coins,
   FlaskConical,
   HardDrive,
   Plug,
@@ -57,6 +58,7 @@ const PANE_ICONS: Record<PaneId, ComponentType<{ className?: string }>> = {
   "test-defaults": Settings2,
   "auto-heal": Bandage,
   storage: HardDrive,
+  cost: Coins,
   ai: Sparkles,
   alerts: Bell,
   integrations: Plug,
