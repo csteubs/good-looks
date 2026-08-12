@@ -15,7 +15,7 @@ import {
   Text,
   toast,
 } from "@ui";
-import { Plus, FolderOpen, Gauge, EyeOff, BarChart3, GitBranch, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
+import { Plus, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
 
 import { ChromeButton, Rail, RailEmpty, RailGroup, RailRow, SiteIcon } from "../theme";
 import { api } from "../lib/api";
@@ -27,6 +27,7 @@ import type { TestRecord } from "../lib/recorder-types";
 import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/duplicate-warnings";
 import { nativeShell } from "../lib/native-shell";
+import { BranchesRailRow } from "./branches-rail-row";
 import { useAiDebug } from "./ai-debug-store";
 import { NewRecordingDialog } from "./new-recording-dialog";
 import { GenerateTestDialog } from "./generate-test-dialog";
@@ -457,12 +458,9 @@ export function LibrarySidebar() {
               is building the app, and a permanently greyed row would be a
               standing question for everyone else. */}
           {branchesAvailable ? (
-            <RailRow
-              icon={<GitBranch aria-hidden="true" />}
-              title="Branches"
-              subtitle="Run a PR of this app"
+            <BranchesRailRow
               selected={pathname === "/branches"}
-              onClick={() => navigate({ to: "/branches" })}
+              onOpenBranches={() => navigate({ to: "/branches" })}
             />
           ) : null}
         </RailGroup>
