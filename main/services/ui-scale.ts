@@ -14,17 +14,29 @@
 // The honest cost, and the pane says so: this scales the whole interface, not
 // only the type.
 //
-// THE TRAINING BROWSER IS DELIBERATELY EXCLUDED — this is the load-bearing line
-// in the file. `recorder-service.ts` opens a window onto the arbitrary site
-// under test, and zooming that is not a display preference, it is a change to
-// the thing being recorded: layout is viewport-width dependent, so a responsive
-// site under 125% zoom may serve a different DOM, a click may land on a
-// different element, and a visual baseline captured at one scale will not match
-// one captured at another. A reading preference must never rewrite the test. So
-// this module is called from the three APP window creation sites and nowhere
-// else, and it takes the window as an argument rather than reaching for
+// THE TRAINING PAGE IS DELIBERATELY EXCLUDED — this is the load-bearing line in
+// the file. `recorder-service.ts` opens a window onto the arbitrary site under
+// test, and zooming that is not a display preference, it is a change to the
+// thing being recorded: layout is viewport-width dependent, so a responsive site
+// under 125% zoom may serve a different DOM, a click may land on a different
+// element, and a visual baseline captured at one scale will not match one
+// captured at another. A reading preference must never rewrite the test. So this
+// module takes the window as an argument rather than reaching for
 // `BrowserWindow.getAllWindows()` — a helper that scales "every window" would
-// pick the training browser up the day someone adds one.
+// pick the training page up the day someone adds one.
+//
+// It says PAGE rather than "training browser" as of the URL strip. That window
+// is no longer one webContents: it holds the untrusted page in one view and an
+// app-owned URL bar in another, and the strip is ordinary app chrome that scales
+// like the rest of the app — a 36px bar of 11px type does not stay legible at
+// 125% while everything around it grows. So `recorder-service.ts` is a fourth
+// caller, applying `uiScale()` to the strip's webContents and to nothing else.
+// `applyUiScaleToAllWindows` below still walks only the app's own WINDOWS, so a
+// mid-session scale change does not reach the strip; the recorder window is
+// short-lived and re-reads the scale when it next opens.
+//
+// The distinction is pinned by `ui-scale.test.ts` ("applied to the recorder's
+// URL strip but never to the page") and by `check:recorder-views`.
 
 import { logger } from "@shell/backend";
 

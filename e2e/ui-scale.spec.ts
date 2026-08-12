@@ -45,23 +45,34 @@ async function setSettings(
   }, patch);
 }
 
-/** Zoom factors of every open window, keyed by something recognisable in its
- *  URL. Read from the MAIN process, which is the only place the real number
+/** Zoom factors of every live webContents, keyed by something recognisable in
+ *  its URL. Read from the MAIN process, which is the only place the real number
  *  lives — `window.devicePixelRatio` in a renderer answers a different
- *  question. */
+ *  question.
+ *
+ *  ENUMERATES `webContents`, NOT `BrowserWindow.getAllWindows()`. The training
+ *  browser stopped being one webContents when it grew a URL strip: the page is
+ *  in a child WebContentsView and the strip is in another, and neither is a
+ *  window. Walking windows would find the recorder window reporting the STRIP's
+ *  app:// URL, classify the training browser as "main", and leave the assertion
+ *  below with no `training-page` key to look at — a test that hangs on its poll
+ *  rather than one that fails on the thing it guards. */
 async function zoomByUrl(app: AppFixtures["app"]): Promise<Record<string, number>> {
-  return app.evaluate(({ BrowserWindow }) => {
+  return app.evaluate(({ webContents }) => {
     const out: Record<string, number> = {};
-    for (const win of BrowserWindow.getAllWindows()) {
-      const url = win.webContents.getURL();
+    for (const wc of webContents.getAllWebContents()) {
+      if (wc.isDestroyed()) continue;
+      const url = wc.getURL();
       const key = url.startsWith("http://127.0.0.1")
-        ? "training-browser"
-        : url.includes("settings-window")
-          ? "settings"
-          : url.includes("trainer-window")
-            ? "trainer-panel"
-            : "main";
-      out[key] = win.webContents.getZoomFactor();
+        ? "training-page"
+        : url.includes("recorder-chrome")
+          ? "training-url-strip"
+          : url.includes("settings-window")
+            ? "settings"
+            : url.includes("trainer-window")
+              ? "trainer-panel"
+              : "main";
+      out[key] = wc.getZoomFactor();
     }
     return out;
   });
@@ -193,16 +204,23 @@ test("the training browser is never scaled with the app", async ({ app, window }
       page.url,
     );
 
-    await expect.poll(async () => Object.keys(await zoomByUrl(app))).toContain("training-browser");
+    await expect.poll(async () => Object.keys(await zoomByUrl(app))).toContain("training-page");
     const zoom = await zoomByUrl(app);
 
     // The app scales…
     expect(zoom.main, "the main window").toBeCloseTo(1.25, 5);
     expect(zoom["trainer-panel"], "the trainer panel").toBeCloseTo(1.25, 5);
+    // …including the training browser's own URL strip, which is app chrome and
+    // would be a band of 11px type marooned at 100% inside a 125% app.
+    expect(zoom["training-url-strip"], "the training browser's URL strip").toBeCloseTo(1.25, 5);
     // …and the page under test does not. Scaling it would change what a
     // responsive site serves, what a click lands on, and what every visual
     // baseline captured from here on compares against.
-    expect(zoom["training-browser"], "the page under test").toBeCloseTo(1, 5);
+    //
+    // This is the assertion the strip made delicate: both live in the same
+    // window now, one point apart, and the natural way to write the feature —
+    // scale the window — gets the strip right and the page wrong.
+    expect(zoom["training-page"], "the page under test").toBeCloseTo(1, 5);
   } finally {
     await page.close();
   }

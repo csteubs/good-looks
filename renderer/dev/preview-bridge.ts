@@ -835,6 +835,10 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
             stepCount: TESTS[0].steps.length,
             testId: TESTS[0].id,
             url: TESTS[0].url,
+            // Deliberately a DEEPER url than `url` above: the two fields mean
+            // different things (start vs. now), and a fixture where they match
+            // would hide a view that renders the wrong one.
+            liveUrl: TESTS[0].url.replace(/\/*$/, "") + "/cart",
             name: TESTS[0].name,
             editing: editingPreview(),
             assertSoft: false,
@@ -851,6 +855,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       stepCount: 0,
       testId: null,
       url: null,
+      liveUrl: null,
       name: null,
       editing: false,
       assertSoft: false,

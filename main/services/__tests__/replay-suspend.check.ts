@@ -73,9 +73,26 @@ assert(
     "locks its controls",
 );
 assert(
-  /recWindow\.focus\(\)/.test(helper),
-  "withCaptureSuspended: focuses the training window — a `press` step types into whatever the OS " +
+  /focusTrainingPage\(\)/.test(helper),
+  "withCaptureSuspended: focuses the training PAGE — a `press` step types into whatever the OS " +
     "considers focused, which is the trainer panel if the user replayed from there",
+);
+
+// The two halves of focusing the page. This used to be one call, `recWindow.focus()`,
+// and pinning that string was enough. It stopped being enough when the page moved into
+// a child view: the window now contains TWO focusable webContents, so focusing the
+// window alone leaves key events going to whichever view held them last — including
+// the URL strip, right after the user has clicked "Assert URL" in it. A `press` step
+// typing into the URL bar is completely silent, because the bar is read-only.
+const focusFn = service.slice(service.indexOf("function focusTrainingPage()"));
+assert(
+  /recWindow\.focus\(\)/.test(focusFn.slice(0, 400)),
+  "focusTrainingPage: focuses the WINDOW — the OS decides which window keystrokes reach",
+);
+assert(
+  /pageWc\(\)\?\.focus\(\)/.test(focusFn.slice(0, 400)),
+  "focusTrainingPage: focuses the PAGE VIEW — the window holds two webContents now, and " +
+    "the other one is the URL strip",
 );
 assert(
   /sleep\(REPLAY_FOCUS_SETTLE_MS\)/.test(helper),
@@ -86,7 +103,7 @@ assert(
 // Order matters: focus and settle are worthless after the body has run.
 const iPaused = helper.indexOf("session.paused = true");
 const iAttrs = helper.indexOf("applyStateAttributes()");
-const iFocus = helper.indexOf("recWindow.focus()");
+const iFocus = helper.indexOf("focusTrainingPage()");
 const iSettle = helper.indexOf("sleep(REPLAY_FOCUS_SETTLE_MS)");
 const iBody = helper.indexOf("await body()");
 assert(

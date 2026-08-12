@@ -218,6 +218,13 @@ export function registerHandlers(): void {
     return recorderService.listCookies();
   });
 
+  // The training browser's URL strip: read the live URL, and open a URL
+  // assertion prefilled with it. Both are called from `recorder-chrome.html`,
+  // which runs in a view inside the training browser rather than in a window.
+  ipcMain.handle("recorder:getTrainingUrl", async () => recorderService.getTrainingUrl());
+  ipcMain.handle("recorder:assertUrl", async (_e, params: { kind: AssertKind }) =>
+    recorderService.assertUrl(params.kind),
+  );
   ipcMain.handle("recorder:startRefine", async () => recorderService.startRefine());
   ipcMain.handle("recorder:endRefine", async () => recorderService.endRefine());
   ipcMain.handle("recorder:stop", async () => {
