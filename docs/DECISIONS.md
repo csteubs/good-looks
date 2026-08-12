@@ -16,6 +16,28 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — Cost mode, and the three numbers it refuses to make up (C §6.4)
+
+§6.4's own requirement was that the assumptions be "visible and editable — a number nobody can check is a number nobody believes". The open question was whether that meant Settings rows. It does not, and the distinction is the whole feature: a Settings row makes the value editable *somewhere*, and leaves a reader looking at "48 minutes of manual testing avoided" having to know an assumption exists, guess where it lives, and go and find it before they can judge the figure. The two inputs sit directly under the numbers they produce. The derivation is part of the reading.
+
+They are also **not persisted**. They are a lens, not a preference: you set them to your team's real numbers, read the panel, and the question is answered. Storing them would add a third thing to the settings file that has to be migrated, backed up and reasoned about, in exchange for saving one number-typing on a rare visit.
+
+**Three things it refuses to compute, and each refusal is the design.**
+
+*Time is never converted to money.* That needs an hourly rate for whoever would otherwise have done the testing, and it is the one assumption this app has no business guessing — it varies by an order of magnitude between users, nobody would notice a bad default, and a currency figure carries far more authority than the guess behind it deserves. So spend is money (a CI minute has a price), value is TIME (hours of manual testing not done), and the ratio between them is stated in its own honest unit. A reader who wants a currency figure multiplies by their own rate, which is a calculation they can check.
+
+*No currency symbol is ever printed.* The rate is whatever the user typed, in whatever currency they think in. Stamping a `$` on it would be the app asserting something it was never told.
+
+*"Failures caught", not "regressions caught".* The plan's phrase overclaims: whether a given failure was a regression in the site, a broken test, or flake is exactly the question `triage` and the flake analysis exist to answer, and they only answer it probabilistically. Naming it what it is costs one word.
+
+**And two things it deliberately counts asymmetrically.** Spend counts every run *including failures* — CI bills for those, and a cost figure that quietly excluded them would be the flattering kind, which is what this panel must not be. Manual time is credited only for *passes*, because a run that failed did not verify the flow and stands in for nothing.
+
+**Flake is §6.1's definition, reused.** A failure directly followed by a pass with none of the recorded run settings changed. Re-deriving it here would have been easy and is how two surfaces in one app end up disagreeing about the same test in front of the same user.
+
+**One guard worth writing down, because the obvious version of it is wrong.** `coerceAssumption` has to survive someone clearing the field to retype it. `Number("abc")` is NaN and a `Number.isFinite` check catches that — but `Number("")` is **0**, which is finite, so the obvious guard lets an empty box through as a legitimate rate of nothing, and the panel then reports a confident `0.00` spend for a suite that has been running all week. The test for it was written first and failed on exactly that.
+
+**And adding a second table to Stats made `getByRole("table")` ambiguous**, taking down nineteen existing tests at once. The fix is not scoping in the tests: two unnamed tables on one screen are ambiguous to a screen reader too. Both carry an `aria-label` now.
+
 ### 2026-08-12 — The step composer comes out of the modal, and the line count it was supposed to delete (C §6.2)
 
 The insert cursor exists so a step can be placed somewhere other than the end of the list. The control for placing it was a modal, which covered up the list — so while you filled in the fields that decide WHAT goes in, you could not see WHERE. Composing in place fixes that, and it is the whole feature.

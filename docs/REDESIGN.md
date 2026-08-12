@@ -9,9 +9,10 @@ the five components every screen embeds, and every screen has been reached.
 
 **Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
 its frame rail, threshold-against-frames and the masks/baselines reskin.
-**Phase C has started: §6.1, §6.2, §6.3, §6.7 and §6.9 landed 2026-08-12** — the
-five non-failure run-state summaries (which were B5b), the inline step composer,
-change temp against real medians, the ⌘K command palette, and the boot sequence.
+**Phase C is most of the way in: §6.1, §6.2, §6.3, §6.4, §6.7 and §6.9 landed
+2026-08-12** — the five non-failure run-state summaries (which were B5b), the
+inline step composer, change temp against real medians, Stats → Cost, the ⌘K
+command palette, and the boot sequence.
 Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
@@ -876,11 +877,39 @@ summary are one screen asking one question, and two channels would let them
 answer it from two different reads of a database being written to while they
 look.
 
-**6.4 Stats → Cost mode.** CI spend, manual QA avoided, return on spend, waste
-on flake, regressions caught; spend-by-test table with an earning/review verdict;
-CI minutes trend. Needs a cost-per-minute setting and a "minutes per manual run"
-assumption, both of which must be visible and editable — a number nobody can
-check is a number nobody believes.
+**6.4 Stats → Cost mode.** ✅ **Done, 2026-08-12.** CI spend, manual testing
+avoided, return on spend, failures caught and what flake cost — over a
+spend-by-test table with an earning/review verdict. `renderer/lib/cost-model.ts`
+holds the arithmetic; `renderer/main/cost-panel.tsx` renders it into Stats.
+
+**The assumptions are ON THE PANEL, and that is the answer to this section's own
+question.** A Settings row satisfies the letter of "visible and editable" and
+defeats the point: a reader looking at "48m avoided" would have to know the
+assumption exists, guess that Settings is where it lives, and go and find it,
+before they could judge whether the figure means anything. The two inputs sit
+directly under the numbers they produce, so the derivation is part of the
+reading. They are also **not persisted** — they are a lens rather than a
+preference, and storing them would put a third thing in the settings file to
+migrate and back up in exchange for saving one number-typing.
+
+Three refusals shaped the rest:
+
+- **Time is never converted to money.** That needs a third assumption — an
+  hourly rate for whoever would have done the testing — and it is the one this
+  app has no business guessing: it varies by an order of magnitude, nobody would
+  notice a bad default, and a currency figure carries far more authority than
+  the guess behind it deserves. So spend is money, value is TIME, and the ratio
+  is stated in its own unit (hours avoided per unit spent).
+- **No currency symbol anywhere.** The rate is whatever the user typed, in
+  whatever currency they think in; the app is never told which.
+- **"Failures caught", not "regressions caught".** Whether a given failure was a
+  regression, a broken test or flake is exactly what triage and the flake
+  analysis answer probabilistically. Naming it what it is costs one word.
+
+Flake is counted with §6.1's rule, reused rather than re-derived — a failure
+directly followed by a pass with none of the recorded run settings changed. Two
+definitions of flake in one app is how two surfaces end up disagreeing in front
+of a user.
 
 **6.5 Stats → Report mode.** The weekly digest preview, the channel list, and
 exports (PDF / CSV / JUnit XML / public link). **This overlaps heavily with the
@@ -1146,9 +1175,12 @@ separable and can be reprioritised freely once the foundation is in.
 
 Not blocking, but each will need an answer before the PR it affects.
 
-1. **Cost mode's inputs** (§6.4). Cost per CI minute and minutes-saved-per-manual-run
-   are assumptions. Settings rows, or hardcoded with a visible "edit these"
-   affordance?
+1. ~~**Cost mode's inputs** (§6.4)~~ — ✅ **Answered 2026-08-12: hardcoded
+   defaults with a visible "edit these" affordance, in the Cost panel itself.**
+   Not Settings rows. The reasoning is in §6.4 and in DECISIONS: a figure whose
+   assumption lives on another screen is one the reader has to go looking for
+   before they can judge it, which is the failure the requirement was written
+   against.
 2. **The `job` ticker's data source** (§6.8). The shell needs a global run-state
    subscription. Does that come from `recorder-store`, a new provider, or a
    query?

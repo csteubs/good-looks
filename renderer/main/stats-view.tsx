@@ -37,6 +37,7 @@ import { BROWSER_SF_SYMBOLS, BrowserIcon } from "../lib/browser-icons";
 import { FlakePanel } from "./flake-panel";
 import { StepHealthPanel } from "./step-health-panel";
 import { SuiteCostPanel } from "./suite-cost-panel";
+import { CostPanel } from "./cost-panel";
 import { DivergencePanel } from "./divergence-panel";
 import { LogInspector } from "./log-inspector";
 import { Pager } from "./pager";
@@ -583,6 +584,12 @@ export function StatsView() {
                 />
               ) : null}
 
+              {/* What it COSTS, above where its time goes (§6.4). Two questions
+                  that read as one and are not: this one is about money and
+                  what it bought, `SuiteCostPanel` is about which switches are
+                  spending the minutes. */}
+              <CostPanel runs={realRuns} />
+
               {slownessQuery.data ? (
                 <SuiteCostPanel
                   cost={slownessQuery.data.cost}
@@ -745,7 +752,11 @@ export function StatsView() {
                     </div>
                   </div>
                   <div className="gl-table-wrap">
-                    <table className="gl-table gl-table-runs">
+                    {/* NAMED, since C §6.4 put a second table on this screen. Two unnamed
+                        tables are ambiguous to a screen reader and to every
+                        `getByRole("table")` in this file's tests — which is how
+                        the ambiguity was found. */}
+                    <table className="gl-table gl-table-runs" aria-label="Run history">
                       <thead>
                         <tr>
                           <th>Test</th>
