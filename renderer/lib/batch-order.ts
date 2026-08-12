@@ -28,11 +28,14 @@ import type { TestRecord } from "./recorder-types";
  * relative to each other — and ids for deleted tests are ignored rather than
  * leaving gaps.
  */
-export function applyOrder(tests: TestRecord[], order: string[]): TestRecord[] {
+// Generic over anything with an id rather than `TestRecord`, so `routine-rows`
+// can arrange the rows a Routine does NOT contain by this exact rule instead of
+// writing a second one. It never reads another field.
+export function applyOrder<T extends { id: string }>(tests: readonly T[], order: string[]): T[] {
   const byId = new Map(tests.map((t) => [t.id, t]));
   const listed = new Set(order.filter((id) => byId.has(id)));
   // Unlisted first, in library order (newest first, matching the sidebar).
-  const ordered: TestRecord[] = tests.filter((t) => !listed.has(t.id));
+  const ordered: T[] = tests.filter((t) => !listed.has(t.id));
   const seen = new Set<string>();
   for (const id of order) {
     const t = byId.get(id);

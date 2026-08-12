@@ -72,6 +72,10 @@ describe("preview bridge channel coverage", () => {
       "aiDebug:list",
       "batch:list",
       "batch:status",
+      // The Batch screen is one Routine's editor now: with no answer here it
+      // renders the "no routines yet" empty state and nothing else in the
+      // preview can be looked at.
+      "routines:list",
       "artifacts:usage",
       // The three metrics channels answer `{ available, … }` and every one of
       // their panels destructures it. `defaultFor` would hand back `null` —
