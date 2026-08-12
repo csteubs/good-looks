@@ -16,6 +16,79 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — The Cost panel's assumptions move to Settings, and gain a currency
+
+Three changes to Stats → Cost that are really one: the panel was multiplying by
+two numbers nobody had ever corrected.
+
+**The assumptions persist, and they are set in Settings → Cost.** The panel's
+original design put them on the panel with an inline editor and deliberately did
+not store them — "a number nobody can check is a number nobody believes", and a
+Settings row makes a reader of the figures go hunting for what produced them.
+That argument is still right about the SENTENCE, which is why the sentence stays
+exactly where it was, under the figures. It was wrong about the EDITOR. An
+assumption you have to retype on every visit is one nobody sets twice, so in
+practice the panel was always read at the shipped guess — precisely the outcome
+the design existed to prevent. Persisting them costs one trip to Settings, once,
+and the button under the sentence deep-links there.
+
+**The runner dropdown is a pre-fill, and the selected runner is DERIVED.**
+GitHub publishes a per-minute rate per hosted runner and the spread is 31×
+between Linux 1-core and macOS, so a single default is wrong by an order of
+magnitude for anyone on the wrong hardware — and no amount of "this is an
+assumption" copy fixes a number that cannot be checked against the invoice. The
+dropdown writes `costPerCiMinute` and stores nothing of its own; what it
+DISPLAYS comes back out of that number via `runnerForRate`. Storing the runner
+beside the price would create the exact failure the control exists to prevent: a
+pane reading "Linux 2-core" over a price that is nothing of the sort, because
+one of the two was written and the other was not. The comparison carries a 1e-9
+tolerance rather than being `===`, which is not defensive programming — the
+price field steps by 0.001, and stepping up lands on `0.010000000000000002`, so
+a strict compare reports "Custom" over a price the control itself just produced.
+
+**The no-currency-symbol rule is lifted, not overruled.** `formatSpend` refused
+a symbol because the rate was in whatever currency the user thought in and the
+app was never told which. Settings → Cost is now where it gets told, which
+removes the objection rather than ignoring it — and `none` is on the picker, so
+the original behaviour is a choice the user can make rather than one the app
+makes for them. CAD and AUD take `CA$` and `A$`: three entries are dollars, the
+app never converts, and three identical `$` would let a US figure be read as a
+Canadian one with nothing on screen to catch it. `formatRate` is a second
+function because two decimals turn the shipped 0.008 into `<$0.01` — the one
+sentence whose job is to state the number, withholding it.
+
+**The price clamps live in `shared/`, not with the other settings clamps.**
+Every clamp in `settings-schema.ts` rounds to an integer (those values reach the
+Playwright CLI, and a test pins that as a property of the whole family) and uses
+`Number(raw) || fallback`, which treats 0 as absent. Both are wrong here:
+rounding makes 0.008 free, and 0 is the real answer for a self-hosted runner. So
+the pane calls `clampCostPerCiMinute`/`clampMinutesPerManualRun` from
+`shared/cost-units.mjs` — the same two functions the settings store validates
+with, which is the point: the control that writes and the store that reads
+cannot disagree about what is valid.
+
+**The cross-window refresh is the part with no visible symptom until it is
+missing.** The Settings window is its own `BrowserWindow`, and the main window
+reads settings through react-query — whose focus refetch listens to
+`visibilitychange` only. Moving focus between two windows of the same app never
+changes a window's visibility, so nothing fired. The three existing consumers
+got away with it by remounting on route change (`batch-view`, `test-detail`) or
+by reading a setting whose staleness costs a plainer icon (`library-sidebar`).
+Stats is the first that does neither: it is the view the user is standing on
+while they correct the price. `recorder:setSettings` now pushes
+`settings:changed` and `useSettingsFreshness` invalidates the query;
+`check:push-consumers` is what would catch the push landing with no subscriber.
+The payload is deliberately `null` — the listener re-fetches, so there stays
+exactly one path from stored settings to rendered ones.
+
+**Paging at 25.** Same `Pager` + `DENSE_PAGE_SIZE` as Step health, and `size` is
+passed rather than defaulted: `Pager` computes its own counts, so a pager left
+at 50 over a table sliced at 25 reports half the pages and hides the rest behind
+a Next button that never enables. The preview's run fixtures gained 30 synthetic
+runs for the same reason the step-health fixture already carries 58 filler rows
+— with three tests the pager renders not at all, which is the state the panel is
+least likely to be broken in.
+
 ### 2026-08-12 — The weekly digest, reinterpreted once its delivery was removed (C §6.5)
 
 The mockup drew a weekly DIGEST PREVIEW beside a list of delivery channels: a

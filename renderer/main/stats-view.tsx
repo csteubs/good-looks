@@ -38,6 +38,8 @@ import { FlakePanel } from "./flake-panel";
 import { StepHealthPanel } from "./step-health-panel";
 import { SuiteCostPanel } from "./suite-cost-panel";
 import { CostPanel } from "./cost-panel";
+import { assumptionsFromSettings } from "../lib/cost-model";
+import { DEFAULT_COST_CURRENCY } from "../../shared/cost-units.mjs";
 import { ReportPanel } from "./report-panel";
 import { DigestPanel } from "./digest-panel";
 import { DivergencePanel } from "./divergence-panel";
@@ -357,6 +359,16 @@ export function StatsView() {
   const healsQuery = useQuery({ queryKey: ["heals", "all"], queryFn: () => api.heals.listAll() });
   const replaysQuery = useQuery({ queryKey: ["replays"], queryFn: api.artifacts.list });
 
+  // The Cost panel's two assumptions and its currency, persisted. Same key the
+  // Batch view and the library sidebar already use, so this is one cache entry
+  // rather than a third round trip — and `root-view` invalidates it when the
+  // Settings window writes, which is the only way this view (which the user is
+  // standing on while they change the price) hears about it.
+  const settingsQuery = useQuery({
+    queryKey: ["recorder-settings"],
+    queryFn: () => api.recorder.getSettings(),
+  });
+
   // Every category that has an answer yet. One that has not resolved is OMITTED
   // rather than given a state — see the note in stats-categories.ts on why
   // "loading" must not render as "you have never switched this on".
@@ -596,7 +608,11 @@ export function StatsView() {
                   that read as one and are not: this one is about money and
                   what it bought, `SuiteCostPanel` is about which switches are
                   spending the minutes. */}
-              <CostPanel runs={realRuns} />
+              <CostPanel
+                runs={realRuns}
+                assumptions={assumptionsFromSettings(settingsQuery.data ?? {})}
+                currency={settingsQuery.data?.costCurrency ?? DEFAULT_COST_CURRENCY}
+              />
 
               {/* Report (§6.5), under Cost. The order is the reading order of
                   the screen: what happened, what it cost, and then what you can

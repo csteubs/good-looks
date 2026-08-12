@@ -35,6 +35,30 @@ function RootShell() {
   );
 }
 
+/**
+ * Re-read persisted settings when the OTHER window writes them.
+ *
+ * NOTHING IN THIS WINDOW WOULD NOTICE ON ITS OWN, and the reason is specific
+ * enough to be worth stating: react-query's focus refetch is driven by
+ * `visibilitychange`, which never fires when focus moves between two
+ * BrowserWindows of the same app — a background window's `visibilityState`
+ * stays "visible". The views that appeared to stay current were getting it from
+ * remount on route change instead. Stats does not: it is the view the user is
+ * standing on while they correct the CI price in Settings, and a Cost panel
+ * that ignores the price you just set is worse than one that never offered it.
+ *
+ * Its own hook so it can be tested without a router — `RootView` needs one and
+ * this does not.
+ */
+export function useSettingsFreshness(): void {
+  const qc = useQueryClient();
+  React.useEffect(() => {
+    return api.on("settings:changed", () => {
+      void qc.invalidateQueries({ queryKey: ["recorder-settings"] });
+    });
+  }, [qc]);
+}
+
 export function RootView() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -67,6 +91,8 @@ export function RootView() {
       },
     );
   }, [navigate]);
+
+  useSettingsFreshness();
 
   // Landing on the finished test is a MAIN-WINDOW behaviour, so it lives here
   // rather than in the store: the trainer panel runs the same provider with no

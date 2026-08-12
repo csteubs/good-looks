@@ -2,6 +2,9 @@
 
 import type { LlmErrorKind } from "./llm-types";
 import type { FlakeReport as SharedFlakeReport } from "../../shared/flake-analysis.mjs";
+import type { CostCurrency } from "../../shared/cost-units.mjs";
+
+export type { CostCurrency };
 
 export type StepType =
   | "goto"
@@ -865,6 +868,16 @@ export interface RecorderSettings {
    *  `lib/typeface.ts`, which writes it to `data-gl-typeface` on the document
    *  element; the families themselves live in `renderer/theme/tokens.css`. */
   uiTypeface: UiTypeface;
+  /** Which symbol the Cost panel stamps on a money figure (default "usd").
+   *  "none" restores bare numbers — see `shared/cost-units.mjs`. */
+  costCurrency: CostCurrency;
+  /** What one minute of CI costs, in the currency above (default 0.008).
+   *  The Settings pane offers GitHub's published runner rates as pre-fills; the
+   *  runner shown there is derived from this number, never stored beside it. */
+  costPerCiMinute: number;
+  /** How long one run of one test would take a person, by hand, in minutes
+   *  (default 12). */
+  costMinutesPerManualRun: number;
 }
 
 /** A single alternative locator the Auto-Heal engine found for a failed step.
