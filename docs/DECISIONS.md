@@ -16,6 +16,20 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — Baseline provenance, and the three fields this app does not get to invent (C §6.6)
+
+The Visual screen asks the user to judge a frame against a baseline and, until now, told them nothing whatsoever about the baseline. That gap matters more than it sounds: "these two frames differ" is a completely different statement depending on whether the baseline was pinned yesterday from the same engine or four months ago from WebKit while the current run is Chromium. Without provenance every difference looks equally like a regression.
+
+**§6.6 asks for six fields and three of them do not exist here.** *Commit* — nothing in this product reads the user's repository; a baseline is pinned from a run of a recorded test against a live site, and there is no commit in the picture at all. *Who accepted* — a single-user desktop app with no identity; the field would read back the same name forever. *Viewport* — genuinely not on `RunRecord`, and a test can carry `viewport` steps that resize mid-run, so there is no single viewport for a run to report and quoting the first one would be wrong for any test that resizes. Inventing plausible values for those would be worse than omitting them, because this line's entire job is to make a comparison judgeable and a fabricated provenance makes it less so while looking like it makes it more.
+
+**The field nobody asks for and everybody needs is whether the run still exists.** Retention prunes run history; a baseline outlives it. A baseline pinned from a pruned run is still a perfectly valid baseline and is no longer traceable to anything — which is a fact about how far the comparison can be trusted, and one no other surface in the app would ever tell you. It reads "run since pruned" rather than dropping the engine, because a provenance line missing a field reads as a rendering bug rather than as information.
+
+**Two states that must not look alike.** For a run that EXISTS, an absent `runBrowser` really does mean chromium — every run predating the picker used it, and that is history rather than a default being chosen. For a run that is GONE we know nothing. Defaulting both to "chromium" would be the easy shape and would state a fact about a run nobody can check.
+
+**It goes in `CRT`'s `caption`.** That prop has existed since A3, documented as "what this frame IS: which run, which viewport, which engine", with no consumer at all. This is what it was for.
+
+**And it appears only where the baseline does.** Under the current frame or the diff map the caption would be attributing one frame's history to another; in Blink it shows on the baseline half only, or it would swap the claim twice a second while the frames alternate. Stale (30 days) marks the line amber and never the frame: an old baseline is not a fault — a stable page should have one — so it is a prompt to look rather than a verdict, which is what amber means everywhere else here.
+
 ### 2026-08-12 — Wipe and Blink, and what reduced motion means when the motion IS the information (C §6.6)
 
 The Visual screen had three compare modes and none of them answered the question triage actually asks. Current and Baseline show one frame each, so comparing them means holding an image in your head while you look at another. Diff is exact and nearly useless for judging: it lights every changed pixel with equal weight, so a font-smoothing shift and a button that moved 40px look the same. Wipe and Blink put the two frames in the same PLACE and let the eye do the comparison it is extremely good at.
