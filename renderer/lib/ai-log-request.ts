@@ -49,9 +49,37 @@ const NEED_DESCRIPTIONS: Record<LogRequestNeed, string> = {
  * the user a round trip to find out — the same reason the protocol is only
  * appended at all when the run recorded something.
  */
+/**
+ * What to say when this run can supply NOTHING extra.
+ *
+ * Not an empty string, which is what this used to be. The base system prompt
+ * ends with "if the run output lacks enough detail to diagnose, say what
+ * additional information would help" — sound advice that, with no protocol
+ * block after it, reads as an open invitation. What the model then asks for is
+ * the page: "I need the HTML source code of <url> at the time of failure to
+ * provide a unique and robust locator fix."
+ *
+ * That request is unanswerable. The run is over, the page is gone, and there is
+ * no button in this app that produces HTML — so the session dead-ends on a
+ * question the user cannot act on, having spent the round trip to get there.
+ * The fix is not to suppress the ask but to tell the model the truth about what
+ * exists, so it spends its answer on the evidence it was given instead.
+ */
+const NOTHING_AVAILABLE = [
+  "This run recorded nothing beyond the output above — no console, no network, and",
+  "no page structure — so there is no additional data that can be fetched for you.",
+  "You cannot be sent the page's HTML, a DOM snapshot, or a screenshot: the run has",
+  "finished and the page no longer exists. Do not ask for any of them, and do not",
+  "ask the user to paste them in.",
+  "",
+  "Diagnose from the spec and the run output. Playwright's own error text is",
+  "usually more specific than it first looks — read it to the end before",
+  "concluding that you lack information.",
+].join("\n");
+
 export function logRequestProtocol(available: LogRequestNeed[]): string {
   const needs = ALL_NEEDS.filter((n) => available.includes(n));
-  if (needs.length === 0) return "";
+  if (needs.length === 0) return NOTHING_AVAILABLE;
   const example = JSON.stringify({ need: needs, why: "one short sentence" });
   return [
     "If you need more data about the run to diagnose this, you may ask for it.",

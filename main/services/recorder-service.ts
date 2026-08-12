@@ -1185,6 +1185,33 @@ export const recorderService = {
       title: `${windowLabel()} — ${url}`,
       titleBarStyle: "default", // native draggable frame for an external page
       show: false,
+      // THE CLICK THAT COMES BACK FROM THE PANEL.
+      //
+      // macOS spends a click on an inactive window activating it, and does not
+      // pass it to the content unless this is set ("Whether clicking an inactive
+      // window will also click through to the web contents. Default is false").
+      // The trainer panel is `alwaysOnTop` and is where the user arms an
+      // assertion, adds a step, or scrolls the list — so the training browser is
+      // INACTIVE every single time they turn back to the page. Without this,
+      // the first click after every panel interaction is eaten.
+      //
+      // In an ordinary window that costs a button press. Here it costs a
+      // RECORDED STEP: the capture script's listener never fires, so the click
+      // is absent from the step list while the page has visibly responded to
+      // nothing. That reads as the recorder dropping interactions at random,
+      // which is exactly how it was reported.
+      //
+      // trainer-panel-window.ts already sets this, for the mirror image of the
+      // same problem, and its comment says the same thing ("the first click on
+      // the panel is spent activating the window"). Only one side of the pair
+      // ever got it.
+      //
+      // The trade, stated: this window hosts an arbitrary third-party page, and
+      // click-through means a click that activates the window also reaches that
+      // page. It is a window the user opened to click on, the page is already
+      // driving the capture boundary under `normalizeRawStep`, and the
+      // alternative is a recorder that silently omits steps.
+      acceptFirstMouse: true,
     });
 
     // Worth a line in the log: the OS clamps a window that doesn't fit the
@@ -1711,7 +1738,14 @@ export const recorderService = {
       session.assertMode = mode;
       session.assertSoft = mode ? soft : false;
       await applyStateAttributes();
-      if (mode && recWindow && !recWindow.isDestroyed()) recWindow.focus();
+      // `focusTrainingPage()`, not a bare `recWindow.focus()`. Arming an
+      // assertion is a request to go and click something in the PAGE, and the
+      // window has two focusable webContents — so focusing only the window
+      // leaves key events wherever they were, which after "Assert URL" is the
+      // read-only URL strip. That is the exact case the function's docstring
+      // names, and `assertUrl` above routes through here from that very bar.
+      // `startRefine` (the other armed picker) has always used it.
+      if (mode) focusTrainingPage();
       broadcastState();
     }
     return currentState();

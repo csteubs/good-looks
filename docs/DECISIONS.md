@@ -16,6 +16,64 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — The recorder starts asking the page whether its locator is unique
+
+A test named "Will Pass Firefox" failed every run with `strict mode violation: getByText('Browser') resolved to 2 elements`. The step looked completely ordinary in the trainer, and the site was not at fault.
+
+**The recorder never checked.** `locatorFor` in the capture script walked a preference order — testid, label/placeholder, role+name, text — and returned the first candidate that *existed*, on the untested assumption that a name or a run of text identifies one element. Playwright runs in strict mode, so that assumption is not a nicety: a locator matching two elements does not become the first one, it throws. Every ambiguous locator the recorder ever wrote was a violation waiting for the page to grow a second match, and it could only be discovered on a run, against a page the user was no longer looking at.
+
+**So the candidate list is now a question rather than an answer.** `pickLocator` asks the page how many elements each candidate resolves to and takes the first that identifies *this* element. The preference order is unchanged, so a page whose first choice is unique records exactly what it always did — this is a narrowing, not a new strategy.
+
+**Counting has to use Playwright's semantics, not the obvious ones.** `getByText`/`getByLabel`/`getByPlaceholder`/`getByRole({name})` match a case-insensitive *substring* with whitespace normalized; the text engine returns the *smallest* element containing the text. Comparing exact strings would under-count — "Browser" looks unique on a page whose other match reads "Browsers" — and under-counting is the failure that matters, because it is the one that ships a locator we have declared safe. Without the smallest-element rule every ancestor up to `<body>` counts and nothing is ever unique.
+
+**`found.length === 1` is not sufficient; `found[0] === el` is required.** A wrapper whose text comes entirely from its child produces a text candidate matching exactly one element — the child. Recording it yields a step that acts on something other than what was clicked, which is worse than ambiguity: it does not throw, it silently passes against the wrong thing.
+
+**`.nth()` is the last resort and is admitted as one.** An index picks by DOM order and breaks when the page reorders, so every unique candidate wins over it. It is only written when none is unique, at which point the choice is between an index that works now and a locator that has already failed. The candidate list ends in an xpath on every path, which is positional and therefore unique by construction — that is what makes the choice total and guarantees a step is always recorded.
+
+**`nth` goes through `int()` at the boundary and `num()` in the generator, both.** It lands in the emitted source as a bare numeral — `.nth(<here>)` — which is the exact shape that was remote code execution the last time a numeric step field was trusted for having the right TypeScript type. The generator's guard is not redundant with the boundary's: steps recorded before this existed are on disk and are regenerated from their stored values.
+
+Rejected: healing this at run time instead. Auto-Heal fires on a failure that has already happened, on a machine that may be running the suite unattended at 3am; a locator that was never ambiguous costs nothing to prefer at record time.
+
+### 2026-08-12 — Assertion failures were invisible to the whole evidence layer
+
+The same failed run sent its output to AI Debug, which correctly diagnosed the ambiguity and then asked for "the HTML source code of the page at the time of failure" — a request this app cannot honour. The session dead-ended there.
+
+**It asked because the one thing that would have answered it was never recorded.** The heal fixture patches `Locator.prototype` action methods — click, fill, hover, `waitFor`. An assertion is none of them: `expect(locator).toBeVisible()` reaches the locator through Playwright's matcher. So for an *assertion* failure not one line of that machinery ran, and the consequence ran the full length of the pipeline: no `matches.json`, no `step-matches.json`, `artifacts:hasStructure` false, `structureAvailable` false, the `structure` need never advertised — and a model with no way to ask for the elements the locator matched, asking for the page instead.
+
+`recordMatches` already existed and already described exactly what the model wanted, down to the scoping ancestors a fix is written from. It was simply unreachable from the commonest kind of failure.
+
+**Records, never heals.** Healing an action means acting on the element we meant. Healing an *assertion* would mean asserting against a different element than the test names — a passing run that proves something nobody asked about. So the assertion path describes the page and rethrows exactly as it found it, changing no run's outcome.
+
+**Both outcomes, because they are opposite diagnoses.** `_expect` throws for a locator that could not be resolved (where strict-mode violations land) and returns `{ timedOut: true }` when the locator resolved and the condition never came true (the "matched 0 elements" shape). "Matched 0" and "matched 10" need different fixes — the payload builder says so explicitly — so recording one and not the other would be worse than recording neither. `_expect` is Playwright-internal, so it is patched defensively and its absence degrades to precisely the previous behaviour.
+
+**And the empty protocol was itself a bug.** `logRequestProtocol([])` returned `""` when a run had recorded nothing. The system prompt ends by inviting the model to say what more it needs; with nothing after it, that reads as an open invitation, and what came back was a request for HTML. It now says what cannot be supplied and why — the run is over, the page is gone — rather than staying silent and letting the model spend the user's round trip discovering it.
+
+### 2026-08-12 — The trainer panel and the training browser's strip get the theme
+
+These two were the last surfaces in the app still drawn in the component library's stock classes — `bg-background`, `border-separator`, `bg-accent/5`, the SDK's `Status` and `Badge` — while every screen they mirror had moved to the `--gl-*` layer. Zero `gl-*` classes between them.
+
+**It is not a cosmetic gap.** The panel docks *edge to edge* with the main window's trainer, so the app was rendering one live session in two different designs, one hairline apart. The status chip was the sharp end: "Recording" was the SDK's `error` variant — red, the colour this palette spends on a failed run — on a surface where nothing has run. `recording-view.tsx` was corrected for that in B6 and the panel was not, so red meant two things at once on one screen.
+
+**Why it stayed stock so long is the more useful finding: it could not be looked at.** The panel is its own `BrowserWindow`, opened by the backend when a session starts; the strip renders into a `WebContentsView` inside the recorder window. Neither is reachable from `npm run dev:web`, so the only way to review a change to either was to package the app and record a real test. That is the same argument that produced `?view=settings`, and it gets the same answer: `?view=trainer-panel` and `?view=chrome` mount them against the fake backend. The panel preview is boxed to 360px deliberately — a tool row that wraps at 360 and not at 1400 is exactly what the view is opened to check.
+
+**New names rather than reuse of `.gl-trainer-*`.** Those rules are laid out for the main window; this panel lives at 360px beside a real browser, which is why it is a separate view at all. Shared names would have to satisfy both widths and the one that lost would be this one.
+
+**`check:clickable-chrome` was loosened, not satisfied.** It asserted the panel keeps a drag region with `/className="drag-region[^"]*"/` — anchored to the class being *first*. The reskin put the header's theme class first and the check went red over a working drag region. It now matches the class as a token anywhere in the list; verified it still fails when the drag region is actually deleted. A guard that cries about class order is one people learn to edit rather than read.
+
+### 2026-08-12 — The click the training browser was eating
+
+Reported as the trainer being flaky: clicks going from the panel back into the training browser "fail to register further click events".
+
+**macOS spends a click on an inactive window activating it**, and does not pass it to the content unless `acceptFirstMouse` is set. The trainer panel is `alwaysOnTop` and is where the user arms an assertion, adds a step or scrolls the list — so the training browser is inactive *every single time* they turn back to the page.
+
+In an ordinary window that costs a button press. In a recorder it costs a **recorded step**: the capture script's listener never fires, so the interaction is absent from the step list while the page has visibly responded to nothing. That is indistinguishable from the recorder dropping interactions at random.
+
+`trainer-panel-window.ts` has set this since the panel shipped, for the mirror image of the same problem, and its comment describes the same mechanism — only one side of the pair ever got it.
+
+The trade, stated: this window hosts an arbitrary third-party page, and click-through means a click that activates the window also reaches that page. It is a window the user opened in order to click on, the page already crosses `normalizeRawStep`, and the alternative is a recorder that silently omits steps.
+
+**`setAssertMode` had the second half of the same bug.** It called `recWindow.focus()` rather than `focusTrainingPage()`, so it focused the window without focusing the page view — and `focusTrainingPage`'s own docstring names this exact case ("including, after the user has clicked 'Assert URL', the URL bar"). `assertUrl` routes through it *from that bar*. `startRefine`, the other armed picker, has always used the right one.
+
 ### 2026-08-12 — Baseline provenance, and the three fields this app does not get to invent (C §6.6)
 
 The Visual screen asks the user to judge a frame against a baseline and, until now, told them nothing whatsoever about the baseline. That gap matters more than it sounds: "these two frames differ" is a completely different statement depending on whether the baseline was pinned yesterday from the same engine or four months ago from WebKit while the current run is Chromium. Without provenance every difference looks equally like a regression.

@@ -160,10 +160,27 @@ describe("the protocol text", () => {
     expect(parseLogRequest(example)?.need).toEqual(["structure"]);
   });
 
-  it("is empty when the run recorded nothing", () => {
-    // The caller appends it unconditionally, so an empty string is what keeps
-    // a bare "```glaze-request" instruction out of a prompt nothing can honour.
-    expect(logRequestProtocol([])).toBe("");
+  it("offers no request block when the run recorded nothing", () => {
+    // The caller appends this unconditionally, so it is what keeps a bare
+    // "```glaze-request" instruction out of a prompt nothing can honour. It is
+    // also what stops `parseLogRequest` finding a fence to arm a send button
+    // with — the assertion that actually matters, since a false positive there
+    // offers to send page data on the strength of a prompt echo.
+    const text = logRequestProtocol([]);
+    expect(text).not.toContain("```glaze-request");
+    expect(parseLogRequest(text)).toBeNull();
+  });
+
+  it("says what CANNOT be supplied when nothing was recorded", () => {
+    // This used to be an empty string, and the silence was the bug. The system
+    // prompt ends by inviting the model to say what more it needs; with no
+    // protocol after it, what came back was "I need the HTML source code of
+    // <url> at the time of failure" — unanswerable, since the run is over and
+    // the app has no button that produces HTML. The session dead-ended there.
+    const text = logRequestProtocol([]);
+    expect(text).toContain("HTML");
+    expect(text).toContain("screenshot");
+    expect(text).toMatch(/do not ask/i);
   });
 
   it("tells the model to stop asking for screenshots and HTML in prose", () => {

@@ -80,6 +80,26 @@ export interface Locator {
   role?: string;
   /** accessible name for role locators */
   name?: string;
+  /**
+   * Which of several matches this locator meant, 0-based. ABSENT when the
+   * locator resolves to exactly one element, which is the case the recorder
+   * works hard to reach — see `locatorFor` in capture-script.ts.
+   *
+   * This exists because Playwright runs in STRICT MODE: a locator resolving to
+   * two elements is not "the first one", it is an error that fails the step.
+   * The recorder used to emit locators on the untested assumption that a name,
+   * a label or a run of text identified one element, and every such step was a
+   * strict-mode violation waiting for the page to grow a second match. The one
+   * that prompted this was `getByText("Browser")` against firefox.com, which has
+   * two.
+   *
+   * A last resort, and deliberately so: an index picks by DOM order, so it
+   * breaks the day the page reorders. Every unique candidate is preferred over
+   * it, and it is only written when NONE of them is unique — at which point the
+   * honest choice is between an index that works now and a locator that has
+   * already failed.
+   */
+  nth?: number;
 }
 
 export type AssertKind =
@@ -702,6 +722,11 @@ export const MAX_STEP_STRING_LENGTH = 8000;
 export const MAX_FINGERPRINT_CANDIDATES = 40;
 export const MAX_FINGERPRINT_ATTRIBUTES = 40;
 export const MAX_FLOW_ARGS = 50;
+/** Upper bound on `Locator.nth`. The recorder only ever writes this when no
+ *  candidate locator was unique, and it caps its own scan well below here
+ *  (`MAX_UNIQUENESS_SCAN` in capture-script.ts) — so a value near this one did
+ *  not come from a person clicking an element. */
+export const MAX_MATCH_INDEX = 1000;
 /** Steps accepted from a single drain of the capture queue. A real recording
  *  produces a handful per poll; anything near this is not a person clicking. */
 export const MAX_STEPS_PER_DRAIN = 500;
@@ -746,6 +771,15 @@ function normalizeLocator(input: unknown): Locator | undefined {
   if (v !== undefined) out.v = v;
   if (role !== undefined) out.role = role;
   if (name !== undefined) out.name = name;
+  // `int`, not a typeof check. This field reaches the generator as a BARE
+  // NUMERAL — `.nth(<here>)` — which is the exact shape that was remote code
+  // execution the last time a numeric step field was trusted for having the
+  // right TypeScript type (see `num` in script-generator.ts). The upper bound is
+  // MAX_MATCH_INDEX rather than something enormous because a page with more
+  // than that many matches for one locator is not a page anyone is indexing
+  // into on purpose.
+  const nth = int(l.nth, 0, MAX_MATCH_INDEX);
+  if (nth !== undefined) out.nth = nth;
   return out;
 }
 
