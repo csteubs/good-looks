@@ -16,10 +16,11 @@ open Routine's editor (`renderer/lib/routine-rows.ts` translates its checklist
 to and from steps). Of the step kinds below only `kind: "test"` is built, and
 `onFailure` is stored but not yet honoured — every step behaves as `continue`,
 which is what Batch already does, and nothing can set anything else. The MCP
-`run_routine` tool named in the rename table below is not built, the rail does
-not list Routines (REDESIGN §7.1 puts them there; the view's own picker stands
-in), and Previous batches is not yet scoped to the open Routine — that needs a
-`routineId` on `BatchRecord`. Capabilities 2 (scheduling) and 3 (the flow
+`run_routine` tool named in the rename table below is not built, and the rail
+does not list Routines (REDESIGN §7.1 puts them there; the view's own picker
+stands in). Previous batches IS scoped to the open Routine: `BatchState` carries
+an optional `routineId`, and a batch without one belongs to the migrated
+Routine — see `ORPHAN_BATCH_OWNER`. Capabilities 2 (scheduling) and 3 (the flow
 builder) are untouched.
 
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for what exists today,

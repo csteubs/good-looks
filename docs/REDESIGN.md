@@ -1283,14 +1283,18 @@ name is inline-editable, and the checklist is the open Routine's body
 `onFailure` is stored but not yet honoured: every step behaves as `continue`,
 which is what Batch already does.
 
-**Two pieces of the plan below are deliberately NOT built yet**, and both are
-placement rather than capability. The rail does not list Routines — that gives
-`library-sidebar.tsx`, which every screen shares, a third job, and the picker
-makes the feature usable without it. And **Previous batches is not scoped to the
-open Routine**: that wants a `routineId` on `BatchRecord`, which is an on-disk
-format change and belongs with whatever else needs one. Capabilities 2
-(scheduling) and 3 (the flow builder) are untouched, so there is no schedule
-chip to draw.
+**Previous batches IS scoped to the open Routine** as of the same day:
+`BatchState` gained an optional `routineId`, stamped by `routines:run`. The live
+batch is scoped with it — results are keyed by `testId`, so a batch from another
+Routine would paint its outcomes onto whichever rows this one shares. A batch
+with no `routineId` belongs to the migrated Routine; see DECISIONS for why the
+alternatives are worse.
+
+**One piece of the plan below is deliberately NOT built**, and it is placement
+rather than capability: the rail does not list Routines. That gives
+`library-sidebar.tsx`, which every screen shares, a third job, and the view's own
+picker makes the feature usable without it. Capabilities 2 (scheduling) and 3
+(the flow builder) are untouched, so there is no schedule chip to draw.
 
 **Where it lands.** Batch becomes a *list of Routines* with one Routine open,
 rather than a single implicit checklist. Concretely, in the redesign's shell:

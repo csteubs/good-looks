@@ -30,6 +30,7 @@ import {
   BATCH_CONCURRENCY_CHOICES,
   batchConcurrencyConsequence,
 } from "../lib/batch-parallel";
+import { ORPHAN_BATCH_OWNER } from "../../shared/routine-migration.mjs";
 import { toastTexts } from "../__tests__/sonner-stub";
 import { BatchView } from "./batch-view";
 
@@ -192,6 +193,20 @@ function routineOf(
     defaults: { captureArtifacts: false, concurrency: 1 },
     ...over,
   };
+}
+
+/** A stored batch, belonging to nothing in particular. */
+function batchRecord(batchId: string): BatchRecord {
+  return {
+    batchId,
+    startedAt: Date.parse("2026-08-07T10:00:00Z"),
+    finishedAt: Date.parse("2026-08-07T10:03:00Z"),
+    currentIndex: -1,
+    running: false,
+    stopped: false,
+    results: [],
+    summary: { total: 3, passed: 3, failed: 0, skipped: 0, ok: true, durationMs: 1000 },
+  } as unknown as BatchRecord;
 }
 
 /** A Routine expressed the way `batchTestOptions` used to be: which tests are
@@ -382,6 +397,9 @@ describe("BatchView per-row engines", () => {
 
     emit("batch:progress", {
       batchId: "b1",
+      // Started FROM this screen, so it carries the open routine — the view
+      // scopes both the live batch and the history to the job on screen.
+      routineId: "r-1",
       running: true,
       startedAt: 0,
       currentIndex: 1,
@@ -856,6 +874,7 @@ describe("BatchView live progress", () => {
   /** A batch:progress payload with the given per-test statuses. */
   const progress = (statuses: string[]) => ({
     batchId: "b1",
+    routineId: "r-1",
     running: true,
     startedAt: 0,
     // Deliberately the value the BACKEND would send. Nothing in the view may
@@ -911,6 +930,7 @@ describe("BatchView finished-batch verdict", () => {
   /** A batch:done payload with the given counts. */
   const done = (passed: number, failed: number, stopped = false) => ({
     batchId: "b1",
+    routineId: "r-1",
     running: false,
     startedAt: 0,
     currentIndex: -1,
@@ -984,6 +1004,7 @@ describe("BatchView history verdicts", () => {
   const record = (batchId: string, passed: number, failed: number): BatchRecord =>
     ({
       batchId,
+      routineId: "r-1",
       startedAt: 0,
       stopped: false,
       results: [],
@@ -1028,6 +1049,9 @@ describe("BatchView log drill-through", () => {
 
     emit("batch:progress", {
       batchId: "b1",
+      // Started FROM this screen, so it carries the open routine — the view
+      // scopes both the live batch and the history to the job on screen.
+      routineId: "r-1",
       running: false,
       startedAt: 0,
       currentIndex: 3,
@@ -1059,6 +1083,9 @@ describe("BatchView log drill-through", () => {
 
     emit("batch:progress", {
       batchId: "b1",
+      // Started FROM this screen, so it carries the open routine — the view
+      // scopes both the live batch and the history to the job on screen.
+      routineId: "r-1",
       running: true,
       startedAt: 0,
       currentIndex: 1,
@@ -1339,6 +1366,78 @@ describe("BatchView as a Routine editor", () => {
     await waitFor(() =>
       expect(screen.queryByText(/names a test that no longer exists/i)).toBeNull(),
     );
+  });
+
+  it("shows only the open routine's past batches", async () => {
+    // A history listing every job's runs under one job is the same lie as a
+    // checklist showing another Routine's ticks.
+    routines = [
+      routineOf([], { id: "r-a", name: "Smoke", createdAt: 1 }),
+      routineOf([], { id: "r-b", name: "Nightly", createdAt: 2 }),
+    ];
+    history = [
+      { ...batchRecord("mine"), routineId: "r-a" },
+      { ...batchRecord("theirs"), routineId: "r-b" },
+    ];
+    renderView();
+    await rowNames();
+
+    await waitFor(() => expect(screen.getByText(/Previous batches/)).toBeTruthy());
+    const panel = screen.getByText(/Previous batches/).closest("section");
+    expect(within(panel as HTMLElement).getAllByRole("button", { name: /^Aug|^\w+ \d/ }).length)
+      .toBeLessThanOrEqual(2);
+    // One row, not two: the other routine's batch is not this routine's history.
+    expect(within(panel as HTMLElement).queryAllByText(/3 tests/)).toHaveLength(1);
+  });
+
+  it("gives a batch with no routine to the MIGRATED one", async () => {
+    // Everything run before Routines shipped, plus the MCP's `run_batch`. They
+    // are runs of the old implicit checklist, and the migrated Routine IS that
+    // checklist — attributing them to every job would show one history under
+    // four, and to none would make a user's whole history vanish on upgrade.
+    routines = [
+      routineOf([], { id: ORPHAN_BATCH_OWNER, name: "Batch", createdAt: 1 }),
+      routineOf([], { id: "r-b", name: "Nightly", createdAt: 2 }),
+    ];
+    history = [batchRecord("old-one")];
+    renderView();
+    await rowNames();
+
+    const panel = () => screen.getByText(/Previous batches/).closest("section") as HTMLElement;
+    await waitFor(() => expect(within(panel()).queryAllByText(/3 tests/)).toHaveLength(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /which routine to edit/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Nightly/ }));
+
+    // …and NOT to any other routine.
+    await waitFor(() =>
+      expect(screen.queryByText(/Previous batches/)).toBeNull(),
+    );
+  });
+
+  it("ignores a live batch another routine started", async () => {
+    // Results are keyed by testId, so a foreign batch would paint its outcomes
+    // onto whichever rows this routine shares with it — a row reporting a pass
+    // it never had.
+    routines = [routineOf([], { id: "r-a", name: "Smoke", createdAt: 1 })];
+    renderView();
+    await rowNames();
+
+    emit("batch:progress", {
+      batchId: "b-elsewhere",
+      routineId: "r-b",
+      running: true,
+      startedAt: 0,
+      currentIndex: 0,
+      stopped: false,
+      results: [{ testId: "a", testName: "Alpha", status: "running" }],
+      summary: { total: 1, passed: 0, failed: 0, skipped: 0, ok: false, durationMs: 0 },
+    });
+
+    // Idle here. The top strip's ticker is where a fact about the whole app
+    // belongs; pressing Run answers "a batch is already running".
+    await waitFor(() => expect(screen.queryByText(/Running 1 of 1/)).toBeNull());
+    expect(screen.queryByRole("button", { name: /^Stop$/ })).toBeNull();
   });
 
   it("says what to do when there are no routines at all", async () => {

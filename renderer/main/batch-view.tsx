@@ -52,6 +52,7 @@ import {
   sameSteps,
   stepsFromRows,
 } from "../lib/routine-rows";
+import { batchBelongsToRoutine } from "../../shared/routine-migration.mjs";
 import type {
   BatchRecord,
   BatchState,
@@ -272,11 +273,28 @@ export function BatchView() {
   }, [tags, tagFilter]);
 
 
-  const history = React.useMemo(() => historyQuery.data ?? [], [historyQuery.data]);
+  // SCOPED TO THE OPEN ROUTINE. This screen is one job's editor, and a history
+  // listing every job's runs under it is the same lie as a checklist showing
+  // another Routine's ticks. Batches with no `routineId` — everything run
+  // before Routines shipped, plus the MCP's `run_batch` — belong to the
+  // migrated Routine, which IS the old implicit checklist; see
+  // `ORPHAN_BATCH_OWNER` for why the alternatives are worse.
+  const history = React.useMemo(
+    () => (historyQuery.data ?? []).filter((b) => batchBelongsToRoutine(b, openId)),
+    [historyQuery.data, openId],
+  );
+  // THE LIVE BATCH IS SCOPED TOO, not just the history. Results are keyed by
+  // testId, so a batch started from another Routine would paint ITS outcomes
+  // onto whichever rows this one happens to share — a row reporting a pass it
+  // never had. The top strip's job ticker (§6.8) still reports that batch
+  // globally, which is where a fact about the whole app belongs; here the
+  // screen simply looks idle, and pressing Run answers "a batch is already
+  // running" rather than pretending otherwise.
+  const mine = batch && batchBelongsToRoutine(batch, openId) ? batch : null;
   // Nothing live → show the most recent persisted batch, so a restart doesn't
   // present a blank view as though the batch never happened.
-  const shown: BatchState | null = batch ?? history[0] ?? null;
-  const running = batch?.running ?? false;
+  const shown: BatchState | null = mine ?? history[0] ?? null;
+  const running = mine?.running ?? false;
 
   // The globals a row falls back to when the user has never touched it.
   const rowDefaults = React.useMemo(
@@ -586,7 +604,7 @@ export function BatchView() {
   // flight there is no single current one, and "Running 3 of 12" needs to mean
   // "3 finished" rather than "the third one".
   const liveCounts = React.useMemo(() => {
-    const results = batch?.results ?? [];
+    const results = mine?.results ?? [];
     return {
       inFlight: results.filter((r) => r.status === "running").length,
       settled: results.filter((r) => r.status !== "running" && r.status !== "pending").length,

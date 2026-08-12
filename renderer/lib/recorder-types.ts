@@ -1056,6 +1056,10 @@ export interface BatchSummary {
 
 export interface BatchState {
   batchId: string;
+  /** The Routine this batch was started from. Absent for a batch started any
+   *  other way, or by a release that predates Routines — see the main-process
+   *  copy, and `ORPHAN_BATCH_OWNER` for who those belong to. */
+  routineId?: string;
   running: boolean;
   startedAt: number;
   finishedAt?: number;

@@ -1895,6 +1895,17 @@ export interface BatchSummary {
 
 export interface BatchState {
   batchId: string;
+  /** The Routine this batch was started from, when it was started from one.
+   *
+   *  ADDITIVE AND OPTIONAL, deliberately. ROUTINES.md's rename table says NOT
+   *  to rewrite `batch-history.json` — a rename there costs a migration and
+   *  buys a word — but a new optional field needs none: an older record simply
+   *  has no routine, which is TRUE of it. That is what lets the Routines screen
+   *  show one job's history without pretending the app had no history before.
+   *
+   *  Absent for a batch started any other way (the MCP's `run_batch`, an
+   *  older release), and `ORPHAN_BATCH_OWNER` decides who those belong to. */
+  routineId?: string;
   running: boolean;
   startedAt: number;
   finishedAt?: number;

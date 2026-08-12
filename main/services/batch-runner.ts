@@ -91,6 +91,10 @@ export interface BatchRunParams {
    *  any caller that never had rows) falls back to the batch-wide `browser` and
    *  `runHeadless` above, so those two must keep working unchanged. */
   perTest?: PerTestRunOption[];
+  /** The Routine this batch is a run OF, when there is one. Recorded on the
+   *  state and so on the persisted record; the runner does nothing else with
+   *  it. Absent for `batch:run` and for the MCP, which are not Routines. */
+  routineId?: string;
 }
 
 // Expanding a selection into the queue actually executed lives in
@@ -235,6 +239,7 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
       const queue = buildQueue(params, deps.getDatasets);
       state = {
         batchId,
+        ...(params.routineId ? { routineId: params.routineId } : {}),
         running: true,
         startedAt: deps.now(),
         currentIndex: -1,

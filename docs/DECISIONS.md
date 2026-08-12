@@ -16,6 +16,58 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — A batch belongs to a Routine, and orphans belong to the migrated one (Phase D)
+
+The Routine editor shipped in #116 scoped its checklist to the open job but not
+its history, so the screen claimed to be one job's editor while listing every
+job's runs beneath it. `BatchState` now carries an optional `routineId`,
+stamped by `routines:run` and by nothing else.
+
+**Additive and optional, not a rewrite.** ROUTINES' rename table says to leave
+`batch-history.json` alone — a rename costs a migration and buys a word — but a
+new optional field needs no migration at all: an older record simply has no
+Routine, which is *true* of it. That is what lets this screen scope history
+without pretending the app had none before Routines existed.
+
+**The interesting question is who owns a batch with no `routineId`** — every
+batch run before this shipped, plus every one the MCP's `run_batch` starts. All
+three obvious answers are wrong. Attributing them to EVERY Routine shows one
+history under four different jobs as if each had run it. Attributing them to
+NONE makes a user's entire batch history vanish from the screen the day they
+upgrade. Inventing a "no routine" entry puts a job in the picker that nobody
+made. `ORPHAN_BATCH_OWNER` is the migrated Routine: those batches are runs of
+the old implicit checklist, and that Routine *is* the old implicit checklist —
+carrying it forward under a name is the entire point of the migration.
+
+**The live batch is scoped too, not just the history**, and this is the half
+that would have been a real bug. Results are keyed by `testId`, so a batch
+started from another Routine would paint its outcomes onto whichever rows this
+one happens to share with it — a row reporting a pass it never had. The top
+strip's job ticker (§6.8) still reports that batch globally, which is where a
+fact about the whole app belongs; here the screen looks idle and pressing Run
+answers "a batch is already running", which is true and actionable.
+
+`batchBelongsToRoutine` lives in `shared/` because the app filters the history
+with it and an MCP `list_batches` scoped to a Routine will need the same answer.
+Two spellings of "belongs to" is how one surface ends up showing a batch the
+other hides.
+
+An empty `routineId` is treated as no stamp: `"" === ""` would otherwise hand a
+half-written record to a Routine whose id is the empty string, which cannot
+exist, so it would belong to nothing and disappear.
+
+Covered by five cases in `routine-migration.test.ts` and three in
+`batch-view.test.tsx` (another Routine's past batches hidden, an orphan showing
+under the migrated Routine and nowhere else, a foreign live batch ignored).
+Mutation-checked; one survivor was a redundant `if (!routineId) return false`
+guard — a null id already matches neither an owner nor the orphan owner, and
+the second copy of a rule is the one that rots. Removed rather than pinned with
+a test that cannot fail.
+
+The preview's batch fixtures are now split across the two Routines with one left
+unattributed, because a fixture where every batch belongs to the same job would
+look identical with the filter missing.
+
 ### 2026-08-12 — Batch becomes a Routine's editor (Phase D)
 
 REDESIGN §7.1 says "the checklist is unchanged; it is now the open Routine's
