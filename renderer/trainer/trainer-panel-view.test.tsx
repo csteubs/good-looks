@@ -351,25 +351,31 @@ describe("tool icons stay distinguishable", () => {
 
 describe("context actions are addressed", () => {
   // The regression this whole mechanism exists for: one right-click in the
-  // training browser reaching two windows and opening two dialogs.
+  // training browser reaching two windows and opening two composers.
+  //
+  // Queried by `data-gl` since C §6.2: the Add-step surface is an inline panel
+  // in the step list now, not a dialog. What is being pinned is unchanged —
+  // WHICH WINDOW acts on a right-click — so these moved rather than went.
+  const composer = () => document.querySelector('[data-gl="step-composer"]');
+
   it("acts on an action addressed to the panel", async () => {
     setStore({ contextAction: ctx({ target: "panel" }) });
     renderPanel();
-    // The Add-step dialog opened, prefilled as an assertion.
-    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    // The composer opened, prefilled as an assertion.
+    await waitFor(() => expect(composer()).toBeTruthy());
   });
 
   it("ignores an action addressed to the main window", async () => {
     setStore({ contextAction: ctx({ target: "main" }) });
     renderPanel();
     await waitFor(() => expect(actions.clearContextAction).toHaveBeenCalled());
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(composer()).toBeNull();
   });
 
   it("acts on an unaddressed action, so older payloads still work", async () => {
     setStore({ contextAction: ctx({ target: undefined }) });
     renderPanel();
-    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    await waitFor(() => expect(composer()).toBeTruthy());
   });
 });
 

@@ -16,6 +16,20 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — The step composer comes out of the modal, and the line count it was supposed to delete (C §6.2)
+
+The insert cursor exists so a step can be placed somewhere other than the end of the list. The control for placing it was a modal, which covered up the list — so while you filled in the fields that decide WHAT goes in, you could not see WHERE. Composing in place fixes that, and it is the whole feature.
+
+**The plan's line-count claim does not survive contact, and should not.** §B6 says retiring the dialog "removes 1,170 lines and a modal". It removes the modal. The lines are ten step kinds times their fields: the three-checkbox wait that emits one step per ticked box, the CSS assert that refuses a malformed property name rather than emitting an assert that checks nothing, the element-state expansion that turns one pick into several rows. Every one of those is behaviour with a test behind it. Deleting them to hit a number would be deleting the feature and calling it a cleanup. So the forms are untouched, their tests are the same tests, and what changed is the frame — which is what was wrong.
+
+**Three things the frame had to grow back, having lost Radix.** Escape, bound on the panel, because without it the only way out of a half-filled composer is the mouse. A max-width on the body, because the dialog was `size="large"` and the panel inherits the width of the step list — uncapped, a label and its control sit at opposite ends of a thousand pixels, which reads as a broken layout rather than a wide one. And **Add disabled until the step will actually build**: a modal can afford a permanently-enabled confirm that does nothing, because it stays open and "nothing happened" reads as "I have not finished yet". A panel sitting in the list cannot — it has no such alibi, and a button that silently declines is indistinguishable from a broken one.
+
+**That last one exposed a bug rather than causing one.** With the button gated on `build()`, the element-state composer came up permanently un-pressable. The cause: the composer's reset effect cleared `locator`, which `TargetElementPicker` — a CHILD — had just seeded from the best candidate of the picked element, and a child's effects run before its parent's, so the reset landed second and won. Behind an always-enabled confirm this was survivable; the submit simply did nothing and the user tried again. The fix is not to reorder anything: the reset is unnecessary, because both call sites now `key` the composer on the kind and the picked element, so every open and every re-target is a fresh mount and `useState(null)` is the reset — and it happens first by construction.
+
+**`composerAt(index)`, not one element hoisted out of the list.** "Between step 3 and step 4" is a position in the list's map, not a place in the component tree, so the composer is a function of the gap index that renders at most once — `state.cursor` is a single index. It has a home in the empty list as well, which is not an edge case: it is the only way to put a step into a session that has captured nothing.
+
+**And three tests moved rather than went.** `trainer-panel-view.test.tsx` asserted `getByRole("dialog")` to pin which WINDOW acts on a right-click in the training browser — the regression that whole addressing mechanism exists for. The behaviour is unchanged; only the surface stopped being a dialog. They query `[data-gl="step-composer"]` now.
+
 ### 2026-08-12 — Change temp stops guessing, and two numbers that are both medians (C §6.3)
 
 `Temp` shipped in A3 with a note admitting what it was: a component that reads a timing against a median, with no median to read. It fell to `off` and rendered neutral everywhere, which was the current behaviour rendered honestly rather than a feature. This wires it to `metrics-store`, and two of the three decisions are about refusing to colour something.

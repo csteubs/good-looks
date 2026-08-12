@@ -9,10 +9,10 @@ the five components every screen embeds, and every screen has been reached.
 
 **Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
 its frame rail, threshold-against-frames and the masks/baselines reskin.
-**Phase C has started: §6.1, §6.3, §6.7 and §6.9 landed 2026-08-12** — the five
-non-failure run-state summaries (which were B5b), change temp against real
-medians, the ⌘K command palette, and the boot sequence. Where the rest of this
-says "would", it means would.
+**Phase C has started: §6.1, §6.2, §6.3, §6.7 and §6.9 landed 2026-08-12** — the
+five non-failure run-state summaries (which were B5b), the inline step composer,
+change temp against real medians, the ⌘K command palette, and the boot sequence.
+Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -814,8 +814,40 @@ Four things the plan did not anticipate, all of which changed the shipped shape:
   the failure mode `check:renderer-classes` cannot see — the class resolves, to
   the wrong rule. Renamed to `.gl-run-heal-*`.
 
-**6.2 Inline step composer** (from B6). Retires `add-step-dialog.tsx`. The
-`InsertGap` cursor is the prerequisite and the reason it can be moved.
+**6.2 Inline step composer** (from B6). ✅ **Done, 2026-08-12.**
+`add-step-dialog.tsx` is now `step-composer.tsx`, and the panel opens BETWEEN
+the two steps the new one will sit between, at the insert cursor, in both the
+main window and the trainer panel.
+
+**The line-count claim in this plan does not survive contact, and should not.**
+§B6 says retiring the dialog "removes 1,170 lines and a modal". It removes the
+modal. The lines are ten step kinds times their fields — the three-checkbox
+wait, the CSS assert that refuses a malformed property, the element-state
+expansion that emits several rows — every one of them behaviour with a test
+behind it. Deleting them to hit a number would be deleting the feature. So the
+forms are untouched and their tests are the same ones; what changed is the frame
+around them.
+
+What the frame had to grow back, having lost Radix:
+
+- **Escape closes it**, bound on the panel. Without it the only way out of a
+  half-filled composer is the mouse.
+- **Add is disabled until the step will actually build.** The modal could afford
+  a permanently-enabled confirm that did nothing — it stayed open, so "nothing
+  happened" read as "I have not finished". A panel sitting in the list cannot: a
+  button that silently declines is indistinguishable from a broken one.
+- **A cap on the form's measure.** The dialog was `size="large"`; the panel
+  inherits the width of the step list, which is most of the window, and an
+  uncapped form puts a label and its control at opposite ends of a thousand
+  pixels.
+
+And one bug the change exposed rather than caused: the composer's reset effect
+was clearing `locator`, which `TargetElementPicker` — a CHILD — had just seeded
+from the picked element. A child's effects run before its parent's, so the reset
+landed second and won. Invisible behind an always-enabled confirm; immediately
+visible as a button that cannot be pressed. The reset is unnecessary now anyway,
+because both call sites `key` the composer on the kind and the picked element,
+so every open and every re-target is a fresh mount.
 
 **6.3 Change temp against real medians.** ✅ **Done, 2026-08-12.** `Temp` now
 reads `metrics-store`, per test and per step, and the step list is where it

@@ -52,7 +52,7 @@ import type { AssertKind, PickedElement, RawStep, WaitDialogMode } from "../lib/
 import { computeStepDepths, describeStep } from "../lib/describe-step";
 import { useRecorder } from "../main/recorder-store";
 import { CursorGap, INSERT_HERE, StepRow } from "../main/step-row";
-import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "../main/add-step-dialog";
+import { StepComposer, ADD_STEP_LABEL, type AddStepKind } from "../main/step-composer";
 import { GenerateStepsDialog } from "../main/generate-steps-dialog";
 import { RefineSelectorDialog } from "../main/refine-selector-dialog";
 import { useViewportNarrowedNotice } from "../main/viewport-narrowed-notice";
@@ -372,6 +372,51 @@ export function TrainerPanelView() {
 
   const stepDepths = computeStepDepths(liveSteps);
 
+  // The composer, at the cursor rather than over the list (§6.2). Same shape as
+  // the main window's — see recording-view.tsx for why it is a function of the
+  // gap index rather than one element hoisted out of the list.
+  const composerAt = (index: number) =>
+    addKind !== null && state.cursor === index ? (
+      <StepComposer
+        key={`${addKind}:${contextPick?.picked?.description ?? ""}`}
+        kind={addKind}
+        currentTestId={state?.testId ?? undefined}
+        onCancel={() => {
+          setAddKind(null);
+          if (addStepPicking) {
+            setAddStepPicking(false);
+            endRefine();
+            clearPicked();
+          }
+          setContextPick(null);
+        }}
+        onAdd={(steps: RawStep[]) => {
+          steps.forEach((s) => insertStep(s));
+          if (addStepPicking) {
+            setAddStepPicking(false);
+            endRefine();
+            clearPicked();
+          }
+          setContextPick(null);
+        }}
+        picked={contextPick?.picked ?? (addStepPicking ? picked : null)}
+        onStartPick={() => {
+          setAddStepPicking(true);
+          startRefine(null);
+        }}
+        onClearPick={() => {
+          setAddStepPicking(false);
+          endRefine();
+          clearPicked();
+        }}
+        initialAssert={contextPick?.assert}
+        initialWaitMode={contextPick?.waitMode}
+        initialState={contextPick?.elementState}
+        prefillText={contextPick?.prefillText}
+        prefillValue={contextPick?.prefillValue}
+      />
+    ) : null;
+
   return (
     <div className="flex h-full flex-col bg-background">
       {/* Header. `drag-region` keeps the top strip draggable — with the traffic
@@ -471,9 +516,14 @@ export function TrainerPanelView() {
       >
         <div className="flex flex-col p-2">
           {liveSteps.length === 0 ? (
-            <Text variant="small" color="secondary" className="px-1 py-2">
-              Interact with the site — steps appear here as you go.
-            </Text>
+            <>
+              {/* No gaps to sit between yet, and the composer is the only way
+                  to put a step into a session that has captured nothing. */}
+              {composerAt(0)}
+              <Text variant="small" color="secondary" className="px-1 py-2">
+                Interact with the site — steps appear here as you go.
+              </Text>
+            </>
           ) : (
             <>
               <CursorGap
@@ -482,6 +532,7 @@ export function TrainerPanelView() {
                 disabled={controlsDisabled}
                 label={INSERT_HERE}
               />
+              {composerAt(0)}
               {liveSteps.map((s, i) => (
                 <React.Fragment key={s.id}>
                   <StepRow
@@ -516,6 +567,7 @@ export function TrainerPanelView() {
                     disabled={controlsDisabled}
                     label={i + 1 === liveSteps.length ? undefined : INSERT_HERE}
                   />
+                  {composerAt(i + 1)}
                 </React.Fragment>
               ))}
             </>
@@ -592,49 +644,6 @@ export function TrainerPanelView() {
           {state.editing ? "Save Test" : "Generate Test"}
         </Button>
       </div>
-
-      {addKind ? (
-        <AddStepDialog
-          open={addKind !== null}
-          kind={addKind}
-          currentTestId={state?.testId ?? undefined}
-          onOpenChange={(o) => {
-            if (!o) {
-              setAddKind(null);
-              if (addStepPicking) {
-                setAddStepPicking(false);
-                endRefine();
-                clearPicked();
-              }
-              setContextPick(null);
-            }
-          }}
-          onAdd={(steps: RawStep[]) => {
-            steps.forEach((s) => insertStep(s));
-            if (addStepPicking) {
-              setAddStepPicking(false);
-              endRefine();
-              clearPicked();
-            }
-            setContextPick(null);
-          }}
-          picked={contextPick?.picked ?? (addStepPicking ? picked : null)}
-          onStartPick={() => {
-            setAddStepPicking(true);
-            startRefine(null);
-          }}
-          onClearPick={() => {
-            setAddStepPicking(false);
-            endRefine();
-            clearPicked();
-          }}
-          initialAssert={contextPick?.assert}
-          initialWaitMode={contextPick?.waitMode}
-          initialState={contextPick?.elementState}
-          prefillText={contextPick?.prefillText}
-          prefillValue={contextPick?.prefillValue}
-        />
-      ) : null}
 
       <GenerateStepsDialog
         open={aiOpen}
