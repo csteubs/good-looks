@@ -9,6 +9,7 @@ import { AiDebugChip } from "./ai-debug-chip";
 import { AppStrip } from "./app-strip";
 import { AiDebugHost } from "./ai-debug-panel";
 import { AiDebugProvider } from "./ai-debug-store";
+import { CommandPalette } from "./command-palette";
 import { LibrarySidebar } from "./library-sidebar";
 import { LoadFailedDialog } from "./load-failed-dialog";
 import { RecorderProvider, useRecorder } from "./recorder-store";
@@ -141,7 +142,13 @@ export function RootView() {
             trainer replacing the whole outlet. The host renders whichever
             session is expanded; the chip is the way back to a minimized one. */}
         <AiDebugProvider>
-          <RootShell />
+          {/* ⌘K (§6.7). Wraps the shell rather than sitting beside it, because
+              the strip's key cap reads its opener from this context — and
+              because the palette's own dialogs must outlive a navigation the
+              palette itself triggered. */}
+          <CommandPalette>
+            <RootShell />
+          </CommandPalette>
           <AiDebugHost />
           <AiDebugChip />
           {/* Outside RootShell on purpose. A failed load tears the session down

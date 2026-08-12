@@ -9,9 +9,9 @@ the five components every screen embeds, and every screen has been reached.
 
 **Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
 its frame rail, threshold-against-frames and the masks/baselines reskin.
-**Phase C has started: §6.1 and §6.9 landed 2026-08-12** — the five non-failure
-run-state summaries (which were B5b) and the boot sequence. Where the rest of
-this says "would", it means would.
+**Phase C has started: §6.1, §6.7 and §6.9 landed 2026-08-12** — the five
+non-failure run-state summaries (which were B5b), the ⌘K command palette, and
+the boot sequence. Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -832,9 +832,36 @@ them here.
 
 **6.6 Visual triage.** Wipe, Blink, region breakdown, baseline provenance, drift.
 
-**6.7 Command palette (⌘K).** Does not exist in any form today. Run a test, run a
-tag, open a view, debug the last failure, record, generate. Straightforward over
-the existing router and query layer.
+**6.7 Command palette (⌘K).** ✅ **Done, 2026-08-12.** Run a test, run a tag,
+open a view, record, generate, reach the last failure. Ranking in
+`renderer/lib/command-palette.ts`, overlay in `renderer/main/command-palette.tsx`,
+and the strip's `command` slot is filled at last — half the debt
+`top-strip.tsx` describes is discharged.
+
+Four things the line above does not say:
+
+- **"Debug the last failure" became "OPEN the last failure".** An AI debug
+  session needs the script and the run output `test-detail-view` assembles, and
+  a palette reaching across that boundary to fake the context would open a
+  session about the wrong run. The row is named for what it does; the sparkle is
+  one click away and already the right colour.
+- **The scoring is deliberately small** — title prefix, then word prefix, then
+  subsequence, with keyword matches always below every title match, and a
+  shortness term that is a tie-break INSIDE a tier and can never cross between
+  them. A palette's only real failure mode is a wrong FIRST row, because nobody
+  reads the list: they type three letters and press Enter. A general fuzzy
+  matcher guesses, and a palette that guesses is one where the top row moves for
+  reasons the user cannot see.
+- **Groups stop mattering the moment there is a query.** Browsed, the list is
+  blocked into Actions / Tests / Tags / Views; searched, it is flat, because its
+  order IS the answer and re-grouping would destroy what the search produced.
+- **⌘K is the one shortcut in the app that does not exempt text fields.**
+  `HistoryNav`'s ⌘[ does, because `[` is a character somebody might be typing;
+  ⌘K produces none, and a palette you cannot open from the log search is one you
+  learn not to trust.
+
+Still unfilled: `ticker` (§6.8). An affordance for a feature that does not exist
+teaches a shortcut that answers with silence.
 
 **6.8 Job ticker.** The top-strip live readout — one shape, five readings (one
 run / several / batch / failed / idle-hidden). Needs a global run-state
