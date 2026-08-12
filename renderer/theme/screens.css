@@ -2378,6 +2378,160 @@
   border-bottom: 1px solid var(--gl-line);
 }
 
+/* ── The DOCKED trainer panel, and the training browser's strip ──────────
+   Its own window (renderer/trainer/), and the last surface in the app still
+   drawn in the component library's stock classes — `bg-background`,
+   `border-separator`, `bg-accent/5` — while every screen it mirrors had moved
+   to this layer. That is not a cosmetic gap: the panel is docked EDGE TO EDGE
+   with the main window's trainer, so the two were rendering the same session
+   in two different designs, one hairline apart.
+
+   Everything below is deliberately NARROWER than its `.gl-trainer-*`
+   counterpart above. That row is laid out for the main window; this one lives
+   at 360px beside a real browser, which is the whole reason the panel exists as
+   a separate view rather than a second mount of `RecordingView`. Shared names
+   would have to satisfy both widths, and the one that lost would be this
+   one. */
+
+.gl-panelwin {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--gl-ink);
+}
+
+/* `padding-top` clears the inset traffic lights — the window is
+   `titleBarStyle: "hiddenInset"`, so there is no title bar to sit below and
+   the first 28px of the content box is under the buttons. The `drag-region`
+   class on the element is what makes this band the window's drag handle; an
+   undocked panel that cannot be moved is a trap (see trainer-panel-window.ts). */
+.gl-panelwin-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 4px 10px 8px;
+  padding-top: 36px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* The live URL. Its own band rather than a trailing item in the header,
+   because at this width the status chip and the step count already fill that
+   row — and the URL is the one value here the user reads character by
+   character when writing a URL assertion. */
+.gl-panelwin-url {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+/* An armed picker — assert mode or refine mode. Cyan-keyed, matching
+   `.gl-trainer-prompt` in the main window: the app is waiting on the user,
+   which the palette spends cyan on ("running / live / focus"). The tinted
+   background is the panel surface, NOT a cyan wash: a coloured band this size
+   in a 360px column would be the loudest thing on either screen. */
+.gl-panelwin-armed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+}
+
+.gl-panelwin-armed-icon {
+  flex: 0 0 auto;
+  color: var(--gl-cyan);
+}
+
+.gl-panelwin-list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+}
+
+/* The empty state, before the user has touched the page. */
+.gl-panelwin-empty {
+  padding: 10px 6px;
+}
+
+/* Replay's one-line result, between the list and the tools. */
+.gl-panelwin-status {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border-top: 1px solid var(--gl-line);
+}
+
+/* The icon strip. `flex-wrap` for the same reason `.gl-trainer-tools` wraps and
+   more urgently: this row is half the width of that one. */
+.gl-panelwin-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  padding: 6px 8px;
+  border-top: 1px solid var(--gl-line);
+}
+
+.gl-panelwin-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border-top: 1px solid var(--gl-line);
+}
+
+/* ── The training browser's URL strip ────────────────────────────────────
+   `renderer/recorder-chrome/`. The app's only owned pixel inside the training
+   browser, and the one surface here that is NOT app chrome in the usual sense:
+   it is docked directly above an arbitrary third-party page. It takes the
+   panel surface rather than `--gl-ink` so there is a visible step down from the
+   strip to whatever the site paints, which is what stops a page with a dark
+   header from appearing to extend through our chrome. */
+.gl-chrome-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  width: 100%;
+  padding-inline: 8px;
+  background: var(--gl-panel);
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.gl-chrome-strip-icon {
+  flex: 0 0 auto;
+  color: var(--gl-tx-3);
+}
+
+/* The URL itself. `select-text` is applied at the call site, not here: reading
+   and copying the URL is the entire point of a bar that deliberately cannot be
+   typed into. The origin is dimmed one step so the PATH — the part that changes
+   as the user moves through the site, and the part a URL assertion is written
+   against — is what the eye lands on. */
+.gl-chrome-strip-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--gl-tx-1);
+}
+
+.gl-chrome-strip-origin {
+  color: var(--gl-tx-3);
+}
+
+.gl-chrome-strip-path {
+  color: var(--gl-tx-1);
+}
+
 /* ── Visual (B8) ───────────────────────────────────────────────────────── */
 
 /* The bezel fills the viewer. `CRT` sizes to its content by default, which is

@@ -67,6 +67,167 @@ export const CSS_PROPS_HELPER = `
   }
 `;
 
+/**
+ * How many elements the uniqueness scan will look at before giving up.
+ *
+ * The scan runs on the click path, so it is on the critical path of every
+ * recorded interaction. A page is walked at most once per candidate and the
+ * per-element work is a string compare against `textContent` — deliberately not
+ * `innerText`, which forces layout and would turn one click into a reflow of the
+ * whole document. Above this many elements the answer is "assume ambiguous",
+ * which costs an `.nth()` on a step rather than a stall the user feels.
+ */
+export const MAX_UNIQUENESS_SCAN = 6000;
+
+/**
+ * `matchesFor(loc, root)` — the elements a recorded locator would resolve to.
+ *
+ * ── Why this has to exist ──────────────────────────────────────────────────
+ * Playwright runs in STRICT MODE. A locator matching two elements is not "the
+ * first of two", it is an error that fails the step. The recorder chose
+ * locators on the untested assumption that a name, a label or a run of text
+ * identified exactly one element, and never once asked the page whether that was
+ * true — so every ambiguous locator was recorded happily and failed at replay,
+ * on a page the user could no longer see. `getByText("Browser")` on firefox.com
+ * is the one that prompted this: two elements, and a test named "Will Pass".
+ *
+ * ── What "the same as Playwright" means here ───────────────────────────────
+ * These mirror Playwright's DEFAULT string semantics, which are not the
+ * obvious ones and where the count is decided:
+ *   • getByText / getByLabel / getByPlaceholder / getByRole({name}) match a
+ *     CASE-INSENSITIVE SUBSTRING with whitespace normalized. Comparing exact
+ *     strings would under-count — "Browser" would look unique on a page whose
+ *     other match reads "Browsers" — and under-counting is the failure that
+ *     matters, because it is the one that ships a locator we have declared safe.
+ *   • the text engine returns the SMALLEST element containing the text, i.e. a
+ *     match whose descendants do not also match. Without that rule every
+ *     ancestor up to <body> counts and nothing is ever unique.
+ * `roleOf` and `accName` are reused rather than reimplemented, so the count is
+ * computed with the same functions that produced the locator. That is not
+ * perfect fidelity to Playwright's ARIA computation and does not need to be:
+ * it is self-consistent, which is what makes "this one is unique" mean
+ * something.
+ *
+ * Returns [] on anything unexpected — a caller that cannot count treats the
+ * locator as ambiguous, which is the safe direction.
+ */
+export const UNIQUENESS_HELPERS = `
+  function pwNorm(s) {
+    return String(s == null ? "" : s).replace(/\\s+/g, " ").trim().toLowerCase();
+  }
+
+  /** Playwright's default string match: case-insensitive substring, whitespace
+   *  normalized on both sides. */
+  function pwHas(haystack, needle) {
+    var n = pwNorm(needle);
+    if (!n) return false;
+    return pwNorm(haystack).indexOf(n) >= 0;
+  }
+
+  function scanAll(selector) {
+    try {
+      var list = document.querySelectorAll(selector);
+      return Array.prototype.slice.call(list, 0, ${MAX_UNIQUENESS_SCAN});
+    } catch (e) {
+      return [];
+    }
+  }
+
+  function matchesFor(loc) {
+    if (!loc) return [];
+    try {
+      if (loc.k === "testid") {
+        return scanAll(
+          '[data-testid="' + cssEscape(loc.v) + '"],' +
+          '[data-test-id="' + cssEscape(loc.v) + '"],' +
+          '[data-test="' + cssEscape(loc.v) + '"]'
+        );
+      }
+      if (loc.k === "css") return scanAll(loc.v);
+      if (loc.k === "xpath") {
+        var out = [];
+        var r = document.evaluate(loc.v, document, null, 5 /* UNORDERED_NODE_ITERATOR */, null);
+        var node = r.iterateNext();
+        while (node && out.length < ${MAX_UNIQUENESS_SCAN}) { out.push(node); node = r.iterateNext(); }
+        return out;
+      }
+      if (loc.k === "placeholder") {
+        return scanAll("[placeholder]").filter(function (el) {
+          return pwHas(el.getAttribute("placeholder"), loc.v);
+        });
+      }
+      if (loc.k === "label") {
+        // Every element that can carry an accessible label, rather than every
+        // element: a label locator is only ever generated for a form control.
+        return scanAll("input,textarea,select,button,[aria-label],[aria-labelledby]").filter(
+          function (el) { return pwHas(labelFor(el), loc.v); }
+        );
+      }
+      if (loc.k === "role") {
+        // Explicit roles plus the tags roleOf() derives one from — the same set,
+        // so nothing roleOf can name is missed and the whole document is not
+        // walked for a role query.
+        var cands = scanAll("[role],a[href],button,input,select,textarea");
+        return cands.filter(function (el) {
+          if (roleOf(el) !== loc.role) return false;
+          if (!loc.name) return true;
+          return pwHas(accName(el), loc.name);
+        });
+      }
+      if (loc.k === "text") {
+        // textContent, not innerText: this runs on the click path and innerText
+        // forces layout per element. See MAX_UNIQUENESS_SCAN.
+        var hits = scanAll("*").filter(function (el) {
+          return pwHas(el.textContent, loc.v);
+        });
+        // "Smallest element containing the text" — drop any match that contains
+        // another match. Without this every ancestor counts and html/body match
+        // everything.
+        return hits.filter(function (el) {
+          for (var i = 0; i < hits.length; i++) {
+            if (hits[i] !== el && el.contains(hits[i])) return false;
+          }
+          return true;
+        });
+      }
+    } catch (e) {}
+    return [];
+  }
+
+  /**
+   * Choose the first candidate that identifies EXACTLY this element, or index
+   * into the best one that at least contains it.
+   *
+   * The order of preference is the caller's — this only ever narrows it. A
+   * candidate that matches one element which is not the target is rejected
+   * outright: that is a locator pointing at the wrong thing, which is worse than
+   * an ambiguous one, because it fails silently by passing.
+   */
+  function pickLocator(candidates, el) {
+    var fallback = null;
+    for (var i = 0; i < candidates.length; i++) {
+      var loc = candidates[i];
+      var found = matchesFor(loc);
+      if (found.length === 1 && found[0] === el) return loc;
+      if (fallback === null && found.length > 1) {
+        var ix = found.indexOf(el);
+        // Only worth remembering if the target is actually in there AND the
+        // index is reachable — an .nth() past the cap would be a guess.
+        if (ix >= 0 && ix < ${MAX_UNIQUENESS_SCAN}) {
+          fallback = { k: loc.k, v: loc.v, role: loc.role, name: loc.name, nth: ix };
+        }
+      }
+    }
+    // Nothing was unique. The indexed best candidate beats the last resort,
+    // because a readable locator with an index still says what was meant.
+    if (fallback) return fallback;
+    // Every candidate list this is called with ends in an xpath, which is
+    // positional and therefore unique by construction. Returning the last
+    // candidate rather than null is what guarantees a step is always recorded.
+    return candidates.length > 0 ? candidates[candidates.length - 1] : null;
+  }
+`;
+
 export const DOM_HELPERS = `
   function cssEscape(s) {
     try { return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s); }
@@ -218,6 +379,7 @@ export const CAPTURE_SCRIPT = `
   }
 
   ${DOM_HELPERS}
+  ${UNIQUENESS_HELPERS}
 
   function interactiveTarget(el) {
     var node = el;
@@ -236,34 +398,59 @@ export const CAPTURE_SCRIPT = `
     return el;
   }
 
-  function locatorFor(el) {
+  // The recorded locator's PREFERENCE ORDER, best first.
+  //
+  // Unchanged from what this function used to return outright — a testid, then
+  // a label/placeholder for form controls, then role+name, then text — so a
+  // page where the first choice is unique records exactly the locator it always
+  // did. What changed is that this is now a list of candidates rather than an
+  // answer: pickLocator asks the page which of them actually identifies this
+  // element.
+  //
+  // It ends in cssPath and xpathFor on every path. That is what makes the
+  // choice total: an xpath is positional, so there is always a last candidate
+  // that cannot be ambiguous, and the recorder never has to record nothing.
+  function locatorCandidates(el) {
+    var out = [];
     var tid =
       (el.getAttribute && (el.getAttribute("data-testid") ||
         el.getAttribute("data-test-id") ||
         el.getAttribute("data-test"))) || "";
-    if (tid) return { k: "testid", v: tid };
+    if (tid) out.push({ k: "testid", v: tid });
 
     var tag = el.tagName.toLowerCase();
     var role = roleOf(el);
+    var nm = accName(el);
 
     if (tag === "input" || tag === "textarea" || tag === "select") {
       var lab = labelFor(el);
-      if (lab) return { k: "label", v: lab };
+      if (lab) out.push({ k: "label", v: lab });
       var ph = el.getAttribute("placeholder");
-      if (ph) return { k: "placeholder", v: ph };
-      var nm = accName(el);
-      if (role && nm) return { k: "role", role: role, name: nm };
-      return { k: "css", v: cssPath(el) };
+      if (ph) out.push({ k: "placeholder", v: ph });
+      if (role && nm) out.push({ k: "role", role: role, name: nm });
+    } else {
+      if (role && nm) out.push({ k: "role", role: role, name: nm });
+      var t = txt(el);
+      if (t && t.length <= 40) out.push({ k: "text", v: t });
+      if (role && !nm) out.push({ k: "role", role: role });
     }
 
-    if (role) {
-      var name = accName(el);
-      if (name) return { k: "role", role: role, name: name };
-    }
-    var t = txt(el);
-    if (t && t.length <= 40) return { k: "text", v: t };
-    if (role) return { k: "role", role: role };
-    return { k: "css", v: cssPath(el) };
+    out.push({ k: "css", v: cssPath(el) });
+    out.push({ k: "xpath", v: xpathFor(el) });
+    return out;
+  }
+
+  function locatorFor(el) {
+    var chosen = pickLocator(locatorCandidates(el), el);
+    if (!chosen) return { k: "css", v: cssPath(el) };
+    // Rebuilt rather than returned as-is, so a step never carries an undefined
+    // key that JSON.stringify would drop unpredictably across the queue.
+    var loc = { k: chosen.k };
+    if (chosen.v != null) loc.v = chosen.v;
+    if (chosen.role != null) loc.role = chosen.role;
+    if (chosen.name != null) loc.name = chosen.name;
+    if (typeof chosen.nth === "number") loc.nth = chosen.nth;
+    return loc;
   }
 
   // ----- Refine Selector: hover bounding box + rich element capture -----
