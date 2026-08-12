@@ -67,11 +67,56 @@ describe("availability", () => {
     // an explanation, which is the failure this feature can least afford —
     // "branch switching is broken" and "branch switching cannot work here" look
     // identical from a blank pane.
+    //
+    // The setup names what "packaged" means rather than relying on the flag
+    // alone: a shipped `.app` has no repository above it, and that — not the
+    // flag — is now what makes the feature unavailable. `isPackaged` picks the
+    // WORDING, which is the one thing it is reliable for.
     setPackaged(true);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gl-packaged-"));
+    created.push(dir);
+    setAppPath(dir);
+
     return status().then((result) => {
       expect(result.available).toBe(false);
       expect(result.reason).toMatch(/packaged/i);
     });
+  });
+
+  it("is available in a checkout even when Electron calls the build packaged", async () => {
+    // THE REGRESSION. `app.isPackaged` is not "was this shipped" — Electron
+    // derives it from the executable's NAME, and `npm run dev` runs a branded,
+    // re-signed clone of Electron.app called "Good Looks!" so that macOS shows
+    // the right name and icon (scripts/dev-app-bundle.mjs). Every dev run
+    // therefore reported itself as packaged, and the whole feature answered
+    // with a message telling the user to run it from a checkout — which is
+    // what they had just done.
+    //
+    // Worse than a hidden sidebar row: `relaunchOnto` relaunches the same
+    // binary, so switching onto a branch left the user with a Branches view
+    // saying it was unavailable, and the way back to their own checkout was
+    // inside it.
+    setPackaged(true);
+    const dir = repo("https://github.com/csteubs/good-looks.git");
+
+    const result = await status();
+    expect(result.available).toBe(true);
+    expect(result.checkout).toBe(dir);
+  });
+
+  it("gives git's own reason, not the packaged one, when not packaged", async () => {
+    // "not a git repository" is the sentence a developer can act on. Answering
+    // "this is a packaged build" to a checkout with a broken .git sends them
+    // looking for a problem they do not have.
+    setPackaged(false);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gl-not-a-repo-2-"));
+    created.push(dir);
+    setAppPath(dir);
+
+    const result = await status();
+    expect(result.available).toBe(false);
+    expect(result.reason).toBeTruthy();
+    expect(result.reason).not.toMatch(/packaged/i);
   });
 
   it("is unavailable outside a git repository, and says why", async () => {
@@ -134,7 +179,17 @@ describe("refusing a branch", () => {
   });
 
   it("refuses to switch at all when the feature is unavailable", async () => {
+    // The app path has to be somewhere with no repository. It used to be enough
+    // to set `packaged`, but that only worked because the stub's default app
+    // path is this project — a real checkout — and the old `isPackaged`
+    // short-circuit returned before anything looked at it. With availability
+    // decided by whether a repository is actually there, a "packaged" build
+    // sitting in a checkout is available, so the setup now has to say what it
+    // means.
     setPackaged(true);
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gl-no-repo-switch-"));
+    created.push(dir);
+    setAppPath(dir);
 
     await expect(switchToBranch("main")).rejects.toThrow(/packaged/i);
     expect(relaunchCalls()).toEqual([]);
