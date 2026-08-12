@@ -17,6 +17,7 @@ import {
 } from "@shell/backend";
 
 import { installAppProtocol, registerAppScheme } from "./shell/app-protocol.js";
+import { registerDeepLinks, takePendingDeepLink } from "./shell/deep-link.js";
 import { forwardRendererConsole, registerHostHandlers } from "./shell/host-handlers.js";
 import { registerHandlers } from "./handlers/index.js";
 import { getPreloadPath, getWindowUrl } from "./windows/window-paths.js";
@@ -49,6 +50,13 @@ installUserDataPath();
 // privileged-scheme list once during startup. The handler itself is installed
 // after ready (see whenReady below).
 registerAppScheme();
+
+// ── Deep links ────────────────────────────────────────────────────────
+// Also at module scope, and for the same class of reason: on macOS the
+// `open-url` that LAUNCHED the app fires before `whenReady` resolves, so a
+// listener attached after ready misses the click that started everything and a
+// cold start opens on the home screen instead.
+registerDeepLinks();
 
 // ── IPC Handlers ──────────────────────────────────────────────────────
 // Host surface first (dialogs/shell/clipboard/theme/menus), then the app's own.
@@ -182,6 +190,13 @@ async function createMainWindow() {
     });
 
     mainWindow?.show();
+
+    // A deep link that LAUNCHED the app arrived before this window existed, so
+    // it was held rather than delivered. Replayed here, once the renderer can
+    // receive it — without this a cold start from a clicked link opens on the
+    // home screen and the click looks like it did nothing.
+    const pending = takePendingDeepLink();
+    if (pending) mainWindow?.webContents.send("deepLink:open", pending);
 
     const showEndTime = Date.now();
     logger.info("main", "⏱️ [COLD_START] Window shown", {

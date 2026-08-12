@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { SplitView } from "@ui";
 
 import { Atmosphere, BootPlate } from "../theme";
+import { api } from "../lib/api";
 import { AiDebugChip } from "./ai-debug-chip";
 import { AppStrip } from "./app-strip";
 import { AiDebugHost } from "./ai-debug-panel";
@@ -42,6 +43,29 @@ export function RootView() {
       window.glazeAPI?.glaze?.ipc?.disconnect();
     };
   }, []);
+
+  // ── Deep links ──────────────────────────────────────────────────────
+  // Here for the same reason `onFinished` is: routing is a main-window
+  // behaviour, and the trainer panel runs without a router.
+  //
+  // A link SELECTS A VIEW and nothing else. The target arrives already
+  // validated by `shared/deep-link.mjs`, and it is re-checked here anyway —
+  // the push channel is not a trusted one just because the backend usually
+  // writes to it, and this is one `if` against a class of bug that opens a
+  // route with an undefined param.
+  React.useEffect(() => {
+    return api.on<{ testId?: unknown; runId?: unknown; stepId?: unknown }>(
+      "deepLink:open",
+      (target: { testId?: unknown; runId?: unknown; stepId?: unknown }) => {
+        const testId = typeof target?.testId === "string" ? target.testId : "";
+        if (!testId) return;
+        // Always the test route: a run or step in the link narrows what the
+        // view shows, and the test is the thing that has an address. Landing
+        // somewhere is the whole contract.
+        navigate({ to: "/test/$id", params: { id: testId } });
+      },
+    );
+  }, [navigate]);
 
   // Landing on the finished test is a MAIN-WINDOW behaviour, so it lives here
   // rather than in the store: the trainer panel runs the same provider with no

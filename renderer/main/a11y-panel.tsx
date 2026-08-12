@@ -29,6 +29,7 @@ import { Accessibility, RotateCcw, Stamp, TriangleAlert } from "lucide-react";
 import { api } from "../lib/api";
 import { countA11ySteps, latestA11yRun } from "../lib/a11y-format";
 import { A11yBadge, A11yViolationList } from "./a11y-violations";
+import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import type { ReplayStep, RunReplay, TestRecord } from "../lib/recorder-types";
 
 function fmtWhen(ms: number): string {
@@ -44,10 +45,15 @@ function StepViolations({
   step,
   onAccept,
   busy,
+  onSend,
+  filed,
 }: {
   step: ReplayStep;
   onAccept: () => void;
   busy: boolean;
+  /** Absent when there is no run to file against. */
+  onSend?: (stepId: string, ruleId: string) => void;
+  filed?: Record<string, string>;
 }) {
   if (!step.a11y) return null;
   return (
@@ -74,13 +80,20 @@ function StepViolations({
           />
         ) : null}
       </div>
-      <A11yViolationList result={step.a11y} />
+      <A11yViolationList
+        result={step.a11y}
+        filing={onSend ? { onSend: (ruleId) => onSend(step.stepId, ruleId), filed } : undefined}
+      />
     </div>
   );
 }
 
 export function A11yPanel({ test }: { test: TestRecord }) {
   const qc = useQueryClient();
+  // Which violation the compose dialog is open for. One at a time: each
+  // violation becomes its own issue, so they are independently assignable and
+  // closable, which is what a11y work actually looks like.
+  const [sending, setSending] = React.useState<{ stepId: string; ruleId: string } | null>(null);
   // Shares the ["runs"] key with Stats, so opening this tab usually costs no
   // round trip at all.
   const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
@@ -88,6 +101,23 @@ export function A11yPanel({ test }: { test: TestRecord }) {
     () => latestA11yRun(runsQuery.data ?? [], test.id),
     [runsQuery.data, test.id],
   );
+  // One read badges every row. Keyed on the test so filing one violation
+  // refreshes the whole list rather than only the row that was clicked.
+  const linksQuery = useQuery({
+    queryKey: ["issueLinks", test.id],
+    queryFn: () => api.issues.linksForTest(test.id),
+  });
+  const filedByStep = React.useMemo(() => {
+    const out = new Map<string, Record<string, string>>();
+    for (const l of linksQuery.data ?? []) {
+      if (l.kind !== "a11y") continue;
+      const row = out.get(l.stepId) ?? {};
+      row[l.ruleId] = l.identifier;
+      out.set(l.stepId, row);
+    }
+    return out;
+  }, [linksQuery.data]);
+
   const replayQuery = useQuery({
     queryKey: ["replay", test.id, latest?.id],
     queryFn: () => api.artifacts.getReplay(test.id, latest?.id as string),
@@ -278,9 +308,36 @@ export function A11yPanel({ test }: { test: TestRecord }) {
             step={s}
             busy={busy}
             onAccept={() => acceptStep.mutate(s.stepId)}
+            onSend={
+              latest ? (stepId, ruleId) => setSending({ stepId, ruleId }) : undefined
+            }
+            filed={filedByStep.get(s.stepId)}
           />
         ))}
       </div>
+
+      <IssueComposeDialog
+        source={
+          sending && latest
+            ? {
+                kind: "a11y",
+                testId: test.id,
+                runId: latest.id,
+                stepId: sending.stepId,
+                ruleId: sending.ruleId,
+              }
+            : null
+        }
+        open={sending !== null}
+        onOpenChange={(open) => {
+          if (!open) setSending(null);
+        }}
+        onFiled={(issue) => {
+          toast.success(`Filed as ${issue.identifier}.`);
+          void qc.invalidateQueries({ queryKey: ["issueLinks", test.id] });
+        }}
+        onCommented={(link) => toast.success(`Added to ${link.identifier}.`)}
+      />
     </ScrollArea>
   );
 }

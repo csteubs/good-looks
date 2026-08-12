@@ -42,6 +42,7 @@ import {
 } from "./ai-debug-store";
 import { EditStepsView } from "./edit-steps-view";
 import { RunOutput } from "./run-output";
+import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import { ScriptEditor, ScriptView } from "./script-view";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
@@ -114,6 +115,9 @@ export function TestDetailView() {
   // a test whose script isn't generated from its steps; null the rest of the
   // time, which is also what closes the dialog.
   const [pendingSteps, setPendingSteps] = React.useState<Step[] | null>(null);
+  // The run whose failure is being filed. Held here rather than in RunOutput
+  // because the dialog needs the test id, which this view owns.
+  const [failureRunId, setFailureRunId] = React.useState<string | null>(null);
   const [trainerConfirmOpen, setTrainerConfirmOpen] = React.useState(false);
   // Per-test visual-testing gate — remembers the user's "Capture screenshots"
   // choice between sessions. Falls back to the global Settings default when the
@@ -882,7 +886,25 @@ export function TestDetailView() {
         summary={runSummary}
         onDebug={openAiDebug}
         onReview={test.sourceDir ? undefined : () => setTab("heals")}
+        onSendToTracker={setFailureRunId}
         aiStatus={aiStatus}
+      />
+
+      {/* A failure names no step of its own — the loader resolves which step
+          failed from the replay, which is where that fact lives. Passing null
+          rather than guessing here keeps one answer to "which step failed?" */}
+      <IssueComposeDialog
+        source={
+          failureRunId
+            ? { kind: "failure", testId: test.id, runId: failureRunId, stepId: null }
+            : null
+        }
+        open={failureRunId !== null}
+        onOpenChange={(open) => {
+          if (!open) setFailureRunId(null);
+        }}
+        onFiled={(issue) => toast.success(`Filed as ${issue.identifier}.`)}
+        onCommented={(link) => toast.success(`Added to ${link.identifier}.`)}
       />
 
       {/* Asked at SAVE, not when Edit Steps is opened: this is a question about

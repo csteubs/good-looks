@@ -16,6 +16,61 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — Filing a defect: the payload, the consent, and three invisible bugs
+
+Phases 2–6 of the issue-tracker integration, on top of the connection that
+landed in #87. A visual difference, an accessibility violation or a failed step
+becomes a Linear issue; the same defect seen again comments on the issue it
+already has; and every issue carries a `goodlooks://` link back.
+
+**The renderer never handles the evidence.** It names a coordinate — this test,
+this run, this step — and the BACKEND loads the screenshots, console lines and
+error text itself. That is what makes the leak check meaningful: if the renderer
+carried the evidence across IPC and handed it back to be sent, `check:issue-payload`
+could only verify what it was given. It also means the sending direction of IPC
+carries no image data at all — the dialog returns filenames, and the bytes are
+re-read from the same coordinate the draft was built from.
+
+**What the check actually guarantees is narrower than "no logs", and the
+distinction is the whole point.** The raw Playwright log never appears, because
+its only redaction is for declared secrets while it carries DOM snippets,
+assertion diffs and unscrubbed URLs; what goes instead is `errorSignature`'s
+reduction of its first line. Console lines DO go, for a failure only, filtered to
+errors and page errors — that is where a diagnosis lives. Network entries go only
+when the run had its headers filtered, and are dropped **whole** otherwise rather
+than narrowed: `GLAZE_RECORD_ALL_HEADERS=1` produces exactly the run someone
+debugging an auth failure would have, and not reading those entries is a stronger
+guarantee than remembering to strip them.
+
+**Screenshots are consented to, not filtered.** They cannot be redacted, so the
+mitigation is the thumbnail strip: all three images shown at a size you can
+actually read, above the button, each removable. The dialog is `2xl` rather than
+`large` for that reason alone — at `max-w-lg` the strip wraps to one per row and
+the consent it exists to obtain stops meaning anything.
+
+**Links are keyed without the run id.** A visual difference reappears on every
+run, so a run-keyed link reports "not filed" every time and the feature produces
+one duplicate per run — which is how it would become the one everyone mutes. The
+exception is a failure that blamed no step: nothing identifies it but its run,
+and keying those together would comment a new failure onto an unrelated issue.
+
+**Three bugs found here were invisible, and all three are the same shape.**
+
+The first: `SettingRow` drops `details` on a flagged row by design, so copy
+written there compiled, type-checked and rendered nowhere. The second:
+`new URL()` **resolves `..` rather than preserving it**, so a deep-link
+validator inspecting parsed segments can never see a traversal — by then it has
+been applied, silently changing which target the link resolves to. Dot segments
+are now rejected on the raw string, before parsing. The third was the worst: the
+issue-link store built its key in two places, and the two `join` separators
+**rendered identically in every editor, grep and diff** while being different
+characters. Every save succeeded, every lookup missed, and the feature reported
+"not filed yet" for defects it had just filed. There is now one derivation, and
+it joins on a visible `::`.
+
+None of the three throws, none shows up in type-check, and two of them were found
+only because a test was written for the behaviour rather than the code.
+
 ### 2026-08-12 — The boot plate, and the three things "2.6s splash" does not say (C §6.9)
 
 The plan's whole brief for this is one line: *2.6s glitch-plate splash. Cheap, and the first thing anyone sees. Should respect reduced motion by rendering statically.* Building it honestly needed three answers the line does not give.
