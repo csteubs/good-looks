@@ -25,6 +25,10 @@ let replays: RunReplaySummary[] = [];
 /** Mutable so the bezel tests can seed a run with a real frame; every other
  *  test in this file leaves them null and never reaches the viewer. */
 let replayDetail: unknown = null;
+/** Seeded only by the drift tests, which are the one place that needs the
+ *  backend to answer DIFFERENTLY per run — drift is a statement about a series,
+ *  and a mock that hands back the same replay for every id makes one. */
+let replayById: Record<string, unknown> | null = null;
 let shot: string | null = null;
 let baselineShot: string | null = null;
 let baselines: unknown[] = [];
@@ -57,7 +61,8 @@ vi.mock("../lib/api", () => ({
   api: {
     artifacts: {
       list: async () => replays,
-      getReplay: async () => replayDetail,
+      getReplay: async (_testId: string, runId: string) =>
+        replayById ? (replayById[runId] ?? null) : replayDetail,
       readShot: async () => shot,
       dismissNotice: (...a: Parameters<typeof dismissNotice>) => dismissNotice(...a),
       restoreNotice: (...a: Parameters<typeof restoreNotice>) => restoreNotice(...a),
@@ -816,5 +821,133 @@ describe("baseline provenance (C §6.6)", () => {
       if (!document.querySelector('[data-gl="crt"]')) throw new Error("waiting");
     });
     expect(document.querySelector('[data-gl="baseline-provenance"]')).toBeNull();
+  });
+});
+
+// ── Drift (C §6.6) ──────────────────────────────────────────────────────
+//
+// jsdom has no layout engine and the `dom` project runs with `css: false`, so
+// nothing here can see what the strip LOOKS like — the two-pixel difference
+// between a floored bar and a "no reading" dash lives in `check:drift-gap`
+// instead. What these cover is the layer above it: that a run with no reading
+// produces no bar at all, and that the sentence matches the series.
+describe("baseline drift (C §6.6)", () => {
+  /** One run's replay, with the single step's diff supplied per run. */
+  function replayAt(runId: string, startedAt: number, diff: unknown) {
+    return {
+      testId: "t1",
+      runId,
+      testName: "Checkout",
+      status: "passed",
+      startedAt,
+      finishedAt: startedAt + 1_000,
+      failedIndex: null,
+      steps: [
+        {
+          index: 0,
+          stepId: "s1",
+          label: "goto example.com",
+          type: "goto",
+          status: "passed",
+          screenshot: "0.png",
+          diff,
+        },
+      ],
+    };
+  }
+
+  /** `diffs[0]` is the run on screen; the rest are its history, newest first. */
+  function seed(diffs: unknown[]) {
+    const base = 1_700_000_000_000;
+    replays = diffs.map((_, i) =>
+      summary({ runId: `r${i}`, startedAt: base - i * 3_600_000, stepCount: 1 }),
+    );
+    replayById = {};
+    diffs.forEach((d, i) => {
+      replayById![`r${i}`] = replayAt(`r${i}`, base - i * 3_600_000, d);
+    });
+  }
+
+  const changed = { state: "changed", ratio: 0.04, threshold: 0.2, diffFile: "0.diff.png" };
+  const match = { state: "match", ratio: 0.0002, threshold: 0.2 };
+
+  beforeEach(() => {
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+  });
+
+  afterEach(() => {
+    replayById = null;
+    replayDetail = null;
+    shot = null;
+  });
+
+  async function strip() {
+    renderVisual();
+    return await waitFor(() => {
+      const el = document.querySelector(".gl-drift");
+      if (!el) throw new Error("no drift strip");
+      return el as HTMLElement;
+    });
+  }
+
+  it("reads the frame across the whole window, not just the run on screen", async () => {
+    seed([changed, changed, match, changed, changed, match]);
+    const el = await strip();
+    expect(el.querySelectorAll(".gl-drift-slot")).toHaveLength(6);
+    expect(el.textContent).toContain("Changed in 4 of the last 6 runs");
+  });
+
+  it("draws no bar for a run that never measured the frame", async () => {
+    // THE distinction the strip exists to hold. A zero-height bar would say the
+    // frame was identical in a run that made no comparison at all.
+    seed([changed, { state: "unable", reason: "sizes differ" }, match, changed, match]);
+    const el = await strip();
+    expect(el.querySelectorAll(".gl-drift-slot")).toHaveLength(5);
+    expect(el.querySelectorAll(".gl-drift-gap")).toHaveLength(1);
+    expect(el.querySelectorAll(".gl-drift-bar")).toHaveLength(4);
+  });
+
+  it("gives a measured-but-identical frame a bar with real height", async () => {
+    // Zero height and "no reading" would look the same on screen; the floor is
+    // what keeps them apart, and it is applied here rather than in CSS.
+    seed([changed, match, match, match, match]);
+    const el = await strip();
+    const heights = [...el.querySelectorAll<HTMLElement>(".gl-drift-bar")].map(
+      (b) => Number.parseFloat(b.style.height),
+    );
+    expect(heights).toHaveLength(5);
+    for (const h of heights) expect(h).toBeGreaterThan(0);
+  });
+
+  it("colours only the runs that were over threshold", async () => {
+    // Colour means outcome. A bar's HEIGHT is a magnitude — a large
+    // sub-threshold diff is still a pass and must not be lit like a change.
+    seed([changed, match, match, match, match]);
+    const el = await strip();
+    expect(el.querySelectorAll(".gl-drift-bar[data-changed]")).toHaveLength(1);
+  });
+
+  it("marks a drifting series so the stylesheet can colour its sentence", async () => {
+    seed([changed, changed, match, changed, changed, match]);
+    expect((await strip()).dataset.verdict).toBe("drifting");
+  });
+
+  it("does NOT call a single change drift", async () => {
+    // One edit, one moved frame, one re-pin: the ordinary healthy case, and the
+    // one a readout like this most easily cries wolf about.
+    seed([match, changed, match, match, match, match]);
+    const el = await strip();
+    expect(el.dataset.verdict).toBe("settled");
+    expect(el.textContent).toContain("Changed once in the last 6 runs");
+  });
+
+  it("says nothing at all when there is only the run on screen", async () => {
+    // A strip of one is not a series, and drawing it would imply it is.
+    seed([changed]);
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("waiting");
+    });
+    expect(document.querySelector(".gl-drift")).toBeNull();
   });
 });

@@ -10,9 +10,10 @@ the five components every screen embeds, and every screen has been reached.
 **Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
 its frame rail, threshold-against-frames and the masks/baselines reskin.
 **Phase C is most of the way in: §6.1, §6.2, §6.3, §6.4, §6.7 and §6.9 landed
-2026-08-12, and §6.6's first slice with them** — the five non-failure run-state summaries (which were B5b), the
-inline step composer, change temp against real medians, Stats → Cost, the ⌘K
-command palette, and the boot sequence.
+2026-08-12, and all of §6.6 except the region breakdown with them** — the five
+non-failure run-state summaries (which were B5b), the inline step composer,
+change temp against real medians, Stats → Cost, the ⌘K command palette, the boot
+sequence, and Visual's Wipe/Blink, baseline provenance and drift.
 Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
@@ -916,10 +917,11 @@ exports (PDF / CSV / JUnit XML / public link). **This overlaps heavily with the
 MCP plan's Phase 5 emit adapters** — see §7.3. Build the emitters once, surface
 them here.
 
-**6.6 Visual triage.** **Wipe, Blink and baseline provenance done, 2026-08-12.**
-Region breakdown and drift are what is left — B8 was split the
-same way and for the same reason, that `visual-view.tsx` is the largest file in
-the renderer and the one where a change is most easily made blind.
+**6.6 Visual triage.** **Wipe, Blink, baseline provenance and drift done,
+2026-08-12.** The region breakdown is what is left, and it is the one piece that
+needs backend work that does not exist — B8 was split the same way and for the
+same reason, that `visual-view.tsx` is the largest file in the renderer and the
+one where a change is most easily made blind.
 
 **Why these two first.** A diff map is exact and nearly useless for triage: it
 lights every changed pixel with equal weight, so a font-smoothing shift and a
@@ -965,6 +967,46 @@ trusted. It says "run since pruned" rather than dropping the field, because a
 provenance line missing a field reads as a rendering bug. It renders in `CRT`'s
 `caption` — a prop that has existed since A3 documented as "what this frame IS"
 and had no consumer until now.
+
+**Drift — the question the screen could not ask.** Every mode above answers "did
+this frame change?" for ONE run. Nothing in the app could answer the one that
+follows: is it changing *repeatedly*? Those have different fixes. A frame that
+changed once is a change to look at; a frame over threshold in six of the last
+ten runs is a baseline nobody re-pinned, and reading it one run at a time makes
+one standing problem look like six separate small ones. The strip sits under the
+step row as context for the diff badge directly above it — not a finding of its
+own, which is why it is twenty pixels and not a chart.
+
+Four decisions in it, all of which could have gone wrong quietly:
+
+- **A run with no reading is a GAP, never a zero.** A skipped step, capture off,
+  a run predating the step, an `unable` comparison: none of those measured
+  anything, and a zero-height bar in that slot says "this frame was identical
+  that time", which is a claim nobody made. Both readings are a couple of pixels
+  in the same 20px strip, so the distinction is pure geometry — and it shipped
+  collapsed once already in the preview, where a floored bar was a single pixel
+  and looked exactly like the dash meaning no reading. `check:drift-gap` pins
+  the two properties that keep them apart: the floor is thick enough to read as
+  a bar, and the gap marker floats clear of the baseline bars stand on. jsdom
+  has no layout engine and the `dom` project runs with `css: false`, so nothing
+  else in the gate can see it.
+- **A single change is never drift.** One edit, one moved frame, one re-pin is
+  the ordinary healthy case and the thing a readout like this most easily cries
+  wolf about. It falls out of the two constants together — the smallest readable
+  window is four runs, so one change is at most a quarter, under the 40% share —
+  which means it is an emergent property rather than a branch, and a test pins
+  it across the whole window range rather than at one point.
+- **Bars scale to the window's own peak, not to 100%.** Diff ratios here are
+  small numbers; a 4% change is a large one. Against a full axis every bar draws
+  as the same flat line and the strip says nothing.
+- **Only `drifting` gets a colour.** It is the one reading that asks for an
+  action. A readout that colours its good news too is one where colour has
+  stopped meaning anything.
+
+It needs no new backend: one replay read per run in the window, sharing the
+cache the viewer already fills, keyed per RUN so moving between steps of a run
+costs nothing. That is exactly what separates it from the region breakdown,
+which needs pixel analysis that does not exist yet.
 
 **6.7 Command palette (⌘K).** ✅ **Done, 2026-08-12.** Run a test, run a tag,
 open a view, record, generate, reach the last failure. Ranking in

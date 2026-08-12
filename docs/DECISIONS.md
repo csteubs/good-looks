@@ -16,6 +16,62 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — Drift, and the two pixels that decide whether the app is lying (C §6.6)
+
+Drift is the last §6.6 piece that needed no new backend: this frame across its
+recent runs, as a 20px strip under the step row. Every other mode on this screen
+answers "did this frame change?" for ONE run, and nothing in the app could
+answer the question that follows — is it changing *repeatedly*? Those have
+different fixes. A frame that changed once is a change to look at; a frame over
+threshold in six of the last ten runs is a baseline nobody re-pinned, and reading
+it one run at a time makes one standing problem look like six separate small
+ones.
+
+**The failure this feature can have is a lie, not a bug.** A run that measured
+nothing — a skipped step, capture off, a run predating the step, an `unable`
+comparison — has no reading, and drawing it as a zero-height bar says "this frame
+was identical that time", which is a claim nobody made. The two readings live a
+couple of pixels apart in the same 20px strip, so the whole distinction is
+geometry.
+
+**It shipped collapsed, and only looking at it caught that.** `MIN_BAR` at 0.06
+of a 20px strip floors a measured bar at ONE PIXEL, which in the preview was
+visually identical to the one-pixel dash meaning no reading. Nothing in the gate
+saw it: `baseline-drift.ts`'s own tests assert `barHeight` returns `null` rather
+than a number, which is correct and says nothing about whether the two look
+alike; jsdom has no layout engine; and the `dom` Vitest project runs with
+`css: false`, so the entire stylesheet could be deleted with every rendered test
+still passing. The fix is two properties, and either alone still leaves two
+dashes on the same baseline — the floor is thick enough to read as a bar, and the
+gap marker floats clear of the baseline every bar stands on. `check:drift-gap`
+pins both at source level, which is the same reason `check:scroll-layout` and
+`check:clickable-chrome` exist.
+
+**A single change is never drift, and that guarantee is emergent.** One edit, one
+moved frame, one re-pin is the ordinary healthy case and the thing a readout like
+this most easily cries wolf about. The first cut spelled it out as
+`changedRuns >= 2 && share >= DRIFT_SHARE` — and mutating that clause away left
+every test passing, because it is unreachable: the smallest readable window is
+four runs, so one change is at most 0.25, already under the 0.4 share. An
+unreachable branch that reads like a rule is worse than no branch, so it went,
+and a test now pins the property across every window size from four to a hundred.
+That test fails if either constant is lowered, which is the only warning anyone
+would get.
+
+**Two smaller calls.** Bars scale to the window's own PEAK rather than to 100%,
+because diff ratios here are small — a 4% change is a large one — and a full axis
+draws every bar as the same flat line. And only `drifting` takes a colour, in the
+amber the changed bars already use: it is the one reading that asks for an
+action, and a readout that colours its good news too is one where colour has
+stopped meaning anything.
+
+**The preview needed fixtures before the feature existed on screen at all.**
+Drift is a statement about a series, so one run in `artifacts:list` renders
+nothing — the same trap as that handler returning `[]` before B8, one level up.
+`REPLAY_HISTORY` adds eight earlier runs cloned from `REPLAY`, with one step
+drifting, one settled after a single change and one `unable` throughout, so all
+three verdicts and the gap marker are visible without a week of real history.
+
 ### 2026-08-12 — Baseline provenance, and the three fields this app does not get to invent (C §6.6)
 
 The Visual screen asks the user to judge a frame against a baseline and, until now, told them nothing whatsoever about the baseline. That gap matters more than it sounds: "these two frames differ" is a completely different statement depending on whether the baseline was pinned yesterday from the same engine or four months ago from WebKit while the current run is Chromium. Without provenance every difference looks equally like a regression.

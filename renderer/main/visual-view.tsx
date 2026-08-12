@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertDialog,
   Badge,
@@ -47,6 +47,14 @@ import { api } from "../lib/api";
 import { countA11ySteps } from "../lib/a11y-format";
 import { blinkIntervalMs, wipeAfterKey, wipeFromPointer } from "../lib/visual-compare";
 import { baselineProvenance, isStale, provenanceLine } from "../lib/baseline-provenance";
+import {
+  DRIFT_WINDOW,
+  type DriftRun,
+  barHeight,
+  computeDrift,
+  driftLine,
+  driftPointsFor,
+} from "../lib/baseline-drift";
 import { A11yBadge, A11yViolationList } from "./a11y-violations";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import type {
@@ -249,6 +257,83 @@ function useBaselineCaption(testId: string, stepId: string): React.ReactNode {
     <span data-gl="baseline-provenance" data-stale={isStale(p) ? "" : undefined}>
       {provenanceLine(p)}
     </span>
+  );
+}
+
+/**
+ * Drift — this frame across its recent runs. REDESIGN §6.6.
+ *
+ * The rest of this screen answers "did this frame change?" for ONE run. Nothing
+ * in the app could answer the question that follows: is it changing repeatedly?
+ * Those have different fixes. A frame that changed once is a change to look at;
+ * a frame over threshold in six of the last ten runs is a baseline nobody
+ * re-pinned, and reading it one run at a time makes one standing problem look
+ * like six separate small ones.
+ *
+ * WHAT IT COSTS. One replay read per run in the window, shared with the
+ * `["replay", …]` cache the viewer already fills, so the selected run is free
+ * and the rest are cached for the session. They are keyed per RUN, not per
+ * step, so moving through the steps of a run costs nothing after the first.
+ *
+ * NOTHING IS DRAWN UNTIL THE WHOLE WINDOW HAS ARRIVED. A partial series has a
+ * verdict of its own, and watching it read "drifting" and then settle as the
+ * remaining runs land would be worse than a moment of nothing.
+ */
+function StepDrift({ testId, stepId }: { testId: string; stepId: string }) {
+  const summaries = useQuery({ queryKey: ["replays"], queryFn: api.artifacts.list }).data;
+  const recent = React.useMemo(
+    () =>
+      (summaries ?? [])
+        .filter((s) => s.testId === testId)
+        .sort((a, b) => b.startedAt - a.startedAt)
+        .slice(0, DRIFT_WINDOW),
+    [summaries, testId],
+  );
+
+  const replays = useQueries({
+    queries: recent.map((s) => ({
+      queryKey: ["replay", s.testId, s.runId],
+      queryFn: () => api.artifacts.getReplay(s.testId, s.runId),
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+
+  // A strip of one run is not a series, and drawing it would imply it is.
+  if (recent.length < 2 || replays.some((r) => r.isPending)) return null;
+
+  const runs: DriftRun[] = replays
+    .map((r) => r.data as RunReplay | null)
+    .filter((r): r is RunReplay => r !== null)
+    .map((r) => ({ runId: r.runId, startedAt: r.startedAt, steps: r.steps }));
+  const drift = computeDrift(driftPointsFor(runs, stepId));
+
+  return (
+    <div className="gl-drift" data-verdict={drift.verdict}>
+      <div className="gl-drift-strip" aria-hidden>
+        {drift.points.map((p) => {
+          const h = barHeight(p.ratio, drift.peak);
+          return (
+            <span key={p.runId} className="gl-drift-slot">
+              {h === null ? (
+                // A gap, not a bar. A run with no reading did not report an
+                // identical frame — it reported nothing, and a zero-height bar
+                // would be the app making a claim on its behalf.
+                <span className="gl-drift-gap" />
+              ) : (
+                <span
+                  className="gl-drift-bar"
+                  data-changed={p.changed ? "" : undefined}
+                  style={{ height: `${h * 100}%` }}
+                />
+              )}
+            </span>
+          );
+        })}
+      </div>
+      <Text variant="small" color="tertiary" className="gl-drift-line">
+        {driftLine(drift)}
+      </Text>
+    </div>
   );
 }
 
@@ -1774,6 +1859,12 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           </Text>
         )}
       </div>
+
+      {/* Drift, under the step row and above everything the step row leads to:
+          it is context for the badge directly above it, not a finding of its
+          own. Offered only for a step that was actually compared — a step with
+          no `diff` has no series to have. */}
+      {step.diff ? <StepDrift testId={summary.testId} stepId={step.stepId} /> : null}
 
       <IssueComposeDialog
         source={

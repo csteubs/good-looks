@@ -291,23 +291,73 @@ export const REPLAY: RunReplay = {
   ],
 };
 
-export const REPLAY_SUMMARIES: RunReplaySummary[] = [
-  {
-    testId: REPLAY.testId,
-    runId: REPLAY.runId,
-    testName: REPLAY.testName,
-    status: REPLAY.status,
-    startedAt: REPLAY.startedAt,
-    finishedAt: REPLAY.finishedAt,
-    stepCount: REPLAY.steps.length,
-    failedIndex: REPLAY.failedIndex,
-    changedSteps: REPLAY.steps.filter((s) => s.diff?.state === "changed").length,
+/**
+ * The runs BEFORE the one on screen, for the drift strip (§6.6).
+ *
+ * Drift is a statement about a series, so a fixture with one run in it renders
+ * nothing at all — the same trap as `artifacts:list` returning `[]` above, one
+ * level up. These exist so the strip, its two verdicts and its gaps are visible
+ * in the preview rather than only in an app with a week of history.
+ *
+ * TWO STEPS TELL DIFFERENT STORIES ON PURPOSE. `s2` is over threshold in most
+ * of the window — a baseline nobody re-pinned, which is the finding the strip
+ * was built for — while `s1` moved once and settled, which is the ordinary case
+ * the strip must NOT cry wolf about. `s4` is `unable` throughout, so its slots
+ * draw as gaps: the distinction between "measured, identical" and "no reading"
+ * is the one thing here that cannot be checked in jsdom, which has no layout.
+ */
+const DRIFT_RATIOS: Record<string, (number | null)[]> = {
+  // Newest first, matching the order the runs are listed in.
+  s1: [0.0004, 0.0002, 0.0003, 0.0221, 0.0002, 0.0001, 0.0003, 0.0002],
+  s2: [0.0413, 0.0388, 0.0026, 0.0451, 0.0402, 0.0019, 0.0367, 0.0009],
+};
+
+/** Eight earlier runs of the same test, differing only in what the comparison
+ *  found. Cloned from `REPLAY` rather than written out, so a step added to the
+ *  fixture above cannot silently go missing from its own history. */
+export const REPLAY_HISTORY: RunReplay[] = DRIFT_RATIOS.s1.slice(1).map((_, i) => {
+  const n = i + 1;
+  return {
+    ...REPLAY,
+    runId: `r-${n + 1}`,
+    startedAt: REPLAY.startedAt - n * 6 * HOUR,
+    finishedAt: REPLAY.startedAt - n * 6 * HOUR + 11_900,
+    steps: REPLAY.steps.map((s) => {
+      const ratio = DRIFT_RATIOS[s.stepId]?.[n];
+      if (ratio === undefined || ratio === null || !s.diff) return s;
+      const changed = ratio * 100 > (REPLAY.visualThreshold ?? 0.2);
+      return {
+        ...s,
+        diff: {
+          ...s.diff,
+          state: changed ? ("changed" as const) : ("match" as const),
+          ratio,
+          diffFile: changed ? s.diff.diffFile : undefined,
+        },
+      };
+    }),
+  };
+});
+
+function summarise(r: RunReplay): RunReplaySummary {
+  return {
+    testId: r.testId,
+    runId: r.runId,
+    testName: r.testName,
+    status: r.status,
+    startedAt: r.startedAt,
+    finishedAt: r.finishedAt,
+    stepCount: r.steps.length,
+    failedIndex: r.failedIndex,
+    changedSteps: r.steps.filter((s) => s.diff?.state === "changed").length,
     // Derived, not hard-coded: the summary marker and the banner are two
     // readings of the same fact, and a fixture where they disagree teaches the
     // preview to lie about exactly the thing this screen reports.
-    a11yNewSteps: REPLAY.steps.filter((s) => (s.a11y?.newKeys.length ?? 0) > 0).length,
-  },
-];
+    a11yNewSteps: r.steps.filter((s) => (s.a11y?.newKeys.length ?? 0) > 0).length,
+  };
+}
+
+export const REPLAY_SUMMARIES: RunReplaySummary[] = [REPLAY, ...REPLAY_HISTORY].map(summarise);
 
 export const RUN_LOG = [
   "Running 1 test using 1 worker",
