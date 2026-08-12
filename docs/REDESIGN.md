@@ -8,9 +8,9 @@ first slice)** and **B9 (AI debug — the status contract and the Sending strip)
 the five components every screen embeds, and every screen has been reached.
 
 **Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
-its frame rail, threshold-against-frames and the masks/baselines reskin. **B5b**
-(the five non-failure run-state summaries) was always Phase C §6.1 and is where
-the remaining work starts. Where the rest of this says "would", it means would.
+its frame rail, threshold-against-frames and the masks/baselines reskin.
+**Phase C has started: §6.1 landed 2026-08-12** — the five non-failure run-state
+summaries, which were B5b. Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -784,8 +784,33 @@ captured frame, and it should not look like our chrome.
 
 Each is its own PR, each independently useful, ordered by value.
 
-**6.1 The six run states** (from B5). Five new summary panels in test detail.
-Data is already present in `RunRecord` and the heal journal.
+**6.1 The six run states** (from B5). ✅ **Done, 2026-08-12.** Five new summary
+panels in test detail, from data already present in `RunRecord` and the heal
+journal. The state decision and its arithmetic are pure
+(`renderer/lib/run-summary.ts`), the rendering is `run-summary-panel.tsx`, and
+`RunOutput` now shows the six-state chip rather than pass/fail.
+
+Four things the plan did not anticipate, all of which changed the shipped shape:
+
+- **"retry" had to be translated.** The plan calls it "attempt 1 vs attempt 2",
+  which presumes a runner with `retries` configured. This app configures none —
+  every run is one attempt — so the two attempts are two RUNS. The question
+  survives intact and the answer comes only from what `RunRecord` stores. When
+  NOTHING differed, that is the most useful reading available and the one a user
+  is least likely to reach alone: same engine, same pacing, same budget, opposite
+  outcome, so the test is flaky rather than fixed.
+- **Two of the six passed and are not phos.** `healed` is amber because a
+  mis-heal usually succeeds (clicking the wrong button rarely throws), and a
+  flaky `retry` is amber for the same reason. Reporting either as a plain pass
+  is the app agreeing with the substitution.
+- **The panel now renders with no live run.** It used to appear only once
+  something had executed in this session, so opening a test cold said nothing
+  whatsoever about it. That was invisible while the panel was about failure and
+  indefensible once it was about state.
+- **`.gl-heal-row` already existed** in `shared.css`, used by `heals-panel.tsx`,
+  and the new rows silently inherited it (and leaked into that panel). This is
+  the failure mode `check:renderer-classes` cannot see — the class resolves, to
+  the wrong rule. Renamed to `.gl-run-heal-*`.
 
 **6.2 Inline step composer** (from B6). Retires `add-step-dialog.tsx`. The
 `InsertGap` cursor is the prerequisite and the reason it can be moved.
