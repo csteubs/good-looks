@@ -126,6 +126,33 @@ describe("opening a Routine into the checklist", () => {
     expect(rows.rowOptions["t-a"].browsers).toEqual(["chromium"]);
   });
 
+  it("arranges the tests it does NOT contain by the library's own order", () => {
+    // A Routine's order covers the tests in it. Without carrying the library's
+    // arrangement, a row dragged while unticked snaps back on the next reload —
+    // a rearrangement silently undone, which is worse than one never offered.
+    const rows = rowsFromRoutine(
+      routine([step({ testId: "t-b" })]),
+      tests("t-a", "t-b", "t-c", "t-d"),
+      DEFAULTS,
+      {},
+      ["t-d", "t-c", "t-a"],
+    );
+    expect(rows.order).toEqual(["t-b", "t-d", "t-c", "t-a"]);
+  });
+
+  it("leads with a test the stored order never mentioned", () => {
+    // `applyOrder`'s rule, reused rather than re-written: a test recorded since
+    // the order was saved is the one you came here to run, and appending it
+    // buries it off the bottom of any real library.
+    const rows = rowsFromRoutine(routine([]), tests("t-a", "t-new"), DEFAULTS, {}, ["t-a"]);
+    expect(rows.order).toEqual(["t-new", "t-a"]);
+  });
+
+  it("ignores a stored order naming a test that is gone", () => {
+    const rows = rowsFromRoutine(routine([]), tests("t-a"), DEFAULTS, {}, ["t-ghost", "t-a"]);
+    expect(rows.order).toEqual(["t-a"]);
+  });
+
   it("lists the whole library when no Routine is open", () => {
     const rows = rowsFromRoutine(null, tests("t-a", "t-b"), DEFAULTS);
     expect(rows.order).toEqual(["t-a", "t-b"]);

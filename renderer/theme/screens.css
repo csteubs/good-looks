@@ -373,6 +373,32 @@
   gap: 8px;
 }
 
+/* The open Routine's name. An ordinary field, styled DOWN to the weight of the
+   controls beside it: the `Input` primitive's own light chrome made the name
+   the loudest thing on a screen whose subject is the checklist, and a title
+   shouting over its own content is the opposite of what an editable title is
+   for. Same box as `.gl-cost-input`, wider, because a job name is a phrase. */
+.gl-routine-name {
+  width: 220px;
+  height: 30px;
+  border: 1px solid var(--gl-line-2);
+  padding: 4px 8px;
+  background: var(--gl-ink);
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  letter-spacing: var(--gl-track-label);
+  color: var(--gl-tx-1);
+  outline: none;
+}
+
+.gl-routine-name:focus-visible {
+  border-color: var(--gl-cyan);
+}
+
+.gl-routine-name:disabled {
+  color: var(--gl-tx-3);
+}
+
 /* The header cluster: two cells in one bordered box, at control height. Boxed
    together because they are one question — "how should this batch run?" — and
    two loose checkboxes in a toolbar read as two unrelated ones. */

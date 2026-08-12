@@ -18,13 +18,7 @@ import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts } from "../lib/test-tags";
 import { LogInspector } from "./log-inspector";
 import { TagCluster } from "./tag-cluster";
-import {
-  applyOrder,
-  isCustomOrder,
-  moveToTarget,
-  orderIdsOf,
-  orderIsStale,
-} from "../lib/batch-order";
+import { applyOrder, isCustomOrder, moveToTarget, orderIdsOf } from "../lib/batch-order";
 import {
   BATCH_CONCURRENCY_CHOICES,
   batchConcurrencyConsequence,
@@ -40,7 +34,6 @@ import {
   pruneRowOptions,
   resolveRow,
   resultKeyOf,
-  rowOptionsAreStale,
   rowStatus,
   setRow,
   setSelection,
@@ -53,11 +46,18 @@ import {
   batchOutcomeTitle,
   batchOutcomeTone,
 } from "../lib/batch-outcome";
+import {
+  brokenSteps,
+  rowsFromRoutine,
+  sameSteps,
+  stepsFromRows,
+} from "../lib/routine-rows";
 import type {
   BatchRecord,
   BatchState,
   BatchTestResult,
   BatchTestStatus,
+  Routine,
   RunBrowser,
 } from "../lib/recorder-types";
 
@@ -125,6 +125,28 @@ export function BatchView() {
     queryKey: ["recorder-settings"],
     queryFn: () => api.recorder.getSettings(),
   });
+  // The saved jobs. ROUTINES.md capability 1: this screen is now ONE Routine's
+  // editor rather than the app's single implicit checklist, and the picker
+  // below is what makes the others reachable.
+  const routinesQuery = useQuery({ queryKey: ["routines"], queryFn: api.routines.list });
+  const routines = React.useMemo(() => routinesQuery.data ?? [], [routinesQuery.data]);
+  // Which one is open. Null until the list arrives — and null FOREVER for a
+  // user with none, which is the state the migration leaves anyone who never
+  // ticked a row. That is an empty screen with a "New routine" button, not an
+  // error, and not an invented Routine nobody asked for.
+  const [openId, setOpenId] = React.useState<string | null>(null);
+  const openRoutine = React.useMemo(
+    () => routines.find((r) => r.id === openId) ?? null,
+    [routines, openId],
+  );
+  React.useEffect(() => {
+    if (routines.length === 0) return;
+    // Also covers the open Routine being deleted from under us: `openId` stops
+    // resolving, and falling back to the first is better than a blank screen
+    // reporting a job that no longer exists.
+    if (openId !== null && routines.some((r) => r.id === openId)) return;
+    setOpenId(routines[0].id);
+  }, [routines, openId]);
 
   // Selection, engines and headedness — one persisted map keyed by test id, so
   // all three survive a restart. A test with NO entry resolves from its own
@@ -135,18 +157,12 @@ export function BatchView() {
   // to be added to the selection automatically and joined the next "Run all"
   // without being asked.
   const [rowOptions, setRowOptions] = React.useState<RowOptionsMap>({});
-  const [rowsInited, setRowsInited] = React.useState(false);
   // A finished row's badge opens that run's console output — the row that made
   // you curious shouldn't need a detour through Stats to answer "why".
   const [logRun, setLogRun] = React.useState<{ id: string; title: string } | null>(null);
   // Which past batch has its drawer open. One at a time: the drawer lists every
   // test in that batch, and two open at once turns the history into a wall.
   const [expandedBatchId, setExpandedBatchId] = React.useState<string | null>(null);
-  React.useEffect(() => {
-    if (rowsInited || !settingsQuery.data) return;
-    setRowOptions(settingsQuery.data.batchTestOptions ?? {});
-    setRowsInited(true);
-  }, [rowsInited, settingsQuery.data]);
 
   // Batch-level run options. `captureArtifacts` and `concurrency` are one-off
   // choices for this run; `runHeadless` is the MASTER for the per-row toggles
@@ -154,14 +170,30 @@ export function BatchView() {
   const [runHeadless, setRunHeadless] = React.useState(false);
   const [captureArtifacts, setCaptureArtifacts] = React.useState(false);
   const [concurrency, setConcurrency] = React.useState<BatchConcurrencyChoice>(1);
-  const [optionsInited, setOptionsInited] = React.useState(false);
+  const [optionsInited, setOptionsInited] = React.useState<string | null>(null);
+  // `captureArtifacts` and `concurrency` are the ROUTINE'S now — a saved job
+  // that forgot how many lanes it runs in is a saved job in name only, and the
+  // spec puts both on `Routine.defaults`. They fall back to the global settings
+  // for a user with no Routine yet, which is also what a brand-new one is
+  // created with. `runHeadless` stays a bulk EDIT of the rows rather than a
+  // stored field: it has always been a master switch, not a value.
   React.useEffect(() => {
-    if (optionsInited || !settingsQuery.data) return;
+    if (!settingsQuery.data) return;
+    const key = openId ?? "";
+    if (optionsInited === key) return;
     setRunHeadless(settingsQuery.data.defaultRunHeadless ?? false);
-    setCaptureArtifacts(settingsQuery.data.defaultCaptureArtifacts ?? false);
-    setConcurrency(choiceFromSetting(settingsQuery.data.defaultBatchConcurrency));
-    setOptionsInited(true);
-  }, [optionsInited, settingsQuery.data]);
+    setCaptureArtifacts(
+      openRoutine
+        ? openRoutine.defaults.captureArtifacts
+        : (settingsQuery.data.defaultCaptureArtifacts ?? false),
+    );
+    setConcurrency(
+      choiceFromSetting(
+        openRoutine ? openRoutine.defaults.concurrency : settingsQuery.data.defaultBatchConcurrency,
+      ),
+    );
+    setOptionsInited(key);
+  }, [optionsInited, settingsQuery.data, openRoutine, openId]);
 
   // Set when Run is pressed on a headed batch big enough to be worth asking
   // about; holds the number of windows so the dialog can name it.
@@ -170,7 +202,6 @@ export function BatchView() {
   // User-defined run order, persisted as ids in settings. Held locally while
   // dragging so rows track the pointer without a round trip per frame.
   const [order, setOrder] = React.useState<string[]>([]);
-  const [orderInited, setOrderInited] = React.useState(false);
   const [dragId, setDragId] = React.useState<string | null>(null);
   const [overId, setOverId] = React.useState<string | null>(null);
 
@@ -179,25 +210,11 @@ export function BatchView() {
   // themselves live in TagCluster, which also owns deleting a tag library-wide.
   const [tagFilter, setTagFilter] = React.useState<string>(ALL_TAGS);
   const tags = React.useMemo(() => tagCounts(tests), [tests]);
-  React.useEffect(() => {
-    if (orderInited || !settingsQuery.data) return;
-    setOrder(settingsQuery.data.batchOrder ?? []);
-    setOrderInited(true);
-  }, [orderInited, settingsQuery.data]);
 
   // Every test appears exactly once regardless of what was stored, so a test
   // added or deleted since the order was saved can never go missing.
   const orderedTests = React.useMemo(() => applyOrder(tests, order), [tests, order]);
 
-  // Rewrite the stored order once when the library has drifted (a test added or
-  // deleted), rather than on every render.
-  React.useEffect(() => {
-    if (!orderInited || tests.length === 0) return;
-    if (!orderIsStale(order, tests)) return;
-    const fresh = orderIdsOf(applyOrder(tests, order));
-    setOrder(fresh);
-    api.recorder.setSettings({ batchOrder: fresh }).catch(() => {});
-  }, [orderInited, tests, order]);
 
   const visibleTests = React.useMemo(
     () => filterByTag(orderedTests, tagFilter),
@@ -254,19 +271,6 @@ export function BatchView() {
     }
   }, [tags, tagFilter]);
 
-    // Commit a drag: reorder by ID, not by visible index — under a tag filter the
-  // visible rows are only a subsequence of the real order.
-  const commitDrag = () => {
-    if (dragId && overId && dragId !== overId) {
-      const next = moveToTarget(orderIdsOf(orderedTests), dragId, overId);
-      setOrder(next);
-      api.recorder.setSettings({ batchOrder: next }).catch(() => {
-        /* best-effort persist; the new order still applies to this session */
-      });
-    }
-    setDragId(null);
-    setOverId(null);
-  };
 
   const history = React.useMemo(() => historyQuery.data ?? [], [historyQuery.data]);
   // Nothing live → show the most recent persisted batch, so a restart doesn't
@@ -283,22 +287,215 @@ export function BatchView() {
     [settingsQuery.data],
   );
 
-  // Every write goes through here so state and disk never disagree. Persist is
-  // best-effort, matching the stored order: the choice still applies to this
-  // session if the write fails.
-  const commitRows = React.useCallback((next: RowOptionsMap) => {
-    setRowOptions(next);
-    api.recorder.setSettings({ batchTestOptions: next }).catch(() => {});
-  }, []);
-
-  // Drop rows for tests that no longer exist, once on drift rather than every
-  // render — the same shape as the stored-order rewrite above.
+  // ── The open Routine, opened into the checklist ─────────────────────
+  //
+  // RE-SEEDED WHENEVER THE ROUTINE OR THE LIBRARY CHANGES, and that is safe
+  // precisely because every gesture below persists immediately: what the job
+  // contains goes to the Routine, what an unticked row remembers goes to the
+  // settings scratch. There is no unsaved state for a re-seed to lose, so this
+  // also replaces the two "drift" effects that used to rewrite storage when a
+  // test was added or deleted — `rowsFromRoutine` only ever emits rows for
+  // tests that exist.
+  //
+  // THE KEY INCLUDES `updatedAt`, and that is not belt-and-braces. Without it:
+  // untick a row, then have the library refetch before the Routine query has
+  // caught up, and the re-seed reads the STALE Routine — the unticked test
+  // comes back, silently, and the next gesture writes it into the job. The
+  // stored `updatedAt` moving is precisely the signal that the record on screen
+  // is behind the one on disk. It also means every save re-seeds from what was
+  // actually stored rather than from what was sent, which is what makes the
+  // store's own rebuild (a dropped step, two steps collapsed) visible instead
+  // of appearing to have been accepted.
+  const libraryKey = React.useMemo(() => tests.map((t) => t.id).join("\u0000"), [tests]);
+  const [seedKey, setSeedKey] = React.useState<string | null>(null);
   React.useEffect(() => {
-    if (!rowsInited || tests.length === 0) return;
-    const ids = tests.map((t) => t.id);
-    if (!rowOptionsAreStale(rowOptions, ids)) return;
-    commitRows(pruneRowOptions(rowOptions, ids));
-  }, [rowsInited, tests, rowOptions, commitRows]);
+    if (!settingsQuery.data || routinesQuery.data === undefined) return;
+    const key = `${openId ?? ""}|${openRoutine?.updatedAt ?? 0}|${libraryKey}`;
+    if (seedKey === key) return;
+    const rows = rowsFromRoutine(
+      openRoutine,
+      tests,
+      {
+        defaultRunBrowser: settingsQuery.data.defaultRunBrowser,
+        defaultRunHeadless: settingsQuery.data.defaultRunHeadless,
+      },
+      settingsQuery.data.batchTestOptions ?? {},
+      settingsQuery.data.batchOrder ?? [],
+    );
+    setOrder(rows.order);
+    setRowOptions(rows.rowOptions);
+    setSeedKey(key);
+  }, [settingsQuery.data, routinesQuery.data, openRoutine, openId, tests, libraryKey, seedKey]);
+
+  // Steps naming a test the library no longer has. Kept by the store on
+  // purpose (ROUTINES open question 4) so a saved job never silently shrinks;
+  // the checklist cannot draw a row for a test that is gone, so they are
+  // reported above it instead.
+  const broken = React.useMemo(() => brokenSteps(openRoutine, tests), [openRoutine, tests]);
+
+  // The last payload sent, and how many saves are still in flight. See
+  // `saveRoutine` — two edits made before the first round trip lands would
+  // otherwise clobber each other.
+  const pending = React.useRef<Routine | null>(null);
+  const inFlight = React.useRef(0);
+  React.useEffect(() => {
+    pending.current = null;
+    inFlight.current = 0;
+  }, [openId]);
+
+  // The name, held locally while it is being typed. Committed on blur and on
+  // Enter — see the field itself for why not per keystroke.
+  const [nameDraft, setNameDraft] = React.useState("");
+  React.useEffect(() => {
+    setNameDraft(openRoutine?.name ?? "");
+  }, [openRoutine?.id, openRoutine?.name]);
+
+  // Which Routine the confirm dialog is about. Held as the RECORD, not the id,
+  // so the dialog can name it even in the frame where the list has already
+  // moved on.
+  const [pendingDelete, setPendingDelete] = React.useState<Routine | null>(null);
+
+  /**
+   * Write the open Routine.
+   *
+   * THE BASE COMES FROM THE CACHE, NOT FROM THE CLOSURE. Two edits in quick
+   * succession — tick Headless, then tick Capture — both render before either
+   * save has come back, so a handler spreading the `openRoutine` it captured
+   * would write the OLD steps back over the new ones. The second edit appears
+   * to work and silently undoes the first; nothing errors and the screen looks
+   * right until the next reload. Reading the freshest record at call time is
+   * what makes each patch a patch.
+   *
+   * Returns nothing: the invalidation is what puts the STORED version — the one
+   * the backend rebuilt, possibly with a step dropped — back on screen, rather
+   * than the payload we hoped for.
+   */
+  const saveRoutine = React.useCallback(
+    (patch: Partial<Routine>) => {
+      if (!openId) return;
+      const base =
+        // What we last SENT, while anything is still in flight. The cache is
+        // not enough on its own: invalidation is asynchronous, so a second
+        // patch issued before the first round trip lands would read the
+        // pre-edit record out of it and write the old value straight back.
+        (inFlight.current > 0 ? pending.current : null) ??
+        (qc.getQueryData<Routine[]>(["routines"]) ?? []).find((r) => r.id === openId) ??
+        openRoutine;
+      if (!base) return;
+      const next = { ...base, ...patch };
+      pending.current = next;
+      inFlight.current++;
+      api.routines
+        .save(next)
+        .then(() => qc.invalidateQueries({ queryKey: ["routines"] }))
+        .catch(() => toast.error("Could not save this routine."))
+        .finally(() => {
+          // Dropped to zero means the cache is authoritative again — and it has
+          // to become authoritative, or a change made ELSEWHERE (a deleted test
+          // tombstoning a step) would be overwritten by a stale local copy on
+          // the next edit.
+          inFlight.current = Math.max(0, inFlight.current - 1);
+          if (inFlight.current === 0) pending.current = null;
+        });
+    },
+    [openId, openRoutine, qc],
+  );
+
+  const commitName = React.useCallback(() => {
+    if (!openRoutine) return;
+    const next = nameDraft.trim();
+    // An empty name is not a rename, it is a half-finished one. Snapping back
+    // is what makes the field safe to clear and retype.
+    if (next === "" || next === openRoutine.name) {
+      setNameDraft(openRoutine.name);
+      return;
+    }
+    saveRoutine({ name: next });
+  }, [nameDraft, openRoutine, saveRoutine]);
+
+  /** A new, empty Routine, opened immediately.
+   *
+   *  EMPTY, not "a copy of what is on screen". The tick boxes are how a test
+   *  joins a job, and pre-filling would make the first thing a new Routine does
+   *  be something the user has to undo. Its defaults come from the global
+   *  settings, which is where a first Routine's would have come from too. */
+  const createRoutine = React.useCallback(async () => {
+    const stamp = Date.now();
+    const taken = new Set(routines.map((r) => r.name));
+    let name = "New routine";
+    for (let n = 2; taken.has(name); n++) name = `New routine ${n}`;
+    try {
+      const created = await api.routines.save({
+        id: `routine-${stamp}-${Math.random().toString(36).slice(2, 8)}`,
+        name,
+        createdAt: stamp,
+        updatedAt: stamp,
+        steps: [],
+        defaults: {
+          captureArtifacts: settingsQuery.data?.defaultCaptureArtifacts ?? false,
+          concurrency: settingsQuery.data?.defaultBatchConcurrency ?? 1,
+        },
+      });
+      await qc.invalidateQueries({ queryKey: ["routines"] });
+      if (created) setOpenId(created.id);
+    } catch {
+      toast.error("Could not create a routine.");
+    }
+  }, [routines, settingsQuery.data, qc]);
+
+  // ── Every write, in one place ───────────────────────────────────────
+  //
+  // TWO STORES, ONE AUTHORITY EACH. What the JOB is — which tests, in what
+  // order, on which engines, headed or not — goes to the Routine. What a row
+  // REMEMBERS while it is not in the job goes to `batchTestOptions`, which is
+  // where it already lived: untick a row that ran on WebKit and tick it again,
+  // and the choice is still there rather than silently reset to Chromium.
+  //
+  // The Routine write is SKIPPED when the steps did not change. The view
+  // commits on every tick, drag and engine click, and `updatedAt` is what the
+  // picker sorts by and what a schedule will one day compare against — writing
+  // on a change that changed nothing would re-date a job for opening it.
+  //
+  // Both persists are best-effort, matching what the stored order always did:
+  // the choice still applies to this session if the write fails.
+  const persist = React.useCallback(
+    (nextOrder: string[], nextRows: RowOptionsMap) => {
+      setOrder(nextOrder);
+      setRowOptions(nextRows);
+      const liveIds = tests.map((t) => t.id);
+      api.recorder
+        .setSettings({
+          batchOrder: nextOrder,
+          // Pruned on the way out rather than by an effect watching for drift:
+          // stateless, so it cannot loop, and a re-imported test is new again
+          // rather than inheriting a choice nobody remembers.
+          batchTestOptions: pruneRowOptions(nextRows, liveIds),
+        })
+        .catch(() => {});
+      if (!openRoutine) return;
+      const steps = stepsFromRows(nextOrder, nextRows, tests, rowDefaults, openRoutine.steps);
+      if (sameSteps(steps, openRoutine.steps)) return;
+      saveRoutine({ steps });
+    },
+    [tests, rowDefaults, openRoutine, saveRoutine],
+  );
+
+  /** A row change: the order is untouched. */
+  const commitRows = React.useCallback(
+    (next: RowOptionsMap) => persist(order, next),
+    [order, persist],
+  );
+
+  // Commit a drag: reorder by ID, not by visible index — under a tag filter the
+  // visible rows are only a subsequence of the real order.
+  const commitDrag = () => {
+    if (dragId && overId && dragId !== overId) {
+      persist(moveToTarget(orderIdsOf(orderedTests), dragId, overId), rowOptions);
+    }
+    setDragId(null);
+    setOverId(null);
+  };
+
 
   // What Run will actually do. Derived from the ORDERED list, not the library:
   // a batch runs in the order the checklist shows, and one place computes the
@@ -320,17 +517,26 @@ export function BatchView() {
   // time. Counting runs here would warn about windows that never exist.
   const effectiveConcurrency = resolveConcurrency(concurrency, selectedIds.length);
 
+  // RUNS THE SAVED ROUTINE, not the screen. The backend re-reads the record and
+  // builds the queue from it, so what runs is what is stored — if those ever
+  // disagree, the run is right and the screen is stale, which is the only
+  // direction that is recoverable. It also means a Routine started from
+  // anywhere else does exactly the same thing.
   const startBatch = async () => {
-    if (selectedIds.length === 0) return;
+    if (!openId || selectedIds.length === 0) return;
     try {
-      const res = await api.batch.run(selectedIds, {
-        captureArtifacts,
-        // Still sent as the fallback for any test the backend finds no row for.
-        runHeadless,
-        concurrency: effectiveConcurrency,
-        perTest: plan.perTest,
-      });
+      const res = await api.routines.run(openId);
       if (res.alreadyRunning) toast.info("A batch is already running.");
+      // A NOTE, NOT A FAILURE. The run still did most of what was asked; the
+      // alternative — refusing — lets one deleted test disable a suite. Saying
+      // nothing is what would make this feature untrustworthy.
+      else if (res.skipped.length > 0) {
+        toast.info(
+          res.skipped.length === 1
+            ? "1 step skipped — its test has been deleted."
+            : `${res.skipped.length} steps skipped — their tests have been deleted.`,
+        );
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to start the batch.");
     }
@@ -394,7 +600,80 @@ export function BatchView() {
           breadcrumb already says BATCH. What is left is the controls, and the
           status line that used to be the toolbar's description — same strings,
           because they are what the tests and the user both read. */}
+      {/* ── The open Routine ──────────────────────────────────────────────
+          The name is an ordinary editable field rather than a title with a
+          pencil beside it: this screen only ever shows ONE Routine, so the
+          name is a property of what you are looking at, and a second click to
+          reach it buys nothing. It commits on blur and on Enter, never per
+          keystroke — a save per character would re-date the job continuously
+          and put a write on the disk for every letter. */}
       <div className="gl-batch-controls">
+        <Menu
+          value={openRoutine ? openRoutine.name : "No routine"}
+          label="Which routine to edit"
+          disabled={running}
+          width={200}
+        >
+          {(close) => (
+            <>
+              {routines.map((r) => (
+                <MenuItem
+                  key={r.id}
+                  label={r.name}
+                  consequence={
+                    r.steps.length === 1 ? "1 test" : `${r.steps.length} tests`
+                  }
+                  selected={r.id === openId}
+                  onSelect={() => {
+                    setOpenId(r.id);
+                    close();
+                  }}
+                />
+              ))}
+              <MenuItem
+                label="New routine…"
+                consequence="An empty job you tick tests into"
+                onSelect={() => {
+                  close();
+                  void createRoutine();
+                }}
+              />
+              {openRoutine ? (
+                <MenuItem
+                  label={`Delete "${openRoutine.name}"`}
+                  consequence="The tests are untouched — only the job goes"
+                  onSelect={() => {
+                    close();
+                    setPendingDelete(openRoutine);
+                  }}
+                />
+              ) : null}
+            </>
+          )}
+        </Menu>
+        {openRoutine ? (
+          // A PLAIN INPUT, not the `Input` primitive. That one carries its own
+          // light chrome, and its utilities win over a theme class by source
+          // order — so the name rendered as the brightest thing on a screen
+          // whose subject is the checklist below it. The theme layer owns this
+          // one instead; `check:renderer-classes` proves the class resolves.
+          <input
+            type="text"
+            value={nameDraft}
+            disabled={running}
+            aria-label="Routine name"
+            onChange={(e) => setNameDraft(e.target.value)}
+            onBlur={commitName}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitName();
+              // Escape abandons the edit rather than committing it — the only
+              // way back from a half-typed rename you did not mean to start.
+              if (e.key === "Escape") setNameDraft(openRoutine.name);
+            }}
+            className="gl-routine-name"
+          />
+        ) : null}
+
         {/* Parallelism, and the one control on this screen that stopped being a
             native menu. The SDK `Select` is kept everywhere else — but a native
             menu item is a STRING, and the whole point here is the second line.
@@ -417,6 +696,15 @@ export function BatchView() {
                 selected={String(c) === String(concurrency)}
                 onSelect={() => {
                   setConcurrency(c);
+                  saveRoutine({
+                    defaults: {
+                      ...(openRoutine?.defaults ?? { captureArtifacts: false }),
+                      // Stored as the NUMBER the picker means, so "All at once"
+                      // survives as the ceiling rather than as a word this
+                      // module would have to re-interpret on the backend.
+                      concurrency: resolveConcurrency(c, tests.length || 1),
+                    },
+                  });
                   close();
                 }}
               />
@@ -454,7 +742,13 @@ export function BatchView() {
                 window stealing focus for every test in it. */}
             <Checkbox
               checked={captureArtifacts}
-              onCheckedChange={(v) => setCaptureArtifacts(v === true)}
+              onCheckedChange={(v) => {
+                const next = v === true;
+                setCaptureArtifacts(next);
+                saveRoutine({
+                  defaults: { ...(openRoutine?.defaults ?? { concurrency: 1 }), captureArtifacts: next },
+                });
+              }}
               disabled={running}
               aria-label="Capture screenshots during this batch"
             />
@@ -507,9 +801,43 @@ export function BatchView() {
           flex item refuses to shrink below its content and overflows again. */}
       <ScrollArea className="min-h-0 flex-1">
         <div className="mx-auto flex max-w-3xl flex-col gap-4 p-5 pb-10">
-          {tests.length === 0 ? (
+          {/* STEPS WITH NO ROW. The store keeps a step whose test was deleted
+              (ROUTINES open question 4) so a saved job never silently shrinks —
+              but the checklist cannot draw a row for a test that does not
+              exist, so they are reported here, above it, and removed from
+              here. Without this the job would be one step longer than the
+              screen and nothing would say so. */}
+          {broken.length > 0 ? (
+            <Panel title="Deleted tests still in this routine">
+              <p className="gl-note" style={{ padding: "0 0 8px" }}>
+                {broken.length === 1
+                  ? "One step names a test that no longer exists. It is skipped when this routine runs."
+                  : `${broken.length} steps name tests that no longer exist. They are skipped when this routine runs.`}
+              </p>
+              <Btn
+                tone="ghost"
+                disabled={running}
+                onClick={() =>
+                  saveRoutine({
+                    steps: (openRoutine?.steps ?? []).filter(
+                      (step) => !broken.some((b) => b.testId === step.testId),
+                    ),
+                  })
+                }
+              >
+                Remove {broken.length === 1 ? "it" : "them"}
+              </Btn>
+            </Panel>
+          ) : null}
+
+          {routines.length === 0 ? (
             <p className="gl-note" style={{ padding: "40px 0", textAlign: "center" }}>
-              No tests to run. Record or import a test first — a batch runs the tests in your
+              No routines yet. A routine is a saved job — the tests it runs, the engines they run
+              on, and how many go at once. Make one from the menu above.
+            </p>
+          ) : tests.length === 0 ? (
+            <p className="gl-note" style={{ padding: "40px 0", textAlign: "center" }}>
+              No tests to run. Record or import a test first — a routine runs the tests in your
               library, in the order this list shows.
             </p>
           ) : (
@@ -549,12 +877,15 @@ export function BatchView() {
                   <Btn
                     tone="ghost"
                     disabled={running}
-                    onClick={() => {
-                      // Clearing the stored order lets the drift effect rewrite
-                      // it as plain library order on the next render.
-                      setOrder([]);
-                      api.recorder.setSettings({ batchOrder: [] }).catch(() => {});
-                    }}
+                    onClick={() =>
+                      // RESETS THE JOB'S ORDER TOO, not just the scratch one.
+                      // The routine's steps lead the list, so clearing
+                      // `batchOrder` alone left the button visible and inert —
+                      // a control that does nothing is worse than no control.
+                      // Committing library order through `persist` rewrites the
+                      // steps in that order, which is what the button says.
+                      persist(orderIdsOf(applyOrder(tests, [])), rowOptions)
+                    }
                   >
                     Reset order
                   </Btn>
@@ -893,6 +1224,38 @@ export function BatchView() {
         onConfirm={() => {
           setPendingHeadedRun(null);
           void startBatch();
+        }}
+      />
+
+      {/* Deleting a JOB, not tests, and the description has to say so — the
+          checklist right above it is a list of tests with tick boxes, and
+          "Delete Smoke?" beside it reads like it might take them with it. */}
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        size="small"
+        title={`Delete “${pendingDelete?.name ?? ""}”?`}
+        description={
+          "The routine goes; the tests in it are untouched and stay in your library. " +
+          "Its past runs stay in Stats."
+        }
+        confirmLabel="Delete routine"
+        onConfirm={() => {
+          const doomed = pendingDelete;
+          setPendingDelete(null);
+          if (!doomed) return;
+          api.routines
+            .remove(doomed.id)
+            .then(() => {
+              // Clearing the open id lets the effect above fall back to the
+              // first surviving Routine, rather than this view holding an id
+              // that resolves to nothing.
+              setOpenId(null);
+              return qc.invalidateQueries({ queryKey: ["routines"] });
+            })
+            .catch(() => toast.error("Could not delete this routine."));
         }}
       />
 

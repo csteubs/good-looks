@@ -29,6 +29,7 @@
 // asserting them through React would mean re-testing state plumbing per rule.
 
 import { RUN_BROWSERS } from "./recorder-types";
+import { applyOrder } from "./batch-order";
 import { defaultRow, resolveRow } from "./batch-run-plan";
 import type { RowDefaults, RowOptionsMap, RowTest } from "./batch-run-plan";
 import type { BatchRowOptions, Routine, RoutineStep, RunBrowser } from "./recorder-types";
@@ -60,6 +61,12 @@ export function rowsFromRoutine(
   tests: readonly RowTest[],
   defaults: RowDefaults,
   remembered: RowOptionsMap = {},
+  /** The library's own arrangement, `batchOrder`. Scratch, like `remembered`
+   *  and for the same reason: a Routine's order covers the tests IN it, so
+   *  without this a row dragged while unticked would snap back to library order
+   *  on the next reload — a rearrangement silently undone, which is worse than
+   *  one that was never offered. */
+  libraryOrder: readonly string[] = [],
 ): RoutineRows {
   const byId = new Map(tests.map((t) => [t.id, t]));
   const rowOptions: RowOptionsMap = {};
@@ -83,8 +90,18 @@ export function rowsFromRoutine(
     };
   }
 
-  for (const test of tests) {
-    if (placed.has(test.id)) continue;
+  // Everything not in the Routine, arranged by `applyOrder` — the SAME rule the
+  // checklist has always used, rather than a second one written here. That rule
+  // carries two behaviours worth keeping: a stored id the library no longer has
+  // is ignored, and a test recorded SINCE the order was saved leads rather than
+  // trailing (on a library of any size, a just-recorded test off the bottom
+  // reads as not having been created at all).
+  const rest = applyOrder(
+    tests.filter((t) => !placed.has(t.id)),
+    [...libraryOrder],
+  );
+  for (const test of rest) {
+    placed.add(test.id);
     order.push(test.id);
     // The scratch memory: what this row was set to before it was unticked.
     // `selected` is forced false regardless of what was stored — the Routine is

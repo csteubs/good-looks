@@ -15,6 +15,7 @@
 
 import type {
   BatchRecord,
+  Routine,
   BatchTestResult,
   HealListEntry,
   RecorderSettings,
@@ -574,6 +575,64 @@ const batchResults = (
     durationMs: 41_000,
     ...(status === "failed" ? { exitCode: 1 } : null),
   }));
+
+/**
+ * Saved jobs. docs/ROUTINES.md — the Batch screen is one Routine's editor now,
+ * so a preview with none shows the "no routines yet" state and nothing else.
+ *
+ * TWO OF THEM, DELIBERATELY. One is the whole point of the feature: "Smoke,
+ * Chromium, headless" and "Nightly, all three engines, headed" are exactly the
+ * pair the old single checklist could not express, and a preview with one
+ * Routine cannot show that switching between them changes the screen.
+ */
+export const ROUTINES: Routine[] = [
+  {
+    id: "r-smoke",
+    name: "Smoke",
+    createdAt: NOW - 30 * DAY,
+    updatedAt: NOW - 2 * DAY,
+    steps: [
+      {
+        kind: "test",
+        testId: "t-login",
+        browsers: ["chromium"],
+        headless: true,
+        onFailure: "continue",
+      },
+      {
+        kind: "test",
+        testId: "t-checkout",
+        browsers: ["chromium"],
+        headless: true,
+        onFailure: "continue",
+      },
+    ],
+    defaults: { captureArtifacts: false, concurrency: 2 },
+  },
+  {
+    id: "r-nightly",
+    name: "Nightly regression",
+    createdAt: NOW - 10 * DAY,
+    updatedAt: NOW - 10 * DAY,
+    steps: [
+      {
+        kind: "test",
+        testId: "t-checkout",
+        browsers: ["chromium", "firefox", "webkit"],
+        headless: false,
+        onFailure: "continue",
+      },
+      {
+        kind: "test",
+        testId: "t-search",
+        browsers: ["chromium", "webkit"],
+        headless: false,
+        onFailure: "continue",
+      },
+    ],
+    defaults: { captureArtifacts: true, concurrency: 1 },
+  },
+];
 
 export const BATCHES: BatchRecord[] = [
   {

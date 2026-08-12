@@ -16,6 +16,76 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — Batch becomes a Routine's editor (Phase D)
+
+REDESIGN §7.1 says "the checklist is unchanged; it is now the open Routine's
+body", and `renderer/lib/routine-rows.ts` is what makes that literally true: the
+view keeps its `order` + `RowOptionsMap` model, drag handles, engine pills and
+master headless toggle, and the module translates that to and from
+`Routine.steps`. Rewriting the checklist against a step array would have meant
+re-testing every one of those behaviours to gain nothing.
+
+**Two stores, one authority each.** What the job IS — which tests, in what
+order, on which engines, headed or not — is the Routine's. What a row REMEMBERS
+while it is *not* in the job stays in `batchTestOptions`, where it already
+lived. Untick a row that ran on WebKit and tick it again, and the choice is
+still there; without the split, unticking would silently discard a decision the
+user made and the row would come back on Chromium looking exactly like one they
+had never touched. A remembered row is forced unticked on open regardless of
+what was stored, because a stale `selected: true` there would put a test into a
+Routine that does not contain it — and it would run.
+
+**Two bugs found by driving the screen, neither of which any test would have
+suggested.** First: the re-seed key has to include the Routine's `updatedAt`.
+Untick a row, have the library refetch before the routines query catches up, and
+the re-seed reads the *stale* record — the unticked test comes back, and the
+next gesture writes it into the job. Second: `saveRoutine` bases its patch on
+what was last SENT while any save is in flight, not on the closure or even the
+cache. Tick Headless then Capture in quick succession and both handlers render
+before either round trip lands, so each spreads its own stale copy: the second
+edit appears to work and silently undoes the first. Invalidation is
+asynchronous, so reading the cache alone does not fix it. The pending copy is
+dropped the moment the in-flight count reaches zero, or a change made elsewhere
+(a deleted test tombstoning a step) would be overwritten by a stale local copy
+on the next edit.
+
+**The rail does not list Routines yet.** §7.1 puts them there, giving the rail a
+third job. That reaches into `library-sidebar.tsx`, which every screen shares,
+and the picker in this view makes the feature usable without it. Deferred
+deliberately rather than quietly dropped — noted in §7.1.
+
+**`onFailure` is stored but not honoured.** Every step behaves as `continue`,
+which is what Batch already does, and no surface can set anything else yet. What
+the editor must NOT do is reset it: `stepsFromRows` reads the previous steps for
+that one field, because a field the editing surface cannot see is one it must
+not overwrite, and otherwise ticking a box would turn "stop the routine if
+seeding fails" into "carry on".
+
+**Behaviour that genuinely changed**, and the tests that pinned the old
+behaviour were rewritten rather than deleted, each keeping its original reason:
+the checklist's order now leads with the job's steps, so a stored `batchOrder`
+arranges only the rows the Routine does NOT contain; a newly recorded test leads
+*those* rather than the whole list; and "Reset order" rewrites the steps into
+library order, because clearing `batchOrder` alone left the button visible and
+inert — a control that does nothing is worse than no control. `applyOrder` was
+made generic over `{ id: string }` so this reuses the library's one ordering
+rule instead of a second copy of it.
+
+The name is a plain `<input>`, not the `Input` primitive: that one's light
+chrome wins over a theme class by source order, and it rendered the name as the
+brightest thing on a screen whose subject is the list below it. Measured in the
+browser preview rather than read off a screenshot — the first read of that
+screenshot was of a stale file and said the opposite.
+
+Covered by nine new cases in `batch-view.test.tsx` (switching between two
+Routines, rename on Enter, Escape abandoning the edit, an empty name refused,
+mounting writing nothing, New being EMPTY, Delete confirming first and falling
+back, broken steps reported and removable, a skipped-step run saying so) plus
+`routine-rows.test.ts`. One harness bug was worth its own fix: the mock mutated
+its Routine array in place, which makes the cached data referentially equal to
+the new data, so React never re-renders and every "the edit survives" assertion
+fails for a reason that has nothing to do with the view.
+
 ### 2026-08-12 — Running a Routine is a translation, not a second runner (Phase D)
 
 `shared/routine-plan.mjs` turns a Routine into the batch runner's existing
