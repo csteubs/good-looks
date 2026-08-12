@@ -914,10 +914,45 @@ directly followed by a pass with none of the recorded run settings changed. Two
 definitions of flake in one app is how two surfaces end up disagreeing in front
 of a user.
 
-**6.5 Stats → Report mode.** The weekly digest preview, the channel list, and
-exports (PDF / CSV / JUnit XML / public link). **This overlaps heavily with the
-MCP plan's Phase 5 emit adapters** — see §7.3. Build the emitters once, surface
-them here.
+**6.5 Stats → Report mode.** **Emitters landed 2026-08-12; the panel and the
+weekly digest are what remain.** `shared/emitters.mjs` carries §7.3's five
+formats — JUnit XML, GitHub Actions annotations, OTLP JSON trace, ticket
+markdown, and NDJSON/CSV of `step_metrics` — built once and shared with the MCP,
+as §7.3 asks.
+
+**This answers §10's open question 3: emit-only, and the module is where that is
+ENFORCED rather than promised.** Every emitter is a pure function returning a
+string. Nothing opens a socket, stores a credential or knows a hostname, because
+a pure string function has nowhere to send anything to. Redaction is passed IN as
+a parameter rather than imported: `redactWithSnapshot` reads an encrypted store
+and must stay on the app side, and dragging it into `shared/` would make the
+module impure and untestable in one move.
+
+**Which settles what the mockup drew.** The design shows PDF and "public link"
+export chips and a list of delivery CHANNELS with toggles. None of those exist: a
+public link needs a server this app does not have, PDF needs a renderer it does
+not carry, and §7.3 already says the channel toggles must be rewritten "before it
+ships, or it promises a Slack integration that does not exist". So the panel will
+list EMITTERS, and "where it goes" is a list of what was last written to disk.
+
+The six failures the emitters' tests pin are all silent and downstream — the kind
+that surface in someone else's CI report rather than on this screen: JUnit `time`
+in SECONDS (milliseconds make every job look a thousand times slower and no
+consumer complains); all five XML entities including quotes (a test name
+routinely has an apostrophe); control bytes DROPPED rather than escaped (they are
+illegal in XML 1.0 either way, Playwright output carries them, and one makes the
+file unparseable); GitHub annotation newlines encoded (a raw one ends the
+workflow command and the rest prints as ordinary log output); CSV rows written
+against the FIRST row's columns (differing shapes otherwise open cleanly in a
+spreadsheet with the columns meaning different things per line); and OTLP nanos
+as STRINGS (2026 in nanoseconds is past `Number.MAX_SAFE_INTEGER`, so computing
+them as a JS number silently drops the low digits and every span drifts).
+
+**Still to land: the Export panel and the weekly digest.** The panel's shape is
+decided — the renderer never sees the emitted text. It asks the main process to
+emit; main gathers the runs and rows, redacts, saves through the existing
+`dialog:showSaveDialog`, and returns only the path. The digest preview is a
+different thing from exporting and gets its own slice.
 
 **6.6 Visual triage.** ✅ **Done, 2026-08-12** — Wipe, Blink, baseline
 provenance, drift and the region breakdown. It was split into four PRs for the
@@ -1367,8 +1402,12 @@ Not blocking, but each will need an answer before the PR it affects.
    own `runs:changed` comment had already made the argument: a subscription on a
    route component is not listening on any other route. The live BATCH moved
    there too, which was a bug fix — see §6.8.
-3. **Report mode's "Where it goes"** (§7.3). Confirmed as emit-only? If any of it
-   ever sends, that is a new egress path and needs its own decision entry.
+3. ~~**Report mode's "Where it goes"** (§7.3)~~ — ✅ **Answered 2026-08-12:
+   emit-only, and enforced rather than promised.** Every emitter in
+   `shared/emitters.mjs` is a pure function returning a string; there is nowhere
+   in the module to send anything to. The mockup's PDF and "public link" chips
+   and its channel toggles are dropped — see §6.5. If any of it ever sends, that
+   is a new egress path and needs its own decision entry.
 4. ~~**`check:text-color`'s fate** (§8.3)~~ — answered for now in A5: **keep it**.
    The five shared components no longer render `Text`, but forty-odd files still
    do, so its subject is not gone until they are. Ask again per Phase B PR.
