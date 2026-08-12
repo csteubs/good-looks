@@ -109,7 +109,11 @@ export interface PreviewDiagnostics {
  *  deliberate `preview.html` filename). */
 function recorderPreview(): boolean {
   const view = new URLSearchParams(window.location.search).get("view");
-  return view === "recorder" || view === "recorder-editing";
+  // `trainer-panel` is here because it is the same LIVE SESSION seen from the
+  // docked window — it runs the same store, and without a session in flight it
+  // renders its "Loading…" state forever, which is not the screen anyone opened
+  // it to look at.
+  return view === "recorder" || view === "recorder-editing" || view === "trainer-panel";
 }
 
 /** `?view=recorder-editing` — a session CONTINUING an existing test.

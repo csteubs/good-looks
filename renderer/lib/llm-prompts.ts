@@ -32,6 +32,8 @@ This app's generated specs always follow these conventions — treat a violation
   Good: await page.getByRole('button', { name: 'Submit' }).click();
 - No page.waitForTimeout(). Waits should be web-first assertions instead, e.g. expect(locator).toBeVisible() or expect(locator).toContainText().
 
+Playwright runs in STRICT MODE, and "strict mode violation: <locator> resolved to N elements" is a locator that is ambiguous, NOT one that is wrong or missing. Read the rest of that error before asking for anything: Playwright lists the elements it matched and prints a disambiguated locator for each one after the word "aka". Those are generated from the live page at the moment of failure, so prefer one of them over a locator you invent. Narrow by scoping to an ancestor (page.getByTestId("nav").getByRole("link", { name: "Browser" })) rather than by adding .first() or .nth(), which pick by DOM order and break the next time the page reorders.
+
 Task: given the test's Playwright spec and its failing run output, identify the most likely root cause and suggest a concrete fix.
 
 Output format:
