@@ -16,6 +16,22 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — ⌘K, and why its scoring is three tiers rather than a fuzzy library (C §6.7)
+
+**A palette has exactly one failure mode that matters: a wrong first row.** Nobody reads the list. They type three letters and press Enter, and whatever was at the top happens. Everything below follows from that.
+
+**So the scoring is small enough to predict.** Title prefix, then a word prefix inside the title, then a subsequence anywhere — with every keyword match ranked below every title match, and a shortness term that tie-breaks INSIDE a tier and is capped so it can never cross between them. A general fuzzy matcher does more, and everything it does more of is a guess; a palette that guesses is one where the top row moves for reasons the user cannot see, which is worse than one that occasionally ranks something second. The keyword rule is the same principle applied to hidden text: a test whose URL happens to contain "stats" must never outrank the Stats view, because a hostname is context and a name is a name.
+
+**Groups stop mattering the moment there is a query.** Browsed, the list is blocked into Actions / Tests / Tags / Views. Searched, it is flat. Keeping the blocks under a query would mean someone who typed `sta` and meant Stats has to scroll past four tests to reach it, because Tests is the earlier block — the search produced an order, and re-grouping destroys exactly the information it produced.
+
+**A combobox, not a dialog.** The SDK's `Dialog` is kept elsewhere for its focus trap, but a palette has one focusable element and its rows are never tabbed to. `role="combobox"` over a `role="listbox"` with `aria-activedescendant` is the only version a screen reader reads correctly — rows that take focus announce themselves as the focused thing and leave the query behind — and it is the more testable one, because the selection is an attribute rather than `document.activeElement`.
+
+**⌘K deliberately does not exempt text fields**, and it is the only shortcut in this app that does not. `HistoryNav`'s ⌘[ must, because `[` is a character somebody might be typing. ⌘K produces none, and a palette you cannot open while the cursor is in the log search is a palette you learn not to trust.
+
+**"Debug the last failure" shipped as "OPEN the last failure", and the rename is the honest part.** An AI debug session needs the script and the run output that `test-detail-view` assembles. A palette reaching across that boundary to synthesise the context would open a session about the wrong run — confidently, and with no way to tell. The row is named for what it does; the sparkle is one click further on and already the right colour.
+
+**Two things the guards caught, both worth keeping.** `check:renderer-classes` rejected `id="gl-cmd-listbox"`: `gl-*` is the theme's CLASS namespace and the guard audits every `gl-` string the renderer writes by asking the emitted stylesheet whether a rule exists for it — so a DOM id borrowing the prefix reads as a class that styles nothing, which is precisely what it is. The ids are `cmdrow-*` / `cmd-listbox` now. And a selection clamp written inline in the component turned out to be **untestable from the keyboard**: typing resets the selection to the top, so no keystroke can leave it past the end of the list. Rather than keep an assertion that could never fire, the clamp moved into the pure module with the case it actually guards written down — a background refetch shortening the live `["tests"]` query while the palette is open, with no input at all.
+
 ### 2026-08-12 — The boot plate, and the three things "2.6s splash" does not say (C §6.9)
 
 The plan's whole brief for this is one line: *2.6s glitch-plate splash. Cheap, and the first thing anyone sees. Should respect reduced motion by rendering statically.* Building it honestly needed three answers the line does not give.

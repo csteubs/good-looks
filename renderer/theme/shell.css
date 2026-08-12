@@ -453,3 +453,143 @@
     width: 100%;
   }
 }
+
+/* ── The ⌘K command palette ────────────────────────────────────────────── */
+/*
+ * REDESIGN §6.7. Above the modal layer, because it can be opened FROM a modal:
+ * ⌘K is the one shortcut in the app that does not exempt text fields, and a
+ * palette that opened behind the dialog whose input the user was in would be
+ * the app swallowing a keystroke it visibly accepted.
+ */
+.gl-cmd-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  display: flex;
+  justify-content: center;
+  /* Not centred vertically. A box that opens in the middle of the window has
+     to travel to wherever it ends up as the list grows and shrinks under the
+     query; pinned near the top, only the bottom edge moves and the input — the
+     thing being typed into — never does. */
+  align-items: flex-start;
+  padding: 12vh 16px 16px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.gl-cmd-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: 62vh;
+  border: 1px solid var(--gl-line-2);
+  background: var(--gl-panel);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+/* Sans and 14px, and it is the only input in the app set that way. Everything
+   else here is a mono label because everything else is SCANNED; this one is a
+   sentence somebody is composing, and mono at .12em tracking is measurably
+   slower to type into. */
+.gl-cmd-input {
+  flex: 0 0 auto;
+  border: 0;
+  border-bottom: 1px solid var(--gl-line);
+  padding: 14px 16px;
+  background: transparent;
+  font-family: var(--gl-sans);
+  font-size: 14px;
+  color: var(--gl-tx-1);
+  outline: none;
+}
+
+.gl-cmd-input::placeholder {
+  color: var(--gl-tx-3);
+}
+
+.gl-cmd-list {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.gl-cmd-group {
+  padding: 8px 16px 4px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-cmd-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 16px;
+  cursor: pointer;
+}
+
+/* NEUTRAL, like every other selection in this app. The selected row here is
+   "where the cursor is", not an outcome, and a tone would make Enter look like
+   it were about to do something the row's own words do not say. */
+.gl-cmd-row[data-selected] {
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+.gl-cmd-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-cmd-hint {
+  flex: 0 0 auto;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-cmd-empty {
+  padding: 16px;
+}
+
+/* The strip's affordance. It is a button as well as a hint, because the
+   shortcut is undiscoverable on its own and a key cap nobody can click is a
+   label rather than a control. */
+.gl-cmd-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid var(--gl-line-2);
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-cmd-key:hover {
+  border-color: var(--gl-line);
+  color: var(--gl-tx-1);
+}
+
+.gl-cmd-key:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 1px;
+}
