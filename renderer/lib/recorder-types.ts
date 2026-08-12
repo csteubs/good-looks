@@ -942,7 +942,13 @@ export interface RecorderState {
   assertMode: AssertKind | null;
   stepCount: number;
   testId: string | null;
+  /** where the recording STARTS — what gets saved as the test's URL and what
+   *  the opening `goto` step replays */
   url: string | null;
+  /** where the page is NOW. Separate from `url` on purpose: tracking the live
+   *  location in that field would rewrite every saved test's starting point to
+   *  wherever the user happened to stop. Null outside a session. */
+  liveUrl: string | null;
   name: string | null;
   editing: boolean;
   assertSoft: boolean;

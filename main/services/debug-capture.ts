@@ -186,6 +186,16 @@ export async function captureWindows(
     return session;
   }
 
+  // One window can contain several things worth a picture.
+  //
+  // `win.webContents.capturePage()` was the whole of this until the training
+  // browser grew a URL strip. That window no longer renders anything itself —
+  // the untrusted page is in one child WebContentsView and the app-owned URL bar
+  // is in another — so capturing the window returns an EMPTY image, which the
+  // `isEmpty()` guard below skips silently. The training browser simply stopped
+  // appearing in debug captures, with no error and nothing missing from the log:
+  // the one window you most want a picture of when a recording misbehaves.
+  const targets: { wc: Electron.WebContents; label: string }[] = [];
   for (let i = 0; i < windows.length; i++) {
     const win = windows[i];
     let title = `window ${i + 1}`;
@@ -194,8 +204,24 @@ export async function captureWindows(
     } catch {
       /* a title is a nicety */
     }
+    targets.push({ wc: win.webContents, label: title });
     try {
-      const image = await win.webContents.capturePage();
+      for (const child of win.contentView.children) {
+        const wc = (child as Electron.WebContentsView).webContents;
+        if (!wc || wc.isDestroyed()) continue;
+        // Labelled by URL so the training browser's two views are told apart in
+        // the manifest — "page" and "URL strip" are different questions.
+        targets.push({ wc, label: `${title} › ${wc.getURL() || "view"}` });
+      }
+    } catch {
+      /* a window with no content view is the ordinary case */
+    }
+  }
+
+  for (let i = 0; i < targets.length; i++) {
+    const { wc, label: title } = targets[i];
+    try {
+      const image = await wc.capturePage();
       if (image.isEmpty()) continue;
       const size = image.getSize();
       // Downscale wide captures rather than writing a multi-megabyte PNG that

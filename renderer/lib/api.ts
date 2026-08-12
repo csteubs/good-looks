@@ -105,6 +105,12 @@ export const api = {
     resume: () => ipc().invoke<RecorderState>("recorder:resume"),
     setAssert: (mode: AssertKind | null, soft = false) =>
       ipc().invoke<RecorderState>("recorder:setAssert", { mode, soft }),
+    /** Open a URL assertion prefilled with the training page's live URL. Called
+     *  from the training browser's URL strip. */
+    assertUrl: (kind: AssertKind) =>
+      ipc().invoke<RecorderState>("recorder:assertUrl", { kind }),
+    getTrainingUrl: () =>
+      ipc().invoke<{ url: string; loading: boolean }>("recorder:getTrainingUrl"),
     deleteStep: (stepId: string) =>
       ipc().invoke<RecorderState>("recorder:deleteStep", { stepId }),
     insertStep: (step: RawStep, index?: number) =>
