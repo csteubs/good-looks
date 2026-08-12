@@ -72,3 +72,111 @@ export interface IssueDefaults {
   containerId: string | null;
   subContainerId: string | null;
 }
+
+/** A label, by the name a user reads. Ids are resolved by the provider — Linear
+ *  wants node ids, GitHub takes plain strings, and a caller should not have to
+ *  know which. */
+export interface IssueLabel {
+  id: string;
+  name: string;
+  /** Provider-supplied swatch, when it has one. Shown, never interpreted. */
+  color: string | null;
+}
+
+/**
+ * WHICH defect is being filed — never the defect's content.
+ *
+ * The renderer names a coordinate (this test, this run, this step) and the
+ * BACKEND loads the evidence from disk itself. That is deliberate: the evidence
+ * is screenshots, console lines and error text, and a renderer that carried it
+ * across IPC to hand back for sending would make the leak check meaningless —
+ * it could only verify what it was given. This way `buildIssueDraft` is the one
+ * place the outgoing shape is decided, and `check:issue-payload` can assert
+ * against it directly.
+ */
+export type DefectSource =
+  | {
+      kind: "a11y";
+      testId: string;
+      runId: string;
+      stepId: string;
+      /** axe rule id, e.g. "color-contrast". Identifies one violation on the step. */
+      ruleId: string;
+    }
+  | { kind: "visual"; testId: string; runId: string; stepId: string }
+  | { kind: "failure"; testId: string; runId: string; stepId: string | null };
+
+/** An image that will be attached, described for the confirmation strip. The
+ *  renderer renders these BEFORE the send, because a screenshot cannot be
+ *  redacted and consent is the only real mitigation. */
+export interface DraftAttachment {
+  /** "Baseline" / "This run" / "Difference" — what the reader is looking at. */
+  label: string;
+  /** How the backend re-reads this image at send time: a run-relative filename,
+   *  or `baseline:<stepId>` for a pinned baseline. The renderer never sends
+   *  image bytes back — it names the same coordinate, so what is uploaded
+   *  cannot be substituted by anything that happened in between. */
+  file: string;
+  /** Data URL for the confirmation strip. Preview only. */
+  previewUrl: string;
+  bytes: number;
+}
+
+/**
+ * The pre-filled issue, before the user edits it.
+ *
+ * `title` and `body` are editable and whatever the user finally sends is their
+ * own text. What the leak check guarantees is this DEFAULT: that nothing
+ * arrived here the user would not expect to be sending.
+ */
+export interface IssueDraft {
+  source: DefectSource;
+  title: string;
+  /** Markdown. */
+  body: string;
+  attachments: DraftAttachment[];
+  /** Warnings the dialog must show — e.g. a run recorded with header filtering
+   *  off, whose network entries are therefore withheld. Plain sentences. */
+  notices: string[];
+}
+
+/** Where one issue is being filed, as chosen in the dialog. */
+export interface IssueDestination {
+  containerId: string;
+  subContainerId: string | null;
+  labelIds: string[];
+}
+
+/** A filed issue. `identifier` is the display form ("ENG-42"); `id` is opaque. */
+export interface CreatedIssue {
+  id: string;
+  identifier: string;
+  url: string;
+}
+
+/**
+ * A defect that already has an issue.
+ *
+ * Keyed WITHOUT a run id, which is the whole point: a visual difference or an
+ * accessibility violation reappears on every run, so a run-keyed link would
+ * report "not yet filed" every time and the feature would produce one duplicate
+ * per run. `stepId` is stable across runs — it is what annotations are pinned
+ * to — so a link made today is still found tomorrow.
+ */
+export interface IssueLink {
+  provider: ProviderId;
+  testId: string;
+  stepId: string;
+  /** The run it was filed from. Part of the key ONLY for a failure that blamed
+   *  no step, where nothing else identifies the defect. */
+  runId: string;
+  kind: DefectSource["kind"];
+  /** The axe rule for an a11y link; empty for kinds with one defect per step. */
+  ruleId: string;
+  issueId: string;
+  identifier: string;
+  url: string;
+  createdAt: number;
+  /** Last time a recurrence was reported onto this issue. */
+  lastCommentedAt?: number;
+}

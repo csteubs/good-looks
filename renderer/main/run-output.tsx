@@ -37,7 +37,7 @@
 //    and reporting both as "Passed" is the app agreeing with the mis-heal.
 
 import { ScrollArea } from "@ui";
-import { Check, ChevronsDownUp, ChevronsUpDown, Copy, Sparkles } from "lucide-react";
+import { Check, ChevronsDownUp, ChevronsUpDown, Copy, Send, Sparkles } from "lucide-react";
 import { useState } from "react";
 
 import { StatusChip } from "../theme";
@@ -89,6 +89,7 @@ export function RunOutput({
   onDebug,
   /** Opens the Heals tab, for the healed panel's review action. */
   onReview,
+  onSendToTracker,
   /** Status of this test's AI debug session, or null when it has none. */
   aiStatus,
 }: {
@@ -96,6 +97,8 @@ export function RunOutput({
   summary: RunSummary;
   onDebug?: () => void;
   onReview?: () => void;
+  /** Absent where filing makes no sense (no tracker surface in the trainer). */
+  onSendToTracker?: (runId: string) => void;
   aiStatus?: AiDebugStatus | null;
 }) {
   const [copied, setCopied] = useState(false);
@@ -146,6 +149,21 @@ export function RunOutput({
             <Sparkles
               className={`size-3.5 ${tone ? tone.className : ""} ${tone?.busy ? "animate-pulse" : ""}`}
             />
+          </button>
+        ) : null}
+        {/* Beside Debug with AI, because they are the two things you do with a
+            failure: work out why, or hand it to someone. Only for a failure
+            that reached history — `recordId` is what identifies the run on
+            disk, and without it there is no evidence to assemble. */}
+        {failed && summary.state === "failed" && summary.recordId && onSendToTracker ? (
+          <button
+            type="button"
+            className="gl-icon-btn"
+            onClick={() => onSendToTracker(summary.recordId as string)}
+            aria-label="Send this failure to the issue tracker"
+            title="Send to issue tracker"
+          >
+            <Send className="size-3.5" />
           </button>
         ) : null}
         {info && !info.running && info.lines.length > 0 ? (

@@ -58,6 +58,13 @@ function makeProvider(over: Partial<IssueProvider> = {}): IssueProvider {
     verify: vi.fn(async () => ({ accountName: "Sam", workspaceName: "Northwind" })),
     listContainers: vi.fn(async () => []),
     listSubContainers: vi.fn(async () => []),
+    listLabels: vi.fn(async () => []),
+    createIssue: vi.fn(async () => ({
+      id: "iss-1",
+      identifier: "ENG-42",
+      url: "https://linear.app/northwind/issue/ENG-42",
+    })),
+    addComment: vi.fn(async () => {}),
     ...over,
   };
 }
