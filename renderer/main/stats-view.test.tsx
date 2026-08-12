@@ -76,7 +76,7 @@ function renderView() {
  *  Synchronous: the table renders before the query resolves, so a plain
  *  findByRole("table") would return an empty body and read as "no runs". */
 function rowsNow(): HTMLElement[] {
-  const table = screen.getByRole("table");
+  const table = screen.getByRole("table", { name: /run history/i });
   return within(table).getAllByRole("row").slice(1) as HTMLElement[];
 }
 
@@ -121,7 +121,11 @@ describe("run history table", () => {
     runs = [run({ id: "r1" }), run({ id: "r2", testName: "Beta", status: "failed" })];
     renderView();
     expect(await bodyRows()).toHaveLength(2);
-    expect(screen.getByText("Beta")).toBeTruthy();
+    // Scoped to the run table since C §6.4 — the Cost panel's spend-by-test
+    // table names the same tests on the same screen.
+    expect(
+      within(screen.getByRole("table", { name: /run history/i })).getByText("Beta"),
+    ).toBeTruthy();
   });
 
   it("puts the Browser column between Status and Started", async () => {
@@ -130,7 +134,7 @@ describe("run history table", () => {
     runs = [run({ id: "r1" })];
     renderView();
     await bodyRows();
-    const headers = within(screen.getByRole("table"))
+    const headers = within(screen.getByRole("table", { name: /run history/i }))
       .getAllByRole("columnheader")
       .map((h) => h.textContent?.trim());
     expect(headers.indexOf("Browser")).toBe(headers.indexOf("Status") + 1);
@@ -354,7 +358,7 @@ describe("layout keeps the page's last controls reachable", () => {
     renderView();
     await bodyRows(1);
     expect(statusFilter("All")).toBeTruthy();
-    expect(screen.getByRole("table")).toBeTruthy();
+    expect(screen.getByRole("table", { name: /run history/i })).toBeTruthy();
     expect(screen.getByRole("button", { name: /next page/i })).toBeTruthy();
   });
 

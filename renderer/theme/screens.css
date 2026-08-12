@@ -2578,3 +2578,160 @@
   padding: 8px 10px;
   border-top: 1px solid var(--gl-line);
 }
+
+/* ── Cost (§6.4) ──────────────────────────────────────────────────────── */
+/*
+ * A row of derived figures over the two assumptions that derive them. The
+ * assumptions sit BELOW the numbers rather than above: the numbers are what
+ * somebody came for, and a panel that opens on its own caveats reads as one
+ * that does not trust itself.
+ */
+.gl-cost-figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1px;
+  /* One hairline grid, not five boxes — these are read ACROSS, and separate
+     frames make them look like five unrelated facts. Same idiom as the Home
+     screen's three readouts. */
+  background: var(--gl-line);
+  border: 1px solid var(--gl-line);
+}
+
+.gl-cost-figure {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  background: var(--gl-panel);
+}
+
+.gl-cost-figure-label {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-cost-figure-value {
+  font-family: var(--gl-mono);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--gl-tx-1);
+}
+
+.gl-cost-figure-unit {
+  margin-inline-start: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--gl-tx-3);
+}
+
+.gl-cost-figure-note {
+  font-family: var(--gl-sans);
+  font-size: 10px;
+  color: var(--gl-tx-3);
+}
+
+/* Sans and prose, not the mono label register the rest of the panel uses. This
+   is the one line here meant to be READ rather than scanned — it is the
+   sentence that makes every figure above it checkable. */
+.gl-cost-assume {
+  margin: 10px 0 0;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--gl-tx-2);
+}
+
+.gl-cost-assume strong {
+  font-family: var(--gl-mono);
+  font-weight: 700;
+  color: var(--gl-tx-1);
+}
+
+.gl-cost-assume-editing {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.gl-cost-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-cost-input {
+  width: 110px;
+  border: 1px solid var(--gl-line-2);
+  padding: 4px 6px;
+  background: var(--gl-ink);
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  color: var(--gl-tx-1);
+  outline: none;
+}
+
+.gl-cost-input:focus-visible {
+  border-color: var(--gl-cyan);
+}
+
+.gl-cost-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-cost-edit:hover {
+  color: var(--gl-tx-1);
+}
+
+.gl-cost-edit:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+.gl-cost-num {
+  text-align: right;
+  font-family: var(--gl-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.gl-cost-test {
+  display: block;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-1);
+}
+
+/* The reason under a called-out row. Always present when there is a verdict to
+   justify — a verdict with no reason is an assertion, and this table's whole
+   job is to be checkable. */
+.gl-cost-why {
+  display: block;
+  margin-top: 2px;
+  max-width: 52ch;
+  font-family: var(--gl-sans);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--gl-tx-3);
+}
