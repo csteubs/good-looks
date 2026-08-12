@@ -120,6 +120,11 @@ export async function status(): Promise<BranchStatus> {
       appPath: info.appPath,
       repo: info.repo,
       current: switchedTo ?? info.head,
+      // `info.head` is read in the CHECKOUT, so it is the user's own branch
+      // whether or not this process is a branch build. `current` loses that
+      // when switched, and the branch menu's pinned "return to my checkout"
+      // row needs a name it can honestly print.
+      checkoutBranch: info.head,
     };
   } catch (err) {
     return {
