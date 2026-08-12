@@ -16,6 +16,22 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — The boot plate, and the three things "2.6s splash" does not say (C §6.9)
+
+The plan's whole brief for this is one line: *2.6s glitch-plate splash. Cheap, and the first thing anyone sees. Should respect reduced motion by rendering statically.* Building it honestly needed three answers the line does not give.
+
+**It covers the app rather than delaying it.** The plate is mounted alongside everything else and everything else is live underneath it the whole time — a curtain over a running show, not a loading screen holding one up. The alternative would have been to gate the first paint on it, which is how a 2.6-second splash turns into a 2.6-second *wait*, and it would have made the app measurably slower to start in exchange for nothing.
+
+**It is skippable, on any key or any click, and the skip is not advertised.** 2.6 seconds is the right length the first time somebody launches this and the wrong length the two-hundredth; a splash you cannot get out of is the entire reason splashes have a bad name. An on-screen "Skip" was rejected: a control offering escape frames the plate as something being endured rather than shown, and pressing something is the first thing anyone tries anyway. The corollary is that the plate must be `pointer-events: none` — a plate that swallowed the click it is being dismissed by would read as the app dropping input, on the one screen where the user has no other evidence it works.
+
+**"Render statically" taken literally is a hang.** The house rule is that `prefers-reduced-motion` clamps motion and never content (`resolveAtmo`), so the reflex answer is to keep the 2.6 seconds and stop the animation. That leaves a motionless black rectangle held for 2.6 seconds, which does not read as a splash — it reads as the app having failed to start, which is worse than any motion it removes. The still version is 900ms instead, and 900 is not a fraction of 2600: 2.6s is how long the glitch cycle takes to be worth watching, and 900ms is how long a title card needs to be read. Two different questions. The fill rule is drawn full and still rather than left empty for the same reason — a bar stuck at zero width for the whole hold reads as stalled.
+
+**The `echo` treatment moved rather than being copied.** It was `screens.css`, keyed on `.gl-home-mark`. The plate wears the same glitch on the same word, and the four-stylesheet split states the rule: a rule a SECOND screen wants moves to `shared.css`. It is keyed on `.gl-echo` now, applied by both marks, so the treatment is named once and the two keep their own type and layout.
+
+**One bug worth writing down, because it looked correct for 2.6 seconds.** The hold and the fade started as a single effect with `phase` in its dependencies. The moment it set `phase` to `"out"` it re-ran, its own cleanup cleared the fade timer it had just set, and the plate sat at zero opacity over the app forever. Everything about the first 2.6 seconds was right; the app simply never came back. Two effects, and the tests that caught it are the two most obvious ones — "it goes away on its own" and "it goes away on any key".
+
+**And the once-per-window flag is set when the plate FINISHES, not when it mounts.** Set on mount, StrictMode's mount/unmount/remount cycle consumes it before the plate has ever played, so it would never appear in development — the one environment where it is being worked on.
+
 ### 2026-08-12 — The run panel stops being about failure (C §6.1)
 
 The detail view was shaped around one run state. A verdict chip, a triage line, a log: exactly right for the run you arrived at because something broke, and wrong for every other one. A passed run's panel was a green word over an eight-line window of Playwright's own chatter — it answered nothing anybody came to ask, and it was the panel most users saw most often.
