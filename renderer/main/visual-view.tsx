@@ -36,6 +36,7 @@ import {
   MessageSquare,
   Pencil,
   RefreshCw,
+  Send,
   SquareDashed,
   Stamp,
   TriangleAlert,
@@ -45,6 +46,7 @@ import {
 import { api } from "../lib/api";
 import { countA11ySteps } from "../lib/a11y-format";
 import { A11yBadge, A11yViolationList } from "./a11y-violations";
+import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import type {
   A11yResult,
   Annotation,
@@ -1003,6 +1005,10 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   // Step IDs whose baseline was accepted in this session — used to hide the
   // per-step "Accept New Baseline" button after a run- or step-level accept.
   const [acceptedSteps, setAcceptedSteps] = React.useState<Set<string>>(() => new Set());
+  // Which step the compose dialog is filing. One at a time — a visual change is
+  // one defect on one step, and a bulk send would file issues nobody looked at.
+  const [sendingStepId, setSendingStepId] = React.useState<string | null>(null);
+  const onSendToTracker = (stepId: string) => setSendingStepId(stepId);
   // When a run first loads, jump straight to the failure — the main debugging
   // value — or to the first step for a passing run. Guard on runId so later
   // replay mutations (e.g. accepting a baseline) don't yank the user away from
@@ -1476,6 +1482,23 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         ) : null}
         {step.diff ? <DiffBadge diff={step.diff} /> : null}
         {step.a11y ? <A11yBadge result={step.a11y} /> : null}
+        {/* Beside "Accept New Baseline", because they are the two answers to
+            the same question: this changed, was it meant to? Accepting says
+            yes; filing says no, and hands someone the three pictures that
+            show it. Only offered for a CHANGED step — there is nothing to
+            report about a step that matched. */}
+        {step.diff?.state === "changed" && onSendToTracker ? (
+          <Button
+            size="small"
+            variant="glass"
+            className="shrink-0"
+            aria-label={`Send step ${step.index + 1}'s visual change to the issue tracker`}
+            onClick={() => onSendToTracker(step.stepId)}
+          >
+            <Send className="size-3.5" />
+            Send
+          </Button>
+        ) : null}
         {step.screenshot && step.diff?.state === "changed" && !acceptedSteps.has(step.stepId) ? (
           <AlertDialog
             trigger={
@@ -1496,6 +1519,25 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           </Text>
         )}
       </div>
+
+      <IssueComposeDialog
+        source={
+          sendingStepId
+            ? {
+                kind: "visual",
+                testId: summary.testId,
+                runId: summary.runId,
+                stepId: sendingStepId,
+              }
+            : null
+        }
+        open={sendingStepId !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setSendingStepId(null);
+        }}
+        onFiled={(issue) => toast.success(`Filed as ${issue.identifier}.`)}
+        onCommented={(link) => toast.success(`Added to ${link.identifier}.`)}
+      />
 
       {/* Accessibility, under the step row: reported, never fatal — the run's
           pass/fail is decided purely by its assertions. */}

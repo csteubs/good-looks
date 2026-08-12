@@ -34,7 +34,9 @@
 //     second place it lives for the lifetime of the process.
 
 import type {
+  CreatedIssue,
   IssueContainer,
+  IssueLabel,
   IssueSubContainer,
   ProviderAccount,
   ProviderId,
@@ -43,13 +45,40 @@ import type {
 
 export type {
   ConnectionStatus,
+  CreatedIssue,
+  DefectSource,
+  DraftAttachment,
   IssueContainer,
   IssueDefaults,
+  IssueDestination,
+  IssueDraft,
+  IssueLabel,
   IssueSubContainer,
   ProviderAccount,
   ProviderId,
   ProviderVocabulary,
 } from "../../../renderer/lib/issue-types.js";
+
+/** One image to upload, read from disk by the backend at send time. */
+export interface UploadImage {
+  /** Shown as the image's caption in the issue. */
+  label: string;
+  /** Filename the provider should store it under. */
+  filename: string;
+  bytes: Buffer;
+  contentType: string;
+}
+
+/** Everything needed to file one issue, after the user has edited it. */
+export interface CreateIssueRequest {
+  title: string;
+  /** Markdown. Whatever the user finally approved. */
+  body: string;
+  containerId: string;
+  subContainerId: string | null;
+  labelIds: string[];
+  images: UploadImage[];
+}
 
 /**
  * How a provider failed, in terms a caller can branch on.
@@ -104,4 +133,29 @@ export interface IssueProvider {
    *  caller's job, since a provider may not scope them at all.
    *  @throws {IssueProviderError} */
   listSubContainers(key: string): Promise<IssueSubContainer[]>;
+
+  /** Labels the user can pick, by NAME. Resolving names to whatever the
+   *  provider actually wants — node ids for Linear, plain strings for GitHub —
+   *  is the provider's job, not a caller's.
+   *  @throws {IssueProviderError} */
+  listLabels(key: string): Promise<IssueLabel[]>;
+
+  /**
+   * File one issue, uploading its images first.
+   *
+   * Images are handed over as bytes rather than paths: a provider must not
+   * read the filesystem, both because `main/shell` owns that boundary and
+   * because it keeps every provider testable with no disk at all. How an image
+   * reaches the body is the provider's business — Linear uploads to a signed
+   * URL and references the asset, GitHub embeds it in markdown — which is why
+   * this takes images rather than a body that already mentions them.
+   *
+   * @throws {IssueProviderError}
+   */
+  createIssue(key: string, request: CreateIssueRequest): Promise<CreatedIssue>;
+
+  /** Append a comment to an existing issue — how a recurrence is reported
+   *  instead of filing a duplicate.
+   *  @throws {IssueProviderError} */
+  addComment(key: string, issueId: string, body: string, images: UploadImage[]): Promise<void>;
 }
