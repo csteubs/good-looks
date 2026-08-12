@@ -16,6 +16,18 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-11 — `app.isPackaged` made the branch switcher unreachable in the only way anyone runs this app from source
+
+**Found by running the app and looking at it, which is the step in CLAUDE.md that exists for exactly this.** Every automated gate was green; the Branches row simply was not in the sidebar, and opening the view said *"This is a packaged build … Run the app from a checkout (`npm run dev`)"* — to a user who had run `npm run dev`.
+
+**`isPackaged` is not "was this shipped".** Electron derives it from the name of the executable: anything not called `Electron` counts as packaged. And `npm run dev` deliberately runs a **branded, re-signed clone of Electron.app called "Good Looks!"**, because macOS reads an app's name and icon from its bundle (`scripts/dev-app-bundle.mjs`, and never `app.setName` — that would move userData). So every dev run reported itself as packaged. The two facts are individually documented and had never been put together.
+
+**It was worse than a hidden row.** `relaunchOnto` relaunches the same binary, so a user who did reach the feature and switched onto a branch arrived at a Branches view telling them branch switching was unavailable — with the way back to their own checkout inside it. The escape was to quit and re-run `npm run dev`.
+
+**So availability is decided by what the feature actually requires: a git repository to check a branch out of.** `readRepoInfo` already answers that, and answers it correctly for a dev run, for a branch build, and for a shipped `.app` in /Applications, which has no repository above it and fails exactly as it did before. `isPackaged` is kept **only to choose the wording** of that failure, which is the one thing it is reliable for — a packaged build is the case where "no repository" has a specific, actionable explanation.
+
+**Two existing tests only passed because of the short-circuit.** Both set `packaged` and asserted unavailability, while the stub's default app path is this project — a real checkout. The old code returned before anything looked at it. Their setups now say what they mean, which is that a packaged build has no repository above it.
+
 ### 2026-08-11 — The app can open a URL now, and the ban that said it never would
 
 **`check:recorder-navigation` asserted that no file in `main/` calls `shell.openExternal`, on the stated grounds that nothing needed it and "its absence is far easier to keep than its correctness."** The branch menu's pull-request icon needs it. The choice was to delete that assertion or to narrow it, and deleting it would have thrown away the reasoning along with the rule — so it is now a one-file allowlist naming `main/shell/host-handlers.ts`, plus a second assertion that the allowed file still contains the call. An allowlist entry for code that has since been deleted is a guard that passes vacuously forever.

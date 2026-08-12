@@ -35,6 +35,7 @@ import { GitBranch, GitPullRequest, Home, RefreshCw } from "lucide-react";
 
 import { api } from "../lib/api";
 import type { BranchSummary, PullRequestSummary, SwitchProgress } from "../lib/branch-types";
+import { takeBranchSwitch } from "./pending-branch-switch";
 
 function fmtWhen(ms: number): string {
   if (!ms) return "";
@@ -290,6 +291,23 @@ export function BranchesView() {
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["branches"] });
   };
+
+  // A switch chosen in the sidebar's hover menu, which navigates here rather
+  // than running the build itself — this view already owns the progress panel
+  // it needs to be watched in. `takeBranchSwitch` CLEARS as it reads, so a
+  // request is acted on exactly once: left in place, it would restart the build
+  // every time this view mounts, and navigating away and back would rebuild and
+  // relaunch the app for a click made ten minutes ago.
+  //
+  // `switching` is deliberately not a dependency. The mutation object is new on
+  // every render, so depending on it would run this effect on every render —
+  // and the read is a one-shot, so the only visible symptom would be a request
+  // arriving during a render being silently dropped.
+  const startSwitch = switching.mutate;
+  React.useEffect(() => {
+    const requested = takeBranchSwitch();
+    if (requested !== undefined) startSwitch(requested);
+  }, [startSwitch]);
 
   if (status.isLoading) {
     return (
