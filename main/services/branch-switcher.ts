@@ -94,20 +94,32 @@ function progress(event: SwitchProgress): void {
  *
  * Never throws: an unavailable feature has to be able to say WHY, and a
  * rejected status call would render as a broken view instead of an explanation.
+ *
+ * ── `app.isPackaged` DOES NOT MEAN WHAT IT LOOKS LIKE HERE ────────────
+ * It used to gate this function, and it made the whole feature unreachable in
+ * the one way anybody runs this app from source. Electron decides `isPackaged`
+ * from the name of the executable — anything not called `Electron` is
+ * "packaged" — and `npm run dev` deliberately runs a BRANDED, RE-SIGNED CLONE
+ * of Electron.app called "Good Looks!", because macOS reads the app's name and
+ * icon from the bundle (`scripts/dev-app-bundle.mjs`). So a dev run reported
+ * itself as packaged and answered with a message telling the user to "Run the
+ * app from a checkout (`npm run dev`)" — which is exactly what they had done.
+ *
+ * It was worse than a hidden sidebar row. `relaunchOnto` relaunches the same
+ * binary, so a user who switched onto a branch found the Branches view telling
+ * them it was unavailable, with the way back to their own checkout inside it.
+ *
+ * So availability is now decided by THE THING IT ACTUALLY REQUIRES: whether
+ * there is a git repository here to check a branch out of. `readRepoInfo`
+ * already answers that, and it answers it correctly for a dev run, for a branch
+ * build, and for a shipped `.app` in /Applications, which has no repository
+ * above it and so fails exactly as before. `isPackaged` is kept only to pick
+ * the WORDING of that failure, where it is right: a packaged build is the one
+ * case where "no repository" has a specific, actionable explanation.
  */
 export async function status(): Promise<BranchStatus> {
   const hasToken = await githubTokenStore.hasToken().catch(() => false);
   const switchedTo = branchFromArgv(process.argv);
-
-  if (app.isPackaged) {
-    return {
-      available: false,
-      switched: switchedTo !== null,
-      hasToken,
-      reason:
-        "This is a packaged build. It ships compiled output with no source, no git repository and no build tooling, so there is nothing here to check a branch out of. Run the app from a checkout (`npm run dev`) to switch branches.",
-    };
-  }
 
   const appPath = app.getAppPath();
   try {
@@ -131,7 +143,14 @@ export async function status(): Promise<BranchStatus> {
       available: false,
       switched: switchedTo !== null,
       hasToken,
-      reason: err instanceof Error ? err.message : String(err),
+      // The packaged wording only where it is true. Everywhere else, git's own
+      // reason — "git is not installed", "not a repository" — which is the
+      // sentence the user can act on.
+      reason: app.isPackaged
+        ? "This is a packaged build. It ships compiled output with no source, no git repository and no build tooling, so there is nothing here to check a branch out of. Run the app from a checkout (`npm run dev`) to switch branches."
+        : err instanceof Error
+          ? err.message
+          : String(err),
     };
   }
 }
