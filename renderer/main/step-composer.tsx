@@ -239,7 +239,17 @@ function CssAssertFields({
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-3">
+      {/* Two-up ONLY when there is room for it. This dialog renders in two very
+          different places: the main window, which is never narrower than
+          1200pt, and the docked trainer panel, which is 360. At 360 a
+          half-width column is ~125pt — narrower than a Select showing "Has CSS
+          property" or a segmented control offering "Is exactly / Contains", so
+          both were drawn clipped, and before the `Field` fix they overflowed
+          sideways into the column beside them. The breakpoint is on the
+          VIEWPORT, which is the right question here precisely because the panel
+          is its own window: it is genuinely a 360pt viewport, not a narrow box
+          inside a wide one. */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <Field label="CSS property" orientation="vertical">
           <Select value={options.includes(prop) ? prop : ""} onValueChange={onCssProp}>
             <SelectTrigger size="small">
@@ -366,8 +376,28 @@ function TargetElementPicker({
 
   return (
     <Field label="Target element" orientation="vertical">
-      <div className="flex flex-col gap-1.5">
-        <div className="flex items-center gap-2">
+      {/* `min-w-0` is load-bearing, not defensive tidiness.
+       *
+       * A labelled `Field` wraps its children in a flex ROW (see `Field` in
+       * renderer/ui/layout.tsx). A flex item's automatic minimum size is its
+       * MIN-CONTENT width, and the min-content width of this block is the
+       * longest locator — an xpath like `//*[@id="controller"][1]/div[2]/…`
+       * has no break opportunity in it at all. So without this the block
+       * refuses to shrink, every `truncate` inside it is dead (a `truncate`
+       * only truncates once its box is actually constrained), and the row
+       * renders at its full natural width.
+       *
+       * The visible symptom is not a scrollbar. That wrapper is
+       * `justify-end`, so the oversized box is right-aligned and the overflow
+       * spills off the LEFT edge: measured at 476px inside the 360px trainer
+       * panel, starting at x=-106. The locators are clipped on both sides and
+       * the panel cannot be scrolled to reach them.
+       *
+       * It has to be here rather than on the wrapper — `min-w-0` on the
+       * wrapper does not propagate to the child's automatic minimum, which was
+       * confirmed by measuring both. */}
+      <div className="flex min-w-0 flex-col gap-1.5">
+        <div className="flex min-w-0 items-center gap-2">
           <code className="min-w-0 flex-1 truncate rounded bg-background-secondary px-2 py-1 font-mono text-xs text-primary">
             {picked.description || picked.tag || "element"}
           </code>
@@ -393,7 +423,7 @@ function TargetElementPicker({
                   setSelected(i);
                   onChange(l);
                 }}
-                className={`flex items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
+                className={`flex min-w-0 items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
                   active ? "border-accent bg-accent/10" : "border-separator hover:bg-background-secondary"
                 }`}
               >
@@ -800,7 +830,7 @@ export function StepComposer({
 
         {kind === "press" ? (
           <>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Key" orientation="vertical">
                 <Input size="small" value={key} onChange={(e) => setKey(e.target.value)} />
               </Field>
@@ -859,7 +889,7 @@ export function StepComposer({
             </Text>
 
             {waitUntilOn ? (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label="Condition" orientation="vertical">
                   <Select
                     value={waitUntil}
@@ -983,7 +1013,7 @@ export function StepComposer({
               </Select>
             </Field>
             {viewport === "custom" ? (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label="Width" orientation="vertical">
                   <Input size="small" type="number" value={vw} onChange={(e) => setVw(e.target.value)} />
                 </Field>
@@ -1070,7 +1100,7 @@ export function StepComposer({
 
         {kind === "assertion" ? (
           <>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Assertion" orientation="vertical">
                 <Select value={assert} onValueChange={(v) => setAssert(v as AssertKind)}>
                   <SelectTrigger size="small">
@@ -1117,7 +1147,7 @@ export function StepComposer({
               </Field>
             ) : null}
             {opt.need === "attr" ? (
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label="Attribute" orientation="vertical">
                   <Input size="small" value={attr} onChange={(e) => setAttr(e.target.value)} />
                 </Field>
