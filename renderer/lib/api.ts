@@ -53,7 +53,11 @@ import type {
   ProviderVocabulary,
 } from "./issue-types";
 import type { TriageResult } from "../../shared/triage.mjs";
-import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
+import type {
+  StepDurationRow,
+  StepHealthRow,
+  TestDurationTrend,
+} from "../../shared/metrics-query.mjs";
 import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
 import type {
   LlmChatParams,
@@ -397,6 +401,9 @@ export const api = {
         rows: StepDurationRow[];
         slowed: StepDurationRow[];
         cost: CostBreakdown;
+        /** The named test's own duration trend (C §6.3). Null when no test was
+         *  named — the suite-wide call has no single test to trend. */
+        testTrend: TestDurationTrend | null;
       }>("metrics:slowness", { testId }),
     divergence: (testId?: string) =>
       ipc().invoke<{ available: boolean; steps: DivergentStep[] }>("metrics:divergence", {

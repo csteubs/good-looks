@@ -16,6 +16,22 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — Change temp stops guessing, and two numbers that are both medians (C §6.3)
+
+`Temp` shipped in A3 with a note admitting what it was: a component that reads a timing against a median, with no median to read. It fell to `off` and rendered neutral everywhere, which was the current behaviour rendered honestly rather than a feature. This wires it to `metrics-store`, and two of the three decisions are about refusing to colour something.
+
+**On a step row, both numbers are medians.** Recent p50 against the p50 before it — not this run against a median. The obvious design is the other one, and it is wrong here: a single run's duration for a single step is noise, a garbage collection or a slow DNS answer, and colouring it would light half the list on every run for reasons that have nothing to do with the test. What earns a colour is the step having CHANGED, which is a claim two medians can support and one sample cannot. §3.4's dead band exists for the same reason at one level down — a table where every row is lit says nothing at all.
+
+**For the test's own median, metrics beats run history, and the reason is retention.** §6.1 computes a median from `api.runs.list()`, which is `run-history.json` — and retention prunes that file. The metrics DB is rolled up BEFORE retention runs (CLAUDE.md says why: after it, retention costs you pictures rather than history), so once a prune has happened it holds strictly more of a test's past. A median is exactly the statistic that degrades when its sample is silently truncated: the number stays plausible, keeps rendering, and stops being true. Nothing about the screen changes when that happens, which is what makes it worth the extra query.
+
+**But it falls back rather than failing.** The metrics DB is a derived shadow that is allowed to be unavailable — a runtime without `node:sqlite`, a failed open — and every method in it swallows its own errors by design. So `summariseRun`'s `medianMs` is preferred when present and the history-derived median is used when it is not. Losing the better source must not mean losing the answer.
+
+**`testDurationTrend` counts passed runs only.** A run that died on step two is fast; one that timed out is exactly as slow as the budget. Either poisons a median whose entire job is to say whether a PASS was unusual. `baseline-update` rows are excluded for the reason they are excluded everywhere else: accepting screenshots is an audit event, not an execution.
+
+**It rides the existing channel rather than taking its own.** `metrics:slowness` already answers per-test when given a `testId`, so the trend goes on that response. The step list and the run summary are one screen asking one question, and two channels would let them answer it from two different reads of a database that is being written to while they look.
+
+**And the check is real SQL against a real database, deliberately.** `stepDurations` once computed its percentiles with `LIMIT 1 OFFSET <expression over aggregates>`, which SQLite accepted for p95 and refused for p50 — and because `all()` swallows a throw by contract, the broken half came back as `null` and read exactly like "this step was never timed". A pure test of the arithmetic would have passed. The same trap applies here, so the same kind of test guards it.
+
 ### 2026-08-12 — Filing a defect: the payload, the consent, and three invisible bugs
 
 Phases 2–6 of the issue-tracker integration, on top of the connection that

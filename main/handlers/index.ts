@@ -67,6 +67,7 @@ import {
   siblingRuns,
   stepBrowserMatrix,
   stepDurations,
+  testDurationTrend,
   stepHealth,
   suiteCost,
 } from "../../shared/metrics-query.mjs";
@@ -1297,6 +1298,14 @@ export function registerHandlers(): void {
         // disagree about what counts as a slowdown.
         slowed: slowdowns(rows),
         cost: costBreakdown(suiteCost(metricsStore.handle())),
+        // The TEST's own trend, only when one was named (C §6.3). On the same
+        // channel as its steps rather than a new one: the run summary and the
+        // step list are one screen asking one question, and two channels would
+        // let them answer it from two different reads of a database that is
+        // being written to while they look.
+        testTrend: params?.testId
+          ? testDurationTrend(metricsStore.handle(), params.testId, params?.window)
+          : null,
       };
     },
   );
