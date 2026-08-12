@@ -80,7 +80,10 @@ export interface RailFlyoutProps {
 
 interface Placement {
   left: number;
-  top: number;
+  /** Distance from the viewport's bottom edge to the row's — see `measure`.
+   *  The panel is pinned by its BOTTOM so that growing taller moves its top
+   *  edge up rather than pushing its bottom off the window. */
+  bottom: number;
   /** Space the panel may occupy before it must scroll. */
   maxHeight: number;
 }
@@ -124,29 +127,46 @@ export function RailFlyout({
     setOpenState(false);
   }, [clearTimers, setOpenState]);
 
-  /** Where the panel goes: to the right of the rail, its bottom aligned with
-   *  the row's, so a menu on a row pinned to the bottom of the window grows
-   *  upward into the space that exists rather than off the screen. */
-  const measure = React.useCallback((height: number | null) => {
+  /**
+   * Where the panel goes: to the right of the rail, its BOTTOM edge aligned
+   * with the row's, so a menu on a row pinned near the bottom of the window
+   * grows upward into the space that exists.
+   *
+   * ── ANCHORED BY `bottom`, NOT BY `top`, AND THAT IS THE WHOLE POINT ───
+   * The first version computed a `top` from the panel's measured height. It
+   * looked right in every situation where the menu's contents were already
+   * known — and this menu's contents usually are NOT: nothing is fetched until
+   * the first open, so the panel is placed while it still says "Reading
+   * branches…" and then gets five rows taller a moment later. Pinned by `top`,
+   * that growth goes DOWNWARD, straight off the bottom of the window. It cost a
+   * second measure pass, a re-measure on resize, and it was still wrong.
+   *
+   * Anchoring the bottom edge makes growth upward a property of the layout
+   * rather than something to keep recomputing: whatever height the panel takes,
+   * its bottom stays on the row and the top rises. `maxHeight` is the space
+   * between the window's top margin and that edge, so a very long menu scrolls
+   * inside itself instead of escaping either end.
+   *
+   * Found by opening the menu on a cold launch and watching it get cut off at
+   * the window's edge. jsdom cannot see it: `getBoundingClientRect` is zeros,
+   * so every placement number is 0 and every test passes either way.
+   */
+  const measure = React.useCallback(() => {
     const rect = triggerRef.current?.getBoundingClientRect();
     if (!rect) return;
     const viewportHeight = window.innerHeight || 0;
-    const available = Math.max(0, rect.bottom - VIEWPORT_MARGIN);
-    const wanted = height ?? available;
-    const used = Math.min(wanted, available);
     setPlacement({
       left: rect.right,
-      // Bottom-aligned to the row, then clamped so it can never start above the
-      // top of the window.
-      top: Math.max(VIEWPORT_MARGIN, Math.min(rect.bottom - used, viewportHeight - used)),
-      maxHeight: available,
+      // Distance from the viewport's bottom up to the row's bottom edge.
+      bottom: Math.max(0, viewportHeight - rect.bottom),
+      maxHeight: Math.max(0, rect.bottom - VIEWPORT_MARGIN),
     });
   }, []);
 
   const openNow = React.useCallback(() => {
     if (disabled) return;
     clearTimers();
-    measure(null);
+    measure();
     setOpenState(true);
   }, [clearTimers, disabled, measure, setOpenState]);
 
@@ -202,7 +222,7 @@ export function RailFlyout({
     // Not `scroll` on a specific element: the rail's nav does not scroll, but
     // the window can be resized and the app can be zoomed, and a panel left at
     // a stale rect is a menu floating away from its row.
-    const reposition = () => measure(panelRef.current?.offsetHeight ?? null);
+    const reposition = () => measure();
     document.addEventListener("pointerdown", onPointerDown);
     document.addEventListener("keydown", onKeyDown);
     window.addEventListener("resize", reposition);
@@ -213,15 +233,6 @@ export function RailFlyout({
     };
   }, [close, measure, open]);
 
-  // Re-measure once the panel has a real height, so a bottom-aligned menu is
-  // aligned to its own size rather than to the space it was guessed at.
-  React.useEffect(() => {
-    if (!open) return;
-    const height = panelRef.current?.offsetHeight ?? null;
-    if (height) measure(height);
-    // `placement` is deliberately NOT a dependency: this sets it, and depending
-    // on it would re-run on its own result forever. `measure` is stable.
-  }, [measure, open]);
 
   // ── Keyboard ─────────────────────────────────────────────────────
   const focusItem = React.useCallback((index: number) => {
@@ -282,7 +293,7 @@ export function RailFlyout({
               data-gl="rail-flyout-panel"
               style={{
                 left: placement?.left ?? 0,
-                top: placement?.top ?? 0,
+                bottom: placement?.bottom ?? 0,
                 maxHeight: placement?.maxHeight ?? undefined,
               }}
               // Belt and braces, NOT the mechanism. React propagates events
