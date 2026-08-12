@@ -359,7 +359,33 @@ export function Field({
         <FieldLabel>{label}</FieldLabel>
         {description && <FieldDescription>{description}</FieldDescription>}
       </FieldContent>
-      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{children}</div>
+      {/* `[&>*]:min-w-0` lets the controls SHRINK; without it they cannot.
+       *
+       * A flex item's automatic minimum size is its min-content width, so a
+       * control wider than the column it is in — a Select whose longest option
+       * is "Has CSS property", a row of locators containing an unbreakable
+       * xpath — simply refuses to get smaller, and any `truncate` inside it is
+       * inert, because truncation needs a constrained box to act on.
+       *
+       * The symptom is not a scrollbar. This row is `justify-end`, so an
+       * oversized child is right-aligned and overflows off its LEFT edge:
+       * measured in the 360pt trainer panel, the Assertion select began 12px
+       * left of its own field and the Match control 25px left of its own,
+       * spilling into the field beside it. Both rendered with their first
+       * characters sliced off and nothing to scroll.
+       *
+       * On the child rather than here: `min-w-0` on this wrapper does NOT
+       * propagate to a child's automatic minimum — measured both ways, only
+       * the child's takes effect.
+       *
+       * `shrink-0` and `justify-end` stay. In a horizontal field they are what
+       * keeps a long label from squashing the controls and what pins those
+       * controls to the right; in a vertical field the wrapper stretches, so
+       * `justify-end` only affects children narrower than the field, which is
+       * the existing arrangement across ~50 call sites. */}
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 [&>*]:min-w-0">
+        {children}
+      </div>
     </>
   ) : (
     children

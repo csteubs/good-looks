@@ -141,7 +141,14 @@ export function RefineSelectorDialog({
             <Text variant="small" color="secondary">
               CSS properties
             </Text>
-            <div className="grid grid-cols-2 gap-x-4 gap-y-1 rounded-md border border-separator px-3 py-2">
+            {/* Two-up only when there is room, same rule as the step composer.
+                This dialog also renders in the docked trainer panel, where the
+                window is 360pt: two columns leave ~150 per cell, and a property
+                name like `background-color` takes 116 of it, so the VALUE — the
+                only part being read — truncated to "rg…". Stacking gives each
+                pair the full width. The main window is never below 1000, so it
+                keeps two columns. */}
+            <div className="grid grid-cols-1 gap-x-4 gap-y-1 rounded-md border border-separator px-3 py-2 sm:grid-cols-2">
               {cssEntries.map(([k, v]) => (
                 <div key={k} className="flex min-w-0 items-baseline gap-2">
                   <code className="shrink-0 font-mono text-xs text-tertiary">{k}</code>

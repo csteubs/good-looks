@@ -686,3 +686,66 @@ describe("continuing an existing test: where a captured step goes", () => {
     }
   });
 });
+
+// ── The panel wears the app's theme ────────────────────────────────────────
+//
+// This window was the last surface in the app still drawn in the component
+// library's stock classes — `bg-background`, `border-separator`, `bg-accent/5`,
+// the SDK's `Status` and `Badge` — while every screen it mirrors had moved to
+// the `--gl-*` theme layer. That is not a cosmetic gap: the panel docks EDGE TO
+// EDGE with the main window's trainer, so the two were rendering the same live
+// session in two different designs, one hairline apart.
+//
+// `check:renderer-classes` proves a `gl-*` class RESOLVES to CSS; it cannot
+// know whether this view uses one. Nothing else would notice the stock classes
+// coming back, because they resolve too — they just belong to the other design.
+describe("theme", () => {
+  /** Class names from the pre-reskin surface. Each one still emits valid CSS,
+   *  which is exactly why their return would be silent. */
+  const STOCK = ["bg-background", "border-separator", "bg-accent/5", "text-accent"];
+
+  function classSoup(): string {
+    return [...document.querySelectorAll<HTMLElement>("[class]")]
+      .map((el) => el.getAttribute("class") ?? "")
+      .join(" ");
+  }
+
+  it("draws its own chrome from the theme layer", () => {
+    setStore();
+    renderPanel();
+    // The frame: root, header, URL band, list, tool row, footer. Asserted as a
+    // set rather than one at a time — a panel missing its footer rule is a
+    // panel whose Save button has no separator, which reads as a rendering bug.
+    for (const cls of [
+      "gl-panelwin",
+      "gl-panelwin-head",
+      "gl-panelwin-url",
+      "gl-panelwin-list",
+      "gl-panelwin-tools",
+      "gl-panelwin-foot",
+    ]) {
+      expect(document.querySelector(`.${cls}`), `${cls} is rendered`).not.toBeNull();
+    }
+  });
+
+  it("uses none of the stock classes it was built from", () => {
+    setStore();
+    renderPanel();
+    const soup = classSoup();
+    for (const cls of STOCK) {
+      expect(soup.split(/\s+/), `${cls} came back`).not.toContain(cls);
+    }
+  });
+
+  it("keeps the status chip neutral rather than reusing the failed-run colour", () => {
+    // "Recording" was the SDK's `error` variant — i.e. RED, the colour this
+    // palette spends on a failed run — on a surface where nothing has run. The
+    // main window's trainer was corrected for this; the panel is docked beside
+    // it, so it has to agree or red means two things at once on one screen.
+    setStore();
+    renderPanel();
+    const chip = document.querySelector('[data-gl="status-chip"], .gl-status-chip');
+    expect(chip, "a status chip is rendered").not.toBeNull();
+    expect(chip?.className).not.toMatch(/destructive|error|danger/);
+  });
+});

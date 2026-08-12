@@ -16,6 +16,82 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — The recorder starts asking the page whether its locator is unique
+
+A test named "Will Pass Firefox" failed every run with `strict mode violation: getByText('Browser') resolved to 2 elements`. The step looked completely ordinary in the trainer, and the site was not at fault.
+
+**The recorder never checked.** `locatorFor` in the capture script walked a preference order — testid, label/placeholder, role+name, text — and returned the first candidate that *existed*, on the untested assumption that a name or a run of text identifies one element. Playwright runs in strict mode, so that assumption is not a nicety: a locator matching two elements does not become the first one, it throws. Every ambiguous locator the recorder ever wrote was a violation waiting for the page to grow a second match, and it could only be discovered on a run, against a page the user was no longer looking at.
+
+**So the candidate list is now a question rather than an answer.** `pickLocator` asks the page how many elements each candidate resolves to and takes the first that identifies *this* element. The preference order is unchanged, so a page whose first choice is unique records exactly what it always did — this is a narrowing, not a new strategy.
+
+**Counting has to use Playwright's semantics, not the obvious ones.** `getByText`/`getByLabel`/`getByPlaceholder`/`getByRole({name})` match a case-insensitive *substring* with whitespace normalized; the text engine returns the *smallest* element containing the text. Comparing exact strings would under-count — "Browser" looks unique on a page whose other match reads "Browsers" — and under-counting is the failure that matters, because it is the one that ships a locator we have declared safe. Without the smallest-element rule every ancestor up to `<body>` counts and nothing is ever unique.
+
+**`found.length === 1` is not sufficient; `found[0] === el` is required.** A wrapper whose text comes entirely from its child produces a text candidate matching exactly one element — the child. Recording it yields a step that acts on something other than what was clicked, which is worse than ambiguity: it does not throw, it silently passes against the wrong thing.
+
+**`.nth()` is the last resort and is admitted as one.** An index picks by DOM order and breaks when the page reorders, so every unique candidate wins over it. It is only written when none is unique, at which point the choice is between an index that works now and a locator that has already failed. The candidate list ends in an xpath on every path, which is positional and therefore unique by construction — that is what makes the choice total and guarantees a step is always recorded.
+
+**`nth` goes through `int()` at the boundary and `num()` in the generator, both.** It lands in the emitted source as a bare numeral — `.nth(<here>)` — which is the exact shape that was remote code execution the last time a numeric step field was trusted for having the right TypeScript type. The generator's guard is not redundant with the boundary's: steps recorded before this existed are on disk and are regenerated from their stored values.
+
+Rejected: healing this at run time instead. Auto-Heal fires on a failure that has already happened, on a machine that may be running the suite unattended at 3am; a locator that was never ambiguous costs nothing to prefer at record time.
+
+### 2026-08-12 — Assertion failures were invisible to the whole evidence layer
+
+The same failed run sent its output to AI Debug, which correctly diagnosed the ambiguity and then asked for "the HTML source code of the page at the time of failure" — a request this app cannot honour. The session dead-ended there.
+
+**It asked because the one thing that would have answered it was never recorded.** The heal fixture patches `Locator.prototype` action methods — click, fill, hover, `waitFor`. An assertion is none of them: `expect(locator).toBeVisible()` reaches the locator through Playwright's matcher. So for an *assertion* failure not one line of that machinery ran, and the consequence ran the full length of the pipeline: no `matches.json`, no `step-matches.json`, `artifacts:hasStructure` false, `structureAvailable` false, the `structure` need never advertised — and a model with no way to ask for the elements the locator matched, asking for the page instead.
+
+`recordMatches` already existed and already described exactly what the model wanted, down to the scoping ancestors a fix is written from. It was simply unreachable from the commonest kind of failure.
+
+**Records, never heals.** Healing an action means acting on the element we meant. Healing an *assertion* would mean asserting against a different element than the test names — a passing run that proves something nobody asked about. So the assertion path describes the page and rethrows exactly as it found it, changing no run's outcome.
+
+**Both outcomes, because they are opposite diagnoses.** `_expect` throws for a locator that could not be resolved (where strict-mode violations land) and returns `{ timedOut: true }` when the locator resolved and the condition never came true (the "matched 0 elements" shape). "Matched 0" and "matched 10" need different fixes — the payload builder says so explicitly — so recording one and not the other would be worse than recording neither. `_expect` is Playwright-internal, so it is patched defensively and its absence degrades to precisely the previous behaviour.
+
+**And the empty protocol was itself a bug.** `logRequestProtocol([])` returned `""` when a run had recorded nothing. The system prompt ends by inviting the model to say what more it needs; with nothing after it, that reads as an open invitation, and what came back was a request for HTML. It now says what cannot be supplied and why — the run is over, the page is gone — rather than staying silent and letting the model spend the user's round trip discovering it.
+
+### 2026-08-12 — The trainer panel and the training browser's strip get the theme
+
+These two were the last surfaces in the app still drawn in the component library's stock classes — `bg-background`, `border-separator`, `bg-accent/5`, the SDK's `Status` and `Badge` — while every screen they mirror had moved to the `--gl-*` layer. Zero `gl-*` classes between them.
+
+**It is not a cosmetic gap.** The panel docks *edge to edge* with the main window's trainer, so the app was rendering one live session in two different designs, one hairline apart. The status chip was the sharp end: "Recording" was the SDK's `error` variant — red, the colour this palette spends on a failed run — on a surface where nothing has run. `recording-view.tsx` was corrected for that in B6 and the panel was not, so red meant two things at once on one screen.
+
+**Why it stayed stock so long is the more useful finding: it could not be looked at.** The panel is its own `BrowserWindow`, opened by the backend when a session starts; the strip renders into a `WebContentsView` inside the recorder window. Neither is reachable from `npm run dev:web`, so the only way to review a change to either was to package the app and record a real test. That is the same argument that produced `?view=settings`, and it gets the same answer: `?view=trainer-panel` and `?view=chrome` mount them against the fake backend. The panel preview is boxed to 360px deliberately — a tool row that wraps at 360 and not at 1400 is exactly what the view is opened to check.
+
+**New names rather than reuse of `.gl-trainer-*`.** Those rules are laid out for the main window; this panel lives at 360px beside a real browser, which is why it is a separate view at all. Shared names would have to satisfy both widths and the one that lost would be this one.
+
+**`check:clickable-chrome` was loosened, not satisfied.** It asserted the panel keeps a drag region with `/className="drag-region[^"]*"/` — anchored to the class being *first*. The reskin put the header's theme class first and the check went red over a working drag region. It now matches the class as a token anywhere in the list; verified it still fails when the drag region is actually deleted. A guard that cries about class order is one people learn to edit rather than read.
+
+### 2026-08-12 — The click the training browser was eating
+
+Reported as the trainer being flaky: clicks going from the panel back into the training browser "fail to register further click events".
+
+**macOS spends a click on an inactive window activating it**, and does not pass it to the content unless `acceptFirstMouse` is set. The trainer panel is `alwaysOnTop` and is where the user arms an assertion, adds a step or scrolls the list — so the training browser is inactive *every single time* they turn back to the page.
+
+In an ordinary window that costs a button press. In a recorder it costs a **recorded step**: the capture script's listener never fires, so the interaction is absent from the step list while the page has visibly responded to nothing. That is indistinguishable from the recorder dropping interactions at random.
+
+`trainer-panel-window.ts` has set this since the panel shipped, for the mirror image of the same problem, and its comment describes the same mechanism — only one side of the pair ever got it.
+
+The trade, stated: this window hosts an arbitrary third-party page, and click-through means a click that activates the window also reaches that page. It is a window the user opened in order to click on, the page already crosses `normalizeRawStep`, and the alternative is a recorder that silently omits steps.
+
+**`setAssertMode` had the second half of the same bug.** It called `recWindow.focus()` rather than `focusTrainingPage()`, so it focused the window without focusing the page view — and `focusTrainingPage`'s own docstring names this exact case ("including, after the user has clicked 'Assert URL', the URL bar"). `assertUrl` routes through it *from that bar*. `startRefine`, the other armed picker, has always used the right one.
+
+### 2026-08-12 — The panel that stopped following, and three things cut off in a 360pt window
+
+**The trainer panel stopped following after about fifty points.** `computePanelFollow` kept the panel at the browser's full height and then clamped its `y` into the work area, which is safe — the panel is always wholly on-screen — and wrong. A default training browser is 820pt tall on a work area of ~870, so the panel's top had roughly fifty points of travel; drag the browser further down than that, which macOS allows freely, and the panel sat at the clamp while the browser walked away from it. Right width, right side, no longer attached to anything. Reported as "moving the browser doesn't bring the trainer along".
+
+**The top edge wins, and height is what pays.** Being flush with the browser is what *docked* means, so `computePanelSpan` pins the panel to the browser's top and gives it whatever is left down to the bottom of the work area. It shrinks instead of detaching. Only below `PANEL_MIN_HEIGHT` does it stop and slide up — at that point the browser is mostly off-screen and there is no rectangle that is both flush and usable, so it stops pretending.
+
+**Nothing in the suite could see this, which is the more useful finding.** `panel-dock.test.ts` proves the arithmetic — against a generous 1055pt work area where the clamp never binds, so every case passed. `check:trainer-panel` proves the listeners are attached, not that they produce a correct rectangle. `trainer-dock.spec.ts` only ever looked at the FIRST dock. A follower that had stopped moving vertically was invisible to all three, and a person reported it instead. The unit tests now use a work area only slightly taller than the browser — the configuration where the bug lives — and `e2e/trainer-dock.spec.ts` moves a real window and asserts the panel arrives.
+
+**The Target element list was cut off because a flex item cannot shrink below its min-content width.** A labelled `Field` wraps its children in a flex row, and a flex item's automatic minimum size is min-content. The min-content width of a locator list is its longest locator — and a generated CSS path or an xpath contains no space, no hyphen, no break opportunity at all. So the block refused to shrink, and every `truncate` inside it was inert, because truncation needs a constrained box to act on.
+
+**The symptom was not a scrollbar, and that is why a scrollWidth check would not have caught it.** That wrapper is `justify-end`, so the oversized block is right-aligned and its overflow spills off the LEFT edge, at negative coordinates. Negative overflow does not extend `scrollWidth`: the panel measured `scrollWidth === clientWidth === 360` in the broken build, identical to the fixed one. The locators were sliced off at both edges with nothing to scroll. The assertion that catches it is "no row starts left of zero".
+
+**Three levels, three fixes, and only the middle one belonged in the shared component.** The locator list got `min-w-0` at its call site. Then measuring the rest of the dialog found the same defect one level in and invisible to a document-level check: the Assertion select began 12pt left of its own field and the Match control 25pt left of its own, overflowing into the column beside them while staying inside the panel. That is generic — any control wider than its column — so `Field` now grants its children `[&>*]:min-w-0`. It has to be on the child: `min-w-0` on the wrapper does not propagate to a child's automatic minimum, measured both ways. `shrink-0` and `justify-end` stay, because in a horizontal field they are what stops a long label squashing the controls.
+
+**And then the row simply did not fit, which no amount of shrinking fixes.** At 360pt a half-width column is ~125pt, narrower than a select reading "Has CSS property" or a segmented control offering "Is exactly / Contains" — so with the overflow fixed they clipped their own labels instead. The two-up rows are now `sm:grid-cols-2`, stacking below 640. A viewport breakpoint is the right instrument precisely because the panel is its own WINDOW: it is genuinely a 360pt viewport, not a narrow box inside a wide one, and the main window is never below 1000.
+
+**jsdom can see none of this.** It has no layout engine, so every rectangle is zeros and a row rendered 476px wide inside a 360px panel measures the same as one that fits. `e2e/panel-overflow.spec.ts` measures the real docked panel.
+
 ### 2026-08-12 — Baseline provenance, and the three fields this app does not get to invent (C §6.6)
 
 The Visual screen asks the user to judge a frame against a baseline and, until now, told them nothing whatsoever about the baseline. That gap matters more than it sounds: "these two frames differ" is a completely different statement depending on whether the baseline was pinned yesterday from the same engine or four months ago from WebKit while the current run is Chromium. Without provenance every difference looks equally like a regression.

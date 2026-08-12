@@ -92,7 +92,7 @@ function reEscape(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function locatorExpr(loc: Locator): string {
+function locatorBase(loc: Locator): string {
   switch (loc.k) {
     case "testid":
       return "getByTestId(" + q(loc.v ?? "") + ")";
@@ -112,6 +112,29 @@ function locatorExpr(loc: Locator): string {
     default:
       return "locator(" + q(loc.v ?? "") + ")";
   }
+}
+
+/**
+ * The locator expression, with its disambiguator if it has one.
+ *
+ * `.nth(k)` is appended for a locator the recorder could not make unique. It is
+ * the difference between a step that RUNS and a strict-mode violation:
+ * Playwright refuses a locator matching two elements rather than taking the
+ * first, so an ambiguous locator does not degrade, it fails.
+ *
+ * `num`, not interpolation, and that is the same rule the rest of this file
+ * follows for every numeric field — this lands in the source as a bare numeral,
+ * which is precisely the hole a `count` of `"0); …; ("` went through once. The
+ * value is already bounded by `normalizeLocator`; this is the second of the two
+ * independent guards `check:step-ingest` pins, and it is the one that covers
+ * steps recorded before the boundary existed.
+ */
+function locatorExpr(loc: Locator): string {
+  const base = locatorBase(loc);
+  // 0 is a real index and must survive: `.nth(0)` on a two-match locator is the
+  // whole fix for that step, so a falsy test here would put the strict-mode
+  // violation straight back for exactly the first element.
+  return typeof loc.nth === "number" ? base + ".nth(" + num(loc.nth, 0) + ")" : base;
 }
 
 function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>): string | null {

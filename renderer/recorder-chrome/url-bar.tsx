@@ -18,7 +18,8 @@
 
 import * as React from "react";
 import { Check, Copy, Link2 } from "lucide-react";
-import { Button, Text, Tooltip, TooltipContent, TooltipTrigger } from "@ui";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@ui";
+import { Btn } from "../theme";
 
 import { api } from "../lib/api";
 import type { AssertKind } from "../lib/recorder-types";
@@ -122,12 +123,12 @@ export function UrlBar({ url, loading }: UrlBarProps): React.JSX.Element {
   }, []);
 
   return (
-    <div className="border-separator bg-panel flex h-full w-full items-center gap-2 border-b px-2">
+    <div className="gl-chrome-strip">
       <Link2
         className={
           loading
-            ? "size-3.5 shrink-0 animate-pulse text-tertiary"
-            : "size-3.5 shrink-0 text-tertiary"
+            ? "gl-chrome-strip-icon size-3.5 animate-pulse"
+            : "gl-chrome-strip-icon size-3.5"
         }
         aria-hidden="true"
       />
@@ -135,41 +136,35 @@ export function UrlBar({ url, loading }: UrlBarProps): React.JSX.Element {
       {/* `select-text` explicitly: the strip sits in a window the user drags by
           its frame, and the app's base layer turns selection off so a drag
           never smears a highlight across the UI. Here selection is the point. */}
-      <div
-        className="min-w-0 flex-1 select-text truncate font-mono text-xs"
-        title={url}
-        data-testid="training-url"
-      >
+      <div className="gl-chrome-strip-url select-text" title={url} data-testid="training-url">
         {url ? (
           <>
-            <span className="text-tertiary">{origin}</span>
-            <span className="text-primary">{rest}</span>
+            <span className="gl-chrome-strip-origin">{origin}</span>
+            <span className="gl-chrome-strip-path">{rest}</span>
           </>
         ) : (
-          <Text variant="small" color="tertiary">
-            Loading…
-          </Text>
+          <span className="gl-note">Loading…</span>
         )}
       </div>
 
       <Tooltip>
         <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="small"
+          <button
+            type="button"
+            className="gl-icon-btn"
             onClick={copy}
             disabled={!url}
             aria-label="Copy URL"
           >
             {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-          </Button>
+          </button>
         </TooltipTrigger>
         <TooltipContent>{copied ? "Copied" : "Copy URL"}</TooltipContent>
       </Tooltip>
 
-      <Button variant="ghost" size="small" onClick={openAssertMenu} disabled={!url}>
+      <Btn onClick={openAssertMenu} disabled={!url}>
         Assert URL
-      </Button>
+      </Btn>
     </div>
   );
 }

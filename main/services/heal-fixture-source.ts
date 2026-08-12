@@ -353,5 +353,66 @@ export function installHealing(page) {
       }
     };
   });
+
+  // ── Assertions ──────────────────────────────────────────────────────────
+  //
+  // THE GAP THIS CLOSES. Everything above patches ACTIONS — click, fill, hover,
+  // waitFor. An assertion is none of them: expect(locator).toBeVisible() goes
+  // through Playwright's matcher, which reaches the locator by its private
+  // _expect. So when an ASSERTION failed, not one line of the machinery above
+  // ran, and the consequences went all the way to the user:
+  //
+  //   recordMatches never fired  →  no matches.json  →  no step-matches.json
+  //   →  artifacts:hasStructure false  →  structureAvailable false
+  //   →  the "structure" need was never offered in the debug prompt
+  //   →  the model asked, in prose, for "the HTML source at the time of
+  //      failure", which is the one thing this app cannot hand over — and the
+  //      debug session dead-ended on a question that already had an answer.
+  //
+  // That is how it was reported: a strict-mode violation on
+  // getByText("Browser"), with every element the locator matched sitting
+  // undescribed because the failing step was an expect() rather than a click.
+  //
+  // RECORDS ONLY, NEVER HEALS, and that asymmetry is the point. Healing an
+  // action means "act on the element we actually meant". Healing an ASSERTION
+  // would mean asserting against a different element than the test names, which
+  // silently changes what the test checks — a passing run that proves something
+  // nobody asked about. So this describes the page and rethrows, exactly as it
+  // found it.
+  //
+  // Both outcomes are covered because they are opposite diagnoses:
+  //   • _expect THROWS on a locator that could not be resolved at all — which
+  //     is where a strict-mode violation lands.
+  //   • _expect RETURNS { timedOut: true } when the locator resolved fine and
+  //     the condition never came true, which is the "matched 0 elements" shape.
+  // "matched 0" and "matched 10" need different fixes, and the payload builder
+  // says so explicitly, so recording only one of them would be worse than
+  // recording neither.
+  //
+  // _expect is Playwright-internal. Everything here is guarded and degrades to
+  // the previous behaviour if it is absent or changes shape: a missing method
+  // means no assertion structure, which is exactly where this started.
+  const origExpect = proto._expect;
+  if (typeof origExpect === "function") {
+    proto._expect = async function (...args) {
+      const entry = this.__glazeKey ? healMap[this.__glazeKey] : null;
+      let result;
+      try {
+        result = await origExpect.apply(this, args);
+      } catch (err) {
+        if (entry && isResolveFailure(err)) {
+          // Before rethrowing, and while the page is still in the state that
+          // produced the failure — the same reason the action path records
+          // before it heals.
+          await recordMatches(this, entry, "expect");
+        }
+        throw err;
+      }
+      if (entry && result && result.timedOut) {
+        await recordMatches(this, entry, "expect");
+      }
+      return result;
+    };
+  }
 }
 `;
