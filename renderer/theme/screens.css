@@ -2934,3 +2934,113 @@
 .gl-drift[data-verdict="drifting"] .gl-drift-line {
   color: var(--gl-amber);
 }
+
+/* "What moved" — the region breakdown (§6.6).
+
+   THE BOXES ARE AMBER, WHICH IS THE ONE COLOUR CHOICE HERE. They mark change,
+   and change is amber everywhere else on this screen — the diff percentage in
+   the frame rail, the drift strip's over-threshold bars, the run's own "visual
+   change" banner. A second hue for the same claim reads as a second finding. */
+.gl-region-box {
+  position: absolute;
+  border: 1px solid var(--gl-amber);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+  background: rgba(255, 180, 61, 0.08);
+  pointer-events: auto;
+  cursor: default;
+}
+
+/* Raised, not recoloured. The box is already saying "change"; the hover state
+   has to say "this one", and a different colour would be a different claim. */
+.gl-region-box[data-active] {
+  background: rgba(255, 180, 61, 0.22);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.55),
+    0 0 12px rgba(255, 180, 61, 0.45);
+}
+
+.gl-region-tag {
+  position: absolute;
+  top: -1px;
+  left: -1px;
+  padding: 0 4px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  color: #100d06;
+  background: var(--gl-amber);
+}
+
+.gl-regions {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--gl-line);
+  padding: 6px 16px 8px;
+}
+
+.gl-regions-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gl-regions-line {
+  min-width: 0;
+}
+
+.gl-regions-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+/* NEUTRAL selection, like everything else in this design. The number chip
+   inside the row carries the amber; the row itself is a control, and a control
+   tinted in an outcome colour is how a screen stops being able to say which of
+   its colours are findings. */
+.gl-region-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--gl-line);
+  border-radius: 2px;
+  padding: 2px 8px 2px 3px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.gl-region-row:hover,
+.gl-region-row[data-active] {
+  background: var(--gl-sel-bg);
+  border-color: var(--gl-sel-ring);
+}
+
+.gl-region-row:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 1px;
+}
+
+.gl-region-rank {
+  min-width: 14px;
+  padding: 0 3px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  color: #100d06;
+  background: var(--gl-amber);
+}
+
+.gl-region-place {
+  font-size: 11px;
+  color: var(--gl-tx-1);
+}
+
+.gl-region-share {
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-3);
+}

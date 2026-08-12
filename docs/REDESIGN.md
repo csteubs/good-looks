@@ -9,11 +9,13 @@ the five components every screen embeds, and every screen has been reached.
 
 **Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
 its frame rail, threshold-against-frames and the masks/baselines reskin.
-**Phase C is most of the way in: §6.1, §6.2, §6.3, §6.4, §6.7 and §6.9 landed
-2026-08-12, and all of §6.6 except the region breakdown with them** — the five
-non-failure run-state summaries (which were B5b), the inline step composer,
-change temp against real medians, Stats → Cost, the ⌘K command palette, the boot
-sequence, and Visual's Wipe/Blink, baseline provenance and drift.
+**Phase C is most of the way in: §6.1, §6.2, §6.3, §6.4, §6.6, §6.7 and §6.9 all
+landed 2026-08-12** — the five non-failure run-state summaries (which were B5b),
+the inline step composer, change temp against real medians, Stats → Cost, the
+whole of Visual triage (Wipe/Blink, baseline provenance, drift and the region
+breakdown), the ⌘K command palette, and the boot sequence. **§6.5 (Stats →
+Report) and §6.8 (the job ticker) are what remain**, both blocked on an open
+question in §8.
 Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
@@ -675,7 +677,7 @@ into rail + viewer + inspector.
 | 3 compare modes | 5 — adds **Wipe** (draggable divider) and **Blink** (600ms alternate) |
 | Masks | Masks drawn *in the frame* as first-class objects, plus a managed list |
 | Threshold | Slider drawn **against the actual frames**, so moving it shows what it will silence |
-| — | "What moved" — per-region breakdown with measured boxes |
+| — | ✅ "What moved" — per-region breakdown with measured boxes |
 | — | Baseline provenance (run, commit, browser, viewport, who accepted, when) |
 | — | Drift — this frame across the last 10 runs |
 
@@ -917,11 +919,10 @@ exports (PDF / CSV / JUnit XML / public link). **This overlaps heavily with the
 MCP plan's Phase 5 emit adapters** — see §7.3. Build the emitters once, surface
 them here.
 
-**6.6 Visual triage.** **Wipe, Blink, baseline provenance and drift done,
-2026-08-12.** The region breakdown is what is left, and it is the one piece that
-needs backend work that does not exist — B8 was split the same way and for the
-same reason, that `visual-view.tsx` is the largest file in the renderer and the
-one where a change is most easily made blind.
+**6.6 Visual triage.** ✅ **Done, 2026-08-12** — Wipe, Blink, baseline
+provenance, drift and the region breakdown. It was split into four PRs for the
+reason B8 was split: `visual-view.tsx` is the largest file in the renderer and
+the one where a change is most easily made blind.
 
 **Why these two first.** A diff map is exact and nearly useless for triage: it
 lights every changed pixel with equal weight, so a font-smoothing shift and a
@@ -1007,6 +1008,49 @@ It needs no new backend: one replay read per run in the window, sharing the
 cache the viewer already fills, keyed per RUN so moving between steps of a run
 costs nothing. That is exactly what separates it from the region breakdown,
 which needs pixel analysis that does not exist yet.
+
+**The region breakdown — "what moved".** The last piece, and the only one that
+needed analysis the backend did not have. A diff map is exact and nearly useless
+for triage: it lights every changed pixel with equal weight, so a paragraph of
+font smoothing and a button that moved 40px look identical. This turns the same
+pixels into a handful of MEASURED BOXES, ranked by how much of the change each
+holds, and says each one's place in words.
+
+- **A coarse grid, not per-pixel connected components, and that is the whole
+  design.** Per-pixel components on a 1280×3000 screenshot produce hundreds of
+  one- and two-pixel specks from antialiasing — which is exactly the noise this
+  exists to see past, reproduced in a new shape and with a ranking that puts
+  real change below it. Snapping to a grid first merges a paragraph's smoothing
+  into one region and keeps a moved button its own, at 40×95 cells rather than
+  3.8M pixels.
+- **The changed-pixel mask is read back off the overlay pixelmatch already
+  drew**, because it writes unchanged pixels as GREYSCALE and changed ones in a
+  marker colour, so "r, g and b are not all equal" identifies them exactly. Both
+  marker colours are now passed explicitly rather than defaulted — the invariant
+  is what makes this safe, and "pixelmatch changed a default" would silently
+  empty every breakdown. The alternative was a second full pixelmatch pass to
+  recover information the first one already wrote down.
+- **The words are half the feature.** "62% of the change, across the top" is a
+  sentence somebody can check against the page; four numbers between 0 and 1 are
+  not. Place is a three-by-three grid measured from each box's CENTRE — a corner
+  reading calls a change through the middle of the page "top" and sends the
+  reader to the wrong place, with nothing visibly wrong since the box on screen
+  is still right.
+- **Boxes are drawn on the DIFF map only.** Current and Baseline are the frames
+  the user is asked to judge, and this screen's standing rule is that what is on
+  them is what the page put there. The list switches modes for you rather than
+  drawing over evidence, and picking a row scrolls its box into view — a
+  full-page frame is routinely three times the height of its pane, so most
+  regions are off-screen and a list that points at what you cannot see reads as
+  broken.
+
+**It uncovered a real bug in the frame overlays, which this fixes.** Masks and
+the element-scope outline were positioned against the CRT's *pane* rather than
+its picture — and the pane is a scroll viewport, so on any screenshot taller
+than it (which is most of them) every overlay drifted by however much the frame
+overflowed. `CRT` now wraps the image and its children in a plate that shrinks
+to the image, which is what `StepScreenshot`'s own comment had claimed was true
+since B8. The region boxes could not have been correct without it.
 
 **6.7 Command palette (⌘K).** ✅ **Done, 2026-08-12.** Run a test, run a tag,
 open a view, record, generate, reach the last failure. Ranking in

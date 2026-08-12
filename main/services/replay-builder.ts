@@ -291,6 +291,11 @@ export function enrichWithVisualDiffs(
         diffFile,
         maskedCount: stepMasks.length || undefined,
         scope,
+        // §6.6's "what moved". Carried only on a changed step: a matched one's
+        // sub-threshold specks would sit in every replay on disk forever and
+        // answer a question nobody asked of a frame that passed.
+        regions: outcome.regions.length > 0 ? outcome.regions : undefined,
+        regionsOmitted: outcome.regionsOmitted || undefined,
       };
     } else {
       step.diff = {

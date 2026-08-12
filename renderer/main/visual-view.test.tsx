@@ -951,3 +951,174 @@ describe("baseline drift (C §6.6)", () => {
     expect(document.querySelector(".gl-drift")).toBeNull();
   });
 });
+
+// ── "What moved" — the region breakdown (C §6.6) ────────────────────────
+//
+// jsdom has no layout engine, so nothing here can check that a box lands on the
+// right part of the frame — that is geometry, and it is why the boxes are
+// positioned against `CRT`'s plate rather than the pane around it. What these
+// cover is the layer above: that the list says the right thing, that picking a
+// row takes you to the mode that draws boxes, and that a highlight belongs to
+// one step rather than leaking across a step change.
+describe("region breakdown (C §6.6)", () => {
+  const REGIONS = [
+    { x: 0.02, y: 0.48, w: 0.3, h: 0.1, pixels: 1800, share: 0.7 },
+    { x: 0.6, y: 0.02, w: 0.35, h: 0.08, pixels: 500, share: 0.2 },
+    { x: 0.05, y: 0.9, w: 0.1, h: 0.05, pixels: 260, share: 0.1 },
+  ];
+
+  function step(over: Record<string, unknown> = {}) {
+    return {
+      index: 0,
+      stepId: "s1",
+      label: "goto example.com",
+      type: "goto",
+      status: "passed",
+      screenshot: "0.png",
+      diff: {
+        state: "changed",
+        ratio: 0.04,
+        threshold: 0.2,
+        diffFile: "0.diff.png",
+        regions: REGIONS,
+        regionsOmitted: 2,
+      },
+      ...over,
+    };
+  }
+
+  function seed(steps: unknown[]) {
+    replays = [summary({ runId: "r1", stepCount: steps.length, changedSteps: 1 })];
+    replayDetail = {
+      testId: "t1",
+      runId: "r1",
+      testName: "Checkout",
+      status: "passed",
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_001_000,
+      failedIndex: null,
+      steps,
+    } as never;
+  }
+
+  beforeEach(() => {
+    seed([step()]);
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+  });
+
+  afterEach(() => {
+    replayDetail = null;
+    shot = null;
+  });
+
+  async function ready() {
+    renderVisual();
+    return await waitFor(() => {
+      const el = document.querySelector(".gl-regions");
+      if (!el) throw new Error("no breakdown");
+      return el as HTMLElement;
+    });
+  }
+
+  it("says how many areas changed, where the largest is, and what it did not list", async () => {
+    const el = await ready();
+    expect(el.textContent).toContain("3 areas changed (+2 smaller)");
+    expect(el.textContent).toContain("Largest is left, 70% of it");
+  });
+
+  it("lists a row per region, ranked", async () => {
+    const el = await ready();
+    const rows = [...el.querySelectorAll(".gl-region-row")];
+    expect(rows).toHaveLength(3);
+    expect(rows.map((r) => r.querySelector(".gl-region-share")?.textContent)).toEqual([
+      "70%",
+      "20%",
+      "10%",
+    ]);
+  });
+
+  it("calls out a dominant area, and only when there is one", async () => {
+    // A change is either somewhere or everywhere. Naming a lead on an evenly
+    // spread change sends the reader to look at the wrong thing.
+    expect((await ready()).textContent).toContain("mostly left");
+  });
+
+  it("draws no boxes until the mode that draws boxes", async () => {
+    // Current and Baseline are the frames the user is asked to JUDGE, and this
+    // screen's standing rule is that what is on them is what the page put there.
+    await ready();
+    // Wait for the FRAME, not just the list: `StepScreenshot` renders nothing
+    // while its image query is in flight, so asserting zero boxes before it
+    // resolves passes against a component that draws them in every mode.
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("waiting");
+    });
+    expect(document.querySelectorAll(".gl-region-box")).toHaveLength(0);
+    fireEvent.click(
+      screen.getAllByRole("button").find((b) => /^Diff$/.test(b.textContent ?? ""))!,
+    );
+    await waitFor(() => {
+      if (document.querySelectorAll(".gl-region-box").length !== 3) throw new Error("waiting");
+    });
+  });
+
+  it("picking a row switches to the mode that draws boxes", async () => {
+    // Otherwise the list points at boxes and leaves the user to work out which
+    // mode shows them.
+    const el = await ready();
+    fireEvent.click(el.querySelectorAll(".gl-region-row")[1]);
+    await waitFor(() => {
+      if (document.querySelectorAll(".gl-region-box").length === 0) throw new Error("waiting");
+    });
+    expect(document.querySelectorAll(".gl-region-box[data-active]")).toHaveLength(1);
+  });
+
+  it("highlights the hovered row's box and no other", async () => {
+    const el = await ready();
+    fireEvent.click(
+      screen.getAllByRole("button").find((b) => /^Diff$/.test(b.textContent ?? ""))!,
+    );
+    await waitFor(() => {
+      if (document.querySelectorAll(".gl-region-box").length !== 3) throw new Error("waiting");
+    });
+    fireEvent.mouseEnter(el.querySelectorAll(".gl-region-row")[2]);
+    const boxes = [...document.querySelectorAll(".gl-region-box")];
+    expect(boxes.map((b) => b.hasAttribute("data-active"))).toEqual([false, false, true]);
+  });
+
+  it("does not carry a highlight from one step onto another", async () => {
+    // The highlight is an INDEX into one step's boxes. Carried across, it lights
+    // an unrelated box — and the step it points into may have fewer, so it can
+    // also point at nothing while the row still reads as picked.
+    // The next step has a region AT THE SAME INDEX, which is what makes the
+    // leak visible: a stale index pointing past the end of a shorter list
+    // highlights nothing and looks fine.
+    seed([
+      step(),
+      step({
+        index: 1,
+        stepId: "s2",
+        diff: { ...step().diff, regions: [REGIONS[0], REGIONS[1], REGIONS[2]] },
+      }),
+    ]);
+    const el = await ready();
+    fireEvent.mouseEnter(el.querySelectorAll(".gl-region-row")[2]);
+    expect(document.querySelectorAll(".gl-region-row[data-active]")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: /next step/i }));
+    await waitFor(() => {
+      if (!screen.getByText(/2 \/ 2/)) throw new Error("waiting");
+    });
+    expect(document.querySelectorAll(".gl-region-row[data-active]")).toHaveLength(0);
+  });
+
+  it("says nothing when the comparison found no regions", async () => {
+    // A matched frame has none, and "0 areas changed" under it would be a
+    // finding about a frame that had none.
+    seed([step({ diff: { state: "match", ratio: 0.0001, threshold: 0.2 } })]);
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("waiting");
+    });
+    expect(document.querySelector(".gl-regions")).toBeNull();
+  });
+});

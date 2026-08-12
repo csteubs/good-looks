@@ -244,6 +244,15 @@ export const REPLAY: RunReplay = {
         threshold: 0.2,
         diffFile: "1.diff.png",
         maskedCount: 1,
+        // §6.6's "what moved". Three areas of unequal weight, so the list has a
+        // ranking to show and one of them is dominant — a fixture where every
+        // region is the same size exercises the layout and none of the reading.
+        regions: [
+          { x: 0.02, y: 0.48, w: 0.32, h: 0.12, pixels: 18_400, share: 0.71 },
+          { x: 0.55, y: 0.02, w: 0.42, h: 0.09, pixels: 5_200, share: 0.2 },
+          { x: 0.06, y: 0.88, w: 0.14, h: 0.06, pixels: 2_300, share: 0.09 },
+        ],
+        regionsOmitted: 2,
       },
     },
     {

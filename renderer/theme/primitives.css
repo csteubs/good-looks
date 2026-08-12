@@ -437,6 +437,16 @@
   position: relative;
 }
 
+/* Shrink-wraps the image, so a normalized overlay inside it is measured
+   against the PICTURE rather than against the scroll viewport around it.
+   `width: max-content` with a `max-width` cap is what makes it track the
+   image's rendered width instead of stretching to the screen. */
+.gl-crt-plate {
+  position: relative;
+  width: max-content;
+  max-width: 100%;
+}
+
 .gl-crt-img {
   display: block;
   max-width: 100%;

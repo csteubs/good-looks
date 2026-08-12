@@ -32,7 +32,15 @@ export interface CRTProps {
   /** What this frame IS: which run, which viewport, which engine. */
   caption?: React.ReactNode;
   /** An arbitrary frame — a canvas, a diff layer, a stack of masks. Same rule
-   *  applies: whatever goes in here is shown untouched. */
+   *  applies: whatever goes in here is shown untouched.
+   *
+   *  IT IS POSITIONED AGAINST THE IMAGE, NOT AGAINST THE SCREEN. Everything
+   *  callers put here is an annotation of the frame — a mask, an element
+   *  outline, a measured region — and every one of them is stored in
+   *  normalized (0–1) coordinates, so "50% down" has to mean half way down the
+   *  PICTURE. The screen is a scroll viewport (a full-page screenshot is
+   *  routinely three times its height), so positioning against it silently
+   *  drifts by however much the frame overflows, which is most of it. */
   children?: React.ReactNode;
   className?: string;
 }
@@ -41,10 +49,15 @@ export function CRT({ src, alt, caption, children, className }: CRTProps): React
   return (
     <figure className={["gl-crt", className].filter(Boolean).join(" ")} data-gl="crt">
       <div className="gl-crt-screen" data-gl-crt-screen>
-        {src !== undefined ? (
-          <img className="gl-crt-img" src={src} alt={alt ?? ""} draggable={false} />
-        ) : null}
-        {children}
+        {/* The one box that is exactly the image. See `children` above: it is
+            what makes a normalized overlay land where it says it does, and it
+            scrolls with the frame rather than floating over the viewport. */}
+        <div className="gl-crt-plate">
+          {src !== undefined ? (
+            <img className="gl-crt-img" src={src} alt={alt ?? ""} draggable={false} />
+          ) : null}
+          {children}
+        </div>
       </div>
       {caption !== undefined ? (
         <figcaption className="gl-crt-caption">{caption}</figcaption>

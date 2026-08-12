@@ -16,6 +16,67 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — "What moved", and the overlay bug it exposed (C §6.6)
+
+The last §6.6 piece and the only one needing analysis the backend did not have.
+A diff map is exact and nearly useless for triage: it lights every changed pixel
+with equal weight, so a paragraph of font smoothing and a button that moved 40px
+look identical. The breakdown turns the same pixels into a handful of measured
+boxes, ranked by how much of the change each holds, and says each one's place in
+words.
+
+**A coarse grid, not per-pixel connected components.** This is the decision the
+whole thing turns on. Per-pixel components on a 1280×3000 screenshot produce
+hundreds of one- and two-pixel specks from antialiasing — which is exactly the
+noise this exists to see past, reproduced in a new shape and with a ranking that
+puts real change below it. Snapping to a 48-cell grid first merges a paragraph's
+smoothing into one region and keeps a moved button its own, at 40×95 cells
+rather than 3.8M pixels. The fill is iterative, because a full-page change is
+one component covering every cell and that is a stack overflow as recursion, and
+four-neighbour, because diagonal-only contact means two changes that meet at a
+corner, which reads as two things to a person looking at the page.
+
+**The changed-pixel mask is read back off the overlay, not recomputed.**
+pixelmatch draws unchanged pixels as greyscale — one luminance value written to
+r, g and b — and changed ones in a marker colour, so "r, g and b are not all
+equal" identifies a changed pixel exactly. That makes the second pass a cheap
+scan of a buffer we already have rather than a second full pixelmatch, which
+would double the most expensive step of capture to recover information the first
+one already wrote down. The invariant is load-bearing, so both marker colours
+are now passed explicitly: they are the library's own defaults, written down,
+because "pixelmatch changed a default colour" would silently empty every
+breakdown in the app with nothing failing.
+
+**The words are half the feature.** A list of normalized rectangles is a diff map
+with fewer entries. "62% of the change, across the top" is a sentence somebody
+can check against the page. Place comes from a three-by-three grid measured from
+each box's CENTRE — a corner reading calls a change through the middle of the
+page "top" and sends the reader to look in the wrong place, and nothing about
+that failure is visible, since the box on screen is still right. A separate
+"this box spans the axis, drop the word" rule was written and then deleted: it
+was redundant with centring everywhere except a wide box jammed against an edge,
+where the word it removed was the useful one. The revert-check is what surfaced
+that — the rule's own test passed with the rule disabled.
+
+**The boxes exposed a real bug in the frame overlays.** Masks and the
+element-scope outline were laid beside the `CRT` bezel and positioned against the
+PANE — and the pane is a scroll viewport, since a full-page screenshot is
+routinely three times its height. Every overlay therefore drifted by however much
+the frame overflowed, which is most of it. `CRT` now wraps the image and its
+children in a plate that shrinks to the image, which is what `StepScreenshot`'s
+own comment had claimed was true since B8. Nothing in the gate could have caught
+it: jsdom has no layout engine and the `dom` project runs with `css: false`. It
+was found by looking at the screen, which is the step the working rules call the
+most easily skipped one.
+
+**Two more things only the preview caught.** A `useCallback` and a `useEffect`
+written below this component's two early returns are conditional hooks — React
+rejects them outright and the whole view went to its error boundary. And picking
+a list row scrolled the box into view with `scrollIntoView`, which walks every
+scrollable ancestor: it slid the page as well, pulled the row out from under the
+pointer, fired its `mouseleave` and dropped the highlight the click had just set.
+Scrolling the CRT's own screen is both narrower and what the user asked for.
+
 ### 2026-08-12 — Drift, and the two pixels that decide whether the app is lying (C §6.6)
 
 Drift is the last §6.6 piece that needed no new backend: this frame across its
