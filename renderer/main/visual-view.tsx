@@ -433,7 +433,27 @@ function nearestPresetIndex(value: number | undefined): number {
   return best;
 }
 
-function ThresholdControl({ testId }: { testId: string }) {
+/**
+ * How many of THIS RUN's frames a threshold would flag.
+ *
+ * Pure and exported so the arithmetic is testable without a slider: the whole
+ * value of the readout is that the number is right, and an off-by-one on a
+ * boundary ratio is invisible on screen.
+ *
+ * STRICTLY GREATER, matching the comparator that produced these ratios — a
+ * frame exactly AT the threshold is not flagged. Guessing `>=` here would make
+ * the preview disagree with the next run by one frame, which is worse than no
+ * preview at all because it would be believed.
+ */
+export function framesOverThreshold(
+  steps: { diff?: { ratio?: number } }[],
+  thresholdPct: number,
+): number {
+  return steps.filter((s) => s.diff?.ratio !== undefined && s.diff.ratio * 100 > thresholdPct)
+    .length;
+}
+
+function ThresholdControl({ testId, steps }: { testId: string; steps: ReplayStep[] }) {
   const qc = useQueryClient();
   const thresholdQuery = useQuery({
     queryKey: ["visualThreshold", testId],
@@ -466,6 +486,14 @@ function ThresholdControl({ testId }: { testId: string }) {
   const pct = THRESHOLD_PRESETS[index];
   const label = THRESHOLD_LABELS[index];
 
+  // DRAWN AGAINST THE ACTUAL FRAMES (REDESIGN §B8). The slider used to be a
+  // number with no consequence on screen: "0.20%" says nothing about whether
+  // moving it silences the change you are looking at or every change you have.
+  // Counting THIS run's frames makes the setting concrete, and it updates from
+  // local `index` rather than the committed value so it answers while you drag.
+  const flagged = framesOverThreshold(steps, pct);
+  const measured = steps.filter((s) => s.diff?.ratio !== undefined).length;
+
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -487,6 +515,16 @@ function ThresholdControl({ testId }: { testId: string }) {
             disabled={thresholdQuery.isLoading}
             className="w-44"
           />
+          {/* Only once something has been measured. On a run with no captured
+              comparison this would read "0 of 0", which looks like a broken
+              readout rather than an empty one. */}
+          {measured > 0 ? (
+            <span className="gl-threshold-readout" data-flagged={flagged > 0 ? "" : undefined}>
+              {flagged === 0
+                ? `silences all ${measured}`
+                : `flags ${flagged} of ${measured}`}
+            </span>
+          ) : null}
         </div>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-[220px] leading-snug">
@@ -1176,7 +1214,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         >
           Masks & baselines
         </Button>
-        <ThresholdControl testId={summary.testId} />
+        <ThresholdControl testId={summary.testId} steps={steps} />
         <div className="flex shrink-0 items-center gap-1">
           <Button
             iconOnly

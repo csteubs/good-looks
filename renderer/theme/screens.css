@@ -2384,3 +2384,23 @@
   color: var(--gl-amber);
   white-space: nowrap;
 }
+
+/* What the threshold would do to THIS run's frames. Mono and tabular so the
+   number does not shimmy as it changes under a drag — the whole point is that
+   it updates live, and a figure that jumps sideways while you move a slider is
+   harder to read than one that does not move at all. */
+.gl-threshold-readout {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+/* Amber once it is flagging something — caution, matching the frame rail's own
+   change marker, because it is reporting the same fact at a different scale. */
+.gl-threshold-readout[data-flagged] {
+  color: var(--gl-amber);
+}

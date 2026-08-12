@@ -702,8 +702,19 @@ The bars take the palette (phos/red for the two real outcomes, neutral for a
 frame that was never attempted, an amber inset rail to mark a change — caution,
 not an outcome, since the frame still passed).
 
-Still to do in B8: the mask list, and the threshold slider drawn against the
-frames.
+✅ **The threshold, drawn against the frames, 2026-08-11.** The slider used to be
+a number with no consequence on screen — "0.20%" says nothing about whether
+moving it silences the change you are looking at or every change you have. It
+now reads `flags 1 of 2` beside itself, counted over THIS run's frames and
+updated from the drag rather than the committed value, so it answers while you
+move it. The comparison is strictly-greater, matching the comparator that
+produced the ratios: a preview that disagreed with the next run by one frame
+would be worse than none, because it would be believed. Pinned by four tests on
+the pure `framesOverThreshold`.
+
+**The mask list already existed** — `MasksBaselinesDialog` is the per-test
+managed view, and masks are already drawn in the frame by the ignore-region
+editor. What B8 leaves is a RESKIN of that dialog, not a capability.
 
 **One implementation note carried over from the mockup and worth keeping:** the
 diff region boxes are *measured after layout*, never authored as percentages,
