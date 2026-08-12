@@ -558,6 +558,17 @@ export type ReplayStepStatus = "passed" | "failed" | "skipped" | "unknown";
 /** Visual-diff outcome for a step (Phase 3). */
 export type VisualDiffState = "new-baseline" | "match" | "changed" | "unable";
 
+/** One measured area of change. Mirror of the backend's own type; kept
+ *  structural here so the renderer's record types import nothing from `main/`. */
+export interface DiffRegion {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  pixels: number;
+  share: number;
+}
+
 export interface VisualDiff {
   state: VisualDiffState;
   /** fraction of pixels changed (0–1), for match/changed. */
@@ -572,6 +583,15 @@ export interface VisualDiff {
   maskedCount?: number;
   /** "element" when the step was compared element-scoped rather than page-wide. */
   scope?: "page" | "element";
+  /** Where the change is, largest first — REDESIGN §6.6's "what moved".
+   *  Normalized (0–1) against the compared image, like every other rect in
+   *  this app, so the viewer can lay a box over the frame at any size.
+   *  Recorded only for "changed": it is what the user triages, and a matched
+   *  step's sub-threshold specks are noise stored in every replay forever. */
+  regions?: DiffRegion[];
+  /** Regions found beyond the cap and folded away, so the UI can say "and 12
+   *  smaller" rather than implying the list is everything. */
+  regionsOmitted?: number;
 }
 
 /** A normalized (0–1) rectangle in page/viewport space. */

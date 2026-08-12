@@ -34,6 +34,7 @@ import {
   LLM_CONFIG,
   LLM_STATUS,
   REPLAY,
+  REPLAY_HISTORY,
   REPLAY_SUMMARIES,
   RUNS,
   RUN_LOG,
@@ -562,8 +563,12 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     // preview that cannot run Playwright, and it also meant the largest file in
     // the renderer only ever rendered its empty state — see REPLAY.
     "artifacts:list": (): RunReplaySummary[] => REPLAY_SUMMARIES,
+    // The history matters as much as the current run: the drift strip (§6.6) is
+    // a statement about a SERIES, and a bridge that answers for one run leaves
+    // it rendering nothing.
     "artifacts:getReplay": (p): RunReplay | null =>
-      p?.testId === REPLAY.testId && p?.runId === REPLAY.runId ? REPLAY : null,
+      [REPLAY, ...REPLAY_HISTORY].find((r) => r.testId === p?.testId && r.runId === p?.runId) ??
+      null,
     /** The frames. `readShot` is asked for the CURRENT or the DIFF image and
      *  told which by filename, so the two are told apart on `.diff.` rather
      *  than by guessing from the step — a viewer showing the current frame in

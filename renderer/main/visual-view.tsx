@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertDialog,
   Badge,
@@ -47,6 +47,15 @@ import { api } from "../lib/api";
 import { countA11ySteps } from "../lib/a11y-format";
 import { blinkIntervalMs, wipeAfterKey, wipeFromPointer } from "../lib/visual-compare";
 import { baselineProvenance, isStale, provenanceLine } from "../lib/baseline-provenance";
+import { dominantRegion, formatShare, regionPlace, regionsLine } from "../lib/diff-regions";
+import {
+  DRIFT_WINDOW,
+  type DriftRun,
+  barHeight,
+  computeDrift,
+  driftLine,
+  driftPointsFor,
+} from "../lib/baseline-drift";
 import { A11yBadge, A11yViolationList } from "./a11y-violations";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import type {
@@ -55,6 +64,7 @@ import type {
   ReplayStep,
   ReplayStepStatus,
   RunNoticeKind,
+  DiffRegion,
   RunReplay,
   RunReplaySummary,
   VisualDiff,
@@ -253,6 +263,240 @@ function useBaselineCaption(testId: string, stepId: string): React.ReactNode {
 }
 
 /**
+ * "What moved" — the measured boxes, laid over the diff map. REDESIGN §6.6.
+ *
+ * DIFF MODE ONLY, and that is a decision rather than an omission. Current and
+ * Baseline are the frames the user is being asked to JUDGE, and this screen's
+ * standing rule is that anything on screen there is something the page put
+ * there — the same rule the CRT bezel and the neutral mode switch exist for.
+ * The diff map is already an annotation, so boxes belong on it; the list below
+ * switches modes for you rather than drawing over evidence.
+ */
+function RegionBoxes({
+  regions,
+  active,
+  onHover,
+  scrollTo,
+  onScrolled,
+}: {
+  regions: readonly DiffRegion[];
+  active: number | null;
+  onHover: (index: number | null) => void;
+  /** A box the list asked to be shown, or null. */
+  scrollTo: number | null;
+  onScrolled: () => void;
+}) {
+  const boxes = React.useRef<(HTMLDivElement | null)[]>([]);
+
+  // THE FRAME SCROLLS, so picking a row has to bring its box into view. A
+  // full-page screenshot is routinely three times the height of the pane it is
+  // shown in, which means most regions are off-screen at any moment: without
+  // this, the list points confidently at things the user cannot see and reads
+  // as broken. Cleared by the parent after, so re-picking the same row works.
+  React.useEffect(() => {
+    if (scrollTo === null) return;
+    let frames = 0;
+    let raf = 0;
+    // WAITING FOR THE FRAME TO HAVE A SIZE IS THE WHOLE TRICK. Picking a row
+    // also switches to Diff, which swaps the image `src`; until that loads the
+    // plate has no height, every box is zero-tall, and `scrollIntoView` on a
+    // zero-tall box silently does nothing at all. The bug is invisible — the
+    // row highlights, the box highlights, and the frame just does not move —
+    // and it only appears when the mode CHANGES, so it survives any amount of
+    // testing from inside Diff.
+    const tick = () => {
+      const el = boxes.current[scrollTo];
+      const screen = el?.closest("[data-gl-crt-screen]") as HTMLElement | null;
+      if (el && screen && el.getBoundingClientRect().height > 0) {
+        // THE FRAME MOVES, THE PAGE DOES NOT. `scrollIntoView` walks every
+        // scrollable ancestor, so it also slid the whole view — which pulled
+        // the row out from under the pointer, fired its `mouseleave`, and
+        // dropped the highlight the click had just set. Scrolling the CRT's own
+        // screen is both the narrower action and the one the user asked for.
+        const er = el.getBoundingClientRect();
+        const sr = screen.getBoundingClientRect();
+        screen.scrollTop += er.top - sr.top - (sr.height - er.height) / 2;
+        screen.scrollLeft += er.left - sr.left - (sr.width - er.width) / 2;
+        onScrolled();
+        return;
+      }
+      // Bounded: an image that never loads must not leave a frame loop running.
+      if (frames++ < 30) raf = requestAnimationFrame(tick);
+      else onScrolled();
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [scrollTo, onScrolled]);
+
+  return (
+    <>
+      {regions.map((r, i) => (
+        <div
+          key={`${r.x}:${r.y}:${i}`}
+          ref={(el) => {
+            boxes.current[i] = el;
+          }}
+          className="gl-region-box"
+          data-active={active === i ? "" : undefined}
+          style={{
+            left: pctStr(r.x),
+            top: pctStr(r.y),
+            width: pctStr(r.w),
+            height: pctStr(r.h),
+          }}
+          onMouseEnter={() => onHover(i)}
+          onMouseLeave={() => onHover(null)}
+          title={`${regionPlace(r)} — ${formatShare(r.share)} of the change`}
+        >
+          <span className="gl-region-tag">{i + 1}</span>
+        </div>
+      ))}
+    </>
+  );
+}
+
+/**
+ * The ranked list, under the step row.
+ *
+ * The boxes on the frame say WHERE; this says which of them matters, in words,
+ * for a reader who is not currently looking at the frame — the state anybody
+ * scanning a run report is in. Rows are buttons: picking one is how you get
+ * from "62% of it, top left" to the picture, and it switches to Diff itself
+ * rather than leaving the user to work out which mode draws boxes.
+ */
+function RegionBreakdown({
+  diff,
+  active,
+  onHover,
+  onPick,
+}: {
+  diff: VisualDiff;
+  active: number | null;
+  onHover: (index: number | null) => void;
+  onPick: (index: number) => void;
+}) {
+  const regions = diff.regions ?? [];
+  if (regions.length === 0) return null;
+  const omitted = diff.regionsOmitted ?? 0;
+  const lead = dominantRegion(regions);
+
+  return (
+    <div className="gl-regions">
+      <div className="gl-regions-head">
+        <Text variant="small" color="secondary" className="gl-regions-line">
+          {regionsLine(regions, omitted)}
+        </Text>
+        {/* Only when one area really is the answer. A change that is spread
+            evenly has no lead to name, and naming one anyway sends the reader
+            to look at the wrong thing. */}
+        {lead ? (
+          <Badge color="orange" className="shrink-0">
+            mostly {regionPlace(lead)}
+          </Badge>
+        ) : null}
+      </div>
+      <div className="gl-regions-list">
+        {regions.map((r, i) => (
+          <button
+            key={`${r.x}:${r.y}:${i}`}
+            type="button"
+            className="gl-region-row"
+            data-active={active === i ? "" : undefined}
+            onMouseEnter={() => onHover(i)}
+            onMouseLeave={() => onHover(null)}
+            onFocus={() => onHover(i)}
+            onBlur={() => onHover(null)}
+            onClick={() => onPick(i)}
+            aria-label={`Show area ${i + 1}, ${regionPlace(r)}, ${formatShare(r.share)} of the change`}
+          >
+            <span className="gl-region-rank">{i + 1}</span>
+            <span className="gl-region-place">{regionPlace(r)}</span>
+            <span className="gl-region-share">{formatShare(r.share)}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Drift — this frame across its recent runs. REDESIGN §6.6.
+ *
+ * The rest of this screen answers "did this frame change?" for ONE run. Nothing
+ * in the app could answer the question that follows: is it changing repeatedly?
+ * Those have different fixes. A frame that changed once is a change to look at;
+ * a frame over threshold in six of the last ten runs is a baseline nobody
+ * re-pinned, and reading it one run at a time makes one standing problem look
+ * like six separate small ones.
+ *
+ * WHAT IT COSTS. One replay read per run in the window, shared with the
+ * `["replay", …]` cache the viewer already fills, so the selected run is free
+ * and the rest are cached for the session. They are keyed per RUN, not per
+ * step, so moving through the steps of a run costs nothing after the first.
+ *
+ * NOTHING IS DRAWN UNTIL THE WHOLE WINDOW HAS ARRIVED. A partial series has a
+ * verdict of its own, and watching it read "drifting" and then settle as the
+ * remaining runs land would be worse than a moment of nothing.
+ */
+function StepDrift({ testId, stepId }: { testId: string; stepId: string }) {
+  const summaries = useQuery({ queryKey: ["replays"], queryFn: api.artifacts.list }).data;
+  const recent = React.useMemo(
+    () =>
+      (summaries ?? [])
+        .filter((s) => s.testId === testId)
+        .sort((a, b) => b.startedAt - a.startedAt)
+        .slice(0, DRIFT_WINDOW),
+    [summaries, testId],
+  );
+
+  const replays = useQueries({
+    queries: recent.map((s) => ({
+      queryKey: ["replay", s.testId, s.runId],
+      queryFn: () => api.artifacts.getReplay(s.testId, s.runId),
+      staleTime: 5 * 60 * 1000,
+    })),
+  });
+
+  // A strip of one run is not a series, and drawing it would imply it is.
+  if (recent.length < 2 || replays.some((r) => r.isPending)) return null;
+
+  const runs: DriftRun[] = replays
+    .map((r) => r.data as RunReplay | null)
+    .filter((r): r is RunReplay => r !== null)
+    .map((r) => ({ runId: r.runId, startedAt: r.startedAt, steps: r.steps }));
+  const drift = computeDrift(driftPointsFor(runs, stepId));
+
+  return (
+    <div className="gl-drift" data-verdict={drift.verdict}>
+      <div className="gl-drift-strip" aria-hidden>
+        {drift.points.map((p) => {
+          const h = barHeight(p.ratio, drift.peak);
+          return (
+            <span key={p.runId} className="gl-drift-slot">
+              {h === null ? (
+                // A gap, not a bar. A run with no reading did not report an
+                // identical frame — it reported nothing, and a zero-height bar
+                // would be the app making a claim on its behalf.
+                <span className="gl-drift-gap" />
+              ) : (
+                <span
+                  className="gl-drift-bar"
+                  data-changed={p.changed ? "" : undefined}
+                  style={{ height: `${h * 100}%` }}
+                />
+              )}
+            </span>
+          );
+        })}
+      </div>
+      <Text variant="small" color="tertiary" className="gl-drift-line">
+        {driftLine(drift)}
+      </Text>
+    </div>
+  );
+}
+
+/**
  * Wipe and Blink — the two modes that need BOTH frames at once. REDESIGN §6.6.
  *
  * A diff map is exact and nearly useless for triage: it lights every changed
@@ -342,7 +586,9 @@ function CompareShot({
           // leaving it up while the current frame is showing would attribute
           // one frame's provenance to the other twice a second.
           caption={showBaseline ? caption : undefined}
-        />
+        >
+          {children}
+        </CRT>
         {/* The label is not decoration: with the frames alternating, "which one
             am I looking at" is otherwise unanswerable, and a user who cannot
             answer it cannot say which direction the change went. */}
@@ -358,7 +604,6 @@ function CompareShot({
             </button>
           ) : null}
         </div>
-        {children}
       </div>
     );
   }
@@ -371,7 +616,12 @@ function CompareShot({
           src={baseline}
           alt={`Baseline for step ${step.index + 1}`}
           caption={caption}
-        />
+        >
+          {/* On the BASELINE plate, which is the one that is never clipped —
+              an overlay on the top frame would be sliced in half by the
+              divider, which makes it look like the change stops there. */}
+          {children}
+        </CRT>
         {/* The current frame on top, clipped. `clip-path` and not opacity: the
             premise of this mode is that any difference on screen is a
             difference in the page, and a partly-transparent layer invents one. */}
@@ -419,7 +669,6 @@ function CompareShot({
         <span className="gl-visual-wipe-label gl-visual-wipe-left">Current</span>
         <span className="gl-visual-wipe-label gl-visual-wipe-right">Baseline</span>
       </div>
-      {children}
     </div>
   );
 }
@@ -435,9 +684,11 @@ function StepScreenshot({
   runId: string;
   step: ReplayStep;
   mode: ShotMode;
-  /** Overlay rendered on top of the image, aligned to its rendered box (the
-   *  wrapper shrinks to the image), so percentage-positioned children line up
-   *  with normalized mask coordinates. */
+  /** Overlay rendered on top of the image. Handed to `CRT` rather than laid
+   *  beside it, because CRT's plate is the one box that IS the image — a
+   *  sibling of the bezel is positioned against the pane, which drifts by
+   *  however much a tall frame overflows its scroll viewport, i.e. most of it
+   *  on any full-page screenshot. */
   children?: React.ReactNode;
 }) {
   // Only in `baseline` mode — the caption says what the BASELINE is, and under
@@ -519,8 +770,9 @@ function StepScreenshot({
         src={src}
         alt={alt}
         caption={mode === "baseline" ? caption : undefined}
-      />
-      {children}
+      >
+        {children}
+      </CRT>
     </div>
   );
 }
@@ -1225,6 +1477,23 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
 
   const [current, setCurrent] = React.useState(0);
   const [mode, setMode] = React.useState<ShotMode>("current");
+  // Shared between the boxes on the frame and the ranked list below it: they
+  // are two views of one set, and highlighting in only one direction reads as
+  // the list being decorative. Keyed by the step that owns it — see `setActive`.
+  const [activeRegion, setActiveRegion] = React.useState<{
+    stepId: string;
+    index: number;
+  } | null>(null);
+  /** A box the list asked to be shown. One-shot: cleared once scrolled to. */
+  const [scrollToRegion, setScrollToRegion] = React.useState<number | null>(null);
+  // Declared HERE, with the other hooks, because this component early-returns
+  // twice below (loading, and no replay) — a `useCallback` after those is a
+  // conditional hook, which React rejects outright and which took the whole
+  // view down in the preview when this was first written further down.
+  // Stable, because it is an effect dependency in `RegionBoxes`: an inline
+  // arrow re-runs the scroll on every render and fights the user's own
+  // scrolling.
+  const clearRegionScroll = React.useCallback(() => setScrollToRegion(null), []);
   // Step IDs whose baseline was accepted in this session — used to hide the
   // per-step "Accept New Baseline" button after a run- or step-level accept.
   const [acceptedSteps, setAcceptedSteps] = React.useState<Set<string>>(() => new Set());
@@ -1357,9 +1626,18 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   }
 
   const idx = clamp(current);
-
-
   const step = steps[idx];
+
+  // A region highlight is an INDEX into ONE step's boxes, so it is stored with
+  // the step it belongs to and read back only for that step. The obvious
+  // alternative — an index plus an effect that clears it on step change — is a
+  // hook below two early returns in this component, which React rejects
+  // outright ("rendered more hooks than during the previous render") and which
+  // took down the whole view in the preview. Carrying the owner makes a stale
+  // highlight simply not match, with nothing to remember to clear.
+  const activeIndex = activeRegion?.stepId === step.stepId ? activeRegion.index : null;
+  const setActive = (index: number | null) =>
+    setActiveRegion(index === null ? null : { stepId: step.stepId, index });
   // Test-wide masks (stepId null) plus any pinned to this step.
   const stepMasks = allMasks.filter((m) => m.stepId === null || m.stepId === step.stepId);
   const changedCount = steps.filter((s) => s.diff?.state === "changed").length;
@@ -1654,6 +1932,17 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
                       title="Only this region is compared"
                     />
                   ) : null}
+                  {/* §6.6's measured boxes, on the diff map only — see
+                      `RegionBoxes`. */}
+                  {effectiveMode === "diff" && step.diff?.regions ? (
+                    <RegionBoxes
+                      regions={step.diff.regions}
+                      active={activeIndex}
+                      onHover={setActive}
+                      scrollTo={scrollToRegion}
+                      onScrolled={clearRegionScroll}
+                    />
+                  ) : null}
                   <MaskLayer
                     masks={stepMasks}
                     editing={masking}
@@ -1774,6 +2063,25 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           </Text>
         )}
       </div>
+
+      {/* Drift, under the step row and above everything the step row leads to:
+          it is context for the badge directly above it, not a finding of its
+          own. Offered only for a step that was actually compared — a step with
+          no `diff` has no series to have. */}
+      {step.diff ? (
+        <RegionBreakdown
+          diff={step.diff}
+          active={activeIndex}
+          onHover={setActive}
+          onPick={(index) => {
+            setMode("diff");
+            setActive(index);
+            setScrollToRegion(index);
+          }}
+        />
+      ) : null}
+
+      {step.diff ? <StepDrift testId={summary.testId} stepId={step.stepId} /> : null}
 
       <IssueComposeDialog
         source={

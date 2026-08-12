@@ -16,6 +16,122 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — "What moved", and the overlay bug it exposed (C §6.6)
+
+The last §6.6 piece and the only one needing analysis the backend did not have.
+A diff map is exact and nearly useless for triage: it lights every changed pixel
+with equal weight, so a paragraph of font smoothing and a button that moved 40px
+look identical. The breakdown turns the same pixels into a handful of measured
+boxes, ranked by how much of the change each holds, and says each one's place in
+words.
+
+**A coarse grid, not per-pixel connected components.** This is the decision the
+whole thing turns on. Per-pixel components on a 1280×3000 screenshot produce
+hundreds of one- and two-pixel specks from antialiasing — which is exactly the
+noise this exists to see past, reproduced in a new shape and with a ranking that
+puts real change below it. Snapping to a 48-cell grid first merges a paragraph's
+smoothing into one region and keeps a moved button its own, at 40×95 cells
+rather than 3.8M pixels. The fill is iterative, because a full-page change is
+one component covering every cell and that is a stack overflow as recursion, and
+four-neighbour, because diagonal-only contact means two changes that meet at a
+corner, which reads as two things to a person looking at the page.
+
+**The changed-pixel mask is read back off the overlay, not recomputed.**
+pixelmatch draws unchanged pixels as greyscale — one luminance value written to
+r, g and b — and changed ones in a marker colour, so "r, g and b are not all
+equal" identifies a changed pixel exactly. That makes the second pass a cheap
+scan of a buffer we already have rather than a second full pixelmatch, which
+would double the most expensive step of capture to recover information the first
+one already wrote down. The invariant is load-bearing, so both marker colours
+are now passed explicitly: they are the library's own defaults, written down,
+because "pixelmatch changed a default colour" would silently empty every
+breakdown in the app with nothing failing.
+
+**The words are half the feature.** A list of normalized rectangles is a diff map
+with fewer entries. "62% of the change, across the top" is a sentence somebody
+can check against the page. Place comes from a three-by-three grid measured from
+each box's CENTRE — a corner reading calls a change through the middle of the
+page "top" and sends the reader to look in the wrong place, and nothing about
+that failure is visible, since the box on screen is still right. A separate
+"this box spans the axis, drop the word" rule was written and then deleted: it
+was redundant with centring everywhere except a wide box jammed against an edge,
+where the word it removed was the useful one. The revert-check is what surfaced
+that — the rule's own test passed with the rule disabled.
+
+**The boxes exposed a real bug in the frame overlays.** Masks and the
+element-scope outline were laid beside the `CRT` bezel and positioned against the
+PANE — and the pane is a scroll viewport, since a full-page screenshot is
+routinely three times its height. Every overlay therefore drifted by however much
+the frame overflowed, which is most of it. `CRT` now wraps the image and its
+children in a plate that shrinks to the image, which is what `StepScreenshot`'s
+own comment had claimed was true since B8. Nothing in the gate could have caught
+it: jsdom has no layout engine and the `dom` project runs with `css: false`. It
+was found by looking at the screen, which is the step the working rules call the
+most easily skipped one.
+
+**Two more things only the preview caught.** A `useCallback` and a `useEffect`
+written below this component's two early returns are conditional hooks — React
+rejects them outright and the whole view went to its error boundary. And picking
+a list row scrolled the box into view with `scrollIntoView`, which walks every
+scrollable ancestor: it slid the page as well, pulled the row out from under the
+pointer, fired its `mouseleave` and dropped the highlight the click had just set.
+Scrolling the CRT's own screen is both narrower and what the user asked for.
+
+### 2026-08-12 — Drift, and the two pixels that decide whether the app is lying (C §6.6)
+
+Drift is the last §6.6 piece that needed no new backend: this frame across its
+recent runs, as a 20px strip under the step row. Every other mode on this screen
+answers "did this frame change?" for ONE run, and nothing in the app could
+answer the question that follows — is it changing *repeatedly*? Those have
+different fixes. A frame that changed once is a change to look at; a frame over
+threshold in six of the last ten runs is a baseline nobody re-pinned, and reading
+it one run at a time makes one standing problem look like six separate small
+ones.
+
+**The failure this feature can have is a lie, not a bug.** A run that measured
+nothing — a skipped step, capture off, a run predating the step, an `unable`
+comparison — has no reading, and drawing it as a zero-height bar says "this frame
+was identical that time", which is a claim nobody made. The two readings live a
+couple of pixels apart in the same 20px strip, so the whole distinction is
+geometry.
+
+**It shipped collapsed, and only looking at it caught that.** `MIN_BAR` at 0.06
+of a 20px strip floors a measured bar at ONE PIXEL, which in the preview was
+visually identical to the one-pixel dash meaning no reading. Nothing in the gate
+saw it: `baseline-drift.ts`'s own tests assert `barHeight` returns `null` rather
+than a number, which is correct and says nothing about whether the two look
+alike; jsdom has no layout engine; and the `dom` Vitest project runs with
+`css: false`, so the entire stylesheet could be deleted with every rendered test
+still passing. The fix is two properties, and either alone still leaves two
+dashes on the same baseline — the floor is thick enough to read as a bar, and the
+gap marker floats clear of the baseline every bar stands on. `check:drift-gap`
+pins both at source level, which is the same reason `check:scroll-layout` and
+`check:clickable-chrome` exist.
+
+**A single change is never drift, and that guarantee is emergent.** One edit, one
+moved frame, one re-pin is the ordinary healthy case and the thing a readout like
+this most easily cries wolf about. The first cut spelled it out as
+`changedRuns >= 2 && share >= DRIFT_SHARE` — and mutating that clause away left
+every test passing, because it is unreachable: the smallest readable window is
+four runs, so one change is at most 0.25, already under the 0.4 share. An
+unreachable branch that reads like a rule is worse than no branch, so it went,
+and a test now pins the property across every window size from four to a hundred.
+That test fails if either constant is lowered, which is the only warning anyone
+would get.
+
+**Two smaller calls.** Bars scale to the window's own PEAK rather than to 100%,
+because diff ratios here are small — a 4% change is a large one — and a full axis
+draws every bar as the same flat line. And only `drifting` takes a colour, in the
+amber the changed bars already use: it is the one reading that asks for an
+action, and a readout that colours its good news too is one where colour has
+stopped meaning anything.
+
+**The preview needed fixtures before the feature existed on screen at all.**
+Drift is a statement about a series, so one run in `artifacts:list` renders
+nothing — the same trap as that handler returning `[]` before B8, one level up.
+`REPLAY_HISTORY` adds eight earlier runs cloned from `REPLAY`, with one step
+drifting, one settled after a single change and one `unable` throughout, so all
+three verdicts and the gap marker are visible without a week of real history.
 ### 2026-08-12 — The recorder starts asking the page whether its locator is unique
 
 A test named "Will Pass Firefox" failed every run with `strict mode violation: getByText('Browser') resolved to 2 elements`. The step looked completely ordinary in the trainer, and the site was not at fault.
