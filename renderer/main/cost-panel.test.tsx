@@ -2,16 +2,21 @@
 //
 // The arithmetic is tested in `renderer/lib/cost-model.test.ts`. What is here is
 // the thing that makes the arithmetic trustworthy: the two assumptions are ON
-// SCREEN, they are editable in place, and editing them moves the figures. A
-// panel that showed the same numbers with its assumptions hidden in Settings
-// would pass every arithmetic test and still be the thing the plan warned
-// against — "a number nobody can check is a number nobody believes".
+// SCREEN, in prose, under the figures they produce, and the money figures say
+// what currency they are in. A panel that showed the same numbers with its
+// assumptions nowhere on it would pass every arithmetic test and still be the
+// thing the plan warned against — "a number nobody can check is a number nobody
+// believes".
+//
+// Where the assumptions are SET moved to Settings → Cost; that pane has its own
+// tests. What must not move is the sentence, the symbol, and the way out.
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 
 import type { RunRecord } from "../lib/recorder-types";
 import { COST_DEFAULTS } from "../lib/cost-model";
+import { DENSE_PAGE_SIZE } from "../lib/paginate";
 import { CostPanel, REVIEW_COPY } from "./cost-panel";
 
 const MIN = 60_000;
@@ -45,52 +50,105 @@ function figure(label: RegExp): string {
   return (el.querySelector(".gl-cost-figure-value") as HTMLElement).textContent ?? "";
 }
 
+/** The IPC bridge, stubbed. The panel's only side effect is opening Settings. */
+function stubIpc(): ReturnType<typeof vi.fn> {
+  const invoke = vi.fn(async () => undefined);
+  (window as unknown as { glazeAPI: unknown }).glazeAPI = { glaze: { ipc: { invoke } } };
+  return invoke;
+}
+
+afterEach(() => {
+  delete (window as unknown as { glazeAPI?: unknown }).glazeAPI;
+});
+
 describe("the assumptions are the feature", () => {
   it("states both of them, in prose, under the figures they produce", () => {
     render(<CostPanel runs={[run({ id: "r1", startedAt: 1 })]} />);
-    const line = screen.getByText(/Assuming/).textContent ?? "";
+    const line = screen.getByText(/Assumes/).textContent ?? "";
     expect(line).toContain(String(COST_DEFAULTS.costPerCiMinute));
     expect(line).toContain(String(COST_DEFAULTS.minutesPerManualRun));
   });
 
-  it("admits the shipped numbers are guesses", () => {
-    // The panel's credibility rests on saying so. It stops saying it once the
-    // user has supplied their own.
+  it("states the price at full precision rather than rounding it to nothing", () => {
+    // The rate is 0.008. Through the money formatter that is "<$0.01", which
+    // turns the one sentence that makes the panel checkable into one that
+    // withholds the number it exists to state.
     render(<CostPanel runs={[run({ id: "r1", startedAt: 1 })]} />);
-    expect(screen.getByText(/this app's guesses/i)).toBeTruthy();
+    expect(screen.getByText(/Assumes/).textContent).toContain("$0.008");
   });
 
-  it("edits in place, and the figures move", () => {
-    // 10 runs of 1 minute each. At the default rate the spend is trivial; at 1
-    // per minute it is 10 — and the whole point is that a reader can do that
-    // multiplication themselves.
+  it("admits the shipped numbers are guesses, and stops once they are not", () => {
+    // The panel's credibility rests on saying so while they are its own.
+    const shipped = render(<CostPanel runs={[run({ id: "r1", startedAt: 1 })]} />);
+    expect(screen.getByText(/this app's guesses/i)).toBeTruthy();
+    shipped.unmount();
+
+    render(
+      <CostPanel
+        runs={[run({ id: "r1", startedAt: 1 })]}
+        assumptions={{ costPerCiMinute: 0.062, minutesPerManualRun: 30 }}
+      />,
+    );
+    expect(screen.queryByText(/this app's guesses/i)).toBeNull();
+  });
+
+  it("moves every figure when the persisted assumptions change", () => {
+    // 10 runs of 1 minute each. The whole point is that a reader can do this
+    // multiplication themselves from the sentence on screen.
     const runs = Array.from({ length: 10 }, (_, i) => run({ id: `r${i}`, startedAt: i }));
-    render(<CostPanel runs={runs} />);
-    fireEvent.click(screen.getByRole("button", { name: /edit these/i }));
-    fireEvent.change(screen.getByLabelText("Cost per CI minute"), { target: { value: "1" } });
-    expect(figure(/CI spend/i)).toBe("10.00");
-    fireEvent.change(screen.getByLabelText("Minutes per manual run"), { target: { value: "60" } });
+    render(
+      <CostPanel runs={runs} assumptions={{ costPerCiMinute: 1, minutesPerManualRun: 60 }} />,
+    );
+    expect(figure(/CI spend/i)).toBe("$10.00");
     expect(figure(/Manual testing avoided/i)).toBe("10h");
   });
 
-  it("survives a cleared field instead of reporting a confident zero", () => {
-    // Someone clearing the box to retype it must not make the panel claim the
-    // suite is free — see `coerceAssumption`.
-    const runs = Array.from({ length: 10 }, (_, i) => run({ id: `r${i}`, startedAt: i }));
-    render(<CostPanel runs={runs} />);
-    fireEvent.click(screen.getByRole("button", { name: /edit these/i }));
-    fireEvent.change(screen.getByLabelText("Cost per CI minute"), { target: { value: "" } });
-    expect(figure(/CI spend/i)).not.toBe("0.00");
+  it("offers a way to the pane that sets them, and lands on that pane", () => {
+    // Not a bare "open Settings": the button's job is to answer "where do these
+    // numbers come from", and dropping the reader on Appearance to go looking
+    // is the scavenger hunt this panel's first design argued against.
+    const invoke = stubIpc();
+    render(<CostPanel runs={[run({ id: "r1", startedAt: 1 })]} />);
+    fireEvent.click(screen.getByRole("button", { name: /edit in settings/i }));
+    expect(invoke).toHaveBeenCalledWith("window:openSettings", "cost");
+  });
+});
+
+describe("currency", () => {
+  const runs = Array.from({ length: 10 }, (_, i) => run({ id: `r${i}`, startedAt: i }));
+  const A = { costPerCiMinute: 1, minutesPerManualRun: 60 };
+
+  it("stamps the chosen symbol on the money figures", () => {
+    render(<CostPanel runs={runs} assumptions={A} currency="gbp" />);
+    expect(figure(/CI spend/i)).toBe("£10.00");
+    expect(screen.getByText(/Assumes/).textContent).toContain("£1");
   });
 
-  it("resets to the shipped defaults", () => {
-    render(<CostPanel runs={[run({ id: "r1", startedAt: 1 })]} />);
-    fireEvent.click(screen.getByRole("button", { name: /edit these/i }));
-    fireEvent.change(screen.getByLabelText("Cost per CI minute"), { target: { value: "5" } });
-    fireEvent.click(screen.getByRole("button", { name: /reset/i }));
-    expect(screen.getByText(/Assuming/).textContent).toContain(
-      String(COST_DEFAULTS.costPerCiMinute),
-    );
+  it("leaves the time figures alone", () => {
+    // Value is TIME here, not money — converting hours to cash needs an hourly
+    // rate this app was never told. Only the ratio's denominator is a price.
+    render(<CostPanel runs={runs} assumptions={A} currency="usd" />);
+    expect(figure(/Manual testing avoided/i)).toBe("10h");
+    expect(figure(/Manual testing avoided/i)).not.toContain("$");
+    expect(figure(/Failures caught/i)).not.toContain("$");
+    const ratio = document.querySelector(".gl-cost-figure-unit")?.textContent ?? "";
+    expect(ratio).toContain("per $1 spent");
+  });
+
+  it("prints no symbol at all under `none`", () => {
+    // The behaviour the panel shipped with, still reachable for a user whose
+    // currency is not on the list.
+    render(<CostPanel runs={runs} assumptions={A} currency="none" />);
+    expect(figure(/CI spend/i)).toBe("10.00");
+    expect(screen.getByText(/Assumes/).textContent).not.toMatch(/[$£€¥]/);
+    const ratio = document.querySelector(".gl-cost-figure-unit")?.textContent ?? "";
+    expect(ratio).toBe(" per 1 spent");
+  });
+
+  it("puts the symbol in the spend column too", () => {
+    render(<CostPanel runs={runs} assumptions={A} currency="usd" />);
+    const row = screen.getByText("Checkout").closest("tr") as HTMLElement;
+    expect(within(row).getByText("$10.00")).toBeTruthy();
   });
 });
 
@@ -158,6 +216,61 @@ describe("the spend table", () => {
     const chip = document.querySelector('[data-gl="status-chip"]') as HTMLElement;
     expect(chip.textContent).toBe("Earning");
     expect(chip.dataset.tone).toBe("neutral");
+  });
+
+  describe("paging", () => {
+    // One run each for N distinct tests, descending in duration so the order is
+    // deterministic and page 2 holds the cheapest.
+    const manyTests = (n: number): RunRecord[] =>
+      Array.from({ length: n }, (_, i) =>
+        run({
+          id: `r${i}`,
+          startedAt: i,
+          testId: `t${i}`,
+          testName: `Test ${String(i).padStart(2, "0")}`,
+          durationMs: (n - i) * MIN,
+        }),
+      );
+
+    const bodyRows = () => screen.getAllByRole("row").slice(1);
+
+    it("shows nothing at all until there is more than one page", () => {
+      // A pager over a three-row table is chrome for its own sake.
+      render(<CostPanel runs={manyTests(3)} />);
+      expect(screen.queryByLabelText("Next page")).toBeNull();
+      expect(bodyRows()).toHaveLength(3);
+    });
+
+    it("cuts the table at 25 tests and says how many pages there are", () => {
+      render(<CostPanel runs={manyTests(26)} />);
+      expect(bodyRows()).toHaveLength(DENSE_PAGE_SIZE);
+      expect(DENSE_PAGE_SIZE).toBe(25);
+      expect(screen.getByText(/Page 1 of 2/)).toBeTruthy();
+      expect(screen.getByText(/1–25 of 26 tests/)).toBeTruthy();
+    });
+
+    it("reaches the 26th test on the next page", () => {
+      // The row that would be invisible if `size` were left at the Pager's
+      // default: the counts would say one page and Next would never enable.
+      render(<CostPanel runs={manyTests(26)} />);
+      expect(screen.queryByText("Test 25")).toBeNull();
+      fireEvent.click(screen.getByLabelText("Next page"));
+      expect(screen.getByText("Test 25")).toBeTruthy();
+      expect(bodyRows()).toHaveLength(1);
+    });
+
+    it("falls back to real rows when the list shrinks under the page you are on", () => {
+      // Retention prunes runs and tests get deleted. An unclamped page renders
+      // an empty table, which reads as "my history vanished".
+      const many = render(<CostPanel runs={manyTests(60)} />);
+      fireEvent.click(screen.getByLabelText("Next page"));
+      fireEvent.click(screen.getByLabelText("Next page"));
+      expect(screen.getByText(/Page 3 of 3/)).toBeTruthy();
+
+      many.rerender(<CostPanel runs={manyTests(26)} />);
+      expect(screen.getByText(/Page 2 of 2/)).toBeTruthy();
+      expect(bodyRows().length).toBeGreaterThan(0);
+    });
   });
 
   it("lists the dearest test first", () => {

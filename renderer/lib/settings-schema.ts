@@ -12,6 +12,11 @@
 // fire a change event.
 
 import type { RecorderSettings } from "./recorder-types";
+import {
+  COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
+  COST_DEFAULT_PER_CI_MINUTE,
+  DEFAULT_COST_CURRENCY,
+} from "../../shared/cost-units.mjs";
 
 // ── Panes ────────────────────────────────────────────────────────────────────
 
@@ -21,6 +26,7 @@ export type PaneId =
   | "test-defaults"
   | "auto-heal"
   | "storage"
+  | "cost"
   | "ai"
   | "alerts"
   | "integrations"
@@ -72,6 +78,16 @@ export const PANES: readonly PaneDef[] = [
     id: "storage",
     title: "Storage",
     subtitle: "How long captured screenshots stay on disk.",
+    group: "Testing",
+  },
+  {
+    // Its own pane rather than a section of Test defaults: nothing here is a
+    // starting value for a new test, and nothing here changes what a run DOES.
+    // These are the two numbers the Stats → Cost panel multiplies by, and the
+    // pane exists so the panel can stop guessing.
+    id: "cost",
+    title: "Cost",
+    subtitle: "What a CI minute costs, and what one manual test run costs in time.",
     group: "Testing",
   },
   {
@@ -367,6 +383,38 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "prune delete retention disk space free",
   },
 
+  // Cost
+  // Keywords name the INVOICE, not the panel: someone who has just seen a CI
+  // bill searches "spend", "price", "dollar" or "github actions", and none of
+  // those words are in any of these labels.
+  {
+    id: "cost-currency",
+    pane: "cost",
+    label: "Currency",
+    keywords: "money symbol dollar euro pound yen usd eur gbp jpy cad aud spend cost none",
+    key: "costCurrency",
+  },
+  {
+    id: "cost-ci-runner",
+    pane: "cost",
+    label: "CI runner",
+    keywords: "github actions hosted runner linux windows macos arm64 x64 price rate preset",
+  },
+  {
+    id: "cost-per-ci-minute",
+    pane: "cost",
+    label: "Price per CI minute",
+    keywords: "spend cost money price rate minute ci github actions invoice bill",
+    key: "costPerCiMinute",
+  },
+  {
+    id: "cost-minutes-per-manual-run",
+    pane: "cost",
+    label: "Minutes to run one test by hand",
+    keywords: "manual testing time saved avoided hours by hand human",
+    key: "costMinutesPerManualRun",
+  },
+
   // AI
   {
     id: "llm-provider",
@@ -563,6 +611,9 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   disabledAestheticEnhancements: [],
   uiScale: 1,
   uiTypeface: "space",
+  costCurrency: DEFAULT_COST_CURRENCY,
+  costPerCiMinute: COST_DEFAULT_PER_CI_MINUTE,
+  costMinutesPerManualRun: COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
 };
 
 /** Structural equality for the three shapes a setting value actually takes:
@@ -660,6 +711,17 @@ export function clampHealRetries(raw: string | number): number {
 export function clampHealTimeoutMs(raw: string | number): number {
   return Math.max(1000, Math.min(30000, Math.round(Number(raw) || 4000)));
 }
+
+// THE COST PANE'S TWO NUMBERS ARE NOT CLAMPED HERE, deliberately. Every clamp
+// above rounds to an integer (`settings-schema.test.ts` pins that as a
+// property of the whole family, because these values reach the Playwright CLI
+// and the retention sweep), and a price of 0.008 does not survive rounding.
+// They also both use `Number(raw) || fallback`, which treats 0 as absent —
+// right for "0 heal attempts", wrong for a CI price, where 0 is the real
+// answer for a self-hosted runner. `clampCostPerCiMinute` and
+// `clampMinutesPerManualRun` in `shared/cost-units.mjs` are what the pane calls
+// instead, and they are the same two functions the settings store validates
+// with, so the pane and the store cannot disagree about what is valid.
 
 // ── Formatting ───────────────────────────────────────────────────────────────
 

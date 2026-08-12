@@ -3,10 +3,17 @@
 // PURE, AND EVERY NUMBER IT RETURNS IS DERIVED FROM TWO STATED ASSUMPTIONS AND
 // THE RUN HISTORY. That is the whole design constraint, and the plan says why:
 // "a number nobody can check is a number nobody believes". So there are exactly
-// two assumptions, they are named, they carry their units, and the panel that
-// renders this puts them on screen with an edit control beside them — not in
-// Settings, where a reader of the figures would have to go looking for what
-// produced them.
+// two assumptions, they are named, and they carry their units.
+//
+// WHERE THEY ARE SET MOVED, AND WHAT THEY MUST STILL DO DID NOT. They now live
+// in Settings → Cost and persist (`shared/cost-units.mjs` holds the bounds and
+// the published runner prices); the panel still states both in prose directly
+// under the figures they produce, so a reader can still check the derivation
+// without going anywhere. Editing them in place and losing them on reload was
+// the earlier design, and its flaw was practical rather than theoretical: an
+// assumption you have to retype on every visit is one nobody sets twice, so
+// the panel was read at the shipped guess — the exact outcome the design was
+// meant to prevent.
 //
 // WHAT IT REFUSES TO DO IS THE INTERESTING PART.
 //
@@ -27,6 +34,14 @@
 // still only answer probabilistically. Naming it what it is costs one word.
 
 import type { RunRecord } from "./recorder-types";
+import {
+  clampCostPerCiMinute,
+  clampMinutesPerManualRun,
+  COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
+  COST_DEFAULT_PER_CI_MINUTE,
+  currencySymbol,
+} from "../../shared/cost-units.mjs";
+import type { CostCurrency } from "../../shared/cost-units.mjs";
 
 /**
  * The two assumptions, with the defaults the app ships.
@@ -50,38 +65,29 @@ export interface CostAssumptions {
   minutesPerManualRun: number;
 }
 
+/** The shipped guesses, sourced from `shared/cost-units.mjs` — the same file the
+ *  settings store validates against and the Settings pane writes through, so
+ *  "the default" means one number rather than three that agree today. */
 export const COST_DEFAULTS: CostAssumptions = {
-  costPerCiMinute: 0.008,
-  minutesPerManualRun: 12,
+  costPerCiMinute: COST_DEFAULT_PER_CI_MINUTE,
+  minutesPerManualRun: COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
 };
 
-/** Bounds for the two editable numbers.
+/** Read the assumptions out of persisted settings, falling back to the shipped
+ *  guesses for anything absent.
  *
- *  Not validation theatre: these are read from a text input, and `Number("")`
- *  is 0 while `Number("abc")` is NaN — either would silently turn every figure
- *  on the panel into 0 or NaN, which renders as a confident "$0.00" or "$NaN"
- *  rather than as a mistake. */
-export const COST_LIMITS = {
-  costPerCiMinute: { min: 0, max: 100 },
-  minutesPerManualRun: { min: 0.5, max: 480 },
-} as const;
-
-/** Coerce one edited field, falling back to the shipped default. */
-export function coerceAssumption(
-  field: keyof CostAssumptions,
-  raw: string,
-  fallback: number = COST_DEFAULTS[field],
-): number {
-  // A BLANK FIELD IS NOT ZERO, and this is the case the obvious guard misses:
-  // `Number("")` is 0, which is finite, so a `Number.isFinite` check alone lets
-  // an empty input through as a legitimate rate of nothing — and the panel then
-  // reports a confident spend of 0.00 for a suite that has been running all
-  // week. Someone clearing the field to retype it must not do that mid-keystroke.
-  if (raw.trim() === "") return fallback;
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return fallback;
-  const { min, max } = COST_LIMITS[field];
-  return Math.min(max, Math.max(min, n));
+ *  Both fields are clamped ON THE WAY OUT as well as on the way in. The store
+ *  clamps what it writes, but a settings object also reaches the panel straight
+ *  off an IPC response before any write has happened, and a `0.008` that
+ *  arrived as `null` from a partially-loaded query would render a confident
+ *  "$0.00 spent" — a wrong answer that looks exactly like a right one. */
+export function assumptionsFromSettings(
+  settings: Partial<{ costPerCiMinute: number; costMinutesPerManualRun: number }>,
+): CostAssumptions {
+  return {
+    costPerCiMinute: clampCostPerCiMinute(settings.costPerCiMinute),
+    minutesPerManualRun: clampMinutesPerManualRun(settings.costMinutesPerManualRun),
+  };
 }
 
 /** One test's line in the spend table. */
@@ -267,16 +273,42 @@ export function computeCost(
   };
 }
 
-/** Money, to the cent, with no currency symbol.
+/**
+ * Money, to the cent, in the currency the user picked.
  *
- *  NO SYMBOL ON PURPOSE. The rate is whatever the user typed, in whatever
- *  currency they think in — this app never learns which, and stamping a `$` on
- *  it would be the app asserting something it was never told. The panel labels
- *  the column instead. */
-export function formatSpend(n: number): string {
-  if (n === 0) return "0.00";
-  if (n < 0.01) return "<0.01";
-  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+ * THIS USED TO REFUSE A SYMBOL, and the reasoning was sound at the time: the
+ * rate was whatever the user typed, in whatever currency they thought in, and
+ * the app was never told which — so a `$` would have been the app asserting
+ * something it did not know. Settings → Cost is now where it gets told, which
+ * removes the objection rather than overriding it. `"none"` is still on that
+ * list and still lands here as `""`, so the original behaviour is a choice a
+ * user can make rather than one the app makes for them.
+ *
+ * The symbol goes on the near side of the `<`: `<$0.01` is "less than a cent",
+ * where `$<0.01` reads as a typo.
+ */
+export function formatSpend(n: number, currency: CostCurrency): string {
+  const sym = currencySymbol(currency);
+  if (n === 0) return `${sym}0.00`;
+  if (n < 0.01) return `<${sym}0.01`;
+  return `${sym}${n.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+/**
+ * A RATE, not a total — the price of one CI minute, as the panel states it.
+ *
+ * Separate from `formatSpend` because two decimals destroy it: the shipped
+ * 0.008 renders as `<$0.01` through that function, which turns the sentence
+ * that exists to make the figures checkable into one that withholds the number.
+ * So this keeps up to four decimals and drops trailing zeroes, and $0.062 and
+ * $0.008 both read as themselves.
+ */
+export function formatRate(n: number, currency: CostCurrency): string {
+  const sym = currencySymbol(currency);
+  return `${sym}${n.toLocaleString(undefined, { maximumFractionDigits: 4 })}`;
 }
 
 /** Hours, at the precision the number deserves. Under ten hours a decimal is

@@ -139,13 +139,51 @@ function previewCursor(): number {
   return nav === -1 ? Math.min(1, steps.length) : Math.min(nav + 1, steps.length);
 }
 
+/**
+ * Runs for tests that are not in the library, so Stats → Cost reaches page two.
+ *
+ * The hand-written fixtures cover three tests, and the spend table pages at 25 —
+ * so without these the pager renders not at all, which is the state that panel
+ * is least likely to be broken in. Same reasoning, and the same shape, as the
+ * 58 filler rows the step-health fixture already carries.
+ *
+ * THEY ARE RUNS OF DELETED TESTS as far as the library is concerned, which is
+ * deliberate: the Cost table names a test from the run record itself, so these
+ * render correctly there, while nothing in the sidebar or the test list gains a
+ * row it cannot open. `testDeleted` is left FALSE because the cost model filters
+ * those out — these are meant to be counted.
+ */
+function costFiller(): RunRecord[] {
+  const day = 86_400_000;
+  return Array.from({ length: 30 }, (_, i): RunRecord => {
+    const startedAt = Date.now() - (i + 2) * day;
+    // Descending duration, so the table's "dearest first" order is legible and
+    // page two is visibly the cheap tail rather than an arbitrary cut.
+    const durationMs = (40 - i) * 4_000;
+    const failed = i % 9 === 0;
+    return {
+      id: `r-cost-${i}`,
+      testId: `t-cost-${i}`,
+      testName: `Suite check ${String(i + 1).padStart(2, "0")}`,
+      url: "https://example.com",
+      status: failed ? "failed" : "passed",
+      exitCode: failed ? 1 : 0,
+      startedAt,
+      finishedAt: startedAt + durationMs,
+      durationMs,
+      logFile: "/preview/runs/cost.log",
+      logBytes: 2_048,
+    };
+  });
+}
+
 /** Mutable copies, so the preview behaves like an app with state: renaming a
  *  test or deleting a tag persists for the session. Reloading resets it, which
  *  is the right amount of persistence for a preview. */
 function seed() {
   return {
     tests: structuredClone(TESTS),
-    runs: structuredClone(RUNS),
+    runs: [...structuredClone(RUNS), ...costFiller()],
     heals: structuredClone(HEALS),
     settings: structuredClone(SETTINGS),
     llmConfig: structuredClone(LLM_CONFIG),

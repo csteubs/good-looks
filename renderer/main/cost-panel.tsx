@@ -1,41 +1,42 @@
 // What the suite costs, and what it is worth. REDESIGN §6.4.
 //
 // The arithmetic is in `renderer/lib/cost-model.ts` and is tested there. This
-// renders it, and the one design decision that is entirely this file's is where
-// the ASSUMPTIONS live.
+// renders it, and the one design decision that is entirely this file's is what
+// it says about the ASSUMPTIONS behind the figures.
 //
-// THEY ARE ON THE PANEL, NOT IN SETTINGS. Every figure here scales off two
-// numbers this app guessed, and the plan's rule is that "a number nobody can
-// check is a number nobody believes". A Settings row satisfies the letter of
-// that — the value is editable somewhere — and defeats the point: a reader
-// looking at "47 hours avoided" has to know the assumption exists, guess that
-// Settings is where it lives, and find it, before they can judge whether the
-// figure means anything. Putting the two inputs directly under the numbers they
-// produce makes the derivation part of the reading rather than a scavenger hunt.
+// THEY ARE STATED HERE AND SET IN SETTINGS → COST. The rule they exist to
+// satisfy is the plan's — "a number nobody can check is a number nobody
+// believes" — and stating them under the figures they produce is what
+// satisfies it: a reader of "128h avoided" can see, without going anywhere,
+// exactly what that claim rests on.
 //
-// AND THEY ARE NOT PERSISTED, deliberately. They are a lens, not a preference:
-// you set them to your team's real numbers, read the panel, and the question is
-// answered. Storing them would put a third thing in the settings file that has
-// to be migrated, backed up and reasoned about, in exchange for saving one
-// number-typing on the rare visit to this panel. The defaults are on screen and
-// the edit is two keystrokes.
+// EDITING THEM MOVED, and this file used to argue at length that it never
+// should. The argument was that a Settings row makes the reader hunt for what
+// produced the number. What it missed is the other half: an assumption you have
+// to retype on every visit is one nobody sets twice, so the panel was in
+// practice always read at the shipped guess — the exact outcome the design was
+// trying to prevent. Persisting them costs one hunt, once, and the hunt is
+// signposted by the button below the sentence. The sentence stays.
 
-import { Pencil, RotateCcw } from "lucide-react";
+import { SlidersHorizontal } from "lucide-react";
 import * as React from "react";
 
 import { Panel, StatusChip, TONE } from "../theme";
-import type { RunRecord } from "../lib/recorder-types";
+import type { CostCurrency, RunRecord } from "../lib/recorder-types";
+import { DENSE_PAGE_SIZE, clampPage, pageSlice } from "../lib/paginate";
+import { Pager } from "./pager";
 import {
   COST_DEFAULTS,
   MIN_RUNS_FOR_NEVER_CAUGHT,
-  coerceAssumption,
   computeCost,
   formatHours,
   formatMinutes,
+  formatRate,
   formatSpend,
   reviewReason,
   type CostAssumptions,
 } from "../lib/cost-model";
+import { currencySymbol } from "../../shared/cost-units.mjs";
 
 /** The sentence under a called-out row. Exported so the test asserts the string
  *  the user reads — a verdict with no reason is an assertion, and this table's
@@ -73,89 +74,64 @@ function Figure({
   );
 }
 
-/** The two assumptions, stated and editable, under the figures they produce. */
-function Assumptions({
+/** Opens the Settings window on the Cost pane.
+ *
+ *  Deep-linked, not just "open Settings": the button's whole job is to answer
+ *  "where do these numbers come from", and landing the reader on Appearance to
+ *  find out is the scavenger hunt this panel spent its first design arguing
+ *  against. */
+function openCostSettings(): void {
+  void window.glazeAPI.glaze.ipc.invoke("window:openSettings", "cost");
+}
+
+/** The two assumptions, stated in prose under the figures they produce. */
+export function Assumptions({
   assumptions,
-  onChange,
+  currency,
 }: {
   assumptions: CostAssumptions;
-  onChange: (next: CostAssumptions) => void;
+  currency: CostCurrency;
 }) {
-  const [editing, setEditing] = React.useState(false);
   const isDefault =
     assumptions.costPerCiMinute === COST_DEFAULTS.costPerCiMinute &&
     assumptions.minutesPerManualRun === COST_DEFAULTS.minutesPerManualRun;
 
-  if (!editing) {
-    return (
-      <p className="gl-cost-assume">
-        Assuming <strong>{assumptions.costPerCiMinute}</strong> per CI minute and{" "}
-        <strong>{assumptions.minutesPerManualRun}</strong> minutes to run one test by hand.
-        {isDefault ? " Both are this app's guesses." : null}{" "}
-        <button type="button" className="gl-cost-edit" onClick={() => setEditing(true)}>
-          <Pencil className="size-3" aria-hidden />
-          Edit these
-        </button>
-      </p>
-    );
-  }
-
   return (
-    <div className="gl-cost-assume gl-cost-assume-editing">
-      <label className="gl-cost-field">
-        <span>Cost per CI minute</span>
-        <input
-          className="gl-cost-input"
-          type="text"
-          inputMode="decimal"
-          autoFocus
-          defaultValue={String(assumptions.costPerCiMinute)}
-          aria-label="Cost per CI minute"
-          onChange={(e) =>
-            onChange({
-              ...assumptions,
-              costPerCiMinute: coerceAssumption("costPerCiMinute", e.target.value),
-            })
-          }
-        />
-      </label>
-      <label className="gl-cost-field">
-        <span>Minutes per manual run</span>
-        <input
-          className="gl-cost-input"
-          type="text"
-          inputMode="decimal"
-          defaultValue={String(assumptions.minutesPerManualRun)}
-          aria-label="Minutes per manual run"
-          onChange={(e) =>
-            onChange({
-              ...assumptions,
-              minutesPerManualRun: coerceAssumption("minutesPerManualRun", e.target.value),
-            })
-          }
-        />
-      </label>
-      <button
-        type="button"
-        className="gl-cost-edit"
-        onClick={() => {
-          onChange(COST_DEFAULTS);
-          setEditing(false);
-        }}
-      >
-        <RotateCcw className="size-3" aria-hidden />
-        Reset
+    <p className="gl-cost-assume">
+      {/* `formatRate`, not `formatSpend`: the rate is 0.008 and two decimals
+          would render it as "<$0.01" — a sentence that exists to make the
+          figures checkable, withholding the number. */}
+      Assumes <strong>{formatRate(assumptions.costPerCiMinute, currency)}</strong> per CI minute
+      and <strong>{assumptions.minutesPerManualRun}</strong> minutes to run one test by hand.
+      {isDefault ? " Both are this app's guesses." : null}{" "}
+      <button type="button" className="gl-cost-edit" onClick={openCostSettings}>
+        <SlidersHorizontal className="size-3" aria-hidden />
+        Edit in Settings
       </button>
-      <button type="button" className="gl-cost-edit" onClick={() => setEditing(false)}>
-        Done
-      </button>
-    </div>
+    </p>
   );
 }
 
-export function CostPanel({ runs }: { runs: readonly RunRecord[] }) {
-  const [assumptions, setAssumptions] = React.useState<CostAssumptions>(COST_DEFAULTS);
+export function CostPanel({
+  runs,
+  // Both come from persisted settings, and both have a default so the panel
+  // renders honestly while the settings query is still in flight — the shipped
+  // guesses are exactly what it would show anyway.
+  assumptions = COST_DEFAULTS,
+  currency = "usd",
+}: {
+  runs: readonly RunRecord[];
+  assumptions?: CostAssumptions;
+  currency?: CostCurrency;
+}) {
+  const [page, setPage] = React.useState(1);
   const cost = React.useMemo(() => computeCost(runs, assumptions), [runs, assumptions]);
+
+  // Clamped, not trusted: retention prunes runs and a test can be deleted, so
+  // the list can shrink under the page you are standing on — and an unclamped
+  // page renders an empty table, which reads as "my history vanished".
+  const safePage = clampPage(page, cost.byTest.length, DENSE_PAGE_SIZE);
+  const visible = pageSlice(cost.byTest, safePage, DENSE_PAGE_SIZE);
 
   if (cost.runs === 0) {
     return (
@@ -173,7 +149,7 @@ export function CostPanel({ runs }: { runs: readonly RunRecord[] }) {
       <div className="gl-cost-figures">
         <Figure
           label="CI spend"
-          value={formatSpend(cost.spend)}
+          value={formatSpend(cost.spend, currency)}
           note={`${formatMinutes(cost.ciMinutes)} minutes of CI`}
         />
         <Figure
@@ -181,13 +157,19 @@ export function CostPanel({ runs }: { runs: readonly RunRecord[] }) {
           value={formatHours(cost.manualHoursAvoided)}
           note={`${cost.runs - cost.failures} passed runs`}
         />
-        {/* THE RATIO IS IN ITS OWN UNIT, not in money. Converting saved time to
-            currency needs an hourly rate this app was never told, and a dollar
-            figure carries more authority than the guess behind it deserves. */}
+        {/* THE RATIO'S VALUE IS STILL TIME, not money, and a currency picker
+            does not change that: converting saved hours into cash needs an
+            hourly rate this app was never told. The currency reaches only the
+            DENOMINATOR — "per $1 spent" — which is a price the user did give
+            it. */}
         <Figure
           label="Return on spend"
           value={cost.hoursPerUnitSpent === null ? "—" : formatHours(cost.hoursPerUnitSpent)}
-          unit={cost.hoursPerUnitSpent === null ? undefined : " per 1 spent"}
+          unit={
+            cost.hoursPerUnitSpent === null
+              ? undefined
+              : ` per ${currencySymbol(currency)}1 spent`
+          }
           note={
             cost.hoursPerUnitSpent === null
               ? "nothing spent yet"
@@ -204,13 +186,13 @@ export function CostPanel({ runs }: { runs: readonly RunRecord[] }) {
             everywhere else. */}
         <Figure
           label="Spent on flake"
-          value={formatSpend(cost.flakeSpend)}
+          value={formatSpend(cost.flakeSpend, currency)}
           note={`${formatMinutes(cost.flakeMinutes)} minutes re-running`}
           tone={cost.flakeSpend > 0 ? "amber" : undefined}
         />
       </div>
 
-      <Assumptions assumptions={assumptions} onChange={setAssumptions} />
+      <Assumptions assumptions={assumptions} currency={currency} />
 
       <div className="gl-table-wrap">
         <table className="gl-table" aria-label="Spend by test">
@@ -225,7 +207,7 @@ export function CostPanel({ runs }: { runs: readonly RunRecord[] }) {
             </tr>
           </thead>
           <tbody>
-            {cost.byTest.map((t) => {
+            {visible.map((t) => {
               const reason = reviewReason(t);
               return (
                 <tr key={t.testId}>
@@ -235,7 +217,7 @@ export function CostPanel({ runs }: { runs: readonly RunRecord[] }) {
                   </td>
                   <td className="gl-cost-num">{t.runs}</td>
                   <td className="gl-cost-num">{formatMinutes(t.ciMinutes)}</td>
-                  <td className="gl-cost-num">{formatSpend(t.spend)}</td>
+                  <td className="gl-cost-num">{formatSpend(t.spend, currency)}</td>
                   <td className="gl-cost-num">{formatHours(t.manualHoursAvoided)}</td>
                   <td>
                     {/* `earning` carries no tone at all. Colour means outcome in
@@ -252,6 +234,18 @@ export function CostPanel({ runs }: { runs: readonly RunRecord[] }) {
           </tbody>
         </table>
       </div>
+
+      {/* `size` is not optional here even though it looks it: `Pager` computes
+          its own counts, so a pager left at the default 50 over a table sliced
+          at 25 reports half the pages and hides the rest behind a Next button
+          that never enables. */}
+      <Pager
+        page={safePage}
+        total={cost.byTest.length}
+        onPage={setPage}
+        label="tests"
+        size={DENSE_PAGE_SIZE}
+      />
     </Panel>
   );
 }

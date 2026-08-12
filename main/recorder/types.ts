@@ -1,6 +1,12 @@
 // Shared recorder data model (backend). Mirror kept in renderer/lib/recorder-types.ts.
 
 import type { LlmErrorKind } from "../services/llm/types.js";
+// Declared in shared/ because the settings store validates against the same
+// list the Settings pane offers and the Cost panel formats with — see the
+// header of `shared/cost-units.mjs`.
+import type { CostCurrency } from "../../shared/cost-units.mjs";
+
+export type { CostCurrency };
 
 export type StepType =
   | "goto"
@@ -1683,6 +1689,21 @@ export interface RecorderSettings {
    *  is fetched — see the header of `renderer/theme/fonts.css` for why this app
    *  does not load fonts over the network. */
   uiTypeface: UiTypeface;
+  /** Which symbol the Cost panel stamps on a money figure (default "usd").
+   *
+   *  "none" restores the panel's original behaviour — bare numbers, claiming
+   *  nothing about currency. See `shared/cost-units.mjs`. */
+  costCurrency: CostCurrency;
+  /** What one minute of CI costs, in the currency above (default 0.008).
+   *
+   *  The Cost panel's whole output scales off this and off the minutes below,
+   *  which is why both are settings a user can correct rather than constants.
+   *  The Settings pane offers GitHub's published runner rates as pre-fills; the
+   *  chosen runner is DERIVED from this number and never stored beside it. */
+  costPerCiMinute: number;
+  /** How long one run of one test would take a person, by hand, in minutes
+   *  (default 12). The other half of every "manual testing avoided" figure. */
+  costMinutesPerManualRun: number;
 }
 
 /** What a successful Auto-Heal is allowed to do to the stored test. */

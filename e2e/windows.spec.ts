@@ -46,6 +46,48 @@ test("opening settings creates a second window", async ({ app, window }) => {
   await expect.poll(() => app.windows().length, { timeout: 5_000 }).toBe(before);
 });
 
+test("settings can be deep-linked onto a pane", async ({ app, window }) => {
+  // Stats → Cost's "Edit in Settings" sends a pane id, because a button whose
+  // job is "where do these numbers come from" that lands on Appearance is the
+  // scavenger hunt the panel's own design argued against.
+  //
+  // ONLY AN END-TO-END RUN CAN CHECK THIS. The id travels as a URL FRAGMENT on
+  // a real `loadURL`, and both halves of that are absent from jsdom: the
+  // settings view's test can set `location.hash` by hand and prove it reads it,
+  // but not that the main process puts it there, that `getWindowUrl` tolerates
+  // it in dev AND under `app://`, or that the fragment survives the load.
+  const opened = app.waitForEvent("window");
+  await window.evaluate(() =>
+    (
+      window as unknown as {
+        glazeAPI: { glaze: { ipc: { invoke(c: string, p: string): Promise<unknown> } } };
+      }
+    ).glazeAPI.glaze.ipc.invoke("window:openSettings", "cost"),
+  );
+
+  const settings = await opened;
+  await settings.waitForLoadState("domcontentloaded");
+  expect(new URL(settings.url()).hash).toBe("#cost");
+  await expect(settings.getByText("Price per CI minute")).toBeVisible();
+
+  // A pane id is a string from a renderer that is concatenated into a URL, so
+  // the main process refuses anything that is not one. The window still opens —
+  // on its default pane — rather than failing to open at all.
+  await settings.close();
+  const second = app.waitForEvent("window");
+  await window.evaluate(() =>
+    (
+      window as unknown as {
+        glazeAPI: { glaze: { ipc: { invoke(c: string, p: string): Promise<unknown> } } };
+      }
+    ).glazeAPI.glaze.ipc.invoke("window:openSettings", "../../etc/passwd"),
+  );
+  const fallback = await second;
+  await fallback.waitForLoadState("domcontentloaded");
+  expect(new URL(fallback.url()).hash).toBe("");
+  await fallback.close();
+});
+
 test("the main process exposes exactly one main window at startup", async ({ app, window }) => {
   // Guards a specific startup failure: main/index.ts creates the main window
   // in whenReady AND on the "activate" event. If activate fires during launch

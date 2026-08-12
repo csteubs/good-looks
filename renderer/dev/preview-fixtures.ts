@@ -502,6 +502,12 @@ export const SETTINGS: RecorderSettings = {
   // the Appearance pane renders its size control with no segment selected.
   uiScale: 1,
   uiTypeface: "space",
+  // The shipped cost guesses. Left at their defaults deliberately: the Cost
+  // panel's "both are this app's guesses" sentence only renders while they are,
+  // and the preview is the only place that sentence can be looked at.
+  costCurrency: "usd",
+  costPerCiMinute: 0.008,
+  costMinutesPerManualRun: 12,
 };
 
 export const LLM_CONFIG: LlmConfig = {
