@@ -19,7 +19,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { clearToastCalls, toastCalls } from "../__tests__/sonner-stub";
 
 import type { RunReplaySummary, VisualDiff } from "../lib/recorder-types";
-import { DiffBadge, VisualView } from "./visual-view";
+import { DiffBadge, VisualView, framesOverThreshold } from "./visual-view";
 
 let replays: RunReplaySummary[] = [];
 /** Mutable so the bezel tests can seed a run with a real frame; every other
@@ -525,5 +525,40 @@ describe("the frame rail (B8)", () => {
     renderVisual();
     await waitFor(() => expect(frames().length).toBe(3));
     expect(screen.queryByRole("button", { name: "Changed" })).toBeNull();
+  });
+});
+
+describe("the threshold, drawn against the frames (B8)", () => {
+  // The slider used to be a number with no consequence on screen: "0.20%" says
+  // nothing about whether moving it silences the change you are looking at or
+  // every change you have.
+  const steps = (...ratios: (number | undefined)[]) =>
+    ratios.map((r, i) => ({
+      index: i,
+      stepId: `s${i}`,
+      diff: r === undefined ? undefined : { ratio: r },
+    }));
+
+  it("counts the frames a threshold would flag", () => {
+    // 4.13% and 0.5% are over 0.2%; 0.01% is not.
+    expect(framesOverThreshold(steps(0.0413, 0.005, 0.0001), 0.2)).toBe(2);
+  });
+
+  it("does not flag a frame sitting exactly ON the threshold", () => {
+    // STRICTLY GREATER, matching the comparator that produced these ratios.
+    // Guessing >= would make the preview disagree with the next run by one
+    // frame — worse than no preview, because it would be believed.
+    expect(framesOverThreshold(steps(0.002), 0.2)).toBe(0);
+    expect(framesOverThreshold(steps(0.00201), 0.2)).toBe(1);
+  });
+
+  it("ignores frames with nothing measured", () => {
+    // An uncaptured step has no ratio. Counting it as unflagged is right;
+    // counting it at all in the denominator would overstate the run's coverage.
+    expect(framesOverThreshold(steps(undefined, undefined), 0.2)).toBe(0);
+  });
+
+  it("flags everything at a threshold of zero", () => {
+    expect(framesOverThreshold(steps(0.0001, 0.5), 0)).toBe(2);
   });
 });

@@ -48,6 +48,7 @@ import {
 // hard as no answer at all, and is far less obvious in review.
 import type {
   ArtifactUsage,
+  BaselineEntry,
   BatchRecord,
   BatchState,
   CaptureOverheadSummary,
@@ -696,7 +697,22 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "debug:shortcut": () => "⌘⌥⇧S",
 
     // ── Visual ───────────────────────────────────────────────────────────
-    "visual:listBaselines": (): string[] => REPLAY.steps.filter((st) => st.screenshot).map((st) => st.stepId),
+    /** `BaselineEntry[]`, NOT `string[]`. The first version of this returned bare
+     *  step ids with a `: string[]` annotation — which type-checked, because the
+     *  annotation was the thing being checked rather than `api.ts`'s actual
+     *  return type. The manager then rendered four rows with no label and
+     *  "Invalid Date", which is precisely the "looks like a broken feature"
+     *  failure this file's header is about. Annotate with the app's own type. */
+    "visual:listBaselines": (): BaselineEntry[] =>
+      REPLAY.steps
+        .filter((st) => st.screenshot)
+        .map((st) => ({
+          stepId: st.stepId,
+          runId: REPLAY.runId,
+          at: REPLAY.startedAt,
+          label: st.label,
+          ...(st.rect ? { rect: st.rect } : null),
+        })),
     /** One mask, on the step whose diff reports `maskedCount: 1` — the two
      *  numbers describing the same thing have to agree, or the panel says a
      *  mask was applied and the list shows none. */

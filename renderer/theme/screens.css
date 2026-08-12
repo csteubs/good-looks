@@ -2384,3 +2384,44 @@
   color: var(--gl-amber);
   white-space: nowrap;
 }
+
+/* What the threshold would do to THIS run's frames. Mono and tabular so the
+   number does not shimmy as it changes under a drag — the whole point is that
+   it updates live, and a figure that jumps sideways while you move a slider is
+   harder to read than one that does not move at all. */
+.gl-threshold-readout {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+/* Amber once it is flagging something — caution, matching the frame rail's own
+   change marker, because it is reporting the same fact at a different scale. */
+.gl-threshold-readout[data-flagged] {
+  color: var(--gl-amber);
+}
+
+/* A row in the masks / baselines manager. Square hairline on `--gl-panel`, like
+   every other list row in this design — the SDK's rounded bordered box read as
+   a card, which is the wrong weight for something you scan a dozen of. */
+.gl-mask-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  padding: 5px 8px;
+}
+
+.gl-mask-size {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
