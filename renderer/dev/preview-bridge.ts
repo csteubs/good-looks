@@ -74,7 +74,11 @@ import type {
   ProviderVocabulary,
 } from "../lib/issue-types";
 import type { TriageResult } from "../../shared/triage.mjs";
-import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
+import type {
+  StepDurationRow,
+  StepHealthRow,
+  TestDurationTrend,
+} from "../../shared/metrics-query.mjs";
 import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
 
 /** api.ts passes ONE options object per call — `invoke("tests:get", { id })`,
@@ -250,8 +254,8 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     },
     {
       stepId: "s2",
-      label: "goto shop.example.com",
-      type: "goto",
+      label: "click Add to cart",
+      type: "click",
       testId: "t-checkout",
       testName: "Checkout — happy path",
       recentRuns: 12,
@@ -490,14 +494,39 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       available: true,
       rows: stepHealthRows(),
     }),
-    "metrics:slowness": (): {
+    "metrics:slowness": (params?: {
+      testId?: string;
+    }): {
       available: boolean;
       rows: StepDurationRow[];
       slowed: StepDurationRow[];
       cost: CostBreakdown;
+      testTrend: TestDurationTrend | null;
     } => {
       const rows = durationRows();
-      return { available: true, rows, slowed: rows.filter((r) => (r.changeRatio ?? 1) > 1.5), cost: cost() };
+      return {
+        available: true,
+        rows,
+        slowed: rows.filter((r) => (r.changeRatio ?? 1) > 1.5),
+        cost: cost(),
+        // Only when a test was named, exactly as the handler does (C §6.3).
+        // A fixture that answered for the suite-wide call too would let the
+        // run summary read a median that the real app never gives it.
+        testTrend: params?.testId
+          ? {
+              testId: params.testId,
+              window: 10,
+              recentRuns: 8,
+              previousRuns: 6,
+              // Slightly above the run summary's own history median (11,900),
+              // so the preview shows the two sources being different and the
+              // metrics one winning.
+              recentP50Ms: 11_400,
+              previousP50Ms: 10_800,
+              changeRatio: 11_400 / 10_800,
+            }
+          : null,
+      };
     },
     "metrics:divergence": (): { available: boolean; steps: DivergentStep[] } => ({
       available: true,

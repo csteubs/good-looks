@@ -253,6 +253,50 @@ describe("summariseRun — the passed facts", () => {
     expect(s).toMatchObject({ state: "passed", durationMs: 4_000, medianMs: 2_000, deltaPct: 100 });
   });
 
+  it("prefers the metrics median over the one it can derive from run history", () => {
+    // Retention prunes run-history.json and not the metrics DB, so after a
+    // prune the history-derived median is computed from a silently truncated
+    // sample — it stays plausible and stops being true.
+    const runs = [
+      run({ id: "r1", startedAt: 1, durationMs: 1_000 }),
+      run({ id: "r2", startedAt: 2, durationMs: 3_000 }),
+    ];
+    const s = summariseRun({
+      testId: T,
+      runs,
+      heals: NO_HEALS,
+      stepCount: 3,
+      live: live({ recordId: "r2" }),
+      now: 0,
+      medianMs: 9_000,
+    });
+    expect(s).toMatchObject({ state: "passed", medianMs: 9_000 });
+    // …and the delta is measured against it, not against the 1_000 the
+    // history would have given.
+    expect(s.state === "passed" && Math.round(s.deltaPct!)).toBe(-67);
+  });
+
+  it("falls back to run history when metrics are unavailable, not to no median", () => {
+    // The metrics DB is a derived shadow that is allowed to be absent. Losing
+    // the better source must not mean losing the answer.
+    const runs = [
+      run({ id: "r1", startedAt: 1, durationMs: 1_000 }),
+      run({ id: "r2", startedAt: 2, durationMs: 3_000 }),
+    ];
+    for (const medianMs of [null, undefined]) {
+      const s = summariseRun({
+        testId: T,
+        runs,
+        heals: NO_HEALS,
+        stepCount: 3,
+        live: live({ recordId: "r2" }),
+        now: 0,
+        medianMs,
+      });
+      expect(s).toMatchObject({ state: "passed", medianMs: 1_000 });
+    }
+  });
+
   it("has no median on a test's first ever run", () => {
     const runs = [run({ id: "r1", startedAt: 1, durationMs: 1_000 })];
     const s = summariseRun({

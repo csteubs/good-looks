@@ -15,7 +15,7 @@ import {
 import { Check, GripVertical, Loader2, MoreHorizontal, Pencil, Play, X } from "lucide-react";
 import type { RunStepStatus } from "./recorder-store";
 
-import { SEL_BG, SEL_RING, TONE, TypeChip, insetRail } from "../theme";
+import { SEL_BG, SEL_RING, TONE, Temp, TypeChip, formatDuration, insetRail } from "../theme";
 import { describeStep } from "../lib/describe-step";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "../lib/recorder-types";
 import { clampViewportAxis } from "../lib/viewport-presets";
@@ -182,6 +182,7 @@ export function StepRow({
   justAdded,
   replayFlash,
   indent = 0,
+  trend,
 }: {
   index: number;
   step: Step;
@@ -194,6 +195,22 @@ export function StepRow({
   drag?: StepDragProps;
   /** Live run status of this step during a test run, for highlight. */
   runStatus?: RunStepStatus;
+  /**
+   * This step's own duration trend, from `metrics-store` (C §6.3).
+   *
+   * BOTH NUMBERS ARE MEDIANS, and neither is "this run". That is the design
+   * rather than a limitation: a single run's duration for a single step is
+   * noise — a garbage collection, a slow DNS answer — and colouring it would
+   * light half the list on every run for reasons that are not about the test.
+   * `Temp` reads recent-median against earlier-median, so what it colours is
+   * the step having CHANGED, which is the one thing worth a colour here.
+   *
+   * Absent when metrics are unavailable, when this step has no timed history,
+   * or when it has recent runs and nothing to compare them against. `Temp`
+   * falls to `off` on a missing median by itself, so there is nothing to guard
+   * at the call site.
+   */
+  trend?: { recentP50Ms: number | null; previousP50Ms: number | null };
   /** This step was just added to the list by something other than the user
    *  typing it — an applied AI-debug fix, an inserted AI-generated flow — and
    *  gets a pulsing green border until the list changes again. Only ADDED
@@ -444,6 +461,23 @@ export function StepRow({
 
       {!editing ? (
         <div className="ml-auto flex shrink-0 items-center gap-0.5">
+          {/* Before the run glyph, because the glyph is about THIS run and the
+              temp is about the step's history — and the row reads outward from
+              what is happening now. `rule` rather than `tint`: the numbers sit
+              in a row of controls, and a coloured numeral among icons reads as
+              a status badge. */}
+          {trend && trend.recentP50Ms !== null ? (
+            <Temp
+              ms={trend.recentP50Ms}
+              median={trend.previousP50Ms}
+              mode="rule"
+              title={
+                trend.previousP50Ms
+                  ? undefined
+                  : `${formatDuration(trend.recentP50Ms)} median — no earlier runs to compare against`
+              }
+            />
+          ) : null}
           {runStatus ? (
             <span
               className="flex shrink-0 items-center [&_svg]:size-3.5"

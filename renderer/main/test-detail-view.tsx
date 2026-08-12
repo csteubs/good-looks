@@ -186,6 +186,29 @@ export function TestDetailView() {
   const a11yNewSteps = latestA11yRun(runsQuery.data ?? [], id)?.a11yNewSteps ?? 0;
   const runInfo = runs[id];
 
+  // Real medians, per step and for the test itself (C §6.3). One query for
+  // both — they are one screen asking one question, and two channels would let
+  // the step list and the run summary answer it from two different reads of a
+  // database that is being written to while they look.
+  //
+  // `available: false` is not an error and is not treated as one: the metrics
+  // DB is a derived shadow that degrades to "no metrics" by design, and every
+  // consumer of it here falls back to a `Temp` that renders neutral.
+  const metricsQuery = useQuery({
+    queryKey: ["metrics", "slowness", id],
+    queryFn: () => api.metrics.slowness(id),
+  });
+  const stepTrends = React.useMemo(() => {
+    const map = new Map<string, { recentP50Ms: number | null; previousP50Ms: number | null }>();
+    for (const row of metricsQuery.data?.rows ?? []) {
+      map.set(row.stepId, {
+        recentP50Ms: row.recentP50Ms,
+        previousP50Ms: row.previousP50Ms,
+      });
+    }
+    return map;
+  }, [metricsQuery.data]);
+
   // The run panel's clock, and ONLY while a run is in flight (§6.1's `running`
   // panel reports elapsed time). It would usually be carried for free by the
   // log streaming in, but a run that is waiting — on a slow navigation, on a
@@ -213,8 +236,20 @@ export function TestDetailView() {
         stepCount: testQuery.data?.steps.length ?? 0,
         live: runInfo ?? null,
         now: nowTick,
+        // The REAL median, when the metrics DB can supply one — see §6.3 and
+        // `summariseRun`'s note on why it is preferred over the one derived
+        // from run history here.
+        medianMs: metricsQuery.data?.testTrend?.recentP50Ms ?? null,
       }),
-    [id, runsQuery.data, healsQuery.data, testQuery.data?.steps.length, runInfo, nowTick],
+    [
+      id,
+      runsQuery.data,
+      healsQuery.data,
+      testQuery.data?.steps.length,
+      runInfo,
+      nowTick,
+      metricsQuery.data,
+    ],
   );
 
   // Seed the run controls from the record, falling back to the global defaults.
@@ -818,6 +853,7 @@ export function TestDetailView() {
                       step={test.steps[i]}
                       indent={depth}
                       runStatus={runInfo?.stepStatus[i]}
+                      trend={stepTrends.get(test.steps[i].id)}
                       isNew={newStepIds.has(test.steps[i].id)}
                     />
                   ))}
