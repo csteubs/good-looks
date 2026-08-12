@@ -45,6 +45,8 @@ export { TopStrip, ChromeButton, WORDMARK } from "./shell/top-strip";
 export type { TopStripProps, ChromeButtonProps, Crumb } from "./shell/top-strip";
 export { Rail, RailGroup, RailRow, RailEmpty } from "./shell/rail";
 export type { RailProps, RailRowProps } from "./shell/rail";
+export { RailFlyout } from "./shell/rail-flyout";
+export type { RailFlyoutProps, RailFlyoutTriggerProps } from "./shell/rail-flyout";
 export {
   BootPlate,
   bootDurationMs,
