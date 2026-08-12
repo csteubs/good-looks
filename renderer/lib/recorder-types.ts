@@ -509,6 +509,12 @@ export interface RunRecord {
   batchId?: string;
   /** how many steps run-time Auto-Heal got past by substituting a locator. */
   healedSteps?: number;
+  /** how many steps Auto-Heal TRIED to rescue and could not. The opposite
+   *  evidence to `healedSteps` and the more informative half — a step that
+   *  healed says the locator was stale, a step that could not says the element
+   *  is gone. Nothing recorded this before 2026-08-07, so absent means UNKNOWN
+   *  and never 0 (mirrors main/recorder/types.ts). */
+  healFailedSteps?: number;
   /** accessibility-check cost, and steps with unaccepted violations. */
   a11yMs?: number;
   a11yChecks?: number;

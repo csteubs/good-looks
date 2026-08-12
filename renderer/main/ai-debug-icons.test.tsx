@@ -34,6 +34,7 @@ import {
 } from "./ai-debug-store";
 import { LibrarySidebar } from "./library-sidebar";
 import { RunOutput } from "./run-output";
+import { summariseRun } from "../lib/run-summary";
 import type { RunInfo } from "./recorder-store";
 
 const h = vi.hoisted(() => ({
@@ -134,11 +135,23 @@ function info(): RunInfo {
   return { lines: ["x\n"], running: false, code: 1, stepStatus: {}, recordId: "rec-1", startedAt: 1 };
 }
 
+/** The failed-run summary the view would compute for `info()`. Taken from the
+ *  real function rather than written out here, so this file keeps testing the
+ *  icon and not a stale copy of §6.1's state table. */
+const FAILED_SUMMARY = summariseRun({
+  testId: "t1",
+  runs: [],
+  heals: [],
+  stepCount: 1,
+  live: info(),
+  now: 0,
+});
+
 /** Stands in for TestDetailView: looks the status up by the CURRENT test's key
  *  and hands it to the run panel, exactly as the real view does. */
 function TestPanel({ testId }: { testId: string }) {
   const status = useAiDebugStatus(runSessionKey(testId));
-  return <RunOutput info={info()} onDebug={() => {}} aiStatus={status} />;
+  return <RunOutput info={info()} summary={FAILED_SUMMARY} onDebug={() => {}} aiStatus={status} />;
 }
 
 function session(over: Partial<AiDebugSession> = {}): AiDebugSession {
@@ -452,7 +465,7 @@ describe("the run panel icon, across runs of one test", () => {
   /** The panel as the real view drives it: keyed by test, but describing one run. */
   function RunPanel({ testId, runKey }: { testId: string; runKey: string }) {
     const status = useAiDebugStatus(runSessionKey(testId), runKey);
-    return <RunOutput info={info()} onDebug={() => {}} aiStatus={status} />;
+    return <RunOutput info={info()} summary={FAILED_SUMMARY} onDebug={() => {}} aiStatus={status} />;
   }
 
   it("does not show the previous run's colour on a new run", async () => {
@@ -504,7 +517,7 @@ describe("the run panel icon, across runs of one test", () => {
 describe("the icon for a job kept across a re-run (experimental)", () => {
   function RunPanel({ testId, runKey }: { testId: string; runKey: string }) {
     const status = useAiDebugStatus(runSessionKey(testId), runKey);
-    return <RunOutput info={info()} onDebug={() => {}} aiStatus={status} />;
+    return <RunOutput info={info()} summary={FAILED_SUMMARY} onDebug={() => {}} aiStatus={status} />;
   }
 
   it("leaves the new run's icon blank while the kept job stays visible on the chip", async () => {
