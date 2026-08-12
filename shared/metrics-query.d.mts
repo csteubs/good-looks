@@ -113,6 +113,28 @@ export declare function stepDurations(
   opts?: { testId?: string; window?: number; limit?: number },
 ): StepDurationRow[];
 
+/** A TEST's own duration trend — recent median against the one before it.
+ *  Passed runs only; a failure's duration is not evidence about how long a
+ *  test takes. C §6.3. */
+export interface TestDurationTrend {
+  testId: string;
+  window: number;
+  /** how many of the most recent `window` PASSED runs there were */
+  recentRuns: number;
+  /** …and how many of the `window` before those */
+  previousRuns: number;
+  recentP50Ms: number | null;
+  previousP50Ms: number | null;
+  /** recentP50 ÷ previousP50, or null when either window is empty */
+  changeRatio: number | null;
+}
+
+export declare function testDurationTrend(
+  db: Db,
+  testId: string,
+  window?: number,
+): TestDurationTrend;
+
 export interface StepBrowserRow {
   stepId: string;
   label: string | null;

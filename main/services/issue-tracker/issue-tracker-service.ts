@@ -14,12 +14,21 @@
 
 import { logger } from "@shell/backend";
 
+import { redact } from "../secret-redaction.js";
+import { testSecretsStore } from "../test-secrets-store.js";
+import { defectLoader } from "./defect-loader.js";
 import { issueConfigStore } from "./issue-config-store.js";
+import { issueLinkStore, type IssueLink } from "./issue-link-store.js";
 import { ACTIVE_PROVIDER, keyStoreFor, providerFor } from "./provider-registry.js";
 import {
   IssueProviderError,
   type ConnectionStatus,
+  type CreatedIssue,
+  type DefectSource,
   type IssueContainer,
+  type IssueDestination,
+  type IssueDraft,
+  type IssueLabel,
   type IssueDefaults,
   type IssueSubContainer,
   type ProviderAccount,
@@ -153,6 +162,139 @@ export const issueTrackerService = {
         ? { ...patch, subContainerId: null }
         : patch;
     return issueConfigStore.set(provider, effective);
+  },
+
+  async listLabels(provider: ProviderId = ACTIVE_PROVIDER): Promise<IssueLabel[]> {
+    return providerFor(provider).listLabels(await requireKey(provider));
+  },
+
+  /** The pre-filled issue for one defect, assembled from disk. Null when the
+   *  coordinate no longer resolves — a pruned run, a re-recorded step. */
+  buildDraft(source: DefectSource): IssueDraft | null {
+    return defectLoader.build(source);
+  },
+
+  /**
+   * Rebuild a defect coordinate arriving over IPC.
+   *
+   * Every field here becomes part of a filesystem path, so this is the same
+   * class of boundary as `normalizeRawStep` and follows the same rule: it
+   * REBUILDS rather than filters, so an unknown key cannot ride along into the
+   * next thing that spreads it. Ids are bounded and refused outright if they
+   * contain a path separator or a dot segment — `artifactStore` builds its
+   * paths by joining these, and "it's our own renderer" is exactly the
+   * assumption that makes a traversal bug survive review.
+   */
+  normalizeSource(raw: unknown): DefectSource | null {
+    if (!raw || typeof raw !== "object") return null;
+    const r = raw as Record<string, unknown>;
+    const id = (v: unknown): string | null => {
+      if (typeof v !== "string") return null;
+      const t = v.trim();
+      if (!t || t.length > 200) return null;
+      if (t.includes("/") || t.includes("\\") || t === "." || t === "..") return null;
+      return t;
+    };
+    const testId = id(r.testId);
+    const runId = id(r.runId);
+    if (!testId || !runId) return null;
+
+    if (r.kind === "a11y") {
+      const stepId = id(r.stepId);
+      const ruleId = id(r.ruleId);
+      return stepId && ruleId ? { kind: "a11y", testId, runId, stepId, ruleId } : null;
+    }
+    if (r.kind === "visual") {
+      const stepId = id(r.stepId);
+      return stepId ? { kind: "visual", testId, runId, stepId } : null;
+    }
+    if (r.kind === "failure") {
+      // The only nullable one: a run can fail without a step being blamed.
+      return { kind: "failure", testId, runId, stepId: id(r.stepId) };
+    }
+    return null;
+  },
+
+  /**
+   * File one issue.
+   *
+   * The images are re-read from disk HERE, by the same coordinate the draft
+   * named — the renderer sends back filenames, never bytes. So what is uploaded
+   * is what the app read, and the confirmation strip the user approved was a
+   * view of the same files rather than a promise about them.
+   *
+   * Text is redacted immediately before the send, the way `sendAlert` does it:
+   * at the last point every path funnels through, rather than anywhere a later
+   * refactor could route around. It matters even though the user typed some of
+   * this — a step label recorded before variables existed has its typed value
+   * baked in, and that label is in the draft they accepted without reading.
+   */
+  async createIssue(
+    draft: { source: DefectSource; title: string; body: string; attachmentFiles: string[] },
+    destination: IssueDestination,
+    provider: ProviderId = ACTIVE_PROVIDER,
+  ): Promise<CreatedIssue> {
+    const key = await requireKey(provider);
+    const secrets = await testSecretsStore.allValues().catch(() => [] as string[]);
+    const images = defectLoader.readImages(draft.source, draft.attachmentFiles);
+    const created = await providerFor(provider).createIssue(key, {
+      title: redact(draft.title, secrets),
+      body: redact(draft.body, secrets),
+      containerId: destination.containerId,
+      subContainerId: destination.subContainerId,
+      labelIds: destination.labelIds,
+      images,
+    });
+    // Recorded AFTER the provider confirms, never before: a link written
+    // optimistically would badge the defect "filed as ENG-42" for an issue that
+    // does not exist, and the user's next move would be to click a dead link.
+    issueLinkStore.save(provider, draft.source, created);
+    logger.info("issues", "Filed an issue", { provider, identifier: created.identifier });
+    return created;
+  },
+
+  /** The issue already filed for this defect, if any. */
+  linkFor(source: DefectSource, provider: ProviderId = ACTIVE_PROVIDER): IssueLink | null {
+    return issueLinkStore.find(provider, source);
+  },
+
+  /** Every link on a test, so a list badges itself in one read. */
+  linksForTest(testId: string): IssueLink[] {
+    return issueLinkStore.forTest(testId);
+  },
+
+  /**
+   * Report a recurrence onto the issue that already exists.
+   *
+   * The alternative — filing again — produces one issue per run for a defect
+   * that recurs every run, which is how this feature would become the thing
+   * everyone mutes. A comment keeps the history on one work item.
+   *
+   * The body is rebuilt from THIS run rather than reusing the original: the
+   * point of the comment is that it carries the latest evidence, and the
+   * screenshots go with it for the same reason.
+   */
+  async commentRecurrence(
+    source: DefectSource,
+    attachmentFiles: string[],
+    provider: ProviderId = ACTIVE_PROVIDER,
+  ): Promise<IssueLink> {
+    const link = issueLinkStore.find(provider, source);
+    if (!link) throw new IssueProviderError("unknown", "This defect has no issue to comment on.");
+    const draft = defectLoader.build(source);
+    if (!draft) throw new IssueProviderError("unknown", "This defect's evidence is no longer on disk.");
+
+    const key = await requireKey(provider);
+    const secrets = await testSecretsStore.allValues().catch(() => [] as string[]);
+    await providerFor(provider).addComment(
+      key,
+      link.issueId,
+      redact(`**Seen again.**\n\n${draft.body}`, secrets),
+      defectLoader.readImages(source, attachmentFiles),
+    );
+    issueLinkStore.touch(provider, source);
+    logger.info("issues", "Reported a recurrence", { provider, identifier: link.identifier });
+    return { ...link, lastCommentedAt: Date.now() };
   },
 
   /** Test seam: drop the in-process verification cache. */

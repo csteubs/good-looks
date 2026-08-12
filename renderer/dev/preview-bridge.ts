@@ -68,13 +68,21 @@ import type { LlmConfig, LlmModel, LlmProviderStatus } from "../lib/llm-types";
 import type { BranchStatus } from "../lib/branch-types";
 import type {
   ConnectionStatus,
+  CreatedIssue,
   IssueContainer,
   IssueDefaults,
+  IssueDraft,
+  IssueLabel,
+  IssueLink,
   IssueSubContainer,
   ProviderVocabulary,
 } from "../lib/issue-types";
 import type { TriageResult } from "../../shared/triage.mjs";
-import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
+import type {
+  StepDurationRow,
+  StepHealthRow,
+  TestDurationTrend,
+} from "../../shared/metrics-query.mjs";
 import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
 
 /** api.ts passes ONE options object per call — `invoke("tests:get", { id })`,
@@ -143,6 +151,9 @@ function seed() {
       connected: false,
       error: null as string | null,
       defaults: { containerId: null as string | null, subContainerId: null as string | null },
+      // Grows as issues are filed, so the recurrence branch is reachable in a tab:
+      // send the same defect twice and the second opens on "already filed".
+      links: [] as IssueLink[],
     },
   };
 }
@@ -250,8 +261,8 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     },
     {
       stepId: "s2",
-      label: "goto shop.example.com",
-      type: "goto",
+      label: "click Add to cart",
+      type: "click",
       testId: "t-checkout",
       testName: "Checkout — happy path",
       recentRuns: 12,
@@ -490,14 +501,39 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       available: true,
       rows: stepHealthRows(),
     }),
-    "metrics:slowness": (): {
+    "metrics:slowness": (params?: {
+      testId?: string;
+    }): {
       available: boolean;
       rows: StepDurationRow[];
       slowed: StepDurationRow[];
       cost: CostBreakdown;
+      testTrend: TestDurationTrend | null;
     } => {
       const rows = durationRows();
-      return { available: true, rows, slowed: rows.filter((r) => (r.changeRatio ?? 1) > 1.5), cost: cost() };
+      return {
+        available: true,
+        rows,
+        slowed: rows.filter((r) => (r.changeRatio ?? 1) > 1.5),
+        cost: cost(),
+        // Only when a test was named, exactly as the handler does (C §6.3).
+        // A fixture that answered for the suite-wide call too would let the
+        // run summary read a median that the real app never gives it.
+        testTrend: params?.testId
+          ? {
+              testId: params.testId,
+              window: 10,
+              recentRuns: 8,
+              previousRuns: 6,
+              // Slightly above the run summary's own history median (11,900),
+              // so the preview shows the two sources being different and the
+              // metrics one winning.
+              recentP50Ms: 11_400,
+              previousP50Ms: 10_800,
+              changeRatio: 11_400 / 10_800,
+            }
+          : null,
+      };
     },
     "metrics:divergence": (): { available: boolean; steps: DivergentStep[] } => ({
       available: true,
@@ -753,6 +789,91 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       { id: "proj-a11y", name: "Accessibility debt", containerId: null },
       { id: "proj-design-sys", name: "Design system", containerId: "team-design" },
     ],
+    "issues:listLabels": (): IssueLabel[] => [
+      { id: "lbl-bug", name: "Bug", color: "#ff4d61" },
+      { id: "lbl-a11y", name: "Accessibility", color: "#35e0ff" },
+      { id: "lbl-visual", name: "Visual", color: "#b98cff" },
+    ],
+    /** A draft shaped like the real one, so the compose dialog can be looked at
+     *  in a tab. The attachments carry a 1×1 PNG rather than a real screenshot:
+     *  the strip's LAYOUT is the thing worth seeing here, and a fixture holding
+     *  a plausible-looking page would make the preview feel like it had data it
+     *  does not. */
+    "issues:buildDraft": (p): IssueDraft | null => {
+      const source = (p?.source ?? null) as IssueDraft["source"] | null;
+      if (!source) return null;
+      const png =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+      const visual = source.kind === "visual";
+      return {
+        source,
+        title:
+          source.kind === "a11y"
+            ? "a11y: color-contrast on Checkout — happy path"
+            : visual
+              ? "Visual change (3.1%) — Checkout — happy path · click Place order"
+              : "Checkout — happy path failed at click Place order — Timeout <ms> exceeded",
+        body: [
+          source.kind === "a11y"
+            ? "**serious** · `color-contrast`\n\nElements must meet minimum contrast ratio thresholds"
+            : visual
+              ? "**3.1% of pixels changed** on this step's screenshot."
+              : "**Failure**\n\n```\nTimeout <ms> exceeded\n```",
+          "",
+          "---",
+          "",
+          "- **Test:** Checkout — happy path",
+          "- **URL:** `https://shop.example.com/cart`",
+          "- **Step:** `click Place order`",
+          "",
+          "_Filed from Good Looks!_",
+        ].join("\n"),
+        attachments: visual
+          ? [
+              { label: "Baseline", file: "baseline:s5", previewUrl: png, bytes: 148_231 },
+              { label: "This run", file: "5.png", previewUrl: png, bytes: 151_004 },
+              { label: "Difference", file: "5.diff.png", previewUrl: png, bytes: 22_887 },
+            ]
+          : source.kind === "failure"
+            ? [{ label: "At failure", file: "5.png", previewUrl: png, bytes: 151_004 }]
+            : [],
+        notices: [],
+      };
+    },
+    "issues:createIssue": (p): CreatedIssue => {
+      const source = (p?.source ?? {}) as IssueLink;
+      const issue = {
+        id: `iss-${state.issues.links.length + 1}`,
+        identifier: `ENG-${42 + state.issues.links.length}`,
+        url: "https://linear.app/northwind/issue/ENG-42",
+      };
+      // Recorded, so the SECOND send of the same defect shows the recurrence
+      // branch — which is the half of this feature worth being able to look at.
+      state.issues.links.push({
+        provider: "linear",
+        testId: String(source.testId ?? ""),
+        stepId: String(source.stepId ?? ""),
+        runId: String((source as { runId?: string }).runId ?? ""),
+        kind: (source.kind ?? "visual") as IssueLink["kind"],
+        ruleId: String((source as { ruleId?: string }).ruleId ?? ""),
+        issueId: issue.id,
+        identifier: issue.identifier,
+        url: issue.url,
+        createdAt: 0,
+      });
+      return issue;
+    },
+    "issues:linksForTest": (p): IssueLink[] =>
+      state.issues.links.filter((l) => l.testId === p?.testId),
+    "issues:commentRecurrence": (p): IssueLink => {
+      const source = (p?.source ?? {}) as IssueLink;
+      const link = state.issues.links.find(
+        (l) => l.testId === source.testId && l.stepId === source.stepId && l.kind === source.kind,
+      );
+      if (!link) throw new Error("This defect has no issue to comment on.");
+      link.lastCommentedAt = 0;
+      return link;
+    },
     "issues:getDefaults": (): IssueDefaults => state.issues.defaults,
     "issues:setDefaults": (p): IssueDefaults => {
       const patch = (p ?? {}) as Partial<IssueDefaults>;

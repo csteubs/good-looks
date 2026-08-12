@@ -144,6 +144,22 @@ export interface SummaryInput {
   live?: LiveRun | null;
   /** Epoch ms. Passed in rather than read, so "elapsed" is testable. */
   now: number;
+  /**
+   * The median from `metrics-store`, when it can supply one (C §6.3).
+   *
+   * PREFERRED OVER THE ONE THIS MODULE COMPUTES, and the reason is retention.
+   * The history in `runs` is `run-history.json`, which retention prunes; the
+   * metrics DB is rolled up BEFORE retention runs (CLAUDE.md), so after a prune
+   * it holds strictly more of this test's past than the JSON does. A median is
+   * exactly the statistic that degrades when its sample is silently truncated,
+   * and the failure is quiet: the number stays plausible and stops being true.
+   *
+   * Null or absent falls back to the history-derived median rather than to no
+   * median at all. The metrics DB is a derived shadow that is allowed to be
+   * unavailable — on a runtime without `node:sqlite`, or after a failed open —
+   * and "we lost the better source" must not mean "we lost the answer".
+   */
+  medianMs?: number | null;
 }
 
 /** This test's real runs, oldest first.
@@ -226,6 +242,7 @@ function summariseRecord(
   earlier: readonly RunRecord[],
   heals: readonly HealEntry[],
   stepCount: number,
+  metricsMedianMs: number | null,
 ): RunSummary {
   if (record.status === "failed") return { state: "failed", recordId: record.id };
 
@@ -255,7 +272,7 @@ function summariseRecord(
   }
 
   const passedBefore = earlier.filter((r) => r.status === "passed").map((r) => r.durationMs);
-  const med = median(passedBefore);
+  const med = metricsMedianMs ?? median(passedBefore);
   return {
     state: "passed",
     stepCount,
@@ -307,7 +324,13 @@ export function summariseRun(input: SummaryInput): RunSummary {
     // test's run in between and newest-wins would summarise a stranger.
     const index = live.recordId ? history.findIndex((r) => r.id === live.recordId) : -1;
     if (index >= 0) {
-      return summariseRecord(history[index], history.slice(0, index), input.heals, stepCount);
+      return summariseRecord(
+        history[index],
+        history.slice(0, index),
+        input.heals,
+        stepCount,
+        input.medianMs ?? null,
+      );
     }
     if (live.code !== null && live.code !== 0) return { state: "failed", recordId: live.recordId };
     // Passed, with no record yet: report the plain pass rather than reaching
@@ -330,5 +353,6 @@ export function summariseRun(input: SummaryInput): RunSummary {
     history.slice(0, history.length - 1),
     input.heals,
     stepCount,
+    input.medianMs ?? null,
   );
 }
