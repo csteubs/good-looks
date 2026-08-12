@@ -2847,3 +2847,15 @@
   text-transform: uppercase;
   color: var(--gl-tx-2);
 }
+
+/* Baseline provenance (§6.6), in the CRT's caption. The caption's own type is
+   set in primitives.css; this is only the stale marker.
+
+   AMBER AND NOT RED, and it does not colour the whole line. An old baseline is
+   not a fault — a stable page should have one — so this is a prompt to look,
+   which is what amber means everywhere else in this app. Colouring the entire
+   caption would make every frame with an old baseline read as a warning about
+   the frame, which is a different and wrong claim. */
+[data-gl="baseline-provenance"][data-stale] {
+  color: var(--gl-amber);
+}

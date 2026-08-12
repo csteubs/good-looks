@@ -27,6 +27,7 @@ let replays: RunReplaySummary[] = [];
 let replayDetail: unknown = null;
 let shot: string | null = null;
 let baselineShot: string | null = null;
+let baselines: unknown[] = [];
 
 // The four exits from a findings banner. Each returns the replay the way the
 // real handler does — patched, so the view re-renders from the same object the
@@ -67,7 +68,7 @@ vi.mock("../lib/api", () => ({
       setThreshold: async () => 0.1,
       getMasks: async () => [],
       setMasks: async () => [],
-      listBaselines: async () => [],
+      listBaselines: async () => baselines,
       baselineShot: async () => baselineShot,
       clearBaseline: async () => null,
       acceptStep: async () => null,
@@ -717,5 +718,103 @@ describe("wipe and blink (C §6.6)", () => {
     await waitFor(() => {
       if (!screen.queryByText(/both have to exist/i)) throw new Error("no explanation");
     });
+  });
+});
+
+// ── Baseline provenance (C §6.6) ────────────────────────────────────────
+//
+// The screen asks the user to judge a frame against a baseline and, until this,
+// said nothing about the baseline. "These two differ" means something entirely
+// different depending on whether the baseline was pinned yesterday from the
+// same engine or months ago from another one.
+
+describe("baseline provenance (C §6.6)", () => {
+  beforeEach(() => {
+    replays = [summary({ runId: "r1", stepCount: 1, changedSteps: 1 })];
+    replayDetail = {
+      testId: "t1",
+      runId: "r1",
+      testName: "Checkout",
+      status: "passed",
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_001_000,
+      failedIndex: null,
+      steps: [
+        {
+          index: 0,
+          stepId: "s1",
+          label: "goto example.com",
+          type: "goto",
+          status: "passed",
+          screenshot: "0.png",
+          diff: { state: "changed", ratio: 0.04, threshold: 0.2, diffFile: "0.diff.png" },
+        },
+      ],
+    } as never;
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+    baselineShot = "data:image/svg+xml;utf8,%3Csvg%20id%3D%22b%22%3E%3C/svg%3E";
+    baselines = [{ stepId: "s1", runId: "r-old", at: Date.now(), label: "goto" }];
+  });
+
+  afterEach(() => {
+    replayDetail = null;
+    shot = null;
+    baselineShot = null;
+    baselines = [];
+  });
+
+  async function showBaseline() {
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector(".gl-visual-modes")) throw new Error("not ready");
+    });
+    const button = screen.getAllByRole("button").find((b) => /^Baseline$/.test(b.textContent ?? ""));
+    fireEvent.click(button!);
+  }
+
+  it("says what the baseline is, under the frame", async () => {
+    await showBaseline();
+    const line = await waitFor(() => {
+      const el = document.querySelector('[data-gl="baseline-provenance"]');
+      if (!el) throw new Error("no provenance");
+      return el as HTMLElement;
+    });
+    // The run behind it is not in the fixture's run list, which is the ordinary
+    // state after retention has pruned — and it says so rather than dropping
+    // the field or guessing an engine.
+    expect(line.textContent).toContain("run since pruned");
+  });
+
+  it("shows it in the CRT's own caption slot, not as loose chrome", async () => {
+    // The prop has existed since A3, documented as "what this frame IS", with
+    // no consumer until now.
+    await showBaseline();
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="baseline-provenance"]')) throw new Error("waiting");
+    });
+    expect(
+      document.querySelector('[data-gl="crt"] .gl-crt-caption [data-gl="baseline-provenance"]'),
+    ).not.toBeNull();
+  });
+
+  it("says nothing at all when the step has no baseline record", async () => {
+    // A caption reading "unknown" under a frame is worse than no caption,
+    // because it looks like a fact.
+    baselines = [];
+    await showBaseline();
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("waiting");
+    });
+    expect(document.querySelector('[data-gl="baseline-provenance"]')).toBeNull();
+  });
+
+  it("does NOT caption the current frame with the baseline's provenance", async () => {
+    // The caption describes the baseline. Under the current frame it would be
+    // attributing one frame's history to another.
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("waiting");
+    });
+    expect(document.querySelector('[data-gl="baseline-provenance"]')).toBeNull();
   });
 });

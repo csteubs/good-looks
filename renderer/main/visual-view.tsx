@@ -46,6 +46,7 @@ import {
 import { api } from "../lib/api";
 import { countA11ySteps } from "../lib/a11y-format";
 import { blinkIntervalMs, wipeAfterKey, wipeFromPointer } from "../lib/visual-compare";
+import { baselineProvenance, isStale, provenanceLine } from "../lib/baseline-provenance";
 import { A11yBadge, A11yViolationList } from "./a11y-violations";
 import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import type {
@@ -218,6 +219,40 @@ export function DiffBadge({ diff }: { diff: VisualDiff }) {
 type ShotMode = "current" | "baseline" | "diff" | "wipe" | "blink";
 
 /**
+ * What this step's baseline IS, as one line. REDESIGN §6.6.
+ *
+ * Rendered into `CRT`'s `caption` — a prop that has existed since A3 documented
+ * as "what this frame IS: which run, which viewport, which engine" and had no
+ * consumer until now. It is shown on every frame the BASELINE participates in,
+ * because "these two differ" means something completely different depending on
+ * whether the baseline was pinned yesterday from the same engine or months ago
+ * from another one, and until now the screen said nothing at all about it.
+ *
+ * Returns undefined rather than a placeholder when there is no baseline record:
+ * a caption reading "unknown" under a frame is worse than no caption, because
+ * it looks like a fact.
+ */
+function useBaselineCaption(testId: string, stepId: string): React.ReactNode {
+  const baselines = useQuery({
+    queryKey: ["baselines", testId],
+    queryFn: () => api.visual.listBaselines(testId),
+    staleTime: 60 * 1000,
+  }).data;
+  // Shares the ["runs"] cache the rest of the app already holds, so joining a
+  // baseline to the run it came from costs nothing.
+  const runs = useQuery({ queryKey: ["runs"], queryFn: api.runs.list }).data;
+
+  const entry = baselines?.find((b) => b.stepId === stepId);
+  if (!entry) return undefined;
+  const p = baselineProvenance(entry, runs ?? [], Date.now());
+  return (
+    <span data-gl="baseline-provenance" data-stale={isStale(p) ? "" : undefined}>
+      {provenanceLine(p)}
+    </span>
+  );
+}
+
+/**
  * Wipe and Blink — the two modes that need BOTH frames at once. REDESIGN §6.6.
  *
  * A diff map is exact and nearly useless for triage: it lights every changed
@@ -246,6 +281,7 @@ function CompareShot({
   children?: React.ReactNode;
 }) {
   const reduced = usePrefersReducedMotion();
+  const caption = useBaselineCaption(testId, step.stepId);
   const [wipe, setWipe] = React.useState(50);
   const [showBaseline, setShowBaseline] = React.useState(false);
   const [dragging, setDragging] = React.useState(false);
@@ -302,6 +338,10 @@ function CompareShot({
           className="gl-visual-frame"
           src={showBaseline ? baseline : current}
           alt={`${showBaseline ? "Baseline" : "Current"} frame for step ${step.index + 1}`}
+          // Only under the baseline: the caption describes THAT frame, and
+          // leaving it up while the current frame is showing would attribute
+          // one frame's provenance to the other twice a second.
+          caption={showBaseline ? caption : undefined}
         />
         {/* The label is not decoration: with the frames alternating, "which one
             am I looking at" is otherwise unanswerable, and a user who cannot
@@ -326,7 +366,12 @@ function CompareShot({
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden">
       <div ref={boxRef} className="gl-visual-wipe" data-gl="wipe">
-        <CRT className="gl-visual-frame" src={baseline} alt={`Baseline for step ${step.index + 1}`} />
+        <CRT
+          className="gl-visual-frame"
+          src={baseline}
+          alt={`Baseline for step ${step.index + 1}`}
+          caption={caption}
+        />
         {/* The current frame on top, clipped. `clip-path` and not opacity: the
             premise of this mode is that any difference on screen is a
             difference in the page, and a partly-transparent layer invents one. */}
@@ -395,6 +440,9 @@ function StepScreenshot({
    *  with normalized mask coordinates. */
   children?: React.ReactNode;
 }) {
+  // Only in `baseline` mode — the caption says what the BASELINE is, and under
+  // the current frame or the diff map it would be describing something else.
+  const caption = useBaselineCaption(testId, step.stepId);
   // Resolve the image source for the active view mode.
   const file =
     mode === "diff" ? (step.diff?.diffFile ?? null) : mode === "current" ? step.screenshot : null;
@@ -466,7 +514,12 @@ function StepScreenshot({
   // `check:crt-untreated` pins that nothing here gains a filter or blend mode.
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden">
-      <CRT className="gl-visual-frame" src={src} alt={alt} />
+      <CRT
+        className="gl-visual-frame"
+        src={src}
+        alt={alt}
+        caption={mode === "baseline" ? caption : undefined}
+      />
       {children}
     </div>
   );

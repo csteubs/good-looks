@@ -916,8 +916,8 @@ exports (PDF / CSV / JUnit XML / public link). **This overlaps heavily with the
 MCP plan's Phase 5 emit adapters** — see §7.3. Build the emitters once, surface
 them here.
 
-**6.6 Visual triage.** **First slice done, 2026-08-12: Wipe and Blink.** Region
-breakdown, baseline provenance and drift are the second slice — B8 was split the
+**6.6 Visual triage.** **Wipe, Blink and baseline provenance done, 2026-08-12.**
+Region breakdown and drift are what is left — B8 was split the
 same way and for the same reason, that `visual-view.tsx` is the largest file in
 the renderer and the one where a change is most easily made blind.
 
@@ -945,6 +945,26 @@ is the question the three existing modes cannot answer.
   otherwise needs a steady hand.
 - **The modes are offered only when both frames exist.** A mode whose empty
   state is "both have to exist" is a mode that should not have been offered.
+
+**Baseline provenance, and the three fields that do not exist.** This section
+asks for "run, commit, browser, viewport, who accepted, when". Three of the six
+are not in this app and were not invented: nothing reads the user's repository,
+so there is no COMMIT in the picture at all; it is a single-user desktop app
+with no identity, so WHO ACCEPTED would read back the same name forever; and
+VIEWPORT is genuinely not on `RunRecord` — a test can carry `viewport` steps
+that resize mid-run, so there is no single viewport for a run to report and
+quoting the first would be wrong for any test that resizes. Fabricating them
+would make the comparison less judgeable while looking like it makes it more.
+
+What ships is the run, when it was pinned, the engine, headed-or-headless,
+whether the baseline is element-scoped — and the one nobody would think to ask
+for: **whether that run still exists.** Retention prunes run history and a
+baseline outlives it, so a baseline can be perfectly valid and no longer
+traceable to anything, which is a fact about how far the comparison can be
+trusted. It says "run since pruned" rather than dropping the field, because a
+provenance line missing a field reads as a rendering bug. It renders in `CRT`'s
+`caption` — a prop that has existed since A3 documented as "what this frame IS"
+and had no consumer until now.
 
 **6.7 Command palette (⌘K).** ✅ **Done, 2026-08-12.** Run a test, run a tag,
 open a view, record, generate, reach the last failure. Ranking in
