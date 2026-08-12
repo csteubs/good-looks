@@ -18,6 +18,7 @@ import {
 import { Plus, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
 
 import { ChromeButton, Rail, RailEmpty, RailGroup, RailRow, SiteIcon } from "../theme";
+import { RoutinesRail, useCreateRoutine } from "./routines-rail";
 import { api } from "../lib/api";
 import { aggregateStatus, type SessionLike } from "../lib/ai-debug-sessions";
 import { toneFor } from "../lib/ai-debug-status";
@@ -282,6 +283,10 @@ export function LibrarySidebar() {
   const params = useParams({ strict: false }) as { id?: string };
   const selectedId = params.id;
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const onRoutines = pathname === "/batch";
+  // Declared unconditionally — it is a hook, and the rail renders on every
+  // screen. Its queries are ones the app already holds.
+  const newRoutine = useCreateRoutine();
   const [dialogOpen, setDialogOpen] = React.useState(false);
   const [generateOpen, setGenerateOpen] = React.useState(false);
   const [gitDialogOpen, setGitDialogOpen] = React.useState(false);
@@ -410,12 +415,23 @@ export function LibrarySidebar() {
 
   return (
     <Rail
-      title="Library"
+      // ONE RAIL, THREE JOBS. REDESIGN §7.1 gives it a third: on the Routines
+      // screen it lists saved jobs instead of the library, the way Settings'
+      // rail lists panes. It swaps rather than stacking — two lists in one rail
+      // makes the rail a screen of its own, and what is navigated here is jobs.
+      // Nothing is lost: the checklist's own rows still open a test.
+      title={onRoutines ? "Routines" : "Library"}
       footer={<AiConnectionFooter />}
       actions={
-        <ChromeButton label="Add test" onClick={openAddMenu}>
-          <Plus aria-hidden="true" />
-        </ChromeButton>
+        onRoutines ? (
+          <ChromeButton label="New routine" onClick={newRoutine}>
+            <Plus aria-hidden="true" />
+          </ChromeButton>
+        ) : (
+          <ChromeButton label="Add test" onClick={openAddMenu}>
+            <Plus aria-hidden="true" />
+          </ChromeButton>
+        )
       }
       nav={
         // OUTSIDE the scrolling body, structurally. The views used to be an
@@ -440,8 +456,8 @@ export function LibrarySidebar() {
           />
           <RailRow
             icon={<ListChecks aria-hidden="true" />}
-            title="Batch"
-            subtitle="Run many tests"
+            title="Routines"
+            subtitle="Saved jobs"
             selected={pathname === "/batch"}
             onClick={() => navigate({ to: "/batch" })}
           />
@@ -466,7 +482,9 @@ export function LibrarySidebar() {
         </RailGroup>
       }
     >
-      {tests.length === 0 ? (
+      {onRoutines ? (
+        <RoutinesRail />
+      ) : tests.length === 0 ? (
         <RailEmpty>
           No tests yet. Click + to train, generate, import, or clone your first one.
         </RailEmpty>

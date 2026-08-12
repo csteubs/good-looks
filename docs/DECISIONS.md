@@ -16,6 +16,58 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — The rail's third job, and the word changes in the UI only (Phase D)
+
+REDESIGN §7.1's last unbuilt piece. On the Routines screen the rail lists saved
+jobs instead of the library — the pattern the redesign already establishes: one
+surface, context-dependent content, no new chrome. The views-nav row, the top
+strip's crumb, the router's title and the command palette all now say
+**Routines**.
+
+**It SWAPS rather than stacking.** Two lists in one rail makes the rail a screen
+of its own, and what is navigated here is jobs, not tests. Nothing is lost by
+the swap: the checklist's own rows still open a test, which is the only reason
+the library was reachable from this screen at all.
+
+**The word changes in the UI and nowhere else**, exactly as ROUTINES' rename
+table argues. The route is still `/batch`, the channels are still `batch:*`,
+the file is still `batch-history.json` and the join key is still
+`RunRecord.batchId`. Renaming those costs a migration and an MCP integration
+break to buy a word; the word is worth having where a person reads it.
+
+**Which Routine is open moved into the recorder store**, because the rail
+selects it and the view edits it — two components with no parent between them
+but `RootShell`. The router was the other option and is worse: this app's router
+uses memory history, so a path cannot select anything, and a search param would
+put a Routine id in a URL nobody can see. It is session-scoped on purpose:
+"reopen on the job you were editing" is a real nicety and also a settings field
+with its own normalizer and its own failure mode (a stored id for a deleted
+Routine), which is not what this slice is about.
+
+**`useCreateRoutine` fetches at click time rather than subscribing.** The hook
+is called by the rail, which renders on EVERY screen, while the button it feeds
+exists on one — standing `useQuery` subscriptions would keep two queries alive
+on six screens that never use them. Reading at the click is also the more
+correct answer for the generated name: unique against the list as it is now,
+not as it was when the rail last rendered. The creation itself is one shared
+`createRoutine`, because "make a new job" spelled twice — once in the picker,
+once in the rail — is how one of them starts producing Routines the other
+cannot open.
+
+The rail's row subtitle is a COUNT, not a name list: "3 tests" is what tells two
+jobs apart at a glance, and three truncated test names in a 240px rail is a list
+you cannot read pretending to be a summary. The row marks the FIRST Routine
+before anything has been chosen, because that is what the view opens — a rail
+showing no selection beside a screen plainly editing something reads as the two
+disagreeing about what you are looking at.
+
+Three test files needed a `recorder-store` stub they did not need before
+(`batch-view`, `library-sidebar`, `ai-debug-icons`): the rail now calls
+`useRecorder`, and the real provider owns the whole recording session. The
+`batch-view` stub is ordinary component state, which reproduces exactly what
+the view used to hold locally. Covered by `routines-rail.test.tsx` (7 cases),
+mutation-checked against five mutations.
+
 ### 2026-08-12 — A batch belongs to a Routine, and orphans belong to the migrated one (Phase D)
 
 The Routine editor shipped in #116 scoped its checklist to the open job but not

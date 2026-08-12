@@ -148,6 +148,21 @@ function emit(channel: string, payload: unknown): void {
 // focused on batch behavior rather than routing.
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 
+// The open Routine lives in the recorder store, because the RAIL selects it and
+// this view edits it. Stubbed with ordinary component state rather than mounting
+// the real provider: that provider opens IPC subscriptions and owns the whole
+// recording session, none of which this file is about, and the stub reproduces
+// exactly what the view used to hold locally.
+vi.mock("./recorder-store", async () => {
+  const react = await import("react");
+  return {
+    useRecorder: () => {
+      const [openRoutineId, setOpenRoutineId] = react.useState<string | null>(null);
+      return { openRoutineId, setOpenRoutineId };
+    },
+  };
+});
+
 function test_(id: string, name: string, tags?: string[]): TestRecord {
   return {
     id,

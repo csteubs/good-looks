@@ -39,6 +39,15 @@ vi.mock("@tanstack/react-router", () => ({
   useRouterState: () => "/",
 }));
 
+// The rail lists saved Routines while the Routines screen is open (REDESIGN
+// §7.1), and the selection lives in the recorder store. Stubbed for the same
+// reason the dialogs below are: the real provider owns the whole recording
+// session, and `useRouterState` above answers "/" here, so this file only ever
+// renders the library half.
+vi.mock("./recorder-store", () => ({
+  useRecorder: () => ({ openRoutineId: null, setOpenRoutineId: () => {} }),
+}));
+
 // The sidebar's other dialogs each open their own queries and native bridges;
 // none of them is what this file is about.
 vi.mock("./new-recording-dialog", () => ({ NewRecordingDialog: () => null }));

@@ -55,6 +55,14 @@ vi.mock("@tanstack/react-router", () => ({
 
 // The sidebar's dialogs each open their own queries and native bridges; none
 // of them is an icon surface.
+// The rail lists saved Routines while the Routines screen is open (REDESIGN
+// §7.1), and the selection lives in the recorder store. Stubbed because this
+// file mounts `LibrarySidebar` for the sparkle and has no business owning a
+// recording session; the router stub above puts it on the library half anyway.
+vi.mock("./recorder-store", () => ({
+  useRecorder: () => ({ openRoutineId: null, setOpenRoutineId: () => {} }),
+}));
+
 vi.mock("./new-recording-dialog", () => ({ NewRecordingDialog: () => null }));
 vi.mock("./generate-test-dialog", () => ({ GenerateTestDialog: () => null }));
 vi.mock("./import-git-dialog", () => ({ ImportGitDialog: () => null }));

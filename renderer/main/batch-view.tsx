@@ -17,6 +17,7 @@ import { api } from "../lib/api";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts } from "../lib/test-tags";
 import { LogInspector } from "./log-inspector";
+import { useRecorder } from "./recorder-store";
 import { TagCluster } from "./tag-cluster";
 import { applyOrder, isCustomOrder, moveToTarget, orderIdsOf } from "../lib/batch-order";
 import {
@@ -52,6 +53,7 @@ import {
   sameSteps,
   stepsFromRows,
 } from "../lib/routine-rows";
+import { createRoutine, randomSuffix } from "../lib/create-routine";
 import { batchBelongsToRoutine } from "../../shared/routine-migration.mjs";
 import type {
   BatchRecord,
@@ -131,11 +133,13 @@ export function BatchView() {
   // below is what makes the others reachable.
   const routinesQuery = useQuery({ queryKey: ["routines"], queryFn: api.routines.list });
   const routines = React.useMemo(() => routinesQuery.data ?? [], [routinesQuery.data]);
-  // Which one is open. Null until the list arrives — and null FOREVER for a
+  // Which one is open. HELD IN THE STORE rather than here, because the rail
+  // selects it and this view edits it — see `openRoutineId` in recorder-store
+  // for why not the router. Null until the list arrives, and null FOREVER for a
   // user with none, which is the state the migration leaves anyone who never
-  // ticked a row. That is an empty screen with a "New routine" button, not an
-  // error, and not an invented Routine nobody asked for.
-  const [openId, setOpenId] = React.useState<string | null>(null);
+  // ticked a row: an empty screen with a "New routine" button, not an error and
+  // not an invented Routine nobody asked for.
+  const { openRoutineId: openId, setOpenRoutineId: setOpenId } = useRecorder();
   const openRoutine = React.useMemo(
     () => routines.find((r) => r.id === openId) ?? null,
     [routines, openId],
@@ -437,29 +441,23 @@ export function BatchView() {
    *  joins a job, and pre-filling would make the first thing a new Routine does
    *  be something the user has to undo. Its defaults come from the global
    *  settings, which is where a first Routine's would have come from too. */
-  const createRoutine = React.useCallback(async () => {
-    const stamp = Date.now();
-    const taken = new Set(routines.map((r) => r.name));
-    let name = "New routine";
-    for (let n = 2; taken.has(name); n++) name = `New routine ${n}`;
+  const newRoutine = React.useCallback(async () => {
     try {
-      const created = await api.routines.save({
-        id: `routine-${stamp}-${Math.random().toString(36).slice(2, 8)}`,
-        name,
-        createdAt: stamp,
-        updatedAt: stamp,
-        steps: [],
-        defaults: {
-          captureArtifacts: settingsQuery.data?.defaultCaptureArtifacts ?? false,
-          concurrency: settingsQuery.data?.defaultBatchConcurrency ?? 1,
-        },
-      });
+      // `createRoutine` is shared with the rail's `+`: "make a new job" spelled
+      // twice is how one of them starts producing Routines the other cannot
+      // open — a different id scheme, a different name, different defaults.
+      const created = await createRoutine(
+        routines,
+        settingsQuery.data,
+        Date.now(),
+        randomSuffix(),
+      );
       await qc.invalidateQueries({ queryKey: ["routines"] });
       if (created) setOpenId(created.id);
     } catch {
       toast.error("Could not create a routine.");
     }
-  }, [routines, settingsQuery.data, qc]);
+  }, [routines, settingsQuery.data, qc, setOpenId]);
 
   // ── Every write, in one place ───────────────────────────────────────
   //
@@ -653,7 +651,7 @@ export function BatchView() {
                 consequence="An empty job you tick tests into"
                 onSelect={() => {
                   close();
-                  void createRoutine();
+                  void newRoutine();
                 }}
               />
               {openRoutine ? (

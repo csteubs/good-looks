@@ -52,7 +52,7 @@ const VIEWS: { path: string; label: string; keywords: string }[] = [
   { path: "/", label: "Home", keywords: "start overview" },
   { path: "/stats", label: "Stats", keywords: "run history logs charts flake cost" },
   { path: "/visual", label: "Visual", keywords: "screenshot replay diff baseline" },
-  { path: "/batch", label: "Batch", keywords: "run many tests suite" },
+  { path: "/batch", label: "Routines", keywords: "batch run many tests suite job" },
   { path: "/heals", label: "Heals", keywords: "auto-heal locators review" },
   { path: "/branches", label: "Branches", keywords: "git worktree build switch" },
 ];

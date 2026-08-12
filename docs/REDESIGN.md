@@ -1290,11 +1290,12 @@ Routine would paint its outcomes onto whichever rows this one shares. A batch
 with no `routineId` belongs to the migrated Routine; see DECISIONS for why the
 alternatives are worse.
 
-**One piece of the plan below is deliberately NOT built**, and it is placement
-rather than capability: the rail does not list Routines. That gives
-`library-sidebar.tsx`, which every screen shares, a third job, and the view's own
-picker makes the feature usable without it. Capabilities 2 (scheduling) and 3
-(the flow builder) are untouched, so there is no schedule chip to draw.
+**The rail lists Routines** as of the same day, giving it the third job §7.1
+describes. It SWAPS for the library rather than stacking above it, and the word
+"Routines" now appears in the views nav, the top strip's crumb, the router title
+and the command palette — the UI only, per the rename table. Capabilities 2
+(scheduling) and 3 (the flow builder) are untouched, so there is no schedule chip
+to draw; that is the only part of the plan below still unbuilt.
 
 **Where it lands.** Batch becomes a *list of Routines* with one Routine open,
 rather than a single implicit checklist. Concretely, in the redesign's shell:
