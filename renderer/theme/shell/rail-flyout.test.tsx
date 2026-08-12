@@ -82,6 +82,29 @@ describe("RailFlyout — where the panel lives", () => {
     expect(document.body.contains(panel)).toBe(true);
   });
 
+  it("is anchored by its BOTTOM edge, so growing taller moves its top up", async () => {
+    // The bug: this menu fetches nothing until it is first opened, so it is
+    // placed while it still says "Reading branches…" and gets five rows taller
+    // a moment later. Pinned by `top`, that growth goes DOWNWARD and the menu
+    // is cut off by the bottom of the window — which is exactly what happened
+    // on the first cold launch after the merge.
+    //
+    // jsdom cannot see it. `getBoundingClientRect` returns zeros, so every
+    // placement number is 0 and the assertion "it is on screen" is unavailable.
+    // What IS observable is which edge the panel is pinned by, and that is the
+    // whole of the fix — with `bottom` set and `top` unset, growth is upward as
+    // a property of the layout rather than something re-measured after the fact.
+    render(<Harness />);
+    hoverIn();
+    await advance(PAST_OPEN_DELAY);
+
+    const panel = await screen.findByRole("menu");
+    expect(panel.style.bottom).not.toBe("");
+    expect(panel.style.top).toBe("");
+    // And it can never be taller than the space above the row.
+    expect(panel.style.maxHeight).not.toBe("");
+  });
+
   it("removes the panel from the document when it closes", async () => {
     // A portal outlives its parent's re-render, so "hidden" is not enough:
     // a left-behind panel keeps its menuitems focusable and tabbable.
