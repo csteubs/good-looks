@@ -1,6 +1,6 @@
 # The indie redesign — an implementation plan
 
-**Status: Phase A is done; Phase B has reached every screen.** A1–A5 are landed,
+**Status: Phases A, B and C are done.** A1–A5 are landed,
 and so are **B1 (Home)**, **B2 (Heals)**, **B3 (Batch)**, **B4 (Settings)**,
 **B5a (Test detail, parity)**, **B6 (Recorder)**, **B7 (Stats)**, **B8 (Visual,
 first slice)** and **B9 (AI debug — the status contract and the Sending strip)**
@@ -9,13 +9,12 @@ the five components every screen embeds, and every screen has been reached.
 
 **Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
 its frame rail, threshold-against-frames and the masks/baselines reskin.
-**Phase C is nearly complete: §6.1, §6.2, §6.3, §6.4, §6.6, §6.7, §6.8 and §6.9
-all landed 2026-08-12** — the five non-failure run-state summaries (which were
-B5b), the inline step composer, change temp against real medians, Stats → Cost,
-the whole of Visual triage (Wipe/Blink, baseline provenance, drift and the region
-breakdown), the ⌘K command palette, the job ticker, and the boot sequence.
-**§6.5 (Stats → Report) is what remains**, and it overlaps §7.3's MCP emit
-adapters — build the emitters once, surface them there.
+**Phase C is complete. §6.1 through §6.9 all landed 2026-08-12** — the five
+non-failure run-state summaries (which were B5b), the inline step composer,
+change temp against real medians, Stats → Cost, Stats → Report (the emitters,
+the Export panel and the weekly digest), the whole of Visual triage (Wipe/Blink,
+baseline provenance, drift and the region breakdown), the ⌘K command palette,
+the job ticker, and the boot sequence. **Phase D (§7) is what remains.**
 Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
@@ -914,8 +913,8 @@ directly followed by a pass with none of the recorded run settings changed. Two
 definitions of flake in one app is how two surfaces end up disagreeing in front
 of a user.
 
-**6.5 Stats → Report mode.** **Emitters and the Export panel landed 2026-08-12;
-the weekly digest is what remains.** `shared/emitters.mjs` carries §7.3's five
+**6.5 Stats → Report mode.** ✅ **Done, 2026-08-12** — the emitters, the Export
+panel, and the weekly digest. `shared/emitters.mjs` carries §7.3's five
 formats — JUnit XML, GitHub Actions annotations, OTLP JSON trace, ticket
 markdown, and NDJSON/CSV of `step_metrics` — built once and shared with the MCP,
 as §7.3 asks.
@@ -975,8 +974,50 @@ Three smaller decisions:
   to look before forwarding: not a failure, so not red, and never green, because
   there is no good news to report about what a file contains.
 
-**Still to land: the weekly digest preview.** A different thing from exporting —
-an in-app summary with no emit path — and it gets its own slice.
+**The weekly digest landed 2026-08-12, as a READ rather than a preview — and
+that is a reinterpretation worth stating.** The mockup drew it beside the
+delivery channels: a picture of the email that went out on Mondays. §7.3 removed
+the channels because they promised a Slack integration that was never built, and
+with delivery gone a preview is a preview of nothing.
+
+What survives the loss is the QUESTION, and the Stats screen could not answer it.
+Six panels live there — cost, suite cost, step health, flake, divergence, capture
+overhead — and every one is a table or a breakdown answering something the reader
+already knew they wanted. None said how the week went. So `weeklyDigest` in
+`renderer/lib/weekly-digest.ts` produces three or four sentences, rendered above
+everything else by `digest-panel.tsx`, and the ticket emitter is how it leaves.
+
+Five decisions in it:
+
+- **A quiet week is not a good week.** With no runs the report is "Nothing ran
+  this week", never "0 failed" or "all passed" — both true of an empty set, both
+  reading as good news, and a suite nobody runs is the failure this whole app
+  exists against. It is the reading the digest most has to get right.
+- **The week-on-week comparison is what makes it weekly.** Without it these are
+  totals and the panels below do totals better. It is OMITTED for a first week
+  rather than compared against zero, which would read as explosive growth and is
+  really a statement about the app being new.
+- **Failures are counted per TEST, not per run.** One test failing three times is
+  one problem; three tests failing once each is three, and "3 failures" says the
+  same thing about both while they want completely different reactions. Two are
+  named and the rest counted — a list of five test names is a table written in
+  prose, and there is a real table further down the screen.
+- **Flake reuses §6.4's definition** rather than adding a second one, since two
+  definitions of flake in one app is how two surfaces end up disagreeing in
+  front of a user. `flakeRuns` wants ONE test's history, OLDEST FIRST; sorted the
+  other way it silently finds nothing, and the flake line simply never appears.
+- **Nothing renders when there is no history at all**, but a suite whose history
+  is all older than a week still gets the panel — "nothing ran this week" is the
+  most useful thing it can say about a suite that has gone quiet, and hiding it
+  there would hide exactly that.
+
+**One honest overlap.** On a young suite whose entire history sits inside the
+week, the first line restates the Stats header's own count. The labels separate
+them ("N runs recorded" against "THIS WEEK"), and they diverge as soon as the
+suite is older than seven days — but it is a real duplication on day one and not
+worth pretending otherwise.
+
+**§6.5 is complete, and with it Phase C.**
 
 **6.6 Visual triage.** ✅ **Done, 2026-08-12** — Wipe, Blink, baseline
 provenance, drift and the region breakdown. It was split into four PRs for the
