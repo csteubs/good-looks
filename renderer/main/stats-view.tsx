@@ -43,6 +43,7 @@ import { Pager } from "./pager";
 import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { DENSE_PAGE_SIZE, pageSlice } from "../lib/paginate";
+import { nativeShell } from "../lib/native-shell";
 import {
   NO_FILTERS,
   filtersActive,
@@ -72,10 +73,6 @@ interface NativeMenu {
 }
 function nativeMenu(): NativeMenu {
   return (window as unknown as { glazeAPI: { Menu: NativeMenu } }).glazeAPI.Menu;
-}
-function nativeShell(): { showItemInFolder: (p: string) => void } {
-  return (window as unknown as { glazeAPI: { shell: { showItemInFolder: (p: string) => void } } })
-    .glazeAPI.shell;
 }
 // ── Formatting helpers ─────────────────────────────────────────────────
 function fmtDateTime(ms: number): string {

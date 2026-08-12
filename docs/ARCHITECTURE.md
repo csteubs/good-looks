@@ -193,6 +193,7 @@ should update the relevant entry in the same commit.
   - `renderer/main/branches-view.tsx` (route `/branches`) + `renderer/lib/branch-types.ts` — the wire types, declared once and imported **type-only** by the main side rather than mirrored the way `recorder-types.ts` is; six interfaces are small enough to share outright and `import type` erases at build time.
   - Guarded by `check:branch-switch` (which runs the real script against hostile branch names), `branch-paths.test.ts`, `branch-switcher.test.ts` and `branches-view.test.tsx`.
 - `renderer/lib/api.ts` — Typed `window.glazeAPI.glaze.ipc` wrappers + `api.on(channel, cb)` for push events.
+- `renderer/lib/native-shell.ts` — the one typed accessor for `glazeAPI.shell` (`showItemInFolder`, `openExternal`). Separate from `api.ts`, which is this app's own IPC surface, where these are host capabilities underneath it. It existed twice before — a local `interface NativeShell` in `library-sidebar.tsx` and a differently-shaped inline type in `stats-view.tsx`, each describing whatever its own file called — and `openExternal` is the method where guessing the contract costs something: the main side refuses a URL it dislikes and the preload swallows the rejection, so a caller working from a wrong type sees nothing happen with nowhere to look.
 - `renderer/lib/use-llm-chat.ts` — `useLlmChat()` hook: calls `api.llm.chat`, subscribes to `llm:chunk/done/error` filtered by the returned `requestId` (a ref, so late/stale events from a previous request are ignored), accumulates streamed text. Exposes `{content, status, error, start, stop}`.
 - `renderer/lib/llm-prompts.ts` — `buildDebugMessages(ctx)`: the shared persona/prompt-construction pipeline for LLM features. System prompt hard-codes this app's actual spec conventions (prefer `getByRole/getByTestId/getByLabel/getByPlaceholder/getByText` over raw `locator()`, no `waitForTimeout`, web-first `expect(...).toBeVisible/toContainText` — mirrors `script-generator.ts`), a bad/good locator example, and an output-format rule (plain text, no markdown — the response renders in a `<pre>`, not a markdown viewer). User message adds dynamic context: `imported` (`test.sourceDir` set → hand-authored script, locator conventions may not apply) and `speed` (maps to the run's `slowMo` delay via a local `SLOW_MO_MS` mirror of `playwright-runner.ts` — flags whether timing/race causes are more or less likely). Keeps the existing head-truncate script (6000 chars) / tail-truncate output (8000 chars, errors are usually at the end). Also exports `buildGenerateMessages(ctx)` for whole-spec generation by prompt (single fenced ```ts block, whose system prompt additionally pins the vocabulary `spec-parser.ts` can read BACK — one self-contained `await page.<builder>(…).<action>(…)` per statement, no locator variables, no refinement chains, no `test.step` wrappers, no data extraction or branching, every `expect()` subject a locator or `page` — while explicitly keeping comments and `console.log` welcome, since the parser consumes both without counting a skip; guarded by `llm-prompts.test.ts`, which parses a spec written to those rules and asserts every action becomes a step with nothing skipped), `buildGenerateStepsMessages(ctx)` for the trainer's AI-steps flow — a `GENERATE_STEPS_SYSTEM_PROMPT` documenting the exact `Step[]`/locator/assert JSON schema so the model emits a fenced ```json array of editable steps — and `buildStepDebugMessages(ctx)` for per-step trainer Console debugging (focused single-step diagnosis, asks for prose + an optional corrected-expression ```ts snippet, not a whole-file replacement). Also exports `locatorToPrompt(l)` (Playwright-style expression from a `Locator`).
 - `renderer/lib/parse-llm-response.ts` — `parseResponse(text)` tokenizes a (possibly still-streaming) markdown-ish response into `text`/`code` segments (unterminated trailing fence → `closed:false` so partial streamed code still renders); `extractCorrectedScript(text)` returns the largest *closed* code block containing both `import` and `test(` (a plausibly-complete applyable spec) or `null`. `extractStepsJson(text)` pulls a JSON array (prefers a fenced ```json block, else the widest `[...]` span), parses it, and validates each entry against the `StepType`/`AssertKind`/`LocatorKind` enums (dropping invalid), returning `RawStep[]` or `null` — used by the trainer's AI-steps flow. Pure, no React.
@@ -666,6 +667,23 @@ template into a real macOS menu and answers with the picked `commandId`, which
 is what keeps `Select` and `DropdownMenu` native. Also exports
 `forwardRendererConsole`, which pipes renderer errors into the main log — the
 port's first failure was a blank window with a completely clean log.
+`shell:openExternal` is the one handler with a validator in front of it; see
+below.
+
+### `main/shell/external-url.ts`
+The allowlist deciding which URLs may be handed to the OS, and the whole of the
+`shell:openExternal` boundary. `shell.openExternal` launches whatever Launch
+Services has registered for a scheme — `file://` opens a document, a custom
+scheme starts another application — and the URL this app passes is a PR's
+`html_url` out of a GitHub API response, so it is network input. `checkExternalUrl`
+accepts https on `github.com` (or a subdomain) and **returns the parsed href**,
+which the handler opens instead of its argument: validating a parsed URL and
+then opening the caller's raw string means two values that merely usually agree.
+Guarded by `check:open-external` (hostile hosts, schemes, userinfo, normalisation)
+and by `check:recorder-navigation`, whose blanket ban on `openExternal` in `main/`
+is now a one-file allowlist — that check also pins the fact the exception rests
+on, that the **training window has no preload** and so an untrusted page has no
+`glazeAPI` with which to invoke any host channel.
 
 ### `main/shell/app-protocol.ts`
 Serves the built renderer over a custom `app://` scheme. Vite emits module
