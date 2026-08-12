@@ -39,6 +39,92 @@ import {
 } from "../theme";
 import type { TempMode } from "../theme";
 import type { StepType } from "../lib/recorder-types";
+// Not a primitive, and here anyway. §6.1's five panels are the same problem
+// this page was built for: only ONE of them is reachable from the preview's
+// fixtures (a test that has run and passed), so `healed`, `retry` and `never`
+// would first be seen by a user rather than by us.
+import { RunSummaryPanel } from "../main/run-summary-panel";
+import type { RunSummary } from "../lib/run-summary";
+
+/** The six run states, in the order a test tends to meet them. `failed` is
+ *  absent because its panel is `RunTriage`, which needs a backend query. */
+const RUN_SUMMARIES: RunSummary[] = [
+  { state: "never", stepCount: 6 },
+  { state: "running", done: 2, total: 6, failedSoFar: 0, elapsedMs: 4_200 },
+  {
+    state: "passed",
+    stepCount: 6,
+    durationMs: 12_400,
+    medianMs: 11_900,
+    deltaPct: 4.2,
+    captured: true,
+    a11yChecks: 6,
+    a11yNewSteps: 2,
+  },
+  {
+    state: "healed",
+    healedSteps: 1,
+    healFailedSteps: 0,
+    pendingReview: 1,
+    entries: [
+      {
+        id: "h-1",
+        testId: "t-login",
+        stepId: "s4",
+        stepIndex: 3,
+        stepLabel: 'click "Sign in"',
+        source: "run",
+        runId: "r-2",
+        at: 0,
+        originalLocator: { k: "testid", v: "signin" },
+        appliedLocator: { k: "role", role: "button", name: "Sign in" },
+        candidates: [],
+        applied: false,
+        status: "pending",
+      },
+    ],
+  },
+  {
+    state: "retry",
+    durationMs: 9_100,
+    stepCount: 6,
+    differences: [{ label: "Browser", before: "WebKit", after: "Chromium" }],
+    previous: {
+      id: "r-0",
+      testId: "t-login",
+      testName: "Login",
+      url: "https://app.example.com/login",
+      status: "failed",
+      exitCode: 1,
+      startedAt: 0,
+      finishedAt: 8_100,
+      durationMs: 8_100,
+      logFile: "/preview/runs/r-0.log",
+      logBytes: 0,
+    },
+  },
+  // The reading that decides whether somebody goes looking for a fix that does
+  // not exist, so it gets its own specimen rather than sharing `retry`'s.
+  {
+    state: "retry",
+    durationMs: 9_100,
+    stepCount: 6,
+    differences: [],
+    previous: {
+      id: "r-0",
+      testId: "t-login",
+      testName: "Login",
+      url: "https://app.example.com/login",
+      status: "failed",
+      exitCode: 1,
+      startedAt: 0,
+      finishedAt: 8_100,
+      durationMs: 8_100,
+      logFile: "/preview/runs/r-0.log",
+      logBytes: 0,
+    },
+  },
+];
 
 const ALL_TYPES: StepType[] = [
   "goto",
@@ -405,6 +491,16 @@ export function Specimen(): React.ReactElement {
                 </span>
               </Dialog>
             </Row>
+          </div>
+        </Panel>
+
+        {/* Inside a `.gl-run-panel` because that is what the panels sit in, and
+            their padding and dividers are set against its edges. */}
+        <Panel title="Run summaries" id="§6.1 — five states" pad={0}>
+          <div className="gl-run-panel" style={{ flex: "0 0 auto" }}>
+            {RUN_SUMMARIES.map((summary, i) => (
+              <RunSummaryPanel key={i} summary={summary} onReview={() => {}} />
+            ))}
           </div>
         </Panel>
 

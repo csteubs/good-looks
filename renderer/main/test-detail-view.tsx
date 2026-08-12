@@ -50,6 +50,7 @@ import { A11yPanel } from "./a11y-panel";
 import { computeStepDepths } from "../lib/describe-step";
 import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import { latestA11yRun } from "../lib/a11y-format";
+import { summariseRun } from "../lib/run-summary";
 import { BROWSER_SF_SYMBOLS } from "../lib/browser-icons";
 import {
   RUN_BROWSERS,
@@ -184,6 +185,37 @@ export function TestDetailView() {
   const pendingHeals = (healsQuery.data ?? []).filter((h) => h.status === "pending").length;
   const a11yNewSteps = latestA11yRun(runsQuery.data ?? [], id)?.a11yNewSteps ?? 0;
   const runInfo = runs[id];
+
+  // The run panel's clock, and ONLY while a run is in flight (§6.1's `running`
+  // panel reports elapsed time). It would usually be carried for free by the
+  // log streaming in, but a run that is waiting — on a slow navigation, on a
+  // locator that will eventually time out — streams nothing, and those are
+  // exactly the runs somebody is watching the clock on.
+  const [nowTick, setNowTick] = React.useState(() => Date.now());
+  const running = runInfo?.running ?? false;
+  React.useEffect(() => {
+    if (!running) return;
+    setNowTick(Date.now());
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [running]);
+
+  // Which of the six states this test's run panel is in. Computed here rather
+  // than inside the panel because both of its inputs are queries this view
+  // already holds for other reasons — the a11y badge needs `runs`, the Heals
+  // tab badge needs `heals` — so the summary costs nothing extra.
+  const runSummary = React.useMemo(
+    () =>
+      summariseRun({
+        testId: id,
+        runs: runsQuery.data ?? [],
+        heals: healsQuery.data ?? [],
+        stepCount: testQuery.data?.steps.length ?? 0,
+        live: runInfo ?? null,
+        now: nowTick,
+      }),
+    [id, runsQuery.data, healsQuery.data, testQuery.data?.steps.length, runInfo, nowTick],
+  );
 
   // Seed the run controls from the record, falling back to the global defaults.
   // Once per TEST rather than once per mount (see `seededFor`), and never again
@@ -842,7 +874,16 @@ export function TestDetailView() {
 
       {/* The dialog itself is rendered by AiDebugHost above the router, so a
           minimized session outlives this view. */}
-      {runInfo ? <RunOutput info={runInfo} onDebug={openAiDebug} aiStatus={aiStatus} /> : null}
+      {/* Always rendered now, not only once something has run in this session.
+          Opening a test cold used to say nothing at all about it — not that it
+          had never run, not that it failed yesterday (§6.1). */}
+      <RunOutput
+        info={runInfo}
+        summary={runSummary}
+        onDebug={openAiDebug}
+        onReview={test.sourceDir ? undefined : () => setTab("heals")}
+        aiStatus={aiStatus}
+      />
 
       {/* Asked at SAVE, not when Edit Steps is opened: this is a question about
           what to do with the edits, and it can only be answered once they

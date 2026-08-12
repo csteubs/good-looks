@@ -347,3 +347,109 @@
   align-items: center;
   gap: 6px;
 }
+
+/* ── The boot plate ────────────────────────────────────────────────────── */
+/*
+ * REDESIGN §6.9. A full-window title card on the palette's only true black,
+ * over everything including the modal layer — it is what the app looks like
+ * before there is an app to look at, so nothing may be in front of it.
+ *
+ * INERT TO THE POINTER. The app underneath is already mounted and interactive:
+ * the plate is a curtain over a running show, not a loading screen holding one
+ * up. A plate that swallowed the first click would make the skip read as the
+ * app dropping input rather than as it getting on with things.
+ */
+.gl-boot {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--gl-black);
+  pointer-events: none;
+  opacity: 1;
+  transition-property: opacity;
+  transition-timing-function: ease-out;
+}
+
+/* The duration comes from the component, because it is zero under reduced
+   motion — a cross-fade is motion, and the still path has none. */
+.gl-boot[data-phase="out"] {
+  opacity: 0;
+}
+
+.gl-boot-plate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 0 24px;
+  text-align: center;
+}
+
+/* Smaller than the Home wordmark at 40px, deliberately. This one is alone on a
+   black field with nothing to be measured against, and type with no neighbours
+   reads larger than it is; matching the Home size here would make the reveal
+   look like the mark shrinking. */
+.gl-boot-mark {
+  position: relative;
+  font-family: var(--gl-mono);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  /* Same correction as the Home mark: the tracking leaves a full space after
+     the last letter, so the mark measures centred and looks left of centre. */
+  text-indent: 0.24em;
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+  line-height: 1.1;
+}
+
+.gl-boot-sub {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+/* A fixed width rather than one derived from the mark: the rule is a beat, and
+   a beat whose length depends on how long the product's name happens to be is
+   a coincidence rather than a design. */
+.gl-boot-rule {
+  width: 180px;
+  height: 2px;
+  margin-top: 6px;
+  background: var(--gl-line);
+  overflow: hidden;
+}
+
+/* Phosphor, and the only colour on the plate. It is not reporting an outcome —
+   nothing has happened yet — but it is the app's own accent introducing itself,
+   which is the one job this screen has. */
+.gl-boot-rule-fill {
+  width: 0;
+  height: 100%;
+  background: var(--gl-phos);
+  box-shadow: 0 0 8px var(--gl-phos);
+  animation-name: gl-boot-fill;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+/* NOT an ambient animation name, and that matters: atmosphere.css stops the
+   ambient set under `calm`, which is the reduced-motion floor. This one is
+   turned off by the component instead — under reduced motion the fill is drawn
+   full and still, so there is a rule rather than an empty groove. Leaving it to
+   the stylesheet would give a `calm` user a bar stuck at zero for the whole
+   hold, which reads as stalled. */
+@keyframes gl-boot-fill {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}

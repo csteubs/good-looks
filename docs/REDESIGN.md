@@ -7,12 +7,11 @@ first slice)** and **B9 (AI debug — the status contract and the Sending strip)
 — see the ✅ marks in §4, §5 and §8.3. The app's frame is the redesign, so are
 the five components every screen embeds, and every screen has been reached.
 
-**One screen is partially done and says so in its own section**: B8 still owes
-its frame rail, mask list and threshold-against-frames. It was scoped that way
-deliberately — the first slice shipped the half with a contract riding on it (the
-`CRT` bezel) and left the half that is only a restyle. B9 is now complete, chrome
-included. **B5b** (the five non-failure run-state summaries) remains Phase C
-§6.1. Where the rest of this says "would", it means would.
+**Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
+its frame rail, threshold-against-frames and the masks/baselines reskin.
+**Phase C has started: §6.1 and §6.9 landed 2026-08-12** — the five non-failure
+run-state summaries (which were B5b) and the boot sequence. Where the rest of
+this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -702,8 +701,31 @@ The bars take the palette (phos/red for the two real outcomes, neutral for a
 frame that was never attempted, an amber inset rail to mark a change — caution,
 not an outcome, since the frame still passed).
 
-Still to do in B8: the mask list, and the threshold slider drawn against the
-frames.
+✅ **The threshold, drawn against the frames, 2026-08-11.** The slider used to be
+a number with no consequence on screen — "0.20%" says nothing about whether
+moving it silences the change you are looking at or every change you have. It
+now reads `flags 1 of 2` beside itself, counted over THIS run's frames and
+updated from the drag rather than the committed value, so it answers while you
+move it. The comparison is strictly-greater, matching the comparator that
+produced the ratios: a preview that disagreed with the next run by one frame
+would be worse than none, because it would be believed. Pinned by four tests on
+the pure `framesOverThreshold`.
+
+✅ **The masks / baselines manager, 2026-08-11.** It already existed as a
+capability — `MasksBaselinesDialog` is the per-test managed view, and masks are
+already drawn in the frame by the ignore-region editor — so this was a reskin:
+square hairline rows on `--gl-panel` instead of rounded bordered cards (the SDK
+weight read as a card, which is wrong for something you scan a dozen of), mono
+micro-label headings, neutral chips (neither "which steps" nor "has geometry" is
+a result), and amber on the mask glyph because a mask is a CAUTION about the
+comparison — pixels deliberately not judged — rather than an outcome.
+
+Doing it surfaced a fixture bug worth recording: `visual:listBaselines` was
+answering with bare step ids under a `: string[]` annotation. That type-checked,
+because the annotation was the thing being checked rather than `api.ts`'s actual
+`BaselineEntry[]` — so the manager rendered four rows with no label and "Invalid
+Date", which is exactly the "looks like a broken feature" failure the bridge's
+own header warns about. **With this, §B8 is complete and so is Phase B.**
 
 **One implementation note carried over from the mockup and worth keeping:** the
 diff region boxes are *measured after layout*, never authored as percentages,
@@ -763,8 +785,33 @@ captured frame, and it should not look like our chrome.
 
 Each is its own PR, each independently useful, ordered by value.
 
-**6.1 The six run states** (from B5). Five new summary panels in test detail.
-Data is already present in `RunRecord` and the heal journal.
+**6.1 The six run states** (from B5). ✅ **Done, 2026-08-12.** Five new summary
+panels in test detail, from data already present in `RunRecord` and the heal
+journal. The state decision and its arithmetic are pure
+(`renderer/lib/run-summary.ts`), the rendering is `run-summary-panel.tsx`, and
+`RunOutput` now shows the six-state chip rather than pass/fail.
+
+Four things the plan did not anticipate, all of which changed the shipped shape:
+
+- **"retry" had to be translated.** The plan calls it "attempt 1 vs attempt 2",
+  which presumes a runner with `retries` configured. This app configures none —
+  every run is one attempt — so the two attempts are two RUNS. The question
+  survives intact and the answer comes only from what `RunRecord` stores. When
+  NOTHING differed, that is the most useful reading available and the one a user
+  is least likely to reach alone: same engine, same pacing, same budget, opposite
+  outcome, so the test is flaky rather than fixed.
+- **Two of the six passed and are not phos.** `healed` is amber because a
+  mis-heal usually succeeds (clicking the wrong button rarely throws), and a
+  flaky `retry` is amber for the same reason. Reporting either as a plain pass
+  is the app agreeing with the substitution.
+- **The panel now renders with no live run.** It used to appear only once
+  something had executed in this session, so opening a test cold said nothing
+  whatsoever about it. That was invisible while the panel was about failure and
+  indefensible once it was about state.
+- **`.gl-heal-row` already existed** in `shared.css`, used by `heals-panel.tsx`,
+  and the new rows silently inherited it (and leaked into that panel). This is
+  the failure mode `check:renderer-classes` cannot see — the class resolves, to
+  the wrong rule. Renamed to `.gl-run-heal-*`.
 
 **6.2 Inline step composer** (from B6). Retires `add-step-dialog.tsx`. The
 `InsertGap` cursor is the prerequisite and the reason it can be moved.
@@ -793,8 +840,33 @@ the existing router and query layer.
 run / several / batch / failed / idle-hidden). Needs a global run-state
 subscription the app does not currently expose to the shell.
 
-**6.9 Boot sequence.** 2.6s glitch-plate splash. Cheap, and the first thing
-anyone sees. Should respect reduced motion by rendering statically.
+**6.9 Boot sequence.** ✅ **Done, 2026-08-12.** The 2.6s glitch plate, on the
+palette's only true black, wearing the same `echo` treatment as the Home
+wordmark over a phosphor rule that fills for the hold
+(`renderer/theme/shell/boot-plate.tsx`).
+
+Three departures from the one-line brief, each of which the brief implies
+without saying:
+
+- **It is skippable, on any key or any click.** 2.6 seconds is right the first
+  time and wrong the two-hundredth, and a splash you cannot get out of is the
+  reason splashes have a bad name. The skip is deliberately not advertised — an
+  on-screen "Skip" would make the plate look like something being endured — but
+  it is the first thing anyone tries.
+- **It covers the app rather than delaying it.** Everything below is mounted and
+  interactive the whole time; the plate is a curtain over a running show, not a
+  loading screen holding one up. It is inert to the pointer for the same reason,
+  so the skip never reads as the app dropping input.
+- **Reduced motion gets a different DURATION, not just a stiller plate** —
+  900ms. "Render statically" taken literally is a motionless black rectangle
+  held for 2.6 seconds, which does not read as a splash; it reads as a hang. The
+  plate is a performance, and with the performance removed there is less to
+  watch. The fill rule is drawn full and still rather than left empty, because a
+  bar stuck at zero for the whole hold reads as stalled.
+
+The `echo` treatment moved from `screens.css` to `shared.css` and is keyed on
+`.gl-echo` rather than on `.gl-home-mark`: a second screen wanted it, which is
+exactly the rule the four-stylesheet split states.
 
 ---
 

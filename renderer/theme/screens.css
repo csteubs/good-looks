@@ -94,80 +94,6 @@
   line-height: 1.1;
 }
 
-/*
- * `echo` — the glitch treatment, fixed as the design's default (REDESIGN §0).
- *
- * GHOSTING, NOT CHROMATIC ABERRATION, and the name is the reason: an echo is
- * the same signal arriving twice. The offset copies are drawn in the SAME ink
- * at low alpha, because the obvious alternative — red and cyan fringes — would
- * spend two status hues on decoration, on the app's own name, at the largest
- * type size in the product. Colour means outcome here, and the wordmark reports
- * nothing.
- *
- * `content: attr(data-text)` rather than duplicated markup: a second and third
- * copy of "GOOD LOOKS!" in the DOM is read out three times by a screen reader,
- * and pseudo-element content is not.
- */
-:root[data-glitch="echo"] .gl-home-mark::before,
-:root[data-glitch="echo"] .gl-home-mark::after {
-  content: attr(data-text);
-  position: absolute;
-  inset: 0;
-  text-indent: inherit;
-  pointer-events: none;
-}
-
-:root[data-glitch="echo"] .gl-home-mark::before {
-  color: rgba(233, 237, 238, 0.22);
-  transform: translate(-1.5px, 0);
-  animation: gl-echo-a 5.5s steps(1, end) infinite;
-}
-
-:root[data-glitch="echo"] .gl-home-mark::after {
-  color: rgba(233, 237, 238, 0.14);
-  transform: translate(1.5px, 0);
-  animation: gl-echo-b 5.5s steps(1, end) infinite;
-}
-
-/* Both ghosts sit still for most of the cycle and jump for a sixth of a second.
-   A continuously-moving wordmark is a thing you have to look away from; one
-   that twitches every five seconds is a thing you notice once. `steps(1, end)`
-   rather than an ease, because an echo snaps — an interpolated one reads as a
-   drop shadow sliding around. */
-@keyframes gl-echo-a {
-  0%,
-  92% {
-    transform: translate(-1.5px, 0);
-  }
-  94% {
-    transform: translate(-4px, 1px);
-  }
-  96% {
-    transform: translate(-1px, -1px);
-  }
-  98%,
-  100% {
-    transform: translate(-1.5px, 0);
-  }
-}
-
-@keyframes gl-echo-b {
-  0%,
-  92% {
-    transform: translate(1.5px, 0);
-  }
-  94% {
-    transform: translate(4px, -1px);
-  }
-  96% {
-    transform: translate(1px, 1px);
-  }
-  98%,
-  100% {
-    transform: translate(1.5px, 0);
-  }
-}
-
 .gl-home-copy {
   max-width: 44ch;
   margin: 0;
@@ -2098,6 +2024,172 @@
 }
 
 /*
+ * ── The five non-failed run summaries (§6.1) ─────────────────────
+ *
+ * Same slot as `.gl-triage`, same padding, same divider: a reader who learns
+ * where the explanation sits on a failed run should find it in the same place
+ * on every other kind. What changes between the states is the CONTENT, and
+ * nothing here is per-state except the progress bar — five layouts would be
+ * five things to learn.
+ */
+.gl-run-summary {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--gl-line);
+  overflow-y: auto;
+  /* Bounded, because the healed panel's journal list is as long as the run
+     healed steps. Past this it would push the log out of the strip they share,
+     and the log is the evidence.
+     `vh` AND NOT `%`. The panel is `flex: 0 0 auto` when there is no log, so
+     its own height is content-driven and indefinite — against which a
+     percentage max-height resolves to `none` and silently does nothing. The
+     symptom is a panel that renders correctly and is cut off at the window's
+     edge, with the scrollbar that would have revealed the rest never appearing.
+     Viewport units are definite everywhere, which is what this needs. */
+  max-height: 40vh;
+}
+
+/* Without a live run there is no log, so the fixed 224px strip has nothing to
+   fill it and the panel is as tall as the summary inside it. */
+.gl-run-panel:not(:has(.gl-run-log)) {
+  flex: 0 0 auto;
+}
+
+.gl-run-panel:not(:has(.gl-run-log)) .gl-run-summary {
+  border-bottom: 0;
+}
+
+/* Trailing, and mono: a qualifier on the sentence it follows, in the same
+   register as the triage confidence figure for the same reason. */
+.gl-run-summary-aside {
+  margin-inline-start: 8px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-run-summary .gl-kv {
+  margin-top: 6px;
+}
+
+.gl-run-summary-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gl-amber);
+}
+
+.gl-run-summary-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 3px 8px;
+  border: 1px solid var(--gl-line-2);
+  border-radius: 2px;
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+  cursor: pointer;
+}
+
+/* Neutral, not amber. Hover is not an outcome, and this app spends its four
+   hues on outcomes only — a control that goes amber under the pointer is
+   indistinguishable from one reporting a warning. */
+.gl-run-summary-action:hover {
+  border-color: var(--gl-line);
+  color: var(--gl-tx-1);
+}
+
+.gl-run-summary-action:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 1px;
+}
+
+/* HOW FAR IN, not "still going". A determinate bar because the step count is
+   known from the moment the run starts — a spinner here would repeat what the
+   chip already says and answer nothing the chip does not. */
+.gl-run-progress {
+  height: 3px;
+  margin-top: 8px;
+  border-radius: 2px;
+  background: var(--gl-line);
+  overflow: hidden;
+}
+
+.gl-run-progress-fill {
+  height: 100%;
+  background: var(--gl-cyan);
+  transition: width 200ms linear;
+}
+
+/* The heal journal rows. The locator is the content, so it wraps rather than
+   truncating — a heal you cannot read is a heal you cannot review, and this
+   panel exists to get them reviewed. */
+.gl-run-heals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.gl-run-heal {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.gl-run-heal-step {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-1);
+}
+
+.gl-run-heal-swap {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+  color: var(--gl-tx-3);
+}
+
+.gl-run-heal-locator {
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  word-break: break-all;
+  color: var(--gl-tx-2);
+}
+
+/* The before side is struck through rather than dimmed. Dimming is what this
+   palette uses for "less important", and the old locator is not less
+   important — it is the thing that stopped working. */
+.gl-run-diff {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.gl-run-diff-before {
+  text-decoration: line-through;
+  color: var(--gl-tx-3);
+}
+
+/*
  * The run-options block: the gang of four, 2×2.
  *
  * THE TRACK SIZING IS A LAYOUT CONTRACT, NOT A STYLE, and it is why this rule
@@ -2383,4 +2475,45 @@
   letter-spacing: 0;
   color: var(--gl-amber);
   white-space: nowrap;
+}
+
+/* What the threshold would do to THIS run's frames. Mono and tabular so the
+   number does not shimmy as it changes under a drag — the whole point is that
+   it updates live, and a figure that jumps sideways while you move a slider is
+   harder to read than one that does not move at all. */
+.gl-threshold-readout {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+/* Amber once it is flagging something — caution, matching the frame rail's own
+   change marker, because it is reporting the same fact at a different scale. */
+.gl-threshold-readout[data-flagged] {
+  color: var(--gl-amber);
+}
+
+/* A row in the masks / baselines manager. Square hairline on `--gl-panel`, like
+   every other list row in this design — the SDK's rounded bordered box read as
+   a card, which is the wrong weight for something you scan a dozen of. */
+.gl-mask-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  padding: 5px 8px;
+}
+
+.gl-mask-size {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
