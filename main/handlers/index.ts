@@ -19,6 +19,7 @@ import { recorderService } from "../services/recorder-service.js";
 import { batchRunner } from "../services/batch-runner.js";
 import { batchHistoryStore } from "../services/batch-history-store.js";
 import { routineStore } from "../services/routine-store.js";
+import { routineBlockedReason, routineRunPlan } from "../../shared/routine-plan.mjs";
 import { webhookUrlStore } from "../services/webhook-url-store.js";
 import { postWebhook } from "../services/alert-service.js";
 import { issueTrackerService } from "../services/issue-tracker/issue-tracker-service.js";
@@ -1262,6 +1263,49 @@ export function registerHandlers(): void {
   ipcMain.handle("routines:delete", async (_e, params: { id: string }) =>
     routineStore.remove(params.id),
   );
+  /**
+   * Run a saved Routine.
+   *
+   * A TRANSLATION INTO `batchRunner`, not a second execution engine. Every step
+   * becomes its own process, its own RunRecord and its own row in Stats — a
+   * Routine composes RUNS, and building a parallel runner for it is the design
+   * risk ROUTINES.md names. So this reads the Routine, asks
+   * `routineRunPlan` for the same `{ testIds, perTest }` payload `batch:run`
+   * takes, and hands it over.
+   *
+   * `plan.skipped` is returned rather than swallowed. A Routine that runs four
+   * of its five steps has done most of what was asked — refusing would let one
+   * deleted test disable a suite — but a batch quietly one test shorter than
+   * the job it came from is the failure this whole feature is supposed not to
+   * have. The caller reports it; only a Routine that can run NOTHING throws,
+   * and it throws the sentence explaining which kind of nothing.
+   */
+  ipcMain.handle("routines:run", async (_e, params: { id: string }) => {
+    const routine = routineStore.get(params.id);
+    if (!routine) throw new Error("That routine no longer exists.");
+    const plan = routineRunPlan(
+      routine,
+      testStore.list().map((t) => t.id),
+    );
+    const blocked = routineBlockedReason(plan);
+    if (blocked) throw new Error(blocked);
+    const started = await batchRunner.start({
+      testIds: plan.testIds,
+      captureArtifacts: plan.captureArtifacts,
+      // The batch-wide fallback for a test the runner finds no entry for.
+      // Every step here HAS an entry, so this only decides the degenerate case
+      // — headless, because a saved job opening windows nobody asked for is
+      // the behaviour ROUTINES.md rules out for scheduled runs and there is no
+      // reason for the manual path to differ on a test it could not resolve.
+      runHeadless: true,
+      perTest: plan.perTest,
+      // Clamped against DISTINCT tests, same as `batch:run`: the runner keys a
+      // lane by testId, so a multi-engine step still runs one window at a time
+      // and counting queue entries here would promise workers that only idle.
+      concurrency: clampBatchConcurrency(plan.concurrency, new Set(plan.testIds).size),
+    });
+    return { ...started, skipped: plan.skipped, plannedRuns: plan.plannedRuns };
+  });
 
   ipcMain.handle("runner:stop", async (_e, params: { runId: string }) => {
     playwrightRunner.stop(params.runId);

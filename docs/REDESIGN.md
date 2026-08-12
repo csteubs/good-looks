@@ -1273,13 +1273,16 @@ into existing UI rather than bolting on. Four are outstanding.
 Three independent capabilities, sequenced 1 → 2 → 3: a saved named
 configuration, a schedule, a flow builder.
 
-**Built as of 2026-08-12: the entity, and nothing visible.** A Routine is a
-record now (`routine-store.ts`, `shared/routine-migration.mjs`, `routines:*`
-IPC), the old Batch checklist migrates into one named "Batch" on first launch,
-and only `kind: "test"` steps exist. The UI below is unchanged and unstarted —
-Batch is still the single implicit checklist on screen. Doing it in this order
-is deliberate: it makes the next slice a reskin of a screen over a real record,
-rather than a screen that has to invent one.
+**Built as of 2026-08-12: the entity and running one, and nothing visible.** A
+Routine is a record now (`routine-store.ts`, `shared/routine-migration.mjs`,
+`routines:*` IPC), the old Batch checklist migrates into one named "Batch" on
+first launch, `routines:run` executes one through the SAME batch runner, and
+only `kind: "test"` steps exist (`onFailure` is stored but not yet honoured —
+every step behaves as `continue`, which is what Batch already does). The UI
+below is unchanged and unstarted — Batch is still the single implicit checklist
+on screen. Doing it in this order is deliberate: it makes the next slice a
+reskin of a screen over a real record that already runs, rather than a screen
+that has to invent one and teach it to run at the same time.
 
 **Where it lands.** Batch becomes a *list of Routines* with one Routine open,
 rather than a single implicit checklist. Concretely, in the redesign's shell:

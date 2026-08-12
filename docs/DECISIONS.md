@@ -16,6 +16,53 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — Running a Routine is a translation, not a second runner (Phase D)
+
+`shared/routine-plan.mjs` turns a Routine into the batch runner's existing
+`{ testIds, perTest }` payload and `routines:run` hands it straight to
+`batchRunner.start`. **A Routine composes RUNS; `runFlow` composes STEPS** —
+ROUTINES.md names conflating those as the main design risk in the whole
+feature, and the way to not conflate them is to keep the plan a translation.
+Every step is its own process, its own `RunRecord`, its own row in Stats,
+exactly as a batch entry already is.
+
+**Skips are returned, not swallowed, and they do not refuse the run.** A
+Routine that can run four of its five steps has done most of what was asked;
+refusing would let one deleted test disable a suite. But a batch quietly one
+test shorter than the job it came from is precisely the failure this feature
+exists to prevent, so `plan.skipped` comes back and the caller reports it. Only
+a Routine that can run *nothing* throws — and it throws a sentence saying which
+kind of nothing, because "no steps yet" and "all its tests were deleted" are
+different problems: one is a job you have not finished building, the other is a
+job whose tests you removed somewhere else. Collapsing them into "nothing to
+run" sends someone looking for a tick they never made.
+
+**A step is skipped when the test is flagged deleted OR absent from the
+library**, and both checks are needed. The flag is what the *editor* renders,
+so a user sees what they lost; the library is what is true *right now*, so a
+Routine saved before a delete reached it still cannot queue a ghost.
+
+**`knownTestIds: null` and `[]` mean opposite things**, deliberately, and the
+parameter is required rather than defaulted. "I already resolved these" and
+"the library is empty" want opposite answers, and a default would silently give
+the second one the first one's behaviour — every step running against a library
+with nothing in it.
+
+**`plannedRuns` counts queue entries, not tests.** The two differ the moment one
+step names two engines, and the toolbar has to report the number that will
+actually run. **Concurrency is clamped against distinct tests** in the handler
+and not in the plan: the runner keys a lane by `testId`, so a multi-engine step
+still opens one window at a time, and a second clamp inside the module could
+only ever disagree with the one that matters.
+
+In `shared/` because ROUTINES' rename table says to add an MCP `run_routine`
+*alongside* `run_batch` rather than renaming it — so two callers will build this
+payload, and a second transcription of these rules is right the day it is
+written and silently divergent after.
+
+Covered by `main/services/routine-plan.test.ts` (15 tests), every assertion
+mutation-checked against nine mutations.
+
 ### 2026-08-12 — Routines, capability 1: a Routine is an entity (Phase D)
 
 `docs/ROUTINES.md` sequences the feature 1 → 2 → 3 — a saved named

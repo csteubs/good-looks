@@ -5,14 +5,18 @@ document, written alongside the per-row Batch work of 2026-08-07 so that work
 didn't paint the next version into a corner. Most of it is still design — where
 it says "would", it means would.
 
-What now exists: **the entity and the migration**, and nothing else.
+What now exists: **the entity, the migration, and running one.**
 `main/services/routine-store.ts` persists Routines to
 `userData/recorder/routines.json`; `shared/routine-migration.mjs` synthesises
 the "Batch" Routine described under *A Routine is an entity*, once, at startup;
-`routines:*` IPC exposes list/get/save/delete. Of the step kinds below only
-`kind: "test"` is built. **There is no UI yet** — the Batch view is still the
-old checklist, and turning it into this Routine's editor is the next slice.
-Capabilities 2 (scheduling) and 3 (the flow builder) are untouched.
+`shared/routine-plan.mjs` turns a Routine into the batch runner's own payload;
+`routines:*` IPC exposes list/get/save/delete/run. Of the step kinds below only
+`kind: "test"` is built, and `onFailure` is stored but not yet honoured — every
+step behaves as `continue`, which is what Batch already does. **There is no UI
+yet** — the Batch view is still the old checklist, and turning it into this
+Routine's editor is the next slice. The MCP `run_routine` tool named in the
+rename table below is not built either. Capabilities 2 (scheduling) and 3 (the
+flow builder) are untouched.
 
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for what exists today,
 [DECISIONS.md](DECISIONS.md) for why the current Batch is shaped the way it is,
