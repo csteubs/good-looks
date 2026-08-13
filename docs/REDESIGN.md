@@ -1293,9 +1293,13 @@ alternatives are worse.
 **The rail lists Routines** as of the same day, giving it the third job §7.1
 describes. It SWAPS for the library rather than stacking above it, and the word
 "Routines" now appears in the views nav, the top strip's crumb, the router title
-and the command palette — the UI only, per the rename table. Capabilities 2
-(scheduling) and 3 (the flow builder) are untouched, so there is no schedule chip
-to draw; that is the only part of the plan below still unbuilt.
+and the command palette — the UI only, per the rename table.
+
+**Capability 2 (scheduling) is built** as of 2026-08-13, so the schedule chip
+this section calls for now exists — neutral chrome, as the design note below
+requires, opening a dialog that states the "runs only while the app is open"
+caveat ROUTINES.md insists on. Capability 3 (the flow builder) is untouched,
+and is the only part of the plan below still unbuilt.
 
 **Where it lands.** Batch becomes a *list of Routines* with one Routine open,
 rather than a single implicit checklist. Concretely, in the redesign's shell:

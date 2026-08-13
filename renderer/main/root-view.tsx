@@ -14,6 +14,7 @@ import { LibrarySidebar } from "./library-sidebar";
 import { LoadFailedDialog } from "./load-failed-dialog";
 import { RecorderProvider, useRecorder } from "./recorder-store";
 import { RecordingView } from "./recording-view";
+import { MissedRunsDialog } from "./missed-runs-dialog";
 
 function RootShell() {
   const { state } = useRecorder();
@@ -184,6 +185,11 @@ export function RootView() {
               appear. That is the bug this component exists to fix; putting it
               back inside would silently reintroduce it. */}
           <LoadFailedDialog onCheckStats={onCheckStats} />
+          {/* Also outside RootShell, and for a related reason: a missed
+              scheduled run has to be offerable whatever screen the user landed
+              on, including while a recording session has swapped the outlet
+              out. See docs/ROUTINES.md capability 2. */}
+          <MissedRunsDialog />
         </AiDebugProvider>
       </RecorderProvider>
     </div>

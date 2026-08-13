@@ -28,6 +28,7 @@
 // a preview that white-screens on one unknown channel is useless exactly when
 // you most want to look at it.
 
+import { missedRoutines } from "../../shared/routine-schedule.mjs";
 import {
   BATCHES,
   ROUTINES,
@@ -212,6 +213,15 @@ function seed() {
 
 function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> {
   const findTest = (id: unknown) => state.tests.find((t) => t.id === id) ?? null;
+
+  /** Settle a missed occurrence, the way both real answers do — running it and
+   *  declining it both stamp, or the prompt returns on every reload. */
+  const stampScheduled = (id: string): boolean => {
+    const i = state.routines.findIndex((r) => r.id === id);
+    if (i < 0) return false;
+    state.routines[i] = { ...state.routines[i], lastScheduledRunAt: Date.now() };
+    return true;
+  };
 
   /** One place the connection state is shaped, since four handlers return it. */
   const issuesStatus = (): ConnectionStatus => ({
@@ -1114,6 +1124,21 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       const before = state.routines.length;
       state.routines = state.routines.filter((r) => r.id !== id);
       return { removed: before - state.routines.length };
+    },
+    /** Occurrences missed while the app was closed. Computed from the SAME
+     *  rules the backend uses rather than hard-coded, so a fixture whose
+     *  schedule stops being overdue stops appearing here too — a preview that
+     *  disagrees with the app about what is due is worse than no preview. */
+    "routines:missed": (): Routine[] =>
+      structuredClone(missedRoutines(state.routines, Date.now())),
+    "routines:runMissed": (params?: unknown): { routineId: string; outcome: string } => {
+      const id = (params as { id?: string } | undefined)?.id ?? "";
+      stampScheduled(id);
+      return { routineId: id, outcome: "started" };
+    },
+    "routines:dismissMissed": (params?: unknown): { dismissed: boolean } => {
+      const id = (params as { id?: string } | undefined)?.id ?? "";
+      return { dismissed: stampScheduled(id) };
     },
     /** The preview HAS a runner (see the run bridge above), so this answers the
      *  way the real one does rather than pretending nothing happened. */

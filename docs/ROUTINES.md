@@ -1,6 +1,6 @@
 # Routines — a design spec for Batch v2
 
-**Status: capability 1 is built (2026-08-12).** This started as a design
+**Status: capabilities 1 and 2 are built (2026-08-13).** This started as a design
 document, written alongside the per-row Batch work of 2026-08-07 so that work
 didn't paint the next version into a corner. Most of it is still design — where
 it says "would", it means would.
@@ -23,15 +23,15 @@ below). Previous batches IS scoped to the open Routine: `BatchState` carries
 an optional `routineId`, and a batch without one belongs to the migrated
 Routine — see `ORPHAN_BATCH_OWNER`.
 
-**Capability 2 is most of the way there.** `Routine.schedule`,
-`shared/routine-schedule.mjs` and `main/services/routine-scheduler.ts` all
-exist: the timer fires occurrences that arrive while the app is open, and
-`routines:missed` reports the ones missed while it was closed for the renderer
-to offer. **What is missing is the picker** — nothing can set a schedule yet, so
-nothing fires in practice, and `SCHEDULE_CAVEAT` has nowhere on screen to
-appear. Note the two departures recorded under *Scheduling* below: the schedule
-is an ENUMERATION rather than a cron string, and `lastRunAt` lives on the
-Routine as `lastScheduledRunAt`. Capability 3 (the flow builder) is untouched.
+**Capability 2 is built.** `Routine.schedule`,
+`shared/routine-schedule.mjs`, `main/services/routine-scheduler.ts`, the
+schedule chip in the editor and the launch prompt for a missed run. The timer
+fires occurrences arriving while the app is open; the catch-up offers ones
+missed while it was closed; `SCHEDULE_CAVEAT` is stated wherever a schedule is
+set. Note the two departures recorded under *Scheduling* below: the schedule is
+an ENUMERATION rather than a cron string, and `lastRunAt` lives on the Routine
+as `lastScheduledRunAt`. **Capability 3 (the flow builder) is untouched**, and
+so is the MCP `run_routine` tool named in the rename table.
 
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for what exists today,
 [DECISIONS.md](DECISIONS.md) for why the current Batch is shaped the way it is,

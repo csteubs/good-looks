@@ -381,6 +381,71 @@
   gap: 8px;
 }
 
+/* The schedule chip. NEUTRAL CHROME, not phosphor — REDESIGN §7.1 says so and
+   the palette rule behind it is the app's oldest: colour means OUTCOME. A
+   schedule has not passed or failed anything, and a green "Every day at 09:00"
+   beside a red run history would be the loudest wrong signal on the screen. */
+.gl-schedule-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--gl-line-2);
+  background: var(--gl-ink);
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-2);
+  cursor: pointer;
+}
+
+.gl-schedule-chip:hover:not(:disabled) {
+  border-color: var(--gl-line);
+  color: var(--gl-tx-1);
+}
+
+.gl-schedule-chip:disabled {
+  color: var(--gl-tx-3);
+  cursor: default;
+}
+
+.gl-schedule-chip svg {
+  width: 12px;
+  height: 12px;
+}
+
+.gl-schedule-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.gl-schedule-time {
+  height: 30px;
+  border: 1px solid var(--gl-line-2);
+  padding: 4px 8px;
+  background: var(--gl-ink);
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  color: var(--gl-tx-1);
+  outline: none;
+}
+
+.gl-schedule-time:focus-visible {
+  border-color: var(--gl-cyan);
+}
+
+/* The headless note takes the whole row: it is a sentence about what a
+   scheduled run DOES, not a label for the control beside it. */
+.gl-schedule-note {
+  flex-basis: 100%;
+  margin: 0;
+}
+
 /* The open Routine's name. An ordinary field, styled DOWN to the weight of the
    controls beside it: the `Input` primitive's own light chrome made the name
    the loudest thing on a screen whose subject is the checklist, and a title
