@@ -1,0 +1,282 @@
+// Documentation — the app's own manual, rendered from the repo's markdown.
+//
+// The words are NOT written here. `docs/MCP-GUIDE.md` is one document with two
+// readers (the repo and this pane), parsed by `renderer/lib/doc-blocks.ts` into
+// blocks this file draws. See that file for why a subset parser rather than a
+// markdown dependency.
+//
+// THREE THINGS THIS PANE DOES THAT A RENDERED FILE WOULD NOT:
+//
+//   • It is reachable by SEARCH. Every topic is indexed by its full text, so
+//     typing "webhook" or "flaky" into the settings search finds the passage
+//     about it, next to the settings it is about.
+//   • It is reachable by DEEP LINK. The Help menu opens this window on a topic
+//     (`settings-window.html#documentation/setup`), which is the only reason
+//     the slugs in `REQUIRED_TOPIC_SLUGS` are a contract.
+//   • It knows things the document cannot. The setup topic ends with THIS
+//     machine's MCP server path and a command that can be copied — a file path
+//     nobody should be asked to type, and one the markdown cannot know.
+//
+// Links: only what `shell.openExternal` will actually open is a link. That
+// allowlist is https on github.com and nothing else (main/shell/external-url.ts),
+// so every other href — the doc's relative links to other repo files — renders
+// as ordinary text. An underlined thing that does nothing when clicked is worse
+// than no underline.
+
+import { useEffect, useMemo, useState } from "react";
+import { Button, toast } from "@ui";
+
+import type { DocBlock, DocSpan, DocTopic } from "../../lib/doc-blocks";
+import { APP_DOCS, docRowId } from "../../lib/docs";
+import { api } from "../../lib/api";
+import { PaneSection } from "../pane-section";
+import { useMatchedIds } from "../setting-row";
+
+/** Every topic across every shipped document, flattened — the pane navigates
+ *  topics, and which document one came from is a label, not a level. */
+const TOPICS: readonly { docLabel: string; topic: DocTopic }[] = APP_DOCS.flatMap((doc) =>
+  doc.page.topics.map((topic) => ({ docLabel: doc.label, topic })),
+);
+
+const DOC_TITLE = APP_DOCS[0].page.title;
+
+/** The topic a `#documentation/<slug>` fragment asks for. Read once, like the
+ *  pane fragment itself — after mount this is ordinary state, so clicking a
+ *  topic is not fighting the address bar. */
+function slugFromHash(): string | null {
+  const parts = window.location.hash.slice(1).split("/");
+  return parts.length > 1 && parts[1].length > 0 ? parts[1] : null;
+}
+
+function isOpenableLink(href: string | undefined): href is string {
+  return href !== undefined && /^https:\/\/([a-z0-9-]+\.)*github\.com(\/|$)/i.test(href);
+}
+
+function Spans({ spans }: { spans: readonly DocSpan[] }) {
+  return (
+    <>
+      {spans.map((span, i) => {
+        const text = span.code ? <code className="gl-doc-code">{span.text}</code> : span.text;
+        const marked = span.strong ? (
+          <strong className="gl-doc-strong">{text}</strong>
+        ) : span.em ? (
+          <em>{text}</em>
+        ) : (
+          text
+        );
+        if (isOpenableLink(span.href)) {
+          const href = span.href;
+          return (
+            <button
+              key={i}
+              type="button"
+              className="gl-doc-link"
+              onClick={() => window.glazeAPI.shell.openExternal(href)}
+            >
+              {marked}
+            </button>
+          );
+        }
+        return <span key={i}>{marked}</span>;
+      })}
+    </>
+  );
+}
+
+function Block({ block }: { block: DocBlock }) {
+  switch (block.kind) {
+    case "heading":
+      return <h3 className="gl-doc-h">{block.text}</h3>;
+    case "paragraph":
+      return (
+        <p className="gl-doc-p">
+          <Spans spans={block.spans} />
+        </p>
+      );
+    case "quote":
+      return (
+        <p className="gl-doc-quote">
+          <Spans spans={block.spans} />
+        </p>
+      );
+    case "list":
+      return (
+        <ul className="gl-doc-list">
+          {block.items.map((item, i) => (
+            <li key={i}>
+              <Spans spans={item} />
+            </li>
+          ))}
+        </ul>
+      );
+    case "code":
+      return (
+        <pre className="gl-doc-pre">
+          <code>{block.text}</code>
+        </pre>
+      );
+    case "table":
+      // Its own scroller. The settings content column is ~550px and the guide
+      // has three-column tables; without this the window itself scrolls
+      // sideways and the rail goes with it.
+      return (
+        <div className="gl-doc-table-wrap">
+          <table className="gl-doc-table">
+            <thead>
+              <tr>
+                {block.head.map((cell, i) => (
+                  <th key={i}>
+                    <Spans spans={cell} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {block.rows.map((row, r) => (
+                <tr key={r}>
+                  {row.map((cell, c) => (
+                    <td key={c}>
+                      <Spans spans={cell} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    case "rule":
+      return <hr className="gl-doc-rule" />;
+  }
+}
+
+/**
+ * Where the MCP server actually is on THIS machine, and the command that
+ * registers it.
+ *
+ * The honest version of a copy button. The server is a folder in the source
+ * tree (`mcp/server.mjs`), and `build.files` does not ship it — so a packaged
+ * app has no server to point at, and a command copied there would name a path
+ * that does not exist. Rather than print a plausible command and let the user
+ * discover that, the backend answers whether the file is really there and this
+ * says which of the two situations they are in.
+ */
+function McpServerCard() {
+  const [state, setState] = useState<{
+    path: string | null;
+    exists: boolean;
+    command: string;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.docs
+      .mcpServer()
+      .then((result) => {
+        if (!cancelled) setState(result);
+      })
+      .catch(() => {
+        if (!cancelled) setState({ path: null, exists: false, command: "" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!state) return null;
+
+  return (
+    <div className="gl-doc-card">
+      <p className="gl-doc-card-label">On this machine</p>
+      {state.exists ? (
+        <>
+          <p className="gl-doc-p">
+            The server is at <code className="gl-doc-code">{state.path}</code>. This registers it
+            with Claude Code for every project:
+          </p>
+          <pre className="gl-doc-pre">
+            <code>{state.command}</code>
+          </pre>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              void window.glazeAPI.clipboard.writeText(state.command);
+              toast.success("Command copied.");
+            }}
+          >
+            Copy command
+          </Button>
+        </>
+      ) : (
+        <p className="gl-doc-p">
+          This copy of the app does not carry the MCP server — it is part of the source tree, and a
+          packaged build ships only what it needs to run. Register the server from a checkout of the
+          project, using the path to its <code className="gl-doc-code">mcp/server.mjs</code>.
+        </p>
+      )}
+    </div>
+  );
+}
+
+export function DocumentationPane() {
+  const matched = useMatchedIds();
+
+  // Topics a running search left standing. `null` means no search.
+  const visible = useMemo(
+    () =>
+      matched === null
+        ? TOPICS
+        : TOPICS.filter(({ topic }) => matched.indexOf(docRowId(topic.slug)) !== -1),
+    [matched],
+  );
+
+  const [selected, setSelected] = useState<string>(
+    () => slugFromHash() ?? TOPICS[0].topic.slug,
+  );
+
+  // A search that filters the open topic away moves to one that survived —
+  // same rule the pane list follows, for the same reason: a heading over blank
+  // space reads as broken search rather than as a narrowed list.
+  const current =
+    visible.filter(({ topic }) => topic.slug === selected)[0] ?? visible[0] ?? null;
+
+  if (current === null) return null;
+
+  return (
+    <div className="gl-doc">
+      <PaneSection title={current.docLabel}>
+        {/* Not `role="tab"`. These pick which section of a document is shown,
+            which is what a rail of links does — and tabs come with a keyboard
+            contract (arrow keys move selection) that plain buttons do not
+            honour. `aria-current` is the same announcement `RailRow` makes. */}
+        <nav className="gl-doc-toc" aria-label="Topics">
+          {visible.map(({ topic }) => (
+            <button
+              key={topic.slug}
+              type="button"
+              id={docRowId(topic.slug)}
+              aria-current={topic.slug === current.topic.slug ? "true" : undefined}
+              data-current={topic.slug === current.topic.slug ? "" : undefined}
+              className="gl-doc-tab"
+              onClick={() => setSelected(topic.slug)}
+            >
+              {topic.title}
+            </button>
+          ))}
+        </nav>
+      </PaneSection>
+
+      <article className="gl-doc-body">
+        <p className="gl-doc-eyebrow">{DOC_TITLE}</p>
+        <h2 className="gl-doc-title">{current.topic.title}</h2>
+        {current.topic.blocks.map((block, i) => (
+          <Block key={i} block={block} />
+        ))}
+        {/* The one place app state is spliced into a document. Deliberately
+            after the topic's own words: the guide explains what to register,
+            and this says where it is here. */}
+        {current.topic.slug === "setup" ? <McpServerCard /> : null}
+      </article>
+    </div>
+  );
+}

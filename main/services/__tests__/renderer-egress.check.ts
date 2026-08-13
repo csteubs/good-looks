@@ -139,6 +139,40 @@ const ALLOWED: Array<{ needle: string; why: string }> = [
   );
 }
 
+// ── The documents the renderer bundles are held to the same rule ──────
+
+{
+  // `docs/MCP-GUIDE.md` is imported with `?raw` and inlined into the renderer
+  // bundle, so prose in it ships exactly like source does. The scan above only
+  // walks `.ts`/`.tsx`, which means moving a sentence out of a pane and into a
+  // document would have moved it out of this check's sight — and the whole
+  // argument for the check is that nothing else in the toolchain looks at where
+  // a URL points.
+  //
+  // Displaying a URL is not fetching one: these pages are rendered as text, and
+  // only https on github.com is clickable at all (main/shell/external-url.ts).
+  // The point is the SECOND LOOK, which is the same reason the allowlist above
+  // is of specific strings rather than of hosts.
+  const offenders: string[] = [];
+  for (const rel of ["docs/MCP-GUIDE.md"]) {
+    readFileSync(join(root, rel), "utf-8")
+      .split("\n")
+      .forEach((line, i) => {
+        const m = /https?:\/\/[^\s"'`)\]]+/.exec(line);
+        if (!m) return;
+        if (/^https?:\/\/(localhost|127\.0\.0\.1)/.test(m[0])) return;
+        if (ALLOWED.some((a) => line.includes(a.needle))) return;
+        offenders.push(`${rel}:${i + 1} — ${m[0].slice(0, 72)}`);
+      });
+  }
+  assert(
+    offenders.length === 0,
+    offenders.length === 0
+      ? "every absolute URL in the shipped documentation is one the user typed, configured, or is being shown"
+      : `a URL in shipped documentation that nobody has justified:\n     ${offenders.join("\n     ")}`,
+  );
+}
+
 // ── The sidebar specifically does not fetch per-test icons ────────────
 
 {

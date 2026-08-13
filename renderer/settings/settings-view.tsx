@@ -34,6 +34,7 @@ import { SettingsProvider, useSettingsController } from "./settings-controller";
 import { SettingsNav } from "./settings-nav";
 import { RowFilterProvider } from "./setting-row";
 import { DiagnosticsPane } from "./panes/diagnostics-pane";
+import { DocumentationPane } from "./panes/documentation-pane";
 import { AiPane } from "./panes/ai-pane";
 import { ExperimentsPane } from "./panes/experiments-pane";
 import { AlertsPane } from "./panes/alerts-pane";
@@ -55,6 +56,7 @@ const PANE_COMPONENTS: Record<PaneId, ComponentType> = {
   ai: AiPane,
   alerts: AlertsPane,
   integrations: IntegrationsPane,
+  documentation: DocumentationPane,
   diagnostics: DiagnosticsPane,
   experiments: ExperimentsPane,
 };
@@ -130,8 +132,13 @@ function SettingsShell() {
   //
   // `paneById` is what makes an unknown fragment harmless — it returns
   // undefined and the window opens where it always did.
+  //
+  // Only the FIRST segment names a pane. `#documentation/setup` carries a topic
+  // for the Documentation pane, which reads the rest itself — this must not
+  // hand the whole string to `paneById` and land on Appearance because a topic
+  // was appended.
   const [selected, setSelected] = useState<PaneId>(
-    () => paneById(window.location.hash.slice(1))?.id ?? DEFAULT_PANE_ID,
+    () => paneById(window.location.hash.slice(1).split("/")[0])?.id ?? DEFAULT_PANE_ID,
   );
   const [search, setSearch] = useState("");
 

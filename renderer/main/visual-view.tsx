@@ -2279,17 +2279,14 @@ function RunList({
 
 // ── The Visual tab: replay hub over Phase 1 artifacts ───────────────────
 export function VisualView() {
-  const qc = useQueryClient();
   const runsQuery = useQuery({ queryKey: ["replays"], queryFn: api.artifacts.list });
   const runs = React.useMemo(() => runsQuery.data ?? [], [runsQuery.data]);
   const [selectedRunId, setSelectedRunId] = React.useState<string | null>(null);
 
-  // Live-refresh when a run completes.
-  React.useEffect(() => {
-    return api.on("runs:changed", () => {
-      qc.invalidateQueries({ queryKey: ["replays"] });
-    });
-  }, [qc]);
+  // NO `runs:changed` SUBSCRIPTION HERE, deliberately — see `run-derived-cache`.
+  // Invalidating ["replays"] from this route component meant the Stats board's
+  // Visual tile, which reads the same cache, only ever saw a new run by being
+  // remounted. `RecorderProvider` owns it now.
 
   // Default to the newest run once the list loads (or when the selection
   // disappears, e.g. after retention pruning).

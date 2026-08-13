@@ -97,6 +97,60 @@ off the right edge. The fix is a tighter row rhythm (8px gaps to 6px) and a
 smaller group indent, not shrinking a control below the width of its own text.
 Measured in the preview before and after; jsdom has no layout engine and could
 not have reported it.
+### 2026-08-13 — One owner for the six caches a run writes
+
+The Stats board's Stability, Auto-Heal and Visual tiles never refreshed after a
+run. Not "refreshed late" — never, for as long as you stayed on the page. The
+metrics DB and every JSON store were correct the whole time; `metrics.db` on
+this machine held the newest run, with the same id run history had. The screen
+was the only thing that was wrong.
+
+**Two mechanisms, both structural.** `["flake"]` was invalidated by nothing in
+the app, anywhere, ever. `["heals"]` was invalidated only by the user's own
+accept/revert — but Auto-Heal journals a heal DURING a run
+(`playwright-runner.ts`, `source: "run"`), so the Heals view, whose entire job
+is to show new heals, showed nothing until it was remounted. And the three
+caches that DID refresh (`["metrics"]`, `["captureOverhead"]`, `["replays"]`)
+were invalidated from inside `StatsView` and `VisualView` — ROUTE components, so
+the refresh only happened if you were already standing on the right screen.
+
+That last shape is the one this codebase keeps rediscovering. It is the sidebar's
+stale verdict dot (fixed by moving `runs:changed` into `RecorderProvider`), and
+it is `batch-view`'s invalidation (fixed the same way in §6.8). Both fixes moved
+one key and left the rest behind, because the rule was written as a comment on a
+call site rather than as a list.
+
+**So the list exists now.** `renderer/lib/run-derived-cache.ts` names the six
+caches a finished run makes stale, and `RecorderProvider` — mounted for the whole
+session — is the only subscriber that invalidates them. `StatsView`'s and
+`VisualView`'s subscriptions are gone; Stats' Manage menu (Reset / Delete) calls
+the same helper, because it rewrites run history wholesale and used to leave the
+Stability tile quoting a verdict over runs it had just deleted.
+
+**What deliberately stays out: `["script-changes"]`.** It sits beside heals in
+the Heals view and looks symmetrical, but `scriptChangeStore.record` is reached
+only from an IPC handler on a user action — no run writes one. Adding it would
+refetch it after every run for nothing, so the check pins its absence.
+
+**Why nothing caught this.** `check:push-consumers` asks whether somebody listens
+to each push, and every one of these passed — somebody did. It cannot ask whether
+the listener is mounted when the event fires, and it cannot see a cache that goes
+stale with no push involved at all, which is what heals and flake were. The
+component tests could not catch it either: the usual way to mock the bridge is
+`on: () => () => {}`, which makes the subscription inert, and that is exactly
+what `stats-view.test.tsx` does — so the live-refresh path had never been
+exercised by a single test. The browser preview was blind too, because
+`startFakeRun` never emitted `runs:changed`; it does now, which is what made the
+before/after observable in `dev:web` at all (`["runner:run","runs:list"]` before,
+all six after, standing on Stats with no remount).
+
+`check:derived-cache` is the rule as a gate: no `runs:changed` handler outside
+the store may invalidate, every listed key must be read by a real `useQuery`, and
+the detector is run against a synthetic violating fixture so it fails if it ever
+goes blind. `run-derived-cache.test.tsx` drives a real push bus and counts
+`queryFn` calls rather than `invalidateQueries` calls — an invalidation aimed at
+the wrong key is still a call, and counting calls is how you write a test that
+passes against the bug.
 
 ### 2026-08-13 — Capability 3 starts with `group`, not `wait`
 
@@ -244,6 +298,83 @@ already running. Claiming the app's behaviour would have been the easy lie.
 this is the second setting permitted to break it, on the same terms `Headed`
 already claims: it changes what happens to OTHER work, and scanning a routine
 for where it can abort is worth a hue. `continue` carries none.
+
+
+### 2026-08-13 — The app grows a manual: one markdown file, two readers
+
+`docs/MCP-GUIDE.md`, `renderer/lib/doc-blocks.ts`, `renderer/settings/panes/documentation-pane.tsx`, `main/index.ts`, `check:docs-blocks`.
+
+The app shipped with **no documentation surface**. Every document it has lives
+in the repo, and the only in-app mention of the MCP server was one clause inside
+the Debug screenshots row — which also meant searching Settings for "mcp"
+returned a screenshot toggle and nothing else. A user who had never read the
+repo had no way to learn that the MCP server exists, let alone that Linear,
+Slack and GitHub are *app* integrations rather than parts of it.
+
+**One file, not two copies.** The obvious implementation is to write the pane's
+copy in JSX. It is also how the pane and the guide drift: both are right the day
+they are written, nothing in the toolchain can compare them, and the failure is
+invisible from either side. So the pane renders `docs/MCP-GUIDE.md` itself.
+
+**A subset parser that throws, not a markdown dependency.** A general renderer
+accepts everything and draws whatever it likes; what this repo keeps being bitten
+by is the opposite failure — a construct that renders as *nothing*, silently (a
+class that does not exist, a `Text color=` that falls through to the default).
+So `doc-blocks.ts` handles a stated subset and REFUSES the rest, and
+`check:docs-blocks` parses every shipped document in the gate. Writing an
+ordered list in the guide is now a red build rather than a section that quietly
+renders as blank space. It also keeps the runtime dependency count at zero,
+which matters less but is not nothing.
+
+**`?raw`, because `build.files` does not ship `docs/`.** Vite inlines the
+markdown into the renderer bundle at build time. A pane that read the file from
+disk would work in dev and show nothing in the packaged `.app` — the worse
+failure order, since dev is where it would be tested.
+
+**Docs are indexed on full text, and indexed LAST.** Everywhere else in this
+window search is deliberately substring-strict, because a settings search that
+returns near-misses is worse than one that returns nothing. Documentation is the
+exception: someone typing "flaky" or "webhook" is asking where the subject is
+dealt with, and a paragraph about it is a true answer. The position in
+`SETTING_INDEX` is the load-bearing part — `settings-view` moves to the first
+pane with a hit when a search empties the open one, so docs listed first would
+make almost every query jump out of the controls and into the prose about them.
+
+**In Settings rather than in a window of its own.** Settings is the app's one
+secondary window and it already has the two things a reader wants: a rail and a
+search field. A Help window would have duplicated both to hold strictly less. The
+pane carries no `key`-bearing rows, so "N settings differ" and "reset section"
+stay silent there without a special case.
+
+**The Help menu deep-links topics, which makes slugs a contract.** The fragment
+grew a second segment (`#documentation/setup`), validated in the main process as
+two segments rather than by widening the pane pattern to allow a slash — that
+pattern's whole job is that the string is concatenated into a URL naming a file.
+A malformed topic drops the topic and keeps the pane, because dropping the whole
+fragment would send someone who clicked "Set up the MCP server" to Appearance,
+which reads as a broken menu rather than a rejected argument. `check:docs-blocks`
+then scans `main/index.ts` for the slugs it links and asserts each one is a real
+topic: rename a heading and the gate fails, instead of five menu items quietly
+all opening the top of the document.
+
+**The copy button says which of two worlds you are in.** The setup topic ends
+with this machine's resolved `mcp/server.mjs` path and a `claude mcp add` line.
+`mcp/` is part of the SOURCE tree and `build.files` ships `build/**`, so a
+packaged app has no server to point at — `mcp-install.ts` answers from disk and
+the pane prints prose instead of a command that names nothing. **Two things
+about the packaged case were deliberately left alone**: shipping `mcp/` as an
+`extraResources` payload, and the fact that `mcp/glaze-data.mjs` resolves a
+Glaze-era `app.glaze.macos.*` data directory that a packaged build does not
+write to. Both are real, neither is caused by this change, and fixing the path
+without fixing the data directory would produce a server that runs and reads the
+wrong library — which is worse than one that is honestly absent.
+
+**Egress: the check now reads the markdown too.** `check:renderer-egress` walks
+`.ts`/`.tsx` under `renderer/`. Prose bundled with `?raw` ships exactly like
+source, so moving a sentence out of a pane and into a document would have moved
+it out of the check's sight. Displaying a URL is not fetching one — and only
+https-on-github.com is clickable at all — but the point of that check is the
+second look, and the documents are now inside it.
 
 ### 2026-08-13 — `run_routine`: the rename table's one addition, and three stamps that fail silently
 

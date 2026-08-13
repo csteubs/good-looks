@@ -856,6 +856,17 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "llm:isActive": () => ({ active: false }),
     "alerts:status": () => ({ hasUrl: false, host: null }),
 
+    // The Documentation pane's one piece of live state. A preview has no
+    // filesystem to check, so it answers with the shape a real checkout gives —
+    // the interesting half of the pane to look at is the copyable command, and
+    // the absent case is one line of prose.
+    "docs:mcpServer": () => ({
+      path: "/path/to/good-looks/mcp/server.mjs",
+      exists: true,
+      command:
+        'claude mcp add --scope user good-looks -- node "/path/to/good-looks/mcp/server.mjs"',
+    }),
+
     // ── Issue tracker ────────────────────────────────────────────────────
     // Enough behaviour to exercise the pane's two states in a tab: a key that
     // is empty is refused the way the real backend refuses it, and anything
@@ -1274,6 +1285,13 @@ function startFakeRun(
       recordId: stored?.id,
     }),
   );
+  // The real runner persists the record and then broadcasts `runs:changed`,
+  // which is what refreshes the six run-derived caches (see
+  // `renderer/lib/run-derived-cache.ts`). Omitting it here made the preview
+  // quietly unable to show a whole class of bug: the Stats board's tiles going
+  // stale after a run reproduced in the app and NEVER in `dev:web`, because
+  // nothing in a tab could make the event happen.
+  later(() => emit("runs:changed", {}));
   return { runId };
 }
 

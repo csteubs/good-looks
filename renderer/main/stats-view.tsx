@@ -49,6 +49,7 @@ import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/
 import { RUN_BROWSERS, RUN_BROWSER_LABELS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { DENSE_PAGE_SIZE, pageSlice } from "../lib/paginate";
 import { nativeShell } from "../lib/native-shell";
+import { invalidateRunDerived } from "../lib/run-derived-cache";
 import {
   NO_FILTERS,
   filtersActive,
@@ -303,14 +304,13 @@ export function StatsView() {
   const [runsPage, setRunsPage] = React.useState(1);
   const [searchPage, setSearchPage] = React.useState(1);
 
-  // Live-refresh when a run completes.
-  React.useEffect(() => {
-    return api.on("runs:changed", () => {
-      qc.invalidateQueries({ queryKey: ["runs"] });
-    qc.invalidateQueries({ queryKey: ["captureOverhead"] });
-    qc.invalidateQueries({ queryKey: ["metrics"] });
-    });
-  }, [qc]);
+  // NO `runs:changed` SUBSCRIPTION HERE, deliberately. It used to live in this
+  // component and invalidated three of the six caches this page reads — and
+  // only while the page was mounted. Both halves of that were bugs: the board's
+  // Stability, Auto-Heal and Visual tiles never refreshed at all, and the three
+  // that did refresh did so only if you happened to be standing here. It is one
+  // subscription in `RecorderProvider` now, which is mounted for the whole
+  // session. `check:derived-cache` fails the build if it comes back.
 
   // Debounce the log search.
   React.useEffect(() => {
@@ -436,10 +436,13 @@ export function StatsView() {
   const failed = realRuns.length - passed;
   const passRate = realRuns.length > 0 ? Math.round((passed / realRuns.length) * 100) : 0;
 
+  // After Reset stats / Delete stats & logs / Delete by date. This rewrites run
+  // history wholesale, so it invalidates the same six caches a run does — the
+  // Manage menu used to refresh three of them, which left the Stability tile
+  // quoting a verdict over runs that had just been deleted.
   const refresh = () => {
-    qc.invalidateQueries({ queryKey: ["runs"] });
-    qc.invalidateQueries({ queryKey: ["captureOverhead"] });
-    qc.invalidateQueries({ queryKey: ["metrics"] });
+    invalidateRunDerived(qc);
+    // Not run-derived: these are the log-reading queries this page owns.
     qc.invalidateQueries({ queryKey: ["run-log-search"] });
     qc.invalidateQueries({ queryKey: ["run-log"] });
   };
