@@ -2,6 +2,9 @@
 
 import type { LlmErrorKind } from "./llm-types";
 import type { FlakeReport as SharedFlakeReport } from "../../shared/flake-analysis.mjs";
+import type { CostCurrency } from "../../shared/cost-units.mjs";
+
+export type { CostCurrency };
 
 export type StepType =
   | "goto"
@@ -289,6 +292,46 @@ export const RUN_BROWSER_LABELS: Record<RunBrowser, string> = {
   webkit: "WebKit",
 };
 
+/** How big the app's own interface is drawn, as a zoom factor (mirror of main
+ *  types). The backend validates by membership in this exact set before the
+ *  number reaches `setZoomFactor` — see `main/recorder/types.ts`. */
+export type UiScale = 0.9 | 1 | 1.1 | 1.25;
+
+export const UI_SCALES: UiScale[] = [0.9, 1, 1.1, 1.25];
+
+/** Labels for the size picker.
+ *
+ *  DELIBERATELY NOT PERCENTAGES. "110%" invites the reading that this is a
+ *  precise typographic setting; it is a zoom factor, and what the user is
+ *  choosing is how big the app is. Four words say that and survive the value
+ *  set changing. */
+export const UI_SCALE_LABELS: Record<string, string> = {
+  "0.9": "Small",
+  "1": "Default",
+  "1.1": "Large",
+  "1.25": "Larger",
+};
+
+/** Which typeface pairing the interface is set in (mirror of main types). */
+export type UiTypeface = "space" | "system" | "classic";
+
+export const UI_TYPEFACES: UiTypeface[] = ["space", "system", "classic"];
+
+/** Labels for the typeface picker.
+ *
+ *  THE FACES, NOT THE PAIRING NAMES. "Space", "System" and "Classic" are what
+ *  the values are called in the store and in settings search; they are not what
+ *  someone choosing a typeface wants to read, because "System" alone says
+ *  nothing about what they are about to get. Second names are dropped where the
+ *  family is unambiguous ("Grotesk", "Helvetica") so the longest label still
+ *  fits the trigger — a picker whose current value reads "Space — Space Mono /
+ *  Space Gr…" tells you less than one that fits. */
+export const UI_TYPEFACE_LABELS: Record<UiTypeface, string> = {
+  space: "Space Mono / Grotesk",
+  system: "SF Mono / SF Pro",
+  classic: "Menlo / Helvetica",
+};
+
 export interface TestRecord {
   id: string;
   name: string;
@@ -307,6 +350,10 @@ export interface TestRecord {
    *  `"unapplied"`: edited steps were saved but the script wasn't regenerated
    *  from them. Absent on older records — read that as `"parse"`. */
   stepsDivergedReason?: "parse" | "unapplied";
+  /** true when the user dismissed the divergence banner (mirrors main
+   *  TestRecord). Cleared backend-side whenever divergence is established
+   *  afresh, so the banner returns for a NEW divergence only. */
+  stepsDivergedDismissed?: boolean;
   /** Per-test screenshot-capture preference (mirrors main TestRecord). */
   recordLogs?: boolean;
   captureArtifacts?: boolean;
@@ -429,6 +476,51 @@ export interface HealListEntry extends HealEntry {
   testName: string | null;
 }
 
+/** Where a whole-script change came from (mirror of script-change-store.ts). */
+export type ScriptChangeOrigin = "ai-debug" | "manual";
+
+/** What the renderer sends with a script write, so the journal can say who did
+ *  it. `reviewed: false` means the change landed without the user reading it —
+ *  an auto-applied AI fix — which is the only thing that enters the review
+ *  queue. Normalized backend-side; the renderer's copy is a claim, not a fact. */
+export interface ScriptChangeSource {
+  by: ScriptChangeOrigin;
+  model?: string;
+  reviewed?: boolean;
+}
+
+/** One recorded change to a test's whole spec, and the means to undo it.
+ *
+ *  The sibling of `HealEntry`: a heal swaps one step's locator, this replaces
+ *  the file. Kept in its own store backend-side — see script-change-store.ts —
+ *  and merged with the heals in the Heals surfaces, which is where they are
+ *  both just "things that changed this test". */
+export interface ScriptChangeEntry {
+  id: string;
+  testId: string;
+  origin: ScriptChangeOrigin;
+  /** Which model wrote the fix. May be absent even on an `ai-debug` entry, so
+   *  every label must degrade to a bare "AI Debug". */
+  model?: string;
+  reviewed: boolean;
+  /** The previous spec — the undo. Empty when `truncated`. */
+  before: string;
+  after: string;
+  addedLines: number;
+  removedLines: number;
+  /** The sources were too large to store, so there is nothing to revert TO.
+   *  Every Revert control must be disabled on one of these. */
+  truncated?: boolean;
+  status: HealStatus;
+  at: number;
+}
+
+/** A script change as the cross-test Heals view sees it — same reason
+ *  `HealListEntry` exists. */
+export interface ScriptChangeListEntry extends ScriptChangeEntry {
+  testName: string | null;
+}
+
 /** What the renderer is allowed to know about a stored secret: that it exists,
  *  never what it is. The value lives encrypted backend-side and is injected
  *  straight into the run's child process. */
@@ -439,6 +531,20 @@ export interface SecretStatus {
 
 /** A single completed test run (mirror of main/recorder/types.ts RunRecord). */
 export type RunRecordKind = "run" | "baseline-update";
+
+/** What an emit reports back. REDESIGN §6.5 — note there is no `text` field
+ *  and there is not meant to be: the renderer never holds the emitted bytes,
+ *  because redaction happens in the main process and a payload that crossed the
+ *  boundary first would be redacted only in a copy. */
+export interface EmitResult {
+  /** Where it landed, or null when the user cancelled the save dialog. */
+  path: string | null;
+  bytes: number;
+  /** Runs (or metric rows) that went in, so the panel can say what the file
+   *  covers rather than leaving the user to guess. */
+  count: number;
+  cancelled: boolean;
+}
 
 export interface RunRecord {
   id: string;
@@ -465,6 +571,12 @@ export interface RunRecord {
   batchId?: string;
   /** how many steps run-time Auto-Heal got past by substituting a locator. */
   healedSteps?: number;
+  /** how many steps Auto-Heal TRIED to rescue and could not. The opposite
+   *  evidence to `healedSteps` and the more informative half — a step that
+   *  healed says the locator was stale, a step that could not says the element
+   *  is gone. Nothing recorded this before 2026-08-07, so absent means UNKNOWN
+   *  and never 0 (mirrors main/recorder/types.ts). */
+  healFailedSteps?: number;
   /** accessibility-check cost, and steps with unaccepted violations. */
   a11yMs?: number;
   a11yChecks?: number;
@@ -508,6 +620,17 @@ export type ReplayStepStatus = "passed" | "failed" | "skipped" | "unknown";
 /** Visual-diff outcome for a step (Phase 3). */
 export type VisualDiffState = "new-baseline" | "match" | "changed" | "unable";
 
+/** One measured area of change. Mirror of the backend's own type; kept
+ *  structural here so the renderer's record types import nothing from `main/`. */
+export interface DiffRegion {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  pixels: number;
+  share: number;
+}
+
 export interface VisualDiff {
   state: VisualDiffState;
   /** fraction of pixels changed (0–1), for match/changed. */
@@ -522,6 +645,15 @@ export interface VisualDiff {
   maskedCount?: number;
   /** "element" when the step was compared element-scoped rather than page-wide. */
   scope?: "page" | "element";
+  /** Where the change is, largest first — REDESIGN §6.6's "what moved".
+   *  Normalized (0–1) against the compared image, like every other rect in
+   *  this app, so the viewer can lay a box over the frame at any size.
+   *  Recorded only for "changed": it is what the user triages, and a matched
+   *  step's sub-threshold specks are noise stored in every replay forever. */
+  regions?: DiffRegion[];
+  /** Regions found beyond the cap and folded away, so the UI can say "and 12
+   *  smaller" rather than implying the list is everything. */
+  regionsOmitted?: number;
 }
 
 /** A normalized (0–1) rectangle in page/viewport space. */
@@ -558,8 +690,15 @@ export interface RunReplay {
   finishedAt: number;
   failedIndex: number | null;
   visualThreshold?: number;
+  /** Findings banners the user has waved off for THIS run (mirrors main
+   *  RunReplay). Persisted with the run, so it survives selecting another. */
+  dismissedNotices?: RunNoticeKind[];
   steps: ReplayStep[];
 }
+
+/** The two non-failing findings a run reports, each of which the user can
+ *  either accept (resolve for good) or dismiss (acknowledge for this run). */
+export type RunNoticeKind = "visual" | "a11y";
 
 export interface RunReplaySummary {
   testId: string;
@@ -766,6 +905,24 @@ export interface RecorderSettings {
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];
+  /** How big the app's interface is drawn (default 1 = 100%). A zoom factor
+   *  applied to the app's own windows in the main process — not a font size,
+   *  and never applied to the training browser. */
+  uiScale: UiScale;
+  /** Which typeface pairing the interface is set in (default "space"). Read by
+   *  `lib/typeface.ts`, which writes it to `data-gl-typeface` on the document
+   *  element; the families themselves live in `renderer/theme/tokens.css`. */
+  uiTypeface: UiTypeface;
+  /** Which symbol the Cost panel stamps on a money figure (default "usd").
+   *  "none" restores bare numbers — see `shared/cost-units.mjs`. */
+  costCurrency: CostCurrency;
+  /** What one minute of CI costs, in the currency above (default 0.008).
+   *  The Settings pane offers GitHub's published runner rates as pre-fills; the
+   *  runner shown there is derived from this number, never stored beside it. */
+  costPerCiMinute: number;
+  /** How long one run of one test would take a person, by hand, in minutes
+   *  (default 12). */
+  costMinutesPerManualRun: number;
 }
 
 /** A single alternative locator the Auto-Heal engine found for a failed step.
@@ -877,7 +1034,13 @@ export interface RecorderState {
   assertMode: AssertKind | null;
   stepCount: number;
   testId: string | null;
+  /** where the recording STARTS — what gets saved as the test's URL and what
+   *  the opening `goto` step replays */
   url: string | null;
+  /** where the page is NOW. Separate from `url` on purpose: tracking the live
+   *  location in that field would rewrite every saved test's starting point to
+   *  wherever the user happened to stop. Null outside a session. */
+  liveUrl: string | null;
   name: string | null;
   editing: boolean;
   assertSoft: boolean;
@@ -952,6 +1115,47 @@ export interface BatchState {
 /** A batch as persisted to batch-history.json — same shape as the live state,
  *  so a restored batch renders identically to a running one. */
 export type BatchRecord = BatchState;
+
+// ── Routines (mirror of main/recorder/types.ts) ──────────────────────
+// Batch v2: a saved, named job. docs/ROUTINES.md. A Routine composes RUNS;
+// `runFlow` composes STEPS — see the main-process copy for why that line
+// matters. Only `kind: "test"` is built; the rest of the union is designed
+// there and deliberately unwritten.
+
+export type FailurePolicy = "continue" | "stopRoutine" | "skipGroup";
+
+export interface RoutineTestStep {
+  kind: "test";
+  testId: string;
+  /** NEVER empty — an empty array is a step that queues nothing, so the
+   *  Routine silently runs fewer tests than it lists. */
+  browsers: RunBrowser[];
+  headless: boolean;
+  onFailure: FailurePolicy;
+  /** The test this step names has been deleted. Marked, not removed — the step
+   *  renders as broken and the user takes it out. */
+  testDeleted?: boolean;
+}
+
+export type RoutineStep = RoutineTestStep;
+
+export interface RoutineDefaults {
+  captureArtifacts: boolean;
+  concurrency: number;
+}
+
+export interface Routine {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  steps: RoutineStep[];
+  defaults: RoutineDefaults;
+}
+
+export const MAX_ROUTINES = 50;
+export const MAX_ROUTINE_STEPS = 200;
+export const MAX_ROUTINE_NAME = 80;
 
 // ── Cookies (mirror of main/recorder/types.ts) ───────────────────────
 
@@ -1048,6 +1252,11 @@ export interface AiDebugSession {
    *  is no longer on screen. */
   superseded?: boolean;
   scriptHash: string | null;
+  /** Which model is answering, stamped when the stream starts. Read by the
+   *  auto-apply path, which lands long after the panel that chose it — asking
+   *  the settings then would name whichever model is selected at that moment.
+   *  Absent on sessions stored before this was recorded. */
+  model?: string;
   startedAt: number;
   updatedAt: number;
   readOnly?: boolean;

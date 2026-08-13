@@ -30,6 +30,7 @@ import { recorderDebugStore } from "../services/recorder-debug-store.js";
 import { recorderSettingsStore } from "../services/recorder-settings-store.js";
 import { annotationStore } from "../services/annotation-store.js";
 import { healJournalStore } from "../services/heal-journal-store.js";
+import { MAX_SOURCE_BYTES, scriptChangeStore } from "../services/script-change-store.js";
 import { artifactStore } from "../services/artifact-store.js";
 import { DELETED_TEST_NAME } from "../recorder/types.js";
 import type { Step, TestRecord } from "../recorder/types.js";
@@ -89,6 +90,10 @@ describe("handler registration", () => {
       "batch:list",
       "alerts:setWebhookUrl",
       "alerts:status",
+      "issues:status",
+      "issues:connect",
+      "issues:disconnect",
+      "issues:setDefaults",
       "recorder:listCookies",
       "recorder:setCookie",
       "recorder:getSettings",
@@ -262,6 +267,66 @@ describe("alerts — the webhook URL is validated and never read back", () => {
   });
 });
 
+describe("issues — the key never comes back, and the patch keeps its shape", () => {
+  // `connect` verifies, and verification is a network call. Stubbed so this
+  // suite makes no outbound request: a unit test that reaches api.linear.app is
+  // slow, flaky, and sends a fake credential to a third party on every CI run.
+  // The provider looks `fetch` up per request precisely so this works.
+  const realFetch = globalThis.fetch;
+  beforeAll(() => {
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ data: { viewer: { name: "Sam" }, organization: { name: "Northwind" } } }),
+    })) as unknown as typeof fetch;
+  });
+  afterAll(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  it("reports only whether a key exists and whose it is, never the key", async () => {
+    const status = await invokeHandler<{ hasKey: boolean }>("issues:connect", {
+      key: "lin_api_SECRET-TOKEN",
+    });
+    expect(status.hasKey).toBe(true);
+    expect(JSON.stringify(status)).not.toContain("SECRET-TOKEN");
+
+    const read = await invokeHandler("issues:status");
+    expect(JSON.stringify(read)).not.toContain("SECRET-TOKEN");
+  });
+
+  it("keeps `omitted` and `null` distinct across IPC", async () => {
+    // The distinction the whole defaults API rests on: omitting a field means
+    // "leave it alone", passing null means "clear it". A handler that spread
+    // its params, or defaulted a missing key to null, would collapse the two —
+    // and clearing a default would become impossible to express while looking
+    // like it worked.
+    await invokeHandler("issues:setDefaults", { containerId: "t1", subContainerId: "p1" });
+
+    const omitted = await invokeHandler<{ containerId: string | null; subContainerId: string | null }>(
+      "issues:setDefaults",
+      { containerId: "t1" },
+    );
+    expect(omitted.subContainerId).toBe("p1");
+
+    const cleared = await invokeHandler<{ subContainerId: string | null }>("issues:setDefaults", {
+      subContainerId: null,
+    });
+    expect(cleared.subContainerId).toBeNull();
+  });
+
+  it("clears the defaults when the key is removed", async () => {
+    // A team id is only meaningful inside the workspace that key opened.
+    await invokeHandler("issues:connect", { key: "lin_api_ANOTHER" });
+    await invokeHandler("issues:setDefaults", { containerId: "t9", subContainerId: "p9" });
+    await invokeHandler("issues:disconnect");
+    expect(await invokeHandler("issues:getDefaults")).toEqual({
+      containerId: null,
+      subContainerId: null,
+    });
+  });
+});
+
 describe("recorder:setSettings — persistence and validation", () => {
   it("round-trips a setting", async () => {
     await invokeHandler("recorder:setSettings", { defaultRunBrowser: "webkit" });
@@ -274,6 +339,59 @@ describe("recorder:setSettings — persistence and validation", () => {
     await invokeHandler("recorder:setSettings", { defaultRunBrowser: "netscape" });
     const s = await invokeHandler<{ defaultRunBrowser: string }>("recorder:getSettings");
     expect(s.defaultRunBrowser).toBe("webkit");
+  });
+
+  // ── The appearance settings ─────────────────────────────────────────
+  //
+  // `uiScale` is the one setting in this file whose bad values are not merely
+  // ignored downstream: it is handed to `webContents.setZoomFactor` for every
+  // app window, so a `0` or a `1e9` that got through would draw the whole app —
+  // INCLUDING the Settings window that is the only way to change it back — at a
+  // size from which nothing can be read or clicked. There is no recovery path
+  // in the UI, which is why the validator is membership in a set of four and
+  // not a clamp, and why these cases are pinned by name.
+
+  it("round-trips a scale it recognises", async () => {
+    await invokeHandler("recorder:setSettings", { uiScale: 1.25 });
+    const s = await invokeHandler<{ uiScale: number }>("recorder:getSettings");
+    expect(s.uiScale).toBe(1.25);
+  });
+
+  it("refuses a scale that would make the app unusable", async () => {
+    await invokeHandler("recorder:setSettings", { uiScale: 1.1 });
+    for (const bad of [0, -1, NaN, 1e9, Infinity, "large", "1.25", null, {}, []]) {
+      await invokeHandler("recorder:setSettings", { uiScale: bad });
+      const s = await invokeHandler<{ uiScale: number }>("recorder:getSettings");
+      expect(s.uiScale, String(bad)).toBe(1.1);
+    }
+  });
+
+  it("refuses a scale that is merely between two it allows", async () => {
+    // The separate case because it is the one a range clamp would accept: 1.05
+    // is in bounds and would round to something plausible. The set is closed so
+    // the pane and the store cannot disagree about what a size means.
+    await invokeHandler("recorder:setSettings", { uiScale: 1 });
+    await invokeHandler("recorder:setSettings", { uiScale: 1.05 });
+    const s = await invokeHandler<{ uiScale: number }>("recorder:getSettings");
+    expect(s.uiScale).toBe(1);
+  });
+
+  it("round-trips a typeface it recognises", async () => {
+    await invokeHandler("recorder:setSettings", { uiTypeface: "classic" });
+    const s = await invokeHandler<{ uiTypeface: string }>("recorder:getSettings");
+    expect(s.uiTypeface).toBe("classic");
+  });
+
+  it("refuses a typeface that is not one of the three", async () => {
+    // The string is written into a `data-` attribute the stylesheet selects on.
+    // A rejected value is invisible either way — an unmatched selector styles
+    // nothing — so the refusal has to happen here, where it can be seen.
+    await invokeHandler("recorder:setSettings", { uiTypeface: "system" });
+    for (const bad of ["comic sans", 'space"] {}', "Space", "", 42, null, ["space"]]) {
+      await invokeHandler("recorder:setSettings", { uiTypeface: bad });
+      const s = await invokeHandler<{ uiTypeface: string }>("recorder:getSettings");
+      expect(s.uiTypeface, String(bad)).toBe("system");
+    }
   });
 
   it("a partial update preserves the other settings", async () => {
@@ -650,6 +768,105 @@ describe("tests:updateSteps — steps, script, and whether they agree", () => {
     expect(fs.readFileSync(updated.scriptPath, "utf-8")).toBe(HAND_EDITED);
     expect(updated.scriptEdited).toBe(true);
     expect(updated.stepsDiverged).toBe(true);
+  });
+});
+
+// Silencing the divergence warning, and — the part that carries the risk —
+// knowing when to stop silencing it.
+//
+// A dismissal that outlived the divergence it acknowledged would hide the NEXT
+// one, and the next one is the case the warning exists for: an applied AI-debug
+// fix whose script doesn't come back as steps, so the Steps tab is quietly
+// describing something other than what runs. That failure is completely silent
+// on screen, which is why it is pinned here rather than left to the renderer.
+describe("tests:dismissDiverged — silencing the warning, and re-arming it", () => {
+  /** A spec with a statement the parser cannot classify, which is what makes a
+   *  re-parse report `skipped > 0` and set the "parse" divergence. */
+  const UNPARSEABLE =
+    "import { test } from '@playwright/test';\n" +
+    "test('t', async ({ page }) => {\n" +
+    "  await page.goto('https://example.com');\n" +
+    "  await page.evaluate(() => window.scrollBy(0, 500));\n" +
+    "});\n";
+
+  it("records the dismissal without pretending the test agrees with its script", async () => {
+    const rec = seedTest("t-dismiss", { stepsDiverged: true, stepsDivergedReason: "parse" });
+    const updated = await invokeHandler<TestRecord>("tests:dismissDiverged", { id: rec.id });
+
+    expect(updated.stepsDivergedDismissed).toBe(true);
+    // The distinction the whole feature rests on: the two really ARE out of
+    // sync, and everything else reading the flag — the run comparison, the MCP
+    // — must keep saying so. Only the banner is silenced.
+    expect(updated.stepsDiverged).toBe(true);
+    expect(testStore.get(rec.id)?.stepsDivergedDismissed).toBe(true);
+  });
+
+  it("comes back for a divergence the user hasn't seen", async () => {
+    const rec = seedTest("t-dismiss-rearm", {
+      stepsDiverged: true,
+      stepsDivergedReason: "parse",
+      stepsDivergedDismissed: true,
+    });
+
+    // The AI-debug apply path: a new script that won't fully parse back.
+    const updated = await invokeHandler<TestRecord>("tests:updateScript", {
+      id: rec.id,
+      source: UNPARSEABLE,
+    });
+
+    expect(updated.stepsDiverged).toBe(true);
+    expect(updated.stepsDivergedReason).toBe("parse");
+    expect(updated.stepsDivergedDismissed).toBeUndefined();
+  });
+
+  it("comes back when saved steps are left out of the script", async () => {
+    const rec = seedTest("t-dismiss-unapplied", {
+      scriptEdited: true,
+      stepsDiverged: true,
+      stepsDivergedReason: "unapplied",
+      stepsDivergedDismissed: true,
+    });
+    testStore.writeScript(rec.id, "// hand-written\n");
+
+    const updated = await invokeHandler<TestRecord>("tests:updateSteps", {
+      id: rec.id,
+      steps: [{ id: "s1", timestamp: 1, type: "goto", url: "https://new.test/" } as Step],
+    });
+
+    // Same rule, other cause: these are different edits from the ones that were
+    // acknowledged, so the user has not seen this divergence either.
+    expect(updated.stepsDiverged).toBe(true);
+    expect(updated.stepsDivergedDismissed).toBeUndefined();
+  });
+
+  it("clears the dismissal when the divergence is resolved", async () => {
+    // Nothing to acknowledge any more. Leaving a stale `true` on the record is
+    // how the next real divergence gets silenced by a click made months ago.
+    const rec = seedTest("t-dismiss-resolved", {
+      stepsDiverged: true,
+      stepsDivergedReason: "unapplied",
+      stepsDivergedDismissed: true,
+    });
+
+    const updated = await invokeHandler<TestRecord>("tests:updateSteps", {
+      id: rec.id,
+      steps: [{ id: "s1", timestamp: 1, type: "goto", url: "https://resolved.test/" } as Step],
+    });
+
+    expect(updated.stepsDiverged).toBe(false);
+    expect(updated.stepsDivergedDismissed).toBeUndefined();
+  });
+
+  it("takes `dismissed: false` as the way back", async () => {
+    const rec = seedTest("t-dismiss-undo", {
+      stepsDiverged: true,
+      stepsDivergedDismissed: true,
+    });
+    const updated = await invokeHandler<TestRecord>("tests:dismissDiverged", {
+      id: rec.id,
+      dismissed: false,
+    });
+    expect(updated.stepsDivergedDismissed).toBeUndefined();
   });
 });
 
@@ -1035,5 +1252,205 @@ describe("tests:delete — what a deleted test leaves behind", () => {
 
   it("does not throw for an id that never existed", async () => {
     await expect(invokeHandler("tests:delete", { id: "never-was" })).resolves.toBeUndefined();
+  });
+});
+
+describe("the script-change journal — recording a whole-spec change, and undoing it", () => {
+  /** Seed a test with a script actually on disk. */
+  function seedWithScript(id: string, source: string): TestRecord {
+    const rec = seedTest(id);
+    rec.scriptPath = testStore.writeScript(id, source);
+    testStore.save(rec);
+    return rec;
+  }
+
+  const ORIGINAL =
+    "import { test } from '@playwright/test';\ntest('a', async ({ page }) => {});\n";
+  const FIXED = "import { test } from '@playwright/test';\ntest('b', async ({ page }) => {});\n";
+
+  it("records the previous script, which is the only copy of it that survives", async () => {
+    // `tests:updateScript` overwrites the file and re-parses the steps, so
+    // after this call the old spec exists nowhere else on disk.
+    const rec = seedWithScript("t-sc-record", ORIGINAL);
+    await invokeHandler("tests:updateScript", { id: rec.id, source: FIXED });
+
+    const [entry] = scriptChangeStore.list(rec.id);
+    expect(entry.before).toBe(ORIGINAL);
+    expect(entry.after).toBe(FIXED);
+  });
+
+  it("treats a caller that says nothing as a manual edit the user watched land", async () => {
+    // Every call site predating the journal passes no origin, and none of them
+    // should start filling the review queue.
+    const rec = seedWithScript("t-sc-default", ORIGINAL);
+    await invokeHandler("tests:updateScript", { id: rec.id, source: FIXED });
+
+    const [entry] = scriptChangeStore.list(rec.id);
+    expect(entry.origin).toBe("manual");
+    expect(entry.reviewed).toBe(true);
+    expect(entry.status).toBe("accepted");
+  });
+
+  it("queues an AI fix nobody saw land, and settles one that was read first", async () => {
+    const auto = seedWithScript("t-sc-auto", ORIGINAL);
+    await invokeHandler("tests:updateScript", {
+      id: auto.id,
+      source: FIXED,
+      origin: { by: "ai-debug", model: "claude-sonnet-4", reviewed: false },
+    });
+    const read = seedWithScript("t-sc-read", ORIGINAL);
+    await invokeHandler("tests:updateScript", {
+      id: read.id,
+      source: FIXED,
+      origin: { by: "ai-debug", model: "claude-sonnet-4", reviewed: true },
+    });
+
+    expect(scriptChangeStore.list(auto.id)[0]).toMatchObject({
+      origin: "ai-debug",
+      model: "claude-sonnet-4",
+      status: "pending",
+    });
+    expect(scriptChangeStore.list(read.id)[0].status).toBe("accepted");
+  });
+
+  it("rebuilds a hostile origin rather than filtering it", async () => {
+    const rec = seedWithScript("t-sc-hostile", ORIGINAL);
+    await invokeHandler("tests:updateScript", {
+      id: rec.id,
+      source: FIXED,
+      origin: {
+        by: "<script>alert(1)</script>",
+        model: "evil",
+        reviewed: "no",
+        // Unknown keys must not survive into the stored entry, or the next
+        // field wired into a row is a hole again.
+        status: "accepted",
+        truncated: true,
+      },
+    });
+
+    const [entry] = scriptChangeStore.list(rec.id);
+    expect(entry.origin).toBe("manual");
+    // A model is only kept for an ai-debug change, and this one isn't.
+    expect(entry.model).toBeUndefined();
+    // "no" is not `false`, so it does not mean unreviewed.
+    expect(entry.reviewed).toBe(true);
+    expect(entry.truncated).toBeUndefined();
+  });
+
+  it("strips control characters from a model name and caps its length", async () => {
+    const rec = seedWithScript("t-sc-model", ORIGINAL);
+    await invokeHandler("tests:updateScript", {
+      id: rec.id,
+      source: FIXED,
+      origin: { by: "ai-debug", model: `a\u0000b\u001b[31m${"z".repeat(200)}`, reviewed: true },
+    });
+
+    const model = scriptChangeStore.list(rec.id)[0].model ?? "";
+    // Asserted by codepoint rather than by regex: a character class of literal
+    // control characters is exactly what `no-control-regex` exists to stop.
+    const control = [...model].filter((c) => {
+      const code = c.charCodeAt(0);
+      return code < 0x20 || code === 0x7f;
+    });
+    expect(control).toEqual([]);
+    expect(model.length).toBeLessThanOrEqual(80);
+  });
+
+  it("records nothing when the save did not change the script", async () => {
+    const rec = seedWithScript("t-sc-noop", ORIGINAL);
+    await invokeHandler("tests:updateScript", { id: rec.id, source: ORIGINAL });
+
+    expect(scriptChangeStore.list(rec.id)).toEqual([]);
+  });
+
+  it("reverts by writing the previous spec back and re-parsing its steps", async () => {
+    const rec = seedWithScript(
+      "t-sc-revert",
+      "import { test, expect } from '@playwright/test';\n" +
+        "test('t', async ({ page }) => {\n  await page.goto('https://before.test/');\n});\n",
+    );
+    await invokeHandler("tests:updateScript", {
+      id: rec.id,
+      source:
+        "import { test, expect } from '@playwright/test';\n" +
+        "test('t', async ({ page }) => {\n  await page.goto('https://after.test/');\n});\n",
+      origin: { by: "ai-debug", model: "m", reviewed: false },
+    });
+    expect(testStore.get(rec.id)?.steps[0]).toMatchObject({ url: "https://after.test/" });
+
+    const [entry] = scriptChangeStore.list(rec.id);
+    await invokeHandler("scriptChanges:revert", { id: entry.id });
+
+    expect(testStore.readScript(rec.id)).toContain("https://before.test/");
+    // The step list has to come back too. A revert that restores the file but
+    // leaves the Steps tab describing the fix reads as a control that half
+    // worked, and nothing would report it.
+    expect(testStore.get(rec.id)?.steps[0]).toMatchObject({ url: "https://before.test/" });
+    expect(scriptChangeStore.get(entry.id)?.status).toBe("reverted");
+  });
+
+  it("does not journal the revert itself", async () => {
+    // Otherwise every undo leaves a new entry to undo, and the list grows by
+    // one each time the user puts something back.
+    const rec = seedWithScript("t-sc-revert-once", ORIGINAL);
+    await invokeHandler("tests:updateScript", { id: rec.id, source: FIXED });
+    const [entry] = scriptChangeStore.list(rec.id);
+
+    await invokeHandler("scriptChanges:revert", { id: entry.id });
+
+    expect(scriptChangeStore.list(rec.id)).toHaveLength(1);
+  });
+
+  it("refuses to revert an entry whose sources were too large to keep", async () => {
+    // `before` is empty on one of these, so a revert that went ahead would
+    // write an empty spec over a working test.
+    const rec = seedWithScript("t-sc-truncated", ORIGINAL);
+    const entry = scriptChangeStore.record({
+      testId: rec.id,
+      origin: "manual",
+      reviewed: true,
+      before: "x".repeat(MAX_SOURCE_BYTES + 1),
+      after: FIXED,
+    })!;
+
+    await expect(invokeHandler("scriptChanges:revert", { id: entry.id })).rejects.toThrow();
+    expect(testStore.readScript(rec.id)).toBe(ORIGINAL);
+  });
+
+  it("accepts without touching the script — it was already written", async () => {
+    const rec = seedWithScript("t-sc-accept", ORIGINAL);
+    await invokeHandler("tests:updateScript", {
+      id: rec.id,
+      source: FIXED,
+      origin: { by: "ai-debug", model: "m", reviewed: false },
+    });
+    const [entry] = scriptChangeStore.list(rec.id);
+
+    await invokeHandler("scriptChanges:accept", { id: entry.id });
+
+    expect(scriptChangeStore.get(entry.id)?.status).toBe("accepted");
+    expect(testStore.readScript(rec.id)).toBe(FIXED);
+  });
+
+  it("throws for an unknown id rather than reporting success", async () => {
+    await expect(invokeHandler("scriptChanges:revert", { id: "nope" })).rejects.toThrow();
+    await expect(invokeHandler("scriptChanges:accept", { id: "nope" })).rejects.toThrow();
+  });
+
+  it("attaches the test name for the cross-test view, and drops the lot on delete", async () => {
+    const rec = seedWithScript("t-sc-named", ORIGINAL);
+    await invokeHandler("tests:updateScript", { id: rec.id, source: FIXED });
+
+    const listed = await invokeHandler<Array<{ testId: string; testName: string | null }>>(
+      "scriptChanges:listAll",
+    );
+    expect(listed.find((e) => e.testId === rec.id)?.testName).toBe(rec.name);
+
+    await invokeHandler("tests:delete", { id: rec.id });
+    const after = await invokeHandler<Array<{ testId: string }>>("scriptChanges:listAll");
+    // Deleting the test takes its journal with it, for the same reason the heal
+    // journal goes: nothing is left that could act on the entry.
+    expect(after.some((e) => e.testId === rec.id)).toBe(false);
   });
 });

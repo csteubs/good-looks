@@ -5,9 +5,6 @@
 // ourselves is the host handler set backing window.glazeAPI (dialogs, shell,
 // clipboard, theme, native menus) — see shell/host-handlers.ts.
 
-import * as fs from "fs";
-import * as path from "path";
-import { fileURLToPath } from "url";
 
 import { installUserDataPath } from "./shell/user-data.js";
 import {
@@ -20,11 +17,13 @@ import {
 } from "@shell/backend";
 
 import { installAppProtocol, registerAppScheme } from "./shell/app-protocol.js";
+import { registerDeepLinks, takePendingDeepLink } from "./shell/deep-link.js";
 import { forwardRendererConsole, registerHostHandlers } from "./shell/host-handlers.js";
 import { registerHandlers } from "./handlers/index.js";
 import { getPreloadPath, getWindowUrl } from "./windows/window-paths.js";
 import { openSettingsWindow } from "./windows/settings-window.js";
 import { sendToMain, setMainWindow } from "./services/app-window.js";
+import { attachUiScale, scaled } from "./services/ui-scale.js";
 import {
   captureWindows,
   DEBUG_CAPTURE_ACCELERATOR,
@@ -33,6 +32,9 @@ import {
 } from "./services/debug-capture.js";
 import { applyRetention } from "./services/retention.js";
 import { batchHistoryStore } from "./services/batch-history-store.js";
+import { routineStore } from "./services/routine-store.js";
+import { recorderSettingsStore } from "./services/recorder-settings-store.js";
+import { testStore } from "./services/test-store.js";
 import { aiDebugStore } from "./services/ai-debug-store.js";
 import { metricsStore } from "./services/metrics-store.js";
 import { setPrunePreflight } from "./services/artifact-store.js";
@@ -46,15 +48,18 @@ import { setPrunePreflight } from "./services/artifact-store.js";
 // first in the import list. See shell/user-data.ts for what it decides and why.
 installUserDataPath();
 
-// Get directory paths
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 // ── Custom scheme ─────────────────────────────────────────────────────
 // Must run at module scope, before app.whenReady(): Electron reads the
 // privileged-scheme list once during startup. The handler itself is installed
 // after ready (see whenReady below).
 registerAppScheme();
+
+// ── Deep links ────────────────────────────────────────────────────────
+// Also at module scope, and for the same class of reason: on macOS the
+// `open-url` that LAUNCHED the app fires before `whenReady` resolves, so a
+// listener attached after ready misses the click that started everything and a
+// cold start opens on the home screen instead.
+registerDeepLinks();
 
 // ── IPC Handlers ──────────────────────────────────────────────────────
 // Host surface first (dialogs/shell/clipboard/theme/menus), then the app's own.
@@ -83,6 +88,19 @@ registerHandlers();
   }
 }
 
+// ── Routine migration ─────────────────────────────────────────────────
+// One-time: synthesise a Routine named "Batch" from the old per-row Batch
+// settings, so nobody loses a checklist they spent time on. Idempotent by a
+// flag in routines.json, not by "is the list empty" — the difference is
+// whether a Routine the user has since deleted comes back on the next launch.
+// The settings keys it reads are deliberately left in place for one release;
+// a migration that also removes its own source has no way back.
+{
+  const settings = recorderSettingsStore.get();
+  const knownTestIds = testStore.list().map((t) => t.id);
+  routineStore.ensureMigrated(settings, knownTestIds);
+}
+
 // ── AI debug session reconciliation ───────────────────────────────────
 // The llm request map dies with the process, so a session persisted as
 // "streaming" describes a job that no longer exists. Restoring it as-is would
@@ -105,10 +123,6 @@ async function createMainWindow() {
     return;
   }
 
-  // Read display name from package.json
-  // In production: __dirname = build/main, package.json is at ../../package.json
-  const packageJsonPath = path.join(__dirname, "..", "..", "package.json");
-
   // 960, not 390. The old minimum was a promise the layout could not keep: the
   // widest toolbar (test detail) needs 688px beside a 240px sidebar, so below
   // ~928px the run controls — including `Run test` itself — left the viewport
@@ -120,20 +134,27 @@ async function createMainWindow() {
   // If a future toolbar needs more room, this is the number that moves — but
   // `check:narrow-layout` pins it against the measured requirement, so a wider
   // toolbar fails there rather than silently overflowing here.
-  const minWindowWidth = 960;
-  const minWindowHeight = 456;
-  const windowWidth = 1000;
-  const windowHeight = 700;
-  let windowTitle = "Glaze App";
+  //
+  // These four are CSS PIXELS, and `scaled()` turns each into the physical
+  // points a window is sized in. At 100% that is the identity and these are the
+  // numbers they always were; above it, a floor left unscaled would be a
+  // smaller viewport than the measurement above describes — 960 points is 768
+  // CSS pixels at 125%, under the ~928 the toolbar needs — so the guarantee
+  // would quietly lapse at the setting someone turns up in order to read the
+  // app. See services/ui-scale.ts.
+  const minWindowWidth = scaled(960);
+  const minWindowHeight = scaled(456);
+  const windowWidth = scaled(1000);
+  const windowHeight = scaled(700);
 
-  try {
-    if (fs.existsSync(packageJsonPath)) {
-      const packageJson = JSON.parse(await fs.promises.readFile(packageJsonPath, "utf-8"));
-      windowTitle = packageJson.productName || packageJson.appConfig?.displayName || windowTitle;
-    }
-  } catch {
-    // Use defaults
-  }
+  // No title. The app's name is already in the menu bar and the Dock, and the
+  // window's own chrome draws the view it is showing — a title bar repeating
+  // "Good Looks!" above that is noise.
+  //
+  // Setting it to "" is not enough on its own: a window with an empty title
+  // adopts its page's <title>, so main-window.html carries an empty one too.
+  // Both halves are needed, which is what `check:app-identity` pins.
+  const windowTitle = "";
 
   // Create main window
   const browserWindowStartTime = Date.now();
@@ -160,6 +181,17 @@ async function createMainWindow() {
     duration_ms: browserWindowEndTime - browserWindowStartTime,
   });
 
+  // Keep the window untitled. Chromium pushes the document's title up to the
+  // window whenever it changes, so an empty `title` above only survives until
+  // some page or library sets `document.title` — refusing the event is what
+  // makes "no title" a property of the window rather than of one HTML file.
+  mainWindow.on("page-title-updated", (event) => event.preventDefault());
+
+  // Draw at the user's chosen interface scale, before the first paint and
+  // after every reload — and keep the layout floor above expressed in the CSS
+  // pixels it was measured in. See services/ui-scale.ts.
+  attachUiScale(mainWindow, { width: 960, height: 456 });
+
   forwardRendererConsole(mainWindow, "main");
 
   // Share the main window with backend services so they can push events.
@@ -174,6 +206,13 @@ async function createMainWindow() {
     });
 
     mainWindow?.show();
+
+    // A deep link that LAUNCHED the app arrived before this window existed, so
+    // it was held rather than delivered. Replayed here, once the renderer can
+    // receive it — without this a cold start from a clicked link opens on the
+    // home screen and the click looks like it did nothing.
+    const pending = takePendingDeepLink();
+    if (pending) mainWindow?.webContents.send("deepLink:open", pending);
 
     const showEndTime = Date.now();
     logger.info("main", "⏱️ [COLD_START] Window shown", {

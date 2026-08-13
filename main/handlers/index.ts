@@ -18,21 +18,36 @@ import {
 import { recorderService } from "../services/recorder-service.js";
 import { batchRunner } from "../services/batch-runner.js";
 import { batchHistoryStore } from "../services/batch-history-store.js";
+import { routineStore } from "../services/routine-store.js";
+import { routineBlockedReason, routineRunPlan } from "../../shared/routine-plan.mjs";
 import { webhookUrlStore } from "../services/webhook-url-store.js";
 import { postWebhook } from "../services/alert-service.js";
+import { issueTrackerService } from "../services/issue-tracker/issue-tracker-service.js";
 import { playwrightRunner } from "../services/playwright-runner.js";
 import { runHistoryStore } from "../services/run-history-store.js";
+import { emitReport } from "../services/report-emitter.js";
 import { artifactStore } from "../services/artifact-store.js";
 import { baselineStore } from "../services/baseline-store.js";
 import { acceptRunBaseline, acceptStepBaseline } from "../services/visual-baseline-ops.js";
 import { acceptRunA11y, acceptStepA11y, resetA11yBaseline } from "../services/a11y-baseline-ops.js";
+import {
+  dismissRunNotice,
+  isRunNoticeKind,
+  restoreRunNotice,
+} from "../services/run-notice-ops.js";
 import { sendToMain } from "../services/app-window.js";
+import { applyUiScaleToAllWindows } from "../services/ui-scale.js";
 import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
 import { duplicateTest } from "../services/duplicate-test.js";
 import { importService } from "../services/import-service.js";
 import { testSecretsStore } from "../services/test-secrets-store.js";
 import { healJournalStore } from "../services/heal-journal-store.js";
+import {
+  normalizeScriptChangeOrigin,
+  scriptChangeStore,
+  type ScriptChangeJournal,
+} from "../services/script-change-store.js";
 import { refreshSecretSnapshot } from "../services/secret-redaction.js";
 import { parseSpecDetailed } from "../services/spec-parser.js";
 import { llmService } from "../services/llm-service.js";
@@ -60,6 +75,7 @@ import {
   siblingRuns,
   stepBrowserMatrix,
   stepDurations,
+  testDurationTrend,
   stepHealth,
   suiteCost,
 } from "../../shared/metrics-query.mjs";
@@ -89,6 +105,7 @@ import {
 } from "../recorder/types.js";
 import type { AiDebugSession, AssertKind, CookieSpec, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
+import type { EmitterId } from "../../shared/emitters.mjs";
 
 import { ipcMain, logger } from "@shell/backend";
 
@@ -128,8 +145,10 @@ export function registerHandlers(): void {
   });
 
   // Settings window handlers
-  ipcMain.handle("window:openSettings", async (_event) => {
-    await openSettingsWindow();
+  // `pane` is optional and deep-links a FRESH window onto one pane — see
+  // `openSettingsWindow`, which validates it before it reaches a URL.
+  ipcMain.handle("window:openSettings", async (_event, pane?: string) => {
+    await openSettingsWindow(pane);
   });
 
   ipcMain.handle("window:closeSettings", async (_event) => {
@@ -211,6 +230,13 @@ export function registerHandlers(): void {
     return recorderService.listCookies();
   });
 
+  // The training browser's URL strip: read the live URL, and open a URL
+  // assertion prefilled with it. Both are called from `recorder-chrome.html`,
+  // which runs in a view inside the training browser rather than in a window.
+  ipcMain.handle("recorder:getTrainingUrl", async () => recorderService.getTrainingUrl());
+  ipcMain.handle("recorder:assertUrl", async (_e, params: { kind: AssertKind }) =>
+    recorderService.assertUrl(params.kind),
+  );
   ipcMain.handle("recorder:startRefine", async () => recorderService.startRefine());
   ipcMain.handle("recorder:endRefine", async () => recorderService.endRefine());
   ipcMain.handle("recorder:stop", async () => {
@@ -246,6 +272,31 @@ export function registerHandlers(): void {
       // Bring the debug watcher into line immediately. Deferring to the next
       // launch would make the toggle look broken to the person who just used it.
       syncRequestWatcher();
+      // The same argument, twice more, for the two appearance settings.
+      //
+      // Zoom is applied here in the backend because that is the only place it
+      // exists; the typeface is a renderer concern, so it goes out as a push.
+      // Both are broadcast unconditionally rather than only when the value
+      // changed — the patch is a partial and comparing it against the previous
+      // settings to decide would be more code than re-applying an identical
+      // number, which costs nothing.
+      applyUiScaleToAllWindows();
+      sendToMain("settings:appearanceChanged", {
+        uiScale: next.uiScale,
+        uiTypeface: next.uiTypeface,
+      });
+      // And the same argument once more, for everything else on this object.
+      //
+      // THE MAIN WINDOW CANNOT NOTICE THIS ON ITS OWN. It reads settings
+      // through react-query, whose focus refetch listens to `visibilitychange`
+      // only — and moving between two BrowserWindows of the same app never
+      // changes a window's visibility. The views that appeared to stay fresh
+      // were getting it from remount on route change; Stats does not, because
+      // Stats is the view the user is standing on while they correct the CI
+      // price in the other window. Payload-free on purpose: the listener
+      // re-fetches, so there stays exactly one path from stored settings to
+      // rendered ones.
+      sendToMain("settings:changed", null);
       return next;
     },
   );
@@ -279,9 +330,16 @@ export function registerHandlers(): void {
     await testSecretsStore.clearTest(params.id);
     await refreshSecretSnapshot();
     healJournalStore.deleteTest(params.id);
+    scriptChangeStore.deleteTest(params.id);
     // Tombstone the history: records kept for the aggregates, raw logs deleted.
     runHistoryStore.markTestDeleted(params.id);
     batchHistoryStore.markTestDeleted(params.id);
+    // A saved Routine keeps the step and shows it broken, rather than losing
+    // it: silently shrinking a job somebody built is the same class of bug as
+    // the batch running fewer tests than it said. Unlike the Batch settings
+    // below, this is not housekeeping — the step stays until the user removes
+    // it. See ROUTINES.md open question 4.
+    routineStore.markTestDeleted(params.id);
     // Really deleted — the model's answers quote the script and the run output,
     // and with the test gone there is no route left to reach or remove them.
     aiDebugStore.deleteTest(params.id);
@@ -640,10 +698,36 @@ export function registerHandlers(): void {
     },
   );
 
-  ipcMain.handle("tests:updateScript", async (_e, params: { id: string; source: string }) => {
-    const rec = testStore.get(params.id);
-    if (!rec) throw new Error("Test not found: " + params.id);
-    rec.scriptPath = testStore.writeScript(rec.id, params.source);
+  /** Write a new spec over a test's script and re-parse its steps.
+   *
+   *  ONE body, two callers — `tests:updateScript` and `scriptChanges:revert` —
+   *  because a revert has to land exactly the way the change it undoes did. Two
+   *  copies would drift, and the direction they'd drift in is a revert that
+   *  restores the file but leaves the Steps tab describing the fix.
+   *
+   *  `journal` is what tells them apart: a revert must NOT record a change of
+   *  its own, or undoing a change would create a second entry to undo. */
+  const writeTestScript = (
+    id: string,
+    source: string,
+    journal: ScriptChangeJournal | null,
+  ) => {
+    const rec = testStore.get(id);
+    if (!rec) throw new Error("Test not found: " + id);
+    // Read the outgoing script BEFORE the write — this is the only moment the
+    // previous spec still exists anywhere, and it is the entire undo.
+    let before = "";
+    if (journal) {
+      try {
+        before = testStore.readScript(id);
+      } catch {
+        // A record whose file is missing still gets its change recorded, just
+        // with nothing to revert to. Losing the journal entry as well would be
+        // the worse of the two failures.
+        before = "";
+      }
+    }
+    rec.scriptPath = testStore.writeScript(rec.id, source);
     rec.scriptEdited = true;
     // Re-parse the steps from the new script so the Steps tab reflects the
     // edited spec (e.g. after applying an AI-suggested fix). Imported tests
@@ -651,10 +735,16 @@ export function registerHandlers(): void {
     // source of truth, so we don't overwrite their parsed steps.
     if (!rec.sourceDir) {
       try {
-        const { steps, skipped } = parseSpecDetailed(params.source);
+        const { steps, skipped } = parseSpecDetailed(source);
         rec.steps = steps;
         rec.stepsDiverged = skipped > 0;
         rec.stepsDivergedReason = skipped > 0 ? "parse" : undefined;
+        // This is the event the dismissal is scoped to: an applied script (an
+        // AI-debug fix, typically) whose statements don't all come back as
+        // steps. The user acknowledged the LAST divergence, not this one, so
+        // re-arm the warning. Clearing it on the `skipped === 0` branch too
+        // keeps a stale `true` from silencing the next real one.
+        rec.stepsDivergedDismissed = undefined;
         if (skipped > 0) {
           logger.warn("handlers", "Script has statements the parser couldn't map to steps", {
             id: rec.id,
@@ -670,8 +760,119 @@ export function registerHandlers(): void {
     }
     rec.updatedAt = Date.now();
     testStore.save(rec);
+    if (journal) {
+      // The journal must never cost the user their edit. A failure to record
+      // degrades to "no history", exactly as the metrics DB degrades to "no
+      // metrics" — the write to the script already succeeded.
+      try {
+        scriptChangeStore.record({ testId: rec.id, before, after: source, ...journal });
+      } catch (err) {
+        logger.warn("handlers", "Could not journal a script change", {
+          id: rec.id,
+          err: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     return rec;
+  };
+
+  ipcMain.handle(
+    "tests:updateScript",
+    async (_e, params: { id: string; source: string; origin?: unknown }) => {
+      return writeTestScript(
+        params.id,
+        params.source,
+        normalizeScriptChangeOrigin(params.origin),
+      );
+    },
+  );
+
+  // ── Script-change journal ────────────────────────────────────────────────
+  //
+  // The sibling of the heal journal, for changes to the whole spec rather than
+  // to one step's locator: an AI-debug fix, or a hand edit in the Script tab.
+  // Kept in its own store — see script-change-store.ts for why it must not be
+  // folded into heal-journal.json — and merged with the heals in the renderer,
+  // which is where they are both just "things that changed this test".
+  ipcMain.handle("scriptChanges:list", async (_e, params: { testId: string }) =>
+    scriptChangeStore.list(params.testId),
+  );
+
+  /** Every script change across every test, for the Heals view. The test NAME
+   *  is attached here for the same reason `heals:listAll` does it: a record
+   *  outlives the test it came from, and a bare uuid after a delete is worse
+   *  than saying the test is gone. */
+  ipcMain.handle("scriptChanges:listAll", async () => {
+    const names = new Map(testStore.list().map((t) => [t.id, t.name]));
+    return scriptChangeStore.listAll().map((entry) => ({
+      ...entry,
+      testName: names.get(entry.testId) ?? null,
+    }));
   });
+
+  ipcMain.handle("scriptChanges:pending", async (_e, params: { testId: string }) =>
+    scriptChangeStore.pending(params.testId),
+  );
+
+  /** Keep the change. Status only — unlike a heal, the script was already
+   *  written when the entry was recorded, so there is nothing to apply. */
+  ipcMain.handle("scriptChanges:accept", async (_e, params: { id: string }) => {
+    const entry = scriptChangeStore.get(params.id);
+    if (!entry) throw new Error("Script change not found: " + params.id);
+    return scriptChangeStore.setStatus(params.id, "accepted");
+  });
+
+  /** Put the previous script back.
+   *
+   *  Goes through the same `writeTestScript` the change itself did, so the
+   *  Steps tab is re-parsed from the restored spec rather than left describing
+   *  the change that was just undone — and journals NOTHING, or every undo
+   *  would create a new entry to undo. */
+  ipcMain.handle("scriptChanges:revert", async (_e, params: { id: string }) => {
+    const entry = scriptChangeStore.get(params.id);
+    if (!entry) throw new Error("Script change not found: " + params.id);
+    // An entry whose sources were too large to keep is a record, not an undo.
+    // Refusing here is what stops the UI ever writing an empty spec over a
+    // real one; the row disables its button too, and both are load-bearing.
+    if (entry.truncated) {
+      throw new Error("That change was too large to store, so it can't be undone.");
+    }
+    writeTestScript(entry.testId, entry.before, null);
+    return scriptChangeStore.setStatus(params.id, "reverted");
+  });
+
+  ipcMain.handle("scriptChanges:clearSettled", async (_e, params: { testId: string }) =>
+    scriptChangeStore.clearSettled(params.testId),
+  );
+
+  /** Delete one record. The test keeps whatever the change left it as — which
+   *  makes this the one action that throws the previous script away for good,
+   *  so the UI has to say so before asking. */
+  ipcMain.handle("scriptChanges:remove", async (_e, params: { id: string }) =>
+    scriptChangeStore.remove(params.id),
+  );
+
+  ipcMain.handle("scriptChanges:clearAllSettled", async () =>
+    scriptChangeStore.clearAllSettled(),
+  );
+
+  /** Wave off the "steps and script disagree" warning for this test. Note what
+   *  it does NOT do: `stepsDiverged` stays true, because the two really are out
+   *  of sync and everything else that reads it (the run comparison, the MCP)
+   *  must keep saying so. This only silences the banner, and only until the next
+   *  divergence is established. */
+  ipcMain.handle(
+    "tests:dismissDiverged",
+    async (_e, params: { id: string; dismissed?: unknown }) => {
+      const rec = testStore.get(params.id);
+      if (!rec) throw new Error("Test not found: " + params.id);
+      // `=== false` is the only way to un-dismiss; anything else dismisses.
+      rec.stepsDivergedDismissed = params?.dismissed === false ? undefined : true;
+      rec.updatedAt = Date.now();
+      testStore.save(rec);
+      return rec;
+    },
+  );
 
   // Update the steps of a saved test directly (no trainer browser). Used by the
   // "Edit Steps" mode: add / rearrange / remove steps in the detail view, then
@@ -708,6 +909,7 @@ export function registerHandlers(): void {
         rec.scriptPath = testStore.regenerateScript(rec);
         rec.stepsDiverged = false;
         rec.stepsDivergedReason = undefined;
+        rec.stepsDivergedDismissed = undefined;
         // The spec is generated from these steps again, so "edited manually" is
         // no longer true — leaving it set would keep asking about edits that no
         // longer exist, and would block the next step edit from applying.
@@ -715,6 +917,10 @@ export function registerHandlers(): void {
       } else {
         rec.stepsDiverged = true;
         rec.stepsDivergedReason = "unapplied";
+        // A fresh save that the script won't carry is a fresh divergence, even
+        // if one was already dismissed: the previous acknowledgement was about
+        // different edits.
+        rec.stepsDivergedDismissed = undefined;
       }
       rec.updatedAt = Date.now();
       testStore.save(rec);
@@ -945,6 +1151,102 @@ export function registerHandlers(): void {
     return { ok: true };
   });
 
+  // ── Issue tracker handlers ──────────────────────────────────────────
+  // Same credential contract as the webhook above: the key travels
+  // renderer→backend only, and the renderer can learn whether one is stored and
+  // who it belongs to — never the key itself.
+  //
+  // `status` is local and cheap; `verify` is the one that touches the network.
+  // Keeping them separate is what lets the pane say "saved" while offline
+  // instead of "broken".
+  ipcMain.handle("issues:status", async () => issueTrackerService.status());
+  ipcMain.handle("issues:vocabulary", async () => issueTrackerService.vocabulary());
+  ipcMain.handle("issues:connect", async (_e, params: { key?: unknown }) => {
+    const key = typeof params?.key === "string" ? params.key : "";
+    return issueTrackerService.connect(key);
+  });
+  ipcMain.handle("issues:verify", async () => issueTrackerService.verify());
+  ipcMain.handle("issues:disconnect", async () => issueTrackerService.disconnect());
+  ipcMain.handle("issues:listContainers", async () => issueTrackerService.listContainers());
+  ipcMain.handle("issues:listSubContainers", async () => issueTrackerService.listSubContainers());
+  ipcMain.handle("issues:listLabels", async () => issueTrackerService.listLabels());
+  // The source becomes a filesystem path, so it is rebuilt rather than trusted
+  // — see `normalizeSource`. A coordinate that does not survive that, or no
+  // longer resolves on disk, answers null: the dialog says the evidence is gone
+  // rather than opening onto an empty form.
+  ipcMain.handle("issues:buildDraft", async (_e, params: { source?: unknown }) => {
+    const source = issueTrackerService.normalizeSource(params?.source);
+    return source ? issueTrackerService.buildDraft(source) : null;
+  });
+  ipcMain.handle(
+    "issues:createIssue",
+    async (
+      _e,
+      params: {
+        source?: unknown;
+        title?: unknown;
+        body?: unknown;
+        attachmentFiles?: unknown;
+        containerId?: unknown;
+        subContainerId?: unknown;
+        labelIds?: unknown;
+      },
+    ) => {
+      const source = issueTrackerService.normalizeSource(params?.source);
+      if (!source) throw new Error("That defect could not be identified.");
+      const containerId = typeof params?.containerId === "string" ? params.containerId : "";
+      if (!containerId) throw new Error("Choose a destination before sending.");
+      const strings = (v: unknown): string[] =>
+        Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+      return issueTrackerService.createIssue(
+        {
+          source,
+          title: typeof params?.title === "string" ? params.title : "",
+          body: typeof params?.body === "string" ? params.body : "",
+          attachmentFiles: strings(params?.attachmentFiles),
+        },
+        {
+          containerId,
+          subContainerId:
+            typeof params?.subContainerId === "string" ? params.subContainerId : null,
+          labelIds: strings(params?.labelIds),
+        },
+      );
+    },
+  );
+  ipcMain.handle("issues:linksForTest", async (_e, params: { testId?: unknown }) =>
+    typeof params?.testId === "string" ? issueTrackerService.linksForTest(params.testId) : [],
+  );
+  ipcMain.handle(
+    "issues:commentRecurrence",
+    async (_e, params: { source?: unknown; attachmentFiles?: unknown }) => {
+      const source = issueTrackerService.normalizeSource(params?.source);
+      if (!source) throw new Error("That defect could not be identified.");
+      const files = Array.isArray(params?.attachmentFiles)
+        ? params.attachmentFiles.filter((x): x is string => typeof x === "string")
+        : [];
+      return issueTrackerService.commentRecurrence(source, files);
+    },
+  );
+  ipcMain.handle("issues:getDefaults", async () => issueTrackerService.defaults());
+  ipcMain.handle(
+    "issues:setDefaults",
+    async (_e, params: { containerId?: unknown; subContainerId?: unknown }) => {
+      // Rebuilt, not spread. `undefined` means "leave alone" and `null` means
+      // "clear", and both have to survive the trip — so a key that is absent
+      // stays absent rather than becoming an explicit null.
+      const patch: { containerId?: string | null; subContainerId?: string | null } = {};
+      if (params && "containerId" in params) {
+        patch.containerId = typeof params.containerId === "string" ? params.containerId : null;
+      }
+      if (params && "subContainerId" in params) {
+        patch.subContainerId =
+          typeof params.subContainerId === "string" ? params.subContainerId : null;
+      }
+      return issueTrackerService.setDefaults(patch);
+    },
+  );
+
   // ── Runner handlers ─────────────────────────────────────────────────
   ipcMain.handle(
     "runner:run",
@@ -1064,6 +1366,72 @@ export function registerHandlers(): void {
   );
   ipcMain.handle("batch:clearHistory", async () => batchHistoryStore.clear());
 
+  // ── Routines ────────────────────────────────────────────────────────
+  // Saved, named jobs. docs/ROUTINES.md capability 1.
+  //
+  // The channels are `routines:*` because they are new. The spec's rename table
+  // says NOT to rename the existing `batch:*` channels, `batch-history.json` or
+  // `RunRecord.batchId` — those are internal, invisible, and renaming them
+  // costs a migration to buy a word. The word is worth having in the UI.
+  //
+  // `save` takes UNKNOWN and returns what was stored. The store rebuilds the
+  // payload rather than trusting it, so what comes back is the job that will
+  // actually run — which is what the editor must render. Returning the input
+  // would let a step the store dropped stay on screen until the next reload.
+  ipcMain.handle("routines:list", async () => routineStore.list());
+  ipcMain.handle("routines:get", async (_e, params: { id: string }) =>
+    routineStore.get(params.id),
+  );
+  ipcMain.handle("routines:save", async (_e, params: { routine: unknown }) =>
+    routineStore.save(params.routine),
+  );
+  ipcMain.handle("routines:delete", async (_e, params: { id: string }) =>
+    routineStore.remove(params.id),
+  );
+  /**
+   * Run a saved Routine.
+   *
+   * A TRANSLATION INTO `batchRunner`, not a second execution engine. Every step
+   * becomes its own process, its own RunRecord and its own row in Stats — a
+   * Routine composes RUNS, and building a parallel runner for it is the design
+   * risk ROUTINES.md names. So this reads the Routine, asks
+   * `routineRunPlan` for the same `{ testIds, perTest }` payload `batch:run`
+   * takes, and hands it over.
+   *
+   * `plan.skipped` is returned rather than swallowed. A Routine that runs four
+   * of its five steps has done most of what was asked — refusing would let one
+   * deleted test disable a suite — but a batch quietly one test shorter than
+   * the job it came from is the failure this whole feature is supposed not to
+   * have. The caller reports it; only a Routine that can run NOTHING throws,
+   * and it throws the sentence explaining which kind of nothing.
+   */
+  ipcMain.handle("routines:run", async (_e, params: { id: string }) => {
+    const routine = routineStore.get(params.id);
+    if (!routine) throw new Error("That routine no longer exists.");
+    const plan = routineRunPlan(
+      routine,
+      testStore.list().map((t) => t.id),
+    );
+    const blocked = routineBlockedReason(plan);
+    if (blocked) throw new Error(blocked);
+    const started = await batchRunner.start({
+      testIds: plan.testIds,
+      captureArtifacts: plan.captureArtifacts,
+      // The batch-wide fallback for a test the runner finds no entry for.
+      // Every step here HAS an entry, so this only decides the degenerate case
+      // — headless, because a saved job opening windows nobody asked for is
+      // the behaviour ROUTINES.md rules out for scheduled runs and there is no
+      // reason for the manual path to differ on a test it could not resolve.
+      runHeadless: true,
+      perTest: plan.perTest,
+      // Clamped against DISTINCT tests, same as `batch:run`: the runner keys a
+      // lane by testId, so a multi-engine step still runs one window at a time
+      // and counting queue entries here would promise workers that only idle.
+      concurrency: clampBatchConcurrency(plan.concurrency, new Set(plan.testIds).size),
+    });
+    return { ...started, skipped: plan.skipped, plannedRuns: plan.plannedRuns };
+  });
+
   ipcMain.handle("runner:stop", async (_e, params: { runId: string }) => {
     playwrightRunner.stop(params.runId);
   });
@@ -1082,6 +1450,17 @@ export function registerHandlers(): void {
   ipcMain.handle("debug:dir", async () => debugDir());
   ipcMain.handle("debug:shortcut", async () => DEBUG_CAPTURE_ACCELERATOR);
 
+  // REDESIGN §6.5. One channel, and it is a VERB: the renderer asks for an emit
+  // and gets back a path, never the text. Redaction reads an encrypted store
+  // that cannot leave this process, so a channel returning content would move
+  // the un-redacted payload across the boundary and make the redaction a
+  // formality applied to a copy. `stamp` comes from the caller so the filename
+  // the panel is about to show is the filename it asked for.
+  ipcMain.handle(
+    "report:emit",
+    async (_e, params: { emitter: EmitterId; stamp: string; testId?: string }) =>
+      emitReport(params.emitter, params.stamp, { testId: params.testId }),
+  );
   ipcMain.handle("runs:list", async () => runHistoryStore.list());
   /** Flake and failure analytics over the recent run history.
    *
@@ -1152,6 +1531,14 @@ export function registerHandlers(): void {
         // disagree about what counts as a slowdown.
         slowed: slowdowns(rows),
         cost: costBreakdown(suiteCost(metricsStore.handle())),
+        // The TEST's own trend, only when one was named (C §6.3). On the same
+        // channel as its steps rather than a new one: the run summary and the
+        // step list are one screen asking one question, and two channels would
+        // let them answer it from two different reads of a database that is
+        // being written to while they look.
+        testTrend: params?.testId
+          ? testDurationTrend(metricsStore.handle(), params.testId, params?.window)
+          : null,
       };
     },
   );
@@ -1352,6 +1739,30 @@ export function registerHandlers(): void {
     if (result) sendToMain("runs:changed", {});
     return result;
   });
+  // ── Findings banners: dismiss / restore ──────────────────────────────────
+  //
+  // The counterpart to the two accept handlers above. Accepting resolves a
+  // finding and changes what every future run reports; dismissing says "seen"
+  // about this run only. Conflating them would mean the only way to clear a
+  // banner is to sign off on findings you may not have looked at.
+  ipcMain.handle(
+    "artifacts:dismissNotice",
+    async (_e, params: { testId: string; runId: string; kind: unknown }) => {
+      if (!isRunNoticeKind(params?.kind)) return null;
+      const result = dismissRunNotice(params.testId, params.runId, params.kind);
+      if (result) sendToMain("runs:changed", {});
+      return result;
+    },
+  );
+  ipcMain.handle(
+    "artifacts:restoreNotice",
+    async (_e, params: { testId: string; runId: string; kind: unknown }) => {
+      if (!isRunNoticeKind(params?.kind)) return null;
+      const result = restoreRunNotice(params.testId, params.runId, params.kind);
+      if (result) sendToMain("runs:changed", {});
+      return result;
+    },
+  );
   /** Forget everything accepted for a test — the way back from an over-eager
    *  "accept run", which is otherwise irreversible. */
   ipcMain.handle("a11y:resetBaseline", async (_e, params: { testId: string }) =>

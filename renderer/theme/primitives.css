@@ -100,6 +100,18 @@
   white-space: nowrap;
 }
 
+/* LUCIDE DEFAULTS TO 24px AND NOTHING HERE WAS OVERRIDING IT. A 24px glyph next
+   to a 10px letterspaced label in a 30px box reads as an icon with a caption,
+   and the heavier shapes (Trash2 especially) read as plainly broken. 13px is
+   `.gl-icon-btn`'s size — the icon-only sibling of this button — so the two
+   agree. `flex-shrink: 0` because the label is `nowrap` and a narrow row would
+   otherwise take its space out of the glyph and letterbox it. */
+.gl-btn svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
 .gl-btn:disabled {
   cursor: default;
   opacity: 0.42;
@@ -425,6 +437,16 @@
   position: relative;
 }
 
+/* Shrink-wraps the image, so a normalized overlay inside it is measured
+   against the PICTURE rather than against the scroll viewport around it.
+   `width: max-content` with a `max-width` cap is what makes it track the
+   image's rendered width instead of stretching to the screen. */
+.gl-crt-plate {
+  position: relative;
+  width: max-content;
+  max-width: 100%;
+}
+
 .gl-crt-img {
   display: block;
   max-width: 100%;
@@ -527,6 +549,20 @@
 .gl-menu-trigger-caret {
   flex: 0 0 auto;
   color: var(--gl-tx-3);
+}
+
+/* The stacking floor for a MODAL — the Radix Dialog/AlertDialog overlay and
+   content wear it (see renderer/ui/overlays.tsx).
+
+   A class rather than a Tailwind `z-*` because the number it needs to beat is
+   one the THEME introduced: `.gl-crt` sits at 610 to escape the atmosphere
+   overlays, and a dialog at Tailwind's `z-50` opened on the Visual screen was
+   drawn UNDERNEATH the bezel — the description clipped mid-sentence, the
+   confirm button behind a screenshot. Nothing catches that: the dialog mounts,
+   the a11y tree reports its buttons, and every test passes while the user
+   cannot read or press them. */
+.gl-z-modal {
+  z-index: var(--gl-z-modal);
 }
 
 /* The popover. THE ONE PLACE THIS DESIGN ALLOWS A SHADOW: hairlines are the

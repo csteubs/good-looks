@@ -27,6 +27,7 @@ import {
   ToolbarContent,
   ToolbarDescription,
   ToolbarTitle,
+  toast,
 } from "@ui";
 import { ChevronDown, Pencil, TriangleAlert, Trash2 } from "lucide-react";
 
@@ -41,6 +42,7 @@ import {
 } from "./ai-debug-store";
 import { EditStepsView } from "./edit-steps-view";
 import { RunOutput } from "./run-output";
+import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import { ScriptEditor, ScriptView } from "./script-view";
 import { StepRow } from "./step-row";
 import { VariablesPanel } from "./variables-panel";
@@ -49,11 +51,13 @@ import { A11yPanel } from "./a11y-panel";
 import { computeStepDepths } from "../lib/describe-step";
 import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import { latestA11yRun } from "../lib/a11y-format";
+import { summariseRun } from "../lib/run-summary";
 import { BROWSER_SF_SYMBOLS } from "../lib/browser-icons";
 import {
   RUN_BROWSERS,
   RUN_BROWSER_LABELS,
   type RunBrowser,
+  type ScriptChangeSource,
   type Step,
   type TestRecord,
 } from "../lib/recorder-types";
@@ -112,6 +116,9 @@ export function TestDetailView() {
   // a test whose script isn't generated from its steps; null the rest of the
   // time, which is also what closes the dialog.
   const [pendingSteps, setPendingSteps] = React.useState<Step[] | null>(null);
+  // The run whose failure is being filed. Held here rather than in RunOutput
+  // because the dialog needs the test id, which this view owns.
+  const [failureRunId, setFailureRunId] = React.useState<string | null>(null);
   const [trainerConfirmOpen, setTrainerConfirmOpen] = React.useState(false);
   // Per-test visual-testing gate — remembers the user's "Capture screenshots"
   // choice between sessions. Falls back to the global Settings default when the
@@ -170,6 +177,13 @@ export function TestDetailView() {
   // count is visible without opening the tab — an unreviewed heal means the
   // test may already have been changed underneath the user.
   const healsQuery = useQuery({ queryKey: ["heals", id], queryFn: () => api.heals.list(id) });
+  // The other half of that badge: whole-script changes. Fetched here for the
+  // same reason, and it is what decides whether an IMPORTED test gets the tab
+  // at all — see the trigger below.
+  const scriptChangesQuery = useQuery({
+    queryKey: ["script-changes", id],
+    queryFn: () => api.scriptChanges.list(id),
+  });
   // Badged on the Accessibility tab, from the most recent run that actually
   // checked — same reasoning as the Heals count: an unaccepted violation the
   // user has to open a tab to discover is one they won't discover. Shares the
@@ -180,9 +194,81 @@ export function TestDetailView() {
     queryFn: () => api.recorder.getSettings(),
   });
   const test = testQuery.data;
-  const pendingHeals = (healsQuery.data ?? []).filter((h) => h.status === "pending").length;
+  const scriptChanges = scriptChangesQuery.data ?? [];
+  // One badge for both stores. They are two routes to the same hazard — the
+  // stored test changed and nobody has looked — and two numbers on one tab
+  // would be asking the user to add them up.
+  const pendingHeals =
+    (healsQuery.data ?? []).filter((h) => h.status === "pending").length +
+    scriptChanges.filter((c) => c.status === "pending").length;
   const a11yNewSteps = latestA11yRun(runsQuery.data ?? [], id)?.a11yNewSteps ?? 0;
   const runInfo = runs[id];
+
+  // Real medians, per step and for the test itself (C §6.3). One query for
+  // both — they are one screen asking one question, and two channels would let
+  // the step list and the run summary answer it from two different reads of a
+  // database that is being written to while they look.
+  //
+  // `available: false` is not an error and is not treated as one: the metrics
+  // DB is a derived shadow that degrades to "no metrics" by design, and every
+  // consumer of it here falls back to a `Temp` that renders neutral.
+  const metricsQuery = useQuery({
+    queryKey: ["metrics", "slowness", id],
+    queryFn: () => api.metrics.slowness(id),
+  });
+  const stepTrends = React.useMemo(() => {
+    const map = new Map<string, { recentP50Ms: number | null; previousP50Ms: number | null }>();
+    for (const row of metricsQuery.data?.rows ?? []) {
+      map.set(row.stepId, {
+        recentP50Ms: row.recentP50Ms,
+        previousP50Ms: row.previousP50Ms,
+      });
+    }
+    return map;
+  }, [metricsQuery.data]);
+
+  // The run panel's clock, and ONLY while a run is in flight (§6.1's `running`
+  // panel reports elapsed time). It would usually be carried for free by the
+  // log streaming in, but a run that is waiting — on a slow navigation, on a
+  // locator that will eventually time out — streams nothing, and those are
+  // exactly the runs somebody is watching the clock on.
+  const [nowTick, setNowTick] = React.useState(() => Date.now());
+  const running = runInfo?.running ?? false;
+  React.useEffect(() => {
+    if (!running) return;
+    setNowTick(Date.now());
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [running]);
+
+  // Which of the six states this test's run panel is in. Computed here rather
+  // than inside the panel because both of its inputs are queries this view
+  // already holds for other reasons — the a11y badge needs `runs`, the Heals
+  // tab badge needs `heals` — so the summary costs nothing extra.
+  const runSummary = React.useMemo(
+    () =>
+      summariseRun({
+        testId: id,
+        runs: runsQuery.data ?? [],
+        heals: healsQuery.data ?? [],
+        stepCount: testQuery.data?.steps.length ?? 0,
+        live: runInfo ?? null,
+        now: nowTick,
+        // The REAL median, when the metrics DB can supply one — see §6.3 and
+        // `summariseRun`'s note on why it is preferred over the one derived
+        // from run history here.
+        medianMs: metricsQuery.data?.testTrend?.recentP50Ms ?? null,
+      }),
+    [
+      id,
+      runsQuery.data,
+      healsQuery.data,
+      testQuery.data?.steps.length,
+      runInfo,
+      nowTick,
+      metricsQuery.data,
+    ],
+  );
 
   // Seed the run controls from the record, falling back to the global defaults.
   // Once per TEST rather than once per mount (see `seededFor`), and never again
@@ -308,19 +394,21 @@ export function TestDetailView() {
   );
 
   const applyScript = React.useCallback(
-    async (source: string) => {
+    async (source: string, origin?: ScriptChangeSource) => {
       // Snapshot the steps BEFORE the write. Applying a fix goes through
       // `tests:updateScript`, which re-parses the whole spec and replaces the
       // step list wholesale — so this is the only moment the previous list
       // still exists anywhere.
       const before = qc.getQueryData<TestRecord | null>(["test", id])?.steps ?? [];
-      const updated = await api.tests.updateScript(id, source);
+      const updated = await api.tests.updateScript(id, source, origin);
       // Diff off the handler's return value rather than a refetch: the refetch
       // is async and the highlight would race it, and the record it returns is
       // the same one the invalidation is about to put in the cache anyway.
       setNewStepIds(computeNewStepIds(before, updated?.steps ?? []));
       qc.invalidateQueries({ queryKey: ["script", id] });
       qc.invalidateQueries({ queryKey: ["test", id] });
+      // The Heals tab now has a new entry, and its badge counts them.
+      qc.invalidateQueries({ queryKey: ["script-changes", id] });
     },
     [id, qc],
   );
@@ -388,10 +476,37 @@ export function TestDetailView() {
     qc.invalidateQueries({ queryKey: ["script", id] });
   };
 
+  /** Silence the divergence banner. Optimistic on purpose: this is a "yes, I
+   *  know" click, and a banner that lingers until a round trip reads as a
+   *  control that didn't work. The invalidate below reconciles. */
+  const dismissDiverged = () => {
+    qc.setQueryData(["test", id], (prev: TestRecord | null | undefined) =>
+      prev ? { ...prev, stepsDivergedDismissed: true } : prev,
+    );
+    api.tests
+      .dismissDiverged(id)
+      // Take the saved record rather than invalidating: a refetch would land a
+      // moment later and is indistinguishable from the optimistic value, right
+      // up until the write failed — in which case the banner would reappear
+      // with no explanation. The catch below is the only path that restores it.
+      .then((rec) => {
+        if (rec) qc.setQueryData(["test", id], rec);
+      })
+      .catch(() => {
+        // Put it back rather than leaving the user believing it was recorded.
+        qc.invalidateQueries({ queryKey: ["test", id] });
+        toast.error("Couldn't dismiss the warning.");
+      });
+  };
+
   const saveScript = async () => {
-    await api.tests.updateScript(id, scriptDraft);
+    // No origin: a hand edit the user is looking at as they save it. The
+    // backend defaults to exactly that, but saying it here is what keeps the
+    // Heals tab's labels honest if the default ever changes.
+    await api.tests.updateScript(id, scriptDraft, { by: "manual", reviewed: true });
     qc.invalidateQueries({ queryKey: ["script", id] });
     qc.invalidateQueries({ queryKey: ["test", id] });
+    qc.invalidateQueries({ queryKey: ["script-changes", id] });
     setEditingScript(false);
   };
 
@@ -411,9 +526,10 @@ export function TestDetailView() {
   // edited script is preserved on disk before the trainer can regenerate it.
   const saveAndEditInTrainer = async () => {
     if (editingScript) {
-      await api.tests.updateScript(id, scriptDraft);
+      await api.tests.updateScript(id, scriptDraft, { by: "manual", reviewed: true });
       qc.invalidateQueries({ queryKey: ["script", id] });
       qc.invalidateQueries({ queryKey: ["test", id] });
+      qc.invalidateQueries({ queryKey: ["script-changes", id] });
       setEditingScript(false);
     }
     start(test.url, test.name, test.id);
@@ -673,9 +789,20 @@ export function TestDetailView() {
         </ToolbarActions>
       </Toolbar>
 
-      {test.stepsDiverged ? (
+      {/* Dismissible, and the dismissal is persisted rather than held here: the
+          record stays diverged (everything else that reads the flag must keep
+          saying so), the user has simply acknowledged it. The backend re-arms
+          the banner when divergence is established AFRESH — an applied script
+          that won't fully parse back into steps, or a step edit saved without
+          regenerating — so a new problem is never hidden by an old dismissal. */}
+      {test.stepsDiverged && !test.stepsDivergedDismissed ? (
         <div className="px-4 pt-2">
-          <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+          <Callout
+            color="yellow"
+            icon={<TriangleAlert className="size-4" />}
+            onDismiss={dismissDiverged}
+            dismissLabel="Dismiss this warning"
+          >
             <Callout.Text>{divergedMessage(test)}</Callout.Text>
           </Callout>
         </div>
@@ -723,7 +850,14 @@ export function TestDetailView() {
                     {(test.variables?.length ?? 0) > 0 ? ` (${test.variables?.length})` : ""}
                   </TabsTrigger>
                 )}
-                {imported ? null : (
+                {/* Hidden for an imported test only while it would be EMPTY,
+                    which is the same rule the two neighbours state — "a tab
+                    that could only ever be empty is worse than no tab". An
+                    imported test can't be healed (its steps aren't the source
+                    of truth), but its script is exactly the kind that gets
+                    hand-edited, and hiding the tab outright would put that
+                    history somewhere the user cannot reach. */}
+                {imported && scriptChanges.length === 0 ? null : (
                   <TabsTrigger value="heals">
                     Heals
                     {pendingHeals > 0 ? ` (${pendingHeals})` : ""}
@@ -751,6 +885,7 @@ export function TestDetailView() {
                       step={test.steps[i]}
                       indent={depth}
                       runStatus={runInfo?.stepStatus[i]}
+                      trend={stepTrends.get(test.steps[i].id)}
                       isNew={newStepIds.has(test.steps[i].id)}
                     />
                   ))}
@@ -807,7 +942,34 @@ export function TestDetailView() {
 
       {/* The dialog itself is rendered by AiDebugHost above the router, so a
           minimized session outlives this view. */}
-      {runInfo ? <RunOutput info={runInfo} onDebug={openAiDebug} aiStatus={aiStatus} /> : null}
+      {/* Always rendered now, not only once something has run in this session.
+          Opening a test cold used to say nothing at all about it — not that it
+          had never run, not that it failed yesterday (§6.1). */}
+      <RunOutput
+        info={runInfo}
+        summary={runSummary}
+        onDebug={openAiDebug}
+        onReview={test.sourceDir ? undefined : () => setTab("heals")}
+        onSendToTracker={setFailureRunId}
+        aiStatus={aiStatus}
+      />
+
+      {/* A failure names no step of its own — the loader resolves which step
+          failed from the replay, which is where that fact lives. Passing null
+          rather than guessing here keeps one answer to "which step failed?" */}
+      <IssueComposeDialog
+        source={
+          failureRunId
+            ? { kind: "failure", testId: test.id, runId: failureRunId, stepId: null }
+            : null
+        }
+        open={failureRunId !== null}
+        onOpenChange={(open) => {
+          if (!open) setFailureRunId(null);
+        }}
+        onFiled={(issue) => toast.success(`Filed as ${issue.identifier}.`)}
+        onCommented={(link) => toast.success(`Added to ${link.identifier}.`)}
+      />
 
       {/* Asked at SAVE, not when Edit Steps is opened: this is a question about
           what to do with the edits, and it can only be answered once they

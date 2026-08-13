@@ -24,8 +24,10 @@ import { ChevronLeft, ChevronRight, PanelLeft, Settings } from "lucide-react";
 import { useSplitView } from "@ui";
 
 import { ChromeButton, TopStrip, type Crumb } from "../theme";
+import { JobTicker } from "./job-ticker";
 import { api } from "../lib/api";
 import { categoryMeta, facetLabel } from "../lib/stats-categories";
+import { useCommandPalette } from "./command-palette";
 
 /** Route path → what that screen is called. The router's own `staticData.title`
  *  is the same string, but reading it here would mean matching on the route
@@ -143,6 +145,31 @@ function HistoryNav(): React.ReactElement {
   );
 }
 
+/** The ⌘K cap. A BUTTON as well as a hint, because the shortcut is
+ *  undiscoverable on its own and a key cap nobody can press is a label
+ *  pretending to be a control.
+ *
+ *  Renders nothing when there is no palette above it. That is not defensive
+ *  coding — the settings window and the trainer panel draw their own chrome and
+ *  have no command list, and a cap there would be exactly the promise the app
+ *  cannot keep that this slot was left empty to avoid. */
+function CommandKey(): React.ReactElement | null {
+  const setOpen = useCommandPalette();
+  if (!setOpen) return null;
+  return (
+    <button
+      type="button"
+      className="gl-cmd-key"
+      onClick={() => setOpen(true)}
+      // Spelled out for a screen reader, which reads "⌘" as nothing useful.
+      aria-label="Run a command (Command K)"
+      title="Run a command  ⌘K"
+    >
+      ⌘K
+    </button>
+  );
+}
+
 export interface AppStripProps {
   /** True while the trainer has replaced the outlet — see the header. */
   recording?: boolean;
@@ -222,9 +249,12 @@ export function AppStrip({ recording = false }: AppStripProps): React.ReactEleme
           <HistoryNav />
         </>
       }
-      // `command` (⌘K, REDESIGN §6.7) and `ticker` (§6.8) are left unpassed.
-      // See the note in top-strip.tsx: an affordance for a feature that does
-      // not exist teaches a shortcut that answers with silence.
+      // Both slots are filled as of §6.8 — the debt `top-strip.tsx` describes
+      // is discharged. `JobTicker` renders NOTHING when the app is idle, which
+      // keeps the promise the empty slot was making: a strip that says
+      // something only when there is something to say.
+      command={<CommandKey />}
+      ticker={<JobTicker />}
       actions={
         <ChromeButton label="Settings" onClick={openSettingsWindow}>
           <Settings aria-hidden="true" />

@@ -1,13 +1,21 @@
 # The indie redesign — an implementation plan
 
-**Status: Phase A is done; Phase B is nearly done.** A1–A5 are landed, and so
-are **B1 (Home)**, **B2 (Heals)**, **B3 (Batch)**, **B4 (Settings)**, **B5a
-(Test detail, parity)**, **B6 (Recorder)** and **B7 (Stats)** — see the ✅ marks
-in §4, §5 and §8.3. The app's frame is the redesign, so are the five components
-every screen embeds, and so are seven of the nine screens. **Two still carry the
-old chrome** (B8 Visual, B9 AI debug), one PR each, plus **B5b** (the five
-non-failure run-state summaries, Phase C §6.1). Where the rest of this says
-"would", it means would.
+**Status: Phases A, B and C are done.** A1–A5 are landed,
+and so are **B1 (Home)**, **B2 (Heals)**, **B3 (Batch)**, **B4 (Settings)**,
+**B5a (Test detail, parity)**, **B6 (Recorder)**, **B7 (Stats)**, **B8 (Visual,
+first slice)** and **B9 (AI debug — the status contract and the Sending strip)**
+— see the ✅ marks in §4, §5 and §8.3. The app's frame is the redesign, so are
+the five components every screen embeds, and every screen has been reached.
+
+**Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
+its frame rail, threshold-against-frames and the masks/baselines reskin.
+**Phase C is complete. §6.1 through §6.9 all landed 2026-08-12** — the five
+non-failure run-state summaries (which were B5b), the inline step composer,
+change temp against real medians, Stats → Cost, Stats → Report (the emitters,
+the Export panel and the weekly digest), the whole of Visual triage (Wipe/Blink,
+baseline provenance, drift and the region breakdown), the ⌘K command palette,
+the job ticker, and the boot sequence. **Phase D (§7) is what remains.**
+Where the rest of this says "would", it means would.
 
 Source of truth for the design: `Good Looks Redesign.dc.html` in
 `Good Looks indie redesign.zip` — a 4,083-line interactive mockup covering eight
@@ -668,7 +676,7 @@ into rail + viewer + inspector.
 | 3 compare modes | 5 — adds **Wipe** (draggable divider) and **Blink** (600ms alternate) |
 | Masks | Masks drawn *in the frame* as first-class objects, plus a managed list |
 | Threshold | Slider drawn **against the actual frames**, so moving it shows what it will silence |
-| — | "What moved" — per-region breakdown with measured boxes |
+| — | ✅ "What moved" — per-region breakdown with measured boxes |
 | — | Baseline provenance (run, commit, browser, viewport, who accepted, when) |
 | — | Drift — this frame across the last 10 runs |
 
@@ -682,9 +690,46 @@ anywhere else: an accent-coloured segment sitting on a screenshot is a colour
 the page did not put there. ✅ The browser preview now serves a captured run, so
 the screen is reviewable at all — it previously rendered only its empty state,
 which is why this slice is scoped the way it is rather than attempting 1,548
-lines blind. Still to do in B8: the frame rail with per-frame diff percentages
-and a "changed only" filter, the mask list, and the threshold slider drawn
-against the frames.
+lines blind.
+
+✅ **The frame rail, 2026-08-10.** Every frame now carries its diff PERCENTAGE
+and there is a "changed only" filter. The percentage is the substantive part: a
+run with forty frames and three real changes was a row of near-identical bars —
+the strip could say THAT a frame changed but never by how much, so a 0.01%
+antialiasing shift and a 40% layout break looked identical and triage meant
+clicking through one frame at a time. The filter is offered only when it would
+do something, and it always keeps the SELECTED frame even when that frame did
+not change: dropping it while the viewer above still shows it would leave the
+rail disagreeing with the picture, and the user with no handle to move off it.
+The bars take the palette (phos/red for the two real outcomes, neutral for a
+frame that was never attempted, an amber inset rail to mark a change — caution,
+not an outcome, since the frame still passed).
+
+✅ **The threshold, drawn against the frames, 2026-08-11.** The slider used to be
+a number with no consequence on screen — "0.20%" says nothing about whether
+moving it silences the change you are looking at or every change you have. It
+now reads `flags 1 of 2` beside itself, counted over THIS run's frames and
+updated from the drag rather than the committed value, so it answers while you
+move it. The comparison is strictly-greater, matching the comparator that
+produced the ratios: a preview that disagreed with the next run by one frame
+would be worse than none, because it would be believed. Pinned by four tests on
+the pure `framesOverThreshold`.
+
+✅ **The masks / baselines manager, 2026-08-11.** It already existed as a
+capability — `MasksBaselinesDialog` is the per-test managed view, and masks are
+already drawn in the frame by the ignore-region editor — so this was a reskin:
+square hairline rows on `--gl-panel` instead of rounded bordered cards (the SDK
+weight read as a card, which is wrong for something you scan a dozen of), mono
+micro-label headings, neutral chips (neither "which steps" nor "has geometry" is
+a result), and amber on the mask glyph because a mask is a CAUTION about the
+comparison — pixels deliberately not judged — rather than an outcome.
+
+Doing it surfaced a fixture bug worth recording: `visual:listBaselines` was
+answering with bare step ids under a `: string[]` annotation. That type-checked,
+because the annotation was the thing being checked rather than `api.ts`'s actual
+`BaselineEntry[]` — so the manager rendered four rows with no label and "Invalid
+Date", which is exactly the "looks like a broken feature" failure the bridge's
+own header warns about. **With this, §B8 is complete and so is Phase B.**
 
 **One implementation note carried over from the mockup and worth keeping:** the
 diff region boxes are *measured after layout*, never authored as percentages,
@@ -717,44 +762,504 @@ not-cancel, the stale-script warning, the suggested-fix diff, follow-ups. The
 genuinely new element — and it is a *privacy* affordance, so it should ship with
 the reskin rather than waiting for Phase C.
 
+**Shipped 2026-08-10.** ✅ The four tones map onto the pre-redesign contract
+exactly, and — the substantive change — the mapping is now **checkable**:
+`toneFor` returns the palette tone as data, so the contract is asserted by value
+instead of only by label. A wrong colour with a right label used to pass
+everything in this repo. ✅ `ai-debug-icons.test.tsx` extended, plus a guard the
+per-status assertions cannot make: the four meanings must stay in four DIFFERENT
+colours, since two collapsing onto one is the failure that stops the icon
+carrying information at all. ✅ The Sending strip, derived from the same `ctx`
+the prompt is built from, with a drift test that fails if the builder attaches a
+payload the strip does not name. Sizes are characters, not tokens — a token count
+is a guess dressed as a measurement.
+
+✅ **And the panel's chrome, in a follow-up the same day.** Ten icon-only SDK
+buttons became `.gl-icon-btn` — the SDK was spending two different greys
+(`muted`/`transparent`) on one job. "Send to AI" and "Send this data" take
+`tone="ai"`, the holo border, because AI is not an outcome and because that is
+the button which actually sends the payload the strip above it just itemised.
+The prompt preview and code blocks became `.gl-console` on `--gl-black`: a
+prompt is evidence of what was sent, the same category as run output and a
+captured frame, and it should not look like our chrome.
+
 ---
 
 ## 6. Phase C — the redesign's new features
 
 Each is its own PR, each independently useful, ordered by value.
 
-**6.1 The six run states** (from B5). Five new summary panels in test detail.
-Data is already present in `RunRecord` and the heal journal.
+**6.1 The six run states** (from B5). ✅ **Done, 2026-08-12.** Five new summary
+panels in test detail, from data already present in `RunRecord` and the heal
+journal. The state decision and its arithmetic are pure
+(`renderer/lib/run-summary.ts`), the rendering is `run-summary-panel.tsx`, and
+`RunOutput` now shows the six-state chip rather than pass/fail.
 
-**6.2 Inline step composer** (from B6). Retires `add-step-dialog.tsx`. The
-`InsertGap` cursor is the prerequisite and the reason it can be moved.
+Four things the plan did not anticipate, all of which changed the shipped shape:
 
-**6.3 Change temp against real medians.** Wire `Temp` to `metrics-store`
-per-test and per-step medians. Turns a decoration into a measurement.
+- **"retry" had to be translated.** The plan calls it "attempt 1 vs attempt 2",
+  which presumes a runner with `retries` configured. This app configures none —
+  every run is one attempt — so the two attempts are two RUNS. The question
+  survives intact and the answer comes only from what `RunRecord` stores. When
+  NOTHING differed, that is the most useful reading available and the one a user
+  is least likely to reach alone: same engine, same pacing, same budget, opposite
+  outcome, so the test is flaky rather than fixed.
+- **Two of the six passed and are not phos.** `healed` is amber because a
+  mis-heal usually succeeds (clicking the wrong button rarely throws), and a
+  flaky `retry` is amber for the same reason. Reporting either as a plain pass
+  is the app agreeing with the substitution.
+- **The panel now renders with no live run.** It used to appear only once
+  something had executed in this session, so opening a test cold said nothing
+  whatsoever about it. That was invisible while the panel was about failure and
+  indefensible once it was about state.
+- **`.gl-heal-row` already existed** in `shared.css`, used by `heals-panel.tsx`,
+  and the new rows silently inherited it (and leaked into that panel). This is
+  the failure mode `check:renderer-classes` cannot see — the class resolves, to
+  the wrong rule. Renamed to `.gl-run-heal-*`.
 
-**6.4 Stats → Cost mode.** CI spend, manual QA avoided, return on spend, waste
-on flake, regressions caught; spend-by-test table with an earning/review verdict;
-CI minutes trend. Needs a cost-per-minute setting and a "minutes per manual run"
-assumption, both of which must be visible and editable — a number nobody can
-check is a number nobody believes.
+**6.2 Inline step composer** (from B6). ✅ **Done, 2026-08-12.**
+`add-step-dialog.tsx` is now `step-composer.tsx`, and the panel opens BETWEEN
+the two steps the new one will sit between, at the insert cursor, in both the
+main window and the trainer panel.
 
-**6.5 Stats → Report mode.** The weekly digest preview, the channel list, and
-exports (PDF / CSV / JUnit XML / public link). **This overlaps heavily with the
-MCP plan's Phase 5 emit adapters** — see §7.3. Build the emitters once, surface
-them here.
+**The line-count claim in this plan does not survive contact, and should not.**
+§B6 says retiring the dialog "removes 1,170 lines and a modal". It removes the
+modal. The lines are ten step kinds times their fields — the three-checkbox
+wait, the CSS assert that refuses a malformed property, the element-state
+expansion that emits several rows — every one of them behaviour with a test
+behind it. Deleting them to hit a number would be deleting the feature. So the
+forms are untouched and their tests are the same ones; what changed is the frame
+around them.
 
-**6.6 Visual triage.** Wipe, Blink, region breakdown, baseline provenance, drift.
+What the frame had to grow back, having lost Radix:
 
-**6.7 Command palette (⌘K).** Does not exist in any form today. Run a test, run a
-tag, open a view, debug the last failure, record, generate. Straightforward over
-the existing router and query layer.
+- **Escape closes it**, bound on the panel. Without it the only way out of a
+  half-filled composer is the mouse.
+- **Add is disabled until the step will actually build.** The modal could afford
+  a permanently-enabled confirm that did nothing — it stayed open, so "nothing
+  happened" read as "I have not finished". A panel sitting in the list cannot: a
+  button that silently declines is indistinguishable from a broken one.
+- **A cap on the form's measure.** The dialog was `size="large"`; the panel
+  inherits the width of the step list, which is most of the window, and an
+  uncapped form puts a label and its control at opposite ends of a thousand
+  pixels.
 
-**6.8 Job ticker.** The top-strip live readout — one shape, five readings (one
-run / several / batch / failed / idle-hidden). Needs a global run-state
-subscription the app does not currently expose to the shell.
+And one bug the change exposed rather than caused: the composer's reset effect
+was clearing `locator`, which `TargetElementPicker` — a CHILD — had just seeded
+from the picked element. A child's effects run before its parent's, so the reset
+landed second and won. Invisible behind an always-enabled confirm; immediately
+visible as a button that cannot be pressed. The reset is unnecessary now anyway,
+because both call sites `key` the composer on the kind and the picked element,
+so every open and every re-target is a fresh mount.
 
-**6.9 Boot sequence.** 2.6s glitch-plate splash. Cheap, and the first thing
-anyone sees. Should respect reduced motion by rendering statically.
+**6.3 Change temp against real medians.** ✅ **Done, 2026-08-12.** `Temp` now
+reads `metrics-store`, per test and per step, and the step list is where it
+earns its keep: forty durations, one lit row.
+
+- **Per step, BOTH numbers are medians** — recent p50 against the p50 before it,
+  not this run against a median. A single run's duration for a single step is
+  noise (a GC pause, a slow DNS answer), and colouring it would light half the
+  list on every run for reasons that are not about the test. What gets a colour
+  is the step having CHANGED.
+- **Per test, the metrics median is PREFERRED over the one §6.1 derives from run
+  history, and the reason is retention.** `run-history.json` is pruned; the
+  metrics DB is rolled up *before* retention runs, so after a prune it holds
+  strictly more of a test's past. A median is exactly the statistic that
+  degrades when its sample is silently truncated — the number stays plausible
+  and stops being true. It falls back to the history median rather than to no
+  median when metrics are unavailable: losing the better source must not mean
+  losing the answer.
+- **`testDurationTrend` counts PASSED runs only.** A run that died on step two
+  is fast and one that timed out is as slow as the budget; either poisons a
+  median being used to say whether a pass was unusual.
+
+New: `testDurationTrend` in `shared/metrics-query.mjs`, returned on the existing
+`metrics:slowness` channel when a test is named — the step list and the run
+summary are one screen asking one question, and two channels would let them
+answer it from two different reads of a database being written to while they
+look.
+
+**6.4 Stats → Cost mode.** ✅ **Done, 2026-08-12.** CI spend, manual testing
+avoided, return on spend, failures caught and what flake cost — over a
+spend-by-test table with an earning/review verdict. `renderer/lib/cost-model.ts`
+holds the arithmetic; `renderer/main/cost-panel.tsx` renders it into Stats.
+
+**The assumptions are ON THE PANEL, and that is the answer to this section's own
+question.** A Settings row satisfies the letter of "visible and editable" and
+defeats the point: a reader looking at "48m avoided" would have to know the
+assumption exists, guess that Settings is where it lives, and go and find it,
+before they could judge whether the figure means anything. The two inputs sit
+directly under the numbers they produce, so the derivation is part of the
+reading. They are also **not persisted** — they are a lens rather than a
+preference, and storing them would put a third thing in the settings file to
+migrate and back up in exchange for saving one number-typing.
+
+Three refusals shaped the rest:
+
+- **Time is never converted to money.** That needs a third assumption — an
+  hourly rate for whoever would have done the testing — and it is the one this
+  app has no business guessing: it varies by an order of magnitude, nobody would
+  notice a bad default, and a currency figure carries far more authority than
+  the guess behind it deserves. So spend is money, value is TIME, and the ratio
+  is stated in its own unit (hours avoided per unit spent).
+- **No currency symbol anywhere.** The rate is whatever the user typed, in
+  whatever currency they think in; the app is never told which.
+- **"Failures caught", not "regressions caught".** Whether a given failure was a
+  regression, a broken test or flake is exactly what triage and the flake
+  analysis answer probabilistically. Naming it what it is costs one word.
+
+Flake is counted with §6.1's rule, reused rather than re-derived — a failure
+directly followed by a pass with none of the recorded run settings changed. Two
+definitions of flake in one app is how two surfaces end up disagreeing in front
+of a user.
+
+**6.5 Stats → Report mode.** ✅ **Done, 2026-08-12** — the emitters, the Export
+panel, and the weekly digest. `shared/emitters.mjs` carries §7.3's five
+formats — JUnit XML, GitHub Actions annotations, OTLP JSON trace, ticket
+markdown, and NDJSON/CSV of `step_metrics` — built once and shared with the MCP,
+as §7.3 asks.
+
+**This answers §10's open question 3: emit-only, and the module is where that is
+ENFORCED rather than promised.** Every emitter is a pure function returning a
+string. Nothing opens a socket, stores a credential or knows a hostname, because
+a pure string function has nowhere to send anything to. Redaction is passed IN as
+a parameter rather than imported: `redactWithSnapshot` reads an encrypted store
+and must stay on the app side, and dragging it into `shared/` would make the
+module impure and untestable in one move.
+
+**Which settles what the mockup drew.** The design shows PDF and "public link"
+export chips and a list of delivery CHANNELS with toggles. None of those exist: a
+public link needs a server this app does not have, PDF needs a renderer it does
+not carry, and §7.3 already says the channel toggles must be rewritten "before it
+ships, or it promises a Slack integration that does not exist". So the panel will
+list EMITTERS, and "where it goes" is a list of what was last written to disk.
+
+The six failures the emitters' tests pin are all silent and downstream — the kind
+that surface in someone else's CI report rather than on this screen: JUnit `time`
+in SECONDS (milliseconds make every job look a thousand times slower and no
+consumer complains); all five XML entities including quotes (a test name
+routinely has an apostrophe); control bytes DROPPED rather than escaped (they are
+illegal in XML 1.0 either way, Playwright output carries them, and one makes the
+file unparseable); GitHub annotation newlines encoded (a raw one ends the
+workflow command and the rest prints as ordinary log output); CSV rows written
+against the FIRST row's columns (differing shapes otherwise open cleanly in a
+spreadsheet with the columns meaning different things per line); and OTLP nanos
+as STRINGS (2026 in nanoseconds is past `Number.MAX_SAFE_INTEGER`, so computing
+them as a JS number silently drops the low digits and every span drifts).
+
+**The Export panel landed 2026-08-12.** `renderer/main/report-panel.tsx`, under
+Cost in Stats, rendering `EMITTERS` rather than a copy of the list — an emitter
+added to the module appears in the UI without anyone remembering to add it,
+which is the failure mode of every "list of formats" that exists twice.
+
+**THE RENDERER NEVER SEES THE EMITTED TEXT.** It calls `api.report.emit`, a
+VERB, and gets back a path, a byte count and a row count. Redaction runs in the
+main process against an encrypted store that cannot cross the IPC boundary, so a
+channel that returned the bytes would move the un-redacted payload across first
+and make the redaction a formality applied to a copy. `check:emit-redaction`
+pins all three halves of that: every emitter call in `report-emitter.ts` passes
+`redact: redactWithSnapshot`, none reaches for the `NO_REDACTION` escape hatch
+(which exists for the MCP and for tests), and no `report:` channel returns text.
+
+Three smaller decisions:
+
+- **A cancelled save is an ANSWER, not an error.** The user closed a dialog;
+  telling them what they just did reads as the app not having noticed, and it
+  would fire on the most ordinary way out of the flow.
+- **"Last written" is per-emitter.** One shared slot would make exporting a
+  second format look like it replaced the first, which is the opposite of what
+  the list is for. It reports the path, the size AND the row count — "2 KB" says
+  nothing about whether the file covers the run the reader cares about.
+- **The risk note is amber and is the only colour in the panel.** It is a prompt
+  to look before forwarding: not a failure, so not red, and never green, because
+  there is no good news to report about what a file contains.
+
+**The weekly digest landed 2026-08-12, as a READ rather than a preview — and
+that is a reinterpretation worth stating.** The mockup drew it beside the
+delivery channels: a picture of the email that went out on Mondays. §7.3 removed
+the channels because they promised a Slack integration that was never built, and
+with delivery gone a preview is a preview of nothing.
+
+What survives the loss is the QUESTION, and the Stats screen could not answer it.
+Six panels live there — cost, suite cost, step health, flake, divergence, capture
+overhead — and every one is a table or a breakdown answering something the reader
+already knew they wanted. None said how the week went. So `weeklyDigest` in
+`renderer/lib/weekly-digest.ts` produces three or four sentences, rendered above
+everything else by `digest-panel.tsx`, and the ticket emitter is how it leaves.
+
+Five decisions in it:
+
+- **A quiet week is not a good week.** With no runs the report is "Nothing ran
+  this week", never "0 failed" or "all passed" — both true of an empty set, both
+  reading as good news, and a suite nobody runs is the failure this whole app
+  exists against. It is the reading the digest most has to get right.
+- **The week-on-week comparison is what makes it weekly.** Without it these are
+  totals and the panels below do totals better. It is OMITTED for a first week
+  rather than compared against zero, which would read as explosive growth and is
+  really a statement about the app being new.
+- **Failures are counted per TEST, not per run.** One test failing three times is
+  one problem; three tests failing once each is three, and "3 failures" says the
+  same thing about both while they want completely different reactions. Two are
+  named and the rest counted — a list of five test names is a table written in
+  prose, and there is a real table further down the screen.
+- **Flake reuses §6.4's definition** rather than adding a second one, since two
+  definitions of flake in one app is how two surfaces end up disagreeing in
+  front of a user. `flakeRuns` wants ONE test's history, OLDEST FIRST; sorted the
+  other way it silently finds nothing, and the flake line simply never appears.
+- **Nothing renders when there is no history at all**, but a suite whose history
+  is all older than a week still gets the panel — "nothing ran this week" is the
+  most useful thing it can say about a suite that has gone quiet, and hiding it
+  there would hide exactly that.
+
+**One honest overlap.** On a young suite whose entire history sits inside the
+week, the first line restates the Stats header's own count. The labels separate
+them ("N runs recorded" against "THIS WEEK"), and they diverge as soon as the
+suite is older than seven days — but it is a real duplication on day one and not
+worth pretending otherwise.
+
+**§6.5 is complete, and with it Phase C.**
+
+**6.6 Visual triage.** ✅ **Done, 2026-08-12** — Wipe, Blink, baseline
+provenance, drift and the region breakdown. It was split into four PRs for the
+reason B8 was split: `visual-view.tsx` is the largest file in the renderer and
+the one where a change is most easily made blind.
+
+**Why these two first.** A diff map is exact and nearly useless for triage: it
+lights every changed pixel with equal weight, so a font-smoothing shift and a
+button that moved 40px look identical. Wipe and Blink put the two frames in the
+same PLACE instead and let the eye do the comparison it is very good at — which
+is the question the three existing modes cannot answer.
+
+- **Neither frame is treated.** Wipe CLIPS rather than fading, and Blink swaps a
+  whole frame rather than cross-dissolving. The premise of both modes is that
+  any difference on screen is a difference in the page, and a partly-transparent
+  layer invents one. `check:crt-untreated` already pinned the rule; it binds
+  hardest here.
+- **Reduced motion makes Blink a MANUAL toggle rather than turning it off.** The
+  alternation is not decoration on top of the information, it IS the
+  information — a Blink that does not blink is a mode that does nothing. But it
+  is also involuntary repeating full-frame motion, which is what somebody
+  turning reduced motion on is asking not to be shown. Both are true, so the
+  capability stays and only the involuntariness goes: the user swaps the frames
+  at their own pace and gets the same comparison.
+- **The wipe divider never reaches an edge.** Flush to one there is no handle
+  left in the frame to drag it back with, and the mode reads as broken. It is
+  also keyboard-driven, since it is the one control on this screen that
+  otherwise needs a steady hand.
+- **The modes are offered only when both frames exist.** A mode whose empty
+  state is "both have to exist" is a mode that should not have been offered.
+
+**Baseline provenance, and the three fields that do not exist.** This section
+asks for "run, commit, browser, viewport, who accepted, when". Three of the six
+are not in this app and were not invented: nothing reads the user's repository,
+so there is no COMMIT in the picture at all; it is a single-user desktop app
+with no identity, so WHO ACCEPTED would read back the same name forever; and
+VIEWPORT is genuinely not on `RunRecord` — a test can carry `viewport` steps
+that resize mid-run, so there is no single viewport for a run to report and
+quoting the first would be wrong for any test that resizes. Fabricating them
+would make the comparison less judgeable while looking like it makes it more.
+
+What ships is the run, when it was pinned, the engine, headed-or-headless,
+whether the baseline is element-scoped — and the one nobody would think to ask
+for: **whether that run still exists.** Retention prunes run history and a
+baseline outlives it, so a baseline can be perfectly valid and no longer
+traceable to anything, which is a fact about how far the comparison can be
+trusted. It says "run since pruned" rather than dropping the field, because a
+provenance line missing a field reads as a rendering bug. It renders in `CRT`'s
+`caption` — a prop that has existed since A3 documented as "what this frame IS"
+and had no consumer until now.
+
+**Drift — the question the screen could not ask.** Every mode above answers "did
+this frame change?" for ONE run. Nothing in the app could answer the one that
+follows: is it changing *repeatedly*? Those have different fixes. A frame that
+changed once is a change to look at; a frame over threshold in six of the last
+ten runs is a baseline nobody re-pinned, and reading it one run at a time makes
+one standing problem look like six separate small ones. The strip sits under the
+step row as context for the diff badge directly above it — not a finding of its
+own, which is why it is twenty pixels and not a chart.
+
+Four decisions in it, all of which could have gone wrong quietly:
+
+- **A run with no reading is a GAP, never a zero.** A skipped step, capture off,
+  a run predating the step, an `unable` comparison: none of those measured
+  anything, and a zero-height bar in that slot says "this frame was identical
+  that time", which is a claim nobody made. Both readings are a couple of pixels
+  in the same 20px strip, so the distinction is pure geometry — and it shipped
+  collapsed once already in the preview, where a floored bar was a single pixel
+  and looked exactly like the dash meaning no reading. `check:drift-gap` pins
+  the two properties that keep them apart: the floor is thick enough to read as
+  a bar, and the gap marker floats clear of the baseline bars stand on. jsdom
+  has no layout engine and the `dom` project runs with `css: false`, so nothing
+  else in the gate can see it.
+- **A single change is never drift.** One edit, one moved frame, one re-pin is
+  the ordinary healthy case and the thing a readout like this most easily cries
+  wolf about. It falls out of the two constants together — the smallest readable
+  window is four runs, so one change is at most a quarter, under the 40% share —
+  which means it is an emergent property rather than a branch, and a test pins
+  it across the whole window range rather than at one point.
+- **Bars scale to the window's own peak, not to 100%.** Diff ratios here are
+  small numbers; a 4% change is a large one. Against a full axis every bar draws
+  as the same flat line and the strip says nothing.
+- **Only `drifting` gets a colour.** It is the one reading that asks for an
+  action. A readout that colours its good news too is one where colour has
+  stopped meaning anything.
+
+It needs no new backend: one replay read per run in the window, sharing the
+cache the viewer already fills, keyed per RUN so moving between steps of a run
+costs nothing. That is exactly what separates it from the region breakdown,
+which needs pixel analysis that does not exist yet.
+
+**The region breakdown — "what moved".** The last piece, and the only one that
+needed analysis the backend did not have. A diff map is exact and nearly useless
+for triage: it lights every changed pixel with equal weight, so a paragraph of
+font smoothing and a button that moved 40px look identical. This turns the same
+pixels into a handful of MEASURED BOXES, ranked by how much of the change each
+holds, and says each one's place in words.
+
+- **A coarse grid, not per-pixel connected components, and that is the whole
+  design.** Per-pixel components on a 1280×3000 screenshot produce hundreds of
+  one- and two-pixel specks from antialiasing — which is exactly the noise this
+  exists to see past, reproduced in a new shape and with a ranking that puts
+  real change below it. Snapping to a grid first merges a paragraph's smoothing
+  into one region and keeps a moved button its own, at 40×95 cells rather than
+  3.8M pixels.
+- **The changed-pixel mask is read back off the overlay pixelmatch already
+  drew**, because it writes unchanged pixels as GREYSCALE and changed ones in a
+  marker colour, so "r, g and b are not all equal" identifies them exactly. Both
+  marker colours are now passed explicitly rather than defaulted — the invariant
+  is what makes this safe, and "pixelmatch changed a default" would silently
+  empty every breakdown. The alternative was a second full pixelmatch pass to
+  recover information the first one already wrote down.
+- **The words are half the feature.** "62% of the change, across the top" is a
+  sentence somebody can check against the page; four numbers between 0 and 1 are
+  not. Place is a three-by-three grid measured from each box's CENTRE — a corner
+  reading calls a change through the middle of the page "top" and sends the
+  reader to the wrong place, with nothing visibly wrong since the box on screen
+  is still right.
+- **Boxes are drawn on the DIFF map only.** Current and Baseline are the frames
+  the user is asked to judge, and this screen's standing rule is that what is on
+  them is what the page put there. The list switches modes for you rather than
+  drawing over evidence, and picking a row scrolls its box into view — a
+  full-page frame is routinely three times the height of its pane, so most
+  regions are off-screen and a list that points at what you cannot see reads as
+  broken.
+
+**It uncovered a real bug in the frame overlays, which this fixes.** Masks and
+the element-scope outline were positioned against the CRT's *pane* rather than
+its picture — and the pane is a scroll viewport, so on any screenshot taller
+than it (which is most of them) every overlay drifted by however much the frame
+overflowed. `CRT` now wraps the image and its children in a plate that shrinks
+to the image, which is what `StepScreenshot`'s own comment had claimed was true
+since B8. The region boxes could not have been correct without it.
+
+**6.7 Command palette (⌘K).** ✅ **Done, 2026-08-12.** Run a test, run a tag,
+open a view, record, generate, reach the last failure. Ranking in
+`renderer/lib/command-palette.ts`, overlay in `renderer/main/command-palette.tsx`,
+and the strip's `command` slot is filled at last — half the debt
+`top-strip.tsx` describes is discharged.
+
+Four things the line above does not say:
+
+- **"Debug the last failure" became "OPEN the last failure".** An AI debug
+  session needs the script and the run output `test-detail-view` assembles, and
+  a palette reaching across that boundary to fake the context would open a
+  session about the wrong run. The row is named for what it does; the sparkle is
+  one click away and already the right colour.
+- **The scoring is deliberately small** — title prefix, then word prefix, then
+  subsequence, with keyword matches always below every title match, and a
+  shortness term that is a tie-break INSIDE a tier and can never cross between
+  them. A palette's only real failure mode is a wrong FIRST row, because nobody
+  reads the list: they type three letters and press Enter. A general fuzzy
+  matcher guesses, and a palette that guesses is one where the top row moves for
+  reasons the user cannot see.
+- **Groups stop mattering the moment there is a query.** Browsed, the list is
+  blocked into Actions / Tests / Tags / Views; searched, it is flat, because its
+  order IS the answer and re-grouping would destroy what the search produced.
+- **⌘K is the one shortcut in the app that does not exempt text fields.**
+  `HistoryNav`'s ⌘[ does, because `[` is a character somebody might be typing;
+  ⌘K produces none, and a palette you cannot open from the log search is one you
+  learn not to trust.
+
+✅ **Both slots are filled as of §6.8**, which closes the debt `top-strip.tsx`
+describes. The ticker keeps the promise the empty slot was making: it renders
+nothing at all when there is nothing to say.
+
+**6.8 Job ticker.** ✅ **Done, 2026-08-12.** The top-strip live readout, and the
+last of the two slots `top-strip.tsx` shipped empty in A4. The reading is in
+`renderer/lib/job-ticker.ts`; the subscription and the markup are
+`renderer/main/job-ticker.tsx`.
+
+**The data source, which is §10's open question 2, is `recorder-store` — and the
+codebase had already made the argument.** That store owns the live run map and
+is the one provider mounted for the whole session; its own `runs:changed`
+comment explains why a subscription on a route component is one that is not
+listening on every other route. So: not a new provider, and not a poll.
+
+**Which turned the batch half into a bug fix.** `batch:progress` had exactly one
+subscriber — `batch-view`, a route component — so a batch you started and walked
+away from was invisible from everywhere except the page you had left, and the
+cache invalidation on `batch:done` only fired if you happened to be looking at
+it. Both moved onto the store. The view keeps its own `batch` state, because
+that variable answers a different question — "the record I am displaying", which
+can be a historical one the user picked out of the list — and conflating the two
+is what made the invalidation view-local in the first place.
+
+Four decisions in the reading itself:
+
+- **Idle renders nothing, and that took the most deciding.** An "idle" chip is a
+  permanent word in the chrome that is true and useless: it costs the same
+  attention every time the user looks at the strip and pays it back only in the
+  rare moment it changes. Rendering nothing makes the ticker's PRESENCE the
+  signal, which is what makes a glance work. A passing run gets the same
+  treatment — good news does not belong in the chrome either.
+- **A batch outranks its own member runs.** A batch executes tests, so its
+  members are in the run map too; reporting "3 running" during a batch of eight
+  is a true statement about a smaller thing than the one the user started. Its
+  failure is likewise the batch's, not its last test's — three failures out of
+  eight is one finding, and naming the last member to fail hides the other two.
+- **Every label leads with its state, which is a truncation rule rather than a
+  style one.** The strip gives this a couple of hundred pixels and test names
+  exceed it. The first version put the verb last — "Login — wrong password shows
+  an error failed" — where FAILED was the first thing cut, leaving a red dot
+  beside what read as a name. Found on screen, not in a test.
+- **A failure is a NOTICE, so it expires**, held twelve seconds and measured
+  from when the run ENDED. `RunInfo` gained a `finishedAt` for it: measured from
+  `startedAt`, a run longer than the hold window is already expired when it
+  finishes, so the one notice this exists to give — a long run that failed while
+  the user was elsewhere — is the exact one it would never give.
+
+The pulsing dot is deliberately **not** marked `data-gl-motion="ambient"`.
+`atmosphere.css` already decided this: motion that reports something is not
+decoration, and its own comment names "a run status indicator that must still
+pulse" as the example. Only `still` stops it.
+
+**6.9 Boot sequence.** ✅ **Done, 2026-08-12.** The 2.6s glitch plate, on the
+palette's only true black, wearing the same `echo` treatment as the Home
+wordmark over a phosphor rule that fills for the hold
+(`renderer/theme/shell/boot-plate.tsx`).
+
+Three departures from the one-line brief, each of which the brief implies
+without saying:
+
+- **It is skippable, on any key or any click.** 2.6 seconds is right the first
+  time and wrong the two-hundredth, and a splash you cannot get out of is the
+  reason splashes have a bad name. The skip is deliberately not advertised — an
+  on-screen "Skip" would make the plate look like something being endured — but
+  it is the first thing anyone tries.
+- **It covers the app rather than delaying it.** Everything below is mounted and
+  interactive the whole time; the plate is a curtain over a running show, not a
+  loading screen holding one up. It is inert to the pointer for the same reason,
+  so the skip never reads as the app dropping input.
+- **Reduced motion gets a different DURATION, not just a stiller plate** —
+  900ms. "Render statically" taken literally is a motionless black rectangle
+  held for 2.6 seconds, which does not read as a splash; it reads as a hang. The
+  plate is a performance, and with the performance removed there is less to
+  watch. The fill rule is drawn full and still rather than left empty, because a
+  bar stuck at zero for the whole hold reads as stalled.
+
+The `echo` treatment moved from `screens.css` to `shared.css` and is keyed on
+`.gl-echo` rather than on `.gl-home-mark`: a second screen wanted it, which is
+exactly the rule the four-stylesheet split states.
 
 ---
 
@@ -763,10 +1268,29 @@ anyone sees. Should respect reduced motion by rendering statically.
 The brief asks that already-planned features get design plans now, so they build
 into existing UI rather than bolting on. Four are outstanding.
 
-### 7.1 Routines (Batch v2) — [ROUTINES.md](ROUTINES.md), specified, not built
+### 7.1 Routines (Batch v2) — [ROUTINES.md](ROUTINES.md), capability 1 started
 
 Three independent capabilities, sequenced 1 → 2 → 3: a saved named
 configuration, a schedule, a flow builder.
+
+**Built as of 2026-08-12: capability 1, end to end.** A Routine is a record
+(`routine-store.ts`, `shared/routine-migration.mjs`, `routines:*` IPC), the old
+Batch checklist migrates into one named "Batch" on first launch, `routines:run`
+executes one through the SAME batch runner, and the Batch view is now that
+Routine's editor — a picker names the saved jobs and carries New/Delete, the
+name is inline-editable, and the checklist is the open Routine's body
+(`renderer/lib/routine-rows.ts`). Only `kind: "test"` steps exist, and
+`onFailure` is stored but not yet honoured: every step behaves as `continue`,
+which is what Batch already does.
+
+**Two pieces of the plan below are deliberately NOT built yet**, and both are
+placement rather than capability. The rail does not list Routines — that gives
+`library-sidebar.tsx`, which every screen shares, a third job, and the picker
+makes the feature usable without it. And **Previous batches is not scoped to the
+open Routine**: that wants a `routineId` on `BatchRecord`, which is an on-disk
+format change and belongs with whatever else needs one. Capabilities 2
+(scheduling) and 3 (the flow builder) are untouched, so there is no schedule
+chip to draw.
 
 **Where it lands.** Batch becomes a *list of Routines* with one Routine open,
 rather than a single implicit checklist. Concretely, in the redesign's shell:
@@ -950,14 +1474,24 @@ separable and can be reprioritised freely once the foundation is in.
 
 Not blocking, but each will need an answer before the PR it affects.
 
-1. **Cost mode's inputs** (§6.4). Cost per CI minute and minutes-saved-per-manual-run
-   are assumptions. Settings rows, or hardcoded with a visible "edit these"
-   affordance?
-2. **The `job` ticker's data source** (§6.8). The shell needs a global run-state
-   subscription. Does that come from `recorder-store`, a new provider, or a
-   query?
-3. **Report mode's "Where it goes"** (§7.3). Confirmed as emit-only? If any of it
-   ever sends, that is a new egress path and needs its own decision entry.
+1. ~~**Cost mode's inputs** (§6.4)~~ — ✅ **Answered 2026-08-12: hardcoded
+   defaults with a visible "edit these" affordance, in the Cost panel itself.**
+   Not Settings rows. The reasoning is in §6.4 and in DECISIONS: a figure whose
+   assumption lives on another screen is one the reader has to go looking for
+   before they can judge it, which is the failure the requirement was written
+   against.
+2. ~~**The `job` ticker's data source** (§6.8)~~ — ✅ **Answered 2026-08-12:
+   `recorder-store`.** Not a new provider and not a query. It already owns the
+   live run map and is the one provider mounted for the whole session, and its
+   own `runs:changed` comment had already made the argument: a subscription on a
+   route component is not listening on any other route. The live BATCH moved
+   there too, which was a bug fix — see §6.8.
+3. ~~**Report mode's "Where it goes"** (§7.3)~~ — ✅ **Answered 2026-08-12:
+   emit-only, and enforced rather than promised.** Every emitter in
+   `shared/emitters.mjs` is a pure function returning a string; there is nowhere
+   in the module to send anything to. The mockup's PDF and "public link" chips
+   and its channel toggles are dropped — see §6.5. If any of it ever sends, that
+   is a new egress path and needs its own decision entry.
 4. ~~**`check:text-color`'s fate** (§8.3)~~ — answered for now in A5: **keep it**.
    The five shared components no longer render `Text`, but forty-odd files still
    do, so its subject is not gone until they are. Ask again per Phase B PR.

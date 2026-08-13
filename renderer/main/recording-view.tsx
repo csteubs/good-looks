@@ -20,10 +20,11 @@ import { Bug, Check, ChevronDown, Crosshair, ListPlus, Loader2, Pause, Play, Plu
 import { Btn, Segmented, StatusChip, TONE } from "../theme";
 import type { AiDebugStatus, AssertKind, DebugEntry, HealSuggestion, Locator, PickedElement, RawStep, Step, WaitDialogMode } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
+import { urlAssertPrefill } from "../../shared/url-assert.mjs";
 import { locatorToPrompt } from "../lib/llm-prompts";
 import { useRecorder, type ReplayRun } from "./recorder-store";
-import { CursorGap, StepRow } from "./step-row";
-import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "./add-step-dialog";
+import { CursorGap, INSERT_HERE, StepRow } from "./step-row";
+import { StepComposer, ADD_STEP_LABEL, type AddStepKind } from "./step-composer";
 import { stepSessionKey, useAiDebug } from "./ai-debug-store";
 import { parseSessionKey } from "../lib/ai-debug-sessions";
 import { toneFor } from "../lib/ai-debug-status";
@@ -455,6 +456,7 @@ export function RecordingView() {
     stepsLoaded,
     liveSteps,
     newStepIds,
+    lastAddedStepId,
     pause,
     resume,
     stop,
@@ -653,6 +655,12 @@ export function RecordingView() {
   // backend sent means nothing without the rows it points between.
   const controlsDisabled = !state.pageReady || !stepsLoaded || running;
 
+  // Whether the next captured step will land under the last row. True for the
+  // whole of an ordinary new recording, and that is why "scroll to the bottom"
+  // looked like the right rule for years — it is, right up until the session is
+  // a continued test, where the cursor opens mid-list.
+  const cursorAtEnd = state.cursor >= liveSteps.length;
+
   // Drag-to-reorder bookkeeping.
   const [dragId, setDragId] = React.useState<string | null>(null);
   const [overIndex, setOverIndex] = React.useState<number | null>(null);
@@ -675,8 +683,19 @@ export function RecordingView() {
     } else if (res.commandId >= 100) {
       const urlKind = ASSERT_URL[res.commandId - 100];
       if (urlKind) {
-        // URL assertions need a typed string — open the Add-step dialog prefilled.
-        setContextPick({ picked: null, assert: urlKind.kind });
+        // Prefilled with where the page actually is. This used to open with an
+        // EMPTY field, which meant the user had to know the URL — and the only
+        // legible copy of it was outside the app, because the trainer showed
+        // the session's start URL and the training window's title showed the
+        // site's own `document.title`. `urlAssertPrefill` decides what each
+        // kind gets (a path for the substring kinds, the whole URL for `is`),
+        // and it is the same function the training browser's own URL strip and
+        // right-click menu call.
+        setContextPick({
+          picked: null,
+          assert: urlKind.kind,
+          prefillValue: urlAssertPrefill(urlKind.kind, state.liveUrl ?? state.url ?? ""),
+        });
         setAddKind("assertion");
       }
     }
@@ -709,6 +728,60 @@ export function RecordingView() {
 
   // Indentation level for each row, so conditional block bodies nest visually.
   const stepDepths = computeStepDepths(liveSteps);
+
+  // The composer, rendered AT THE CURSOR rather than over the list (§6.2).
+  //
+  // A function of the gap index rather than one element hoisted out of the
+  // list: the panel has to sit between the two steps the new one will land
+  // between, and "between" is a position in this map, not a place in the tree.
+  // It renders at most once — `state.cursor` is a single index.
+  const composerAt = (index: number) =>
+    addKind !== null && state.cursor === index ? (
+      <StepComposer
+        // Remounts when the caller re-targets it from the context menu, so a
+        // half-filled draft for one element never carries over to another.
+        key={`${addKind}:${contextPick?.picked?.description ?? ""}`}
+        kind={addKind}
+        currentTestId={state?.testId ?? undefined}
+        onCancel={() => {
+          setAddKind(null);
+          // Leaving the composer: tear down any in-flight pick and the
+          // context-menu prefill state.
+          if (addStepPicking) {
+            setAddStepPicking(false);
+            endRefine();
+            clearPicked();
+          }
+          setContextPick(null);
+        }}
+        onAdd={(steps: RawStep[]) => {
+          steps.forEach((s) => insertStep(s));
+          if (addStepPicking) {
+            setAddStepPicking(false);
+            endRefine();
+            clearPicked();
+          }
+          setContextPick(null);
+        }}
+        // Use the context-menu's pre-resolved element when present (it was
+        // captured at the right-click point); otherwise the in-panel picker.
+        picked={contextPick?.picked ?? (addStepPicking ? picked : null)}
+        onStartPick={() => {
+          setAddStepPicking(true);
+          startRefine(null);
+        }}
+        onClearPick={() => {
+          setAddStepPicking(false);
+          endRefine();
+          clearPicked();
+        }}
+        initialAssert={contextPick?.assert}
+        initialWaitMode={contextPick?.waitMode}
+        initialState={contextPick?.elementState}
+        prefillText={contextPick?.prefillText}
+        prefillValue={contextPick?.prefillValue}
+      />
+    ) : null;
 
   return (
     <div className="flex h-full flex-col">
@@ -765,8 +838,15 @@ export function RecordingView() {
         ) : state.paused ? (
           <StatusChip>Paused</StatusChip>
         ) : (
+          // "Recording" WHETHER OR NOT this session is continuing an existing
+          // test, and that is a fix rather than a simplification. It used to
+          // read "Editing" for a continued session — while capture was fully
+          // live — so the one indicator whose job is to say whether the trainer
+          // is listening said it was not. Reported as "it doesn't record any
+          // manual page interaction". That this is an existing test is said
+          // twice already, by the title above and by "Save Test" beside it.
           <StatusChip running animated>
-            {state.editing ? "Editing" : "Recording"}
+            Recording
           </StatusChip>
         )}
         <span className="gl-mono-value min-w-0 truncate">{state.url}</span>
@@ -872,20 +952,43 @@ export function RecordingView() {
         </div>
       ) : null}
 
-      <ScrollArea className="min-h-0 flex-1" autoScrollToBottom autoScrollDeps={[liveSteps.length]}>
+      <ScrollArea
+        className="min-h-0 flex-1"
+        // Follow the bottom only while the bottom IS the insert point. A
+        // continued test opens its cursor just past the navigation, so a
+        // captured step lands mid-list — and a view that jumps to the end on
+        // every capture scrolls away from the one row that changed, which is
+        // indistinguishable from nothing having been recorded. When the cursor
+        // is elsewhere the arriving row scrolls itself into view instead
+        // (StepRow's `justAdded`), and these two must never both be on.
+        autoScrollToBottom={cursorAtEnd}
+        autoScrollDeps={[liveSteps.length]}
+      >
         <div className="flex flex-col p-3">
           {liveSteps.length === 0 ? (
-            <div className="flex flex-col items-start gap-2 px-2 py-1">
-              <Text variant="small" color="secondary">
-                Interact with the site — steps appear here as you go.
-              </Text>
-              <Text variant="small" color="tertiary">
-                Or use <ListPlus className="inline size-3.5 align-text-bottom" /> “Add step” / “AI steps”.
-              </Text>
-            </div>
+            <>
+              {/* The empty list has no gaps to sit between, and the composer
+                  still has to land somewhere — it is the ONLY way to put a step
+                  into a session where nothing has been captured yet. */}
+              {composerAt(0)}
+              <div className="flex flex-col items-start gap-2 px-2 py-1">
+                <Text variant="small" color="secondary">
+                  Interact with the site — steps appear here as you go.
+                </Text>
+                <Text variant="small" color="tertiary">
+                  Or use <ListPlus className="inline size-3.5 align-text-bottom" /> “Add step” / “AI steps”.
+                </Text>
+              </div>
+            </>
           ) : (
             <>
-              <CursorGap active={state.cursor === 0} onClick={() => setCursor(0)} disabled={controlsDisabled} />
+              <CursorGap
+                active={state.cursor === 0}
+                onClick={() => setCursor(0)}
+                disabled={controlsDisabled}
+                label={INSERT_HERE}
+              />
+              {composerAt(0)}
               {liveSteps.map((s, i) => (
                 <React.Fragment key={s.id}>
                   <StepRow
@@ -900,6 +1003,7 @@ export function RecordingView() {
                     runStatus={replayStepStatus[i]}
                     replayFlash={replayFlash[i]}
                     isNew={newStepIds.has(s.id)}
+                    justAdded={s.id === lastAddedStepId}
                     indent={stepDepths[i]}
                     drag={controlsDisabled ? undefined : {
                       onDragStart: () => setDragId(s.id),
@@ -909,7 +1013,13 @@ export function RecordingView() {
                       isOver: overIndex === i && dragId !== null && dragId !== s.id,
                     }}
                   />
-                  <CursorGap active={state.cursor === i + 1} onClick={() => setCursor(i + 1)} disabled={controlsDisabled} />
+                  <CursorGap
+                    active={state.cursor === i + 1}
+                    onClick={() => setCursor(i + 1)}
+                    disabled={controlsDisabled}
+                    label={i + 1 === liveSteps.length ? undefined : INSERT_HERE}
+                  />
+                  {composerAt(i + 1)}
                 </React.Fragment>
               ))}
             </>
@@ -941,52 +1051,6 @@ export function RecordingView() {
         onApplyHeal={applyHeal}
       />
 
-      {addKind ? (
-        <AddStepDialog
-          open={addKind !== null}
-          kind={addKind}
-          currentTestId={state?.testId ?? undefined}
-          onOpenChange={(o) => {
-            if (!o) {
-              setAddKind(null);
-              // Leaving the Add-step dialog: tear down any in-flight pick and
-              // the context-menu prefill state.
-              if (addStepPicking) {
-                setAddStepPicking(false);
-                endRefine();
-                clearPicked();
-              }
-              setContextPick(null);
-            }
-          }}
-          onAdd={(steps: RawStep[]) => {
-            steps.forEach((s) => insertStep(s));
-            if (addStepPicking) {
-              setAddStepPicking(false);
-              endRefine();
-              clearPicked();
-            }
-            setContextPick(null);
-          }}
-          // Use the context-menu's pre-resolved element when present (it was
-          // captured at the right-click point); otherwise the in-dialog picker.
-          picked={contextPick?.picked ?? (addStepPicking ? picked : null)}
-          onStartPick={() => {
-            setAddStepPicking(true);
-            startRefine(null);
-          }}
-          onClearPick={() => {
-            setAddStepPicking(false);
-            endRefine();
-            clearPicked();
-          }}
-          initialAssert={contextPick?.assert}
-          initialWaitMode={contextPick?.waitMode}
-          initialState={contextPick?.elementState}
-          prefillText={contextPick?.prefillText}
-          prefillValue={contextPick?.prefillValue}
-        />
-      ) : null}
       <GenerateStepsDialog
         open={aiOpen}
         url={state.url}

@@ -37,10 +37,12 @@ import { DiagnosticsPane } from "./panes/diagnostics-pane";
 import { AiPane } from "./panes/ai-pane";
 import { ExperimentsPane } from "./panes/experiments-pane";
 import { AlertsPane } from "./panes/alerts-pane";
+import { IntegrationsPane } from "./panes/integrations-pane";
 import { AppearancePane } from "./panes/appearance-pane";
 import { AutoHealPane } from "./panes/auto-heal-pane";
 import { RecordingPane } from "./panes/recording-pane";
 import { StoragePane } from "./panes/storage-pane";
+import { CostPane } from "./panes/cost-pane";
 import { TestDefaultsPane } from "./panes/test-defaults-pane";
 
 const PANE_COMPONENTS: Record<PaneId, ComponentType> = {
@@ -49,8 +51,10 @@ const PANE_COMPONENTS: Record<PaneId, ComponentType> = {
   "test-defaults": TestDefaultsPane,
   "auto-heal": AutoHealPane,
   storage: StoragePane,
+  cost: CostPane,
   ai: AiPane,
   alerts: AlertsPane,
+  integrations: IntegrationsPane,
   diagnostics: DiagnosticsPane,
   experiments: ExperimentsPane,
 };
@@ -118,7 +122,17 @@ function ResetFooter({ pane }: { pane: PaneId }) {
 
 function SettingsShell() {
   const { settings, loaded } = useSettingsController();
-  const [selected, setSelected] = useState<PaneId>(DEFAULT_PANE_ID);
+  // The pane this window opened ON. A caller that has a reason to send someone
+  // here — Stats → Cost's "Edit in Settings" — passes it as a URL fragment
+  // (`settings-window.html#cost`), which the main process validates before it
+  // ever reaches a URL. Read ONCE, in a lazy initialiser: after mount this is
+  // ordinary state, so clicking another pane is not fighting the address.
+  //
+  // `paneById` is what makes an unknown fragment harmless — it returns
+  // undefined and the window opens where it always did.
+  const [selected, setSelected] = useState<PaneId>(
+    () => paneById(window.location.hash.slice(1))?.id ?? DEFAULT_PANE_ID,
+  );
   const [search, setSearch] = useState("");
 
   useCloseOnEscape();

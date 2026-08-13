@@ -1,0 +1,305 @@
+// What an issue SAYS. Pure, and the single place the outgoing shape is decided.
+//
+// Pure for the same reason `buildAlertPayload` is: it makes the guarantee
+// checkable. `check:issue-payload` calls these functions with deliberately
+// hostile inputs — a run log stuffed into a step label, a page's HTML in an axe
+// message, headers in a network entry — and asserts against the returned object
+// that none of it came through. A builder that reached for a store instead of
+// taking data would leave that check able to prove nothing.
+//
+// WHAT THE CHECK PROTECTS, precisely, because it is narrower than "no logs":
+//
+//   • The raw Playwright `.log` NEVER appears. Its only redaction is for
+//     declared secret variables, while it carries DOM snippets around a failing
+//     locator, assertion expected-vs-actual, and unscrubbed page URLs. What
+//     goes instead is `errorSignature()` — first line only, paths, timings,
+//     ids and numbers normalised out, 200 chars.
+//   • Console entries are allowed for a FAILURE only, filtered to errors and
+//     page errors, count-capped and truncated. That is where a diagnosis lives;
+//     the rest is page chatter.
+//   • Network entries are allowed for a FAILURE only, and ONLY from a run whose
+//     headers were filtered. A run recorded with `GLAZE_RECORD_ALL_HEADERS=1`
+//     holds real Authorization and Cookie values — and is exactly the run
+//     someone debugging an auth failure would have produced.
+//   • Header VALUES never appear at all, filtered or not. A header's presence
+//     is diagnostic; its value is the credential.
+//
+// Everything user-visible is bounded here, not trusted: an axe `help` string is
+// remote page content, and a step label can carry a value typed during
+// recording. Redaction of declared secrets happens on top of this, at the send.
+
+import { buildDeepLink } from "../../../shared/deep-link.mjs";
+import { errorSignature } from "../../../shared/error-signature.mjs";
+import type { DefectSource, IssueDraft } from "../../../renderer/lib/issue-types.js";
+
+/** One line of prose from a remote source. Long enough to be useful, short
+ *  enough that no single field can dominate an issue. */
+const MAX_TEXT = 300;
+/** A selector list is evidence; a hundred of them is a page dump. */
+const MAX_TARGETS = 5;
+/** Console errors worth reading before someone opens the app anyway. */
+const MAX_CONSOLE = 10;
+/** Requests around a failure. Past this it stops being a clue. */
+const MAX_NETWORK = 10;
+
+/**
+ * Collapse to one line, neutralise backticks, and bound.
+ *
+ * Newlines matter: a multi-line value in a bullet or a table breaks the
+ * structure around it. Backticks matter for two separate reasons, and doing it
+ * HERE rather than only in `code()` is what covers both — the second one was
+ * missed when it lived there:
+ *
+ *   • Inside a code span, a backtick closes it early and everything after
+ *     renders as markdown — including a link.
+ *   • Inside a fenced block, ``` ends the fence. `failureBody` fences the error
+ *     signature, and an error message is remote text that can contain anything.
+ *
+ * Titles go through this too. A title is plain text in both Linear and GitHub
+ * so nothing renders there, but a value that is safe in one place and not
+ * another is a distinction nobody maintains.
+ */
+export function line(v: unknown, max = MAX_TEXT): string {
+  if (typeof v !== "string") return "";
+  const flat = v.replace(/\s+/g, " ").replace(/`/g, "'").trim();
+  return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
+/** Wrap a value in a code span. Safe because `line` has already removed the one
+ *  character that could close it. */
+function code(v: unknown): string {
+  const text = line(v);
+  return text ? `\`${text}\`` : "";
+}
+
+function pct(fraction: number): string {
+  if (!Number.isFinite(fraction) || fraction <= 0) return "0%";
+  const p = fraction * 100;
+  return p < 0.1 ? "<0.1%" : `${p.toFixed(p < 10 ? 2 : 1)}%`;
+}
+
+// ── Inputs ───────────────────────────────────────────────────────────────────
+//
+// Deliberately plain data. The loader reads these off disk; this file never
+// touches a store, so the check can construct them by hand.
+
+export interface DraftContext {
+  testName: string;
+  /** The test's start URL. A page URL from the run is NOT used — it can carry a
+   *  session token in its query, and the start URL is what identifies the test. */
+  testUrl: string;
+  stepLabel: string | null;
+  browser?: string;
+}
+
+export interface A11yDefect {
+  kind: "a11y";
+  ruleId: string;
+  impact: string;
+  help: string;
+  targets: string[];
+}
+
+export interface VisualDefect {
+  kind: "visual";
+  changedFraction: number;
+  maskedCount: number;
+  threshold: number | null;
+}
+
+/** A console line, already narrowed by the loader to errors and page errors. */
+export interface FailureConsoleLine {
+  type: string;
+  text: string;
+}
+
+/** A request around the failure. Headers are absent by construction — the type
+ *  has nowhere to put them, which is a stronger guarantee than remembering to
+ *  strip them. */
+export interface FailureRequest {
+  method: string;
+  url: string;
+  status: number;
+}
+
+export interface FailureDefect {
+  kind: "failure";
+  /** Already reduced by `errorSignature` upstream, or raw — reduced again here
+   *  regardless, because the one that matters is the one nearest the output. */
+  rawError: string;
+  healOutcome: "exhausted" | "no-candidates" | null;
+  healLocator: string | null;
+  console: FailureConsoleLine[];
+  network: FailureRequest[];
+  /** False when the run recorded ALL headers. Network entries are then dropped
+   *  and a notice explains why. */
+  headersFiltered: boolean;
+}
+
+export type Defect = A11yDefect | VisualDefect | FailureDefect;
+
+export interface BuildInput {
+  source: DefectSource;
+  context: DraftContext;
+  defect: Defect;
+}
+
+// ── Titles ───────────────────────────────────────────────────────────────────
+
+export function buildTitle(input: BuildInput): string {
+  const { context, defect } = input;
+  const test = line(context.testName, 80) || "Untitled test";
+  const step = line(context.stepLabel, 60);
+  if (defect.kind === "a11y") {
+    return line(`a11y: ${line(defect.ruleId, 60) || "violation"} on ${test}`, 200);
+  }
+  if (defect.kind === "visual") {
+    return line(`Visual change (${pct(defect.changedFraction)}) — ${test}${step ? ` · ${step}` : ""}`, 200);
+  }
+  // A signature is far more useful in a title than "Test failed": it is what
+  // makes two issues about the same failure recognisably the same.
+  const sig = line(errorSignature(defect.rawError), 90);
+  return line(`${test} failed${step ? ` at ${step}` : ""}${sig ? ` — ${sig}` : ""}`, 200);
+}
+
+// ── Body ─────────────────────────────────────────────────────────────────────
+
+function contextBlock(context: DraftContext): string[] {
+  const rows = [
+    `- **Test:** ${line(context.testName, 120) || "—"}`,
+    `- **URL:** ${code(context.testUrl) || "—"}`,
+  ];
+  if (context.stepLabel) rows.push(`- **Step:** ${code(context.stepLabel)}`);
+  if (context.browser) rows.push(`- **Browser:** ${line(context.browser, 40)}`);
+  return rows;
+}
+
+function a11yBody(d: A11yDefect): string[] {
+  const out = [
+    `**${line(d.impact, 20) || "unknown"}** · ${code(d.ruleId)}`,
+    "",
+    line(d.help) || "No description was provided for this rule.",
+  ];
+  const targets = d.targets.filter((t) => typeof t === "string" && t.trim()).slice(0, MAX_TARGETS);
+  if (targets.length) {
+    out.push("", "**Elements**", "");
+    for (const t of targets) out.push(`- ${code(t)}`);
+    if (d.targets.length > targets.length) {
+      out.push(`- …and ${d.targets.length - targets.length} more`);
+    }
+  }
+  return out;
+}
+
+function visualBody(d: VisualDefect): string[] {
+  const out = [`**${pct(d.changedFraction)} of pixels changed** on this step's screenshot.`];
+  if (d.threshold !== null) {
+    out.push("", `Threshold for this test is ${pct(d.threshold)}.`);
+  }
+  if (d.maskedCount > 0) {
+    // Worth stating: a reader who does not know regions were excluded may go
+    // looking for a difference that was deliberately ignored.
+    out.push(
+      "",
+      `${d.maskedCount} region${d.maskedCount === 1 ? " was" : "s were"} masked and excluded from the comparison.`,
+    );
+  }
+  return out;
+}
+
+function failureBody(d: FailureDefect): string[] {
+  const out: string[] = [];
+  const sig = line(errorSignature(d.rawError), 200);
+  out.push("**Failure**", "", sig ? `\`\`\`\n${sig}\n\`\`\`` : "_No error text was recorded._");
+
+  if (d.healOutcome) {
+    out.push(
+      "",
+      d.healOutcome === "no-candidates"
+        ? "Auto-Heal found nothing on the page resembling this element — it looks **gone**, not renamed."
+        : "Auto-Heal ranked candidates and every one of them failed — the element looks **gone**, not renamed.",
+    );
+    if (d.healLocator) out.push("", `Original locator: ${code(d.healLocator)}`);
+  }
+
+  const consoleLines = d.console.slice(0, MAX_CONSOLE);
+  if (consoleLines.length) {
+    out.push("", "**Console at this step**", "");
+    for (const c of consoleLines) {
+      out.push(`- \`${line(c.type, 20) || "log"}\` ${line(c.text, 200)}`);
+    }
+    if (d.console.length > consoleLines.length) {
+      out.push(`- …and ${d.console.length - consoleLines.length} more`);
+    }
+  }
+
+  if (!d.headersFiltered) {
+    // Not a silent omission. The reader is told the requests exist and why they
+    // are not here, so a missing section never reads as "nothing happened".
+    out.push(
+      "",
+      "_Network requests are withheld: this run was recorded with full request headers, which include credentials._",
+    );
+  } else {
+    const requests = d.network.slice(0, MAX_NETWORK);
+    if (requests.length) {
+      out.push("", "**Requests at this step**", "");
+      for (const r of requests) {
+        out.push(`- \`${line(r.method, 10) || "GET"}\` ${line(r.url, 160)} → ${Number(r.status) || 0}`);
+      }
+      if (d.network.length > requests.length) {
+        out.push(`- …and ${d.network.length - requests.length} more`);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * The whole draft.
+ *
+ * `attachments` and `notices` are filled by the loader — the first needs file
+ * sizes off disk and the second needs to know what the loader chose to withhold,
+ * neither of which a pure function can know. They are declared here so the
+ * shape has one definition.
+ */
+export function buildIssueDraft(input: BuildInput): IssueDraft {
+  const { source, context, defect } = input;
+  const parts: string[] = [];
+
+  parts.push(
+    ...(defect.kind === "a11y"
+      ? a11yBody(defect)
+      : defect.kind === "visual"
+        ? visualBody(defect)
+        : failureBody(defect)),
+  );
+
+  parts.push("", "---", "", ...contextBlock(context));
+
+  // The way back. Built by the same module that parses it, so the two cannot
+  // drift into producing links that look right and open nothing. Carries only
+  // ids — no content — and opening it selects a view and does nothing else.
+  const link = buildDeepLink({
+    testId: source.testId,
+    runId: source.runId,
+    stepId: source.stepId,
+  });
+  parts.push("", `[Open in Good Looks!](${link})`);
+  parts.push("", "_Filed from Good Looks!_");
+
+  const notices: string[] = [];
+  if (defect.kind === "failure" && !defect.headersFiltered) {
+    notices.push(
+      "This run was recorded with full request headers, so its network requests are not included.",
+    );
+  }
+
+  return {
+    source,
+    title: buildTitle(input),
+    body: parts.join("\n"),
+    attachments: [],
+    notices,
+  };
+}

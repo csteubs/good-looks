@@ -25,6 +25,11 @@ import { baselineStore } from "../baseline-store.js";
 import { buildReplay, enrichWithA11y, enrichWithVisualDiffs } from "../replay-builder.js";
 import type { A11yViolation } from "../a11y-diff.js";
 import { acceptRunBaseline, acceptStepBaseline } from "../visual-baseline-ops.js";
+import {
+  dismissRunNotice,
+  isRunNoticeKind,
+  restoreRunNotice,
+} from "../run-notice-ops.js";
 import { acceptRunA11y, acceptStepA11y, resetA11yBaseline } from "../a11y-baseline-ops.js";
 import { testStore } from "../test-store.js";
 import { annotationStore } from "../annotation-store.js";
@@ -757,6 +762,97 @@ eq(partial?.stepsDiverged, true, "a differing step set is reported as diverged")
     beforePrune,
     "pruning every run's artifacts leaves the accepted-violations baseline intact",
   );
+}
+
+// ── dismissing a findings banner is NOT accepting it ──────────────────────
+//
+// The distinction this pins is the whole reason dismissal exists. Accepting
+// re-pins baselines or pins violations onto the test record and changes what
+// every later run reports; dismissing records "seen" about one run and must
+// leave every finding exactly where it was. A dismissal that quietly resolved
+// anything would be undetectable from the screen — the banner goes either way.
+{
+  const noticeRunId = randomUUID();
+  // A node the section above never accepted, so this really is an UNACCEPTED
+  // finding. Reusing `.cta` made the "nothing was accepted" assertion vacuous —
+  // it was already accepted, and the check below is what caught that.
+  const contrast: A11yViolation[] = [
+    { id: "color-contrast", impact: "serious", help: "Contrast is too low", nodes: [".banner"] },
+  ];
+  seedRunArtifacts(noticeRunId, [RED, BLUE, RED], { 1: contrast });
+  // `runReplay`, not a bare `buildReplay`: it runs the visual diff and writes
+  // the replay, so the steps carry REAL verdicts. Asserting "the diffs didn't
+  // change" over a replay whose diffs are all undefined would pass against an
+  // implementation that wiped them.
+  const replay = runReplay(noticeRunId);
+  enrichWithA11y(replay, testStore.get(testId)?.a11yBaseline);
+  artifactStore.writeReplay(testId, noticeRunId, replay);
+
+  const beforeDiffs = replay.steps.map((s) => s.diff?.state);
+  check(
+    beforeDiffs.some((s) => s !== undefined),
+    "the run being dismissed actually has visual verdicts to preserve",
+  );
+  check(
+    (replay.steps[1].a11y?.newKeys.length ?? 0) > 0,
+    "…and an unaccepted accessibility finding to preserve",
+  );
+  const beforeBaseline = baselineStore.readShot(testId, steps[1].id);
+  check((beforeBaseline?.length ?? 0) > 0, "…and a pinned baseline to leave alone");
+
+  const dismissed = dismissRunNotice(testId, noticeRunId, "visual");
+  eq(dismissed?.dismissedNotices, ["visual"], "dismissing records the notice on the replay");
+  eq(
+    artifactStore.readReplay(testId, noticeRunId)?.dismissedNotices,
+    ["visual"],
+    "…on DISK, so the banner is still gone after selecting another run and back",
+  );
+  eq(
+    artifactStore.readReplay(testId, noticeRunId)?.steps.map((s) => s.diff?.state),
+    beforeDiffs,
+    "dismissing changes no step's diff verdict",
+  );
+  const afterBaseline = baselineStore.readShot(testId, steps[1].id);
+  check(
+    afterBaseline !== null && Buffer.compare(afterBaseline, beforeBaseline as Buffer) === 0,
+    "dismissing re-pins no baseline",
+  );
+  eq(
+    artifactStore.readReplay(testId, noticeRunId)?.steps[1].a11y?.newKeys,
+    replay.steps[1].a11y?.newKeys,
+    "dismissing accepts no violations",
+  );
+
+  // The two notices are independent. One flag for both would hide an
+  // accessibility regression because somebody waved off a pixel diff.
+  dismissRunNotice(testId, noticeRunId, "a11y");
+  eq(
+    artifactStore.readReplay(testId, noticeRunId)?.dismissedNotices?.slice().sort(),
+    ["a11y", "visual"],
+    "each notice is dismissed separately",
+  );
+  // Dismissing twice must not stack up duplicates on a record that is appended
+  // to and never rewritten.
+  dismissRunNotice(testId, noticeRunId, "a11y");
+  eq(
+    artifactStore.readReplay(testId, noticeRunId)?.dismissedNotices?.length,
+    2,
+    "dismissing the same notice twice is idempotent",
+  );
+
+  const restored = restoreRunNotice(testId, noticeRunId, "visual");
+  eq(restored?.dismissedNotices, ["a11y"], "restoring brings one banner back and leaves the other");
+
+  // The bad values, because this crosses IPC: an unchecked kind would be
+  // written into replay.json and read back forever after.
+  for (const bad of ["__proto__", "", "VISUAL", 1, null, undefined, {}]) {
+    check(!isRunNoticeKind(bad), `rejects ${JSON.stringify(bad)} as a notice kind`);
+  }
+  check(isRunNoticeKind("visual") && isRunNoticeKind("a11y"), "accepts the two real kinds");
+
+  // A run with no replay must answer "nothing to dismiss" rather than throw —
+  // retention can prune the artifacts out from under an open screen.
+  eq(dismissRunNotice(testId, randomUUID(), "visual"), null, "an unknown run dismisses to null");
 }
 
 // ── A `state` step must not desync the screenshot timeline ────────────────

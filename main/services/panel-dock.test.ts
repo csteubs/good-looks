@@ -18,6 +18,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   BROWSER_MIN_WIDTH,
+  PANEL_MIN_HEIGHT,
   PANEL_MIN_WIDTH,
   PANEL_WIDTH,
   boundsEqual,
@@ -258,6 +259,64 @@ describe("computePanelFollow", () => {
       expect(again?.panel).toEqual(first?.panel);
       browser = { ...browser };
     }
+  });
+
+  it("stays flush with the browser's top when it is dragged down the screen", () => {
+    // THE BUG. The panel used to keep the browser's full height and clamp its
+    // `y` into the work area, so its top could only travel
+    // `workArea.height - panel.height` points — on a real laptop, a default
+    // 820pt browser against an ~870pt work area, about FIFTY. Drag the browser
+    // further than that (macOS lets a window hang off the bottom freely) and
+    // the panel stopped dead while the browser kept going: right width, right
+    // side, no longer attached to anything. Reported as "moving the browser
+    // doesn't bring the trainer along with it".
+    //
+    // Deliberately measured on a work area only slightly taller than the
+    // browser, because that is the configuration where the old clamp bound —
+    // on the generous 1055pt WORK_AREA the bug is invisible, which is why the
+    // arithmetic tests never caught it.
+    const tight: Bounds = { x: 0, y: 25, width: 1920, height: 870 };
+    const browser: Bounds = { x: 100, y: 25, width: 1200, height: 820 };
+
+    for (const drop of [40, 120, 300]) {
+      const moved: Bounds = { ...browser, y: browser.y + drop };
+      const placed = computePanelFollow(moved, PANEL_WIDTH, tight);
+      expect(placed, `a drop of ${drop} should still dock`).not.toBeNull();
+      expect(placed!.panel.y, `top edge after a drop of ${drop}`).toBe(moved.y);
+      expect(placed!.panel.x, "still flush against the right edge").toBe(moved.x + moved.width);
+      // It pays for that with height, never by leaving the work area.
+      expect(bottom(placed!.panel)).toBeLessThanOrEqual(bottom(tight));
+    }
+  });
+
+  it("shrinks rather than detaching, and never past the readable floor", () => {
+    const tight: Bounds = { x: 0, y: 25, width: 1920, height: 870 };
+    const browser: Bounds = { x: 100, y: 25, width: 1200, height: 820 };
+
+    // Dropped 300, only 595 of the work area is left below the browser's top.
+    const dropped = computePanelFollow({ ...browser, y: 325 }, PANEL_WIDTH, tight);
+    expect(dropped!.panel.height).toBe(570);
+
+    // Dragged almost entirely off the bottom, being flush would leave a sliver.
+    // It stops shrinking and slides up instead — no longer flush, which is the
+    // honest answer when no rectangle is both flush and usable.
+    const nearlyGone = computePanelFollow({ ...browser, y: 860 }, PANEL_WIDTH, tight);
+    expect(nearlyGone!.panel.height).toBe(PANEL_MIN_HEIGHT);
+    expect(bottom(nearlyGone!.panel)).toBeLessThanOrEqual(bottom(tight));
+  });
+
+  it("never places the panel above the work area", () => {
+    // A window restored from a display that is gone, or dragged up by a title
+    // bar it no longer has, can report a negative y. A panel under the menu bar
+    // cannot be reached, and the panel is the only way to end the session.
+    const tight: Bounds = { x: 0, y: 25, width: 1920, height: 870 };
+    const placed = computePanelFollow(
+      { x: 100, y: -400, width: 1200, height: 820 },
+      PANEL_WIDTH,
+      tight,
+    );
+    expect(placed!.panel.y).toBeGreaterThanOrEqual(tight.y);
+    expect(bottom(placed!.panel)).toBeLessThanOrEqual(bottom(tight));
   });
 
   it("leaves the browser's own geometry alone", () => {

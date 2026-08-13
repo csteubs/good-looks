@@ -548,3 +548,39 @@ describe("the replay pass/fail flash", () => {
     expect(hasRail(row, TONE.red)).toBe(true);
   });
 });
+
+// ── Change temp, against real medians (C §6.3) ──────────────────────────
+//
+// The step list's whole job in this design is to let someone find the row that
+// is UNUSUAL without reading forty durations. Two ways that fails silently: a
+// temp that lights on a single run's noise (a GC pause, a slow DNS answer), and
+// one that colours confidently against a median it does not have.
+
+describe("the step's change temp", () => {
+  const temp = () => document.querySelector('[data-gl="temp"]') as HTMLElement | null;
+
+  it("renders nothing when metrics have no timings for this step", () => {
+    render(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} />);
+    expect(temp()).toBeNull();
+    render(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} trend={{ recentP50Ms: null, previousP50Ms: 900 }} />);
+    expect(temp()).toBeNull();
+  });
+
+  it("measures the recent median against the earlier one, not against a run", () => {
+    // Both numbers are medians on purpose. A single run's duration for a single
+    // step is noise, and colouring it would light half the list on every run
+    // for reasons that are not about the test.
+    render(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} trend={{ recentP50Ms: 2400, previousP50Ms: 900 }} />);
+    expect(temp()?.dataset.mode).toBe("rule");
+    expect(temp()?.getAttribute("title")).toContain("vs median");
+  });
+
+  it("goes neutral rather than confident when there is nothing to compare against", () => {
+    // `Temp` falls to `off` on a missing median by itself — this pins that the
+    // call site does not paper over it with a substituted number, and that the
+    // row says WHY instead of just showing a colourless figure.
+    render(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} trend={{ recentP50Ms: 2400, previousP50Ms: null }} />);
+    expect(temp()?.dataset.mode).toBe("off");
+    expect(temp()?.getAttribute("title")).toContain("no earlier runs to compare against");
+  });
+});

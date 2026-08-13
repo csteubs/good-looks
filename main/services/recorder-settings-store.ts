@@ -9,12 +9,22 @@ import { app, logger } from "@shell/backend";
 import {
   isRunBrowser,
   isTestSpeed,
+  isUiScale,
+  isUiTypeface,
   MAX_BATCH_CONCURRENCY,
   MAX_BATCH_TEST_OPTIONS,
   RUN_BROWSERS,
 } from "../recorder/types.js";
 import type { BatchRowOptions, RecorderSettings } from "../recorder/types.js";
 import { normalizeViewport } from "../recorder/window-size.js";
+import {
+  clampCostPerCiMinute,
+  clampMinutesPerManualRun,
+  COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
+  COST_DEFAULT_PER_CI_MINUTE,
+  DEFAULT_COST_CURRENCY,
+  isCostCurrency,
+} from "../../shared/cost-units.mjs";
 import { DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 import {
   clampTestTimeoutMs,
@@ -155,6 +165,17 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   notifyOnAiDebugDone: false,
   autoAcceptAiDebugFixes: false,
   disabledAestheticEnhancements: [],
+  // 100%. The theme is drawn at these exact pixel sizes, so the default has to
+  // be the identity — anything else would mean the app never renders at the
+  // size it was designed at unless someone goes looking for the setting.
+  uiScale: 1,
+  uiTypeface: "space",
+  // USD, because the runner prices the Settings pane offers are published in
+  // it. The two numbers below are the app's own conservative guesses, and the
+  // Cost panel says so on screen for as long as they are unchanged.
+  costCurrency: DEFAULT_COST_CURRENCY,
+  costPerCiMinute: COST_DEFAULT_PER_CI_MINUTE,
+  costMinutesPerManualRun: COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
 };
 
 
@@ -272,6 +293,23 @@ function read(): RecorderSettings {
         parsed.disabledAestheticEnhancements.every((v) => typeof v === "string")
           ? parsed.disabledAestheticEnhancements
           : DEFAULT_SETTINGS.disabledAestheticEnhancements,
+      // Membership, not a clamp, and it matters more here than anywhere else in
+      // this function: `uiScale` is handed to `setZoomFactor` for every app
+      // window, so a hand-edited file carrying `0` or `1e9` would open the app
+      // at a size from which the Settings window cannot be read — and Settings
+      // is the only way back. A bad value falls back to 100%.
+      uiScale: isUiScale(parsed.uiScale) ? parsed.uiScale : DEFAULT_SETTINGS.uiScale,
+      uiTypeface: isUiTypeface(parsed.uiTypeface) ? parsed.uiTypeface : DEFAULT_SETTINGS.uiTypeface,
+      // Clamped rather than cast. Both numbers multiply every figure on the
+      // Cost panel, so a hand-edited `0` or `1e9` on disk would render as a
+      // confident "$0.00 spent" or an absurd one — a wrong answer that looks
+      // exactly like a right one. The clamps live in shared/ so this path and
+      // the pane that writes it cannot disagree about what is valid.
+      costCurrency: isCostCurrency(parsed.costCurrency)
+        ? parsed.costCurrency
+        : DEFAULT_SETTINGS.costCurrency,
+      costPerCiMinute: clampCostPerCiMinute(parsed.costPerCiMinute),
+      costMinutesPerManualRun: clampMinutesPerManualRun(parsed.costMinutesPerManualRun),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -403,6 +441,24 @@ export const recorderSettingsStore = {
         update.disabledAestheticEnhancements.every((v) => typeof v === "string")
           ? update.disabledAestheticEnhancements
           : current.disabledAestheticEnhancements,
+      // Same allowlist as `read()`, and it has to be applied on BOTH paths: a
+      // value rejected on load but accepted on save would be written to disk
+      // and then silently ignored forever after, which reads as "the setting
+      // does not work" rather than "the value was refused".
+      uiScale: isUiScale(update.uiScale) ? update.uiScale : current.uiScale,
+      uiTypeface: isUiTypeface(update.uiTypeface) ? update.uiTypeface : current.uiTypeface,
+      // Same clamps as `read()`, on the same principle as `uiScale` above: a
+      // value refused on load but accepted on save is written to disk and then
+      // ignored forever, which reads as "the setting does not work".
+      costCurrency: isCostCurrency(update.costCurrency) ? update.costCurrency : current.costCurrency,
+      costPerCiMinute:
+        update.costPerCiMinute !== undefined
+          ? clampCostPerCiMinute(update.costPerCiMinute)
+          : current.costPerCiMinute,
+      costMinutesPerManualRun:
+        update.costMinutesPerManualRun !== undefined
+          ? clampMinutesPerManualRun(update.costMinutesPerManualRun)
+          : current.costMinutesPerManualRun,
     };
     fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
     fs.writeFileSync(settingsFile(), JSON.stringify(next, null, 2), "utf-8");
@@ -437,6 +493,11 @@ export const recorderSettingsStore = {
       notifyOnAiDebugDone: next.notifyOnAiDebugDone,
       autoAcceptAiDebugFixes: next.autoAcceptAiDebugFixes,
       disabledAestheticEnhancements: next.disabledAestheticEnhancements,
+      uiScale: next.uiScale,
+      uiTypeface: next.uiTypeface,
+      costCurrency: next.costCurrency,
+      costPerCiMinute: next.costPerCiMinute,
+      costMinutesPerManualRun: next.costMinutesPerManualRun,
     });
     return next;
   },

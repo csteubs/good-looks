@@ -14,7 +14,11 @@
 // file was first written against an older copy of the app.
 
 import type {
+  BatchRecord,
+  Routine,
+  BatchTestResult,
   HealListEntry,
+  ScriptChangeListEntry,
   RecorderSettings,
   RunRecord,
   RunReplay,
@@ -242,6 +246,15 @@ export const REPLAY: RunReplay = {
         threshold: 0.2,
         diffFile: "1.diff.png",
         maskedCount: 1,
+        // §6.6's "what moved". Three areas of unequal weight, so the list has a
+        // ranking to show and one of them is dominant — a fixture where every
+        // region is the same size exercises the layout and none of the reading.
+        regions: [
+          { x: 0.02, y: 0.48, w: 0.32, h: 0.12, pixels: 18_400, share: 0.71 },
+          { x: 0.55, y: 0.02, w: 0.42, h: 0.09, pixels: 5_200, share: 0.2 },
+          { x: 0.06, y: 0.88, w: 0.14, h: 0.06, pixels: 2_300, share: 0.09 },
+        ],
+        regionsOmitted: 2,
       },
     },
     {
@@ -252,6 +265,22 @@ export const REPLAY: RunReplay = {
       status: "passed",
       screenshot: "2.png",
       diff: { state: "new-baseline" },
+      // The only accessibility finding in the fixture, and it is here so the
+      // a11y banner has an address: it is a SEPARATE callout from the visual
+      // one with its own accept and its own dismiss, and with no step reporting
+      // violations the preview rendered neither of them.
+      a11y: {
+        violations: [
+          {
+            id: "color-contrast",
+            impact: "serious",
+            help: "Elements must meet minimum colour contrast ratio thresholds",
+            nodes: [".cart-subtotal", ".promo-code-hint"],
+          },
+        ],
+        newKeys: ["color-contrast|.cart-subtotal", "color-contrast|.promo-code-hint"],
+        acceptedCount: 0,
+      },
     },
     {
       index: 3,
@@ -273,20 +302,73 @@ export const REPLAY: RunReplay = {
   ],
 };
 
-export const REPLAY_SUMMARIES: RunReplaySummary[] = [
-  {
-    testId: REPLAY.testId,
-    runId: REPLAY.runId,
-    testName: REPLAY.testName,
-    status: REPLAY.status,
-    startedAt: REPLAY.startedAt,
-    finishedAt: REPLAY.finishedAt,
-    stepCount: REPLAY.steps.length,
-    failedIndex: REPLAY.failedIndex,
-    changedSteps: REPLAY.steps.filter((s) => s.diff?.state === "changed").length,
-    a11yNewSteps: 0,
-  },
-];
+/**
+ * The runs BEFORE the one on screen, for the drift strip (§6.6).
+ *
+ * Drift is a statement about a series, so a fixture with one run in it renders
+ * nothing at all — the same trap as `artifacts:list` returning `[]` above, one
+ * level up. These exist so the strip, its two verdicts and its gaps are visible
+ * in the preview rather than only in an app with a week of history.
+ *
+ * TWO STEPS TELL DIFFERENT STORIES ON PURPOSE. `s2` is over threshold in most
+ * of the window — a baseline nobody re-pinned, which is the finding the strip
+ * was built for — while `s1` moved once and settled, which is the ordinary case
+ * the strip must NOT cry wolf about. `s4` is `unable` throughout, so its slots
+ * draw as gaps: the distinction between "measured, identical" and "no reading"
+ * is the one thing here that cannot be checked in jsdom, which has no layout.
+ */
+const DRIFT_RATIOS: Record<string, (number | null)[]> = {
+  // Newest first, matching the order the runs are listed in.
+  s1: [0.0004, 0.0002, 0.0003, 0.0221, 0.0002, 0.0001, 0.0003, 0.0002],
+  s2: [0.0413, 0.0388, 0.0026, 0.0451, 0.0402, 0.0019, 0.0367, 0.0009],
+};
+
+/** Eight earlier runs of the same test, differing only in what the comparison
+ *  found. Cloned from `REPLAY` rather than written out, so a step added to the
+ *  fixture above cannot silently go missing from its own history. */
+export const REPLAY_HISTORY: RunReplay[] = DRIFT_RATIOS.s1.slice(1).map((_, i) => {
+  const n = i + 1;
+  return {
+    ...REPLAY,
+    runId: `r-${n + 1}`,
+    startedAt: REPLAY.startedAt - n * 6 * HOUR,
+    finishedAt: REPLAY.startedAt - n * 6 * HOUR + 11_900,
+    steps: REPLAY.steps.map((s) => {
+      const ratio = DRIFT_RATIOS[s.stepId]?.[n];
+      if (ratio === undefined || ratio === null || !s.diff) return s;
+      const changed = ratio * 100 > (REPLAY.visualThreshold ?? 0.2);
+      return {
+        ...s,
+        diff: {
+          ...s.diff,
+          state: changed ? ("changed" as const) : ("match" as const),
+          ratio,
+          diffFile: changed ? s.diff.diffFile : undefined,
+        },
+      };
+    }),
+  };
+});
+
+function summarise(r: RunReplay): RunReplaySummary {
+  return {
+    testId: r.testId,
+    runId: r.runId,
+    testName: r.testName,
+    status: r.status,
+    startedAt: r.startedAt,
+    finishedAt: r.finishedAt,
+    stepCount: r.steps.length,
+    failedIndex: r.failedIndex,
+    changedSteps: r.steps.filter((s) => s.diff?.state === "changed").length,
+    // Derived, not hard-coded: the summary marker and the banner are two
+    // readings of the same fact, and a fixture where they disagree teaches the
+    // preview to lie about exactly the thing this screen reports.
+    a11yNewSteps: r.steps.filter((s) => (s.a11y?.newKeys.length ?? 0) > 0).length,
+  };
+}
+
+export const REPLAY_SUMMARIES: RunReplaySummary[] = [REPLAY, ...REPLAY_HISTORY].map(summarise);
 
 export const RUN_LOG = [
   "Running 1 test using 1 worker",
@@ -338,6 +420,67 @@ export const HEALS: HealListEntry[] = [
     // and a preview that showed heals landing silently would misrepresent it.
     applied: false,
     status: "pending",
+  },
+];
+
+/** Two spec versions, so the preview's diff is a real diff rather than one
+ *  line against another. */
+const SPEC_BEFORE = [
+  "import { test, expect } from '@playwright/test';",
+  "",
+  "test('login', async ({ page }) => {",
+  "  await page.goto('https://example.test/login');",
+  "  await page.getByTestId('signin').click();",
+  "  await expect(page.getByText('Welcome')).toBeVisible();",
+  "});",
+  "",
+].join("\n");
+
+const SPEC_AFTER = [
+  "import { test, expect } from '@playwright/test';",
+  "",
+  "test('login', async ({ page }) => {",
+  "  await page.goto('https://example.test/login');",
+  "  await page.getByRole('button', { name: 'Sign in' }).click();",
+  "  await expect(page.getByText('Welcome')).toBeVisible({ timeout: 10_000 });",
+  "});",
+  "",
+].join("\n");
+
+/** Typed as the superset for the same reason `HEALS` is: one array serves both
+ *  `scriptChanges:list` and `scriptChanges:listAll`.
+ *
+ *  Both states are here on purpose, because they are the whole point of the
+ *  feature and they render differently. The first landed while the AI debug job
+ *  was minimized — nobody read it, so it is in the review queue. The second is
+ *  a hand edit, which is settled history the moment it is saved. */
+export const SCRIPT_CHANGES: ScriptChangeListEntry[] = [
+  {
+    id: "sc-1",
+    testId: "t-login",
+    testName: "Login — wrong password shows an error",
+    origin: "ai-debug",
+    model: "claude-sonnet-4",
+    reviewed: false,
+    before: SPEC_BEFORE,
+    after: SPEC_AFTER,
+    addedLines: 2,
+    removedLines: 2,
+    status: "pending",
+    at: NOW - 20 * MINUTE,
+  },
+  {
+    id: "sc-2",
+    testId: "t-login",
+    testName: "Login — wrong password shows an error",
+    origin: "manual",
+    reviewed: true,
+    before: SPEC_AFTER,
+    after: SPEC_AFTER.replace("Welcome", "Welcome back"),
+    addedLines: 1,
+    removedLines: 1,
+    status: "accepted",
+    at: NOW - 3 * HOUR,
   },
 ];
 
@@ -417,6 +560,17 @@ export const SETTINGS: RecorderSettings = {
   notifyOnAiDebugDone: false,
   autoAcceptAiDebugFixes: false,
   disabledAestheticEnhancements: [],
+  // Both at their defaults. `uiScale` does nothing in the preview — there is no
+  // main process to zoom a webContents — but it has to be present and valid or
+  // the Appearance pane renders its size control with no segment selected.
+  uiScale: 1,
+  uiTypeface: "space",
+  // The shipped cost guesses. Left at their defaults deliberately: the Cost
+  // panel's "both are this app's guesses" sentence only renders while they are,
+  // and the preview is the only place that sentence can be looked at.
+  costCurrency: "usd",
+  costPerCiMinute: 0.008,
+  costMinutesPerManualRun: 12,
 };
 
 export const LLM_CONFIG: LlmConfig = {
@@ -453,5 +607,150 @@ export const LLM_STATUS: LlmProviderStatus[] = [
     baseUrl: "https://api.anthropic.com",
     hasKey: false,
     error: "No backend in preview mode — this is a UI preview, not a running app.",
+  },
+];
+
+/** Past batches, one per verdict.
+ *
+ *  FOUR RECORDS BECAUSE THERE ARE FOUR VERDICTS, and three of them are only
+ *  distinguishable by colour. A batch that finished with some passes and some
+ *  failures is amber; one where NOTHING passed is red; a clean one is
+ *  phosphor; a stopped one is untinted, because it never produced a verdict at
+ *  all. `batch:list` used to answer `[]`, which meant the Previous batches
+ *  panel — and the finished-batch panel above it — could not be seen in the
+ *  preview at all, and those are precisely the surfaces where the tone is the
+ *  whole signal.
+ *
+ *  The counts are deliberately awkward on the mixed record (2 failed, 1
+ *  passed): that is the case where an all-red reading is most tempting and
+ *  most wrong. */
+const batchResults = (
+  outcomes: Array<[testId: string, testName: string, status: BatchTestResult["status"]]>,
+): BatchTestResult[] =>
+  outcomes.map(([testId, testName, status]) => ({
+    testId,
+    testName,
+    status,
+    browser: "chromium",
+    startedAt: NOW - 10 * MINUTE,
+    finishedAt: NOW - 9 * MINUTE,
+    durationMs: 41_000,
+    ...(status === "failed" ? { exitCode: 1 } : null),
+  }));
+
+/**
+ * Saved jobs. docs/ROUTINES.md — the Batch screen is one Routine's editor now,
+ * so a preview with none shows the "no routines yet" state and nothing else.
+ *
+ * TWO OF THEM, DELIBERATELY. One is the whole point of the feature: "Smoke,
+ * Chromium, headless" and "Nightly, all three engines, headed" are exactly the
+ * pair the old single checklist could not express, and a preview with one
+ * Routine cannot show that switching between them changes the screen.
+ */
+export const ROUTINES: Routine[] = [
+  {
+    id: "r-smoke",
+    name: "Smoke",
+    createdAt: NOW - 30 * DAY,
+    updatedAt: NOW - 2 * DAY,
+    steps: [
+      {
+        kind: "test",
+        testId: "t-login",
+        browsers: ["chromium"],
+        headless: true,
+        onFailure: "continue",
+      },
+      {
+        kind: "test",
+        testId: "t-checkout",
+        browsers: ["chromium"],
+        headless: true,
+        onFailure: "continue",
+      },
+    ],
+    defaults: { captureArtifacts: false, concurrency: 2 },
+  },
+  {
+    id: "r-nightly",
+    name: "Nightly regression",
+    createdAt: NOW - 10 * DAY,
+    updatedAt: NOW - 10 * DAY,
+    steps: [
+      {
+        kind: "test",
+        testId: "t-checkout",
+        browsers: ["chromium", "firefox", "webkit"],
+        headless: false,
+        onFailure: "continue",
+      },
+      {
+        kind: "test",
+        testId: "t-search",
+        browsers: ["chromium", "webkit"],
+        headless: false,
+        onFailure: "continue",
+      },
+    ],
+    defaults: { captureArtifacts: true, concurrency: 1 },
+  },
+];
+
+export const BATCHES: BatchRecord[] = [
+  {
+    batchId: "b-mixed",
+    running: false,
+    startedAt: NOW - 2 * HOUR,
+    finishedAt: NOW - 2 * HOUR + 3 * MINUTE,
+    currentIndex: -1,
+    stopped: false,
+    results: batchResults([
+      ["t-checkout", "Checkout — happy path", "failed"],
+      ["t-login", "Login — wrong password shows an error", "failed"],
+      ["t-search", "Search returns results", "passed"],
+    ]),
+    summary: { total: 3, passed: 1, failed: 2, skipped: 0, ok: false, durationMs: 182_000 },
+  },
+  {
+    batchId: "b-total",
+    running: false,
+    startedAt: NOW - 5 * HOUR,
+    finishedAt: NOW - 5 * HOUR + 1 * MINUTE,
+    currentIndex: -1,
+    stopped: false,
+    results: batchResults([
+      ["t-checkout", "Checkout — happy path", "failed"],
+      ["t-login", "Login — wrong password shows an error", "failed"],
+      ["t-search", "Search returns results", "failed"],
+    ]),
+    summary: { total: 3, passed: 0, failed: 3, skipped: 0, ok: false, durationMs: 61_000 },
+  },
+  {
+    batchId: "b-clean",
+    running: false,
+    startedAt: NOW - 1 * DAY,
+    finishedAt: NOW - 1 * DAY + 4 * MINUTE,
+    currentIndex: -1,
+    stopped: false,
+    results: batchResults([
+      ["t-checkout", "Checkout — happy path", "passed"],
+      ["t-login", "Login — wrong password shows an error", "passed"],
+      ["t-search", "Search returns results", "passed"],
+    ]),
+    summary: { total: 3, passed: 3, failed: 0, skipped: 0, ok: true, durationMs: 240_000 },
+  },
+  {
+    batchId: "b-stopped",
+    running: false,
+    startedAt: NOW - 2 * DAY,
+    finishedAt: NOW - 2 * DAY + 1 * MINUTE,
+    currentIndex: -1,
+    stopped: true,
+    results: batchResults([
+      ["t-checkout", "Checkout — happy path", "failed"],
+      ["t-login", "Login — wrong password shows an error", "passed"],
+      ["t-search", "Search returns results", "pending"],
+    ]),
+    summary: { total: 3, passed: 1, failed: 1, skipped: 0, ok: false, durationMs: 52_000 },
   },
 ];

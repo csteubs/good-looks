@@ -1,6 +1,12 @@
 // Shared recorder data model (backend). Mirror kept in renderer/lib/recorder-types.ts.
 
 import type { LlmErrorKind } from "../services/llm/types.js";
+// Declared in shared/ because the settings store validates against the same
+// list the Settings pane offers and the Cost panel formats with — see the
+// header of `shared/cost-units.mjs`.
+import type { CostCurrency } from "../../shared/cost-units.mjs";
+
+export type { CostCurrency };
 
 export type StepType =
   | "goto"
@@ -80,6 +86,26 @@ export interface Locator {
   role?: string;
   /** accessible name for role locators */
   name?: string;
+  /**
+   * Which of several matches this locator meant, 0-based. ABSENT when the
+   * locator resolves to exactly one element, which is the case the recorder
+   * works hard to reach — see `locatorFor` in capture-script.ts.
+   *
+   * This exists because Playwright runs in STRICT MODE: a locator resolving to
+   * two elements is not "the first one", it is an error that fails the step.
+   * The recorder used to emit locators on the untested assumption that a name,
+   * a label or a run of text identified one element, and every such step was a
+   * strict-mode violation waiting for the page to grow a second match. The one
+   * that prompted this was `getByText("Browser")` against firefox.com, which has
+   * two.
+   *
+   * A last resort, and deliberately so: an index picks by DOM order, so it
+   * breaks the day the page reorders. Every unique candidate is preferred over
+   * it, and it is only written when NONE of them is unique — at which point the
+   * honest choice is between an index that works now and a locator that has
+   * already failed.
+   */
+  nth?: number;
 }
 
 export type AssertKind =
@@ -317,6 +343,39 @@ export function isRunBrowser(v: unknown): v is RunBrowser {
   return typeof v === "string" && (RUN_BROWSERS as string[]).includes(v);
 }
 
+/** How big the app's own interface is drawn, as a zoom factor.
+ *
+ *  A CLOSED SET, and the validator below is membership rather than a range
+ *  clamp — on purpose. This number is handed to `webContents.setZoomFactor`
+ *  for every app window (see `main/services/ui-scale.ts`), and a `0`, a `NaN`
+ *  or a `1e9` arriving through `recorder:setSettings` does not degrade, it
+ *  makes every window unreadable — INCLUDING the Settings window, which is the
+ *  only place the value can be changed back. A clamp would still accept a
+ *  garbage type and round it into range; four allowed values cannot be wedged. */
+export type UiScale = 0.9 | 1 | 1.1 | 1.25;
+
+export const UI_SCALES: UiScale[] = [0.9, 1, 1.1, 1.25];
+
+export function isUiScale(v: unknown): v is UiScale {
+  return typeof v === "number" && (UI_SCALES as number[]).includes(v);
+}
+
+/** Which typeface pairing the interface is set in.
+ *
+ *  A NAME, never a font family. The name is what crosses IPC and what is
+ *  stored; the families themselves live in `renderer/theme/tokens.css` and are
+ *  selected by a `data-gl-typeface` attribute. A free-text family would be a
+ *  string from an IPC caller landing inside a `font-family` declaration, and
+ *  there is no useful way to validate one — an enum of three has nothing to
+ *  validate against a stylesheet at all. */
+export type UiTypeface = "space" | "system" | "classic";
+
+export const UI_TYPEFACES: UiTypeface[] = ["space", "system", "classic"];
+
+export function isUiTypeface(v: unknown): v is UiTypeface {
+  return typeof v === "string" && (UI_TYPEFACES as string[]).includes(v);
+}
+
 export interface TestRecord {
   id: string;
   name: string;
@@ -353,6 +412,15 @@ export interface TestRecord {
    *  run — is missing those edits. Absent on records written before the reason
    *  was tracked; treat that as `"parse"`, the only cause that existed then. */
   stepsDivergedReason?: "parse" | "unapplied";
+  /** true when the user has waved the divergence warning off. Kept on the record
+   *  rather than in renderer state so it survives leaving the test — a warning
+   *  you can only silence until you click away is one you learn to read past.
+   *
+   *  Cleared whenever divergence is ESTABLISHED AFRESH — an apply whose script
+   *  won't fully parse back into steps, or a step edit saved without
+   *  regenerating. So the banner returns for a new divergence and stays gone for
+   *  the one already acknowledged, which is the whole distinction. */
+  stepsDivergedDismissed?: boolean;
   /** Visual-diff sensitivity for capture runs (Phase 3): the percent of pixels
    *  (0–100) allowed to change vs the pinned baseline before a step is flagged
    *  "visual change detected". Absent → DEFAULT_VISUAL_THRESHOLD. */
@@ -660,6 +728,11 @@ export const MAX_STEP_STRING_LENGTH = 8000;
 export const MAX_FINGERPRINT_CANDIDATES = 40;
 export const MAX_FINGERPRINT_ATTRIBUTES = 40;
 export const MAX_FLOW_ARGS = 50;
+/** Upper bound on `Locator.nth`. The recorder only ever writes this when no
+ *  candidate locator was unique, and it caps its own scan well below here
+ *  (`MAX_UNIQUENESS_SCAN` in capture-script.ts) — so a value near this one did
+ *  not come from a person clicking an element. */
+export const MAX_MATCH_INDEX = 1000;
 /** Steps accepted from a single drain of the capture queue. A real recording
  *  produces a handful per poll; anything near this is not a person clicking. */
 export const MAX_STEPS_PER_DRAIN = 500;
@@ -704,6 +777,15 @@ function normalizeLocator(input: unknown): Locator | undefined {
   if (v !== undefined) out.v = v;
   if (role !== undefined) out.role = role;
   if (name !== undefined) out.name = name;
+  // `int`, not a typeof check. This field reaches the generator as a BARE
+  // NUMERAL — `.nth(<here>)` — which is the exact shape that was remote code
+  // execution the last time a numeric step field was trusted for having the
+  // right TypeScript type (see `num` in script-generator.ts). The upper bound is
+  // MAX_MATCH_INDEX rather than something enormous because a page with more
+  // than that many matches for one locator is not a page anyone is indexing
+  // into on purpose.
+  const nth = int(l.nth, 0, MAX_MATCH_INDEX);
+  if (nth !== undefined) out.nth = nth;
   return out;
 }
 
@@ -1591,6 +1673,37 @@ export interface RecorderSettings {
   /** IDs of aesthetic enhancement features the user has disabled.
    *  Empty = all enabled. Known IDs: "aiThinkingGif". */
   disabledAestheticEnhancements: string[];
+  /** How big the app's interface is drawn (default 1 = 100%).
+   *
+   *  A ZOOM FACTOR AND NOT A FONT SIZE, which is the whole design of this
+   *  setting: the theme is tuned in whole pixels (9.5px labels inside 24px
+   *  controls inside a 34px strip), so growing the text alone overflows the
+   *  chrome around it in about a dozen places. Zoom scales both together and
+   *  the proportions survive. Applied to the app's own windows only — never to
+   *  the training browser. See `main/services/ui-scale.ts`. */
+  uiScale: UiScale;
+  /** Which typeface pairing the interface is set in (default "space").
+   *
+   *  "space" is the bundled Space Mono / Space Grotesk pairing the redesign was
+   *  drawn in; "system" and "classic" are faces macOS already has. Nothing here
+   *  is fetched — see the header of `renderer/theme/fonts.css` for why this app
+   *  does not load fonts over the network. */
+  uiTypeface: UiTypeface;
+  /** Which symbol the Cost panel stamps on a money figure (default "usd").
+   *
+   *  "none" restores the panel's original behaviour — bare numbers, claiming
+   *  nothing about currency. See `shared/cost-units.mjs`. */
+  costCurrency: CostCurrency;
+  /** What one minute of CI costs, in the currency above (default 0.008).
+   *
+   *  The Cost panel's whole output scales off this and off the minutes below,
+   *  which is why both are settings a user can correct rather than constants.
+   *  The Settings pane offers GitHub's published runner rates as pre-fills; the
+   *  chosen runner is DERIVED from this number and never stored beside it. */
+  costPerCiMinute: number;
+  /** How long one run of one test would take a person, by hand, in minutes
+   *  (default 12). The other half of every "manual testing avoided" figure. */
+  costMinutesPerManualRun: number;
 }
 
 /** What a successful Auto-Heal is allowed to do to the stored test. */
@@ -1669,7 +1782,13 @@ export interface RecorderState {
   assertMode: AssertKind | null;
   stepCount: number;
   testId: string | null;
+  /** where the recording STARTS — what gets saved as the test's URL and what
+   *  the opening `goto` step replays */
   url: string | null;
+  /** where the page is NOW. Separate from `url` on purpose: tracking the live
+   *  location in that field would rewrite every saved test's starting point to
+   *  wherever the user happened to stop. Null outside a session. */
+  liveUrl: string | null;
   name: string | null;
   /** true when continuing/extending an existing test rather than recording a new one */
   editing: boolean;
@@ -1792,6 +1911,77 @@ export interface BatchState {
 export interface BatchRecord extends BatchState {
   summary: BatchSummary;
 }
+
+// ── Routines ──────────────────────────────────────────────────────────
+// Batch v2: a saved, named job. docs/ROUTINES.md. Mirror kept in
+// renderer/lib/recorder-types.ts.
+//
+// A ROUTINE COMPOSES RUNS; `runFlow` COMPOSES STEPS. That is the line the spec
+// calls the main design risk here, and it is why a `test` step names a testId
+// and nothing else: it runs that test as its own process, with its own
+// RunRecord and its own row in Stats. A Routine never reaches inside a test.
+//
+// Only `kind: "test"` exists in this first slice. `group`, `wait`, `notify` and
+// `branch` are designed in ROUTINES.md and deliberately unbuilt — the spec
+// sequences a saved configuration BEFORE a flow builder, because a builder with
+// nothing to save it into is the useless half. The union is written as a union
+// of one so adding the second kind is an additive change every `switch` on it
+// is already shaped for.
+
+/** What a Routine does when one of its steps fails. `continue` FIRST and the
+ *  default: it is Batch's current unwritten behaviour, so anything else changes
+ *  what a migrated job does on its first run. See ROUTINES.md — no `retry`
+ *  policy in v1, because a routine-level retry stacked on Auto-Heal makes a
+ *  flaky test look stable, which is the signal Stability exists to give. */
+export type FailurePolicy = "continue" | "stopRoutine" | "skipGroup";
+
+export interface RoutineTestStep {
+  kind: "test";
+  testId: string;
+  /** Engines this step runs on. NEVER empty — an empty array is a step that
+   *  produces no queue entries, so the Routine silently runs fewer tests than
+   *  it lists. Same invariant `batch-run-plan.ts` protects for a Batch row. */
+  browsers: RunBrowser[];
+  headless: boolean;
+  onFailure: FailurePolicy;
+  /** The test this step names has been deleted. MARKED, NOT REMOVED — ROUTINES
+   *  open question 4: silently shrinking a saved job is the same class of bug
+   *  as the batch running fewer tests than it said. The step renders as broken
+   *  and the user removes it, so the job they built is the job they see. */
+  testDeleted?: boolean;
+}
+
+export type RoutineStep = RoutineTestStep;
+
+export interface RoutineDefaults {
+  captureArtifacts: boolean;
+  /** Lanes. Clamped against the queue by `clampBatchConcurrency` at run time,
+   *  not here — a saved Routine's number is a preference, and the ceiling
+   *  depends on how many distinct tests it actually queues. */
+  concurrency: number;
+}
+
+export interface Routine {
+  id: string;
+  name: string;
+  createdAt: number;
+  updatedAt: number;
+  steps: RoutineStep[];
+  defaults: RoutineDefaults;
+}
+
+/** Ceiling on stored Routines. This is a local app and the whole index is
+ *  rewritten on every save; a person with more than this many saved jobs has a
+ *  different problem than the one Routines solves. */
+export const MAX_ROUTINES = 50;
+
+/** Ceiling on steps in one Routine. Bounds the file, and bounds what a single
+ *  IPC payload can ask the runner to queue. */
+export const MAX_ROUTINE_STEPS = 200;
+
+/** Longest a Routine's name may be. Long enough for a real sentence, short
+ *  enough that the list stays a list. */
+export const MAX_ROUTINE_NAME = 80;
 
 // ── Cookies ───────────────────────────────────────────────────────────
 // Mirror kept in renderer/lib/recorder-types.ts.
@@ -1916,6 +2106,12 @@ export interface AiDebugSession {
   /** Hash of the script the prompt was built from, so a diff computed against a
    *  since-edited script can be flagged instead of silently clobbering it. */
   scriptHash: string | null;
+  /** Which model answered, stamped when the stream started. The auto-apply path
+   *  labels the resulting script-change entry with it, and runs long after the
+   *  panel that chose the model is gone — reading the current setting there
+   *  would name whichever model happens to be selected then. Absent on sessions
+   *  stored before this was recorded. */
+  model?: string;
   startedAt: number;
   updatedAt: number;
   /** Restored from disk with no live context behind it — readable, not re-runnable. */

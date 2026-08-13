@@ -3,11 +3,13 @@ import * as React from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { SplitView } from "@ui";
 
-import { Atmosphere } from "../theme";
+import { Atmosphere, BootPlate } from "../theme";
+import { api } from "../lib/api";
 import { AiDebugChip } from "./ai-debug-chip";
 import { AppStrip } from "./app-strip";
 import { AiDebugHost } from "./ai-debug-panel";
 import { AiDebugProvider } from "./ai-debug-store";
+import { CommandPalette } from "./command-palette";
 import { LibrarySidebar } from "./library-sidebar";
 import { LoadFailedDialog } from "./load-failed-dialog";
 import { RecorderProvider, useRecorder } from "./recorder-store";
@@ -33,6 +35,30 @@ function RootShell() {
   );
 }
 
+/**
+ * Re-read persisted settings when the OTHER window writes them.
+ *
+ * NOTHING IN THIS WINDOW WOULD NOTICE ON ITS OWN, and the reason is specific
+ * enough to be worth stating: react-query's focus refetch is driven by
+ * `visibilitychange`, which never fires when focus moves between two
+ * BrowserWindows of the same app — a background window's `visibilityState`
+ * stays "visible". The views that appeared to stay current were getting it from
+ * remount on route change instead. Stats does not: it is the view the user is
+ * standing on while they correct the CI price in Settings, and a Cost panel
+ * that ignores the price you just set is worse than one that never offered it.
+ *
+ * Its own hook so it can be tested without a router — `RootView` needs one and
+ * this does not.
+ */
+export function useSettingsFreshness(): void {
+  const qc = useQueryClient();
+  React.useEffect(() => {
+    return api.on("settings:changed", () => {
+      void qc.invalidateQueries({ queryKey: ["recorder-settings"] });
+    });
+  }, [qc]);
+}
+
 export function RootView() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -42,6 +68,31 @@ export function RootView() {
       window.glazeAPI?.glaze?.ipc?.disconnect();
     };
   }, []);
+
+  // ── Deep links ──────────────────────────────────────────────────────
+  // Here for the same reason `onFinished` is: routing is a main-window
+  // behaviour, and the trainer panel runs without a router.
+  //
+  // A link SELECTS A VIEW and nothing else. The target arrives already
+  // validated by `shared/deep-link.mjs`, and it is re-checked here anyway —
+  // the push channel is not a trusted one just because the backend usually
+  // writes to it, and this is one `if` against a class of bug that opens a
+  // route with an undefined param.
+  React.useEffect(() => {
+    return api.on<{ testId?: unknown; runId?: unknown; stepId?: unknown }>(
+      "deepLink:open",
+      (target: { testId?: unknown; runId?: unknown; stepId?: unknown }) => {
+        const testId = typeof target?.testId === "string" ? target.testId : "";
+        if (!testId) return;
+        // Always the test route: a run or step in the link narrows what the
+        // view shows, and the test is the thing that has an address. Landing
+        // somewhere is the whole contract.
+        navigate({ to: "/test/$id", params: { id: testId } });
+      },
+    );
+  }, [navigate]);
+
+  useSettingsFreshness();
 
   // Landing on the finished test is a MAIN-WINDOW behaviour, so it lives here
   // rather than in the store: the trainer panel runs the same provider with no
@@ -105,12 +156,25 @@ export function RootView() {
           CRT and motion SETTINGS land with the settings reskin (§B4); until
           then the defaults are the design's shipped state, not placeholders. */}
       <Atmosphere />
+      {/* The boot sequence (§6.9). AFTER `Atmosphere`, because the plate wears
+          the same `echo` treatment as the Home wordmark and that treatment is
+          keyed on `data-glitch` — which is an attribute Atmosphere sets. It
+          covers the app rather than delaying it: everything below is mounted
+          and interactive underneath, and any key or click takes the plate
+          away. It plays once per window, so navigation never brings it back. */}
+      <BootPlate />
       <RecorderProvider onFinished={onFinished}>
         {/* Above the shell, so an AI debug session survives navigation AND the
             trainer replacing the whole outlet. The host renders whichever
             session is expanded; the chip is the way back to a minimized one. */}
         <AiDebugProvider>
-          <RootShell />
+          {/* ⌘K (§6.7). Wraps the shell rather than sitting beside it, because
+              the strip's key cap reads its opener from this context — and
+              because the palette's own dialogs must outlive a navigation the
+              palette itself triggered. */}
+          <CommandPalette>
+            <RootShell />
+          </CommandPalette>
           <AiDebugHost />
           <AiDebugChip />
           {/* Outside RootShell on purpose. A failed load tears the session down

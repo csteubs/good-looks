@@ -5,11 +5,53 @@
 // here — get it backwards and every flourish reads as off while being on, which
 // looks like the toggle is broken rather than the mapping.
 
-import { describe, it, expect } from "vitest";
-import { screen, fireEvent } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
 
 import { makeController, renderPane, savedPatch } from "../__tests__/harness";
 import { AppearancePane } from "./appearance-pane";
+
+/**
+ * Choose an option from the app's native-menu-backed `Select`.
+ *
+ * CLAUDE.md says this control cannot be driven in jsdom, and that is true of
+ * the OPTIONS — they never enter the DOM. The menu itself, though, is opened
+ * through `glazeAPI.Menu.popup`, which is an ordinary promise this test can
+ * answer: hand back the `commandId` of the item whose label matches, and the
+ * component runs exactly the handler a real click would.
+ *
+ * Worth the scaffolding for this one control. The typeface picker is the only
+ * place in the app whose handler does something the store cannot do for it —
+ * it applies the change to THIS document, because the Settings window does not
+ * receive the appearance push — so "the Select is untestable" would leave the
+ * one line that stops the setting looking broken uncovered.
+ */
+function chooseFromNativeMenu(triggerId: string, label: string): void {
+  interface Item {
+    label?: string;
+    commandId?: number;
+    submenu?: Item[];
+  }
+  const popup = vi.fn(async ({ items }: { items: Item[] }) => {
+    const flat: Item[] = [];
+    const walk = (list: Item[]): void => {
+      for (const i of list) {
+        flat.push(i);
+        if (i.submenu) walk(i.submenu);
+      }
+    };
+    walk(items);
+    const hit = flat.find((i) => i.label === label && i.commandId !== undefined);
+    if (!hit) throw new Error(`no menu item labelled "${label}" (saw: ${flat.map((i) => i.label).join(", ")})`);
+    return { commandId: hit.commandId };
+  });
+  (window as unknown as { glazeAPI: { Menu: unknown } }).glazeAPI = { Menu: { popup } };
+  fireEvent.click(document.getElementById(triggerId) as HTMLElement);
+}
+
+afterEach(() => {
+  document.documentElement.removeAttribute("data-gl-typeface");
+});
 
 function switchState(name: RegExp): string {
   const sw = screen.getByRole("switch", { name });
@@ -117,6 +159,123 @@ describe("flourishes are stored as disabled ids", () => {
     const controller = makeController({ settings: {} });
     renderPane(<AppearancePane />, { controller });
     expect(switchState(/ai thinking gif/i)).toMatch(/true|checked/i);
+  });
+});
+
+describe("font size", () => {
+  // A SEGMENTED CONTROL: real `<button aria-pressed>` elements that a plain
+  // click drives. The typeface row below reaches its native-menu Select by
+  // answering the popup promise, which works but is scaffolding; the control
+  // that decides whether the app is legible should be the one that needs none.
+  // This is the test that would notice it being changed into a Select.
+
+  function segment(name: RegExp): HTMLElement {
+    return screen.getByRole("button", { name });
+  }
+
+  it("shows the stored scale as the pressed segment", () => {
+    const controller = makeController({ settings: { uiScale: 1.1 } });
+    renderPane(<AppearancePane />, { controller });
+    expect(segment(/^large$/i).getAttribute("aria-pressed")).toBe("true");
+    expect(segment(/^default$/i).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("saves the number, not the label", () => {
+    // The control's values are strings — Segmented is generic over string. The
+    // store validates by MEMBERSHIP in a set of numbers, so a "1.25" that got
+    // through as a string is rejected on save and silently keeps the old size.
+    const { controller } = renderPane(<AppearancePane />);
+    fireEvent.click(segment(/^larger$/i));
+    expect(savedPatch(controller)).toEqual({ uiScale: 1.25 });
+    expect(typeof savedPatch(controller).uiScale).toBe("number");
+  });
+
+  it("offers every scale the backend accepts, and no others", () => {
+    renderPane(<AppearancePane />);
+    for (const label of ["Small", "Default", "Large", "Larger"]) {
+      expect(segment(new RegExp(`^${label}$`, "i")), label).toBeTruthy();
+    }
+  });
+
+  it("falls back to 100% when nothing is stored yet", () => {
+    // The pane renders before the settings load resolves. Without the `?? 1`
+    // no segment is pressed, which reads as a control with no current value.
+    const controller = makeController({ settings: {} });
+    renderPane(<AppearancePane />, { controller });
+    expect(segment(/^default$/i).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("says plainly that it is not only the text", () => {
+    // The honest disclosure is the whole reason this is acceptable as a "font
+    // size": it scales the chrome too. Copy that quietly drops that claim
+    // turns a documented trade-off into a surprise.
+    renderPane(<AppearancePane />);
+    expect(screen.getByText(/controls around it grow together/i)).toBeTruthy();
+  });
+});
+
+describe("typeface", () => {
+  it("shows the stored pairing", () => {
+    const controller = makeController({ settings: { uiTypeface: "classic" } });
+    renderPane(<AppearancePane />, { controller });
+    expect(screen.getByText("Menlo / Helvetica")).toBeTruthy();
+  });
+
+  it("falls back to Space before the settings load resolves", () => {
+    const controller = makeController({ settings: {} });
+    renderPane(<AppearancePane />, { controller });
+    expect(screen.getByText("Space Mono / Grotesk")).toBeTruthy();
+  });
+
+  it("shows Space for a value the backend would refuse", () => {
+    // A stored typeface that no longer exists must not leave the trigger blank
+    // — an empty picker reads as a broken control rather than a stale value.
+    const controller = makeController({
+      settings: { uiTypeface: "comic-sans" as never },
+    });
+    renderPane(<AppearancePane />, { controller });
+    expect(screen.getByText("Space Mono / Grotesk")).toBeTruthy();
+  });
+
+  it("saves the choice", async () => {
+    const { controller } = renderPane(<AppearancePane />);
+    chooseFromNativeMenu("ui-typeface", "Menlo / Helvetica");
+    await waitFor(() => expect(savedPatch(controller)).toEqual({ uiTypeface: "classic" }));
+  });
+
+  it("applies the choice to THIS window, not only to the store", async () => {
+    // The line this covers is the one that stops the setting looking broken.
+    // `sendToMain` fans out to the main window and registered aux windows, and
+    // the Settings window is neither — so without the local `applyTypeface`,
+    // the single window the user is looking at while they change the typeface
+    // is the only window in the app that does not change.
+    renderPane(<AppearancePane />);
+    chooseFromNativeMenu("ui-typeface", "Menlo / Helvetica");
+    await waitFor(() =>
+      expect(document.documentElement.getAttribute("data-gl-typeface")).toBe("classic"),
+    );
+  });
+
+  it("clears the attribute when the default is chosen back", async () => {
+    const controller = makeController({ settings: { uiTypeface: "classic" } });
+    renderPane(<AppearancePane />, { controller });
+    chooseFromNativeMenu("ui-typeface", "Space Mono / Grotesk");
+    await waitFor(() =>
+      expect(document.documentElement.getAttribute("data-gl-typeface")).toBeNull(),
+    );
+  });
+
+  it("promises the alternatives fetch nothing", () => {
+    // The app's egress posture is one opt-in webhook. A typeface picker is
+    // exactly the feature that would quietly add a second outbound request,
+    // and this row's copy is the claim that it did not.
+    const { container } = renderPane(<AppearancePane />);
+    // By the row's own disclosure, not by index into every "More" on the pane —
+    // an index silently starts opening a different row when one is added above.
+    const more = container.querySelector<HTMLElement>('[aria-controls="ui-typeface-details"]');
+    if (!more) throw new Error("the typeface row has no details disclosure");
+    fireEvent.click(more);
+    expect(screen.getByText(/never requests a font over the network/i)).toBeTruthy();
   });
 });
 

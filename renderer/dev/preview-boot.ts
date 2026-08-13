@@ -146,6 +146,92 @@ async function mountSettings(): Promise<void> {
   );
 }
 
+/** The docked trainer panel — `/?view=trainer-panel`.
+ *
+ *  Mounted INSTEAD OF the app, for exactly the reason Settings is: the panel is
+ *  its own BrowserWindow, opened by the backend when a recording session starts
+ *  (`openTrainerPanel`), so nothing in a browser tab can reach it. Until this
+ *  existed, a change to the panel could only be looked at by packaging the app
+ *  and recording a real test — which is how it ended up the last surface in the
+ *  app still wearing the component library's stock classes.
+ *
+ *  The providers are copied from `renderer/trainer/index.tsx` rather than
+ *  imported, same as `mountSettings`: that module is an ENTRY POINT and would
+ *  mount a second root over this one.
+ *
+ *  The bridge reports a live session for this view (see `recorderPreview`), so
+ *  the step list, the insert cursor and the tool row are all real. What is not
+ *  real is anything native: the assert and Add-step menus go through
+ *  `Menu.popup`, and the dock control invokes `trainerPanel:dock`. */
+async function mountTrainerPanel(): Promise<void> {
+  const [React, ReactDOM, rq, ui, { RecorderProvider }, { TrainerPanelView }] = await Promise.all([
+    import("react"),
+    import("react-dom/client"),
+    import("@tanstack/react-query"),
+    import("@ui"),
+    import("../main/recorder-store"),
+    import("../trainer/trainer-panel-view"),
+    import("../styles.css"),
+  ]);
+  const root = document.getElementById("root");
+  if (!root) throw new Error("Root element not found");
+  // The panel is 360px wide against a real browser. Constraining the preview to
+  // that is the whole point — a tool row that wraps at 360 and not at 1400 is
+  // precisely the thing this view is opened to check.
+  document.body.style.background = "var(--gl-ink)";
+  Object.assign(root.style, { width: "360px", height: "100%", borderInlineEnd: "1px solid #222" });
+  const client = new rq.QueryClient({
+    defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+  });
+  ReactDOM.createRoot(root).render(
+    React.createElement(
+      rq.QueryClientProvider,
+      { client },
+      React.createElement(
+        ui.TooltipProvider,
+        null,
+        React.createElement(RecorderProvider, null, React.createElement(TrainerPanelView)),
+      ),
+    ),
+  );
+}
+
+/** The training browser's URL strip — `/?view=chrome`.
+ *
+ *  Same argument again, one level further out: this renders into a
+ *  WebContentsView docked above the untrusted page INSIDE the recorder window,
+ *  so it is not even a window someone could open. It takes one string and a
+ *  boolean, which is why this mounts `UrlBar` directly with fixture values
+ *  rather than the strip's own IPC-subscribing wrapper — there is no navigation
+ *  to subscribe to here.
+ *
+ *  Boxed to `--gl-strip-h` because the strip's height is set by the recorder
+ *  service, not by its own content, and a bar that only looks right at its
+ *  natural height is a bar that will be wrong in the app. */
+async function mountRecorderChrome(): Promise<void> {
+  const [React, ReactDOM, ui, { UrlBar }] = await Promise.all([
+    import("react"),
+    import("react-dom/client"),
+    import("@ui"),
+    import("../recorder-chrome/url-bar"),
+    import("../styles.css"),
+  ]);
+  const root = document.getElementById("root");
+  if (!root) throw new Error("Root element not found");
+  document.body.style.background = "var(--gl-ink)";
+  Object.assign(root.style, { height: "var(--gl-strip-h)" });
+  ReactDOM.createRoot(root).render(
+    React.createElement(
+      ui.TooltipProvider,
+      null,
+      React.createElement(UrlBar, {
+        url: "https://www.firefox.com/en-US/browsers/",
+        loading: false,
+      }),
+    ),
+  );
+}
+
 async function boot(): Promise<void> {
   const view = new URLSearchParams(window.location.search).get("view");
   if (view === "specimen") {
@@ -155,6 +241,16 @@ async function boot(): Promise<void> {
   }
   if (view === "settings") {
     await mountSettings();
+    mountPreviewBanner();
+    return;
+  }
+  if (view === "trainer-panel") {
+    await mountTrainerPanel();
+    mountPreviewBanner();
+    return;
+  }
+  if (view === "chrome") {
+    await mountRecorderChrome();
     mountPreviewBanner();
     return;
   }

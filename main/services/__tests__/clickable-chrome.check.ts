@@ -32,12 +32,45 @@
 //    `button.gl-tag-stack` in renderer/theme/primitives.css); the ported `@ui`
 //    Button had lost it.
 //
+// 3. THE TRAINER PAIR MUST BOTH ACCEPT THE FIRST MOUSE.
+//
+//    macOS spends a click on an INACTIVE window activating it, and does not
+//    pass it to the web contents unless `acceptFirstMouse` is set. The trainer
+//    panel floats `alwaysOnTop` over the training browser and is where the user
+//    arms an assertion, adds a step or scrolls the list — so each window is
+//    routinely the inactive one when the user turns to the other.
+//
+//    The panel had this from the day it shipped. The training browser did not,
+//    for months, and the asymmetry cost far more there: in an ordinary window a
+//    swallowed click is a button press to repeat, but in a RECORDER the capture
+//    script's listener never fires, so the interaction is simply absent from the
+//    step list while the page has visibly responded to nothing. It was reported
+//    as the trainer being flaky and "clicks failing to register".
+//
+//    Checked as a PAIR, and the panel's `alwaysOnTop` is checked with them,
+//    because that flag is the whole premise: if the panel stops floating over
+//    the browser, neither window is routinely inactive and this stops being
+//    required. Asserting the two flags without it would pin a conclusion whose
+//    reason nobody could find.
+//
 // SOURCE-LEVEL, for the reason check:scroll-layout and check:ai-debug-scroll
 // are: jsdom has no layout engine, so a rendered test cannot observe one
 // element covering another — `library-sidebar.test.tsx` clicks that same "+"
 // button and passed happily for the entire life of the bug, because in jsdom
 // the overlay has no box. And the dom project runs with `css: false`, so a
 // computed-cursor assertion would read "" in the fixed and broken cases alike.
+//
+// Property 3 is source-level for a DIFFERENT and stronger reason, and it is
+// worth being honest about what this does and does not prove. `acceptFirstMouse`
+// has no getter — Electron exposes it as a constructor option and nothing reads
+// it back — and the behaviour it controls is the OS window server deciding what
+// to do with a click on an unfocused window. e2e/ cannot reach it either:
+// `_electron` drives web contents, not the macOS event stream, so there is no
+// way to synthesize "a click arriving at an inactive window" from a test. This
+// therefore pins the INTENT and would catch the flag being dropped; it cannot
+// observe the OS honouring it. That is the whole of what automation can do
+// here, which is precisely why the reasoning above is written down at length
+// rather than left to the assertion.
 //
 // Verified to fail against the original code, both halves.
 //
@@ -153,13 +186,73 @@ function read(rel: string): string {
     "trainer-panel-window.ts: the panel window has no native title strip",
   );
   const panelView = read("../../../renderer/trainer/trainer-panel-view.tsx");
+  // Matched as a class TOKEN anywhere in the list, not as the start of the
+  // string. The original form (`className="drag-region…`) also failed when the
+  // class merely moved — the B-phase reskin put the header's own theme class
+  // first — which is a red check reporting a working drag region. A guard that
+  // cries about class order is one people learn to edit rather than read.
+  const dragRegion = [...panelView.matchAll(/className="([^"]*)"/g)].some((m) =>
+    m[1].split(/\s+/).includes("drag-region"),
+  );
   assert(
-    /className="drag-region[^"]*"/.test(panelView),
+    dragRegion,
     "trainer-panel-view.tsx: keeps a drag region — with hiddenInset there is no other way to move the panel",
   );
 }
 
-// ── 4. Buttons look clickable ──────────────────────────────────────────────
+// ── 4. The trainer pair both accept the first mouse ────────────────────────
+//
+// See property 3 in the header for the mechanism, and for what this can and
+// cannot prove.
+{
+  const panelWindow = read("../../../main/windows/trainer-panel-window.ts");
+  const recorder = read("../../../main/services/recorder-service.ts");
+
+  // The premise. Everything below follows from the panel floating over the
+  // browser; without it, neither window is routinely the inactive one.
+  assert(
+    /alwaysOnTop:\s*true/.test(panelWindow),
+    "trainer-panel-window.ts: the panel floats over the training browser — the premise for both flags below",
+  );
+
+  /**
+   * The options object of one `new BrowserWindow({...})`, found by its
+   * `windowKey`.
+   *
+   * SCOPED, not a whole-file grep, and the difference is not pedantry: both
+   * files could gain a second window, and a check that answers "the flag
+   * appears somewhere in this file" would go green for a flag set on the wrong
+   * one. Bounded by the first line at the construction's own indentation that
+   * closes it, which is what the app's own formatting guarantees.
+   */
+  function windowOptions(src: string, key: string): string | null {
+    const at = src.indexOf(`windowKey: "${key}"`);
+    if (at === -1) return null;
+    const open = src.lastIndexOf("new BrowserWindow({", at);
+    if (open === -1) return null;
+    const close = src.indexOf("\n    });", open);
+    return close === -1 ? src.slice(open) : src.slice(open, close);
+  }
+
+  const panelOpts = windowOptions(panelWindow, "trainer-panel");
+  assert(panelOpts !== null, "trainer-panel-window.ts: found the panel's BrowserWindow options");
+  assert(
+    !!panelOpts && /acceptFirstMouse:\s*true/.test(panelOpts),
+    "trainer-panel-window.ts: the panel accepts the first mouse — otherwise the click that reaches for a tool is spent activating it",
+  );
+
+  const recorderOpts = windowOptions(recorder, "recorder");
+  assert(
+    recorderOpts !== null,
+    "recorder-service.ts: found the training browser's BrowserWindow options",
+  );
+  assert(
+    !!recorderOpts && /acceptFirstMouse:\s*true/.test(recorderOpts),
+    "recorder-service.ts: the training browser accepts the first mouse — without it every click returning from the panel is swallowed, and in a recorder a swallowed click is a step that is never recorded",
+  );
+}
+
+// ── 5. Buttons look clickable ──────────────────────────────────────────────
 {
   const primitives = read("../../../renderer/ui/primitives.tsx");
   const base = primitives.match(/export const buttonVariants = cva\(\s*(?:\/\/[^\n]*\n\s*)*"([^"]*)"/);

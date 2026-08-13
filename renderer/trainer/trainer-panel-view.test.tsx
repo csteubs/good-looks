@@ -24,6 +24,7 @@ import { TooltipProvider } from "@ui";
 
 import type { ContextAction, RecorderState, Step, StepType } from "../lib/recorder-types";
 import { DOCK_TOOLTIP, TrainerPanelView } from "./trainer-panel-view";
+import { INSERT_HERE } from "../main/step-row";
 import { viewportNarrowedNotice } from "../main/viewport-narrowed-notice";
 import { toastTexts, clearToastCalls } from "../__tests__/sonner-stub";
 
@@ -350,25 +351,31 @@ describe("tool icons stay distinguishable", () => {
 
 describe("context actions are addressed", () => {
   // The regression this whole mechanism exists for: one right-click in the
-  // training browser reaching two windows and opening two dialogs.
+  // training browser reaching two windows and opening two composers.
+  //
+  // Queried by `data-gl` since C §6.2: the Add-step surface is an inline panel
+  // in the step list now, not a dialog. What is being pinned is unchanged —
+  // WHICH WINDOW acts on a right-click — so these moved rather than went.
+  const composer = () => document.querySelector('[data-gl="step-composer"]');
+
   it("acts on an action addressed to the panel", async () => {
     setStore({ contextAction: ctx({ target: "panel" }) });
     renderPanel();
-    // The Add-step dialog opened, prefilled as an assertion.
-    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    // The composer opened, prefilled as an assertion.
+    await waitFor(() => expect(composer()).toBeTruthy());
   });
 
   it("ignores an action addressed to the main window", async () => {
     setStore({ contextAction: ctx({ target: "main" }) });
     renderPanel();
     await waitFor(() => expect(actions.clearContextAction).toHaveBeenCalled());
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(composer()).toBeNull();
   });
 
   it("acts on an unaddressed action, so older payloads still work", async () => {
     setStore({ contextAction: ctx({ target: undefined }) });
     renderPanel();
-    await waitFor(() => expect(screen.getByRole("dialog")).toBeTruthy());
+    await waitFor(() => expect(composer()).toBeTruthy());
   });
 });
 
@@ -590,5 +597,155 @@ describe("a replay started in the OTHER trainer window", () => {
 
     expect(screen.getByText("Recording")).toBeTruthy();
     expect(screen.getByLabelText("Add step").hasAttribute("disabled")).toBe(false);
+  });
+});
+
+describe("continuing an existing test: where a captured step goes", () => {
+  // The report this was written against: "I only see the Paused and Editing
+  // options in the trainer window, and it doesn't appear to record any manual
+  // page interaction." Capture was live the whole time. What was true is that
+  // the insert cursor sits where the browser is — just past the navigation for
+  // a continued test — so a captured step landed at the TOP of the list while
+  // this panel scrolled to the bottom, unhighlighted, with a chip reading
+  // "Editing" beside it.
+
+  /** Four steps and a cursor just past the navigation, as `initialCursor` sets
+   *  it: the ordinary state of a session opened on an existing test. */
+  function continuedSession(over: Record<string, unknown> = {}) {
+    setStore({
+      state: state({ editing: true, cursor: 1 }),
+      liveSteps: [
+        step("s0", { type: "goto", url: "https://example.com" }),
+        step("s1", { type: "click", locator: { k: "text", v: "One" } }),
+        step("s2", { type: "click", locator: { k: "text", v: "Two" } }),
+        step("s3", { type: "click", locator: { k: "text", v: "Three" } }),
+      ],
+      ...over,
+    });
+  }
+
+  it("says Recording, because capture is live", () => {
+    // "Editing" here said the opposite of what was true, on the one indicator
+    // whose entire job is whether the trainer is listening.
+    continuedSession();
+    renderPanel();
+    expect(screen.getByText("Recording")).toBeTruthy();
+    expect(screen.queryByText("Editing")).toBe(null);
+  });
+
+  it("names the insert point when it is not at the end of the list", () => {
+    continuedSession();
+    renderPanel();
+    expect(screen.getByText(INSERT_HERE)).toBeTruthy();
+  });
+
+  it("says nothing at the end of the list, where steps appear under the last row", () => {
+    continuedSession({ state: state({ editing: true, cursor: 4 }) });
+    renderPanel();
+    expect(screen.queryByText(INSERT_HERE)).toBe(null);
+  });
+
+  it("scrolls the arriving step into view", () => {
+    // The half of the fix jsdom CAN see. Without it the row that changed is
+    // off-screen at the top of the list while the view follows the bottom,
+    // which is indistinguishable from nothing having been recorded.
+    const scrolled: Element[] = [];
+    const spy = vi
+      .spyOn(Element.prototype, "scrollIntoView")
+      .mockImplementation(function (this: Element) {
+        scrolled.push(this);
+      });
+    try {
+      continuedSession({
+        liveSteps: [
+          step("s0", { type: "goto", url: "https://example.com" }),
+          step("new", { type: "click", locator: { k: "text", v: "Just captured" } }),
+          step("s1", { type: "click", locator: { k: "text", v: "One" } }),
+          step("s2", { type: "click", locator: { k: "text", v: "Two" } }),
+        ],
+        lastAddedStepId: "new",
+      });
+      renderPanel();
+      expect(
+        scrolled.some((el) => el.getAttribute("data-just-added") === "true"),
+        "the arriving row scrolled itself into view",
+      ).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("scrolls nothing when no step has arrived", () => {
+    const spy = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(() => {});
+    try {
+      continuedSession({ lastAddedStepId: null });
+      renderPanel();
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+// ── The panel wears the app's theme ────────────────────────────────────────
+//
+// This window was the last surface in the app still drawn in the component
+// library's stock classes — `bg-background`, `border-separator`, `bg-accent/5`,
+// the SDK's `Status` and `Badge` — while every screen it mirrors had moved to
+// the `--gl-*` theme layer. That is not a cosmetic gap: the panel docks EDGE TO
+// EDGE with the main window's trainer, so the two were rendering the same live
+// session in two different designs, one hairline apart.
+//
+// `check:renderer-classes` proves a `gl-*` class RESOLVES to CSS; it cannot
+// know whether this view uses one. Nothing else would notice the stock classes
+// coming back, because they resolve too — they just belong to the other design.
+describe("theme", () => {
+  /** Class names from the pre-reskin surface. Each one still emits valid CSS,
+   *  which is exactly why their return would be silent. */
+  const STOCK = ["bg-background", "border-separator", "bg-accent/5", "text-accent"];
+
+  function classSoup(): string {
+    return [...document.querySelectorAll<HTMLElement>("[class]")]
+      .map((el) => el.getAttribute("class") ?? "")
+      .join(" ");
+  }
+
+  it("draws its own chrome from the theme layer", () => {
+    setStore();
+    renderPanel();
+    // The frame: root, header, URL band, list, tool row, footer. Asserted as a
+    // set rather than one at a time — a panel missing its footer rule is a
+    // panel whose Save button has no separator, which reads as a rendering bug.
+    for (const cls of [
+      "gl-panelwin",
+      "gl-panelwin-head",
+      "gl-panelwin-url",
+      "gl-panelwin-list",
+      "gl-panelwin-tools",
+      "gl-panelwin-foot",
+    ]) {
+      expect(document.querySelector(`.${cls}`), `${cls} is rendered`).not.toBeNull();
+    }
+  });
+
+  it("uses none of the stock classes it was built from", () => {
+    setStore();
+    renderPanel();
+    const soup = classSoup();
+    for (const cls of STOCK) {
+      expect(soup.split(/\s+/), `${cls} came back`).not.toContain(cls);
+    }
+  });
+
+  it("keeps the status chip neutral rather than reusing the failed-run colour", () => {
+    // "Recording" was the SDK's `error` variant — i.e. RED, the colour this
+    // palette spends on a failed run — on a surface where nothing has run. The
+    // main window's trainer was corrected for this; the panel is docked beside
+    // it, so it has to agree or red means two things at once on one screen.
+    setStore();
+    renderPanel();
+    const chip = document.querySelector('[data-gl="status-chip"], .gl-status-chip');
+    expect(chip, "a status chip is rendered").not.toBeNull();
+    expect(chip?.className).not.toMatch(/destructive|error|danger/);
   });
 });

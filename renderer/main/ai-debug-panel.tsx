@@ -32,13 +32,20 @@ import {
   type LogRequest,
   type LogRequestNeed,
 } from "../lib/ai-log-request";
+import { DiffView } from "../components/diff-view";
 import { diffLines, diffSummary, type DiffLine } from "../lib/line-diff";
 import { friendlyError } from "../lib/llm-errors";
 import type { LlmMessage, LlmModel } from "../lib/llm-types";
-import { buildDebugMessages, buildStepDebugMessages } from "../lib/llm-prompts";
+import {
+  buildDebugMessages,
+  buildStepDebugMessages,
+  describeSending,
+  sendingTotalChars,
+} from "../lib/llm-prompts";
 import { extractCorrectedScript, parseResponse } from "../lib/parse-llm-response";
 import type { AiDebugStatus } from "../lib/recorder-types";
 import { useDisabledEnhancements } from "../lib/use-disabled-enhancements";
+import { Btn } from "../theme";
 import { useAiDebug, useAiDebugContent } from "./ai-debug-store";
 
 // Common failure reasons a user can toggle into the "additional context" box
@@ -154,39 +161,11 @@ export function CodeBlock({ lang, content }: { lang: string; content: string }) 
     <div className="my-1 overflow-hidden rounded-md border border-separator">
       <div className="flex items-center justify-between border-b border-separator bg-control-subtle px-3 py-1">
         <span className="text-small text-secondary">{lang || "code"}</span>
-        <Button iconOnly size="small" variant="transparent" onClick={copy} aria-label="Copy code" title="Copy code">
+        <button type="button" className="gl-icon-btn" onClick={copy} aria-label="Copy code" title="Copy code">
           {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </Button>
+        </button>
       </div>
-      <pre className="text-small-mono overflow-x-auto whitespace-pre-wrap break-words p-3 text-primary">{content}</pre>
-    </div>
-  );
-}
-
-// Renders a line-level diff between the current script and the AI's corrected
-// spec, shown in the "Apply to script" confirm so the user can review exactly
-// what changes before overwriting the file. Equal lines are dimmed; removed
-// lines (current) get a red tint; added lines (corrected) get a green tint.
-function DiffView({ diff }: { diff: DiffLine[] }) {
-  return (
-    <div className="text-small-mono overflow-auto rounded-md border border-separator">
-      <div className="min-w-max">
-        {diff.map((d, i) => {
-          const sign = d.type === "add" ? "+" : d.type === "remove" ? "-" : " ";
-          const cls =
-            d.type === "add"
-              ? "bg-[var(--color-positive-subtle,rgba(46,196,87,0.12))] text-primary"
-              : d.type === "remove"
-                ? "bg-[var(--color-negative-subtle,rgba(229,72,77,0.12))] text-primary"
-                : "text-secondary";
-          return (
-            <div key={i} className={`whitespace-pre px-2 py-px ${cls}`}>
-              <span className="select-none opacity-60">{sign} </span>
-              {d.text}
-            </div>
-          );
-        })}
-      </div>
+      <pre className="gl-console">{content}</pre>
     </div>
   );
 }
@@ -494,16 +473,12 @@ function dialogTitle(
 /** Follow-the-stream toggle, sitting with the other response controls. */
 function AutoScrollToggle({ on, onChange }: { on: boolean; onChange: (next: boolean) => void }) {
   return (
-    <Button
-      iconOnly
-      size="small"
-      variant={on ? "muted" : "transparent"}
-      onClick={() => onChange(!on)}
+    <button type="button" className="gl-icon-btn" onClick={() => onChange(!on)}
       aria-label={on ? "Auto-scroll on" : "Auto-scroll off"}
       title={on ? "Auto-scroll on — click to stop following" : "Auto-scroll off — click to follow"}
     >
       <ArrowDownToLine className={`size-3.5 ${on ? "" : "opacity-50"}`} />
-    </Button>
+    </button>
   );
 }
 
@@ -514,26 +489,18 @@ function SessionControls({ sessionKey }: { sessionKey: string }) {
   const { minimize, discard } = useAiDebug();
   return (
     <>
-      <Button
-        iconOnly
-        size="small"
-        variant="muted"
-        onClick={minimize}
+      <button type="button" className="gl-icon-btn" onClick={minimize}
         aria-label="Minimize"
         title="Minimize — the job keeps running"
       >
         <Minimize2 className="size-3.5" />
-      </Button>
-      <Button
-        iconOnly
-        size="small"
-        variant="transparent"
-        onClick={() => discard(sessionKey)}
+      </button>
+      <button type="button" className="gl-icon-btn" onClick={() => discard(sessionKey)}
         aria-label="Discard session"
         title="Discard — stops the job and forgets it"
       >
         <Trash2 className="size-3.5" />
-      </Button>
+      </button>
     </>
   );
 }
@@ -648,17 +615,17 @@ function LogRequestCard({
       ) : null}
 
       <div className="flex items-center justify-end gap-2">
-        <Button size="small" variant="muted" onClick={onDecline}>
+        <Btn onClick={onDecline}>
           Decline
-        </Button>
+        </Btn>
         {payload ? (
-          <Button size="small" variant="accent" onClick={onSend}>
+          <Btn tone="ai" onClick={onSend}>
             <Send className="size-3.5" /> Send this data
-          </Button>
+          </Btn>
         ) : (
-          <Button size="small" variant="glass" onClick={onFetch}>
+          <Btn onClick={onFetch}>
             Show me what it would send
-          </Button>
+          </Btn>
         )}
       </div>
     </div>
@@ -705,9 +672,9 @@ function CapacityNotice({
         would just wait.
       </Callout.Text>
       {decision.oldestStreamingKey ? (
-        <Button size="small" variant="muted" onClick={onStopOldest}>
+        <Btn onClick={onStopOldest}>
           Stop the oldest and send
-        </Button>
+        </Btn>
       ) : null}
     </Callout>
   );
@@ -789,6 +756,26 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
     [runCtx],
   );
 
+  // WHAT LEAVES THIS MACHINE, itemised. Derived from the same `runCtx` the
+  // prompt is built from, so it cannot describe a request the app no longer
+  // sends — see `describeSending`, and the drift test beside it.
+  const sending = React.useMemo(
+    () =>
+      runCtx
+        ? describeSending({
+            testName: runCtx.testName,
+            testUrl: runCtx.testUrl,
+            script: runCtx.script,
+            output: runCtx.output,
+            imported: runCtx.imported,
+            speed: runCtx.speed,
+            failedStepIndex: runCtx.failedStepIndex,
+            logsAvailable: runCtx.logsAvailable,
+          })
+        : [],
+    [runCtx],
+  );
+
   const send = React.useCallback(
     async (stopOldest?: boolean) => {
       if (!runCtx) return;
@@ -864,7 +851,18 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
   const applyScript = async () => {
     if (!correctedScript || !runCtx?.onApplyScript) return;
     try {
-      await runCtx.onApplyScript(correctedScript);
+      // `reviewed: true`: this button is only reachable behind the diff, so the
+      // user has read what it overwrites. That is what files the resulting
+      // journal entry as history rather than as something to review.
+      //
+      // The model comes from the SESSION, not from the picker — a follow-up can
+      // be sent to a different model than the one that wrote the fix being
+      // applied, and the label has to name the one that wrote it.
+      await runCtx.onApplyScript(correctedScript, {
+        by: "ai-debug",
+        model: session?.model ?? modelName ?? undefined,
+        reviewed: true,
+      });
       setDraft({ applied: true });
       toast.success("Applied the suggested fix to the script.");
     } catch (err) {
@@ -990,28 +988,20 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
         <span className="inline-flex items-center gap-2">
           {session?.testName ?? ""}
           {status === "streaming" ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="muted"
-              onClick={() => store.stopStream(sessionKey)}
+            <button type="button" className="gl-icon-btn" onClick={() => store.stopStream(sessionKey)}
               aria-label="Stop"
               title="Stop"
             >
               <Square className="size-3.5" />
-            </Button>
+            </button>
           ) : null}
           {!reviewing && status !== "streaming" && !readOnly ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="muted"
-              onClick={() => setDraft({ reviewing: true })}
+            <button type="button" className="gl-icon-btn" onClick={() => setDraft({ reviewing: true })}
               aria-label="Regenerate"
               title="Regenerate"
             >
               <RotateCcw className="size-3.5" />
-            </Button>
+            </button>
           ) : null}
           {!reviewing && correctedScript && runCtx?.onApplyScript ? (
             <Button size="small" variant="accent" disabled={draft.applied} onClick={applyScript}>
@@ -1019,16 +1009,12 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
             </Button>
           ) : null}
           {!reviewing && content ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="transparent"
-              onClick={copyResponse}
+            <button type="button" className="gl-icon-btn" onClick={copyResponse}
               aria-label="Copy response"
               title="Copy response"
             >
               {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-            </Button>
+            </button>
           ) : null}
           {!reviewing ? (
             <AutoScrollToggle
@@ -1072,6 +1058,43 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                 Review the prompt that will be sent to the model, then add any context you want and
                 confirm to send. Nothing is sent until you confirm.
               </Text>
+              {/* THE SENDING STRIP. A privacy affordance, which is why it ships
+                  with the reskin rather than waiting for Phase C (REDESIGN §B9):
+                  this button can send a script and a run's console output to a
+                  hosted provider, and until now the only way to know what left
+                  the machine was to read the prompt builder's source. A test
+                  script routinely carries staging hostnames, seeded credentials
+                  and customer-shaped fixture data.
+
+                  Above the prompt preview, not below it — the preview is long,
+                  and a disclosure the user reaches by scrolling past the thing
+                  it is about is one most people never see. Same reasoning as
+                  `risk` on a settings row. */}
+              {sending.length > 0 ? (
+                <div className="gl-sending" data-gl="sending">
+                  <span className="gl-section-title">Sending</span>
+                  <ul className="gl-sending-list">
+                    {sending.map((item) => (
+                      <li key={item.label} className="gl-sending-item">
+                        <span>{item.label}</span>
+                        {item.chars !== null ? (
+                          <span className="gl-sending-size">
+                            {item.chars.toLocaleString()} chars
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {/* Characters, not tokens. A token count is a guess dressed as
+                      a measurement — it depends on the tokenizer, which depends
+                      on the provider — and the question here is "how much of my
+                      stuff", for which characters are honest. */}
+                  <p className="gl-sending-total">
+                    {sendingTotalChars(sending).toLocaleString()} characters in total, to the
+                    provider configured in Settings.
+                  </p>
+                </div>
+              ) : null}
               <div className="flex flex-wrap items-center gap-1.5">
                 {QUICK_CONTEXT_REASONS.map((reason) => {
                   const active = isReasonActive(draft.additionalContext, reason);
@@ -1102,12 +1125,14 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                 />
               </Field>
               <div className="flex items-center justify-end gap-2">
-                <Button size="small" variant="muted" onClick={store.minimize}>
-                  Cancel
-                </Button>
-                <Button size="small" variant="accent" onClick={() => void send()}>
+                <Btn onClick={store.minimize}>Cancel</Btn>
+                {/* `ai`, the holo border — AI is not an outcome, so it takes a
+                    TREATMENT rather than a colour. It is also the button that
+                    actually sends the payload the strip above just itemised,
+                    which is the moment worth marking. */}
+                <Btn tone="ai" onClick={() => void send()}>
                   <Send className="size-3.5" /> Send to AI
-                </Button>
+                </Btn>
               </div>
               <ScrollArea
                 className="max-h-[56vh] flex-1 min-h-0 rounded-md border border-separator"
@@ -1119,7 +1144,7 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
                       <Text variant="small-strong" color="secondary">
                         {m.role === "system" ? "System prompt" : m.role === "user" ? "User prompt" : "Assistant"}
                       </Text>
-                      <pre className="text-small-mono overflow-x-auto whitespace-pre-wrap break-words rounded-md bg-control-subtle p-2 text-primary">
+                      <pre className="gl-console">
                         {m.content}
                       </pre>
                     </div>
@@ -1344,40 +1369,28 @@ export function StepAiDebugDialog({ sessionKey }: { sessionKey: string }) {
         <span className="inline-flex items-center gap-2">
           {session?.label ?? "Step"}
           {status === "streaming" ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="muted"
-              onClick={() => store.stopStream(sessionKey)}
+            <button type="button" className="gl-icon-btn" onClick={() => store.stopStream(sessionKey)}
               aria-label="Stop"
               title="Stop"
             >
               <Square className="size-3.5" />
-            </Button>
+            </button>
           ) : null}
           {status !== "streaming" && !readOnly ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="muted"
-              onClick={() => void runDiagnosis()}
+            <button type="button" className="gl-icon-btn" onClick={() => void runDiagnosis()}
               aria-label="Regenerate"
               title="Regenerate"
             >
               <RotateCcw className="size-3.5" />
-            </Button>
+            </button>
           ) : null}
           {content ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="transparent"
-              onClick={copyResponse}
+            <button type="button" className="gl-icon-btn" onClick={copyResponse}
               aria-label="Copy response"
               title="Copy response"
             >
               {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-            </Button>
+            </button>
           ) : null}
           <AutoScrollToggle on={autoScroll} onChange={setAutoScroll} />
           <SessionControls sessionKey={sessionKey} />

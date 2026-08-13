@@ -12,6 +12,7 @@ import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
 import type {
   DebugCaptureSession,
   AssertKind,
+  BatchState,
   ContextAction,
   DebugEntry,
   DebugLogLine,
@@ -72,6 +73,14 @@ export interface RunInfo {
    *  where recordId only arrives at the end — so anything keyed on "which run
    *  is this" is stable for the whole run instead of changing under it. */
   startedAt: number;
+  /** When it ENDED. Undefined while running.
+   *
+   *  Added for §6.8's ticker, which holds a failure in the strip for a few
+   *  seconds after the fact. Measuring that hold from `startedAt` expires a run
+   *  that took longer than the window before it has even finished — which kills
+   *  the one notice the ticker exists to give, a long run that failed while the
+   *  user was on another screen. */
+  finishedAt?: number;
 }
 
 const EMPTY_STATE: RecorderState = {
@@ -81,6 +90,7 @@ const EMPTY_STATE: RecorderState = {
   stepCount: 0,
   testId: null,
   url: null,
+  liveUrl: null,
   name: null,
   editing: false,
   assertSoft: false,
@@ -105,7 +115,28 @@ interface RecorderContextValue {
    *  rows can glow. Empty for steps the user added by hand: they know what they
    *  just typed, and highlighting it would be noise. */
   newStepIds: Set<string>;
+  /**
+   * The id of the step that most recently ARRIVED in the list, whatever put it
+   * there — a click captured in the training browser, an Add step, an AI batch.
+   *
+   * Distinct from `newStepIds`, which is a claim about PROVENANCE ("the AI put
+   * this here") and holds until the list changes again. This is a claim about
+   * RECENCY, and it exists because of where a captured step lands: the insert
+   * cursor sits where the browser is, so continuing an existing test writes new
+   * steps into the MIDDLE of the list while both trainers auto-scroll to the
+   * bottom. The row that changed was off-screen and unhighlighted, which is
+   * indistinguishable from the trainer having recorded nothing at all.
+   *
+   * Null until a step actually arrives — the initial list of a session is not
+   * "steps being added", it is the test showing up, and pointing at its last
+   * row would be a lie on every session open.
+   */
+  lastAddedStepId: string | null;
   runs: Record<string, RunInfo>;
+  /** The batch running right now, or null. NOT "the batch being displayed" —
+   *  see the state's own note. Owned here so every screen can see it, which is
+   *  what §6.8's ticker needs and what `batch-view` alone could not give. */
+  liveBatch: BatchState | null;
   /** `viewport` is the New Recording dialog's window-size preset; omitted (or
    *  null) keeps the trainer's default window size. Ignored when `testId` names
    *  an existing test — that session opens at the size the test recorded. */
@@ -215,6 +246,27 @@ export function RecorderProvider({
   const [liveSteps, setLiveSteps] = React.useState<Step[]>([]);
   const [stepsLoaded, setStepsLoaded] = React.useState(false);
   const [newStepIds, setNewStepIds] = React.useState<Set<string>>(() => new Set());
+  const [lastAddedStepId, setLastAddedStepId] = React.useState<string | null>(null);
+  // The list as the LAST push left it, for spotting what arrived in the next
+  // one. Its own ref rather than `liveStepsRef` below: that one is written
+  // during render, so two pushes landing between renders would both diff
+  // against the same stale list and the second arrival would go unnoticed.
+  // `null` means "no list yet this session", which is not the same as `[]`.
+  const prevStepsRef = React.useRef<Step[] | null>(null);
+  /** Record a freshly received list and point at whatever is new in it. */
+  const receiveSteps = React.useCallback((next: Step[]) => {
+    const prev = prevStepsRef.current;
+    prevStepsRef.current = next;
+    setLiveSteps(next);
+    setStepsLoaded(true);
+    if (!prev) return;
+    // Ids are the right key HERE (unlike diff-steps, which cannot use them):
+    // these lists come from one session's own in-memory steps, where an id is
+    // minted once and never re-parsed.
+    const had = new Set(prev.map((s) => s.id));
+    const added = next.filter((s) => !had.has(s.id));
+    if (added.length > 0) setLastAddedStepId(added[added.length - 1].id);
+  }, []);
   const [runEpoch, setRunEpoch] = React.useState(0);
   // Mirror of liveSteps for the callbacks below. They are created once (empty
   // dep arrays, so the trainer's props don't rebuild on every captured step),
@@ -227,6 +279,17 @@ export function RecorderProvider({
   const [contextAction, setContextAction] = React.useState<ContextAction | null>(null);
   const [debugEntries, setDebugEntries] = React.useState<DebugEntry[]>([]);
   const [runs, setRuns] = React.useState<Record<string, RunInfo>>({});
+  // THE LIVE BATCH, OWNED HERE FOR THE SAME REASON `runs:changed` IS. Batch
+  // progress arrived only on `batch:progress`, and the only subscriber was
+  // `batch-view` — a ROUTE component. On any other screen nothing was
+  // listening, so a batch you started and walked away from was invisible from
+  // everywhere except the one page you had left.
+  //
+  // Distinct from the batch VIEW's own `batch` state, which is "the record I am
+  // displaying" and can be a historical one the user picked out of the list.
+  // Those are two different questions that happened to share a variable; this
+  // is only ever "what is running now".
+  const [liveBatch, setLiveBatch] = React.useState<BatchState | null>(null);
   // Per-step status for an in-flight trainer replayAll (auto-run on Edit in
   // Trainer), keyed by step index. Cleared when a new run starts.
   const [replayStepStatus, setReplayStepStatus] = React.useState<Record<number, RunStepStatus>>({});
@@ -262,10 +325,7 @@ export function RecorderProvider({
     const offState = api.on<RecorderState>("recorder:state", (s) => setState(s));
     // The backend now owns step ordering (insert/reorder/edit), so it broadcasts
     // the whole list after every change and we replace our copy.
-    const offSteps = api.on<Step[]>("recorder:steps", (steps) => {
-      setLiveSteps(steps ?? []);
-      setStepsLoaded(true);
-    });
+    const offSteps = api.on<Step[]>("recorder:steps", (steps) => receiveSteps(steps ?? []));
     const offPicked = api.on<PickedElement>("recorder:picked", (p) => setPicked(p));
     // The debug-screenshot shortcut fires with no visible effect otherwise —
     // you press a key and nothing happens, which is indistinguishable from the
@@ -300,6 +360,8 @@ export function RecorderProvider({
     const offFinished = api.on<{ testId: string }>("recorder:finished", ({ testId }) => {
       setLiveSteps([]);
       setStepsLoaded(false);
+      prevStepsRef.current = null;
+      setLastAddedStepId(null);
       finishedRef.current?.(testId);
     });
     const offOut = api.on<{ runId: string; chunk: string }>("runner:output", ({ runId, chunk }) => {
@@ -330,7 +392,7 @@ export function RecorderProvider({
       ({ runId, code, recordId }) => {
         setRuns((prev) => {
           const cur = prev[runId] ?? { lines: [], running: false, code, stepStatus: {}, startedAt: Date.now() };
-          return { ...prev, [runId]: { ...cur, running: false, code, recordId } };
+          return { ...prev, [runId]: { ...cur, running: false, code, recordId, finishedAt: Date.now() } };
         });
       },
     );
@@ -345,6 +407,27 @@ export function RecorderProvider({
     // provider that is mounted for the whole session instead.
     const offRunsChanged = api.on("runs:changed", () => {
       void qc.invalidateQueries({ queryKey: ["runs"] });
+    });
+    // A batch already running when this window opened. `batch:progress` fires
+    // on every test transition so it would self-seed within seconds, but "the
+    // ticker is blank until the next test finishes" is a blank ticker during
+    // exactly the long test somebody wanted to know about.
+    void api.batch
+      .status()
+      .then((s) => setLiveBatch(s ?? null))
+      .catch(() => {});
+    const offBatchProgress = api.on("batch:progress", (payload) => {
+      setLiveBatch(payload as BatchState);
+    });
+    const offBatchDone = api.on("batch:done", (payload) => {
+      setLiveBatch(payload as BatchState);
+      // Every member wrote its own RunRecord, so history and the sidebar's
+      // status dots are stale. This used to live in `batch-view`, where it only
+      // fired if you happened to be looking at it — the same shape of bug as
+      // the one `runs:changed` above was moved here to fix.
+      void qc.invalidateQueries({ queryKey: ["runs"] });
+      void qc.invalidateQueries({ queryKey: ["captureOverhead"] });
+      void qc.invalidateQueries({ queryKey: ["batch-history"] });
     });
     const offDebug = api.on<{ testId: string; entries: DebugEntry[] }>(
       "recorder:debugLogs",
@@ -449,10 +532,7 @@ export function RecorderProvider({
     // until the user happened to mutate something.
     api.recorder
       .getSteps()
-      .then((steps) => {
-        setLiveSteps(steps ?? []);
-        setStepsLoaded(true);
-      })
+      .then((steps) => receiveSteps(steps ?? []))
       .catch(() => {});
 
     return () => {
@@ -467,6 +547,8 @@ export function RecorderProvider({
       offStep();
       offDone();
       offRunsChanged();
+      offBatchProgress();
+      offBatchDone();
       offDebug();
       offReplayStep();
       offReplayLog();
@@ -496,6 +578,8 @@ export function RecorderProvider({
       setLiveSteps([]);
       // A new session's list has nothing to do with the last one's highlight.
       setNewStepIds(new Set());
+      setLastAddedStepId(null);
+      prevStepsRef.current = null;
       await api.recorder.start(url, name, testId, viewport);
     },
     [],
@@ -560,12 +644,11 @@ export function RecorderProvider({
     // early it would mark only the first of the inserted steps.
     const after = await api.recorder.getSteps().catch(() => null);
     if (!after) return;
-    setLiveSteps(after);
-    setStepsLoaded(true);
+    receiveSteps(after);
     // Normalization backend-side can drop a step the model produced, so this
     // diffs what actually landed instead of assuming all of `steps` did.
     setNewStepIds(computeNewStepIds(before, after));
-  }, []);
+  }, [receiveSteps]);
   const applyHeal = React.useCallback(
     (stepId: string, locator: Locator) => void api.recorder.applyHeal(stepId, locator),
     [],
@@ -660,7 +743,9 @@ export function RecorderProvider({
     liveSteps,
     stepsLoaded,
     newStepIds,
+    lastAddedStepId,
     runs,
+    liveBatch,
     start,
     pause,
     resume,

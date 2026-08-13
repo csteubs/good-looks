@@ -29,10 +29,14 @@
 // you most want to look at it.
 
 import {
+  BATCHES,
+  ROUTINES,
   HEALS,
+  SCRIPT_CHANGES,
   LLM_CONFIG,
   LLM_STATUS,
   REPLAY,
+  REPLAY_HISTORY,
   REPLAY_SUMMARIES,
   RUNS,
   RUN_LOG,
@@ -47,14 +51,18 @@ import {
 // hard as no answer at all, and is far less obvious in review.
 import type {
   ArtifactUsage,
+  BaselineEntry,
   BatchRecord,
+  Routine,
   BatchState,
+  EmitResult,
   CaptureOverheadSummary,
   FlakeReport,
   RecorderState,
   RunLogs,
   StepStructure,
   RunRecord,
+  RunNoticeKind,
   RunReplay,
   RunReplaySummary,
   SecretStatus,
@@ -63,8 +71,23 @@ import type {
 } from "../lib/recorder-types";
 import type { LlmConfig, LlmModel, LlmProviderStatus } from "../lib/llm-types";
 import type { BranchStatus } from "../lib/branch-types";
+import type {
+  ConnectionStatus,
+  CreatedIssue,
+  IssueContainer,
+  IssueDefaults,
+  IssueDraft,
+  IssueLabel,
+  IssueLink,
+  IssueSubContainer,
+  ProviderVocabulary,
+} from "../lib/issue-types";
 import type { TriageResult } from "../../shared/triage.mjs";
-import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
+import type {
+  StepDurationRow,
+  StepHealthRow,
+  TestDurationTrend,
+} from "../../shared/metrics-query.mjs";
 import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
 
 /** api.ts passes ONE options object per call — `invoke("tests:get", { id })`,
@@ -89,7 +112,72 @@ export interface PreviewDiagnostics {
  *  this module is never bundled into the app (see the header, and the
  *  deliberate `preview.html` filename). */
 function recorderPreview(): boolean {
-  return new URLSearchParams(window.location.search).get("view") === "recorder";
+  const view = new URLSearchParams(window.location.search).get("view");
+  // `trainer-panel` is here because it is the same LIVE SESSION seen from the
+  // docked window — it runs the same store, and without a session in flight it
+  // renders its "Loading…" state forever, which is not the screen anyone opened
+  // it to look at.
+  return view === "recorder" || view === "recorder-editing" || view === "trainer-panel";
+}
+
+/** `?view=recorder-editing` — a session CONTINUING an existing test.
+ *
+ *  Its own address because it is a different screen in the ways that matter,
+ *  and none of them are reachable from `?view=recorder`: the insert cursor
+ *  opens just past the navigation rather than at the end, so the step list
+ *  carries the labelled cursor mid-list and the footer offers "Save Test"
+ *  instead of "Generate Test". That is the state the trainer is in whenever
+ *  anyone re-trains a test, and it had no address at all. */
+function editingPreview(): boolean {
+  return new URLSearchParams(window.location.search).get("view") === "recorder-editing";
+}
+
+/** Where the insert cursor sits in the preview's session — mirroring
+ *  `initialCursor`: the end of the list for a new recording, just past the
+ *  `goto` for one continuing an existing test. */
+function previewCursor(): number {
+  const steps = TESTS[0].steps;
+  if (!editingPreview()) return steps.length;
+  const nav = steps.findIndex((s) => s.type === "goto");
+  return nav === -1 ? Math.min(1, steps.length) : Math.min(nav + 1, steps.length);
+}
+
+/**
+ * Runs for tests that are not in the library, so Stats → Cost reaches page two.
+ *
+ * The hand-written fixtures cover three tests, and the spend table pages at 25 —
+ * so without these the pager renders not at all, which is the state that panel
+ * is least likely to be broken in. Same reasoning, and the same shape, as the
+ * 58 filler rows the step-health fixture already carries.
+ *
+ * THEY ARE RUNS OF DELETED TESTS as far as the library is concerned, which is
+ * deliberate: the Cost table names a test from the run record itself, so these
+ * render correctly there, while nothing in the sidebar or the test list gains a
+ * row it cannot open. `testDeleted` is left FALSE because the cost model filters
+ * those out — these are meant to be counted.
+ */
+function costFiller(): RunRecord[] {
+  const day = 86_400_000;
+  return Array.from({ length: 30 }, (_, i): RunRecord => {
+    const startedAt = Date.now() - (i + 2) * day;
+    // Descending duration, so the table's "dearest first" order is legible and
+    // page two is visibly the cheap tail rather than an arbitrary cut.
+    const durationMs = (40 - i) * 4_000;
+    const failed = i % 9 === 0;
+    return {
+      id: `r-cost-${i}`,
+      testId: `t-cost-${i}`,
+      testName: `Suite check ${String(i + 1).padStart(2, "0")}`,
+      url: "https://example.com",
+      status: failed ? "failed" : "passed",
+      exitCode: failed ? 1 : 0,
+      startedAt,
+      finishedAt: startedAt + durationMs,
+      durationMs,
+      logFile: "/preview/runs/cost.log",
+      logBytes: 2_048,
+    };
+  });
 }
 
 /** Mutable copies, so the preview behaves like an app with state: renaming a
@@ -98,15 +186,42 @@ function recorderPreview(): boolean {
 function seed() {
   return {
     tests: structuredClone(TESTS),
-    runs: structuredClone(RUNS),
+    runs: [...structuredClone(RUNS), ...costFiller()],
     heals: structuredClone(HEALS),
+    scriptChanges: structuredClone(SCRIPT_CHANGES),
+    // Edited in place, so a save made in the preview STICKS for the session — a
+    // bridge that forgot every save would make the Routine editor look broken
+    // in the one place a person can actually drive it.
+    routines: structuredClone(ROUTINES),
     settings: structuredClone(SETTINGS),
     llmConfig: structuredClone(LLM_CONFIG),
+    // Starts DISCONNECTED, so the preview opens on the state that actually
+    // needs looking at: the empty pane someone sees before they have a key.
+    // Connecting works and persists for the session, so both halves of the
+    // Integrations pane are reachable in a tab.
+    issues: {
+      connected: false,
+      error: null as string | null,
+      defaults: { containerId: null as string | null, subContainerId: null as string | null },
+      // Grows as issues are filed, so the recurrence branch is reachable in a tab:
+      // send the same defect twice and the second opens on "already filed".
+      links: [] as IssueLink[],
+    },
   };
 }
 
 function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> {
   const findTest = (id: unknown) => state.tests.find((t) => t.id === id) ?? null;
+
+  /** One place the connection state is shaped, since four handlers return it. */
+  const issuesStatus = (): ConnectionStatus => ({
+    provider: "linear",
+    hasKey: state.issues.connected,
+    account: state.issues.connected
+      ? { accountName: "Sam Rivera", workspaceName: "Northwind" }
+      : null,
+    error: state.issues.error,
+  });
 
   /** One step-health row per fixture test, so the panel has something to sort.
    *  The checkout step is the interesting one: it fails sometimes AND heals. */
@@ -198,8 +313,8 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     },
     {
       stepId: "s2",
-      label: "goto shop.example.com",
-      type: "goto",
+      label: "click Add to cart",
+      type: "click",
       testId: "t-checkout",
       testName: "Checkout — happy path",
       recentRuns: 12,
@@ -292,6 +407,14 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "tests:updateSteps": (p) => {
       const test = findTest(p?.id);
       if (test && Array.isArray(p?.steps)) test.steps = p.steps as typeof test.steps;
+      return test;
+    },
+    /** The divergence banner's dismiss control. Mutates the fixture in place so
+     *  the preview shows what the app does — the banner goes and stays gone —
+     *  rather than a click that appears to do nothing. */
+    "tests:dismissDiverged": (p) => {
+      const test = findTest(p?.id);
+      if (test) test.stepsDivergedDismissed = p?.dismissed === false ? undefined : true;
       return test;
     },
     "tests:setTags": (p) => {
@@ -430,14 +553,39 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       available: true,
       rows: stepHealthRows(),
     }),
-    "metrics:slowness": (): {
+    "metrics:slowness": (params?: {
+      testId?: string;
+    }): {
       available: boolean;
       rows: StepDurationRow[];
       slowed: StepDurationRow[];
       cost: CostBreakdown;
+      testTrend: TestDurationTrend | null;
     } => {
       const rows = durationRows();
-      return { available: true, rows, slowed: rows.filter((r) => (r.changeRatio ?? 1) > 1.5), cost: cost() };
+      return {
+        available: true,
+        rows,
+        slowed: rows.filter((r) => (r.changeRatio ?? 1) > 1.5),
+        cost: cost(),
+        // Only when a test was named, exactly as the handler does (C §6.3).
+        // A fixture that answered for the suite-wide call too would let the
+        // run summary read a median that the real app never gives it.
+        testTrend: params?.testId
+          ? {
+              testId: params.testId,
+              window: 10,
+              recentRuns: 8,
+              previousRuns: 6,
+              // Slightly above the run summary's own history median (11,900),
+              // so the preview shows the two sources being different and the
+              // metrics one winning.
+              recentP50Ms: 11_400,
+              previousP50Ms: 10_800,
+              changeRatio: 11_400 / 10_800,
+            }
+          : null,
+      };
     },
     "metrics:divergence": (): { available: boolean; steps: DivergentStep[] } => ({
       available: true,
@@ -462,8 +610,12 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     // preview that cannot run Playwright, and it also meant the largest file in
     // the renderer only ever rendered its empty state — see REPLAY.
     "artifacts:list": (): RunReplaySummary[] => REPLAY_SUMMARIES,
+    // The history matters as much as the current run: the drift strip (§6.6) is
+    // a statement about a SERIES, and a bridge that answers for one run leaves
+    // it rendering nothing.
     "artifacts:getReplay": (p): RunReplay | null =>
-      p?.testId === REPLAY.testId && p?.runId === REPLAY.runId ? REPLAY : null,
+      [REPLAY, ...REPLAY_HISTORY].find((r) => r.testId === p?.testId && r.runId === p?.runId) ??
+      null,
     /** The frames. `readShot` is asked for the CURRENT or the DIFF image and
      *  told which by filename, so the two are told apart on `.diff.` rather
      *  than by guessing from the step — a viewer showing the current frame in
@@ -472,6 +624,62 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       typeof p?.file === "string" && p.file.includes(".diff.")
         ? VISUAL_FRAMES.diff
         : VISUAL_FRAMES.current,
+    /** Accepting, as opposed to dismissing. Patching the replay the way the
+     *  backend does is what makes the two visibly different in the preview: an
+     *  accept clears the FINDINGS (the diffs become matches, the violations
+     *  become accepted) and the banner goes because there is nothing left to
+     *  report; a dismiss leaves every finding on the steps. */
+    "visual:acceptRun": (): RunReplay => {
+      for (const step of REPLAY.steps) {
+        if (!step.screenshot) continue;
+        step.diff = { state: "match", ratio: 0, threshold: REPLAY.visualThreshold };
+      }
+      return REPLAY;
+    },
+    "visual:acceptStep": (p): RunReplay => {
+      const step = REPLAY.steps.find((s) => s.stepId === p?.stepId);
+      if (step?.screenshot) {
+        step.diff = { state: "match", ratio: 0, threshold: REPLAY.visualThreshold };
+      }
+      return REPLAY;
+    },
+    "a11y:acceptRun": (): RunReplay => {
+      for (const step of REPLAY.steps) {
+        if (!step.a11y) continue;
+        step.a11y = {
+          violations: step.a11y.violations,
+          newKeys: [],
+          acceptedCount: step.a11y.newKeys.length + step.a11y.acceptedCount,
+        };
+      }
+      return REPLAY;
+    },
+    "a11y:acceptStep": (p): RunReplay => {
+      const step = REPLAY.steps.find((s) => s.stepId === p?.stepId);
+      if (step?.a11y) {
+        step.a11y = {
+          violations: step.a11y.violations,
+          newKeys: [],
+          acceptedCount: step.a11y.newKeys.length + step.a11y.acceptedCount,
+        };
+      }
+      return REPLAY;
+    },
+    /** Dismissing a findings banner. Mutates REPLAY so the banner stays gone
+     *  across run selection — which is the whole difference between this and a
+     *  local flag, and therefore the thing the preview has to reproduce. */
+    "artifacts:dismissNotice": (p): RunReplay => {
+      const kind: RunNoticeKind | null =
+        p?.kind === "visual" || p?.kind === "a11y" ? p.kind : null;
+      if (kind) {
+        REPLAY.dismissedNotices = [...new Set<RunNoticeKind>([...(REPLAY.dismissedNotices ?? []), kind])];
+      }
+      return REPLAY;
+    },
+    "artifacts:restoreNotice": (p): RunReplay => {
+      REPLAY.dismissedNotices = (REPLAY.dismissedNotices ?? []).filter((k) => k !== p?.kind);
+      return REPLAY;
+    },
     "visual:baselineShot": (): string => VISUAL_FRAMES.baseline,
     /** `RunLogs`, not a line array: the panel reads `console` and `network`
      *  separately and reports what was dropped. */
@@ -579,6 +787,43 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "heals:listAll": () => state.heals,
     "heals:pending": () => state.heals.filter((h) => h.status === "pending"),
 
+    // ── Script changes ───────────────────────────────────────────────────
+    //
+    // Keep and Revert mutate the fixture rather than returning a value and
+    // leaving the row as it was: the whole point of these two buttons is that
+    // the row settles, and a preview where clicking Keep does nothing visible
+    // teaches the opposite of what the app does.
+    "scriptChanges:list": () => state.scriptChanges,
+    "scriptChanges:listAll": () => state.scriptChanges,
+    "scriptChanges:pending": () => state.scriptChanges.filter((c) => c.status === "pending"),
+    "scriptChanges:accept": (p) => {
+      const entry = state.scriptChanges.find((c) => c.id === p?.id);
+      if (entry) entry.status = "accepted";
+      return entry ?? null;
+    },
+    "scriptChanges:revert": (p) => {
+      const entry = state.scriptChanges.find((c) => c.id === p?.id);
+      if (entry) entry.status = "reverted";
+      return entry ?? null;
+    },
+    "scriptChanges:remove": (p) => {
+      const before = state.scriptChanges.length;
+      state.scriptChanges = state.scriptChanges.filter((c) => c.id !== p?.id);
+      return { removed: before - state.scriptChanges.length };
+    },
+    "scriptChanges:clearSettled": (p) => {
+      const before = state.scriptChanges.length;
+      state.scriptChanges = state.scriptChanges.filter(
+        (c) => c.testId !== p?.testId || c.status === "pending",
+      );
+      return { removed: before - state.scriptChanges.length };
+    },
+    "scriptChanges:clearAllSettled": () => {
+      const before = state.scriptChanges.length;
+      state.scriptChanges = state.scriptChanges.filter((c) => c.status === "pending");
+      return { removed: before - state.scriptChanges.length };
+    },
+
     // ── Settings and providers ───────────────────────────────────────────
     "recorder:getSettings": () => state.settings,
     "recorder:setSettings": (p) => {
@@ -600,6 +845,147 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "llm:hasLmStudioToken": () => ({ hasToken: false }),
     "llm:isActive": () => ({ active: false }),
     "alerts:status": () => ({ hasUrl: false, host: null }),
+
+    // ── Issue tracker ────────────────────────────────────────────────────
+    // Enough behaviour to exercise the pane's two states in a tab: a key that
+    // is empty is refused the way the real backend refuses it, and anything
+    // else connects. A preview cannot reach Linear, so "verify" is local — the
+    // thing being previewed is the pane, not the network.
+    "issues:status": (): ConnectionStatus => issuesStatus(),
+    "issues:vocabulary": (): ProviderVocabulary => ({
+      name: "Linear",
+      container: "Team",
+      subContainer: "Project",
+      keyHelpUrl: "https://linear.app/settings/api",
+      keyPlaceholder: "lin_api_…",
+    }),
+    "issues:connect": (p): ConnectionStatus => {
+      const key = typeof p?.key === "string" ? p.key.trim() : "";
+      state.issues.connected = key.length > 0;
+      state.issues.error = key.length > 0 ? null : "Linear API key is empty.";
+      return issuesStatus();
+    },
+    "issues:verify": (): ConnectionStatus => issuesStatus(),
+    "issues:disconnect": (): ConnectionStatus => {
+      state.issues.connected = false;
+      state.issues.error = null;
+      state.issues.defaults = { containerId: null, subContainerId: null };
+      return issuesStatus();
+    },
+    "issues:listContainers": (): IssueContainer[] => [
+      { id: "team-eng", name: "Engineering", key: "ENG" },
+      { id: "team-design", name: "Design", key: "DES" },
+      { id: "team-web", name: "Web Platform", key: "WEB" },
+    ],
+    "issues:listSubContainers": (): IssueSubContainer[] => [
+      { id: "proj-checkout", name: "Checkout revamp", containerId: "team-eng" },
+      { id: "proj-a11y", name: "Accessibility debt", containerId: null },
+      { id: "proj-design-sys", name: "Design system", containerId: "team-design" },
+    ],
+    "issues:listLabels": (): IssueLabel[] => [
+      { id: "lbl-bug", name: "Bug", color: "#ff4d61" },
+      { id: "lbl-a11y", name: "Accessibility", color: "#35e0ff" },
+      { id: "lbl-visual", name: "Visual", color: "#b98cff" },
+    ],
+    /** A draft shaped like the real one, so the compose dialog can be looked at
+     *  in a tab. The attachments carry a 1×1 PNG rather than a real screenshot:
+     *  the strip's LAYOUT is the thing worth seeing here, and a fixture holding
+     *  a plausible-looking page would make the preview feel like it had data it
+     *  does not. */
+    "issues:buildDraft": (p): IssueDraft | null => {
+      const source = (p?.source ?? null) as IssueDraft["source"] | null;
+      if (!source) return null;
+      const png =
+        "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+      const visual = source.kind === "visual";
+      return {
+        source,
+        title:
+          source.kind === "a11y"
+            ? "a11y: color-contrast on Checkout — happy path"
+            : visual
+              ? "Visual change (3.1%) — Checkout — happy path · click Place order"
+              : "Checkout — happy path failed at click Place order — Timeout <ms> exceeded",
+        body: [
+          source.kind === "a11y"
+            ? "**serious** · `color-contrast`\n\nElements must meet minimum contrast ratio thresholds"
+            : visual
+              ? "**3.1% of pixels changed** on this step's screenshot."
+              : "**Failure**\n\n```\nTimeout <ms> exceeded\n```",
+          "",
+          "---",
+          "",
+          "- **Test:** Checkout — happy path",
+          "- **URL:** `https://shop.example.com/cart`",
+          "- **Step:** `click Place order`",
+          "",
+          "_Filed from Good Looks!_",
+        ].join("\n"),
+        attachments: visual
+          ? [
+              { label: "Baseline", file: "baseline:s5", previewUrl: png, bytes: 148_231 },
+              { label: "This run", file: "5.png", previewUrl: png, bytes: 151_004 },
+              { label: "Difference", file: "5.diff.png", previewUrl: png, bytes: 22_887 },
+            ]
+          : source.kind === "failure"
+            ? [{ label: "At failure", file: "5.png", previewUrl: png, bytes: 151_004 }]
+            : [],
+        notices: [],
+      };
+    },
+    "issues:createIssue": (p): CreatedIssue => {
+      const source = (p?.source ?? {}) as IssueLink;
+      const issue = {
+        id: `iss-${state.issues.links.length + 1}`,
+        identifier: `ENG-${42 + state.issues.links.length}`,
+        url: "https://linear.app/northwind/issue/ENG-42",
+      };
+      // Recorded, so the SECOND send of the same defect shows the recurrence
+      // branch — which is the half of this feature worth being able to look at.
+      state.issues.links.push({
+        provider: "linear",
+        testId: String(source.testId ?? ""),
+        stepId: String(source.stepId ?? ""),
+        runId: String((source as { runId?: string }).runId ?? ""),
+        kind: (source.kind ?? "visual") as IssueLink["kind"],
+        ruleId: String((source as { ruleId?: string }).ruleId ?? ""),
+        issueId: issue.id,
+        identifier: issue.identifier,
+        url: issue.url,
+        createdAt: 0,
+      });
+      return issue;
+    },
+    "issues:linksForTest": (p): IssueLink[] =>
+      state.issues.links.filter((l) => l.testId === p?.testId),
+    "issues:commentRecurrence": (p): IssueLink => {
+      const source = (p?.source ?? {}) as IssueLink;
+      const link = state.issues.links.find(
+        (l) => l.testId === source.testId && l.stepId === source.stepId && l.kind === source.kind,
+      );
+      if (!link) throw new Error("This defect has no issue to comment on.");
+      link.lastCommentedAt = 0;
+      return link;
+    },
+    "issues:getDefaults": (): IssueDefaults => state.issues.defaults,
+    "issues:setDefaults": (p): IssueDefaults => {
+      const patch = (p ?? {}) as Partial<IssueDefaults>;
+      const containerChanged =
+        patch.containerId !== undefined && patch.containerId !== state.issues.defaults.containerId;
+      state.issues.defaults = {
+        containerId:
+          patch.containerId !== undefined
+            ? (patch.containerId ?? null)
+            : state.issues.defaults.containerId,
+        subContainerId:
+          patch.subContainerId !== undefined
+            ? (patch.subContainerId ?? null)
+            : containerChanged
+              ? null
+              : state.issues.defaults.subContainerId,
+      };
+      return state.issues.defaults;
+    },
     // Only the Settings window asks for this, and only to print it inside a
     // description. The real value comes from the main process's accelerator
     // constant; this is the same string so the row reads correctly under
@@ -607,7 +993,22 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "debug:shortcut": () => "⌘⌥⇧S",
 
     // ── Visual ───────────────────────────────────────────────────────────
-    "visual:listBaselines": (): string[] => REPLAY.steps.filter((st) => st.screenshot).map((st) => st.stepId),
+    /** `BaselineEntry[]`, NOT `string[]`. The first version of this returned bare
+     *  step ids with a `: string[]` annotation — which type-checked, because the
+     *  annotation was the thing being checked rather than `api.ts`'s actual
+     *  return type. The manager then rendered four rows with no label and
+     *  "Invalid Date", which is precisely the "looks like a broken feature"
+     *  failure this file's header is about. Annotate with the app's own type. */
+    "visual:listBaselines": (): BaselineEntry[] =>
+      REPLAY.steps
+        .filter((st) => st.screenshot)
+        .map((st) => ({
+          stepId: st.stepId,
+          runId: REPLAY.runId,
+          at: REPLAY.startedAt,
+          label: st.label,
+          ...(st.rect ? { rect: st.rect } : null),
+        })),
     /** One mask, on the step whose diff reports `maskedCount: 1` — the two
      *  numbers describing the same thing have to agree, or the panel says a
      *  mask was applied and the list shows none. */
@@ -648,10 +1049,14 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
             stepCount: TESTS[0].steps.length,
             testId: TESTS[0].id,
             url: TESTS[0].url,
+            // Deliberately a DEEPER url than `url` above: the two fields mean
+            // different things (start vs. now), and a fixture where they match
+            // would hide a view that renders the wrong one.
+            liveUrl: TESTS[0].url.replace(/\/*$/, "") + "/cart",
             name: TESTS[0].name,
-            editing: false,
+            editing: editingPreview(),
             assertSoft: false,
-            cursor: TESTS[0].steps.length,
+            cursor: previewCursor(),
             refineMode: false,
             replaying: false,
             pageReady: true,
@@ -664,6 +1069,7 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       stepCount: 0,
       testId: null,
       url: null,
+      liveUrl: null,
       name: null,
       editing: false,
       assertSoft: false,
@@ -675,7 +1081,48 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
           },
 
     // ── Batch ────────────────────────────────────────────────────────────
-    "batch:list": (): BatchRecord[] => [],
+    // REDESIGN §6.5. The preview has no filesystem and no save dialog, so it
+    // reports the cancel the real dialog reports when the user backs out — the
+    // panel's own "nothing was written" path, which is the one an unbacked
+    // preview can honestly exercise. A fake success would put a path on screen
+    // that names a file nobody can open.
+    "report:emit": (): EmitResult => ({ path: null, bytes: 0, count: 0, cancelled: true }),
+    "batch:list": (): BatchRecord[] => structuredClone(BATCHES),
+
+    // ── Routines ─────────────────────────────────────────────────────────
+    // docs/ROUTINES.md. Backed by mutable session state (see `seed`), so an
+    // edit made in the preview sticks for the rest of the session.
+    "routines:list": (): Routine[] => structuredClone(state.routines),
+    "routines:get": (params?: unknown): Routine | null => {
+      const id = (params as { id?: string } | undefined)?.id;
+      return structuredClone(state.routines.find((r) => r.id === id) ?? null);
+    },
+    "routines:save": (params?: unknown): Routine | null => {
+      const sent = (params as { routine?: Routine } | undefined)?.routine;
+      if (!sent || typeof sent.id !== "string") return null;
+      // `updatedAt` MOVES on every save, as the real store's does — the editor
+      // keys its re-seed on it, so a bridge that left it alone would leave the
+      // screen showing what it sent instead of what was stored.
+      const next = { ...structuredClone(sent), updatedAt: Date.now() };
+      const i = state.routines.findIndex((r) => r.id === next.id);
+      if (i >= 0) state.routines[i] = next;
+      else state.routines.push(next);
+      return structuredClone(next);
+    },
+    "routines:delete": (params?: unknown): { removed: number } => {
+      const id = (params as { id?: string } | undefined)?.id;
+      const before = state.routines.length;
+      state.routines = state.routines.filter((r) => r.id !== id);
+      return { removed: before - state.routines.length };
+    },
+    /** The preview HAS a runner (see the run bridge above), so this answers the
+     *  way the real one does rather than pretending nothing happened. */
+    "routines:run": (): {
+      batchId: string;
+      alreadyRunning: boolean;
+      skipped: string[];
+      plannedRuns: number;
+    } => ({ batchId: `b-${Date.now()}`, alreadyRunning: false, skipped: [], plannedRuns: 0 }),
     /** `BatchState | null`, and idle is `null` — not a half-filled state
      *  object. A `{ running: false }` stand-in is missing every other field the
      *  view reads once it decides a batch exists. */

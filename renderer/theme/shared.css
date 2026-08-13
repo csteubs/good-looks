@@ -200,6 +200,25 @@
   background: var(--gl-cyan);
 }
 
+/* A labelled cursor needs room the 8px strip does not have. Only the ACTIVE
+   cursor is ever labelled, and only when it is not at the end of the list, so
+   this grows exactly one gap in the list rather than all of them. */
+.gl-cursor-gap[data-labelled] {
+  height: auto;
+  gap: 8px;
+  padding: 4px 8px;
+}
+
+.gl-cursor-gap-label {
+  flex: 0 0 auto;
+  color: var(--gl-cyan);
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 /* ── Pager ────────────────────────────────────────────────────────────── */
 
 .gl-pager {
@@ -457,6 +476,50 @@
   gap: 6px;
 }
 
+/* ── Script-change row ─────────────────────────────────────────────────
+   A whole-spec change — an AI-debug fix, or a hand edit — shown in the same
+   list as the heals above. It REUSES `.gl-heal-row` and its head/actions
+   deliberately: the two are different kinds of the same event ("something
+   changed this test"), and giving one its own frame would read as two lists
+   stacked rather than one list of two kinds.
+
+   What differs is only what the row can't share. The icon takes the text ramp
+   rather than violet, because violet marks AI-adjacent chrome and half of
+   these rows are the user's own edit; the AI ones say so with a violet CHIP,
+   which is a claim about that row rather than about the shape. */
+.gl-heal-head-icon.gl-heal-head-icon-plain {
+  color: var(--gl-tx-2);
+}
+
+/* "+12 −7 lines" — the whole body of a collapsed row, so it sits where the
+   `was`/`now` pair sits on a heal. Mono, because the numbers are the content
+   and a proportional font makes a column of them ragged. */
+.gl-script-change-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-2);
+}
+
+.gl-script-change-added {
+  color: var(--gl-phos);
+}
+
+.gl-script-change-removed {
+  color: var(--gl-red);
+}
+
+/* The expanded diff. Capped and scrolled: a corrected spec can be the whole
+   file, and a row that grows to two hundred lines pushes every other entry in
+   the review queue off the screen — which is the one thing this list exists to
+   keep in front of the user. */
+.gl-script-change-diff {
+  max-height: 320px;
+  overflow: auto;
+}
+
 /* The amber block: "a heal that succeeded is not the same as a heal that was
    right." An inset rail rather than a filled banner — the same motif every
    other status in this design uses, so a warning does not need a shape of its
@@ -519,4 +582,166 @@
   background: var(--gl-sel-bg);
   color: var(--gl-tx-1);
   box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+/* ── AI debug status ───────────────────────────────────────────────────
+   The colour of a minimized AI job's icon, which IS the contract of the
+   feature: a wrong colour here is silent — the panel works perfectly while the
+   icon lies, and the user walks away from a finished answer or waits on a dead
+   one (CLAUDE.md, and REDESIGN §B9 which specifies the mapping).
+
+   NAMED FOR MEANING, NOT FOR HUE. `.gl-ai-busy`, never `.gl-ai-amber`:
+   retuning which colour "thinking" takes must not turn a class name into a lie,
+   and this is the one place in the app where a name that lies about its meaning
+   IS the bug. The tone each resolves to is asserted against `TONE` in
+   `ai-debug-status.ts`'s own tests, so the two cannot drift.
+
+   AI is not a status in this palette — it gets the holo treatment elsewhere —
+   but a JOB has real states, and these four are them. */
+.gl-ai-ready {
+  color: var(--gl-cyan);
+}
+
+.gl-ai-busy {
+  color: var(--gl-amber);
+}
+
+.gl-ai-done {
+  color: var(--gl-phos);
+}
+
+.gl-ai-failed {
+  color: var(--gl-red);
+}
+
+/* ── The "Sending" strip ───────────────────────────────────────────────
+   What leaves this machine when a prompt is sent, itemised. In `shared.css`
+   rather than a screen's own section because the AI panel is reachable from
+   the run panel, the trainer and the global chip — it belongs to no one
+   screen. Bordered and on `--gl-panel` so it reads as a block to be read
+   rather than as more of the paragraph above it, exactly like `.gl-setting-risk`
+   and for the same reason. */
+.gl-sending {
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  padding: 8px 10px;
+}
+
+.gl-sending-list {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.gl-sending-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-2);
+}
+
+.gl-sending-size {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-sending-total {
+  margin: 7px 0 0;
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  color: var(--gl-tx-3);
+}
+
+/* ── `echo`, the glitch treatment ──────────────────────────────────────── */
+/*
+ * HERE RATHER THAN IN screens.css BECAUSE A SECOND SCREEN WANTS IT. It was the
+ * Home wordmark's, keyed on `.gl-home-mark`; C §6.9's boot plate wears the same
+ * treatment on the same word, and the house rule is that a rule a second screen
+ * wants moves to shared. It is keyed on `.gl-echo` now, so the treatment is
+ * named once and the two marks keep their own type and layout.
+ *
+ * The element it is applied to must be `position: relative` and must carry a
+ * `data-text` matching its own text; both marks do that themselves, since the
+ * offsets are the only thing they share.
+ */
+/*
+ * `echo` — the glitch treatment, fixed as the design's default (REDESIGN §0).
+ *
+ * GHOSTING, NOT CHROMATIC ABERRATION, and the name is the reason: an echo is
+ * the same signal arriving twice. The offset copies are drawn in the SAME ink
+ * at low alpha, because the obvious alternative — red and cyan fringes — would
+ * spend two status hues on decoration, on the app's own name, at the largest
+ * type size in the product. Colour means outcome here, and the wordmark reports
+ * nothing.
+ *
+ * `content: attr(data-text)` rather than duplicated markup: a second and third
+ * copy of "GOOD LOOKS!" in the DOM is read out three times by a screen reader,
+ * and pseudo-element content is not.
+ */
+:root[data-glitch="echo"] .gl-echo::before,
+:root[data-glitch="echo"] .gl-echo::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  text-indent: inherit;
+  pointer-events: none;
+}
+
+:root[data-glitch="echo"] .gl-echo::before {
+  color: rgba(233, 237, 238, 0.22);
+  transform: translate(-1.5px, 0);
+  animation: gl-echo-a 5.5s steps(1, end) infinite;
+}
+
+:root[data-glitch="echo"] .gl-echo::after {
+  color: rgba(233, 237, 238, 0.14);
+  transform: translate(1.5px, 0);
+  animation: gl-echo-b 5.5s steps(1, end) infinite;
+}
+
+/* Both ghosts sit still for most of the cycle and jump for a sixth of a second.
+   A continuously-moving wordmark is a thing you have to look away from; one
+   that twitches every five seconds is a thing you notice once. `steps(1, end)`
+   rather than an ease, because an echo snaps — an interpolated one reads as a
+   drop shadow sliding around. */
+@keyframes gl-echo-a {
+  0%,
+  92% {
+    transform: translate(-1.5px, 0);
+  }
+  94% {
+    transform: translate(-4px, 1px);
+  }
+  96% {
+    transform: translate(-1px, -1px);
+  }
+  98%,
+  100% {
+    transform: translate(-1.5px, 0);
+  }
+}
+
+@keyframes gl-echo-b {
+  0%,
+  92% {
+    transform: translate(1.5px, 0);
+  }
+  94% {
+    transform: translate(4px, -1px);
+  }
+  96% {
+    transform: translate(1px, 1px);
+  }
+  98%,
+  100% {
+    transform: translate(1.5px, 0);
+  }
 }

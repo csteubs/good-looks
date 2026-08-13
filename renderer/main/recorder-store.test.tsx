@@ -78,6 +78,10 @@ vi.mock("../lib/api", () => ({
       discardExit: async () => {},
     },
     runner: { run: async () => ({ runId: "t1" }), stop: async () => {}, replayRun: async () => ({ runId: "t1" }) },
+    // The store asks for a batch already running when this window opened —
+    // §6.8 moved the live batch here so every screen can see it, not just the
+    // batch view. Null is "nothing running", which is the ordinary case.
+    batch: { status: async () => null },
   },
 }));
 
@@ -119,6 +123,8 @@ function Probe() {
     deleteStep,
     run,
     runEpoch,
+    lastAddedStepId,
+    liveBatch,
   } = useRecorder();
   // Stashed for the tests that need to invoke an action rather than observe
   // state; a button per action would drown the markup the other suites read.
@@ -129,10 +135,17 @@ function Probe() {
       <span data-testid="steps">{liveSteps.map((s) => s.id).join(",")}</span>
       <span data-testid="steps-loaded">{String(stepsLoaded)}</span>
       <span data-testid="new-steps">{[...newStepIds].sort().join(",")}</span>
+      <span data-testid="last-added">{String(lastAddedStepId)}</span>
+      <span data-testid="live-batch">
+        {liveBatch === null ? "none" : `${liveBatch.summary.passed}/${liveBatch.summary.total}`}
+      </span>
       <span data-testid="run-epoch">{String(runEpoch)}</span>
       <span data-testid="run-lines">{(runs["t1"]?.lines ?? []).join("|")}</span>
       <span data-testid="run-running">{String(runs["t1"]?.running ?? "none")}</span>
       <span data-testid="run-code">{String(runs["t1"]?.code ?? "none")}</span>
+      <span data-testid="run-finished">
+        {runs["t1"]?.finishedAt === undefined ? "none" : "set"}
+      </span>
       <span data-testid="replay-ran">{String(replayRun?.ran ?? "none")}</span>
       <span data-testid="replay-steps">
         {(replayRun?.steps ?? []).map((s) => `${s.stepLabel}:${s.ok}`).join("|")}
@@ -281,6 +294,21 @@ describe("run output", () => {
     expect(text("run-code")).toBe("1");
   });
 
+  it("stamps when a run ENDED, not just that it did", () => {
+    // §6.8's ticker holds a failure in the strip for a few seconds after the
+    // fact, and it has to measure that from the END. With only `startedAt` on
+    // the record, a run that took longer than the hold window is already
+    // expired when it finishes — so the one notice the ticker exists to give,
+    // a long run that failed while the user was elsewhere, is the one it can
+    // never give. Nothing about that failure is visible: the strip is simply
+    // blank, exactly as it is when everything is fine.
+    renderStore();
+    emit("runner:output", { runId: "t1", chunk: "x" });
+    expect(text("run-finished")).toBe("none");
+    emit("runner:done", { runId: "t1", code: 1 });
+    expect(text("run-finished")).toBe("set");
+  });
+
   it("handles done for a run with no prior output", () => {
     renderStore();
     emit("runner:done", { runId: "t1", code: 0 });
@@ -311,6 +339,61 @@ describe("run output", () => {
 
     const keys = invalidate.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
     expect(keys).toContain(JSON.stringify(["runs"]));
+  });
+});
+
+describe("the live batch (§6.8)", () => {
+  function batchState(over: Record<string, unknown> = {}) {
+    return {
+      batchId: "b1",
+      running: true,
+      startedAt: 0,
+      currentIndex: 0,
+      results: [],
+      stopped: false,
+      summary: { total: 8, passed: 3, failed: 0, skipped: 0, ok: true, durationMs: 0 },
+      ...over,
+    };
+  }
+
+  it("follows a batch nobody on this screen started", () => {
+    // THE BUG THIS FIXES, and it is the same shape as `runs:changed` above: the
+    // only subscriber to `batch:progress` was `batch-view`, a ROUTE component.
+    // Start a batch, walk to any other screen, and the app had no idea it was
+    // running — which is exactly the state §6.8's ticker has to report from.
+    renderStore();
+    emit("batch:progress", batchState());
+    expect(text("live-batch")).toBe("3/8");
+  });
+
+  it("keeps following it to the end", () => {
+    renderStore();
+    emit("batch:progress", batchState());
+    emit("batch:done", batchState({ running: false, summary: { total: 8, passed: 7, failed: 1, skipped: 0, ok: false, durationMs: 10 } }));
+    expect(text("live-batch")).toBe("7/8");
+  });
+
+  it("refetches the caches a finished batch invalidated", () => {
+    // Every member wrote its own RunRecord. This used to live in `batch-view`,
+    // where it only fired if the user happened to be looking at it — so a batch
+    // finished from another screen left the sidebar's status dots stale, which
+    // is the identical silent failure `runs:changed` was moved here to fix.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const invalidate = vi.spyOn(qc, "invalidateQueries");
+    render(
+      <QueryClientProvider client={qc}>
+        <RecorderProvider>
+          <Probe />
+        </RecorderProvider>
+      </QueryClientProvider>,
+    );
+    invalidate.mockClear();
+
+    emit("batch:done", batchState({ running: false }));
+
+    const keys = invalidate.mock.calls.map((c) => JSON.stringify(c[0]?.queryKey));
+    expect(keys).toContain(JSON.stringify(["runs"]));
+    expect(keys).toContain(JSON.stringify(["batch-history"]));
   });
 });
 
@@ -614,5 +697,66 @@ describe("the ephemeral replay flash", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("which step just arrived", () => {
+  // `lastAddedStepId` is what lets a trainer scroll to the row that changed.
+  // It matters because of where a captured step LANDS: the insert cursor sits
+  // where the browser is, so continuing an existing test writes new steps into
+  // the middle of the list, off-screen from a view that follows the bottom.
+  // Getting this wrong is silent in the worst direction — the trainer looks
+  // like it recorded nothing.
+
+  it("points at nothing until a step actually arrives", async () => {
+    // The first list of a session is the TEST showing up, not steps being
+    // added. Pointing at its last row would scroll on every session open and
+    // claim something was captured when nothing was.
+    renderStore();
+    emit("recorder:steps", [
+      { id: "a", type: "goto" },
+      { id: "b", type: "click" },
+    ] as Step[]);
+    expect(text("last-added")).toBe("null");
+  });
+
+  it("points at a step inserted in the MIDDLE of the list, not the end", () => {
+    renderStore();
+    emit("recorder:steps", [{ id: "a" }, { id: "b" }, { id: "c" }] as Step[]);
+    emit("recorder:steps", [{ id: "a" }, { id: "new" }, { id: "b" }, { id: "c" }] as Step[]);
+    expect(text("last-added")).toBe("new");
+  });
+
+  it("points at the last of several that arrive together", () => {
+    // An AI batch lands as one push. The last one is the end of what was
+    // added, which is what a reader wants to be looking at.
+    renderStore();
+    emit("recorder:steps", [{ id: "a" }] as Step[]);
+    emit("recorder:steps", [{ id: "a" }, { id: "x" }, { id: "y" }] as Step[]);
+    expect(text("last-added")).toBe("y");
+  });
+
+  it("keeps pointing at the last arrival when a later push only REMOVES", () => {
+    // A delete is not an arrival. Clearing the pointer here would be harmless
+    // but re-pointing it would scroll the view somewhere nobody asked to go.
+    renderStore();
+    emit("recorder:steps", [{ id: "a" }] as Step[]);
+    emit("recorder:steps", [{ id: "a" }, { id: "new" }] as Step[]);
+    emit("recorder:steps", [{ id: "new" }] as Step[]);
+    expect(text("last-added")).toBe("new");
+  });
+
+  it("forgets the arrival when the session finishes", () => {
+    // The next session's list is a different test. A stale pointer into it
+    // would either miss (harmless) or hit an unrelated step (not).
+    renderStore();
+    emit("recorder:steps", [{ id: "a" }] as Step[]);
+    emit("recorder:steps", [{ id: "a" }, { id: "new" }] as Step[]);
+    expect(text("last-added")).toBe("new");
+    emit("recorder:finished", { testId: "t1" });
+    expect(text("last-added")).toBe("null");
+    // And the FIRST list of the next session is an arrival-free load again.
+    emit("recorder:steps", [{ id: "p" }, { id: "q" }] as Step[]);
+    expect(text("last-added")).toBe("null");
   });
 });

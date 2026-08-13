@@ -13,24 +13,59 @@
 // run-selection behavior, where the failure mode is a blank pane.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { clearToastCalls, toastCalls } from "../__tests__/sonner-stub";
+
 import type { RunReplaySummary, VisualDiff } from "../lib/recorder-types";
-import { DiffBadge, VisualView } from "./visual-view";
+import { DiffBadge, VisualView, framesOverThreshold } from "./visual-view";
 
 let replays: RunReplaySummary[] = [];
 /** Mutable so the bezel tests can seed a run with a real frame; every other
  *  test in this file leaves them null and never reaches the viewer. */
 let replayDetail: unknown = null;
+/** Seeded only by the drift tests, which are the one place that needs the
+ *  backend to answer DIFFERENTLY per run — drift is a statement about a series,
+ *  and a mock that hands back the same replay for every id makes one. */
+let replayById: Record<string, unknown> | null = null;
 let shot: string | null = null;
+let baselineShot: string | null = null;
+let baselines: unknown[] = [];
+
+// The four exits from a findings banner. Each returns the replay the way the
+// real handler does — patched, so the view re-renders from the same object the
+// backend would hand back rather than from a local guess.
+const acceptVisualRun = vi.fn(async () => {
+  const r = replayDetail as { steps: { screenshot?: string | null; diff?: unknown }[] };
+  for (const s of r.steps) if (s.screenshot) s.diff = { state: "match", ratio: 0, threshold: 0.2 };
+  return replayDetail;
+});
+const acceptA11yRun = vi.fn(async () => {
+  const r = replayDetail as { steps: { a11y?: { violations: unknown[]; newKeys: string[]; acceptedCount: number } }[] };
+  for (const s of r.steps) if (s.a11y) s.a11y = { ...s.a11y, newKeys: [], acceptedCount: 1 };
+  return replayDetail;
+});
+const dismissNotice = vi.fn(async (_testId: string, _runId: string, kind: string) => {
+  const r = replayDetail as { dismissedNotices?: string[] };
+  r.dismissedNotices = [...new Set([...(r.dismissedNotices ?? []), kind])];
+  return replayDetail;
+});
+const restoreNotice = vi.fn(async (_testId: string, _runId: string, kind: string) => {
+  const r = replayDetail as { dismissedNotices?: string[] };
+  r.dismissedNotices = (r.dismissedNotices ?? []).filter((k) => k !== kind);
+  return replayDetail;
+});
 
 vi.mock("../lib/api", () => ({
   api: {
     artifacts: {
       list: async () => replays,
-      getReplay: async () => replayDetail,
+      getReplay: async (_testId: string, runId: string) =>
+        replayById ? (replayById[runId] ?? null) : replayDetail,
       readShot: async () => shot,
+      dismissNotice: (...a: Parameters<typeof dismissNotice>) => dismissNotice(...a),
+      restoreNotice: (...a: Parameters<typeof restoreNotice>) => restoreNotice(...a),
     },
     runs: { list: async () => [] },
     visual: {
@@ -38,12 +73,17 @@ vi.mock("../lib/api", () => ({
       setThreshold: async () => 0.1,
       getMasks: async () => [],
       setMasks: async () => [],
-      listBaselines: async () => [],
-      baselineShot: async () => null,
+      listBaselines: async () => baselines,
+      baselineShot: async () => baselineShot,
       clearBaseline: async () => null,
       acceptStep: async () => null,
+      acceptRun: (...a: unknown[]) => acceptVisualRun(...(a as [])),
       getElementSteps: async () => [],
       setElementStep: async () => [],
+    },
+    a11y: {
+      acceptStep: async () => null,
+      acceptRun: (...a: unknown[]) => acceptA11yRun(...(a as [])),
     },
     annotations: { list: async () => [], upsert: async () => ({}) },
     runner: { compareRuns: async () => null, replayRun: async () => ({ runId: "r" }) },
@@ -202,6 +242,152 @@ describe("VisualView run selection", () => {
   });
 });
 
+// Accepting and dismissing are NOT two words for the same button, and the whole
+// point of these tests is that the screen keeps them apart. Accepting re-pins a
+// baseline or pins violations onto the test record — it changes what every later
+// run reports. Dismissing changes one run's banner and nothing else. Before this
+// there was no dismiss at all, so the cheapest way to clear a nagging screen was
+// to accept findings you had not looked at.
+describe("clearing a run's findings banners", () => {
+  beforeEach(() => {
+    // Not optional here: half these tests assert a mock was NOT called, and
+    // without a reset they pass or fail on the previous test's clicks.
+    vi.clearAllMocks();
+    replays = [summary({ runId: "r1", stepCount: 2, changedSteps: 1, a11yNewSteps: 1 })];
+    replayDetail = {
+      testId: "t1",
+      runId: "r1",
+      testName: "Checkout",
+      status: "passed",
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_001_000,
+      failedIndex: null,
+      visualThreshold: 0.2,
+      steps: [
+        {
+          index: 0,
+          stepId: "s1",
+          label: "goto example.com",
+          type: "goto",
+          status: "passed",
+          screenshot: "0.png",
+          diff: { state: "changed", ratio: 0.04, threshold: 0.2, diffFile: "0.diff.png" },
+        },
+        {
+          index: 1,
+          stepId: "s2",
+          label: "click Cart",
+          type: "click",
+          status: "passed",
+          screenshot: "1.png",
+          diff: { state: "match", ratio: 0, threshold: 0.2 },
+          a11y: {
+            violations: [
+              { id: "color-contrast", impact: "serious", help: "Contrast", nodes: [".total"] },
+            ],
+            newKeys: ["color-contrast|.total"],
+            acceptedCount: 0,
+          },
+        },
+      ],
+    };
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+  });
+
+  afterEach(() => {
+    replayDetail = null;
+    shot = null;
+  });
+
+  /** Press an AlertDialog trigger, then its confirm button. Two clicks, because
+   *  both accepts are destructive enough to be asked about. */
+  async function confirmFrom(triggerName: RegExp) {
+    const triggers = await screen.findAllByRole("button", { name: triggerName });
+    fireEvent.click(triggers[0]);
+    const confirm = await screen.findByRole("button", { name: "Accept all" });
+    fireEvent.click(confirm);
+  }
+
+  it("offers a run-wide accept for VISUAL changes, not just per-step", async () => {
+    // The gap this closes: accessibility had "Accept all for this run" from the
+    // start and visual did not, so re-pinning a twenty-step run meant twenty
+    // clicks — and the two banners taught contradictory mental models.
+    renderVisual();
+    await screen.findByText(/Visual change detected/);
+    await confirmFrom(/Accept all for this run/);
+    await waitFor(() => expect(acceptVisualRun).toHaveBeenCalledWith("t1", "r1"));
+    // The banner goes because the FINDINGS went, which is what makes accept
+    // different from dismiss: nothing is left to report.
+    await waitFor(() => expect(screen.queryByText(/Visual change detected/)).toBeNull());
+  });
+
+  it("dismisses the visual banner without touching a single baseline", async () => {
+    renderVisual();
+    await screen.findByText(/Visual change detected/);
+    fireEvent.click(screen.getByLabelText("Dismiss visual changes for this run"));
+    await waitFor(() => expect(screen.queryByText(/Visual change detected/)).toBeNull());
+    expect(dismissNotice).toHaveBeenCalledWith("t1", "r1", "visual");
+    // The one assertion that separates this from the accept above. If dismiss
+    // ever grew into "accept quietly", this is what would notice.
+    expect(acceptVisualRun).not.toHaveBeenCalled();
+    const steps = (replayDetail as { steps: { diff?: { state: string } }[] }).steps;
+    expect(steps[0].diff?.state).toBe("changed");
+  });
+
+  it("dismisses the accessibility banner without accepting the violations", async () => {
+    renderVisual();
+    await screen.findByText(/accessibility issues that/);
+    fireEvent.click(screen.getByLabelText("Dismiss accessibility issues for this run"));
+    await waitFor(() => expect(screen.queryByText(/accessibility issues that/)).toBeNull());
+    expect(dismissNotice).toHaveBeenCalledWith("t1", "r1", "a11y");
+    expect(acceptA11yRun).not.toHaveBeenCalled();
+    const steps = (replayDetail as { steps: { a11y?: { newKeys: string[] } }[] }).steps;
+    expect(steps[1].a11y?.newKeys).toEqual(["color-contrast|.total"]);
+  });
+
+  it("dismisses one banner without silencing the other", async () => {
+    // They are separate findings and a run can have either. Sharing one flag
+    // would hide an accessibility regression because someone waved off a pixel
+    // diff, which is the worst version of this feature.
+    renderVisual();
+    await screen.findByText(/Visual change detected/);
+    fireEvent.click(screen.getByLabelText("Dismiss visual changes for this run"));
+    await waitFor(() => expect(screen.queryByText(/Visual change detected/)).toBeNull());
+    expect(screen.getByText(/accessibility issues that/)).toBeTruthy();
+  });
+
+  it("keeps a banner dismissed on the replay, not in component state", async () => {
+    // A dismissal held in the component comes back the moment the user selects
+    // another run and returns — which is not a dismissal. Seeded on the replay
+    // here, exactly as a re-read from disk would deliver it.
+    (replayDetail as { dismissedNotices: string[] }).dismissedNotices = ["visual", "a11y"];
+    renderVisual();
+    await screen.findByText("Checkout");
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("not ready");
+    });
+    expect(screen.queryByText(/Visual change detected/)).toBeNull();
+    expect(screen.queryByText(/accessibility issues that/)).toBeNull();
+  });
+
+  it("offers a way back from a dismissal", async () => {
+    // Dismiss sits one click away and beside an irreversible control; without an
+    // undo the two read as equally dangerous and the user uses neither.
+    clearToastCalls();
+    renderVisual();
+    await screen.findByText(/Visual change detected/);
+    fireEvent.click(screen.getByLabelText("Dismiss visual changes for this run"));
+    await waitFor(() => expect(dismissNotice).toHaveBeenCalled());
+    const undo = toastCalls
+      .map((c) => (c.options as { action?: { label: string; onClick: () => void } } | undefined))
+      .find((o) => o?.action?.label === "Undo");
+    expect(undo).toBeTruthy();
+    act(() => undo!.action!.onClick());
+    await waitFor(() => expect(restoreNotice).toHaveBeenCalledWith("t1", "r1", "visual"));
+    expect(await screen.findByText(/Visual change detected/)).toBeTruthy();
+  });
+});
+
 describe("the frame is evidence, and the bezel says so", () => {
   beforeEach(() => {
     replays = [summary({ runId: "r1", stepCount: 1, changedSteps: 0 })];
@@ -262,5 +448,677 @@ describe("the frame is evidence, and the bezel says so", () => {
     // `css: false`, so there is no computed z-index here to read). What this
     // owns is that the element still opts in by carrying the class.
     expect(modes?.className).toContain("gl-visual-modes");
+  });
+});
+
+describe("the frame rail (B8)", () => {
+  /** Three frames, one of which changed — the shape the filter exists for. */
+  function seedRail() {
+    replays = [summary({ runId: "r1", stepCount: 3, changedSteps: 1 })];
+    replayDetail = {
+      testId: "t1",
+      runId: "r1",
+      testName: "Checkout",
+      status: "passed",
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_001_000,
+      failedIndex: null,
+      steps: [
+        { index: 0, stepId: "s1", label: "goto", type: "goto", status: "passed", screenshot: "0.png", diff: { state: "match", ratio: 0.0001 } },
+        { index: 1, stepId: "s2", label: "click", type: "click", status: "passed", screenshot: "1.png", diff: { state: "changed", ratio: 0.0413, diffFile: "1.diff.png" } },
+        { index: 2, stepId: "s3", label: "assert", type: "assert", status: "passed", screenshot: "2.png", diff: { state: "match", ratio: 0 } },
+      ],
+    };
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+  }
+
+  beforeEach(seedRail);
+  afterEach(() => {
+    replayDetail = null;
+    shot = null;
+  });
+
+  const frames = () => document.querySelectorAll(".gl-frame-btn");
+
+  it("shows how much each changed frame changed by", async () => {
+    // THE NUMBER THE STRIP COULD NOT SHOW. A run with forty frames and three
+    // real changes was a row of near-identical bars: a 0.01% antialiasing shift
+    // and a 40% layout break looked the same, so triage meant clicking through.
+    renderVisual();
+    await waitFor(() => expect(frames().length).toBe(3));
+    const pcts = [...document.querySelectorAll(".gl-frame-pct")].map((e) => e.textContent);
+    expect(pcts).toEqual(["4.13%"]);
+  });
+
+  it("prints no percentage on frames that did not change", async () => {
+    // Printing "0%" under every unchanged frame would bury the ones that
+    // matter in noise, which is the problem this is here to solve.
+    renderVisual();
+    await waitFor(() => expect(frames().length).toBe(3));
+    expect(document.querySelectorAll(".gl-frame-pct").length).toBe(1);
+  });
+
+  it("narrows to the changed frames on request", async () => {
+    renderVisual();
+    await waitFor(() => expect(frames().length).toBe(3));
+    fireEvent.click(screen.getByRole("button", { name: "Changed" }));
+    await waitFor(() => expect(frames().length).toBeLessThan(3));
+  });
+
+  it("keeps the selected frame even when it did not change", async () => {
+    // The rule worth pinning. Filtering the selected frame out of the rail
+    // while the viewer above still shows it leaves the two disagreeing — and
+    // the user with no handle to move off it.
+    renderVisual();
+    await waitFor(() => expect(frames().length).toBe(3));
+    // Frame 0 is selected on open (failedIndex is null → index 0) and matched.
+    fireEvent.click(screen.getByRole("button", { name: "Changed" }));
+    await waitFor(() => expect(frames().length).toBe(2));
+    const labels = [...frames()].map((f) => f.getAttribute("aria-label") ?? "");
+    expect(labels.some((l) => l.startsWith("Step 1:"))).toBe(true);
+    expect(labels.some((l) => l.startsWith("Step 2:"))).toBe(true);
+  });
+
+  it("offers no filter when nothing changed", async () => {
+    // A control that is always present and usually a no-op teaches people it
+    // does nothing.
+    replayDetail = {
+      ...(replayDetail as { steps: unknown[] }),
+      steps: (replayDetail as { steps: { diff?: unknown }[] }).steps.map((st) => ({
+        ...st,
+        diff: { state: "match", ratio: 0 },
+      })),
+    };
+    renderVisual();
+    await waitFor(() => expect(frames().length).toBe(3));
+    expect(screen.queryByRole("button", { name: "Changed" })).toBeNull();
+  });
+});
+
+describe("the threshold, drawn against the frames (B8)", () => {
+  // The slider used to be a number with no consequence on screen: "0.20%" says
+  // nothing about whether moving it silences the change you are looking at or
+  // every change you have.
+  const steps = (...ratios: (number | undefined)[]) =>
+    ratios.map((r, i) => ({
+      index: i,
+      stepId: `s${i}`,
+      diff: r === undefined ? undefined : { ratio: r },
+    }));
+
+  it("counts the frames a threshold would flag", () => {
+    // 4.13% and 0.5% are over 0.2%; 0.01% is not.
+    expect(framesOverThreshold(steps(0.0413, 0.005, 0.0001), 0.2)).toBe(2);
+  });
+
+  it("does not flag a frame sitting exactly ON the threshold", () => {
+    // STRICTLY GREATER, matching the comparator that produced these ratios.
+    // Guessing >= would make the preview disagree with the next run by one
+    // frame — worse than no preview, because it would be believed.
+    expect(framesOverThreshold(steps(0.002), 0.2)).toBe(0);
+    expect(framesOverThreshold(steps(0.00201), 0.2)).toBe(1);
+  });
+
+  it("ignores frames with nothing measured", () => {
+    // An uncaptured step has no ratio. Counting it as unflagged is right;
+    // counting it at all in the denominator would overstate the run's coverage.
+    expect(framesOverThreshold(steps(undefined, undefined), 0.2)).toBe(0);
+  });
+
+  it("flags everything at a threshold of zero", () => {
+    expect(framesOverThreshold(steps(0.0001, 0.5), 0)).toBe(2);
+  });
+});
+
+// ── Wipe and Blink (C §6.6) ─────────────────────────────────────────────
+//
+// The two modes that put both frames in the SAME PLACE, which is the comparison
+// a diff map cannot make: a diff lights every changed pixel with equal weight,
+// so a font-smoothing shift and a button that moved 40px look identical.
+//
+// Three things here would be silent if wrong. Offering a mode that cannot open
+// (only one frame exists). Rendering half a comparison and letting it read as a
+// result. And treating a frame — on the one screen where a tint from our own
+// chrome is indistinguishable from a tint in the page under test.
+
+describe("wipe and blink (C §6.6)", () => {
+  beforeEach(() => {
+    replays = [summary({ runId: "r1", stepCount: 1, changedSteps: 1 })];
+    replayDetail = {
+      testId: "t1",
+      runId: "r1",
+      testName: "Checkout",
+      status: "passed",
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_001_000,
+      failedIndex: null,
+      steps: [
+        {
+          index: 0,
+          stepId: "s1",
+          label: "goto example.com",
+          type: "goto",
+          status: "passed",
+          screenshot: "0.png",
+          diff: { state: "changed", ratio: 0.04, threshold: 0.2, diffFile: "0.diff.png" },
+        },
+      ],
+    } as never;
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+    baselineShot = "data:image/svg+xml;utf8,%3Csvg%20id%3D%22b%22%3E%3C/svg%3E";
+  });
+
+  afterEach(() => {
+    replayDetail = null;
+    shot = null;
+    baselineShot = null;
+  });
+
+  const modeButton = (name: RegExp) =>
+    screen.getAllByRole("button").find((b) => name.test(b.textContent ?? ""));
+
+  async function ready() {
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector(".gl-visual-modes")) throw new Error("not ready");
+    });
+  }
+
+  it("offers all five modes when both frames exist", async () => {
+    await ready();
+    for (const name of [/^Current$/, /^Baseline$/, /^Diff$/, /^Wipe$/, /^Blink$/]) {
+      expect(modeButton(name)).toBeTruthy();
+    }
+  });
+
+  it("does not offer them when there is no current frame to compare", async () => {
+    // A mode whose empty state is "both have to exist" is a mode that should
+    // not have been offered in the first place.
+    const detail = replayDetail as unknown as { steps: Record<string, unknown>[] };
+    replayDetail = {
+      ...detail,
+      steps: [{ ...detail.steps[0], screenshot: null }],
+    } as never;
+    renderVisual();
+    // Waiting on the step, not on the mode switch: with no captured frame the
+    // switch may not render at all, and waiting for it would time out on the
+    // very state this test is about.
+    await waitFor(() => {
+      if (!screen.queryByText(/goto example\.com/)) throw new Error("not ready");
+    });
+    expect(modeButton(/^Wipe$/)).toBeUndefined();
+    expect(modeButton(/^Blink$/)).toBeUndefined();
+  });
+
+  it("stacks both frames in wipe, each in its own untreated bezel", async () => {
+    await ready();
+    fireEvent.click(modeButton(/^Wipe$/)!);
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="wipe"]')) throw new Error("no wipe");
+    });
+    // TWO bezels: baseline underneath, current clipped on top. One would mean
+    // the mode is showing a single frame and calling it a comparison.
+    expect(document.querySelectorAll('[data-gl="crt"]').length).toBe(2);
+    for (const img of document.querySelectorAll(".gl-crt-img")) {
+      // The rule this whole screen exists under. An inline treatment here would
+      // manufacture a difference the page does not have.
+      expect((img as HTMLElement).style.filter).toBe("");
+      expect((img as HTMLElement).style.opacity).toBe("");
+      expect((img as HTMLElement).style.mixBlendMode).toBe("");
+    }
+  });
+
+  it("clips the wipe rather than fading it", async () => {
+    // `clip-path`, never opacity: a partly-transparent layer invents a
+    // difference, and this mode's whole premise is that it does not.
+    await ready();
+    fireEvent.click(modeButton(/^Wipe$/)!);
+    const top = await waitFor(() => {
+      const el = document.querySelector(".gl-visual-wipe-top") as HTMLElement | null;
+      if (!el) throw new Error("no top layer");
+      return el;
+    });
+    expect(top.style.clipPath).toContain("inset(");
+    expect(top.style.opacity).toBe("");
+  });
+
+  it("drives the wipe divider from the keyboard", async () => {
+    // Mouse-only would make the one control here that needs a steady hand
+    // unusable without one.
+    await ready();
+    fireEvent.click(modeButton(/^Wipe$/)!);
+    const handle = await waitFor(() => {
+      const el = document.querySelector(".gl-visual-wipe-handle") as HTMLElement | null;
+      if (!el) throw new Error("no handle");
+      return el;
+    });
+    expect(handle.getAttribute("aria-valuenow")).toBe("50");
+    fireEvent.keyDown(handle, { key: "ArrowRight" });
+    expect(handle.getAttribute("aria-valuenow")).toBe("55");
+    fireEvent.keyDown(handle, { key: "End" });
+    // Never flush to the edge — there would be no handle left in the frame to
+    // drag it back with.
+    expect(Number(handle.getAttribute("aria-valuenow"))).toBeLessThan(100);
+  });
+
+  it("says which frame blink is showing", async () => {
+    // With the frames alternating, "which one am I looking at" is otherwise
+    // unanswerable — and a user who cannot answer it cannot say which
+    // direction the change went.
+    await ready();
+    fireEvent.click(modeButton(/^Blink$/)!);
+    await waitFor(() => {
+      if (!document.querySelector(".gl-visual-blink-which")) throw new Error("no label");
+    });
+    expect(document.querySelector(".gl-visual-blink-which")?.textContent).toBe("Current");
+  });
+
+  it("refuses to show half a comparison when the baseline is missing", async () => {
+    baselineShot = null;
+    await ready();
+    // Wipe is still offered (a baseline RECORD exists, which is what the switch
+    // is gated on); the mode itself says which frame it could not load rather
+    // than rendering one and letting it read as a result.
+    fireEvent.click(modeButton(/^Wipe$/)!);
+    await waitFor(() => {
+      if (!screen.queryByText(/both have to exist/i)) throw new Error("no explanation");
+    });
+  });
+});
+
+// ── Baseline provenance (C §6.6) ────────────────────────────────────────
+//
+// The screen asks the user to judge a frame against a baseline and, until this,
+// said nothing about the baseline. "These two differ" means something entirely
+// different depending on whether the baseline was pinned yesterday from the
+// same engine or months ago from another one.
+
+describe("baseline provenance (C §6.6)", () => {
+  beforeEach(() => {
+    replays = [summary({ runId: "r1", stepCount: 1, changedSteps: 1 })];
+    replayDetail = {
+      testId: "t1",
+      runId: "r1",
+      testName: "Checkout",
+      status: "passed",
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_001_000,
+      failedIndex: null,
+      steps: [
+        {
+          index: 0,
+          stepId: "s1",
+          label: "goto example.com",
+          type: "goto",
+          status: "passed",
+          screenshot: "0.png",
+          diff: { state: "changed", ratio: 0.04, threshold: 0.2, diffFile: "0.diff.png" },
+        },
+      ],
+    } as never;
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+    baselineShot = "data:image/svg+xml;utf8,%3Csvg%20id%3D%22b%22%3E%3C/svg%3E";
+    baselines = [{ stepId: "s1", runId: "r-old", at: Date.now(), label: "goto" }];
+  });
+
+  afterEach(() => {
+    replayDetail = null;
+    shot = null;
+    baselineShot = null;
+    baselines = [];
+  });
+
+  async function showBaseline() {
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector(".gl-visual-modes")) throw new Error("not ready");
+    });
+    const button = screen.getAllByRole("button").find((b) => /^Baseline$/.test(b.textContent ?? ""));
+    fireEvent.click(button!);
+  }
+
+  it("says what the baseline is, under the frame", async () => {
+    await showBaseline();
+    const line = await waitFor(() => {
+      const el = document.querySelector('[data-gl="baseline-provenance"]');
+      if (!el) throw new Error("no provenance");
+      return el as HTMLElement;
+    });
+    // The run behind it is not in the fixture's run list, which is the ordinary
+    // state after retention has pruned — and it says so rather than dropping
+    // the field or guessing an engine.
+    expect(line.textContent).toContain("run since pruned");
+  });
+
+  it("shows it in the CRT's own caption slot, not as loose chrome", async () => {
+    // The prop has existed since A3, documented as "what this frame IS", with
+    // no consumer until now.
+    await showBaseline();
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="baseline-provenance"]')) throw new Error("waiting");
+    });
+    expect(
+      document.querySelector('[data-gl="crt"] .gl-crt-caption [data-gl="baseline-provenance"]'),
+    ).not.toBeNull();
+  });
+
+  it("says nothing at all when the step has no baseline record", async () => {
+    // A caption reading "unknown" under a frame is worse than no caption,
+    // because it looks like a fact.
+    baselines = [];
+    await showBaseline();
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("waiting");
+    });
+    expect(document.querySelector('[data-gl="baseline-provenance"]')).toBeNull();
+  });
+
+  it("does NOT caption the current frame with the baseline's provenance", async () => {
+    // The caption describes the baseline. Under the current frame it would be
+    // attributing one frame's history to another.
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("waiting");
+    });
+    expect(document.querySelector('[data-gl="baseline-provenance"]')).toBeNull();
+  });
+});
+
+// ── Drift (C §6.6) ──────────────────────────────────────────────────────
+//
+// jsdom has no layout engine and the `dom` project runs with `css: false`, so
+// nothing here can see what the strip LOOKS like — the two-pixel difference
+// between a floored bar and a "no reading" dash lives in `check:drift-gap`
+// instead. What these cover is the layer above it: that a run with no reading
+// produces no bar at all, and that the sentence matches the series.
+describe("baseline drift (C §6.6)", () => {
+  /** One run's replay, with the single step's diff supplied per run. */
+  function replayAt(runId: string, startedAt: number, diff: unknown) {
+    return {
+      testId: "t1",
+      runId,
+      testName: "Checkout",
+      status: "passed",
+      startedAt,
+      finishedAt: startedAt + 1_000,
+      failedIndex: null,
+      steps: [
+        {
+          index: 0,
+          stepId: "s1",
+          label: "goto example.com",
+          type: "goto",
+          status: "passed",
+          screenshot: "0.png",
+          diff,
+        },
+      ],
+    };
+  }
+
+  /** `diffs[0]` is the run on screen; the rest are its history, newest first. */
+  function seed(diffs: unknown[]) {
+    const base = 1_700_000_000_000;
+    replays = diffs.map((_, i) =>
+      summary({ runId: `r${i}`, startedAt: base - i * 3_600_000, stepCount: 1 }),
+    );
+    replayById = {};
+    diffs.forEach((d, i) => {
+      replayById![`r${i}`] = replayAt(`r${i}`, base - i * 3_600_000, d);
+    });
+  }
+
+  const changed = { state: "changed", ratio: 0.04, threshold: 0.2, diffFile: "0.diff.png" };
+  const match = { state: "match", ratio: 0.0002, threshold: 0.2 };
+
+  beforeEach(() => {
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+  });
+
+  afterEach(() => {
+    replayById = null;
+    replayDetail = null;
+    shot = null;
+  });
+
+  async function strip() {
+    renderVisual();
+    return await waitFor(() => {
+      const el = document.querySelector(".gl-drift");
+      if (!el) throw new Error("no drift strip");
+      return el as HTMLElement;
+    });
+  }
+
+  it("reads the frame across the whole window, not just the run on screen", async () => {
+    seed([changed, changed, match, changed, changed, match]);
+    const el = await strip();
+    expect(el.querySelectorAll(".gl-drift-slot")).toHaveLength(6);
+    expect(el.textContent).toContain("Changed in 4 of the last 6 runs");
+  });
+
+  it("draws no bar for a run that never measured the frame", async () => {
+    // THE distinction the strip exists to hold. A zero-height bar would say the
+    // frame was identical in a run that made no comparison at all.
+    seed([changed, { state: "unable", reason: "sizes differ" }, match, changed, match]);
+    const el = await strip();
+    expect(el.querySelectorAll(".gl-drift-slot")).toHaveLength(5);
+    expect(el.querySelectorAll(".gl-drift-gap")).toHaveLength(1);
+    expect(el.querySelectorAll(".gl-drift-bar")).toHaveLength(4);
+  });
+
+  it("gives a measured-but-identical frame a bar with real height", async () => {
+    // Zero height and "no reading" would look the same on screen; the floor is
+    // what keeps them apart, and it is applied here rather than in CSS.
+    seed([changed, match, match, match, match]);
+    const el = await strip();
+    const heights = [...el.querySelectorAll<HTMLElement>(".gl-drift-bar")].map(
+      (b) => Number.parseFloat(b.style.height),
+    );
+    expect(heights).toHaveLength(5);
+    for (const h of heights) expect(h).toBeGreaterThan(0);
+  });
+
+  it("colours only the runs that were over threshold", async () => {
+    // Colour means outcome. A bar's HEIGHT is a magnitude — a large
+    // sub-threshold diff is still a pass and must not be lit like a change.
+    seed([changed, match, match, match, match]);
+    const el = await strip();
+    expect(el.querySelectorAll(".gl-drift-bar[data-changed]")).toHaveLength(1);
+  });
+
+  it("marks a drifting series so the stylesheet can colour its sentence", async () => {
+    seed([changed, changed, match, changed, changed, match]);
+    expect((await strip()).dataset.verdict).toBe("drifting");
+  });
+
+  it("does NOT call a single change drift", async () => {
+    // One edit, one moved frame, one re-pin: the ordinary healthy case, and the
+    // one a readout like this most easily cries wolf about.
+    seed([match, changed, match, match, match, match]);
+    const el = await strip();
+    expect(el.dataset.verdict).toBe("settled");
+    expect(el.textContent).toContain("Changed once in the last 6 runs");
+  });
+
+  it("says nothing at all when there is only the run on screen", async () => {
+    // A strip of one is not a series, and drawing it would imply it is.
+    seed([changed]);
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("waiting");
+    });
+    expect(document.querySelector(".gl-drift")).toBeNull();
+  });
+});
+
+// ── "What moved" — the region breakdown (C §6.6) ────────────────────────
+//
+// jsdom has no layout engine, so nothing here can check that a box lands on the
+// right part of the frame — that is geometry, and it is why the boxes are
+// positioned against `CRT`'s plate rather than the pane around it. What these
+// cover is the layer above: that the list says the right thing, that picking a
+// row takes you to the mode that draws boxes, and that a highlight belongs to
+// one step rather than leaking across a step change.
+describe("region breakdown (C §6.6)", () => {
+  const REGIONS = [
+    { x: 0.02, y: 0.48, w: 0.3, h: 0.1, pixels: 1800, share: 0.7 },
+    { x: 0.6, y: 0.02, w: 0.35, h: 0.08, pixels: 500, share: 0.2 },
+    { x: 0.05, y: 0.9, w: 0.1, h: 0.05, pixels: 260, share: 0.1 },
+  ];
+
+  function step(over: Record<string, unknown> = {}) {
+    return {
+      index: 0,
+      stepId: "s1",
+      label: "goto example.com",
+      type: "goto",
+      status: "passed",
+      screenshot: "0.png",
+      diff: {
+        state: "changed",
+        ratio: 0.04,
+        threshold: 0.2,
+        diffFile: "0.diff.png",
+        regions: REGIONS,
+        regionsOmitted: 2,
+      },
+      ...over,
+    };
+  }
+
+  function seed(steps: unknown[]) {
+    replays = [summary({ runId: "r1", stepCount: steps.length, changedSteps: 1 })];
+    replayDetail = {
+      testId: "t1",
+      runId: "r1",
+      testName: "Checkout",
+      status: "passed",
+      startedAt: 1_700_000_000_000,
+      finishedAt: 1_700_000_001_000,
+      failedIndex: null,
+      steps,
+    } as never;
+  }
+
+  beforeEach(() => {
+    seed([step()]);
+    shot = "data:image/svg+xml;utf8,%3Csvg%3E%3C/svg%3E";
+  });
+
+  afterEach(() => {
+    replayDetail = null;
+    shot = null;
+  });
+
+  async function ready() {
+    renderVisual();
+    return await waitFor(() => {
+      const el = document.querySelector(".gl-regions");
+      if (!el) throw new Error("no breakdown");
+      return el as HTMLElement;
+    });
+  }
+
+  it("says how many areas changed, where the largest is, and what it did not list", async () => {
+    const el = await ready();
+    expect(el.textContent).toContain("3 areas changed (+2 smaller)");
+    expect(el.textContent).toContain("Largest is left, 70% of it");
+  });
+
+  it("lists a row per region, ranked", async () => {
+    const el = await ready();
+    const rows = [...el.querySelectorAll(".gl-region-row")];
+    expect(rows).toHaveLength(3);
+    expect(rows.map((r) => r.querySelector(".gl-region-share")?.textContent)).toEqual([
+      "70%",
+      "20%",
+      "10%",
+    ]);
+  });
+
+  it("calls out a dominant area, and only when there is one", async () => {
+    // A change is either somewhere or everywhere. Naming a lead on an evenly
+    // spread change sends the reader to look at the wrong thing.
+    expect((await ready()).textContent).toContain("mostly left");
+  });
+
+  it("draws no boxes until the mode that draws boxes", async () => {
+    // Current and Baseline are the frames the user is asked to JUDGE, and this
+    // screen's standing rule is that what is on them is what the page put there.
+    await ready();
+    // Wait for the FRAME, not just the list: `StepScreenshot` renders nothing
+    // while its image query is in flight, so asserting zero boxes before it
+    // resolves passes against a component that draws them in every mode.
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("waiting");
+    });
+    expect(document.querySelectorAll(".gl-region-box")).toHaveLength(0);
+    fireEvent.click(
+      screen.getAllByRole("button").find((b) => /^Diff$/.test(b.textContent ?? ""))!,
+    );
+    await waitFor(() => {
+      if (document.querySelectorAll(".gl-region-box").length !== 3) throw new Error("waiting");
+    });
+  });
+
+  it("picking a row switches to the mode that draws boxes", async () => {
+    // Otherwise the list points at boxes and leaves the user to work out which
+    // mode shows them.
+    const el = await ready();
+    fireEvent.click(el.querySelectorAll(".gl-region-row")[1]);
+    await waitFor(() => {
+      if (document.querySelectorAll(".gl-region-box").length === 0) throw new Error("waiting");
+    });
+    expect(document.querySelectorAll(".gl-region-box[data-active]")).toHaveLength(1);
+  });
+
+  it("highlights the hovered row's box and no other", async () => {
+    const el = await ready();
+    fireEvent.click(
+      screen.getAllByRole("button").find((b) => /^Diff$/.test(b.textContent ?? ""))!,
+    );
+    await waitFor(() => {
+      if (document.querySelectorAll(".gl-region-box").length !== 3) throw new Error("waiting");
+    });
+    fireEvent.mouseEnter(el.querySelectorAll(".gl-region-row")[2]);
+    const boxes = [...document.querySelectorAll(".gl-region-box")];
+    expect(boxes.map((b) => b.hasAttribute("data-active"))).toEqual([false, false, true]);
+  });
+
+  it("does not carry a highlight from one step onto another", async () => {
+    // The highlight is an INDEX into one step's boxes. Carried across, it lights
+    // an unrelated box — and the step it points into may have fewer, so it can
+    // also point at nothing while the row still reads as picked.
+    // The next step has a region AT THE SAME INDEX, which is what makes the
+    // leak visible: a stale index pointing past the end of a shorter list
+    // highlights nothing and looks fine.
+    seed([
+      step(),
+      step({
+        index: 1,
+        stepId: "s2",
+        diff: { ...step().diff, regions: [REGIONS[0], REGIONS[1], REGIONS[2]] },
+      }),
+    ]);
+    const el = await ready();
+    fireEvent.mouseEnter(el.querySelectorAll(".gl-region-row")[2]);
+    expect(document.querySelectorAll(".gl-region-row[data-active]")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: /next step/i }));
+    await waitFor(() => {
+      if (!screen.getByText(/2 \/ 2/)) throw new Error("waiting");
+    });
+    expect(document.querySelectorAll(".gl-region-row[data-active]")).toHaveLength(0);
+  });
+
+  it("says nothing when the comparison found no regions", async () => {
+    // A matched frame has none, and "0 areas changed" under it would be a
+    // finding about a frame that had none.
+    seed([step({ diff: { state: "match", ratio: 0.0001, threshold: 0.2 } })]);
+    renderVisual();
+    await waitFor(() => {
+      if (!document.querySelector('[data-gl="crt"]')) throw new Error("waiting");
+    });
+    expect(document.querySelector(".gl-regions")).toBeNull();
   });
 });

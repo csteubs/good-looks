@@ -47,6 +47,7 @@ import {
   sendToMain,
   unregisterAuxWindow,
 } from "../services/app-window.js";
+import { attachUiScale, scaled } from "../services/ui-scale.js";
 import { getPreloadPath, getWindowUrl } from "./window-paths.js";
 
 /**
@@ -64,8 +65,25 @@ import { getPreloadPath, getWindowUrl } from "./window-paths.js";
  */
 export const FOLLOW_EVENTS = ["move", "moved", "resize", "resized"] as const;
 
-/** Panel width in DIP. Not user-configurable in this pass. */
-const WIDTH = PANEL_WIDTH;
+/**
+ * Panel width in DIP, for THIS session.
+ *
+ * `PANEL_WIDTH` (360) is the panel's width in CSS pixels — what the view needs.
+ * The window is sized in points, so under an interface scale the two differ,
+ * and this holds the resolved number.
+ *
+ * LATCHED WHEN THE PANEL OPENS, and re-read nowhere else. This value is used by
+ * four separate operations across a session — the initial dock, the follower on
+ * every browser move, the parked placement, and `computeUndock`, which gives
+ * the browser back exactly the width the dock took from it. Reading the setting
+ * live would let those disagree mid-session: change the size while docked and
+ * the follower starts placing a wider panel against a browser that was split
+ * for a narrower one, and undocking then hands the browser back the wrong
+ * number of points, permanently. The panel therefore keeps the width it opened
+ * at, and picks up a new scale on the next recording — the same latching, and
+ * for the same reason, as `preserveBrowserWidth`.
+ */
+let WIDTH = PANEL_WIDTH;
 
 let panelWindow: BrowserWindow | null = null;
 let browserWindow: BrowserWindow | null = null;
@@ -263,6 +281,9 @@ export async function openTrainerPanel(
   seenEvents.clear();
   viewportHintSent = false;
   preserveBrowserWidth = !!opts.fixedBrowserWidth;
+  // Latch the session's panel width at the current interface scale. Every dock,
+  // follow and undock below reads this one number — see its declaration.
+  WIDTH = scaled(PANEL_WIDTH);
 
   const browserBounds = recWindow.getBounds();
   const workArea = workAreaFor(browserBounds);
@@ -305,6 +326,15 @@ export async function openTrainerPanel(
   // reaches the panel as well as the main window. Registered before the load so
   // nothing emitted during startup is missed.
   registerAuxWindow(panelWindow);
+
+  // The panel is app chrome and scales with the rest of it. The TRAINING
+  // BROWSER it sits beside is not, and must not be — see services/ui-scale.ts.
+  //
+  // NO MINIMUM SIZE PASSED, unlike the other two windows: the panel's floor is
+  // its docked width, which is already latched in `WIDTH` above and set as
+  // `minWidth`. Handing it to `attachUiScale` as well would let a mid-session
+  // scale change rewrite the one number the dock arithmetic assumes is fixed.
+  attachUiScale(panelWindow);
 
   panelWindow.once("ready-to-show", () => {
     if (isLive(panelWindow)) panelWindow.show();

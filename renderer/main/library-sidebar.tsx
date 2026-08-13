@@ -15,7 +15,7 @@ import {
   Text,
   toast,
 } from "@ui";
-import { Plus, FolderOpen, Gauge, EyeOff, BarChart3, GitBranch, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
+import { Plus, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
 
 import { ChromeButton, Rail, RailEmpty, RailGroup, RailRow, SiteIcon } from "../theme";
 import { api } from "../lib/api";
@@ -26,6 +26,8 @@ import type { LlmProvider } from "../lib/llm-types";
 import type { TestRecord } from "../lib/recorder-types";
 import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/duplicate-warnings";
+import { nativeShell } from "../lib/native-shell";
+import { BranchesRailRow } from "./branches-rail-row";
 import { useAiDebug } from "./ai-debug-store";
 import { NewRecordingDialog } from "./new-recording-dialog";
 import { GenerateTestDialog } from "./generate-test-dialog";
@@ -33,12 +35,6 @@ import { ImportGitDialog } from "./import-git-dialog";
 import { TagsDialog } from "./tags-dialog";
 import { DuplicateTestDialog } from "./duplicate-test-dialog";
 
-interface NativeShell {
-  showItemInFolder: (fullPath: string) => void;
-}
-function nativeShell(): NativeShell {
-  return (window as unknown as { glazeAPI: { shell: NativeShell } }).glazeAPI.shell;
-}
 
 /** Slider embedded in the "Adjust Test Speed" submenu — snaps to the named
  * speeds rather than an arbitrary ms value, since that's what a Playwright
@@ -462,12 +458,9 @@ export function LibrarySidebar() {
               is building the app, and a permanently greyed row would be a
               standing question for everyone else. */}
           {branchesAvailable ? (
-            <RailRow
-              icon={<GitBranch aria-hidden="true" />}
-              title="Branches"
-              subtitle="Run a PR of this app"
+            <BranchesRailRow
               selected={pathname === "/branches"}
-              onClick={() => navigate({ to: "/branches" })}
+              onOpenBranches={() => navigate({ to: "/branches" })}
             />
           ) : null}
         </RailGroup>

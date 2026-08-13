@@ -12,6 +12,11 @@
 // fire a change event.
 
 import type { RecorderSettings } from "./recorder-types";
+import {
+  COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
+  COST_DEFAULT_PER_CI_MINUTE,
+  DEFAULT_COST_CURRENCY,
+} from "../../shared/cost-units.mjs";
 
 // ── Panes ────────────────────────────────────────────────────────────────────
 
@@ -21,8 +26,10 @@ export type PaneId =
   | "test-defaults"
   | "auto-heal"
   | "storage"
+  | "cost"
   | "ai"
   | "alerts"
+  | "integrations"
   | "diagnostics"
   | "experiments";
 
@@ -74,6 +81,16 @@ export const PANES: readonly PaneDef[] = [
     group: "Testing",
   },
   {
+    // Its own pane rather than a section of Test defaults: nothing here is a
+    // starting value for a new test, and nothing here changes what a run DOES.
+    // These are the two numbers the Stats → Cost panel multiplies by, and the
+    // pane exists so the panel can stop guessing.
+    id: "cost",
+    title: "Cost",
+    subtitle: "What a CI minute costs, and what one manual test run costs in time.",
+    group: "Testing",
+  },
+  {
     id: "ai",
     title: "AI",
     subtitle: "The model behind Debug with AI and Generate from prompt.",
@@ -82,7 +99,26 @@ export const PANES: readonly PaneDef[] = [
   {
     id: "alerts",
     title: "Alerts",
-    subtitle: "Being told when a run goes wrong.",
+    // Says "on this Mac" since the webhook moved to Integrations: what is left
+    // here is three local notifications, and the pane's whole claim is now that
+    // none of it goes anywhere.
+    subtitle: "Being told when a run goes wrong, on this Mac.",
+    group: "Connections",
+  },
+  {
+    // The one place to answer "what does this app talk to?".
+    //
+    // Holds the webhook (moved from Alerts), the Linear connection, and the
+    // GitHub token — which had no settings UI at all before this and could only
+    // be set from inside the branch switcher, where nobody auditing the app
+    // would think to look.
+    //
+    // The local notification rows did NOT move with the webhook. They send
+    // nothing anywhere, and a pane whose subject is outbound connections is
+    // weaker for listing three things that aren't.
+    id: "integrations",
+    title: "Integrations",
+    subtitle: "Services this app connects to, and what leaves this Mac.",
     group: "Connections",
   },
   {
@@ -161,6 +197,24 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
   // went, so the search has to be able to reach it by the name of the thing
   // that is gone.
   { id: "theme", pane: "appearance", label: "Theme", keywords: "dark light auto system appearance colour color" },
+  // Keywords cover the words someone reaches for when the app is too small to
+  // read — "zoom", "scale", "bigger", "accessibility" — and not just the label.
+  // Whoever needs this setting most is the person least able to browse for it.
+  {
+    id: "ui-scale",
+    pane: "appearance",
+    label: "Font size",
+    keywords: "font text type size zoom scale bigger larger smaller legibility accessibility",
+    key: "uiScale",
+  },
+  {
+    id: "ui-typeface",
+    pane: "appearance",
+    label: "Typeface",
+    keywords:
+      "font family typeface mono monospace space grotesk sf pro menlo helvetica system classic",
+    key: "uiTypeface",
+  },
   // Both flourishes write the same key — it's one array of disabled ids, not a
   // field each. `paneKeys` dedupes, so the pane counts them as one setting and
   // "reset section" restores the whole array in a single write.
@@ -329,6 +383,38 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "prune delete retention disk space free",
   },
 
+  // Cost
+  // Keywords name the INVOICE, not the panel: someone who has just seen a CI
+  // bill searches "spend", "price", "dollar" or "github actions", and none of
+  // those words are in any of these labels.
+  {
+    id: "cost-currency",
+    pane: "cost",
+    label: "Currency",
+    keywords: "money symbol dollar euro pound yen usd eur gbp jpy cad aud spend cost none",
+    key: "costCurrency",
+  },
+  {
+    id: "cost-ci-runner",
+    pane: "cost",
+    label: "CI runner",
+    keywords: "github actions hosted runner linux windows macos arm64 x64 price rate preset",
+  },
+  {
+    id: "cost-per-ci-minute",
+    pane: "cost",
+    label: "Price per CI minute",
+    keywords: "spend cost money price rate minute ci github actions invoice bill",
+    key: "costPerCiMinute",
+  },
+  {
+    id: "cost-minutes-per-manual-run",
+    pane: "cost",
+    label: "Minutes to run one test by hand",
+    keywords: "manual testing time saved avoided hours by hand human",
+    key: "costMinutesPerManualRun",
+  },
+
   // AI
   {
     id: "llm-provider",
@@ -368,18 +454,49 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "notification macos banner ai debug llm answer ready local",
     key: "notifyOnAiDebugDone",
   },
+
+  // Integrations
+  //
+  // The webhook rows keep their ids across the move to this pane. The id is
+  // what `SettingRow` hides on, what search matches, and what every existing
+  // test addresses — renaming them to match the new pane would break all three
+  // to make the strings tidier.
+  {
+    id: "linear-connection",
+    pane: "integrations",
+    label: "Linear",
+    keywords: "issue tracker ticket bug api key connect linear team project workspace",
+  },
+  {
+    id: "linear-default-team",
+    pane: "integrations",
+    label: "Default team",
+    keywords: "linear team default destination triage",
+  },
+  {
+    id: "linear-default-project",
+    pane: "integrations",
+    label: "Default project",
+    keywords: "linear project default destination milestone",
+  },
   {
     id: "alert-webhook-enabled",
-    pane: "alerts",
+    pane: "integrations",
     label: "Send alerts to a webhook",
-    keywords: "slack discord post http remote",
+    keywords: "slack discord post http remote alerts",
     key: "alertWebhookEnabled",
   },
   {
     id: "alert-webhook-url",
-    pane: "alerts",
+    pane: "integrations",
     label: "Webhook URL",
-    keywords: "slack discord secret credential https endpoint",
+    keywords: "slack discord secret credential https endpoint alerts",
+  },
+  {
+    id: "github-token",
+    pane: "integrations",
+    label: "GitHub token",
+    keywords: "branch switcher pull request private repository rate limit credential",
   },
 
   // Diagnostics
@@ -492,6 +609,11 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   defaultA11yChecks: false,
   debugScreenshots: false,
   disabledAestheticEnhancements: [],
+  uiScale: 1,
+  uiTypeface: "space",
+  costCurrency: DEFAULT_COST_CURRENCY,
+  costPerCiMinute: COST_DEFAULT_PER_CI_MINUTE,
+  costMinutesPerManualRun: COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
 };
 
 /** Structural equality for the three shapes a setting value actually takes:
@@ -589,6 +711,17 @@ export function clampHealRetries(raw: string | number): number {
 export function clampHealTimeoutMs(raw: string | number): number {
   return Math.max(1000, Math.min(30000, Math.round(Number(raw) || 4000)));
 }
+
+// THE COST PANE'S TWO NUMBERS ARE NOT CLAMPED HERE, deliberately. Every clamp
+// above rounds to an integer (`settings-schema.test.ts` pins that as a
+// property of the whole family, because these values reach the Playwright CLI
+// and the retention sweep), and a price of 0.008 does not survive rounding.
+// They also both use `Number(raw) || fallback`, which treats 0 as absent —
+// right for "0 heal attempts", wrong for a CI price, where 0 is the real
+// answer for a self-hosted runner. `clampCostPerCiMinute` and
+// `clampMinutesPerManualRun` in `shared/cost-units.mjs` are what the pane calls
+// instead, and they are the same two functions the settings store validates
+// with, so the pane and the store cannot disagree about what is valid.
 
 // ── Formatting ───────────────────────────────────────────────────────────────
 

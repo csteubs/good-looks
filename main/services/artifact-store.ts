@@ -122,6 +122,17 @@ export type ReplayStepStatus = "passed" | "failed" | "skipped" | "unknown";
  *    viewport/responsive change) — never a false flag. */
 export type VisualDiffState = "new-baseline" | "match" | "changed" | "unable";
 
+/** One measured area of change. Mirror of `visual-diff.ts`'s own type; kept
+ *  structural here so the record types do not import the diffing service. */
+export interface DiffRegion {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  pixels: number;
+  share: number;
+}
+
 export interface VisualDiff {
   state: VisualDiffState;
   /** fraction of pixels changed (0–1), for match/changed. */
@@ -138,6 +149,15 @@ export interface VisualDiff {
   /** "element" when this step was compared element-scoped rather than
    *  page-wide, so the UI can label what the ratio is a share OF. */
   scope?: "page" | "element";
+  /** Where the change is, largest first — REDESIGN §6.6's "what moved".
+   *  Normalized (0–1) against the compared image, like every other rect in
+   *  this app, so the viewer can lay a box over the frame at any size.
+   *  Recorded only for "changed": it is what the user triages, and a matched
+   *  step's sub-threshold specks are noise stored in every replay forever. */
+  regions?: DiffRegion[];
+  /** Regions found beyond the cap and folded away, so the UI can say "and 12
+   *  smaller" rather than implying the list is everything. */
+  regionsOmitted?: number;
 }
 
 export interface ReplayStep {
@@ -188,8 +208,18 @@ export interface RunReplay {
   failedIndex: number | null;
   /** threshold (percent, 0–100) this run's visual diffs used, when captured. */
   visualThreshold?: number;
+  /** Which of the replay screen's findings banners the user has dismissed.
+   *  Lives on the replay rather than in renderer state because a dismissal that
+   *  comes back when you click away is not a dismissal. Safe to pin to the run:
+   *  a run's findings never change after it finishes, and a re-run writes a new
+   *  replay that starts undismissed. */
+  dismissedNotices?: RunNoticeKind[];
   steps: ReplayStep[];
 }
+
+/** The two findings a run reports that don't fail it, and that the user can
+ *  therefore either resolve (accept) or wave off (dismiss). */
+export type RunNoticeKind = "visual" | "a11y";
 
 /** Lightweight summary for the replay run list (from each run's replay.json). */
 export interface RunReplaySummary {

@@ -19,7 +19,7 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 
 import type { PickedElement, RawStep, WaitDialogMode } from "../lib/recorder-types";
-import { AddStepDialog } from "./add-step-dialog";
+import { StepComposer } from "./step-composer";
 
 const PICKED: PickedElement = {
   tag: "button",
@@ -35,10 +35,9 @@ const PICKED: PickedElement = {
 function renderWait(opts: { picked?: PickedElement | null; initialWaitMode?: WaitDialogMode } = {}) {
   const onAdd = vi.fn((_steps: RawStep[]) => {});
   render(
-    <AddStepDialog
-      open
+    <StepComposer
       kind="wait"
-      onOpenChange={() => {}}
+      onCancel={() => {}}
       onAdd={onAdd}
       picked={opts.picked === undefined ? PICKED : opts.picked}
       onStartPick={() => {}}
@@ -240,10 +239,9 @@ describe("opening from the browser right-click menu", () => {
 function renderState(opts: { picked?: PickedElement | null; initialState?: "hover" | "focus" } = {}) {
   const onAdd = vi.fn((_steps: RawStep[]) => {});
   render(
-    <AddStepDialog
-      open
+    <StepComposer
       kind="elementState"
-      onOpenChange={() => {}}
+      onCancel={() => {}}
       onAdd={onAdd}
       picked={opts.picked === undefined ? PICKED : opts.picked}
       onStartPick={() => {}}
@@ -284,5 +282,113 @@ describe("element state steps", () => {
   it("states the row count before the user commits", () => {
     renderState();
     expect(screen.getByText(/Adds 1 step/)).toBeTruthy();
+  });
+});
+
+// ── The panel, as opposed to the forms in it (C §6.2) ───────────────────
+//
+// What changed when this stopped being a modal. The forms above are unchanged
+// and their tests are the same ones; these are about the frame, and each of
+// them is something the dialog got from Radix for free and an inline panel has
+// to say for itself.
+
+describe("the composer panel", () => {
+  const panel = () => document.querySelector('[data-gl="step-composer"]');
+  const addButton = () => screen.getByRole("button", { name: /add step/i });
+
+  it("disables Add until the step will actually build", () => {
+    // The modal could afford a permanently-enabled confirm that did nothing:
+    // it stayed open, so "nothing happened" read as "I have not finished". A
+    // panel sitting in the list cannot — a button that silently declines is
+    // indistinguishable from a broken one.
+    const onAdd = vi.fn();
+    render(
+      <StepComposer
+        kind="goto"
+        onCancel={() => {}}
+        onAdd={onAdd}
+        picked={null}
+        onStartPick={() => {}}
+        onClearPick={() => {}}
+      />,
+    );
+    expect(addButton().hasAttribute("disabled")).toBe(true);
+    fireEvent.change(screen.getByPlaceholderText(/example\.com/), {
+      target: { value: "https://example.com/x" },
+    });
+    expect(addButton().hasAttribute("disabled")).toBe(false);
+    fireEvent.click(addButton());
+    expect(onAdd).toHaveBeenCalledWith([{ type: "goto", url: "https://example.com/x" }]);
+  });
+
+  it("closes itself after adding, so the list is what you are left looking at", () => {
+    const onCancel = vi.fn();
+    render(
+      <StepComposer
+        kind="goto"
+        onCancel={onCancel}
+        onAdd={() => {}}
+        picked={null}
+        onStartPick={() => {}}
+        onClearPick={() => {}}
+      />,
+    );
+    fireEvent.change(screen.getByPlaceholderText(/example\.com/), {
+      target: { value: "https://example.com/x" },
+    });
+    fireEvent.click(addButton());
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes on Escape from inside a field", () => {
+    // Radix gave the dialog this. An inline panel has to bind it, and without
+    // it the only way out of a half-filled composer is the mouse.
+    const onCancel = vi.fn();
+    render(
+      <StepComposer
+        kind="goto"
+        onCancel={onCancel}
+        onAdd={() => {}}
+        picked={null}
+        onStartPick={() => {}}
+        onClearPick={() => {}}
+      />,
+    );
+    fireEvent.keyDown(screen.getByPlaceholderText(/example\.com/), { key: "Escape" });
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers cancel twice — the header X and the footer button", () => {
+    // Both, deliberately. The X is where a dialog's is and where the hand
+    // goes; the footer one is where the eye ends up after filling the form.
+    const onCancel = vi.fn();
+    render(
+      <StepComposer
+        kind="goto"
+        onCancel={onCancel}
+        onAdd={() => {}}
+        picked={null}
+        onStartPick={() => {}}
+        onClearPick={() => {}}
+      />,
+    );
+    const cancels = screen.getAllByRole("button", { name: /^cancel$/i });
+    expect(cancels).toHaveLength(2);
+    for (const c of cancels) fireEvent.click(c);
+    expect(onCancel).toHaveBeenCalledTimes(2);
+  });
+
+  it("names what it is composing, so a panel in a long list is identifiable", () => {
+    render(
+      <StepComposer
+        kind="assertion"
+        onCancel={() => {}}
+        onAdd={() => {}}
+        picked={null}
+        onStartPick={() => {}}
+        onClearPick={() => {}}
+      />,
+    );
+    expect(panel()?.getAttribute("aria-label")).toBe("Add assertion");
   });
 });

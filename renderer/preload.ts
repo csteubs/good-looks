@@ -89,6 +89,15 @@ const glazeAPI = {
     showItemInFolder(fullPath: string): void {
       void ipcRenderer.invoke("shell:showItemInFolder", fullPath).catch(() => {});
     },
+
+    // Opens a URL in the user's real browser; used by the branch menu's
+    // pull-request icon. NOT a general "open anything" — the main side accepts
+    // https on github.com and refuses everything else, because the alternative
+    // is handing an arbitrary scheme to Launch Services. See
+    // `main/shell/external-url.ts`.
+    openExternal(url: string): void {
+      void ipcRenderer.invoke("shell:openExternal", url).catch(() => {});
+    },
   },
 
   // ── Clipboard — used to copy failed-run output for external LLMs ────

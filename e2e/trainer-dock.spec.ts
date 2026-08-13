@@ -72,21 +72,48 @@ async function startSession(
 /**
  * The two training windows and the display they are on.
  *
- * Found by URL, not by title: the training browser's title is whatever the
- * PAGE calls itself, so matching on "Recording — …" finds nothing the moment
- * the site under test has a `<title>`.
+ * Found by the URL of a webContents INSIDE the window, not by the window's own
+ * URL and not by its title.
+ *
+ * Not the window's URL: the training browser stopped loading the site itself
+ * when it grew a URL strip. The page is in a child WebContentsView, so the
+ * window's own webContents reports the strip's `app://` URL and a match on
+ * `http://127.0.0.1` finds nothing — every geometry assertion below would then
+ * fail as "the training browser window was null", which reads like the dock
+ * feature breaking rather than like the finder being out of date.
+ *
+ * Not the title either: it is whatever the PAGE calls itself, so matching on
+ * "Recording — …" finds nothing the moment the site under test has a `<title>`.
+ * (The service now refuses `page-title-updated`, so that is no longer true —
+ * but the URL is still the more direct question to ask.)
  */
 async function geometry(app: AppFixtures["app"]): Promise<{
   workArea: Rect;
   panel: Rect | null;
   browser: Rect | null;
 }> {
-  return app.evaluate(({ BrowserWindow, screen }) => {
+  return app.evaluate(({ BrowserWindow, screen, webContents }) => {
     const find = (match: (url: string) => boolean): Electron.Rectangle | null => {
       const win = BrowserWindow.getAllWindows().find((w) => match(w.webContents.getURL()));
       return win ? win.getBounds() : null;
     };
-    const browser = find((u) => u.startsWith("http://127.0.0.1"));
+    /** The WINDOW that hosts a webContents matching `match`, whether that
+     *  webContents is the window's own or one of its child views. */
+    const findByChild = (match: (url: string) => boolean): Electron.Rectangle | null => {
+      const wc = webContents.getAllWebContents().find((c) => !c.isDestroyed() && match(c.getURL()));
+      if (!wc) return null;
+      // `fromWebContents` answers for a window's own contents; a view's parent
+      // is reached through the ownerBrowserWindow it was added to.
+      const win =
+        BrowserWindow.fromWebContents(wc) ??
+        BrowserWindow.getAllWindows().find((w) =>
+          w.contentView.children.some(
+            (child) => (child as Electron.WebContentsView).webContents?.id === wc.id,
+          ),
+        );
+      return win ? win.getBounds() : null;
+    };
+    const browser = findByChild((u) => u.startsWith("http://127.0.0.1"));
     return {
       workArea: screen.getDisplayMatching(
         browser ?? screen.getPrimaryDisplay().workArea,
@@ -96,6 +123,65 @@ async function geometry(app: AppFixtures["app"]): Promise<{
     };
   });
 }
+
+/** Move the training browser's window, the way dragging its title bar would. */
+async function moveBrowser(app: AppFixtures["app"], dx: number, dy: number): Promise<void> {
+  await app.evaluate(({ BrowserWindow, webContents }, d) => {
+    const wc = webContents
+      .getAllWebContents()
+      .find((c) => !c.isDestroyed() && c.getURL().startsWith("http://127.0.0.1"));
+    const win = BrowserWindow.getAllWindows().find((w) =>
+      w.contentView.children.some(
+        (child) => (child as Electron.WebContentsView).webContents?.id === wc?.id,
+      ),
+    );
+    if (!win) throw new Error("no training browser");
+    const b = win.getBounds();
+    win.setBounds({ x: b.x + d.dx, y: b.y + d.dy, width: b.width, height: b.height });
+  }, { dx, dy });
+}
+
+test("the panel follows the browser down the screen", async ({ app, window }) => {
+  // THE GAP THIS FILLS. Nothing in the suite asserted the panel actually
+  // FOLLOWS. `panel-dock.test.ts` proves the arithmetic against a generous
+  // 1055pt work area where the old clamp never bound; `check:trainer-panel`
+  // proves the listeners are attached, not that they produce a correct
+  // rectangle; and the two tests below only ever looked at the FIRST dock.
+  // So a follower that had stopped moving vertically was invisible to all of
+  // it, and was reported by a person instead.
+  const page = await servePage();
+  try {
+    await startSession(window, page.url, null);
+    const before = await geometry(app);
+    expect(before.browser, "the training browser window").not.toBeNull();
+    expect(before.panel, "the trainer panel window").not.toBeNull();
+
+    test.skip(
+      before.workArea.width < 960,
+      `this display is ${before.workArea.width}pt wide — too narrow to hold any docked pair`,
+    );
+
+    // Far enough that the old clamp would have run out: a default browser is
+    // 820pt tall, so on any ordinary work area it had well under 200pt of
+    // vertical travel before it stuck.
+    const DROP = 200;
+    await moveBrowser(app, -40, DROP);
+    await expect
+      .poll(async () => {
+        const g = await geometry(app);
+        return g.panel && g.browser ? g.panel.y - g.browser.y : null;
+      })
+      .toBe(0);
+
+    const after = await geometry(app);
+    expect(after.browser!.y, "the browser actually moved").toBe(before.browser!.y + DROP);
+    expect(after.panel!.x, "still flush against the browser's right edge").toBe(right(after.browser!));
+    // It pays for the drop in height, and never leaves the work area.
+    expect(bottom(after.panel!)).toBeLessThanOrEqual(bottom(after.workArea));
+  } finally {
+    await page.close();
+  }
+});
 
 test("the panel docks flush against the training browser", async ({ app, window }) => {
   const page = await servePage();

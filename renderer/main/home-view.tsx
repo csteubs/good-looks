@@ -15,6 +15,11 @@
 //   • A number nothing supports renders as "—", never as 0. "0% green" with no
 //     runs in the window is a claim about a week that did not happen, and it is
 //     the one reading here that would send someone looking for a bug.
+//   • EACH ONE IS THE DOOR TO THE VIEW THAT EXPLAINS IT. A count on a home
+//     screen is a question ("16 to review — which?"), and the answer is a view
+//     the app already has; leaving it un-navigable makes the reader go find the
+//     rail entry that means the same thing. `STAT_DESTINATIONS` is the whole
+//     mapping, in one place, because it is expected to move as the readouts do.
 //
 // The wordmark's `echo` treatment lives in screens.css and needs `data-text` —
 // see the note there for why the ghosts are pseudo-elements and why they are
@@ -22,6 +27,7 @@
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 
 import { Btn, WORDMARK } from "../theme";
 import { api } from "../lib/api";
@@ -52,16 +58,66 @@ export function greenRate(
   return Math.round((passed / recent.length) * 100);
 }
 
-function Stat({ value, label }: { value: string; label: string }) {
+/** Where a readout takes you, and what the destination is called out loud.
+ *
+ *  The pairing is the whole point of this table: a number on the home screen is
+ *  a question, and the view that answers it is the one it navigates to. `to` is
+ *  a literal route path the router already registers — a typo is a type error
+ *  rather than a dead click, which is why this is a `const` and not `string`.
+ *
+ *  This mapping is expected to move as the home screen's readouts change. It is
+ *  in one place so that when it does, the tests that pin it fail in one place
+ *  too. */
+const STAT_DESTINATIONS = {
+  // Tests → Batch, not the library: the rail already lists every test one click
+  // away, so "22 tests" is only interesting as something to DO — and running
+  // them together is the one action the count itself suggests.
+  tests: { to: "/batch", view: "Batch" },
+  green: { to: "/stats", view: "Stats" },
+  heals: { to: "/heals", view: "Heals" },
+} as const;
+
+type StatKey = keyof typeof STAT_DESTINATIONS;
+
+/** One readout, and the navigation it carries.
+ *
+ *  A REAL `<button>`, not a div with an `onClick`. Everything that makes this
+ *  usable without a mouse — tab order, Enter and Space, the "button" a screen
+ *  reader announces, the focus ring — comes free from the element and from
+ *  nothing else; a clickable div reproduces none of it and looks identical.
+ *
+ *  The accessible name says the destination, because the visible text cannot.
+ *  "22 Tests" read aloud is a fact, not a control, and a button whose name is a
+ *  fact gives no reason to press it. */
+function Stat({
+  value,
+  label,
+  stat,
+  onNavigate,
+}: {
+  value: string;
+  label: string;
+  stat: StatKey;
+  onNavigate: (stat: StatKey) => void;
+}) {
+  const { view } = STAT_DESTINATIONS[stat];
   return (
-    <div className="gl-home-stat">
+    <button
+      type="button"
+      className="gl-home-stat"
+      // `label: value` rather than the visual order, so the readout names
+      // itself before it reads a number that means nothing without it.
+      aria-label={`${label}: ${value}, opens the ${view} view`}
+      onClick={() => onNavigate(stat)}
+    >
       <span className="gl-home-stat-value">{value}</span>
       <span className="gl-home-stat-label">{label}</span>
-    </div>
+    </button>
   );
 }
 
 export function HomeView() {
+  const navigate = useNavigate();
   const disabledEnhancements = useDisabledEnhancements();
   const animationEnabled = !disabledEnhancements.has("homeBlackHole");
   const [recordOpen, setRecordOpen] = React.useState(false);
@@ -77,6 +133,13 @@ export function HomeView() {
   // a stale window boundary is a wrong number for no benefit.
   const green = runs === undefined ? null : greenRate(runs, Date.now());
   const toReview = heals?.filter((h) => h.status === "pending").length;
+
+  const goTo = React.useCallback(
+    (stat: StatKey) => {
+      navigate({ to: STAT_DESTINATIONS[stat].to });
+    },
+    [navigate],
+  );
 
   return (
     <div className="gl-home">
@@ -97,7 +160,7 @@ export function HomeView() {
         {/* `data-text` feeds the two echo ghosts in screens.css. They are
             pseudo-elements, so the string is in the DOM once and announced
             once. */}
-        <h1 className="gl-home-mark" data-text={WORDMARK}>
+        <h1 className="gl-home-mark gl-echo" data-text={WORDMARK}>
           {WORDMARK}
         </h1>
 
@@ -106,10 +169,29 @@ export function HomeView() {
           test step, then a Playwright script you can run.
         </p>
 
+        {/* Each readout is the door to the view it counts. They stay pressable
+            while the value is still "—": a query that has not resolved is not a
+            reason to refuse navigation, and a control that appears only once
+            data lands is one people learn is not there. */}
         <div className="gl-home-stats">
-          <Stat value={tests === undefined ? "—" : String(tests.length)} label="Tests" />
-          <Stat value={green === null ? "—" : `${green}%`} label="Green · 7d" />
-          <Stat value={toReview === undefined ? "—" : String(toReview)} label="Heals to review" />
+          <Stat
+            stat="tests"
+            onNavigate={goTo}
+            value={tests === undefined ? "—" : String(tests.length)}
+            label="Tests"
+          />
+          <Stat
+            stat="green"
+            onNavigate={goTo}
+            value={green === null ? "—" : `${green}%`}
+            label="Green · 7d"
+          />
+          <Stat
+            stat="heals"
+            onNavigate={goTo}
+            value={toReview === undefined ? "—" : String(toReview)}
+            label="Heals to review"
+          />
         </div>
 
         <div className="gl-home-actions">

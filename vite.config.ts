@@ -1,4 +1,7 @@
-// Renderer build: three windows, three HTML entries, one shared bundle set.
+// Renderer build: four HTML entries, one shared bundle set. Three are windows
+// (main, settings, trainer panel); the fourth is the training browser's chrome
+// strip, which renders into a view inside the recorder window rather than into
+// a window of its own.
 // The main-process and preload bundles are esbuild's job (scripts/build-main.mjs);
 // this config only ever sees browser code.
 
@@ -117,6 +120,11 @@ export default defineConfig(({ mode }) => ({
               "main-window": path.resolve(here, "main-window.html"),
               "settings-window": path.resolve(here, "settings-window.html"),
               "trainer-window": path.resolve(here, "trainer-window.html"),
+              // Not `*-window.html`: this one is not a window. It renders into a
+              // WebContentsView docked inside the TRAINING BROWSER's window,
+              // above the untrusted page. Naming it after the window convention
+              // would imply a fourth BrowserWindow that does not exist.
+              "recorder-chrome": path.resolve(here, "recorder-chrome.html"),
             },
           },
         },

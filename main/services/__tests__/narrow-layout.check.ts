@@ -50,12 +50,30 @@ const read = (rel: string): string => readFileSync(resolve(here, rel), "utf8");
 const MEASURED_REQUIREMENT = 928;
 
 // ── 1. The floor ──────────────────────────────────────────────────────────
+//
+// `MEASURED_REQUIREMENT` IS IN CSS PIXELS, which is the unit the toolbar was
+// measured in and NOT the unit a window is sized in. Those were the same number
+// until the interface-scale setting shipped; they are not any more, and the
+// difference runs the wrong way — a floor of 960 POINTS is 768 CSS pixels at
+// 125%, comfortably under the requirement below, so the guarantee would lapse
+// at exactly the setting someone turns up because they cannot read the app.
+//
+// So `main/index.ts` now wraps each of these in `scaled(...)`, and this check
+// reads the CSS-pixel argument out of the wrapper. Both spellings are accepted:
+// the point is the number, and a bare literal is still correct at 100%. What is
+// NOT acceptable is the regex quietly matching neither — a floor it cannot find
+// is a floor it cannot judge — which is what the `m !== null` assert is for.
 {
   const main = read("../../../main/index.ts");
-  const m = main.match(/const\s+minWindowWidth\s*=\s*(\d+)/);
-  assert(m !== null, "main/index.ts: declares minWindowWidth");
-  if (m) {
-    const width = Number(m[1]);
+  /** `= 960` or `= scaled(960)` — the CSS-pixel measurement either way. */
+  const cssPixels = (name: string): number | null => {
+    const m = main.match(new RegExp(`const\\s+${name}\\s*=\\s*(?:scaled\\()?(\\d+)`));
+    return m ? Number(m[1]) : null;
+  };
+
+  const width = cssPixels("minWindowWidth");
+  assert(width !== null, "main/index.ts: declares minWindowWidth");
+  if (width !== null) {
     assert(
       width >= MEASURED_REQUIREMENT,
       `main/index.ts: minWindowWidth (${width}) must be >= ${MEASURED_REQUIREMENT}, the widest toolbar's measured requirement — below it, "Run test" and "Run 0" leave the viewport with no horizontal scroll to reach them`,
@@ -64,13 +82,25 @@ const MEASURED_REQUIREMENT = 928;
 
   // The default must not sit below the floor, or the app opens at a size it
   // immediately clamps.
-  const dm = main.match(/const\s+windowWidth\s*=\s*(\d+)/);
-  if (m && dm) {
+  const dflt = cssPixels("windowWidth");
+  if (width !== null && dflt !== null) {
     assert(
-      Number(dm[1]) >= Number(m[1]),
-      `main/index.ts: default windowWidth (${dm[1]}) must be >= minWindowWidth (${m[1]})`,
+      dflt >= width,
+      `main/index.ts: default windowWidth (${dflt}) must be >= minWindowWidth (${width})`,
     );
   }
+
+  // And the floor has to REACH the window as a scaled value. Declaring it in
+  // CSS pixels and then handing the raw number to `new BrowserWindow` would
+  // pass every assertion above while shipping the bug they describe.
+  assert(
+    /minWidth:\s*minWindowWidth/.test(main) && /const\s+minWindowWidth\s*=\s*scaled\(/.test(main),
+    "main/index.ts: the window's minWidth is the CSS-pixel floor put through scaled()",
+  );
+  assert(
+    /attachUiScale\(mainWindow,\s*\{/.test(main),
+    "main/index.ts: the main window hands its floor to attachUiScale, so a scale change re-applies it",
+  );
 }
 
 // ── 2. The grids ──────────────────────────────────────────────────────────

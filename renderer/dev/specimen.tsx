@@ -28,6 +28,8 @@ import {
   KeyValue,
   MenuItem,
   Panel,
+  RailFlyout,
+  RailRow,
   Segmented,
   SiteIcon,
   StatusChip,
@@ -39,6 +41,95 @@ import {
 } from "../theme";
 import type { TempMode } from "../theme";
 import type { StepType } from "../lib/recorder-types";
+import { GitBranch } from "lucide-react";
+import { buildBranchMenu, type BranchMenuInput } from "../lib/branch-menu";
+import { BranchMenu } from "../main/branch-menu";
+// Not a primitive, and here anyway. §6.1's five panels are the same problem
+// this page was built for: only ONE of them is reachable from the preview's
+// fixtures (a test that has run and passed), so `healed`, `retry` and `never`
+// would first be seen by a user rather than by us.
+import { RunSummaryPanel } from "../main/run-summary-panel";
+import type { RunSummary } from "../lib/run-summary";
+
+/** The six run states, in the order a test tends to meet them. `failed` is
+ *  absent because its panel is `RunTriage`, which needs a backend query. */
+const RUN_SUMMARIES: RunSummary[] = [
+  { state: "never", stepCount: 6 },
+  { state: "running", done: 2, total: 6, failedSoFar: 0, elapsedMs: 4_200 },
+  {
+    state: "passed",
+    stepCount: 6,
+    durationMs: 12_400,
+    medianMs: 11_900,
+    deltaPct: 4.2,
+    captured: true,
+    a11yChecks: 6,
+    a11yNewSteps: 2,
+  },
+  {
+    state: "healed",
+    healedSteps: 1,
+    healFailedSteps: 0,
+    pendingReview: 1,
+    entries: [
+      {
+        id: "h-1",
+        testId: "t-login",
+        stepId: "s4",
+        stepIndex: 3,
+        stepLabel: 'click "Sign in"',
+        source: "run",
+        runId: "r-2",
+        at: 0,
+        originalLocator: { k: "testid", v: "signin" },
+        appliedLocator: { k: "role", role: "button", name: "Sign in" },
+        candidates: [],
+        applied: false,
+        status: "pending",
+      },
+    ],
+  },
+  {
+    state: "retry",
+    durationMs: 9_100,
+    stepCount: 6,
+    differences: [{ label: "Browser", before: "WebKit", after: "Chromium" }],
+    previous: {
+      id: "r-0",
+      testId: "t-login",
+      testName: "Login",
+      url: "https://app.example.com/login",
+      status: "failed",
+      exitCode: 1,
+      startedAt: 0,
+      finishedAt: 8_100,
+      durationMs: 8_100,
+      logFile: "/preview/runs/r-0.log",
+      logBytes: 0,
+    },
+  },
+  // The reading that decides whether somebody goes looking for a fix that does
+  // not exist, so it gets its own specimen rather than sharing `retry`'s.
+  {
+    state: "retry",
+    durationMs: 9_100,
+    stepCount: 6,
+    differences: [],
+    previous: {
+      id: "r-0",
+      testId: "t-login",
+      testName: "Login",
+      url: "https://app.example.com/login",
+      status: "failed",
+      exitCode: 1,
+      startedAt: 0,
+      finishedAt: 8_100,
+      durationMs: 8_100,
+      logFile: "/preview/runs/r-0.log",
+      logBytes: 0,
+    },
+  },
+];
 
 const ALL_TYPES: StepType[] = [
   "goto",
@@ -58,6 +149,72 @@ const ALL_TYPES: StepType[] = [
   "runFlow",
   "state",
 ];
+
+/** The branch flyout's states. Built from real `buildBranchMenu` inputs rather
+ *  than hand-written rows, so the page shows what the rules produce and not
+ *  what someone hoped they produce. */
+const BRANCH_MENU_SPECIMENS: { label: string; input: BranchMenuInput }[] = (() => {
+  const now = 1_770_000_000_000;
+  const day = 86_400_000;
+  const branches = [
+    { name: "main", updatedAt: now, subject: "⌘K: a command palette that does not guess" },
+    { name: "feat/step-reordering", updatedAt: now - day, subject: "drag to reorder trainer steps" },
+    { name: "fix/heal-journal-retention", updatedAt: now - 2 * day, subject: "roll up before pruning" },
+    { name: "chore/bump-playwright", updatedAt: now - 3 * day, subject: "playwright 1.55" },
+    { name: "feat/a11y-panel-filters", updatedAt: now - 4 * day, subject: "filter violations by impact" },
+    { name: "docs/decisions-2026-08", updatedAt: now - 5 * day, subject: "" },
+    { name: "feat/older-thing", updatedAt: now - 40 * day, subject: "something from a while ago" },
+  ];
+  const pulls = [
+    {
+      number: 91,
+      title: "Reorder steps by dragging",
+      branch: "feat/step-reordering",
+      author: "csteubs",
+      draft: false,
+      updatedAt: "2026-08-11T09:00:00Z",
+      url: "https://github.com/csteubs/good-looks/pull/91",
+      fork: false,
+    },
+    {
+      number: 89,
+      title: "Bump Playwright to 1.55",
+      branch: "chore/bump-playwright",
+      author: "csteubs",
+      draft: true,
+      updatedAt: "2026-08-10T09:00:00Z",
+      url: "https://github.com/csteubs/good-looks/pull/89",
+      fork: false,
+    },
+  ];
+  const status = {
+    available: true,
+    switched: false,
+    hasToken: true,
+    current: "main",
+    checkoutBranch: "main",
+  };
+  return [
+    { label: "with pull requests", input: { status, branches, pulls } },
+    {
+      // What everyone without a token, or over the unauthenticated rate limit,
+      // or on a non-GitHub remote actually sees. No icons, and the menu still
+      // has to be worth opening.
+      label: "no pull-request data",
+      input: { status, branches, pulls: undefined },
+    },
+    {
+      // The running branch is older than the five most recent, so it displaces
+      // the oldest of them — the row that answers "what am I running?".
+      label: "running a branch build",
+      input: {
+        status: { ...status, switched: true, current: "feat/older-thing" },
+        branches,
+        pulls,
+      },
+    },
+  ];
+})();
 
 function Row({ label, children }: { label: string; children: React.ReactNode }): React.ReactElement {
   return (
@@ -405,6 +562,70 @@ export function Specimen(): React.ReactElement {
                 </span>
               </Dialog>
             </Row>
+          </div>
+        </Panel>
+
+        {/* Inside a `.gl-run-panel` because that is what the panels sit in, and
+            their padding and dividers are set against its edges. */}
+        <Panel title="Run summaries" id="§6.1 — five states" pad={0}>
+          <div className="gl-run-panel" style={{ flex: "0 0 auto" }}>
+            {RUN_SUMMARIES.map((summary, i) => (
+              <RunSummaryPanel key={i} summary={summary} onReview={() => {}} />
+            ))}
+          </div>
+        </Panel>
+
+        {/* THE ONLY PLACE THE BRANCH FLYOUT CAN BE SEEN. The rail row it hangs
+            off renders only when the branch switcher is available, and it never
+            is in a browser tab — the preview has no git, no build and no way to
+            relaunch anything, and it says so rather than pretending (see
+            `preview-bridge.ts`). So the menu is mounted here directly, against a
+            fixture, in the states worth looking at: with pull requests, without,
+            and while a branch build is running. Placement and clipping are the
+            things jsdom cannot check, and this is where to check them. */}
+        <Panel title="Branch flyout" id="hover the row →" pad={12}>
+          <div style={{ display: "grid", gap: 16 }}>
+            {BRANCH_MENU_SPECIMENS.map(({ label, input }) => (
+              <div key={label} style={{ display: "grid", gap: 6 }}>
+                <span
+                  style={{
+                    fontFamily: "var(--gl-mono)",
+                    fontSize: 9,
+                    letterSpacing: "var(--gl-track-label)",
+                    textTransform: "uppercase",
+                    color: "var(--gl-tx-3)",
+                  }}
+                >
+                  {label}
+                </span>
+                {/* In a `.gl-rail` at the real rail width, because the panel is
+                    positioned from the row's own rect and a row measured at
+                    some other width lands somewhere the app never would. */}
+                <div className="gl-rail" style={{ width: 232, height: 44 }}>
+                  <div className="gl-rail-nav">
+                    <RailFlyout
+                      label="Branches"
+                      panel={
+                        <BranchMenu
+                          model={buildBranchMenu(input)}
+                          onChoose={() => {}}
+                          onSeeAll={() => {}}
+                        />
+                      }
+                    >
+                      {(trigger) => (
+                        <RailRow
+                          {...trigger}
+                          icon={<GitBranch aria-hidden="true" />}
+                          title="Branches"
+                          subtitle="Run a PR of this app"
+                        />
+                      )}
+                    </RailFlyout>
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </Panel>
 

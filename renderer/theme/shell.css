@@ -347,3 +347,504 @@
   align-items: center;
   gap: 6px;
 }
+
+/* ── The boot plate ────────────────────────────────────────────────────── */
+/*
+ * REDESIGN §6.9. A full-window title card on the palette's only true black,
+ * over everything including the modal layer — it is what the app looks like
+ * before there is an app to look at, so nothing may be in front of it.
+ *
+ * INERT TO THE POINTER. The app underneath is already mounted and interactive:
+ * the plate is a curtain over a running show, not a loading screen holding one
+ * up. A plate that swallowed the first click would make the skip read as the
+ * app dropping input rather than as it getting on with things.
+ */
+.gl-boot {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--gl-black);
+  pointer-events: none;
+  opacity: 1;
+  transition-property: opacity;
+  transition-timing-function: ease-out;
+}
+
+/* The duration comes from the component, because it is zero under reduced
+   motion — a cross-fade is motion, and the still path has none. */
+.gl-boot[data-phase="out"] {
+  opacity: 0;
+}
+
+.gl-boot-plate {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 0 24px;
+  text-align: center;
+}
+
+/* Smaller than the Home wordmark at 40px, deliberately. This one is alone on a
+   black field with nothing to be measured against, and type with no neighbours
+   reads larger than it is; matching the Home size here would make the reveal
+   look like the mark shrinking. */
+.gl-boot-mark {
+  position: relative;
+  font-family: var(--gl-mono);
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  /* Same correction as the Home mark: the tracking leaves a full space after
+     the last letter, so the mark measures centred and looks left of centre. */
+  text-indent: 0.24em;
+  text-transform: uppercase;
+  color: var(--gl-tx-1);
+  line-height: 1.1;
+}
+
+.gl-boot-sub {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+/* A fixed width rather than one derived from the mark: the rule is a beat, and
+   a beat whose length depends on how long the product's name happens to be is
+   a coincidence rather than a design. */
+.gl-boot-rule {
+  width: 180px;
+  height: 2px;
+  margin-top: 6px;
+  background: var(--gl-line);
+  overflow: hidden;
+}
+
+/* Phosphor, and the only colour on the plate. It is not reporting an outcome —
+   nothing has happened yet — but it is the app's own accent introducing itself,
+   which is the one job this screen has. */
+.gl-boot-rule-fill {
+  width: 0;
+  height: 100%;
+  background: var(--gl-phos);
+  box-shadow: 0 0 8px var(--gl-phos);
+  animation-name: gl-boot-fill;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+/* NOT an ambient animation name, and that matters: atmosphere.css stops the
+   ambient set under `calm`, which is the reduced-motion floor. This one is
+   turned off by the component instead — under reduced motion the fill is drawn
+   full and still, so there is a rule rather than an empty groove. Leaving it to
+   the stylesheet would give a `calm` user a bar stuck at zero for the whole
+   hold, which reads as stalled. */
+@keyframes gl-boot-fill {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+/* ── The ⌘K command palette ────────────────────────────────────────────── */
+/*
+ * REDESIGN §6.7. Above the modal layer, because it can be opened FROM a modal:
+ * ⌘K is the one shortcut in the app that does not exempt text fields, and a
+ * palette that opened behind the dialog whose input the user was in would be
+ * the app swallowing a keystroke it visibly accepted.
+ */
+.gl-cmd-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  display: flex;
+  justify-content: center;
+  /* Not centred vertically. A box that opens in the middle of the window has
+     to travel to wherever it ends up as the list grows and shrinks under the
+     query; pinned near the top, only the bottom edge moves and the input — the
+     thing being typed into — never does. */
+  align-items: flex-start;
+  padding: 12vh 16px 16px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.gl-cmd-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(560px, 100%);
+  max-height: 62vh;
+  border: 1px solid var(--gl-line-2);
+  background: var(--gl-panel);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+/* Sans and 14px, and it is the only input in the app set that way. Everything
+   else here is a mono label because everything else is SCANNED; this one is a
+   sentence somebody is composing, and mono at .12em tracking is measurably
+   slower to type into. */
+.gl-cmd-input {
+  flex: 0 0 auto;
+  border: 0;
+  border-bottom: 1px solid var(--gl-line);
+  padding: 14px 16px;
+  background: transparent;
+  font-family: var(--gl-sans);
+  font-size: 14px;
+  color: var(--gl-tx-1);
+  outline: none;
+}
+
+.gl-cmd-input::placeholder {
+  color: var(--gl-tx-3);
+}
+
+.gl-cmd-list {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 4px 0;
+  list-style: none;
+  overflow-y: auto;
+}
+
+.gl-cmd-group {
+  padding: 8px 16px 4px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-cmd-row {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 16px;
+  cursor: pointer;
+}
+
+/* NEUTRAL, like every other selection in this app. The selected row here is
+   "where the cursor is", not an outcome, and a tone would make Enter look like
+   it were about to do something the row's own words do not say. */
+.gl-cmd-row[data-selected] {
+  background: rgba(255, 255, 255, 0.055);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+.gl-cmd-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-cmd-hint {
+  flex: 0 0 auto;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-cmd-empty {
+  padding: 16px;
+}
+
+/* The strip's affordance. It is a button as well as a hint, because the
+   shortcut is undiscoverable on its own and a key cap nobody can click is a
+   label rather than a control. */
+.gl-cmd-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid var(--gl-line-2);
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-cmd-key:hover {
+  border-color: var(--gl-line);
+  color: var(--gl-tx-1);
+}
+
+.gl-cmd-key:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 1px;
+}
+
+/* ── Rail flyout ──────────────────────────────────────────────────────── */
+
+/* The wrapper holds only the row. The PANEL is portalled to `document.body`,
+   because `SplitView` renders the sidebar inside `overflow-hidden` and an
+   absolutely-positioned menu is clipped at the rail's edge — it renders, it has
+   a size, it is in the accessibility tree, and almost none of it is on screen.
+   jsdom cannot see that, so `rail-flyout.test.tsx` pins the structural fact
+   instead: the panel is not a descendant of the rail. */
+.gl-rail-flyout-root {
+  position: relative;
+}
+
+/* `fixed`, positioned from the trigger's own rect — see rail-flyout.tsx. The
+   coordinates are inline styles; everything that is not a coordinate is here. */
+.gl-rail-flyout {
+  position: fixed;
+  z-index: var(--gl-z-menu);
+  min-width: 268px;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  /* Clear of the rail's own border, so the panel reads as a separate surface
+     rather than a widening of the sidebar. */
+  margin-inline-start: 6px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+}
+
+.gl-rail-flyout-label {
+  padding: 7px 10px 5px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-rail-flyout-sep {
+  height: 1px;
+  margin: 2px 0;
+  background: var(--gl-line-2);
+}
+
+/* A row is TWO controls — the branch, and its pull request — so it is a flex
+   container of two buttons rather than one button with a button inside it,
+   which is invalid HTML and which browsers resolve by dropping the inner one. */
+.gl-rail-flyout-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+}
+
+.gl-rail-flyout-item {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 0;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+  /* Reserved on every row so the one marked current does not shift its
+     neighbours' text by 2px — the same rule `.gl-rail-row` follows. */
+  box-shadow: inset 2px 0 0 transparent;
+}
+
+.gl-rail-flyout-item:hover,
+.gl-rail-flyout-item:focus-visible {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.gl-rail-flyout-item:focus-visible,
+.gl-rail-flyout-pr:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+/* SELECTION IS NEUTRAL — never a status hue, the same rule as `.gl-rail-row`
+   and for the same reason. `check:selection-neutral` reads this by name. */
+.gl-rail-flyout-item[data-current] {
+  background: var(--gl-sel-bg);
+  box-shadow:
+    inset 2px 0 0 transparent,
+    inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-rail-flyout-item-icon {
+  flex: 0 0 auto;
+  display: flex;
+  color: var(--gl-tx-3);
+}
+
+.gl-rail-flyout-item-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.gl-rail-flyout-item-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.gl-rail-flyout-item-title {
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-rail-flyout-item-sub {
+  font-family: var(--gl-sans);
+  font-size: 10px;
+  color: var(--gl-tx-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The pull-request icon. Its own control, so it needs its own hit area — an
+   icon that only reacts on its 14px glyph is one people miss. */
+.gl-rail-flyout-pr {
+  appearance: none;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 0;
+  border-inline-start: 1px solid var(--gl-line-2);
+  background: transparent;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-rail-flyout-pr:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--gl-cyan);
+}
+
+.gl-rail-flyout-pr svg {
+  width: 14px;
+  height: 14px;
+}
+
+.gl-rail-flyout-empty {
+  padding: 8px 10px;
+  font-family: var(--gl-sans);
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--gl-tx-3);
+}
+
+/* The job ticker (§6.8) — the strip's second Phase C slot, filled at last.
+
+   IT IS SIZED LIKE THE CHROME BUTTONS BESIDE IT, not like a badge. The strip is
+   a 34px band and everything in the trailing cluster is 24px; a taller readout
+   would make the band look like it had grown a toolbar. */
+.gl-ticker {
+  height: 24px;
+  max-width: 220px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--gl-line);
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-2);
+  /* `body` sets `cursor: default` app-wide and Tailwind's preflight sets it on
+     `button`, so a control that does not ask for the pointer has no hover
+     affordance. Guarded by `check:clickable-chrome`. */
+  cursor: pointer;
+}
+
+/* "Several running" has nowhere single to go, so it is not a link. It still
+   READS the same — the reading is the point — it just stops offering. */
+.gl-ticker:disabled {
+  cursor: default;
+}
+
+.gl-ticker:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--gl-tx-1);
+}
+
+.gl-ticker:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-ticker-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* THE DOT CARRIES THE COLOUR, NOT THE TEXT. Colour means outcome in this
+   palette, and a whole word rendered in red is a much louder claim than a
+   failure that has already happened and is about to expire — while a label in
+   the resting ramp stays readable against the strip in both states. */
+.gl-ticker-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--gl-tx-3);
+}
+
+/* Running takes the holo/cyan reading the palette reserves for "live", never a
+   hue: a run in flight has no outcome yet, and colouring it green or amber
+   would be the app guessing one.
+
+   THE PULSE IS DELIBERATELY NOT MARKED `data-gl-motion="ambient"`, and
+   atmosphere.css is where that decision already lives: motion that REPORTS
+   something is not decoration, and its own comment names "a run status
+   indicator that must still pulse" as the example. So this is the unmarked
+   kind — only `still` stops it, and reduced motion leaves it alone. Marking it
+   ambient, or adding a `prefers-reduced-motion` rule here, would delete the one
+   thing in the strip that separates a run IN PROGRESS from a run that stopped
+   and left its readout up for its last few seconds. */
+@keyframes gl-ticker-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.gl-ticker[data-tone="run"] .gl-ticker-dot {
+  background: var(--gl-cyan);
+  box-shadow: 0 0 6px rgba(53, 224, 255, 0.6);
+  animation: gl-ticker-pulse 1.6s ease-in-out infinite;
+}
+
+.gl-ticker[data-tone="fail"] .gl-ticker-dot {
+  background: var(--gl-red);
+  box-shadow: 0 0 6px rgba(255, 77, 97, 0.55);
+}

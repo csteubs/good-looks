@@ -23,17 +23,8 @@
 // ignores what is not for it. See the effect below.
 
 import * as React from "react";
-import {
-  Badge,
-  Button,
-  Dialog,
-  ScrollArea,
-  Status,
-  Text,
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@ui";
+import { Dialog, ScrollArea, Tooltip, TooltipContent, TooltipTrigger } from "@ui";
+import { Btn, StatusChip } from "../theme";
 import {
   CheckSquare,
   ChevronDown,
@@ -50,9 +41,10 @@ import {
 import { api } from "../lib/api";
 import type { AssertKind, PickedElement, RawStep, WaitDialogMode } from "../lib/recorder-types";
 import { computeStepDepths, describeStep } from "../lib/describe-step";
+import { urlAssertPrefill } from "../../shared/url-assert.mjs";
 import { useRecorder } from "../main/recorder-store";
-import { CursorGap, StepRow } from "../main/step-row";
-import { AddStepDialog, ADD_STEP_LABEL, type AddStepKind } from "../main/add-step-dialog";
+import { CursorGap, INSERT_HERE, StepRow } from "../main/step-row";
+import { StepComposer, ADD_STEP_LABEL, type AddStepKind } from "../main/step-composer";
 import { GenerateStepsDialog } from "../main/generate-steps-dialog";
 import { RefineSelectorDialog } from "../main/refine-selector-dialog";
 import { useViewportNarrowedNotice } from "../main/viewport-narrowed-notice";
@@ -83,6 +75,21 @@ const ASSERT_PICKABLE: { kind: AssertKind; label: string }[] = [
   { kind: "disabled", label: "Is disabled" },
   { kind: "checked", label: "Is checked" },
   { kind: "unchecked", label: "Is unchecked" },
+];
+
+/**
+ * URL assertions, which need a typed value rather than an element click.
+ *
+ * The panel had no URL assertion at all until now — its assert menu offered
+ * only the element kinds above, so the one trainer sitting against the training
+ * browser was the one place you could not assert on the location. Offered here
+ * with the live URL prefilled, same as the main window and the browser's own
+ * URL strip.
+ */
+const ASSERT_URL: { kind: AssertKind; label: string }[] = [
+  { kind: "url", label: "URL contains" },
+  { kind: "urlEndsWith", label: "URL ends with" },
+  { kind: "urlIs", label: "URL is" },
 ];
 
 /** Order matters: index === commandId in the native "+ Add step" menu. */
@@ -117,30 +124,32 @@ function nativeMenu(): NativeMenu {
 }
 
 /** Icon button with a tooltip — the tool row is icon-only to fit the width, so
- *  every control needs a name that is discoverable without one. */
+ *  every control needs a name that is discoverable without one.
+ *
+ *  `tone` rather than a second component for the AI button: `Btn`'s `ai` tone
+ *  is the holo border, and AI-adjacent chrome wears a treatment rather than a
+ *  colour here (colour means outcome — see tokens.css). The main window's
+ *  trainer makes the same call on its "AI steps" button, and the two rows are
+ *  one hairline apart when docked, so they have to agree. */
 function ToolButton({
   label,
   onClick,
   disabled,
+  tone,
   children,
 }: {
   label: string;
   onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
   disabled?: boolean;
+  tone?: "ai";
   children: React.ReactNode;
 }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button
-          size="small"
-          variant="muted"
-          onClick={onClick}
-          disabled={disabled}
-          aria-label={label}
-        >
+        <Btn tone={tone} onClick={onClick} disabled={disabled} aria-label={label}>
           {children}
-        </Button>
+        </Btn>
       </TooltipTrigger>
       <TooltipContent>{label}</TooltipContent>
     </Tooltip>
@@ -153,6 +162,7 @@ export function TrainerPanelView() {
     stepsLoaded,
     liveSteps,
     newStepIds,
+    lastAddedStepId,
     pause,
     resume,
     stop,
@@ -211,6 +221,10 @@ export function TrainerPanelView() {
   // not received yet inserts at the wrong position, and the insert cursor the
   // backend sent means nothing without the rows it points between.
   const controlsDisabled = !state.pageReady || !stepsLoaded || running;
+
+  // See the mirror of this in recording-view.tsx: follow the bottom only while
+  // the bottom is where the next captured step will actually land.
+  const cursorAtEnd = state.cursor >= liveSteps.length;
 
   // Dock state is owned by the backend (it moves real windows), so the button
   // reflects what actually happened rather than an optimistic local guess —
@@ -329,11 +343,33 @@ export function TrainerPanelView() {
       // View-relative, not screen: absolute coordinates put the menu on the
       // primary display regardless of which one the panel is on.
       coordinateSpace: "view",
-      items: ASSERT_PICKABLE.map((a, i) => ({ label: a.label, commandId: i })),
+      // Offset by 100 for the URL group, the same encoding `recording-view.tsx`
+      // uses — the two menus stay readable against each other, and a commandId
+      // cannot silently mean an element assert in one and a URL assert in the
+      // other.
+      items: [
+        ...ASSERT_PICKABLE.map((a, i) => ({ label: a.label, commandId: i })),
+        { type: "separator" as const },
+        ...ASSERT_URL.map((a, i) => ({ label: a.label, commandId: 100 + i })),
+      ],
     });
     if (typeof res.commandId !== "number") return;
-    const chosen = ASSERT_PICKABLE[res.commandId];
-    if (chosen) setAssert(chosen.kind, false);
+    if (res.commandId < 100) {
+      const chosen = ASSERT_PICKABLE[res.commandId];
+      if (chosen) setAssert(chosen.kind, false);
+      return;
+    }
+    const urlKind = ASSERT_URL[res.commandId - 100];
+    if (!urlKind) return;
+    // A URL assertion takes a typed value, so it opens the Add-step dialog
+    // rather than arming the element picker — prefilled from where the page is
+    // now, via the one helper all three surfaces share.
+    setContextPick({
+      picked: null,
+      assert: urlKind.kind,
+      prefillValue: urlAssertPrefill(urlKind.kind, state.liveUrl ?? state.url ?? ""),
+    });
+    setAddKind("assertion");
   };
 
   const openAddStepMenu = async (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -367,31 +403,91 @@ export function TrainerPanelView() {
 
   const stepDepths = computeStepDepths(liveSteps);
 
+  // The composer, at the cursor rather than over the list (§6.2). Same shape as
+  // the main window's — see recording-view.tsx for why it is a function of the
+  // gap index rather than one element hoisted out of the list.
+  const composerAt = (index: number) =>
+    addKind !== null && state.cursor === index ? (
+      <StepComposer
+        key={`${addKind}:${contextPick?.picked?.description ?? ""}`}
+        kind={addKind}
+        currentTestId={state?.testId ?? undefined}
+        onCancel={() => {
+          setAddKind(null);
+          if (addStepPicking) {
+            setAddStepPicking(false);
+            endRefine();
+            clearPicked();
+          }
+          setContextPick(null);
+        }}
+        onAdd={(steps: RawStep[]) => {
+          steps.forEach((s) => insertStep(s));
+          if (addStepPicking) {
+            setAddStepPicking(false);
+            endRefine();
+            clearPicked();
+          }
+          setContextPick(null);
+        }}
+        picked={contextPick?.picked ?? (addStepPicking ? picked : null)}
+        onStartPick={() => {
+          setAddStepPicking(true);
+          startRefine(null);
+        }}
+        onClearPick={() => {
+          setAddStepPicking(false);
+          endRefine();
+          clearPicked();
+        }}
+        initialAssert={contextPick?.assert}
+        initialWaitMode={contextPick?.waitMode}
+        initialState={contextPick?.elementState}
+        prefillText={contextPick?.prefillText}
+        prefillValue={contextPick?.prefillValue}
+      />
+    ) : null;
+
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="gl-panelwin">
       {/* Header. `drag-region` keeps the top strip draggable — with the traffic
           lights inset there is no title bar to grab, and an undocked panel that
           cannot be moved is a trap. */}
-      <div className="drag-region flex items-center gap-2 border-b border-separator px-3 pb-2 pt-9">
+      <div className="gl-panelwin-head drag-region">
+        {/* NONE OF THESE IS AN OUTCOME, so none takes a status hue — the same
+            correction `recording-view.tsx` carries, and it has to be made in
+            both places or the two trainers disagree about what red means while
+            docked side by side. "Recording" was the SDK's `error` variant, i.e.
+            the colour this palette spends on a failed run, on a surface where
+            nothing has run. Recording/Replaying/Running are IN FLIGHT, which is
+            what `StatusChip`'s running treatment says; Paused and the two
+            loading states are neutral. */}
         {!state.pageReady ? (
-          <Status variant="warning">Loading…</Status>
+          <StatusChip>Loading…</StatusChip>
         ) : !stepsLoaded ? (
-          <Status variant="warning">Loading steps…</Status>
+          <StatusChip>Loading steps…</StatusChip>
         ) : running ? (
-          <Status variant="loading">{state.replaying ? "Replaying" : "Running"}</Status>
+          <StatusChip running animated>
+            {state.replaying ? "Replaying" : "Running"}
+          </StatusChip>
+        ) : state.paused ? (
+          <StatusChip>Paused</StatusChip>
         ) : (
-          <Status variant={state.paused ? "warning" : "error"}>
-            {state.paused ? "Paused" : state.editing ? "Editing" : "Recording"}
-          </Status>
+          // "Recording", not "Editing", for a session continuing an existing
+          // test — capture is live in both, and the chip that says so is the
+          // wrong place to carry that distinction. The Save Test button below
+          // already does. See the mirror of this in recording-view.tsx.
+          <StatusChip running animated>
+            Recording
+          </StatusChip>
         )}
-        <Badge color="secondary">{liveSteps.length}</Badge>
+        <span className="gl-chip">{liveSteps.length}</span>
         <div className="ml-auto flex shrink-0 items-center gap-1">
           <Tooltip>
             <TooltipTrigger asChild>
-              <Button
-                iconOnly
-                size="small"
-                variant="transparent"
+              <button
+                type="button"
+                className="gl-icon-btn"
                 aria-label={docked ? "Undock panel" : "Dock panel to the browser"}
                 onClick={() => {
                   // Deliberately no optimistic flip — the backend's push is the
@@ -400,7 +496,7 @@ export function TrainerPanelView() {
                 }}
               >
                 <Shrink className="size-4" />
-              </Button>
+              </button>
             </TooltipTrigger>
             <TooltipContent>
               {docked
@@ -413,61 +509,68 @@ export function TrainerPanelView() {
         </div>
       </div>
 
-      <div className="border-b border-separator px-3 py-1.5">
-        <Text variant="small" color="secondary" truncate className="min-w-0">
-          {state.url}
-        </Text>
+      {/* `liveUrl` — where the page IS — not `url`, which is where the recording
+          STARTED and is what gets saved as the test's URL. This line rendered
+          `url` for its whole life, so it was right until the first navigation
+          and quietly wrong from then on. `GenerateStepsDialog` below still
+          takes `url`, correctly: it is asking about the test, not the page. */}
+      <div className="gl-panelwin-url">
+        <div className="gl-mono-value">{state.liveUrl ?? state.url}</div>
       </div>
 
       {state.assertMode ? (
-        <div className="flex items-center gap-2 border-b border-separator bg-accent/5 px-3 py-2">
-          <Text variant="small" color="blue" className="min-w-0">
-            Click an element in the browser…
-          </Text>
-          <Button
-            iconOnly
-            variant="transparent"
-            size="small"
-            className="ml-auto"
+        <div className="gl-panelwin-armed">
+          <span className="gl-trainer-prompt min-w-0">Click an element in the browser…</span>
+          <button
+            type="button"
+            className="gl-icon-btn ml-auto"
             onClick={() => setAssert(null)}
             aria-label="Cancel assertion"
           >
-            <X className="size-4" />
-          </Button>
+            <X className="size-3.5" />
+          </button>
         </div>
       ) : null}
 
       {state.refineMode ? (
-        <div className="flex items-center gap-2 border-b border-separator bg-accent/5 px-3 py-2">
-          <Crosshair className="size-4 shrink-0 text-accent" />
-          <Text variant="small" color="blue" className="min-w-0">
-            Pick a component in the browser.
-          </Text>
-          <Button
-            size="small"
-            variant="transparent"
-            className="ml-auto"
+        <div className="gl-panelwin-armed">
+          <Crosshair className="gl-panelwin-armed-icon size-3.5" />
+          <span className="gl-trainer-prompt min-w-0">Pick a component in the browser.</span>
+          <button
+            type="button"
+            className="gl-icon-btn ml-auto"
             onClick={endRefine}
             aria-label="Cancel selector refine"
           >
-            <X className="size-4" />
-          </Button>
+            <X className="size-3.5" />
+          </button>
         </div>
       ) : null}
 
-      <ScrollArea className="min-h-0 flex-1" autoScrollToBottom autoScrollDeps={[liveSteps.length]}>
-        <div className="flex flex-col p-2">
+      <ScrollArea
+        className="min-h-0 flex-1"
+        autoScrollToBottom={cursorAtEnd}
+        autoScrollDeps={[liveSteps.length]}
+      >
+        <div className="gl-panelwin-list">
           {liveSteps.length === 0 ? (
-            <Text variant="small" color="secondary" className="px-1 py-2">
-              Interact with the site — steps appear here as you go.
-            </Text>
+            <>
+              {/* No gaps to sit between yet, and the composer is the only way
+                  to put a step into a session that has captured nothing. */}
+              {composerAt(0)}
+              <p className="gl-note gl-panelwin-empty">
+                Interact with the site — steps appear here as you go.
+              </p>
+            </>
           ) : (
             <>
               <CursorGap
                 active={state.cursor === 0}
                 onClick={() => setCursor(0)}
                 disabled={controlsDisabled}
+                label={INSERT_HERE}
               />
+              {composerAt(0)}
               {liveSteps.map((s, i) => (
                 <React.Fragment key={s.id}>
                   <StepRow
@@ -482,6 +585,7 @@ export function TrainerPanelView() {
                     runStatus={replayStepStatus[i]}
                     replayFlash={replayFlash[i]}
                     isNew={newStepIds.has(s.id)}
+                    justAdded={s.id === lastAddedStepId}
                     indent={stepDepths[i]}
                     drag={
                       controlsDisabled
@@ -499,7 +603,9 @@ export function TrainerPanelView() {
                     active={state.cursor === i + 1}
                     onClick={() => setCursor(i + 1)}
                     disabled={controlsDisabled}
+                    label={i + 1 === liveSteps.length ? undefined : INSERT_HERE}
                   />
+                  {composerAt(i + 1)}
                 </React.Fragment>
               ))}
             </>
@@ -508,15 +614,13 @@ export function TrainerPanelView() {
       </ScrollArea>
 
       {replayStatus ? (
-        <div className="border-t border-separator px-3 py-1.5">
-          <Text variant="small" color="secondary" truncate>
-            {replayStatus}
-          </Text>
+        <div className="gl-panelwin-status">
+          <div className="gl-note truncate">{replayStatus}</div>
         </div>
       ) : null}
 
       {/* Tool row — mabl's icon strip. Ordered by how often it is reached for. */}
-      <div className="flex items-center gap-1 border-t border-separator px-2 py-2">
+      <div className="gl-panelwin-tools">
         {/* Icons follow mabl's strip: ☑ assert, + add step, wand for AI. */}
         <ToolButton label="Add assertion" onClick={openAssertMenu} disabled={controlsDisabled}>
           <CheckSquare className="size-3.5" />
@@ -530,6 +634,7 @@ export function TrainerPanelView() {
           label="Generate steps with AI"
           onClick={() => setAiOpen(true)}
           disabled={controlsDisabled}
+          tone="ai"
         >
           <Wand2 className="size-3.5" />
         </ToolButton>
@@ -559,66 +664,24 @@ export function TrainerPanelView() {
         </div>
       </div>
 
-      <div className="flex items-center gap-2 border-t border-separator px-3 py-2">
-        <Button
-          size="small"
-          variant="transparent"
+      <div className="gl-panelwin-foot">
+        {/* `stop` for Discard, `go` for Save: the two footer buttons are the
+            one place in this panel where the action IS the outcome, which is
+            what licenses a hue at all (tokens.css — colour means outcome). */}
+        <Btn
+          tone="stop"
           onClick={() => (liveSteps.length === 0 ? discardExit() : setExitOpen(true))}
         >
           Discard
-        </Button>
-        <Button
-          size="small"
-          variant="accent"
+        </Btn>
+        <Btn
+          tone="go"
           className="ml-auto"
           onClick={() => (liveSteps.length === 0 ? stop() : setExitOpen(true))}
         >
           {state.editing ? "Save Test" : "Generate Test"}
-        </Button>
+        </Btn>
       </div>
-
-      {addKind ? (
-        <AddStepDialog
-          open={addKind !== null}
-          kind={addKind}
-          currentTestId={state?.testId ?? undefined}
-          onOpenChange={(o) => {
-            if (!o) {
-              setAddKind(null);
-              if (addStepPicking) {
-                setAddStepPicking(false);
-                endRefine();
-                clearPicked();
-              }
-              setContextPick(null);
-            }
-          }}
-          onAdd={(steps: RawStep[]) => {
-            steps.forEach((s) => insertStep(s));
-            if (addStepPicking) {
-              setAddStepPicking(false);
-              endRefine();
-              clearPicked();
-            }
-            setContextPick(null);
-          }}
-          picked={contextPick?.picked ?? (addStepPicking ? picked : null)}
-          onStartPick={() => {
-            setAddStepPicking(true);
-            startRefine(null);
-          }}
-          onClearPick={() => {
-            setAddStepPicking(false);
-            endRefine();
-            clearPicked();
-          }}
-          initialAssert={contextPick?.assert}
-          initialWaitMode={contextPick?.waitMode}
-          initialState={contextPick?.elementState}
-          prefillText={contextPick?.prefillText}
-          prefillValue={contextPick?.prefillValue}
-        />
-      ) : null}
 
       <GenerateStepsDialog
         open={aiOpen}
@@ -669,9 +732,9 @@ export function TrainerPanelView() {
           },
         }}
       >
-        <Text variant="small" color="secondary">
+        <p className="gl-note">
           {`${liveSteps.length} step${liveSteps.length === 1 ? "" : "s"} will be saved when you choose "Save & Exit".`}
-        </Text>
+        </p>
       </Dialog>
     </div>
   );
