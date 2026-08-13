@@ -24,7 +24,7 @@
 //
 // Run with: npm run check:css-assertions
 
-import { CAPTURE_SCRIPT, PICK_AT_POINT_SCRIPT } from "../../recorder/capture-script.js";
+import { CAPTURE_SCRIPT_FOR_INSPECTION, PICK_AT_POINT_SCRIPT } from "../../recorder/capture-script.js";
 import { CSS_ASSERT_PROPS, isCssPropName } from "../../recorder/types.js";
 import { CSS_ASSERT_PROPS as RENDERER_PROPS } from "../../../renderer/lib/recorder-types.js";
 
@@ -68,7 +68,7 @@ function assertEqual<T>(actual: T, expected: T, label: string): void {
 // ── 2. Both injected scripts carry ONE interpolated copy of the list ───────
 {
   for (const [name, src] of [
-    ["CAPTURE_SCRIPT", CAPTURE_SCRIPT],
+    ["CAPTURE_SCRIPT", CAPTURE_SCRIPT_FOR_INSPECTION],
     ["PICK_AT_POINT_SCRIPT", PICK_AT_POINT_SCRIPT],
   ] as const) {
     const defs = (src.match(/function cssPropsOf/g) ?? []).length;

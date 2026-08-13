@@ -16,6 +16,84 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-13 — The click that navigates: capture gets a second exit
+
+`main/recorder/capture-channel.ts` (new), `main/recorder/capture-script.ts`,
+`main/services/recorder-service.ts`, `e2e/click-navigation.spec.ts`.
+
+**The report:** clicks were not recorded consistently, and worst on the ones
+that changed route. The page moved, no step appeared, and recovery was worse
+than the bug — the training browser's URL strip is read-only by design, so
+there is no Back button and the only way on was to abandon the recording and
+start it again, usually to lose the same click at the same place.
+
+**The bug was never in the capture.** The click was seen and the step was
+built, correctly, every time. It was then left in `data-pw-queue` — an
+attribute of the document that the click was in the process of destroying —
+for a poll running every 250 ms to collect. Every read of that attribute is an
+asynchronous round-trip into the renderer, so the read raced the navigation and
+usually lost. The best-effort `drain()` on `will-navigate` is the same race with
+a shorter fuse. **Reproduced end to end before anything was changed**: six
+clicks along a chain of routes, six steps expected, zero recorded.
+
+**The fix is an exit that does not depend on the document surviving.** The page
+now emits each step as a `console.debug` line, inside the click's own dispatch,
+picked up by `webContents`'s `console-message`. A console message is handed to
+the browser process at the moment of the call — nothing is read back out of the
+page afterwards. **Rejected: `fetch`/`sendBeacon` to a custom protocol.** Both
+are subject to the page's CSP, so a strict site could switch capture off by
+policy; console output cannot be forbidden. **Rejected: a preload on the page's
+`WebContentsView`.** It would give real IPC, and it is the textbook answer, but
+that view loads arbitrary untrusted sites specifically without one, and
+`executeJavaScriptInIsolatedWorld` already reaches it with no such surface.
+
+**Two channels is a correctness problem, so the queue became a resequencer.**
+The DOM queue stays as a backup, both copies carry `(document, sequence)`, and
+`CaptureLedger` admits each step once, in capture order, holding a step that
+arrives ahead of a gap. A plain "seen" set would have been simpler and wrong in
+the way this codebase keeps meeting: it admits a late-recovered step AFTER the
+ones captured behind it, and a step list in the wrong order is a test that does
+the right things in the wrong sequence, with nothing anywhere to report it. The
+gap is released after 1.2 s, because holding it forever would turn one dropped
+message into a recorder that stops recording.
+
+**Three things measured in a real Electron window rather than assumed** (the
+probes are gone, the answers are why the code looks like this):
+1. A console message from an isolated world does reach `console-message`, and
+   survives the navigation that follows it.
+2. The recorder's isolated world (id 1999) is THE SAME world on every
+   `executeJavaScriptInIsolatedWorld` call and is destroyed with the document.
+   The comment claiming a fresh ephemeral world per call was inherited from the
+   Glaze SDK and no longer true — so capture state moved off DOM attributes and
+   into `window.__glCapture`, where the page can neither read nor corrupt it.
+   That also makes the install marker honest: a page CAN strip every attribute
+   off `<html>`, and an install marker that a page can clear is one that lies.
+3. Both listener registrations receive the same `Event` object, so one dispatch
+   deduplicates by object identity. The weaker test — type + target +
+   timeStamp — was written first and thrown away: it drops a second real click
+   that shares a coarsened timestamp, which is the very failure being fixed.
+
+**Two smaller layers, each for a way the click never arrives.** Listeners are on
+`window` as well as `document`, capture phase, because a router that stops
+propagation before the document phase used to make the recorder blind to
+precisely the clicks that change route. And a pointerdown on something
+activatable is recorded from `pagehide` if no click ever comes, which is what a
+widget that navigates from `mousedown` produces.
+
+**`beforeunload` looked like the right event for that rescue and is the wrong
+one.** It fires synchronously when the navigation starts — for a router that
+navigates from its own click handler, that is in the middle of the click
+dispatch, before the recorder's listener has run. Wired to it, the rescue
+recorded the click and the real handler recorded it again: the trainer showed
+the same click twice, which replays as a test that clicks Pay twice. Only a
+real browser produced that ordering; `pagehide` and a "what did the rescue
+already record" guard close both directions.
+
+**What is deliberately NOT in this change:** the missing Back button. It is the
+other half of what made the bug so expensive, but a navigation the recorder did
+not cause is a navigation it does not record, and adding one is a decision
+about the recorded journey rather than a fix to a lost step.
+
 ### 2026-08-13 — `notify`, and keeping one egress
 
 `main/recorder/types.ts`, `main/services/routine-store.ts`,
