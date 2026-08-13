@@ -5151,3 +5151,28 @@ own primary actions fell out of. Batch additionally rendered two test names at
   literal `grid-cols-2` class. Its intent — all four toggles in one two-column
   block — still holds and is kept; the class assertion now requires explicit
   tracks and explicitly rejects `grid-cols-2`, because that shorthand is the bug.
+
+## 2026-08-13 — The script tab's action bar: matched padding, not a layout bug
+
+- **There was no missing flex rule, just a padding mismatch compounding a loose
+  one.** `.gl-detail-script-bar` (the row holding "Edited manually" / Edit
+  script, directly under the Steps/Script/Variables/Heals/Accessibility tabs)
+  carried 12px of horizontal padding while `Toolbar` above it — the row with
+  "Run test" — carries Tailwind's `px-4` (16px). Both bars right-align their one
+  primary button, so the 4px difference put Edit script's right edge 4px inside
+  of Run test's rather than under it, which read as the row floating loose
+  under the tab strip rather than sitting flush with the toolbar above.
+
+- **The vertical padding was never sized to its content.** `.gl-btn` is a fixed
+  30px tall regardless of what's inside it (`primitives.css`), but the bar
+  padded 6px above and below anyway — padding that wasn't holding up anything,
+  just adding canvas. Tightened to 4px and capped with an explicit
+  `max-height: 38px` (30px button + 4px × 2) so the row can't drift taller than
+  its one button again.
+
+- **Guarded at source level, like `check:narrow-layout`.** jsdom has no layout
+  engine, so nothing rendered here can observe one button's right edge lining
+  up with another's above it. `check:script-bar` reads `screens.css` directly
+  and pins both the 16px horizontal padding and the max-height; both assertions
+  were verified to fail against the pre-fix rule (12px padding, no
+  `max-height`).
