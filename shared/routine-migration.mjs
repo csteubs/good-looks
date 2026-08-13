@@ -29,6 +29,46 @@
 /** Failure policies, ROUTINES.md. `continue` FIRST and default — see above. */
 export const FAILURE_POLICIES = ["continue", "stopRoutine", "skipGroup"];
 
+/** The id the migrated Routine gets. Fixed rather than random so it can be
+ *  named from elsewhere — see `ORPHAN_BATCH_OWNER`. */
+export const MIGRATED_ROUTINE_ID = "routine-migrated-batch";
+
+/**
+ * Which Routine a batch with NO `routineId` belongs to.
+ *
+ * Every batch run before Routines shipped — and every batch the MCP's
+ * `run_batch` starts — has no Routine on it. They still have to belong
+ * somewhere, and the three obvious answers are all wrong: attributing them to
+ * EVERY Routine shows one history under four different jobs as if each had run
+ * it; attributing them to NONE makes a user's entire batch history vanish from
+ * this screen the day they upgrade; and inventing a "no routine" entry puts a
+ * job in the picker nobody made.
+ *
+ * The migrated Routine is the honest owner. Those batches are runs of the old
+ * implicit checklist, and that Routine IS the old implicit checklist — the
+ * migration exists precisely to carry it forward under a name.
+ */
+export const ORPHAN_BATCH_OWNER = MIGRATED_ROUTINE_ID;
+
+/**
+ * Does this batch belong to that Routine?
+ *
+ * Shared because the app filters the history with it and the MCP will need the
+ * same answer for a `list_batches` scoped to a Routine — and two spellings of
+ * "belongs to" is how one surface ends up showing a batch the other hides.
+ */
+export function batchBelongsToRoutine(batch, routineId) {
+  const owner = batch && typeof batch === "object" ? batch.routineId : undefined;
+  // An EMPTY stamp is no stamp. `"" === ""` would otherwise hand a
+  // half-written record to a routine whose id is the empty string, which
+  // cannot exist — so it would belong to nothing and vanish instead.
+  if (typeof owner === "string" && owner !== "") return owner === routineId;
+  // No open routine falls out of this rather than needing its own guard: a
+  // null id matches neither an owner nor the orphan owner. A separate early
+  // return said the same thing twice, and the copy is what rots.
+  return routineId === ORPHAN_BATCH_OWNER;
+}
+
 /** The name the migrated Routine gets. Deliberately the word the user already
  *  knows: they did not create a Routine, they had a Batch, and calling it
  *  something new would make their own suite look like somebody else's. */
@@ -116,7 +156,7 @@ export function routineFromBatchSettings(settings, knownTestIds, now) {
   );
   if (steps.length === 0) return null;
   return {
-    id: "routine-migrated-batch",
+    id: MIGRATED_ROUTINE_ID,
     name: MIGRATED_NAME,
     createdAt: now,
     updatedAt: now,

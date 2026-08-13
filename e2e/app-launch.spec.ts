@@ -57,7 +57,11 @@ test("the sidebar offers every view", async ({ window }) => {
   // say what it means: these four are reachable FROM THE RAIL, which is the
   // claim in the test's name and the one a home-screen shortcut cannot satisfy.
   const views = window.getByRole("group", { name: "Views" });
-  for (const name of ["Stats", "Visual", "Batch", "Heals"]) {
+  // "Routines", not "Batch": the word changed in the UI when the Batch screen
+  // became one Routine's editor (REDESIGN §7.1). The ROUTE is still `/batch`
+  // and so are the channels — per ROUTINES.md's rename table, only what a
+  // person reads changed. This assertion is on what a person reads.
+  for (const name of ["Stats", "Visual", "Routines", "Heals"]) {
     await expect(views.getByRole("button", { name: new RegExp(`^${name}`) })).toBeVisible();
   }
   await expect(window.getByRole("button", { name: "Add test" })).toBeVisible();

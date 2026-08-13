@@ -146,6 +146,47 @@ assert(
 assert(routineStore.save({ name: "no id" }, 4_000) === null, "a routine with no id is refused");
 assert(routineStore.save("nope", 4_000) === null, "a non-object is refused");
 
+// ── The schedule ─────────────────────────────────────────────────────
+const scheduled = routineStore.save(
+  routine({
+    id: "r-sched",
+    schedule: { kind: "dailyAt", minute: 570 },
+    lastScheduledRunAt: 12_345,
+  }),
+  4_000,
+);
+assert(
+  JSON.stringify(scheduled?.schedule) === JSON.stringify({ kind: "dailyAt", minute: 570 }),
+  "a valid schedule round-trips",
+);
+assert(
+  scheduled?.lastScheduledRunAt === 12_345,
+  "and so does the record of when it last fired — the store never invents it",
+);
+const badSchedule = routineStore.save(
+  routine({ id: "r-bad-sched", schedule: { kind: "everyHours", hours: 5 } }),
+  4_000,
+);
+assert(
+  badSchedule !== null && badSchedule.schedule === undefined,
+  "an hour step that does not divide the day is DROPPED, not rounded — a rounded cadence is one nobody chose",
+);
+assert(
+  routineStore.save(routine({ id: "r-no-sched" }), 4_000)?.schedule === undefined,
+  "a routine with no schedule stays unscheduled",
+);
+assert(
+  routineStore.save(
+    routine({ id: "r-junk-stamp", lastScheduledRunAt: "yesterday" }),
+    4_000,
+  )?.lastScheduledRunAt === undefined,
+  "a last-fired stamp that is not a time is dropped rather than carried into the scheduler",
+);
+routineStore.remove("r-sched");
+routineStore.remove("r-bad-sched");
+routineStore.remove("r-no-sched");
+routineStore.remove("r-junk-stamp");
+
 // ── markTestDeleted MARKS ────────────────────────────────────────────
 const before = routineStore.get("r-2")?.steps.length ?? 0;
 const marked = routineStore.markTestDeleted("t-b");

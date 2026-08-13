@@ -17,7 +17,10 @@ import { describe, it, expect } from "vitest";
 
 import type { BatchRowOptions, RecorderSettings } from "../recorder/types.js";
 import {
+  batchBelongsToRoutine,
   FAILURE_POLICIES,
+  MIGRATED_ROUTINE_ID,
+  ORPHAN_BATCH_OWNER,
   MIGRATED_CONCURRENCY,
   MIGRATED_NAME,
   normalizeConcurrency,
@@ -191,6 +194,38 @@ describe("the migrated Routine", () => {
     expect(routine!.updatedAt).toBe(1_234);
     expect(routine!.steps.map((s) => s.testId)).toEqual(["t-a"]);
     expect(routine!.defaults).toEqual({ captureArtifacts: true, concurrency: 4 });
+  });
+});
+
+describe("which routine a batch belongs to", () => {
+  it("matches on the stamped routine", () => {
+    expect(batchBelongsToRoutine({ routineId: "r-a" }, "r-a")).toBe(true);
+    expect(batchBelongsToRoutine({ routineId: "r-a" }, "r-b")).toBe(false);
+  });
+
+  it("gives a batch with no routine to the MIGRATED one, and only to it", () => {
+    // Every batch run before Routines shipped, and every one the MCP's
+    // `run_batch` starts. Attributing them to EVERY routine shows one history
+    // under four jobs as if each had run it; to NONE makes a user's whole
+    // history vanish from the screen the day they upgrade.
+    expect(batchBelongsToRoutine({}, ORPHAN_BATCH_OWNER)).toBe(true);
+    expect(batchBelongsToRoutine({}, "r-b")).toBe(false);
+    expect(ORPHAN_BATCH_OWNER).toBe(MIGRATED_ROUTINE_ID);
+  });
+
+  it("treats an empty stamp as no stamp rather than as a routine", () => {
+    // A hand-edited or half-written record. `"" === ""` would otherwise make
+    // it belong to a routine whose id is the empty string, which cannot exist.
+    expect(batchBelongsToRoutine({ routineId: "" }, ORPHAN_BATCH_OWNER)).toBe(true);
+  });
+
+  it("belongs to nothing when no routine is open", () => {
+    expect(batchBelongsToRoutine({ routineId: "r-a" }, null)).toBe(false);
+    expect(batchBelongsToRoutine({}, undefined)).toBe(false);
+  });
+
+  it("survives a batch that is not one", () => {
+    expect(batchBelongsToRoutine(null, "r-a")).toBe(false);
   });
 });
 

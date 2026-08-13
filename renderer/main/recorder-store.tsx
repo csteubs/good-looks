@@ -137,6 +137,23 @@ interface RecorderContextValue {
    *  see the state's own note. Owned here so every screen can see it, which is
    *  what §6.8's ticker needs and what `batch-view` alone could not give. */
   liveBatch: BatchState | null;
+  /**
+   * Which Routine the Batch screen has open. docs/ROUTINES.md, REDESIGN §7.1.
+   *
+   * HERE RATHER THAN IN THE VIEW because the RAIL selects it and the VIEW edits
+   * it — two components with no parent between them but `RootShell`. Routing it
+   * through the router was the other option and is worse: this app's router
+   * uses memory history, so a path cannot select anything (see CLAUDE.md), and
+   * a search param would put a Routine id in a URL nobody can see or share.
+   *
+   * SESSION-SCOPED, deliberately not persisted. "Reopen on the job you were
+   * editing" is a real nicety, but it is a settings field with its own
+   * normalizer and its own failure mode (a stored id for a deleted Routine),
+   * and it is not what this slice is about. Absent means "not chosen yet", and
+   * the view falls back to the first Routine.
+   */
+  openRoutineId: string | null;
+  setOpenRoutineId: (id: string | null) => void;
   /** `viewport` is the New Recording dialog's window-size preset; omitted (or
    *  null) keeps the trainer's default window size. Ignored when `testId` names
    *  an existing test — that session opens at the size the test recorded. */
@@ -290,6 +307,8 @@ export function RecorderProvider({
   // Those are two different questions that happened to share a variable; this
   // is only ever "what is running now".
   const [liveBatch, setLiveBatch] = React.useState<BatchState | null>(null);
+  // See the interface: the rail selects it, the Batch view edits it.
+  const [openRoutineId, setOpenRoutineId] = React.useState<string | null>(null);
   // Per-step status for an in-flight trainer replayAll (auto-run on Edit in
   // Trainer), keyed by step index. Cleared when a new run starts.
   const [replayStepStatus, setReplayStepStatus] = React.useState<Record<number, RunStepStatus>>({});
@@ -746,6 +765,8 @@ export function RecorderProvider({
     lastAddedStepId,
     runs,
     liveBatch,
+    openRoutineId,
+    setOpenRoutineId,
     start,
     pause,
     resume,
