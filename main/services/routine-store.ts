@@ -33,6 +33,7 @@ import {
   RUN_BROWSERS,
 } from "../recorder/types.js";
 import { FAILURE_POLICIES, routineFromBatchSettings } from "../../shared/routine-migration.mjs";
+import { normalizeSchedule } from "../../shared/routine-schedule.mjs";
 
 import type { FailurePolicy, Routine, RoutineStep, RunBrowser } from "../recorder/types.js";
 
@@ -174,9 +175,18 @@ function normalizeRoutine(raw: unknown, now?: number): Routine | null {
       ? (r.defaults as Record<string, unknown>)
       : {};
 
+  const schedule = normalizeSchedule(r.schedule);
   return {
     id: r.id,
     name: clampName(r.name),
+    ...(schedule ? { schedule } : {}),
+    // Carried through as data the store never invents. It is written by the
+    // scheduler when an occurrence fires, and an editor that echoed a stale
+    // value back would make the Routine look overdue — or make a missed run
+    // look as though it had happened.
+    ...(typeof r.lastScheduledRunAt === "number" && Number.isFinite(r.lastScheduledRunAt)
+      ? { lastScheduledRunAt: r.lastScheduledRunAt }
+      : {}),
     createdAt:
       typeof r.createdAt === "number" && Number.isFinite(r.createdAt) ? r.createdAt : stamp,
     updatedAt:

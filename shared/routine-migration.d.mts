@@ -16,6 +16,15 @@ export declare const FAILURE_POLICIES: readonly ["continue", "stopRoutine", "ski
 
 export declare const MIGRATED_NAME: string;
 
+export declare const MIGRATED_ROUTINE_ID: string;
+
+export declare const ORPHAN_BATCH_OWNER: string;
+
+export declare function batchBelongsToRoutine(
+  batch: { routineId?: string } | null | undefined,
+  routineId: string | null | undefined,
+): boolean;
+
 export declare const MIGRATED_CONCURRENCY: number;
 
 export declare function stepsFromBatchSettings(

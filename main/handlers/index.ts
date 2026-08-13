@@ -1416,6 +1416,10 @@ export function registerHandlers(): void {
     if (blocked) throw new Error(blocked);
     const started = await batchRunner.start({
       testIds: plan.testIds,
+      // Stamped on the batch so its history can be scoped to the job it came
+      // from. Additive and optional — a batch started any other way simply has
+      // no Routine, which is true of it.
+      routineId: routine.id,
       captureArtifacts: plan.captureArtifacts,
       // The batch-wide fallback for a test the runner finds no entry for.
       // Every step here HAS an entry, so this only decides the degenerate case

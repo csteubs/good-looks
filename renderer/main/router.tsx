@@ -101,10 +101,12 @@ const visualRoute = createRoute({
 
 const batchRoute = createRoute({
   getParentRoute: () => rootRoute,
+  // The path stays `/batch` on purpose — see the rename table in
+  // docs/ROUTINES.md. Only the word the user reads changes.
   path: "/batch",
   component: BatchView,
   staticData: {
-    title: "Batch",
+    title: "Routines",
   },
 });
 

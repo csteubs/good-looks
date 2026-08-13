@@ -17,6 +17,7 @@ import { api } from "../lib/api";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts } from "../lib/test-tags";
 import { LogInspector } from "./log-inspector";
+import { useRecorder } from "./recorder-store";
 import { TagCluster } from "./tag-cluster";
 import { applyOrder, isCustomOrder, moveToTarget, orderIdsOf } from "../lib/batch-order";
 import {
@@ -52,6 +53,8 @@ import {
   sameSteps,
   stepsFromRows,
 } from "../lib/routine-rows";
+import { createRoutine, randomSuffix } from "../lib/create-routine";
+import { batchBelongsToRoutine } from "../../shared/routine-migration.mjs";
 import type {
   BatchRecord,
   BatchState,
@@ -130,11 +133,13 @@ export function BatchView() {
   // below is what makes the others reachable.
   const routinesQuery = useQuery({ queryKey: ["routines"], queryFn: api.routines.list });
   const routines = React.useMemo(() => routinesQuery.data ?? [], [routinesQuery.data]);
-  // Which one is open. Null until the list arrives — and null FOREVER for a
+  // Which one is open. HELD IN THE STORE rather than here, because the rail
+  // selects it and this view edits it — see `openRoutineId` in recorder-store
+  // for why not the router. Null until the list arrives, and null FOREVER for a
   // user with none, which is the state the migration leaves anyone who never
-  // ticked a row. That is an empty screen with a "New routine" button, not an
-  // error, and not an invented Routine nobody asked for.
-  const [openId, setOpenId] = React.useState<string | null>(null);
+  // ticked a row: an empty screen with a "New routine" button, not an error and
+  // not an invented Routine nobody asked for.
+  const { openRoutineId: openId, setOpenRoutineId: setOpenId } = useRecorder();
   const openRoutine = React.useMemo(
     () => routines.find((r) => r.id === openId) ?? null,
     [routines, openId],
@@ -272,11 +277,28 @@ export function BatchView() {
   }, [tags, tagFilter]);
 
 
-  const history = React.useMemo(() => historyQuery.data ?? [], [historyQuery.data]);
+  // SCOPED TO THE OPEN ROUTINE. This screen is one job's editor, and a history
+  // listing every job's runs under it is the same lie as a checklist showing
+  // another Routine's ticks. Batches with no `routineId` — everything run
+  // before Routines shipped, plus the MCP's `run_batch` — belong to the
+  // migrated Routine, which IS the old implicit checklist; see
+  // `ORPHAN_BATCH_OWNER` for why the alternatives are worse.
+  const history = React.useMemo(
+    () => (historyQuery.data ?? []).filter((b) => batchBelongsToRoutine(b, openId)),
+    [historyQuery.data, openId],
+  );
+  // THE LIVE BATCH IS SCOPED TOO, not just the history. Results are keyed by
+  // testId, so a batch started from another Routine would paint ITS outcomes
+  // onto whichever rows this one happens to share — a row reporting a pass it
+  // never had. The top strip's job ticker (§6.8) still reports that batch
+  // globally, which is where a fact about the whole app belongs; here the
+  // screen simply looks idle, and pressing Run answers "a batch is already
+  // running" rather than pretending otherwise.
+  const mine = batch && batchBelongsToRoutine(batch, openId) ? batch : null;
   // Nothing live → show the most recent persisted batch, so a restart doesn't
   // present a blank view as though the batch never happened.
-  const shown: BatchState | null = batch ?? history[0] ?? null;
-  const running = batch?.running ?? false;
+  const shown: BatchState | null = mine ?? history[0] ?? null;
+  const running = mine?.running ?? false;
 
   // The globals a row falls back to when the user has never touched it.
   const rowDefaults = React.useMemo(
@@ -419,29 +441,23 @@ export function BatchView() {
    *  joins a job, and pre-filling would make the first thing a new Routine does
    *  be something the user has to undo. Its defaults come from the global
    *  settings, which is where a first Routine's would have come from too. */
-  const createRoutine = React.useCallback(async () => {
-    const stamp = Date.now();
-    const taken = new Set(routines.map((r) => r.name));
-    let name = "New routine";
-    for (let n = 2; taken.has(name); n++) name = `New routine ${n}`;
+  const newRoutine = React.useCallback(async () => {
     try {
-      const created = await api.routines.save({
-        id: `routine-${stamp}-${Math.random().toString(36).slice(2, 8)}`,
-        name,
-        createdAt: stamp,
-        updatedAt: stamp,
-        steps: [],
-        defaults: {
-          captureArtifacts: settingsQuery.data?.defaultCaptureArtifacts ?? false,
-          concurrency: settingsQuery.data?.defaultBatchConcurrency ?? 1,
-        },
-      });
+      // `createRoutine` is shared with the rail's `+`: "make a new job" spelled
+      // twice is how one of them starts producing Routines the other cannot
+      // open — a different id scheme, a different name, different defaults.
+      const created = await createRoutine(
+        routines,
+        settingsQuery.data,
+        Date.now(),
+        randomSuffix(),
+      );
       await qc.invalidateQueries({ queryKey: ["routines"] });
       if (created) setOpenId(created.id);
     } catch {
       toast.error("Could not create a routine.");
     }
-  }, [routines, settingsQuery.data, qc]);
+  }, [routines, settingsQuery.data, qc, setOpenId]);
 
   // ── Every write, in one place ───────────────────────────────────────
   //
@@ -586,7 +602,7 @@ export function BatchView() {
   // flight there is no single current one, and "Running 3 of 12" needs to mean
   // "3 finished" rather than "the third one".
   const liveCounts = React.useMemo(() => {
-    const results = batch?.results ?? [];
+    const results = mine?.results ?? [];
     return {
       inFlight: results.filter((r) => r.status === "running").length,
       settled: results.filter((r) => r.status !== "running" && r.status !== "pending").length,
@@ -635,7 +651,7 @@ export function BatchView() {
                 consequence="An empty job you tick tests into"
                 onSelect={() => {
                   close();
-                  void createRoutine();
+                  void newRoutine();
                 }}
               />
               {openRoutine ? (

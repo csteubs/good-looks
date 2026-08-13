@@ -39,6 +39,15 @@ vi.mock("@tanstack/react-router", () => ({
   useRouterState: () => "/",
 }));
 
+// The rail lists saved Routines while the Routines screen is open (REDESIGN
+// §7.1), and the selection lives in the recorder store. Stubbed for the same
+// reason the dialogs below are: the real provider owns the whole recording
+// session, and `useRouterState` above answers "/" here, so this file only ever
+// renders the library half.
+vi.mock("./recorder-store", () => ({
+  useRecorder: () => ({ openRoutineId: null, setOpenRoutineId: () => {} }),
+}));
+
 // The sidebar's other dialogs each open their own queries and native bridges;
 // none of them is what this file is about.
 vi.mock("./new-recording-dialog", () => ({ NewRecordingDialog: () => null }));
@@ -209,6 +218,20 @@ describe("LibrarySidebar — the rail", () => {
     renderSidebar();
     fireEvent.click(await screen.findByText("Stats"));
     await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/stats" }));
+  });
+
+  it("offers every view, by the name a person reads", async () => {
+    // PINNED HERE BECAUSE THE E2E SUITE PINS IT TOO, and the local gate does
+    // not run the e2e suite (CLAUDE.md). `app-launch.spec.ts` asserts these
+    // four names inside the "Views" group; renaming Batch → Routines for §7.1
+    // turned that red on CI with nothing locally to catch it first. This is the
+    // same claim in the same words, in a file the gate does run — a rename now
+    // fails in a minute rather than after a push.
+    renderSidebar();
+    const nav = document.querySelector(".gl-rail-nav") as HTMLElement;
+    for (const name of ["Stats", "Visual", "Routines", "Heals"]) {
+      expect(nav.textContent).toContain(name);
+    }
   });
 
   it("marks the open test as selected, and nothing else", async () => {
