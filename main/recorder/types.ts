@@ -1912,8 +1912,21 @@ export interface BatchState {
   /** index in `results` currently executing, or -1 when idle */
   currentIndex: number;
   results: BatchTestResult[];
-  /** the user stopped the batch partway */
+  /** the batch ended before its queue did */
   stopped: boolean;
+  /** WHY it stopped, when it did. Absent means the user pressed Stop, which is
+   *  what `stopped` meant on its own and what every record written before
+   *  Routines honoured a failure policy means.
+   *
+   *  A SEPARATE FIELD rather than a note parsed back out, because three
+   *  consumers act on it: the skip note on the entries that never ran, the
+   *  alert, and the desktop notification. A scheduled routine's notification is
+   *  often the ONLY thing the user sees, and "Batch stopped" for a run nobody
+   *  touched is a lie about who did it. */
+  stoppedBy?: "user" | "failure";
+  /** The test whose failure stopped it, for `stoppedBy: "failure"`. The NAME,
+   *  not the id: this is read straight into a notification. */
+  stoppedByTest?: string;
 }
 
 /** A batch as persisted to batch-history.json. Same shape as the live state

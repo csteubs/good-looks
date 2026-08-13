@@ -688,6 +688,44 @@
   outline-offset: -1px;
 }
 
+/* The failure policy, in the same furniture as the headless toggle — it is the
+   same kind of thing (a per-step setting, two states, a word not an icon) and
+   giving it a second shape would suggest a second kind. Wider because "Stop on
+   fail" is wider than "Headless", and `flex: 0 0` because the NAME cell is the
+   only one on this row allowed to give; see `.gl-batch-name`, which reached
+   width zero the last time something here was allowed to grow. */
+.gl-batch-policy {
+  flex: 0 0 80px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--gl-line);
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-batch-policy:disabled {
+  cursor: default;
+}
+
+.gl-batch-policy:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+/* Holds the policy column open on a row that has no policy. Same basis as the
+   control, so the cells after it line up whether or not a row is in the job. */
+.gl-batch-policy-gap {
+  flex: 0 0 80px;
+}
+
 .gl-batch-time {
   flex: 0 0 46px;
   text-align: end;

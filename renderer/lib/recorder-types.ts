@@ -1111,8 +1111,14 @@ export interface BatchState {
   /** index in `results` currently executing, or -1 when idle */
   currentIndex: number;
   results: BatchTestResult[];
-  /** the user stopped the batch partway */
+  /** the batch ended before its queue did */
   stopped: boolean;
+  /** Why — see the main-process copy. Absent means the user pressed Stop, which
+   *  is what `stopped` meant on its own and what every pre-Routines record
+   *  means. */
+  stoppedBy?: "user" | "failure";
+  /** The name of the test whose failure stopped it. */
+  stoppedByTest?: string;
   summary: BatchSummary;
 }
 

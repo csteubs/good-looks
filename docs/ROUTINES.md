@@ -13,9 +13,13 @@ the "Batch" Routine described under *A Routine is an entity*, once, at startup;
 `shared/routine-plan.mjs` turns a Routine into the batch runner's own payload;
 `routines:*` IPC exposes list/get/save/delete/run; and the Batch view is the
 open Routine's editor (`renderer/lib/routine-rows.ts` translates its checklist
-to and from steps). Of the step kinds below only `kind: "test"` is built, and
-`onFailure` is stored but not yet honoured — every step behaves as `continue`,
-which is what Batch already does, and nothing can set anything else. The MCP
+to and from steps). Of the step kinds below only `kind: "test"` is built.
+**`onFailure` is honoured as of 2026-08-13**: a step can be set to
+`stopRoutine` from its row in the editor, and both runners act on it. Of the
+three policies, `skipGroup` is unreachable — it means "skip the rest of this
+group" and groups are capability 3, so `failurePolicy` in
+`shared/routine-plan.mjs` degrades it to `continue`, which is what skipping an
+empty group actually is. The MCP
 `run_routine` tool named in the rename table below IS built, alongside
 `list_routines` and alongside `run_batch` — see `mcp/README.md`. The rail lists
 Routines and the UI says "Routines" throughout (the route, the channels, the
@@ -143,6 +147,24 @@ type FailurePolicy = "continue" | "stopRoutine" | "skipGroup";
 
 `"continue"` must be the default, or migrating the existing Batch changes its
 behaviour silently. `"stopRoutine"` is what makes a setup step meaningful.
+
+> **As built (2026-08-13).** `stopRoutine` does exactly what pressing Stop
+> does: every run in flight is killed, everything not started is skipped, and
+> what finished is kept. Anything gentler would be a second meaning of "stop",
+> and with lanes running concurrently there is no "rest of the queue" left to
+> merely not start — entries are already open. The FIRST failure owns the stop,
+> because two lanes can fail in the same tick and a later one arriving would
+> rewrite whose failure stopped the job.
+>
+> A batch records **why** it stopped (`stoppedBy: "user" | "failure"`) and
+> which step did it, and that is not bookkeeping: a scheduled routine's desktop
+> notification is often the only thing seen of it, and "Batch stopped" for a
+> run nobody touched reads as somebody having intervened.
+>
+> The MCP's `run_routine` honours the same policy with one honest difference —
+> it has no handle on a spawned Playwright CLI, so it stops anything FURTHER
+> from starting rather than killing what is already running. See DECISIONS
+> 2026-08-13.
 
 **Do not add a `retry` policy in v1.** Auto-Heal already retries at the locator
 level, and a routine-level retry stacked on top makes a flaky test look stable —

@@ -12,6 +12,9 @@ export interface BatchEntry {
   vars?: Record<string, string>;
   browser?: RunBrowser;
   headless?: boolean;
+  /** What this entry failing does to the rest of the batch. Absent means
+   *  "continue", which is what every caller without Routines produces. */
+  onFailure?: "continue" | "stopRoutine";
 }
 
 /** One test's engines and headedness, as sent by the Batch view. Validated,
@@ -21,6 +24,10 @@ export interface PerTestRunOption {
   testId: string;
   browsers: RunBrowser[];
   headless: boolean;
+  /** Normalised by whoever built this — `routineRunPlan` for a Routine, the
+   *  `batch:run` handler for anything off the wire. The runner acts on it, so
+   *  it must never arrive as a raw stored or wire value. */
+  onFailure?: "continue" | "stopRoutine";
 }
 
 export declare function buildQueue(

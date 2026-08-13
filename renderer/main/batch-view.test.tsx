@@ -492,6 +492,137 @@ describe("BatchView per-row headless", () => {
   });
 });
 
+describe("BatchView per-row failure policy", () => {
+  const policyBtn = (name: string) => screen.queryByLabelText(`Stop the routine if ${name} fails`);
+
+  it("offers the control only on a row that is IN the job", async () => {
+    // An unticked row is not a step, and a policy about a step that does not
+    // exist has nothing to say. It is also what keeps the row from gaining a
+    // ninth cell on the forty rows that are only listed so they can be added.
+    routines = [routineRows({ a: {} })];
+    renderView();
+    await rowNames();
+
+    await waitFor(() => expect(policyBtn("Alpha")).toBeTruthy());
+    expect(policyBtn("Beta")).toBeNull();
+    // …but the COLUMN stays. Omitting the cell entirely slid every cell after
+    // it left by the control's width, so engines and headless jumped between
+    // ticked and unticked rows and the checklist stopped reading as a table.
+    // jsdom cannot see that; what it can see is that the placeholder is there.
+    expect(document.querySelectorAll(".gl-batch-policy-gap")).toHaveLength(2);
+  });
+
+  it("defaults to carrying on, and says so", async () => {
+    // ROUTINES.md requires this default: anything else would change what every
+    // migrated checklist does the first time it runs.
+    routines = [routineRows({ a: {} })];
+    renderView();
+    await rowNames();
+
+    await waitFor(() => expect(policyBtn("Alpha")).toBeTruthy());
+    expect(policyBtn("Alpha")?.getAttribute("aria-pressed")).toBe("false");
+    expect(policyBtn("Alpha")?.textContent).toContain("Carry on");
+  });
+
+  it("writes the policy to the Routine, leaving the rest of the step alone", async () => {
+    routines = [routineRows({ a: { browsers: ["webkit"], headless: true }, b: {} })];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(policyBtn("Alpha")).toBeTruthy());
+
+    fireEvent.click(policyBtn("Alpha")!);
+
+    await waitFor(() =>
+      expect(routines?.[0].steps.find((st) => st.testId === "a")?.onFailure).toBe("stopRoutine"),
+    );
+    const step = routines[0].steps.find((st) => st.testId === "a");
+    expect(step?.browsers).toEqual(["webkit"]);
+    expect(step?.headless).toBe(true);
+    // One row, not all of them.
+    expect(routines[0].steps.find((st) => st.testId === "b")?.onFailure).toBe("continue");
+  });
+
+  it("reads back a stored policy rather than resetting it on open", async () => {
+    // The regression this replaces a comment about: the checklist used to have
+    // no control for the policy, so `stepsFromRows` read it from the Routine's
+    // previous steps. Now it round-trips through the view, which is the only
+    // way a mount could quietly reset one.
+    routines = [
+      routineOf([
+        {
+          kind: "test",
+          testId: "a",
+          browsers: ["chromium"],
+          headless: false,
+          onFailure: "stopRoutine",
+        },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+
+    await waitFor(() =>
+      expect(policyBtn("Alpha")?.getAttribute("aria-pressed")).toBe("true"),
+    );
+    expect(policyBtn("Alpha")?.textContent).toContain("Stop on fail");
+  });
+
+  it("writes NOTHING when the view merely mounts", async () => {
+    // Same property the headless master has, for the same reason: the view
+    // commits on every gesture, so a mount that counts as a gesture re-dates
+    // every job you open — and here it would also rewrite a policy.
+    routines = [
+      routineOf([
+        {
+          kind: "test",
+          testId: "a",
+          browsers: ["chromium"],
+          headless: false,
+          onFailure: "stopRoutine",
+        },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(policyBtn("Alpha")).toBeTruthy());
+    expect(routineSave).not.toHaveBeenCalled();
+  });
+
+  it("drops the policy when the row is unticked", async () => {
+    // Deliberate asymmetry with the engine choice, which survives unticking as
+    // scratch. A policy is a statement about a job this test is no longer part
+    // of, so re-ticking must not silently re-arm "stop the whole routine".
+    routines = [
+      routineOf([
+        {
+          kind: "test",
+          testId: "a",
+          browsers: ["chromium"],
+          headless: false,
+          onFailure: "stopRoutine",
+        },
+        { kind: "test", testId: "b", browsers: ["chromium"], headless: false, onFailure: "continue" },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(policyBtn("Alpha")).toBeTruthy());
+
+    fireEvent.click(screen.getByLabelText("Include Alpha in the batch"));
+    await waitFor(() => expect(routines?.[0].steps.map((st) => st.testId)).toEqual(["b"]));
+
+    fireEvent.click(screen.getByLabelText("Include Alpha in the batch"));
+    await waitFor(() => expect(routines?.[0].steps).toHaveLength(2));
+    expect(routines[0].steps.find((st) => st.testId === "a")?.onFailure).toBe("continue");
+    // And the screen agrees with the store. This is the half that was broken:
+    // the policy left view state only via a re-seed, so re-ticking before the
+    // Routine query came back showed "Stop on fail" for a step the stored job
+    // did not have — and `sameSteps` then read the pair as unchanged and wrote
+    // nothing, so it stayed diverged instead of settling.
+    expect(policyBtn("Alpha")?.getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
 describe("BatchView ordering", () => {
   it("lists tests in library order when nothing is stored", async () => {
     renderView();

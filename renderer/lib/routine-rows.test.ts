@@ -172,27 +172,44 @@ describe("committing the checklist back to steps", () => {
     expect(steps[0]).toMatchObject({ browsers: ["webkit"], headless: true });
   });
 
-  it("preserves a failure policy the checklist cannot show", () => {
-    // The checklist has no control for it, so rebuilding from rows alone would
-    // reset every step to `continue` the next time anyone ticked a box —
-    // turning "stop if seeding fails" into "carry on", silently.
-    const previous = [step({ testId: "t-a", onFailure: "stopRoutine" })];
+  it("carries the failure policy the row was given", () => {
     const rowOptions: RowOptionsMap = {
       "t-a": { selected: true, browsers: ["firefox"], headless: false },
     };
-    const steps = stepsFromRows(["t-a"], rowOptions, tests("t-a"), DEFAULTS, previous);
+    const steps = stepsFromRows(["t-a"], rowOptions, tests("t-a"), DEFAULTS, {
+      "t-a": "stopRoutine",
+    });
     expect(steps[0].onFailure).toBe("stopRoutine");
     // …and the rest of the step still comes from the row.
     expect(steps[0].browsers).toEqual(["firefox"]);
   });
 
-  it("defaults a newly ticked row to continue", () => {
+  it("defaults a row with no policy to continue", () => {
+    // The default is load-bearing, not incidental: ROUTINES.md requires it,
+    // because migrating the old Batch onto anything else would change what
+    // every existing checklist does the first time it ran.
     const rowOptions: RowOptionsMap = {
       "t-new": { selected: true, browsers: ["chromium"], headless: false },
     };
-    const steps = stepsFromRows(["t-new"], rowOptions, tests("t-new"), DEFAULTS, [
-      step({ testId: "t-a", onFailure: "stopRoutine" }),
-    ]);
+    const steps = stepsFromRows(["t-new"], rowOptions, tests("t-new"), DEFAULTS, {
+      "t-a": "stopRoutine",
+    });
+    expect(steps[0].onFailure).toBe("continue");
+  });
+
+  it("drops the policy of a row that was unticked", () => {
+    // Deliberate asymmetry with `rowOptions`, whose engines survive unticking
+    // as scratch. A policy is a statement about a job this test is no longer
+    // part of, and keeping it would mean re-ticking a row silently re-arming
+    // "stop the whole routine if this fails".
+    const rowOptions: RowOptionsMap = {
+      "t-a": { selected: false, browsers: ["chromium"], headless: false },
+      "t-b": { selected: true, browsers: ["chromium"], headless: false },
+    };
+    const steps = stepsFromRows(["t-a", "t-b"], rowOptions, tests("t-a", "t-b"), DEFAULTS, {
+      "t-a": "stopRoutine",
+    });
+    expect(steps.map((st) => st.testId)).toEqual(["t-b"]);
     expect(steps[0].onFailure).toBe("continue");
   });
 
@@ -239,7 +256,7 @@ describe("round trip", () => {
     ]);
     const library = tests("t-a", "t-b", "t-c");
     const rows = rowsFromRoutine(original, library, DEFAULTS);
-    const back = stepsFromRows(rows.order, rows.rowOptions, library, DEFAULTS, original.steps);
+    const back = stepsFromRows(rows.order, rows.rowOptions, library, DEFAULTS, rows.policies);
     expect(back).toEqual(original.steps);
     expect(sameSteps(back, original.steps)).toBe(true);
   });

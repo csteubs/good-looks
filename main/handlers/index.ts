@@ -20,7 +20,7 @@ import { batchRunner } from "../services/batch-runner.js";
 import { batchHistoryStore } from "../services/batch-history-store.js";
 import { routineStore } from "../services/routine-store.js";
 import { routineScheduler } from "../services/routine-scheduler.js";
-import { routineBlockedReason, routineRunPlan } from "../../shared/routine-plan.mjs";
+import { failurePolicy, routineBlockedReason, routineRunPlan } from "../../shared/routine-plan.mjs";
 import { webhookUrlStore } from "../services/webhook-url-store.js";
 import { postWebhook } from "../services/alert-service.js";
 import { issueTrackerService } from "../services/issue-tracker/issue-tracker-service.js";
@@ -1324,6 +1324,12 @@ export function registerHandlers(): void {
                 ? RUN_BROWSERS.filter((b) => (e.browsers as unknown[]).includes(b))
                 : [],
               headless: e.headless === true,
+              // Rebuilt through the SAME normaliser a Routine's steps go
+              // through, not passed along. This field now decides whether the
+              // REST of the batch runs, so an unrecognised string reaching the
+              // runner would be compared against "stopRoutine", come back
+              // false, and continue — right today, and only by accident.
+              onFailure: failurePolicy(e as { onFailure?: unknown }),
             }))
             // A zero-engine entry would contribute no queue entries, so the
             // batch would silently run fewer tests than were selected. Dropping
