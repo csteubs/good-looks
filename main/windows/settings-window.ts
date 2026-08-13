@@ -4,17 +4,33 @@ import { attachUiScale, scaled } from "../services/ui-scale.js";
 
 let settingsWindow: BrowserWindow | null = null;
 
-/** Which pane a deep-linked open lands on. A URL FRAGMENT and not a new IPC
- *  channel: the window is loaded exactly once per open, and `#cost` is read by
- *  `settings-view`'s lazy initial state, so there is nothing to keep in sync
- *  and nothing that can arrive before the renderer is listening.
+/** One segment of a deep link: a pane id, or the topic slug after it. */
+const SEGMENT = /^[a-z][a-z0-9-]{0,47}$/;
+
+/** Which pane a deep-linked open lands on, and — for the Documentation pane —
+ *  which topic within it. A URL FRAGMENT and not a new IPC channel: the window
+ *  is loaded exactly once per open, and `#cost` is read by `settings-view`'s
+ *  lazy initial state, so there is nothing to keep in sync and nothing that can
+ *  arrive before the renderer is listening.
  *
  *  VALIDATED HERE, not only in the renderer. The id crosses IPC from a renderer
  *  process and is concatenated into the URL this window loads — the pane's own
  *  `paneById(...) ?? DEFAULT_PANE_ID` fallback is the second line of defence,
- *  not the first. */
-function paneFragment(pane: unknown): string {
-  return typeof pane === "string" && /^[a-z][a-z-]{0,31}$/.test(pane) ? `#${pane}` : "";
+ *  not the first.
+ *
+ *  A SECOND SEGMENT IS VALIDATED SEPARATELY, not by widening the pattern to
+ *  allow a slash. `#documentation/../../etc` differs from a pane id by one
+ *  character class, and this fragment is concatenated into a URL that names a
+ *  file — so the two segments are checked as two segments, and a malformed
+ *  topic drops the topic rather than the whole fragment. An unknown-but-legal
+ *  slug is harmless: the pane falls back to its first topic. */
+export function paneFragment(pane: unknown): string {
+  if (typeof pane !== "string") return "";
+  const [paneId, topic, ...rest] = pane.split("/");
+  if (rest.length > 0) return "";
+  if (!SEGMENT.test(paneId)) return "";
+  if (topic === undefined) return `#${paneId}`;
+  return SEGMENT.test(topic) ? `#${paneId}/${topic}` : `#${paneId}`;
 }
 
 export async function openSettingsWindow(pane?: string): Promise<void> {

@@ -1062,6 +1062,230 @@
   background: var(--gl-tx-1);
 }
 
+/* ── Documentation (the manual, inside Settings) ──────────────────────── */
+
+/*
+ * A READING COLUMN, not another settings pane. Everything here is the opposite
+ * of the row treatment above: prose measure, generous leading, no boxes around
+ * individual statements. A manual set in the same dense hairline rows as the
+ * settings would be read as a settings list nobody can act on.
+ *
+ * The topic rail at the top is the exception — that IS a control, so it borrows
+ * the mono micro-label voice the rest of the app uses for navigation.
+ */
+.gl-doc {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.gl-doc-toc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding-block: 8px;
+}
+
+.gl-doc-tab {
+  border: 1px solid var(--gl-line);
+  padding: 3px 8px;
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-doc-tab:hover {
+  color: var(--gl-tx-1);
+}
+
+/* Selection is NEUTRAL — white at low alpha, no hue. Colour in this app means
+   outcome (pass / running / flaky / fail), and a coloured topic chip would be
+   claiming something about a result. Same rule as `--gl-sel-bg`. */
+.gl-doc-tab[data-current] {
+  background: var(--gl-sel-bg);
+  border-color: var(--gl-sel-ring);
+  color: var(--gl-tx-1);
+}
+
+.gl-doc-tab:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+.gl-doc-body {
+  max-width: 62ch;
+}
+
+.gl-doc-eyebrow {
+  margin: 0 0 2px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-doc-title {
+  margin: 0 0 10px;
+  font-family: var(--gl-sans);
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--gl-tx-1);
+}
+
+.gl-doc-h {
+  margin: 18px 0 6px;
+  font-family: var(--gl-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--gl-tx-1);
+}
+
+.gl-doc-p {
+  margin: 0 0 10px;
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--gl-tx-2);
+}
+
+.gl-doc-strong {
+  font-weight: 600;
+  color: var(--gl-tx-1);
+}
+
+/* An example prompt, which is the one thing in these documents the reader is
+   meant to say out loud rather than do. The rail marks it as quoted speech. */
+.gl-doc-quote {
+  margin: 0 0 10px;
+  padding: 6px 10px;
+  border-left: 2px solid var(--gl-line);
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.6;
+  color: var(--gl-tx-2);
+}
+
+.gl-doc-list {
+  margin: 0 0 10px;
+  padding-left: 16px;
+  list-style: disc;
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--gl-tx-2);
+}
+
+.gl-doc-list > li {
+  margin-bottom: 5px;
+}
+
+.gl-doc-code {
+  padding: 1px 4px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-1);
+}
+
+/* A command block scrolls itself. The registration command is ~130 characters
+   of absolute path, and a pane that scrolls sideways takes the rail with it. */
+.gl-doc-pre {
+  margin: 0 0 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  overflow-x: auto;
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  color: var(--gl-tx-1);
+  white-space: pre;
+}
+
+.gl-doc-table-wrap {
+  margin: 0 0 12px;
+  overflow-x: auto;
+}
+
+.gl-doc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--gl-sans);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+.gl-doc-table th {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--gl-line);
+  text-align: left;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  white-space: nowrap;
+}
+
+.gl-doc-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--gl-line-2);
+  color: var(--gl-tx-2);
+  vertical-align: top;
+}
+
+.gl-doc-rule {
+  margin: 14px 0;
+  border: 0;
+  border-top: 1px solid var(--gl-line-2);
+}
+
+/* Only a link the app can actually open is drawn as one — see the pane. */
+.gl-doc-link {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--gl-tx-1);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.gl-doc-link:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+/* What the document cannot know: this machine's own answer. Boxed, because it
+   is the one part of the page that is about the reader rather than the app. */
+.gl-doc-card {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+}
+
+.gl-doc-card-label {
+  margin: 0 0 6px;
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
 /* ── Stats (B7) ───────────────────────────────────────────────────────
    The run history screen: KPI tiles, the pass/fail chart, the table
    treatment, the log-search field, and the Stability / suite-cost /

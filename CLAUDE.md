@@ -65,7 +65,12 @@ mcp/                 standalone MCP server exposing the test library to external
                       get_suite_cost, get_browser_matrix, get_flake_report,
                       get_step_matches, capture_app, get_screenshot)
                      — see mcp/README.md
-docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated rationale)
+docs/                ARCHITECTURE.md (per-file map) + DECISIONS.md (dated rationale) +
+                     MCP-GUIDE.md, which is ALSO THE APP'S IN-APP MANUAL — Settings →
+                     Documentation renders this file (renderer/lib/doc-blocks.ts parses a
+                     subset of markdown and THROWS on the rest; check:docs-blocks runs it
+                     in the gate). Edit it as prose, not as UI copy, but expect the gate
+                     to refuse an ordered list or a nested bullet
 .github/             PR template, hygiene workflow, and the script it runs
 vite.config.ts       renderer build (three windows + the training browser's URL strip).
                      `--mode preview` builds the browser
@@ -109,7 +114,7 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 3186 Vitest tests across 161 files and 61 checks in the chain as of 2026-08-13 (63 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 3209 Vitest tests across 163 files and 62 checks in the chain as of 2026-08-13 (64 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS gets checked: `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 

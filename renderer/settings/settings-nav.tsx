@@ -33,6 +33,7 @@
 import { Input } from "@ui";
 import {
   Bandage,
+  BookOpen,
   Bell,
   Coins,
   FlaskConical,
@@ -62,6 +63,7 @@ const PANE_ICONS: Record<PaneId, ComponentType<{ className?: string }>> = {
   ai: Sparkles,
   alerts: Bell,
   integrations: Plug,
+  documentation: BookOpen,
   diagnostics: Wrench,
   experiments: FlaskConical,
 };

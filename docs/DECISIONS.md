@@ -163,6 +163,83 @@ this is the second setting permitted to break it, on the same terms `Headed`
 already claims: it changes what happens to OTHER work, and scanning a routine
 for where it can abort is worth a hue. `continue` carries none.
 
+
+### 2026-08-13 — The app grows a manual: one markdown file, two readers
+
+`docs/MCP-GUIDE.md`, `renderer/lib/doc-blocks.ts`, `renderer/settings/panes/documentation-pane.tsx`, `main/index.ts`, `check:docs-blocks`.
+
+The app shipped with **no documentation surface**. Every document it has lives
+in the repo, and the only in-app mention of the MCP server was one clause inside
+the Debug screenshots row — which also meant searching Settings for "mcp"
+returned a screenshot toggle and nothing else. A user who had never read the
+repo had no way to learn that the MCP server exists, let alone that Linear,
+Slack and GitHub are *app* integrations rather than parts of it.
+
+**One file, not two copies.** The obvious implementation is to write the pane's
+copy in JSX. It is also how the pane and the guide drift: both are right the day
+they are written, nothing in the toolchain can compare them, and the failure is
+invisible from either side. So the pane renders `docs/MCP-GUIDE.md` itself.
+
+**A subset parser that throws, not a markdown dependency.** A general renderer
+accepts everything and draws whatever it likes; what this repo keeps being bitten
+by is the opposite failure — a construct that renders as *nothing*, silently (a
+class that does not exist, a `Text color=` that falls through to the default).
+So `doc-blocks.ts` handles a stated subset and REFUSES the rest, and
+`check:docs-blocks` parses every shipped document in the gate. Writing an
+ordered list in the guide is now a red build rather than a section that quietly
+renders as blank space. It also keeps the runtime dependency count at zero,
+which matters less but is not nothing.
+
+**`?raw`, because `build.files` does not ship `docs/`.** Vite inlines the
+markdown into the renderer bundle at build time. A pane that read the file from
+disk would work in dev and show nothing in the packaged `.app` — the worse
+failure order, since dev is where it would be tested.
+
+**Docs are indexed on full text, and indexed LAST.** Everywhere else in this
+window search is deliberately substring-strict, because a settings search that
+returns near-misses is worse than one that returns nothing. Documentation is the
+exception: someone typing "flaky" or "webhook" is asking where the subject is
+dealt with, and a paragraph about it is a true answer. The position in
+`SETTING_INDEX` is the load-bearing part — `settings-view` moves to the first
+pane with a hit when a search empties the open one, so docs listed first would
+make almost every query jump out of the controls and into the prose about them.
+
+**In Settings rather than in a window of its own.** Settings is the app's one
+secondary window and it already has the two things a reader wants: a rail and a
+search field. A Help window would have duplicated both to hold strictly less. The
+pane carries no `key`-bearing rows, so "N settings differ" and "reset section"
+stay silent there without a special case.
+
+**The Help menu deep-links topics, which makes slugs a contract.** The fragment
+grew a second segment (`#documentation/setup`), validated in the main process as
+two segments rather than by widening the pane pattern to allow a slash — that
+pattern's whole job is that the string is concatenated into a URL naming a file.
+A malformed topic drops the topic and keeps the pane, because dropping the whole
+fragment would send someone who clicked "Set up the MCP server" to Appearance,
+which reads as a broken menu rather than a rejected argument. `check:docs-blocks`
+then scans `main/index.ts` for the slugs it links and asserts each one is a real
+topic: rename a heading and the gate fails, instead of five menu items quietly
+all opening the top of the document.
+
+**The copy button says which of two worlds you are in.** The setup topic ends
+with this machine's resolved `mcp/server.mjs` path and a `claude mcp add` line.
+`mcp/` is part of the SOURCE tree and `build.files` ships `build/**`, so a
+packaged app has no server to point at — `mcp-install.ts` answers from disk and
+the pane prints prose instead of a command that names nothing. **Two things
+about the packaged case were deliberately left alone**: shipping `mcp/` as an
+`extraResources` payload, and the fact that `mcp/glaze-data.mjs` resolves a
+Glaze-era `app.glaze.macos.*` data directory that a packaged build does not
+write to. Both are real, neither is caused by this change, and fixing the path
+without fixing the data directory would produce a server that runs and reads the
+wrong library — which is worse than one that is honestly absent.
+
+**Egress: the check now reads the markdown too.** `check:renderer-egress` walks
+`.ts`/`.tsx` under `renderer/`. Prose bundled with `?raw` ships exactly like
+source, so moving a sentence out of a pane and into a document would have moved
+it out of the check's sight. Displaying a URL is not fetching one — and only
+https-on-github.com is clickable at all — but the point of that check is the
+second look, and the documents are now inside it.
+
 ### 2026-08-13 — `run_routine`: the rename table's one addition, and three stamps that fail silently
 
 `mcp/server.mjs`, `shared/batch-queue.mjs`, `check:mcp-parity`. ROUTINES.md's
