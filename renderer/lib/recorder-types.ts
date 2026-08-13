@@ -1176,7 +1176,25 @@ export interface RoutineWaitStep {
   ms: number;
 }
 
-export type RoutineStep = RoutineTestStep | RoutineGroupStep | RoutineWaitStep;
+/** Say something when the run reaches this point. A BARRIER like `wait`:
+ *  everything before it finishes before it fires. The message is STATIC TEXT —
+ *  see the main-process copy for why interpolation is a security decision, not
+ *  a missing feature. */
+export interface RoutineNotifyStep {
+  kind: "notify";
+  id: string;
+  channel: "desktop" | "webhook";
+  message: string;
+}
+
+export type RoutineStep =
+  | RoutineTestStep
+  | RoutineGroupStep
+  | RoutineWaitStep
+  | RoutineNotifyStep;
+
+/** Longest a `notify` message may be — user text that can leave the machine. */
+export const MAX_ROUTINE_MESSAGE = 200;
 
 /** Longest a single `wait` may pause a Routine: one hour. A ceiling rather than
  *  a warning — the runner holds the batch open across a wait, so a longer one

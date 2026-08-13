@@ -38,6 +38,7 @@ import type {
   Routine,
   RoutineGroupStep,
   RoutineStep,
+  RoutineNotifyStep,
   RoutineTestStep,
   RoutineWaitStep,
   RunBrowser,
@@ -114,6 +115,15 @@ export interface RoutineGroup {
 /** Which group each test in the job belongs to. Absent = top level. */
 export type GroupOf = Record<string, string>;
 
+/** A message, pinned to the row it follows. Same shape as a pause and for the
+ *  same reason — see `RoutineWait`. */
+export interface RoutineNotify {
+  id: string;
+  channel: "desktop" | "webhook";
+  message: string;
+  after: string;
+}
+
 /** A pause, pinned to the row it follows.
  *
  *  `after` is a TEST ID rather than an index, for the reason the whole module
@@ -142,6 +152,8 @@ export interface RoutineRows {
   groupOf: GroupOf;
   /** The Routine's `wait` steps, each pinned to the row it follows. */
   waits: RoutineWait[];
+  /** The Routine's `notify` steps, pinned the same way. */
+  notifies: RoutineNotify[];
 }
 
 /**
@@ -198,6 +210,7 @@ export function rowsFromRoutine(
   const groups: RoutineGroup[] = [];
   const groupOf: GroupOf = {};
   const waits: RoutineWait[] = [];
+  const notifies: RoutineNotify[] = [];
   const order: string[] = [];
   const placed = new Set<string>();
 
@@ -218,6 +231,17 @@ export function rowsFromRoutine(
       // — `order` is not built until the loop below, so reading it here would
       // pin every wait to "" and quietly turn them all into leading ones.
       waits.push({ id: step.id, ms: step.ms, after: flat[flat.length - 1]?.step.testId ?? "" });
+      continue;
+    }
+    if (step.kind === "notify") {
+      // Not a row either, and pinned the same way: both kinds of barrier keep
+      // their place through a drag without `order` learning about either.
+      notifies.push({
+        id: step.id,
+        channel: step.channel,
+        message: step.message,
+        after: flat[flat.length - 1]?.step.testId ?? "",
+      });
       continue;
     }
     if (step.kind === "group") {
@@ -288,6 +312,9 @@ export function rowsFromRoutine(
     groups: groups.filter((g) => live.has(g.id)),
     groupOf,
     waits: waits.map((w) => (w.after === "" || drawn.has(w.after) ? w : { ...w, after: "" })),
+    notifies: notifies.map((n) =>
+      n.after === "" || drawn.has(n.after) ? n : { ...n, after: "" },
+    ),
   };
 }
 
@@ -321,6 +348,7 @@ export function stepsFromRows(
   groups: readonly RoutineGroup[] = [],
   groupOf: GroupOf = {},
   waits: readonly RoutineWait[] = [],
+  notifies: readonly RoutineNotify[] = [],
 ): RoutineStep[] {
   const byId = new Map(tests.map((t) => [t.id, t]));
   const labels = new Map(groups.map((g) => [g.id, g.label]));
@@ -335,7 +363,20 @@ export function stepsFromRows(
     if (list) list.push(w);
     else waitsAfter.set(w.after, [w]);
   }
+  const notifiesAfter = new Map<string, RoutineNotify[]>();
+  for (const n of notifies) {
+    const list = notifiesAfter.get(n.after);
+    if (list) list.push(n);
+    else notifiesAfter.set(n.after, [n]);
+  }
+  // Both kinds of barrier are emitted at the same pin point, notify FIRST.
+  // "Seeding done" should go out before the pause that follows it, not after —
+  // a message announcing a thing and then arriving a minute late is worse than
+  // no message.
   const emitWaitsAfter = (id: string): void => {
+    for (const n of notifiesAfter.get(id) ?? []) {
+      steps.push({ kind: "notify", id: n.id, channel: n.channel, message: n.message });
+    }
     for (const w of waitsAfter.get(id) ?? []) steps.push({ kind: "wait", id: w.id, ms: w.ms });
   };
   // A LEADING wait is emitted before anything, including before the group its
@@ -425,6 +466,14 @@ export function sameSteps(a: readonly RoutineStep[], b: readonly RoutineStep[]):
     if (step.kind === "wait") {
       const o = other as RoutineWaitStep;
       return step.id === o.id && step.ms === o.ms;
+    }
+    // A notify's CHANNEL and MESSAGE are part of what the job is: retyping the
+    // message or switching it from desktop to webhook is an edit worth a write,
+    // and the channel change in particular decides whether the text leaves the
+    // machine at all.
+    if (step.kind === "notify") {
+      const o = other as RoutineNotifyStep;
+      return step.id === o.id && step.channel === o.channel && step.message === o.message;
     }
     const o = other as RoutineTestStep;
     return (

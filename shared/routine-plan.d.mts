@@ -55,7 +55,12 @@ export interface RoutinePerTest {
  *  pauses for `ms`, then the next segment starts. */
 export interface RoutineBarrier {
   afterSegment: number;
+  /** How long to pause. 0 for a barrier that only notifies. */
   ms: number;
+  /** A message to send at this join, when the step was a `notify`. The message
+   *  is PLAIN TEXT the user wrote — never interpolated from run data. See
+   *  `RoutineNotifyStep` for why that is a security decision. */
+  notify?: { channel: "desktop" | "webhook"; message: string };
 }
 
 export interface RoutineRunPlan {

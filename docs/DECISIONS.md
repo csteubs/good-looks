@@ -16,6 +16,67 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-13 — `notify`, and keeping one egress
+
+`main/recorder/types.ts`, `main/services/routine-store.ts`,
+`shared/routine-plan.mjs`, `main/services/alert-service.ts`,
+`main/services/run-notifier.ts`, `main/services/batch-runner.ts`,
+`renderer/main/batch-view.tsx`, `mcp/server.mjs`. This answers ROUTINES open
+question 3 — yes, reuse `alert-service` — and the reasons are worth more than
+the answer.
+
+**The message is STATIC TEXT, and that is a security decision rather than a
+missing feature.** `channel: "webhook"` sends it off the machine through
+`alert-service`, which is the app's only egress and is summary-only by design:
+run logs are never sent, because they routinely carry page content, URLs with
+tokens and typed fixture values. A message supporting `${...}` interpolation
+would turn that field into a general-purpose pipe from run data to a
+third-party endpoint — exactly what `check:alerts` exists to prevent. If
+interpolation is ever added it needs an allow-list of substitutable values, not
+a template engine.
+
+**Two different guarantees, and conflating them would have weakened the
+stronger one.** For a run or batch alert the promise is STRUCTURAL: the builder
+takes no log or output parameter, so there is nothing to leak — which is why
+those are in `check:alerts`' planted-secret loop. A notify's message is text the
+user typed, so the builder necessarily carries it, and the promise is instead
+that `redactPayload` scrubs it immediately before the send. The first version of
+this put the notify in the structural loop and it failed, correctly; the fix was
+to test the guarantee that actually applies rather than to weaken the check.
+
+**An unrecognised channel falls back to `desktop`, the LOCAL one.** Defaulting
+the other way would turn a typo in a hand-edited `routines.json` into an
+unintended send. A freshly added step starts on desktop for the same reason:
+adding a step should never send anything off the machine until the user says so.
+
+**The MCP does not send notifies at all**, and says so in the response
+(`notificationsNotSent`) rather than passing the step silently. Both channels
+are the app's: `desktop` is a native notification that process cannot post, and
+`webhook` goes through `alert-service`, which redacts using secret values only
+the app can decrypt. Reproducing the send there would be a SECOND EGRESS PATH
+with weaker redaction, which is the divergence `check:mcp-parity` exists to
+catch. Reported rather than swallowed, because a routine that announces things
+is one somebody is relying on to announce them.
+
+**The desktop channel ignores `notifyOnBatchDone`.** That setting turns off a
+courtesy; a notify step is something the user put in a job on purpose, and a
+step that silently does nothing because of an unrelated preference is worse than
+no step at all.
+
+**Two controls became one, because the row ran out of width again.** A pause
+mark and a message mark are the same question — "what happens after this step" —
+and asking it twice cost two cells the checklist did not have (measured: 22px of
+overflow). One menu with two checkable items answers it once and lets both be
+true at a time, which a cycle could not. This checklist has taken four new cells
+across capability 3; the honest response to running out of width is to stop
+asking two questions where there is one.
+
+**An accessible-name collision the test caught before a user could.** The add
+control and the message field were both labelled "Message after X", so the query
+reported "found multiple elements" — and a screen reader would have read the
+same name twice with no way to tell them apart. The field is now "Text of the
+message after X".
+
 ### 2026-08-13 — `wait`, and the barrier that landed without a second engine
 
 `main/recorder/types.ts`, `shared/routine-plan.mjs`,

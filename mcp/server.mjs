@@ -794,6 +794,10 @@ server.registerTool(
     // test is a group, and the seed failing should take the tests that depend
     // on it and nothing else.
     const skippedGroups = new Map();
+    // Messages a `notify` step would have sent from the app. Reported, never
+    // swallowed: a routine that announces things is one somebody is relying on
+    // to announce them.
+    const notSent = [];
     const persist = (running) => {
       saveBatchRecord({
         batchId,
@@ -934,7 +938,15 @@ server.registerTool(
       // pause before saying so would hold the tool open for a stretch in which
       // nothing more can happen.
       if (!barrier || stoppedByTest !== null) continue;
-      await new Promise((resolve) => setTimeout(resolve, barrier.ms));
+      // NOTIFY STEPS ARE NOT SENT FROM HERE, and the response says so rather
+      // than the step passing silently. Both channels are the app's: `desktop`
+      // is a native notification this process cannot post, and `webhook` goes
+      // through `alert-service`, which is the APP's single egress — redacting
+      // with secret values only the app can decrypt. Reproducing the send here
+      // would mean a second egress path with weaker redaction, which is exactly
+      // the divergence `check:mcp-parity` exists to catch.
+      if (barrier.notify) notSent.push(barrier.notify.message);
+      if (barrier.ms > 0) await new Promise((resolve) => setTimeout(resolve, barrier.ms));
     }
     persist(false);
 
@@ -951,6 +963,12 @@ server.registerTool(
               parallel: limit,
               summary,
               ...(stoppedByTest !== null ? { stoppedBy: stoppedByTest } : {}),
+              ...(notSent.length > 0
+                ? {
+                    notificationsNotSent: notSent,
+                    note: "This routine has notify steps. They are the app's to send — this server has no desktop notifications and no access to the webhook — so they did not fire for this run.",
+                  }
+                : {}),
               // The steps that will NOT run, said out loud. A routine quietly
               // running fewer tests than it lists is the same class of bug as
               // a batch that reports a pass having skipped half of it.

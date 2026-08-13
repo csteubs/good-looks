@@ -117,6 +117,25 @@ export function routineRunPlan(routine, knownTestIds, options) {
   const flat = [];
   for (const step of steps) {
     if (!step || typeof step !== "object") continue;
+    if (step.kind === "notify") {
+      // A BARRIER TOO, with no pause. "Tell me when the seeding is done" is a
+      // claim about the steps above it, so it fires at a join for the same
+      // reason a wait pauses at one — a notify racing the steps it describes
+      // would report a thing that had not happened yet.
+      const message = typeof step.message === "string" ? step.message : "";
+      if (message !== "") {
+        barriers.push({
+          afterSegment: segment,
+          ms: 0,
+          notify: {
+            channel: step.channel === "webhook" ? "webhook" : "desktop",
+            message,
+          },
+        });
+        segment += 1;
+      }
+      continue;
+    }
     if (step.kind === "wait") {
       // Clamped, not rejected. A stored value out of range is a job somebody
       // built; refusing to run it teaches nothing, and the ceiling is the thing
@@ -196,7 +215,11 @@ export function routineRunPlan(routine, knownTestIds, options) {
     perTest,
     /** Where the runner must join. `afterSegment` is the segment that has to
      *  finish before the pause starts. */
-    barriers: barriers.filter((b) => b.afterSegment < lastLiveSegment),
+    // A trailing PAUSE is dropped; a trailing NOTIFY is not. "Nightly finished"
+    // is the most useful message there is, and it is by definition the last
+    // thing in the job — filtering it out with the pauses would delete the one
+    // notify anybody actually writes.
+    barriers: barriers.filter((b) => b.notify || b.afterSegment < lastLiveSegment),
     /** Queue entries, which is the sum of each step's engines rather than the
      *  test count — the two differ the moment one step names two engines, and
      *  the toolbar has to report the number that will actually run. */

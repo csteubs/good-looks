@@ -13,10 +13,10 @@ the "Batch" Routine described under *A Routine is an entity*, once, at startup;
 `shared/routine-plan.mjs` turns a Routine into the batch runner's own payload;
 `routines:*` IPC exposes list/get/save/delete/run; and the Batch view is the
 open Routine's editor (`renderer/lib/routine-rows.ts` translates its checklist
-to and from steps). Of the step kinds below, `test`, `group` and `wait` are built.
+to and from steps). Of the step kinds below, `test`, `group`, `wait` and `notify` are built.
 **`onFailure` is honoured as of 2026-08-13**, all three policies: a step can be
 set to `stopRoutine` or — inside a group — `skipGroup` from its row in the
-editor, and both runners act on it. `notify` and `branch` are still unbuilt.
+editor, and both runners act on it. Only `branch` is still unbuilt.
 
 **The barrier machinery landed with `wait` (2026-08-13)**, and it landed without
 a second execution engine: `routineRunPlan` cuts the steps into SEGMENTS at each
@@ -24,7 +24,8 @@ barrier and labels every entry with the segment it belongs to, and the runner
 drains one segment's lanes with the pool it already had, joins, pauses, and
 moves on. Lanes, concurrency, write-through and the summary are untouched, and a
 Routine with no `wait` steps is one segment — byte-for-byte the execution every
-caller had before. `notify` and `branch` are additive on top of that. The MCP
+caller had before. `notify` landed on top of it as a barrier with no pause; `branch` is the last
+one left. The MCP
 `run_routine` tool named in the rename table below IS built, alongside
 `list_routines` and alongside `run_batch` — see `mcp/README.md`. The rail lists
 Routines and the UI says "Routines" throughout (the route, the channels, the
@@ -185,6 +186,19 @@ suite one at a time" — a single number can't say that.
 > mid-barrier there is nothing running and nothing new to report, so a waiting
 > batch is otherwise indistinguishable from one that has stopped answering.
 
+> **`notify` as built (2026-08-13).** A barrier with no pause: it fires at a
+> join for the same reason a `wait` pauses at one — "tell me when the seeding is
+> done" is a claim about the steps above it, and a message racing them would
+> report a thing that had not happened. When a row carries both, the message
+> goes out BEFORE the pause; announcing a thing and then arriving a minute late
+> is worse than saying nothing.
+>
+> A new one starts on the **desktop** channel, and an unrecognised stored
+> channel falls back to it too. That direction is deliberate: defaulting the
+> other way would turn a typo in a hand-edited file into an unintended send.
+> The editor states which channel does what where the choice is made — "stays on
+> this machine" / "leaves this machine" — rather than only in Settings.
+
 ### Branching: the decision that has to be made explicitly
 
 Batch has exactly one failure policy, unwritten and unconfigurable: **a failing
@@ -335,10 +349,18 @@ not worth having in `run-history.json`.
    waits has a shape that a flat list of runs cannot represent. Either accept
    that (Stats stays run-level, Routines has its own history) or add a
    `RoutineRunRecord`. Accepting it is cheaper and probably correct.
-3. **Should `notify` steps reuse `alert-service`?** It already knows how to post
-   to a webhook and how to refuse to send run logs. Reusing it keeps one place
-   that decides what may leave the machine — worth doing even if the shapes
-   don't match perfectly.
+3. **Should `notify` steps reuse `alert-service`?** ~~It already knows how to
+   post to a webhook and how to refuse to send run logs.~~ **Answered yes
+   (2026-08-13).** `channel: "webhook"` goes through `alert-service`, which
+   stays the app's single egress; `channel: "desktop"` is local and goes through
+   `run-notifier`. Two things fell out of doing it that way, both worth stating:
+   the message is **static text and never interpolated**, because a `${...}`
+   template would turn the field into a general-purpose pipe from run data to a
+   third-party endpoint — the exact thing `check:alerts` exists to prevent — and
+   the **MCP does not send at all**, reporting `notificationsNotSent` instead,
+   because reproducing the send there would be a second egress path with weaker
+   redaction (that process cannot decrypt the secret values `alert-service`
+   redacts with).
 4. **Does a Routine survive deleting a test it references?** The delete handler
    would need a `routineStore` entry (see the "adding a per-test store" note in
    `tests:delete`). A step pointing at a deleted test should render as a broken

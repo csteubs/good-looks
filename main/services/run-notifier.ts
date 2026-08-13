@@ -118,6 +118,19 @@ export function buildBatchNotice(notice: BatchOutcomeNotice): { title: string; b
   };
 }
 
+/**
+ * A Routine's `notify` step, on the desktop.
+ *
+ * NO GATE ON `notifyOnBatchDone`. The batch notification is a courtesy the user
+ * can switch off; this one is a step they put in a job on purpose, and a step
+ * that silently does nothing because of an unrelated preference is worse than
+ * no step at all. The message is the user's own text — see `RoutineNotifyStep`
+ * for why it is never interpolated.
+ */
+export function notifyRoutineMessage(routineName: string, message: string): void {
+  post({ title: routineName, body: message }, "routine");
+}
+
 /** Post the notification for a finished batch. */
 export function notifyBatchOutcome(notice: BatchOutcomeNotice): void {
   post(buildBatchNotice(notice), "batch");

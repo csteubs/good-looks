@@ -14,7 +14,7 @@
 // a non-zero exit code on failure stand in for one. Run with:
 //   npm run check:alerts
 
-import { buildAlertPayload, type Alert } from "../alert-service.js";
+import { buildAlertPayload, redactPayload, type Alert } from "../alert-service.js";
 import { hostOfUrl, validateWebhookUrl } from "../webhook-url-store.js";
 
 let failures = 0;
@@ -186,6 +186,49 @@ for (const bad of ["", "   ", "not a url", "ftp://x/y", "file:///etc/passwd", "j
 }
 assert(hostOfUrl("https://hooks.slack.com/services/x") === "hooks.slack.com", "hostOfUrl extracts the host only");
 assert(hostOfUrl("nonsense") === null, "hostOfUrl returns null for junk");
+
+// ── A Routine's `notify` step ─────────────────────────────────────────
+//
+// TWO DIFFERENT GUARANTEES, and conflating them would weaken the stronger one.
+// For a run or batch alert the promise is STRUCTURAL: the builder takes no log
+// or output parameter, so there is nothing to leak — which is why those are in
+// the planted-secret loop above. A notify's message is TEXT THE USER TYPED, so
+// the builder necessarily carries it, and the promise is instead that it is
+// REDACTED before it leaves. `sendAlert` applies `redactPayload` immediately
+// before the send, for every kind.
+
+{
+  const notify = buildAlertPayload({
+    kind: "routineNotify",
+    message: "Seeding done",
+    routineName: "Nightly",
+  });
+  assert(notify !== null, "a notify always sends — it IS the thing the user asked for");
+  assert(
+    notify!.text.includes("Nightly") && notify!.text.includes("Seeding done"),
+    "the message names the routine and says what the user wrote",
+  );
+  // The detail carries NO run data. That is the whole reason a notify's message
+  // is static text: this payload must not become a route from a run to a
+  // third-party endpoint.
+  assert(
+    Object.keys(notify!.detail).sort().join(",") === "message,routineName",
+    `notify detail carries only the routine name and the message (got ${Object.keys(notify!.detail).join(",")})`,
+  );
+
+  // A user can paste a secret into their own message. It is their text and
+  // their webhook, but redaction is what makes that survivable.
+  const withSecret = buildAlertPayload({
+    kind: "routineNotify",
+    message: `Seeding done ${SECRET}`,
+    routineName: "Nightly",
+  });
+  const scrubbed = redactPayload(withSecret!, [SECRET]);
+  assert(
+    !JSON.stringify(scrubbed).includes(SECRET),
+    "a secret pasted into a notify message is redacted before it leaves",
+  );
+}
 
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);

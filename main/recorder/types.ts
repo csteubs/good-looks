@@ -2041,7 +2041,44 @@ export interface RoutineWaitStep {
   ms: number;
 }
 
-export type RoutineStep = RoutineTestStep | RoutineGroupStep | RoutineWaitStep;
+/**
+ * Say something when the run reaches this point. docs/ROUTINES.md capability 3.
+ *
+ * A BARRIER, like `wait`: everything before it finishes before it fires. "Tell
+ * me when the seeding is done" is a claim about the steps above it, and a
+ * notify racing them would report a thing that had not happened.
+ *
+ * THE MESSAGE IS STATIC TEXT, and that is a security decision rather than a
+ * missing feature. `channel: "webhook"` sends it off the machine through
+ * `alert-service`, which is the app's ONLY egress and is summary-only by
+ * design — run logs are never sent, because they routinely carry page content,
+ * URLs with tokens and typed fixture values. A message with `${...}`
+ * interpolation would turn this field into a general-purpose pipe from run data
+ * to a third-party endpoint, which is exactly what `check:alerts` exists to
+ * prevent. If interpolation is ever added it needs its own allow-list of
+ * substitutable values, not a template engine.
+ */
+export interface RoutineNotifyStep {
+  kind: "notify";
+  /** Stable across edits and reorders, like a group's and a wait's. */
+  id: string;
+  /** `desktop` is local and always available. `webhook` goes through
+   *  `alert-service` and is INERT until the user configures a URL — which is
+   *  the same promise the run and batch alerts make. */
+  channel: "desktop" | "webhook";
+  message: string;
+}
+
+export type RoutineStep =
+  | RoutineTestStep
+  | RoutineGroupStep
+  | RoutineWaitStep
+  | RoutineNotifyStep;
+
+/** Longest a `notify` message may be. Bounded because it is user text that can
+ *  leave the machine: a webhook body is not the place for a paste of something
+ *  large, and a cap is cheaper to reason about than a truncation nobody sees. */
+export const MAX_ROUTINE_MESSAGE = 200;
 
 /** Longest a single `wait` step may pause a Routine: one hour.
  *

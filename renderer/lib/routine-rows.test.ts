@@ -527,6 +527,101 @@ describe("waits", () => {
   });
 });
 
+describe("notifies", () => {
+  const notify = (id: string, message: string, channel: "desktop" | "webhook" = "desktop") =>
+    ({ kind: "notify" as const, id, channel, message });
+
+  it("pins each message to the row it follows, like a pause", () => {
+    const rows = rowsFromRoutine(
+      routine([
+        step({ testId: "t-a" }),
+        notify("n-1", "Seeding done") as unknown as RoutineStep,
+        step({ testId: "t-b" }),
+      ]),
+      tests("t-a", "t-b"),
+      DEFAULTS,
+    );
+    expect(rows.notifies).toEqual([
+      { id: "n-1", channel: "desktop", message: "Seeding done", after: "t-a" },
+    ]);
+  });
+
+  it("puts a message back where it was", () => {
+    const back = stepsFromRows(
+      ["t-a", "t-b"],
+      {
+        "t-a": { selected: true, browsers: ["chromium"], headless: false },
+        "t-b": { selected: true, browsers: ["chromium"], headless: false },
+      },
+      tests("t-a", "t-b"),
+      DEFAULTS,
+      {},
+      [],
+      {},
+      [],
+      [{ id: "n-1", channel: "webhook", message: "Done", after: "t-a" }],
+    );
+    expect(back.map((st) => st.kind)).toEqual(["test", "notify", "test"]);
+  });
+
+  it("emits the message BEFORE the pause at the same pin point", () => {
+    // "Seeding done" announcing a thing and then arriving a minute late is
+    // worse than no message.
+    const back = stepsFromRows(
+      ["t-a"],
+      { "t-a": { selected: true, browsers: ["chromium"], headless: false } },
+      tests("t-a"),
+      DEFAULTS,
+      {},
+      [],
+      {},
+      [{ id: "w-1", ms: 30_000, after: "t-a" }],
+      [{ id: "n-1", channel: "desktop", message: "Done", after: "t-a" }],
+    );
+    expect(back.map((st) => st.kind)).toEqual(["test", "notify", "wait"]);
+  });
+
+  it("round-trips a Routine with a message unchanged", () => {
+    const original = routine([
+      step({ testId: "t-a" }),
+      notify("n-1", "Seeding done", "webhook") as unknown as RoutineStep,
+      step({ testId: "t-b" }),
+    ]);
+    const library = tests("t-a", "t-b");
+    const rows = rowsFromRoutine(original, library, DEFAULTS);
+    const back = stepsFromRows(
+      rows.order,
+      rows.rowOptions,
+      library,
+      DEFAULTS,
+      rows.policies,
+      rows.groups,
+      rows.groupOf,
+      rows.waits,
+      rows.notifies,
+    );
+    expect(back).toEqual(original.steps);
+    expect(sameSteps(back, original.steps)).toBe(true);
+  });
+
+  it("sameSteps notices the message and the CHANNEL changing", () => {
+    // The channel in particular decides whether the text leaves the machine at
+    // all, so calling that edit "unchanged" would never write it.
+    const a = [notify("n-1", "Done", "desktop") as unknown as RoutineStep];
+    expect(sameSteps(a, [notify("n-1", "Finished", "desktop") as unknown as RoutineStep])).toBe(
+      false,
+    );
+    expect(sameSteps(a, [notify("n-1", "Done", "webhook") as unknown as RoutineStep])).toBe(false);
+    expect(sameSteps(a, [notify("n-1", "Done", "desktop") as unknown as RoutineStep])).toBe(true);
+  });
+
+  it("does not count a message as a test", () => {
+    expect(
+      testCount(routine([step({ testId: "t-a" }), notify("n-1", "Done") as unknown as RoutineStep])),
+    ).toBe(1);
+  });
+});
+
 describe("nextPolicy", () => {
   it("offers skipGroup only inside a group", () => {
     // `skipGroup` outside a group has no rest-of-group to skip, so offering it

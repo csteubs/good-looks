@@ -50,7 +50,24 @@ export interface BatchAlert {
   browser?: string;
 }
 
-export type Alert = RunAlert | BatchAlert;
+/**
+ * A `notify` step in a Routine reached its point in the run.
+ *
+ * THE MESSAGE IS THE ONLY VARIABLE PART, and it is text the user typed into the
+ * editor — never interpolated from run data. That is what keeps this alert
+ * inside the same guarantee as the other two: what leaves the machine is a
+ * summary and a sentence somebody wrote, not anything the run produced. See
+ * `RoutineNotifyStep`, and `check:alerts` for the assertion.
+ */
+export interface RoutineNotifyAlert {
+  kind: "routineNotify";
+  /** What the user wrote. Trimmed and capped by the store. */
+  message: string;
+  /** The Routine it came from, for context in the channel. */
+  routineName: string;
+}
+
+export type Alert = RunAlert | BatchAlert | RoutineNotifyAlert;
 
 export interface AlertPayload {
   /** rendered by Slack/Discord; also the human-readable line for anything else */
@@ -95,6 +112,23 @@ export function redactPayload(payload: AlertPayload, secrets: readonly string[])
  * guarantee above is enforceable by a regression check.
  */
 export function buildAlertPayload(alert: Alert): AlertPayload | null {
+  if (alert.kind === "routineNotify") {
+    // The ONLY alert that always sends — the other two are conditional on a
+    // failure, because they report on something. This one IS the thing the
+    // user asked to be told, so suppressing it on a clean run would be
+    // suppressing the message they wrote.
+    //
+    // `detail` carries no run data at all. That is not an oversight: the whole
+    // reason a notify's message is static text is that this payload must not
+    // become a route from a run to a third-party endpoint.
+    return {
+      text: `🔔 ${alert.routineName}: ${alert.message}`,
+      event: "batch",
+      status: "passed",
+      detail: { routineName: alert.routineName, message: alert.message },
+      source: "Good Looks!",
+    };
+  }
   if (alert.kind === "run") {
     const failed = alert.status === "failed";
     const changed = alert.changedSteps > 0;

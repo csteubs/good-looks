@@ -43,7 +43,11 @@ import { playwrightRunner } from "./playwright-runner.js";
 import { testStore } from "./test-store.js";
 import { batchHistoryStore } from "./batch-history-store.js";
 import { sendAlert, type BatchAlert } from "./alert-service.js";
-import { notifyBatchOutcome, type BatchOutcomeNotice } from "./run-notifier.js";
+import {
+  notifyBatchOutcome,
+  notifyRoutineMessage,
+  type BatchOutcomeNotice,
+} from "./run-notifier.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { buildQueue } from "../../shared/batch-queue.mjs";
 import type { BatchEntry, PerTestRunOption } from "../../shared/batch-queue.mjs";
@@ -103,6 +107,11 @@ export interface BatchRunParams {
    *  state and so on the persisted record; the runner does nothing else with
    *  it. Absent for `batch:run` and for the MCP, which are not Routines. */
   routineId?: string;
+  /** The Routine's NAME, for a `notify` step's message to name the job it came
+   *  from. Carried rather than looked up because the runner has no routine
+   *  store — and because the name at the moment the run STARTED is the honest
+   *  one to report, even if the job is renamed mid-run. */
+  routineName?: string;
 }
 
 // Expanding a selection into the queue actually executed lives in
@@ -119,7 +128,11 @@ export { buildQueue } from "../../shared/batch-queue.mjs";
  *  `ms`, then the next segment starts. */
 export interface BatchBarrier {
   afterSegment: number;
+  /** How long to pause. 0 for a barrier that only notifies. */
   ms: number;
+  /** A message to send at this join, from a `notify` step. Plain text the user
+   *  wrote — never interpolated from run data. */
+  notify?: { channel: "desktop" | "webhook"; message: string };
 }
 
 /**
@@ -180,6 +193,18 @@ export interface BatchDeps {
   persist: (record: BatchState & { summary: BatchSummary }) => void;
   /** Fire-and-forget outgoing alert when the batch finishes. */
   alert: (alert: BatchAlert) => void;
+  /** A Routine's `notify` step reached its point in the run.
+   *
+   *  SEPARATE FROM `alert` because the two have different rules: `alert` is
+   *  conditional on a failure and goes only to the webhook, while a notify is
+   *  the thing the user asked for and can go to the desktop instead. Routing
+   *  lives on the far side of this seam so the runner never learns which
+   *  channels exist. */
+  notifyStep: (notify: {
+    channel: "desktop" | "webhook";
+    message: string;
+    routineName: string;
+  }) => void;
   /** Local desktop notification for the finished suite. Separate from `alert`
    *  (an outgoing webhook) because they have different defaults, different
    *  audiences, and — unlike the webhook — this one fires on success too. */
@@ -192,6 +217,18 @@ const realDeps: BatchDeps = {
   startRun: (params) => playwrightRunner.start(params),
   waitFor: (runId) => playwrightRunner.waitFor(runId),
   stopRun: (runId) => playwrightRunner.stop(runId),
+  // Routed here rather than in the runner: `desktop` is local and always
+  // available, `webhook` goes through `alert-service` — the app's ONLY egress,
+  // inert until the user configures a URL, and redacting on the way out. Both
+  // are best-effort, because a notification that fails must not affect the run
+  // it was describing.
+  notifyStep: ({ channel, message, routineName }) => {
+    if (channel === "desktop") {
+      notifyRoutineMessage(routineName, message);
+      return;
+    }
+    sendAlert({ kind: "routineNotify", message, routineName });
+  },
   // Polled in slices rather than one `setTimeout(ms)`, so Stop ends a wait
   // within a tick instead of after however long was left — for the one-hour
   // ceiling that difference is "Stop is broken".
@@ -548,7 +585,13 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
 
           const barrier = (params.barriers ?? []).find((b) => b.afterSegment === seg);
           if (!barrier || cancelled) continue;
-          await pause(barrier.ms);
+          // The message goes out BEFORE the pause, when a barrier carries both.
+          // "Seeding done" announcing a thing and then arriving a minute late
+          // is worse than no message at all.
+          if (barrier.notify) {
+            deps.notifyStep({ ...barrier.notify, routineName: params.routineName ?? "Routine" });
+          }
+          if (barrier.ms > 0) await pause(barrier.ms);
         }
 
         s.running = false;

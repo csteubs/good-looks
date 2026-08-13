@@ -1450,6 +1450,10 @@ export function registerHandlers(): void {
       // from. Additive and optional — a batch started any other way simply has
       // no Routine, which is true of it.
       routineId: routine.id,
+      // For a `notify` step to name the job it came from. The name AT START,
+      // which is the honest one to report even if the Routine is renamed while
+      // it runs.
+      routineName: routine.name,
       captureArtifacts: plan.captureArtifacts,
       // The batch-wide fallback for a test the runner finds no entry for.
       // Every step here HAS an entry, so this only decides the degenerate case

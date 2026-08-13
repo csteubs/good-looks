@@ -27,6 +27,7 @@ import * as path from "path";
 import { app, logger } from "@shell/backend";
 
 import {
+  MAX_ROUTINE_MESSAGE,
   MAX_ROUTINE_NAME,
   MAX_ROUTINE_STEPS,
   MAX_ROUTINES,
@@ -41,6 +42,7 @@ import type {
   Routine,
   RoutineGroupStep,
   RoutineStep,
+  RoutineNotifyStep,
   RoutineTestStep,
   RoutineWaitStep,
   RunBrowser,
@@ -186,6 +188,37 @@ function normalizeWaitStep(raw: unknown): RoutineWaitStep | null {
   return { kind: "wait", id: step.id, ms };
 }
 
+/**
+ * Rebuild a `notify`.
+ *
+ * THE MESSAGE IS THE SECURITY-RELEVANT FIELD. With `channel: "webhook"` it goes
+ * off the machine through `alert-service`, so it is trimmed, capped and stored
+ * as PLAIN TEXT — never interpolated, never templated. See `RoutineNotifyStep`
+ * for why that is a decision rather than a gap.
+ *
+ * An unrecognised channel falls back to `desktop`, which is the LOCAL one. That
+ * direction matters: defaulting the other way would turn a typo in a
+ * hand-edited file into an unintended send.
+ */
+function normalizeNotifyStep(raw: unknown): RoutineNotifyStep | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const step = raw as Record<string, unknown>;
+  if (step.kind !== "notify") return null;
+  if (typeof step.id !== "string" || step.id === "") return null;
+  const message = (typeof step.message === "string" ? step.message : "")
+    .trim()
+    .slice(0, MAX_ROUTINE_MESSAGE);
+  // A message with nothing in it is a notification that says nothing — the
+  // editor would draw it and the recipient would learn nothing from it.
+  if (message === "") return null;
+  return {
+    kind: "notify",
+    id: step.id,
+    channel: step.channel === "webhook" ? "webhook" : "desktop",
+    message,
+  };
+}
+
 function normalizeGroupStep(raw: unknown, seen: Set<string>): RoutineGroupStep | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const step = raw as Record<string, unknown>;
@@ -248,6 +281,13 @@ function normalizeRoutine(raw: unknown, now?: number): Routine | null {
     const wait = normalizeWaitStep(rawStep);
     if (wait) {
       steps.push(wait);
+      continue;
+    }
+    // Not counted against `seen` either, and for the same reason: the cap
+    // bounds RUNS, and a notify queues none.
+    const notify = normalizeNotifyStep(rawStep);
+    if (notify) {
+      steps.push(notify);
       continue;
     }
     const step = normalizeTestStep(rawStep);

@@ -115,6 +115,8 @@ function makeFake(opts: {
   const stopped: string[] = [];
   /** Every barrier the runner sat in, in order, by duration. */
   const waited: number[] = [];
+  /** Every `notify` step that fired, in order. */
+  const notified: { channel: string; message: string; routineName: string }[] = [];
   let releaseWait: (() => void) | null = null;
   /** every write-through persist, in order — the last one is what a restart
    *  would load back. */
@@ -173,6 +175,9 @@ function makeFake(opts: {
         };
       });
     },
+    notifyStep: (n) => {
+      notified.push(n);
+    },
     stopRun: (runId) => {
       stopped.push(runId);
       // A killed Playwright process exits non-zero.
@@ -201,6 +206,7 @@ function makeFake(opts: {
     startedWithDataset,
     stopped,
     waited,
+    notified,
     /** Let the run out of the barrier it is sitting in. */
     releaseWait: () => {
       if (!releaseWait) throw new Error("Not waiting at a barrier");
@@ -937,6 +943,101 @@ async function main(): Promise<void> {
     const done = fake.doneEvent();
     assert(done !== undefined, "the batch finished at all (stop before a barrier)");
     assert(done?.stopped === true, "…and reports as stopped");
+  }
+
+  // ── Notify: a barrier that speaks ──────────────────────────────────
+  //
+  // A `notify` fires at a join for the same reason a `wait` pauses at one:
+  // "tell me when the seeding is done" is a claim about the steps above it, and
+  // a message racing them would report a thing that had not happened.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b"],
+      routineName: "Nightly",
+      perTest: [
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 0 },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 1 },
+      ],
+      barriers: [
+        { afterSegment: 0, ms: 0, notify: { channel: "desktop", message: "Seeding done" } },
+      ],
+    });
+    await tick();
+    assert(fake.notified.length === 0, "a notify does not fire before its segment finishes");
+
+    fake.finish("a", 0);
+    await tick();
+    assert(
+      fake.notified.length === 1 && fake.notified[0].message === "Seeding done",
+      "…and fires once that segment has drained",
+    );
+    assert(
+      fake.notified[0].routineName === "Nightly",
+      "…naming the job it came from, so a channel with several is readable",
+    );
+    // ms 0 means no pause: a notify is instantaneous, and sitting in a
+    // zero-length barrier would be a join nobody asked for.
+    assert(fake.waited.length === 0, "a notify-only barrier does not pause the run");
+    assert(fake.started.includes("b"), "…and the next segment starts immediately");
+    fake.finish("b", 0);
+    await tick();
+  }
+
+  // A barrier carrying BOTH sends first, then pauses. "Seeding done" announcing
+  // a thing and then arriving a minute late is worse than no message.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b"],
+      routineName: "Nightly",
+      perTest: [
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 0 },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 1 },
+      ],
+      barriers: [
+        { afterSegment: 0, ms: 30_000, notify: { channel: "webhook", message: "Settling" } },
+      ],
+    });
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+    assert(
+      fake.notified.length === 1 && fake.waited.join(",") === "30000",
+      "a barrier with both a message and a pause does both",
+    );
+    assert(fake.isWaiting(), "…and is sitting in the pause afterwards");
+    fake.releaseWait();
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+  }
+
+  // A run the user stopped does not go on to announce things about it.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b"],
+      routineName: "Nightly",
+      perTest: [
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 0 },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 1 },
+      ],
+      barriers: [
+        { afterSegment: 0, ms: 0, notify: { channel: "webhook", message: "Done" } },
+      ],
+    });
+    await tick();
+    batch.stop();
+    await tick();
+    await tick();
+    assert(
+      fake.notified.length === 0,
+      "a stopped run does not fire the notifications it never reached",
+    );
   }
 
   // ── One batch at a time ───────────────────────────────────────────

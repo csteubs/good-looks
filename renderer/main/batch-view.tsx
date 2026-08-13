@@ -10,11 +10,11 @@ import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertDialog, Checkbox, ScrollArea, toast } from "@ui";
-import { ChevronDown, ChevronRight, GripVertical, Play, Square, Timer } from "lucide-react";
+import { Bell, ChevronDown, ChevronRight, GripVertical, Play, Square, Timer } from "lucide-react";
 
 import { Btn, Menu, MenuItem, Panel, StatusChip, TONE, toneSurface } from "../theme";
 import { api } from "../lib/api";
-import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
+import { MAX_ROUTINE_MESSAGE, RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts } from "../lib/test-tags";
 import { LogInspector } from "./log-inspector";
 import { useRecorder } from "./recorder-store";
@@ -57,7 +57,13 @@ import {
   sameSteps,
   stepsFromRows,
 } from "../lib/routine-rows";
-import type { GroupOf, PolicyMap, RoutineGroup, RoutineWait } from "../lib/routine-rows";
+import type {
+  GroupOf,
+  PolicyMap,
+  RoutineGroup,
+  RoutineNotify,
+  RoutineWait,
+} from "../lib/routine-rows";
 import { createRoutine, randomSuffix } from "../lib/create-routine";
 import { batchBelongsToRoutine } from "../../shared/routine-migration.mjs";
 import type {
@@ -98,6 +104,11 @@ const DEFAULT_WAIT_MS = 30_000;
  *  one, so there is no way to type a wait that outlives the run's patience. The
  *  top of this list is `MAX_ROUTINE_WAIT_MS`. */
 const WAIT_CHOICES = [5_000, 15_000, 30_000, 60_000, 300_000, 900_000, 3_600_000];
+
+/** What a freshly added message says until the user writes their own. Something
+ *  had to be there — an empty message is a step the store drops, so a blank
+ *  default would make "add a message" appear to do nothing. */
+const DEFAULT_MESSAGE = "Reached this point";
 
 function fmtWait(ms: number): string {
   if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
@@ -202,6 +213,8 @@ export function BatchView() {
   // it has no test to draw one from — so it rides beside the order rather than
   // in it, the same shape a group header takes.
   const [waits, setWaits] = React.useState<RoutineWait[]>([]);
+  // The job's messages, pinned the same way as its pauses.
+  const [notifies, setNotifies] = React.useState<RoutineNotify[]>([]);
   // A finished row's badge opens that run's console output — the row that made
   // you curious shouldn't need a detour through Stats to answer "why".
   const [logRun, setLogRun] = React.useState<{ id: string; title: string } | null>(null);
@@ -390,6 +403,7 @@ export function BatchView() {
     setGroups(rows.groups);
     setGroupOf(rows.groupOf);
     setWaits(rows.waits);
+    setNotifies(rows.notifies);
     setSeedKey(key);
   }, [settingsQuery.data, routinesQuery.data, openRoutine, openId, tests, libraryKey, seedKey]);
 
@@ -536,6 +550,7 @@ export function BatchView() {
       nextGroups: RoutineGroup[] = groups,
       nextGroupOf: GroupOf = groupOf,
       nextWaits: RoutineWait[] = waits,
+      nextNotifies: RoutineNotify[] = notifies,
     ) => {
       setOrder(nextOrder);
       setRowOptions(nextRows);
@@ -559,6 +574,7 @@ export function BatchView() {
         nextGroups,
         nextGroupOf,
         nextWaits,
+        nextNotifies,
       );
       // PRUNED TO WHAT IS ACTUALLY IN THE JOB, and set as state rather than
       // left to the next re-seed. `stepsFromRows` already drops the policy of
@@ -579,6 +595,20 @@ export function BatchView() {
         steps.flatMap((st, i) =>
           st.kind === "wait"
             ? [{ id: st.id, ms: st.ms, after: lastTestIdBefore(steps, i) }]
+            : [],
+        ),
+      );
+      setNotifies(
+        steps.flatMap((st, i) =>
+          st.kind === "notify"
+            ? [
+                {
+                  id: st.id,
+                  channel: st.channel,
+                  message: st.message,
+                  after: lastTestIdBefore(steps, i),
+                },
+              ]
             : [],
         ),
       );
@@ -608,7 +638,18 @@ export function BatchView() {
       if (current && sameSteps(steps, current.steps)) return;
       saveRoutine({ steps });
     },
-    [tests, rowDefaults, openRoutine, saveRoutine, freshestRoutine, policies, groups, groupOf, waits],
+    [
+      tests,
+      rowDefaults,
+      openRoutine,
+      saveRoutine,
+      freshestRoutine,
+      policies,
+      groups,
+      groupOf,
+      waits,
+      notifies,
+    ],
   );
 
   /** Flip one row's failure policy. Only ever reached from a ticked row — the
@@ -683,6 +724,51 @@ export function BatchView() {
         waits.map((w) => (w.id === id ? { ...w, ms } : w)),
       ),
     [order, rowOptions, policies, groups, groupOf, waits, persist],
+  );
+
+  /** Add a message after this row, or take the one that is there away. Same
+   *  toggle shape as the pause, and for the same reason: "is there a message
+   *  here" is a question with an answer on screen. A new one starts on the
+   *  DESKTOP channel — the local one — so adding a step never sends anything
+   *  off the machine until the user says so. */
+  const toggleNotify = React.useCallback(
+    (afterId: string) => {
+      const existing = notifies.find((n) => n.after === afterId);
+      persist(
+        order,
+        rowOptions,
+        policies,
+        groups,
+        groupOf,
+        waits,
+        existing
+          ? notifies.filter((n) => n.id !== existing.id)
+          : [
+              ...notifies,
+              {
+                id: `n-${randomSuffix()}`,
+                channel: "desktop" as const,
+                message: DEFAULT_MESSAGE,
+                after: afterId,
+              },
+            ],
+      );
+    },
+    [order, rowOptions, policies, groups, groupOf, waits, notifies, persist],
+  );
+
+  const setNotify = React.useCallback(
+    (id: string, patch: Partial<Pick<RoutineNotify, "channel" | "message">>) =>
+      persist(
+        order,
+        rowOptions,
+        policies,
+        groups,
+        groupOf,
+        waits,
+        notifies.map((n) => (n.id === id ? { ...n, ...patch } : n)),
+      ),
+    [order, rowOptions, policies, groups, groupOf, waits, notifies, persist],
   );
 
   const renameGroup = React.useCallback(
@@ -1159,6 +1245,7 @@ export function BatchView() {
                       ? groups.find((g) => g.id === groupId)
                       : undefined;
                   const waitAfter = waits.find((w) => w.after === t.id);
+                  const notifyAfter = notifies.find((n) => n.after === t.id);
                   const results = resultsFor.get(t.id) ?? [];
                   const status = rowStatus(results);
                   const isCurrent = status === "running";
@@ -1395,22 +1482,44 @@ export function BatchView() {
                           the group control, for the same reason — the row has
                           no width left for a word, and the accessible name
                           carries the meaning. */}
+                      {/* ONE CONTROL, TWO ANSWERS. A pause and a message are
+                          the same kind of thing — a step that is not a run,
+                          inserted after this row — so "what happens after this
+                          step" is one question and deserves one cell. It was
+                          two, and the row overflowed: this checklist has taken
+                          four new cells across capability 3, and the honest
+                          response to running out of width is to stop asking two
+                          questions where there is one. A menu rather than a
+                          cycle, because both answers can be true at once. */}
                       {row.selected ? (
-                        <button
-                          type="button"
-                          className="gl-batch-waitmark"
+                        <Menu
+                          value={waitAfter || notifyAfter ? "▸" : "·"}
+                          label={`After ${t.name}`}
+                          width={24}
                           disabled={running}
-                          aria-pressed={Boolean(waitAfter)}
-                          aria-label={`Pause after ${t.name}`}
-                          title={
-                            waitAfter
-                              ? "The routine pauses here"
-                              : "Pause the routine after this step"
-                          }
-                          onClick={() => toggleWait(t.id)}
+                          className="gl-batch-aftermark"
                         >
-                          <Timer aria-hidden="true" />
-                        </button>
+                          {(close) => [
+                            <MenuItem
+                              key="wait"
+                              label="Pause here"
+                              selected={Boolean(waitAfter)}
+                              onSelect={() => {
+                                toggleWait(t.id);
+                                close();
+                              }}
+                            />,
+                            <MenuItem
+                              key="notify"
+                              label="Say something"
+                              selected={Boolean(notifyAfter)}
+                              onSelect={() => {
+                                toggleNotify(t.id);
+                                close();
+                              }}
+                            />,
+                          ]}
+                        </Menu>
                       ) : (
                         <span className="gl-batch-waitmark-gap" aria-hidden="true" />
                       )}
@@ -1491,6 +1600,74 @@ export function BatchView() {
                         a join in the job, not a step with an outcome. Giving it
                         a row's furniture — a checkbox, engines, a status chip —
                         would promise a result it can never have. */}
+                    {notifyAfter ? (
+                      <div className="gl-batch-wait" data-testid="routine-notify">
+                        <Bell aria-hidden="true" />
+                        <input
+                          className="gl-batch-message"
+                          // DISTINCT from the toggle's label. Two controls with
+                          // the same accessible name is a screen reader reading
+                          // the same thing twice with no way to tell them apart
+                          // — and the reason the first version of the test
+                          // reported "found multiple elements".
+                          aria-label={`Text of the message after ${t.name}`}
+                          defaultValue={notifyAfter.message}
+                          maxLength={MAX_ROUTINE_MESSAGE}
+                          disabled={running}
+                          // Committed on blur, like the group name and for the
+                          // same reason: `updatedAt` is what the rail sorts by,
+                          // and writing per keystroke re-dates the job once per
+                          // character.
+                          onBlur={(e) => {
+                            const next = e.target.value.trim();
+                            if (next !== "" && next !== notifyAfter.message) {
+                              setNotify(notifyAfter.id, { message: next });
+                            } else {
+                              e.target.value = notifyAfter.message;
+                            }
+                          }}
+                        />
+                        <Menu
+                          value={notifyAfter.channel === "webhook" ? "Webhook" : "Desktop"}
+                          label={`Where the message after ${t.name} goes`}
+                          width={110}
+                          disabled={running}
+                        >
+                          {(close) =>
+                            (["desktop", "webhook"] as const).map((c) => (
+                              <MenuItem
+                                key={c}
+                                label={c === "webhook" ? "Webhook" : "Desktop"}
+                                selected={c === notifyAfter.channel}
+                                onSelect={() => {
+                                  setNotify(notifyAfter.id, { channel: c });
+                                  close();
+                                }}
+                              />
+                            ))
+                          }
+                        </Menu>
+                        {/* SAID OUT LOUD, because this is the one control on
+                            this screen that sends data off the machine. The
+                            webhook is configured in Settings and the step is
+                            inert until it is — the same promise the run and
+                            batch alerts make, stated where the choice is. */}
+                        <span className="gl-batch-wait-note">
+                          {notifyAfter.channel === "webhook"
+                            ? "leaves this machine"
+                            : "stays on this machine"}
+                        </span>
+                        <button
+                          type="button"
+                          className="gl-batch-wait-remove"
+                          disabled={running}
+                          aria-label={`Remove the message after ${t.name}`}
+                          onClick={() => toggleNotify(t.id)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ) : null}
                     {waitAfter ? (
                       <div className="gl-batch-wait" data-testid="routine-wait">
                         <Timer aria-hidden="true" />
