@@ -21,8 +21,15 @@ Routines and the UI says "Routines" throughout (the route, the channels, the
 on-disk format and `RunRecord.batchId` are untouched, per the rename table
 below). Previous batches IS scoped to the open Routine: `BatchState` carries
 an optional `routineId`, and a batch without one belongs to the migrated
-Routine — see `ORPHAN_BATCH_OWNER`. Capabilities 2 (scheduling) and 3 (the flow
-builder) are untouched.
+Routine — see `ORPHAN_BATCH_OWNER`.
+
+**Capability 2 is started, and nothing fires yet.** `Routine.schedule` and
+`shared/routine-schedule.mjs` exist and are tested; no surface offers a
+schedule and no timer runs one, because a schedule you can set that never runs
+is the exact promise this document says not to make. Note the two departures
+recorded under *Scheduling* below: the schedule is an ENUMERATION rather than a
+cron string, and `lastRunAt` lives on the Routine as `lastScheduledRunAt`.
+Capability 3 (the flow builder) is untouched.
 
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for what exists today,
 [DECISIONS.md](DECISIONS.md) for why the current Batch is shaped the way it is,
@@ -167,7 +174,27 @@ in-process `setInterval`.
 
 **Recommendation: catch-up on launch, plus an in-process timer while running.**
 A `Routine.schedule` stores `{ cron: string; lastRunAt?: number }`; on launch the
-app computes whether an occurrence was missed and offers to run it. That is a
+app computes whether an occurrence was missed and offers to run it.
+
+> **As built (2026-08-13), two departures from the sketch above.**
+>
+> The schedule is an **enumeration** — `everyHours` / `dailyAt` / `weekdaysAt` —
+> not a cron string. A cron text field's failure mode is a schedule that never
+> fires, and on screen that is indistinguishable from one that is not due yet:
+> no error, no red, and the user finds out days later. An enumerated schedule
+> cannot reach that state, because every value it holds came from a picker. The
+> cost is expressiveness, which is the right thing to give up for a scheduler
+> that only runs while the app is open. `everyHours` is anchored to local
+> midnight rather than to the last run, so the cadence cannot drift, and its
+> step must divide 24.
+>
+> `lastRunAt` lives on the Routine as **`lastScheduledRunAt`**, not inside the
+> schedule, so editing a schedule cannot clobber the record of what it has
+> already done. It records only SCHEDULED fires — a manual run does not satisfy
+> a schedule, or running a job by hand at 23:00 would silently cancel its 23:30
+> occurrence.
+>
+> See DECISIONS 2026-08-13. That is a
 weaker guarantee than `launchd` and it should be *stated in the UI* — "runs when
 the app is open" — rather than implied. Promising unattended nightly runs and
 delivering them only when the app happens to be running is worse than not
