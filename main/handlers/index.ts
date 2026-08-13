@@ -15,6 +15,7 @@ import {
   isTrainerPanelDocked,
   undock as undockTrainerPanel,
 } from "../windows/trainer-panel-window.js";
+import { mcpServerInfo } from "../services/mcp-install.js";
 import { recorderService } from "../services/recorder-service.js";
 import { batchRunner } from "../services/batch-runner.js";
 import { batchHistoryStore } from "../services/batch-history-store.js";
@@ -155,6 +156,10 @@ export function registerHandlers(): void {
   ipcMain.handle("window:closeSettings", async (_event) => {
     getSettingsWindow()?.close();
   });
+
+  // Where this install's MCP server is. Read-only, and it answers "not here"
+  // rather than throwing — the pane renders both outcomes.
+  ipcMain.handle("docs:mcpServer", async () => mcpServerInfo());
 
   // ── Recorder handlers ───────────────────────────────────────────────
   ipcMain.handle(

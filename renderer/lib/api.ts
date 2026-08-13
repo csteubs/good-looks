@@ -597,6 +597,14 @@ export const api = {
     setToken: (token: string) => ipc().invoke<{ hasToken: boolean }>("branches:setToken", { token }),
     clearToken: () => ipc().invoke<{ hasToken: boolean }>("branches:clearToken"),
   },
+  /** What the Documentation pane cannot read out of a document: where this
+   *  install's MCP server actually is. `exists` is answered from disk rather
+   *  than assumed, because the server is part of the SOURCE tree and a packaged
+   *  build does not carry it — see `main/services/mcp-install.ts`. */
+  docs: {
+    mcpServer: () =>
+      ipc().invoke<{ path: string | null; exists: boolean; command: string }>("docs:mcpServer"),
+  },
   /** Subscribe to a backend push event. Returns an unsubscribe function. */
   on<T>(channel: string, cb: (payload: T) => void): () => void {
     return ipc().on(channel, (...args: unknown[]) => cb(args[1] as T));

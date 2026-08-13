@@ -279,9 +279,50 @@ async function setupApplicationMenu() {
     { role: "editMenu" },
     { role: "viewMenu" },
     { role: "windowMenu" },
+    // The app had no help surface at all: every document it has lived in the
+    // repo, and the only in-app mention of the MCP server was one clause inside
+    // a screenshot setting. `role: "help"` is what puts this menu where macOS
+    // users look for it and attaches the system's own search field to it.
+    //
+    // Each item deep-links a TOPIC of the Documentation pane. The slugs are a
+    // contract with `docs/MCP-GUIDE.md` — rename one of those headings and
+    // `check:docs-blocks` fails rather than these items quietly opening the top
+    // of the document. The one external link is github.com, which is the only
+    // host `shell.openExternal` accepts here.
+    {
+      role: "help",
+      submenu: [
+        {
+          label: "Good Looks! Help",
+          click: async () => await openSettingsWindow("documentation"),
+        },
+        { type: "separator" },
+        {
+          label: "Using Good Looks! from an AI assistant",
+          click: async () => await openSettingsWindow("documentation/what-it-is"),
+        },
+        {
+          label: "Set up the MCP server",
+          click: async () => await openSettingsWindow("documentation/setup"),
+        },
+        {
+          label: "What you can ask for",
+          click: async () => await openSettingsWindow("documentation/what-you-can-ask-for"),
+        },
+        {
+          label: "Linear, GitHub and Slack",
+          click: async () => await openSettingsWindow("documentation/linear-github-and-slack"),
+        },
+        { type: "separator" },
+        {
+          label: "Troubleshooting",
+          click: async () => await openSettingsWindow("documentation/troubleshooting"),
+        },
+      ],
+    },
   ]);
   Menu.setApplicationMenu(menu);
-  logger.info("main", "Application menu configured with Settings");
+  logger.info("main", "Application menu configured with Settings and Help");
 }
 
 /**

@@ -82,6 +82,7 @@ describe("pane definitions", () => {
     expect(ungrouped).toHaveLength(2);
     expect(segments[0].panes.map((p) => p.id)).toEqual(["appearance"]);
     expect(segments[segments.length - 1].panes.map((p) => p.id)).toEqual([
+      "documentation",
       "diagnostics",
       "experiments",
     ]);
