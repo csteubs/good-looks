@@ -94,7 +94,7 @@ the standalone `check:*` scripts and the `@glaze/core/backend` stub.
 
 ## Documentation
 
-Four docs, each with a distinct job:
+Five docs, each with a distinct job:
 
 | Doc | What it is for |
 | --- | --- |
@@ -102,8 +102,9 @@ Four docs, each with a distinct job:
 | [`CLAUDE.md`](CLAUDE.md) | Working rules: security boundaries, testing conventions, environment gotchas, hard constraints |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Per-file map of what exists and why — read before any non-trivial change |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | Dated record of *why* each feature landed the way it did |
+| [`docs/MCP-GUIDE.md`](docs/MCP-GUIDE.md) | User guide to driving the app from an AI assistant, and where the Linear/Slack/GitHub integrations fit |
 
-All four are hand-maintained. `ARCHITECTURE.md` and `DECISIONS.md` were kept
+All five are hand-maintained. `ARCHITECTURE.md` and `DECISIONS.md` were kept
 current automatically until 2026-08-06; they stay accurate now only if changes
 carry them, so update the relevant entry in the same commit.
 

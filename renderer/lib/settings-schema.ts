@@ -12,6 +12,8 @@
 // fire a change event.
 
 import type { RecorderSettings } from "./recorder-types";
+import { blockText } from "./doc-blocks";
+import { APP_DOCS, docRowId } from "./docs";
 import {
   COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
   COST_DEFAULT_PER_CI_MINUTE,
@@ -30,6 +32,7 @@ export type PaneId =
   | "ai"
   | "alerts"
   | "integrations"
+  | "documentation"
   | "diagnostics"
   | "experiments";
 
@@ -122,6 +125,23 @@ export const PANES: readonly PaneDef[] = [
     group: "Connections",
   },
   {
+    // Not a settings pane at all, and it lives here anyway.
+    //
+    // The app had NO documentation surface: every doc it has is in the repo,
+    // and the only in-app mention of the MCP server was one clause inside the
+    // Debug screenshots row — so searching Settings for "mcp" returned a
+    // screenshot toggle. Settings is the app's one secondary window, it already
+    // has a rail and a search field, and both are the things a reader of docs
+    // wants. A second window would duplicate them to hold strictly less.
+    //
+    // It carries no `key`-bearing rows, so "N settings differ" and "reset
+    // section" are silent here without either needing a special case.
+    id: "documentation",
+    title: "Documentation",
+    subtitle: "How the parts of this app work, and how to drive it from elsewhere.",
+    group: null,
+  },
+  {
     id: "diagnostics",
     title: "Diagnostics",
     subtitle: "Tools for handing this app's state to someone helping you.",
@@ -189,6 +209,32 @@ export interface SettingIndexEntry {
    *  button have none, which is also what keeps them out of "reset section". */
   key?: keyof RecorderSettings;
 }
+
+/**
+ * One entry per documentation topic, derived from the documents themselves.
+ *
+ * DERIVED, not written out. A hand-listed set of topics is a second copy of
+ * every heading in `docs/`, and the direction it fails is a search that offers
+ * a topic which no longer exists.
+ *
+ * The haystack is the topic's WHOLE TEXT, which is the one place in this window
+ * that full-text search is right. Everywhere else a near-miss is worse than no
+ * hit — the user cannot tell "no such setting" from "the matcher is being
+ * clever". Here the question being asked is different: someone typing "flaky"
+ * or "webhook" into Settings is asking where that subject is dealt with, and a
+ * paragraph about it is a true answer. Each topic is a single entry, so a pane
+ * count stays a count of topics rather than of paragraphs.
+ */
+export const DOC_INDEX: readonly SettingIndexEntry[] = APP_DOCS.flatMap((doc) =>
+  doc.page.topics.map((topic) => ({
+    id: docRowId(topic.slug),
+    pane: "documentation" as const,
+    label: topic.title,
+    // The document's own title too, so "mcp" reaches every topic of the MCP
+    // guide — no topic heading in it contains the acronym.
+    keywords: `${doc.page.title} ${doc.label} ${blockText(topic.blocks)}`,
+  })),
+);
 
 export const SETTING_INDEX: readonly SettingIndexEntry[] = [
   // Appearance
@@ -531,6 +577,13 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "experimental ai debug auto accept apply suggestion corrected script",
     key: "autoAcceptAiDebugFixes",
   },
+
+  // LAST, and the position is load-bearing. When a search leaves the selected
+  // pane empty, `settings-view` moves to the first pane that has a hit — the
+  // first key of `matchCountByPane`, which follows this array's order. Docs
+  // match on full text, so listing them first would make almost every search
+  // jump out of the settings into the manual.
+  ...DOC_INDEX,
 ];
 
 /**

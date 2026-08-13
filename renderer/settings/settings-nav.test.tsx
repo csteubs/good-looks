@@ -179,6 +179,25 @@ describe("search", () => {
     expect(screen.queryByText("Testing")).toBeNull();
   });
 
+  it("finds the manual by a word only the manual uses", () => {
+    // The reason the Documentation pane is indexed on full text at all. Before
+    // it, searching "mcp" in Settings returned exactly one result — the debug
+    // screenshot toggle, whose keywords happen to include the acronym — and
+    // nothing in the app explained what an MCP client was for.
+    const counts = matchCountByPane(searchSettings("mcp"));
+    renderNav({ search: "mcp", matchCounts: counts });
+    const docs = row("Documentation");
+    expect(docs.textContent).toMatch(/\d/);
+  });
+
+  it("does not put the manual first when a search misses the open pane", () => {
+    // `settings-view` moves to the FIRST pane with a hit. Docs match on full
+    // text, so if they were indexed ahead of the settings almost every search
+    // would jump out of the controls and into the prose about them.
+    const first = Object.keys(matchCountByPane(searchSettings("webhook")))[0];
+    expect(first).not.toBe("documentation");
+  });
+
   it("renders an empty list rather than everything when nothing matches", () => {
     // `{}` means "searched, found nothing". Falling back to the full list here
     // would make an unmatched search look like a cleared one.
