@@ -19,6 +19,9 @@ export interface BatchEntry {
    *  for every non-Routine caller; `skipGroup` on an entry with no group has
    *  no rest-of-group to skip, so it continues. */
   groupId?: string;
+  /** Which side of the Routine's barriers this entry falls on. Absent means
+   *  segment 0 — one segment, which is what every non-Routine caller gets. */
+  segment?: number;
 }
 
 /** One test's engines and headedness, as sent by the Batch view. Validated,
@@ -34,6 +37,8 @@ export interface PerTestRunOption {
   onFailure?: "continue" | "stopRoutine" | "skipGroup";
   /** The Routine group these entries belong to, stamped by `routineRunPlan`. */
   groupId?: string;
+  /** Which side of the Routine's barriers these entries fall on. */
+  segment?: number;
 }
 
 export declare function buildQueue(

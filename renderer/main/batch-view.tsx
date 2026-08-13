@@ -10,7 +10,7 @@ import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertDialog, Checkbox, ScrollArea, toast } from "@ui";
-import { ChevronDown, ChevronRight, GripVertical, Play, Square } from "lucide-react";
+import { ChevronDown, ChevronRight, GripVertical, Play, Square, Timer } from "lucide-react";
 
 import { Btn, Menu, MenuItem, Panel, StatusChip, TONE, toneSurface } from "../theme";
 import { api } from "../lib/api";
@@ -50,13 +50,14 @@ import {
 } from "../lib/batch-outcome";
 import {
   brokenSteps,
+  lastTestIdBefore,
   nextPolicy,
   POLICY_LABELS,
   rowsFromRoutine,
   sameSteps,
   stepsFromRows,
 } from "../lib/routine-rows";
-import type { GroupOf, PolicyMap, RoutineGroup } from "../lib/routine-rows";
+import type { GroupOf, PolicyMap, RoutineGroup, RoutineWait } from "../lib/routine-rows";
 import { createRoutine, randomSuffix } from "../lib/create-routine";
 import { batchBelongsToRoutine } from "../../shared/routine-migration.mjs";
 import type {
@@ -83,6 +84,25 @@ function fmtDuration(ms: number): string {
   if (s < 60) return `${s.toFixed(1)}s`;
   const m = Math.floor(s / 60);
   return `${m}m ${Math.round(s % 60)}s`;
+}
+
+/** What a freshly added pause is set to: thirty seconds.
+ *
+ *  A length had to be chosen. Thirty seconds is long enough to be the thing
+ *  somebody wanted (let a deploy settle, let a queue drain) and short enough
+ *  that adding one by accident is not a job that appears to hang. */
+const DEFAULT_WAIT_MS = 30_000;
+
+/** The durations a pause can be set to. An ENUMERATION, for the same reason the
+ *  schedule is one: every value comes from a control that cannot produce a bad
+ *  one, so there is no way to type a wait that outlives the run's patience. The
+ *  top of this list is `MAX_ROUTINE_WAIT_MS`. */
+const WAIT_CHOICES = [5_000, 15_000, 30_000, 60_000, 300_000, 900_000, 3_600_000];
+
+function fmtWait(ms: number): string {
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  return `${Math.round(ms / 3_600_000)}h`;
 }
 
 /** Two letters per engine, not a logo.
@@ -178,6 +198,10 @@ export function BatchView() {
   // reorder never has to learn about containers.
   const [groups, setGroups] = React.useState<RoutineGroup[]>([]);
   const [groupOf, setGroupOf] = React.useState<GroupOf>({});
+  // The job's pauses, each pinned to the row it follows. A wait is not a row —
+  // it has no test to draw one from — so it rides beside the order rather than
+  // in it, the same shape a group header takes.
+  const [waits, setWaits] = React.useState<RoutineWait[]>([]);
   // A finished row's badge opens that run's console output — the row that made
   // you curious shouldn't need a detour through Stats to answer "why".
   const [logRun, setLogRun] = React.useState<{ id: string; title: string } | null>(null);
@@ -365,6 +389,7 @@ export function BatchView() {
     setPolicies(rows.policies);
     setGroups(rows.groups);
     setGroupOf(rows.groupOf);
+    setWaits(rows.waits);
     setSeedKey(key);
   }, [settingsQuery.data, routinesQuery.data, openRoutine, openId, tests, libraryKey, seedKey]);
 
@@ -411,17 +436,27 @@ export function BatchView() {
    * the backend rebuilt, possibly with a step dropped — back on screen, rather
    * than the payload we hoped for.
    */
+  /**
+   * The freshest version of the open Routine this view knows about.
+   *
+   * `openRoutine` is the QUERY's answer, and invalidation is asynchronous — so
+   * between a save going out and its round trip landing, the query still holds
+   * the pre-edit record. Anything that reads the Routine to decide what to do
+   * next has to look here instead, or it decides against a version that is one
+   * edit behind.
+   */
+  const freshestRoutine = React.useCallback(
+    (): Routine | null =>
+      (inFlight.current > 0 ? pending.current : null) ??
+      (qc.getQueryData<Routine[]>(["routines"]) ?? []).find((r) => r.id === openId) ??
+      openRoutine,
+    [qc, openId, openRoutine],
+  );
+
   const saveRoutine = React.useCallback(
     (patch: Partial<Routine>) => {
       if (!openId) return;
-      const base =
-        // What we last SENT, while anything is still in flight. The cache is
-        // not enough on its own: invalidation is asynchronous, so a second
-        // patch issued before the first round trip lands would read the
-        // pre-edit record out of it and write the old value straight back.
-        (inFlight.current > 0 ? pending.current : null) ??
-        (qc.getQueryData<Routine[]>(["routines"]) ?? []).find((r) => r.id === openId) ??
-        openRoutine;
+      const base = freshestRoutine();
       if (!base) return;
       const next = { ...base, ...patch };
       pending.current = next;
@@ -500,6 +535,7 @@ export function BatchView() {
       nextPolicies: PolicyMap = policies,
       nextGroups: RoutineGroup[] = groups,
       nextGroupOf: GroupOf = groupOf,
+      nextWaits: RoutineWait[] = waits,
     ) => {
       setOrder(nextOrder);
       setRowOptions(nextRows);
@@ -522,6 +558,7 @@ export function BatchView() {
         nextPolicies,
         nextGroups,
         nextGroupOf,
+        nextWaits,
       );
       // PRUNED TO WHAT IS ACTUALLY IN THE JOB, and set as state rather than
       // left to the next re-seed. `stepsFromRows` already drops the policy of
@@ -530,8 +567,21 @@ export function BatchView() {
       // comes back, and the screen shows the policy while the stored job has
       // no such step — and `sameSteps` then reads the pair as unchanged and
       // writes nothing, so the divergence persists rather than settling.
-      const flat = steps.flatMap((st) => (st.kind === "group" ? st.steps : [st]));
+      const flat = steps.flatMap((st) =>
+        st.kind === "group" ? st.steps : st.kind === "test" ? [st] : [],
+      );
       setPolicies(Object.fromEntries(flat.map((st) => [st.testId, st.onFailure])));
+      // Pinned back to the row each one follows, so a wait survives the
+      // round-trip through the checklist's flat order. Read off the STORED
+      // steps rather than kept from before the save, for the reason the
+      // policies are: what came back is what the store actually kept.
+      setWaits(
+        steps.flatMap((st, i) =>
+          st.kind === "wait"
+            ? [{ id: st.id, ms: st.ms, after: lastTestIdBefore(steps, i) }]
+            : [],
+        ),
+      );
       setGroupOf(
         Object.fromEntries(
           steps.flatMap((st) =>
@@ -547,10 +597,18 @@ export function BatchView() {
         return prev.filter((g) => kept.has(g.id));
       });
       if (!openRoutine) return;
-      if (sameSteps(steps, openRoutine.steps)) return;
+      // Compared against the FRESHEST record, not against `openRoutine`. The
+      // query's answer is one edit behind while a save is in flight, so an edit
+      // that returns the job to the shape the cache still holds read as
+      // "unchanged" and was dropped — add a pause and immediately remove it,
+      // and the pause stayed. The write below already patches onto the freshest
+      // base; this guard has to ask the same question of the same record, or it
+      // vetoes writes that `saveRoutine` would have made correctly.
+      const current = freshestRoutine();
+      if (current && sameSteps(steps, current.steps)) return;
       saveRoutine({ steps });
     },
-    [tests, rowDefaults, openRoutine, saveRoutine, policies, groups, groupOf],
+    [tests, rowDefaults, openRoutine, saveRoutine, freshestRoutine, policies, groups, groupOf, waits],
   );
 
   /** Flip one row's failure policy. Only ever reached from a ticked row — the
@@ -589,6 +647,42 @@ export function BatchView() {
       persist(order, rowOptions, nextPolicies, nextGroups, nextGroupOf);
     },
     [order, rowOptions, policies, groups, groupOf, persist],
+  );
+
+  /** Add a pause after this row, or take the one that is there away.
+   *
+   *  A TOGGLE rather than an "add" that stacks. Two pauses in a row is
+   *  expressible in the store and means nothing a single longer one does not,
+   *  so the row's control is "is there a wait here", which is a question with
+   *  an answer on screen. */
+  const toggleWait = React.useCallback(
+    (afterId: string) => {
+      const existing = waits.find((w) => w.after === afterId);
+      persist(
+        order,
+        rowOptions,
+        policies,
+        groups,
+        groupOf,
+        existing
+          ? waits.filter((w) => w.id !== existing.id)
+          : [...waits, { id: `w-${randomSuffix()}`, ms: DEFAULT_WAIT_MS, after: afterId }],
+      );
+    },
+    [order, rowOptions, policies, groups, groupOf, waits, persist],
+  );
+
+  const setWaitMs = React.useCallback(
+    (id: string, ms: number) =>
+      persist(
+        order,
+        rowOptions,
+        policies,
+        groups,
+        groupOf,
+        waits.map((w) => (w.id === id ? { ...w, ms } : w)),
+      ),
+    [order, rowOptions, policies, groups, groupOf, waits, persist],
   );
 
   const renameGroup = React.useCallback(
@@ -968,7 +1062,8 @@ export function BatchView() {
                       .filter((step) =>
                         step.kind === "group"
                           ? step.steps.length > 0
-                          : !broken.some((b) => b.testId === step.testId),
+                          : step.kind !== "test" ||
+                            !broken.some((b) => b.testId === step.testId),
                       ),
                   })
                 }
@@ -1063,6 +1158,7 @@ export function BatchView() {
                     groupId && (!prev || groupOf[prev.id] !== groupId)
                       ? groups.find((g) => g.id === groupId)
                       : undefined;
+                  const waitAfter = waits.find((w) => w.after === t.id);
                   const results = resultsFor.get(t.id) ?? [];
                   const status = rowStatus(results);
                   const isCurrent = status === "running";
@@ -1293,6 +1389,31 @@ export function BatchView() {
                       ) : (
                         <span className="gl-batch-group-gap" aria-hidden="true" />
                       )}
+                      {/* ADD A PAUSE AFTER THIS ROW. Only on a row that is in
+                          the job: a pause after a step that does not run is a
+                          join with nothing on one side of it. Same 24px mark as
+                          the group control, for the same reason — the row has
+                          no width left for a word, and the accessible name
+                          carries the meaning. */}
+                      {row.selected ? (
+                        <button
+                          type="button"
+                          className="gl-batch-waitmark"
+                          disabled={running}
+                          aria-pressed={Boolean(waitAfter)}
+                          aria-label={`Pause after ${t.name}`}
+                          title={
+                            waitAfter
+                              ? "The routine pauses here"
+                              : "Pause the routine after this step"
+                          }
+                          onClick={() => toggleWait(t.id)}
+                        >
+                          <Timer aria-hidden="true" />
+                        </button>
+                      ) : (
+                        <span className="gl-batch-waitmark-gap" aria-hidden="true" />
+                      )}
                       {/* WHAT THIS STEP'S FAILURE DOES TO THE REST OF THE JOB.
                           docs/ROUTINES.md: "continue" must stay the default or
                           migrating the old Batch changes its behaviour
@@ -1366,6 +1487,47 @@ export function BatchView() {
                         </span>
                       )}
                     </div>
+                    {/* THE PAUSE, drawn BETWEEN rows because that is what it is:
+                        a join in the job, not a step with an outcome. Giving it
+                        a row's furniture — a checkbox, engines, a status chip —
+                        would promise a result it can never have. */}
+                    {waitAfter ? (
+                      <div className="gl-batch-wait" data-testid="routine-wait">
+                        <Timer aria-hidden="true" />
+                        <Menu
+                          value={fmtWait(waitAfter.ms)}
+                          label={`Length of the pause after ${t.name}`}
+                          width={90}
+                          disabled={running}
+                        >
+                          {(close) =>
+                            WAIT_CHOICES.map((ms) => (
+                              <MenuItem
+                                key={ms}
+                                label={fmtWait(ms)}
+                                selected={ms === waitAfter.ms}
+                                onSelect={() => {
+                                  setWaitMs(waitAfter.id, ms);
+                                  close();
+                                }}
+                              />
+                            ))
+                          }
+                        </Menu>
+                        <span className="gl-batch-wait-note">
+                          everything above finishes first
+                        </span>
+                        <button
+                          type="button"
+                          className="gl-batch-wait-remove"
+                          disabled={running}
+                          aria-label={`Remove the pause after ${t.name}`}
+                          onClick={() => toggleWait(t.id)}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ) : null}
                     </React.Fragment>
                   );
                 })}

@@ -657,6 +657,54 @@ function codeOnly(source: string): string {
     /entry\.onFailure === "skipGroup" &&\s*entry\.groupId/.test(routineSrc),
     "mcp: an ungrouped skipGroup step continues rather than skipping everything",
   );
+
+  // BARRIERS. A `wait` means "everything before this has finished", so the pool
+  // must drain per segment. Running one segment alongside the next would make
+  // the barrier a no-op wearing a label — and the same Routine would then do
+  // something different depending on who started it.
+  assert(
+    /for \(const seg of segments\)/.test(routineSrc),
+    "mcp: run_routine runs one segment at a time rather than one flat pool",
+  );
+  assert(
+    /plan\.barriers\.find\(\(b\) => b\.afterSegment === seg\)/.test(routineSrc),
+    "mcp: …and pauses at the barrier the plan put after that segment",
+  );
+  // Not after a stopRoutine failure: the job is over, and sitting out a pause
+  // would hold the tool open for a stretch in which nothing can happen.
+  assert(
+    /if \(!barrier \|\| stoppedByTest !== null\) continue;/.test(routineSrc),
+    "mcp: a stopped routine does not sit out the pauses it never reached",
+  );
+}
+
+{
+  // The segmentation itself, exercised through the shared planner rather than
+  // asserted about the source — the two runners have to agree about WHICH
+  // entries fall on which side of a barrier, and that answer comes from one
+  // place.
+  const routine = {
+    id: "r1",
+    name: "Nightly",
+    createdAt: 0,
+    updatedAt: 0,
+    defaults: { captureArtifacts: false, concurrency: 1 },
+    steps: [
+      { kind: "test", testId: "a", browsers: ["chromium"], headless: true, onFailure: "continue" },
+      { kind: "wait", id: "w1", ms: 30_000 },
+      { kind: "test", testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue" },
+    ],
+  };
+  const plan = routineRunPlan(routine as never, ["a", "b"]);
+  const queue = buildQueue({ testIds: plan.testIds, perTest: plan.perTest }, () => []);
+  assert(
+    queue.map((e) => `${e.testId}:${e.segment}`).join(",") === "a:0,b:1",
+    "routine: the queue carries the segment each entry falls in, so both runners cut it the same way",
+  );
+  assert(
+    plan.barriers.length === 1 && plan.barriers[0].afterSegment === 0,
+    "routine: the barrier names the segment that must finish before it",
+  );
 }
 
 {

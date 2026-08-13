@@ -12,7 +12,13 @@
 import { describe, it, expect } from "vitest";
 
 import type { Routine, RoutineStep, RoutineTestStep } from "../recorder/types.js";
-import { failurePolicy, routineBlockedReason, routineRunPlan } from "../../shared/routine-plan.mjs";
+import {
+  clampWaitMs,
+  failurePolicy,
+  MAX_WAIT_MS,
+  routineBlockedReason,
+  routineRunPlan,
+} from "../../shared/routine-plan.mjs";
 
 function step(over: Partial<RoutineTestStep> = {}): RoutineTestStep {
   return {
@@ -277,6 +283,114 @@ describe("the failure policy", () => {
       ["t-a"],
     );
     expect(plan.perTest[0].onFailure).toBe("continue");
+  });
+});
+
+describe("barriers", () => {
+  const wait = (id: string, ms: number) => ({ kind: "wait" as const, id, ms });
+
+  it("cuts the steps into segments at each wait", () => {
+    const plan = routineRunPlan(
+      routine([
+        step({ testId: "t-a" }),
+        wait("w-1", 30_000) as unknown as RoutineStep,
+        step({ testId: "t-b" }),
+        step({ testId: "t-c" }),
+      ]),
+      ["t-a", "t-b", "t-c"],
+    );
+    expect(plan.perTest.map((e) => [e.testId, e.segment])).toEqual([
+      ["t-a", 0],
+      ["t-b", 1],
+      ["t-c", 1],
+    ]);
+    expect(plan.barriers).toEqual([{ afterSegment: 0, ms: 30_000 }]);
+  });
+
+  it("has no barriers and one segment when there is no wait", () => {
+    // The path every Routine that predates waits takes, and `batch:run` and the
+    // MCP's run_batch with it. One segment is the execution they always had.
+    const plan = routineRunPlan(routine([step({ testId: "t-a" })]), ["t-a"]);
+    expect(plan.barriers).toEqual([]);
+    expect(plan.perTest.every((e) => e.segment === 0)).toBe(true);
+  });
+
+  it("drops a TRAILING wait, which would gate nothing", () => {
+    // It would hold the batch open — and its own progress — for a stretch in
+    // which the job is already finished.
+    const plan = routineRunPlan(
+      routine([step({ testId: "t-a" }), wait("w-1", 30_000) as unknown as RoutineStep]),
+      ["t-a"],
+    );
+    expect(plan.barriers).toEqual([]);
+  });
+
+  it("drops a wait whose following steps were all deleted", () => {
+    // Trailing in effect rather than in position — the case nobody would think
+    // to check, and the one where a batch sits waiting for a segment that
+    // turns out to be empty.
+    const plan = routineRunPlan(
+      routine([
+        step({ testId: "t-a" }),
+        wait("w-1", 30_000) as unknown as RoutineStep,
+        step({ testId: "t-gone" }),
+      ]),
+      ["t-a"],
+    );
+    expect(plan.barriers).toEqual([]);
+    expect(plan.skipped).toEqual(["t-gone"]);
+  });
+
+  it("keeps a LEADING wait, which delays the start", () => {
+    const plan = routineRunPlan(
+      routine([wait("w-1", 5_000) as unknown as RoutineStep, step({ testId: "t-a" })]),
+      ["t-a"],
+    );
+    expect(plan.barriers).toEqual([{ afterSegment: 0, ms: 5_000 }]);
+    // Segment 0 is EMPTY, so the barrier fires before anything runs.
+    expect(plan.perTest.map((e) => e.segment)).toEqual([1]);
+  });
+
+  it("clamps a stored duration rather than refusing the job", () => {
+    // The ceiling is the thing that matters: the runner holds the batch open
+    // across a wait, so a day-long one is a batch that looks hung.
+    expect(clampWaitMs(MAX_WAIT_MS * 10)).toBe(MAX_WAIT_MS);
+    expect(clampWaitMs(1500)).toBe(1500);
+  });
+
+  it("treats a wait of no time as no barrier at all", () => {
+    // A step that pauses for zero is not a pause, and neither is one holding
+    // junk. Both would otherwise become a join that costs a segment boundary
+    // and buys nothing.
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY, "30s", null, undefined]) {
+      expect(clampWaitMs(bad)).toBe(0);
+    }
+    const plan = routineRunPlan(
+      routine([
+        step({ testId: "t-a" }),
+        wait("w-1", 0) as unknown as RoutineStep,
+        step({ testId: "t-b" }),
+      ]),
+      ["t-a", "t-b"],
+    );
+    expect(plan.barriers).toEqual([]);
+    expect(plan.perTest.every((e) => e.segment === 0)).toBe(true);
+  });
+
+  it("segments a group as a unit, on the side the group sits", () => {
+    const plan = routineRunPlan(
+      routine([
+        wait("w-1", 1_000) as unknown as RoutineStep,
+        {
+          kind: "group",
+          id: "g-1",
+          label: "Seed",
+          steps: [step({ testId: "t-a" }), step({ testId: "t-b" })],
+        } as unknown as RoutineStep,
+      ]),
+      ["t-a", "t-b"],
+    );
+    expect(plan.perTest.map((e) => e.segment)).toEqual([1, 1]);
   });
 });
 

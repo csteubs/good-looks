@@ -1119,6 +1119,10 @@ export interface BatchState {
   stoppedBy?: "user" | "failure";
   /** The name of the test whose failure stopped it. */
   stoppedByTest?: string;
+  /** When the current `wait` barrier ends, present only while sitting in one.
+   *  See the main-process copy: without it a pause is indistinguishable from a
+   *  hang. */
+  waitingUntil?: number;
   summary: BatchSummary;
 }
 
@@ -1162,7 +1166,22 @@ export interface RoutineGroupStep {
   steps: RoutineTestStep[];
 }
 
-export type RoutineStep = RoutineTestStep | RoutineGroupStep;
+/** Pause the Routine. A BARRIER, not a sleep on one lane: everything before it
+ *  finishes before the clock starts, and nothing after it begins until the
+ *  clock ends. See the main-process copy for why that is the only reading that
+ *  makes a wait mean anything. */
+export interface RoutineWaitStep {
+  kind: "wait";
+  id: string;
+  ms: number;
+}
+
+export type RoutineStep = RoutineTestStep | RoutineGroupStep | RoutineWaitStep;
+
+/** Longest a single `wait` may pause a Routine: one hour. A ceiling rather than
+ *  a warning — the runner holds the batch open across a wait, so a longer one
+ *  is a batch that looks hung. Anything beyond this is what a schedule is for. */
+export const MAX_ROUTINE_WAIT_MS = 60 * 60 * 1000;
 
 /**
  * When a Routine runs by itself. docs/ROUTINES.md capability 2.

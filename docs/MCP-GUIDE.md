@@ -186,6 +186,11 @@ edits a Routine (not even its schedule), changes a setting, or prunes anything.
 routine on demand, but it cannot schedule one, and running it here does not
 satisfy that day's schedule.
 
+**A Routine can pause mid-run, so `run_routine` can take much longer than the
+tests in it.** A `wait` step is a barrier: everything before it finishes, the
+run holds for up to an hour, then the rest starts. `list_routines` does not
+report the pauses, so a call that seems to hang may simply be sitting in one.
+
 **Reports need a captured run.** Visual, a11y, console and network reports read
 artifacts that only a captured run produces, and the app prunes old run
 directories per your retention setting. "No artifacts" is an ordinary answer, and

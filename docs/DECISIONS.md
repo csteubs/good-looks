@@ -16,6 +16,87 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-13 — `wait`, and the barrier that landed without a second engine
+
+`main/recorder/types.ts`, `shared/routine-plan.mjs`,
+`main/services/batch-runner.ts`, `renderer/lib/routine-rows.ts`,
+`renderer/main/batch-view.tsx`, `mcp/server.mjs`.
+
+**The problem `wait` actually posed.** It is the first step that is not a run, so
+a Routine stopped being a set of tests that pour into one queue and became a
+SEQUENCE with joins in it. The obvious implementation — teach the runner to walk
+a heterogeneous program — is the "second execution engine" ROUTINES.md names as
+this feature's main design risk, and it would have meant a second copy of lanes,
+concurrency, write-through, the summary and the alerting.
+
+**What landed instead: the PLAN segments, the runner loops.** `routineRunPlan`
+cuts the steps at each barrier, labels every `perTest` entry with its segment,
+and hands over the same `{ testIds, perTest }` payload it always did. The runner
+drains one segment's lanes with the pool it already had, joins, pauses, moves
+on. A Routine with **no** barriers is one segment, so the loop runs once and the
+body is byte-for-byte what was there before — `batch:run`, the MCP's `run_batch`
+and every pre-`wait` Routine take exactly the path they always took. A test
+cannot straddle a barrier, because the store collapses duplicate testIds across
+the whole Routine, so the lane partition and the segment partition can never
+disagree.
+
+**A barrier is a join, and the join is the point.** `Promise.all` over the
+segment's workers is already the drain. A wait that ran alongside the steps
+around it would be a no-op wearing a label.
+
+**One hour, clamped not refused.** The runner holds the batch open across a
+wait, so a stored `86_400_000` — a day, from somebody who meant seconds — is a
+batch that never finishes and says nothing about why. Clamping keeps a job
+somebody built runnable; the ceiling is the part that matters. Anything longer
+is what a schedule is for.
+
+**Stop has to END a wait.** For the one-hour ceiling, a Stop that took effect
+only when the pause elapsed is indistinguishable from a frozen app. The injected
+`wait` dep polls in slices rather than racing one `setTimeout`, and it is
+injected at all so `check:batch-runner` can prove the join happens without the
+check becoming the slowest thing in the suite — which is how a test ends up
+deleted.
+
+**`waitingUntil`, because a pause looks exactly like a hang.** Mid-barrier there
+is nothing running and nothing new to report. A timestamp rather than a
+remaining-ms, so the UI can count down without the backend emitting once a
+second; cleared in a `finally`, so a stop mid-wait does not leave the batch
+claiming to wait forever.
+
+**A trailing barrier is dropped**, and "trailing" is computed against the
+segments that actually produced entries — so a wait followed only by deleted
+tests counts too. That is the case nobody would think to check, and the one
+where a batch sits pausing for a segment that turns out to be empty. A LEADING
+wait is kept: delaying the start is a thing somebody might mean.
+
+**Two bugs the checks found, both of which had been sitting there.**
+
+- A mutation that removed `if (cancelled) break` from the segment loop SURVIVED,
+  which meant the guard was doing nothing observable — except it was doing
+  something wrong. With the break, entries in segments past the barrier never
+  reached `runEntry`, so a stopped batch persisted rows sitting at "queued"
+  forever, and `summarize` counts a pending row as neither passed, failed nor
+  skipped, so the record's own total stopped adding up. The break is gone;
+  `runEntry` already refuses a cancelled entry and marks it skipped.
+- `persist` compared the rebuilt steps against `openRoutine` — the QUERY's
+  answer — while `saveRoutine` patched onto the freshest known record. Those are
+  different records while a save is in flight, so an edit that returned the job
+  to the shape the cache still held read as "unchanged" and was vetoed: add a
+  pause and immediately remove it, and the pause stayed. Both now ask the same
+  question of the same record, via `freshestRoutine()`.
+
+**The pause is NEUTRAL on screen**, and the first draft got that wrong. Cyan is
+the palette's "live / in flight", and a pause drawn in the editor is not in
+flight — it is a setting, exactly like the schedule chip. `check:selection-neutral`
+caught it. Cyan belongs to a run actually sitting in the barrier, which is
+`waitingUntil` and not this.
+
+**The row ran out of width, again.** Three cells joined it across capability 3
+— the failure policy, the group mark, the pause mark — and the status chip fell
+off the right edge. The fix is a tighter row rhythm (8px gaps to 6px) and a
+smaller group indent, not shrinking a control below the width of its own text.
+Measured in the preview before and after; jsdom has no layout engine and could
+not have reported it.
 ### 2026-08-13 — One owner for the six caches a run writes
 
 The Stats board's Stability, Auto-Heal and Visual tiles never refreshed after a

@@ -524,7 +524,11 @@
 .gl-batch-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  /* 6px, not 8. Three cells joined this row across capability 3 — the failure
+     policy, the group mark and the pause mark — and at 8px the status chip fell
+     off the right edge. Tightening the rhythm is the honest fix; shrinking a
+     control below the width of its own text is not. */
+  gap: 6px;
   padding: 4px 10px;
   border-bottom: 1px solid var(--gl-line-2);
 }
@@ -761,7 +765,7 @@
    `.gl-batch-policy-gap`: a missing cell slides every later column. */
 .gl-batch-group-gap,
 .gl-batch-groupmark {
-  flex: 0 0 24px;
+  flex: 0 0 20px;
 }
 
 /* A member of a group, indented under its header. The indent is what makes the
@@ -770,7 +774,98 @@
    to the row's own padding rather than a wrapper so the drop-target and
    running rules keep hitting the same element. */
 .gl-batch-row[data-grouped] {
-  padding-left: 16px;
+  /* 12px, not 16: the indent has to read as nesting without spending width the
+     row does not have — a grouped row is the widest one on this screen. */
+  padding-left: 12px;
+}
+
+/* The pause, drawn BETWEEN rows. It has none of a row's furniture on purpose:
+   a join in the job is not a step with an outcome, and giving it a checkbox and
+   a status cell would promise a result it can never have.
+
+   NEUTRAL, and the first draft got this wrong. Cyan is the palette's "live / in
+   flight", and a pause drawn in the EDITOR is not in flight — it is a setting,
+   exactly like the schedule chip, which is neutral for the same reason: it has
+   not passed or failed anything. `check:selection-neutral` caught it. Cyan
+   belongs to a run that is actually sitting in the barrier, which is
+   `waitingUntil` and not this. */
+.gl-batch-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 34px;
+  border-bottom: 1px solid var(--gl-line-2);
+  color: var(--gl-tx-2);
+}
+
+.gl-batch-wait svg {
+  width: 11px;
+  height: 11px;
+}
+
+.gl-batch-wait-note {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-batch-wait-remove {
+  margin-inline-start: auto;
+  background: transparent;
+  border: 0;
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-batch-wait-remove:hover:not(:disabled) {
+  color: var(--gl-tx-2);
+}
+
+.gl-batch-wait-remove:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 1px;
+}
+
+/* Same 24px mark as the group control, and the gap that holds its column open
+   on a row that is not in the job. */
+.gl-batch-waitmark,
+.gl-batch-waitmark-gap {
+  flex: 0 0 20px;
+}
+
+.gl-batch-waitmark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  background: transparent;
+  border: 0;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-batch-waitmark svg {
+  width: 12px;
+  height: 12px;
+}
+
+.gl-batch-waitmark[aria-pressed="true"] {
+  color: var(--gl-tx-1);
+}
+
+.gl-batch-waitmark:disabled {
+  cursor: default;
+}
+
+.gl-batch-waitmark:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
 }
 
 /* Holds the policy column open on a row that has no policy. Same basis as the

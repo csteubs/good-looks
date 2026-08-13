@@ -64,6 +64,10 @@ export function buildQueue(params, getDatasets) {
     // `skipGroup` means "the rest of THIS group", so the entry has to know
     // which group it came from.
     const groupId = byTest.get(testId)?.groupId;
+    // Which side of the Routine's barriers this test falls on. Absent for every
+    // caller with no `wait` steps, and absent means segment 0 — one segment,
+    // which is exactly the execution those callers already had.
+    const segment = byTest.get(testId)?.segment;
     const rows = wantsSweep
       ? getDatasets(testId).filter((d) => params.allDatasets === true || wanted.has(d.id))
       : [];
@@ -77,6 +81,7 @@ export function buildQueue(params, getDatasets) {
         // the default. Both run the same way; only one of them is a choice.
         ...(onFailure ? { onFailure } : {}),
         ...(groupId ? { groupId } : {}),
+        ...(typeof segment === "number" ? { segment } : {}),
       };
       // A test with no matching rows still runs once, with its declared
       // defaults. Dropping it would turn "sweep my suite" into "silently skip

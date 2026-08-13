@@ -34,6 +34,7 @@ import {
 } from "../recorder/types.js";
 import { FAILURE_POLICIES, routineFromBatchSettings } from "../../shared/routine-migration.mjs";
 import { normalizeSchedule } from "../../shared/routine-schedule.mjs";
+import { clampWaitMs } from "../../shared/routine-plan.mjs";
 
 import type {
   FailurePolicy,
@@ -41,6 +42,7 @@ import type {
   RoutineGroupStep,
   RoutineStep,
   RoutineTestStep,
+  RoutineWaitStep,
   RunBrowser,
 } from "../recorder/types.js";
 
@@ -164,6 +166,26 @@ function normalizeTestStep(raw: unknown): RoutineTestStep | null {
  * anything whose `kind` is not "test", so this falls out rather than needing a
  * branch.
  */
+/**
+ * Rebuild a `wait`.
+ *
+ * `ms` is CLAMPED rather than the step being dropped, and the ceiling is the
+ * point: the runner holds the batch open across a wait, so a stored
+ * `86_400_000` — a day, from somebody who meant seconds — is a batch that never
+ * finishes and says nothing about why. A wait of zero or less is not a pause,
+ * so it is dropped: a step that does nothing is one the editor would draw and
+ * the run would ignore.
+ */
+function normalizeWaitStep(raw: unknown): RoutineWaitStep | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const step = raw as Record<string, unknown>;
+  if (step.kind !== "wait") return null;
+  if (typeof step.id !== "string" || step.id === "") return null;
+  const ms = clampWaitMs(step.ms);
+  if (ms <= 0) return null;
+  return { kind: "wait", id: step.id, ms };
+}
+
 function normalizeGroupStep(raw: unknown, seen: Set<string>): RoutineGroupStep | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const step = raw as Record<string, unknown>;
@@ -218,6 +240,14 @@ function normalizeRoutine(raw: unknown, now?: number): Routine | null {
     const group = normalizeGroupStep(rawStep, seen);
     if (group) {
       steps.push(group);
+      continue;
+    }
+    // Before the test branch, and NOT counted against `seen`: a wait queues no
+    // runs, so capping on it would let a Routine of fifty waits crowd out the
+    // tests the cap exists to bound. The step cap below is about runs.
+    const wait = normalizeWaitStep(rawStep);
+    if (wait) {
+      steps.push(wait);
       continue;
     }
     const step = normalizeTestStep(rawStep);
@@ -330,9 +360,13 @@ export const routineStore = {
       // one the editor cannot show is the silent shrink this whole method
       // exists to prevent — the group would simply run one test fewer than it
       // lists, which is the failure with no symptom.
-      steps: r.steps.map((s) =>
-        s.kind === "group" ? { ...s, steps: s.steps.map(markOne) } : markOne(s),
-      ),
+      steps: r.steps.map((s) => {
+        if (s.kind === "group") return { ...s, steps: s.steps.map(markOne) };
+        // A `wait` names no test, so there is nothing to mark. Falling through
+        // to `markOne` would compare `undefined` to the deleted id — harmless
+        // today and wrong the moment a future step kind grows a `testId`.
+        return s.kind === "test" ? markOne(s) : s;
+      }),
     }));
     if (marked > 0) writeFile({ ...file, routines: next });
     return { marked };

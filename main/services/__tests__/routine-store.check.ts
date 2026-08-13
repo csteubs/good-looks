@@ -29,7 +29,9 @@ const userData = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-routines-"));
 process.env.GLAZE_TEST_USERDATA = userData;
 
 const { routineStore } = await import("../routine-store.js");
-const { MAX_ROUTINES, MAX_ROUTINE_STEPS } = await import("../../recorder/types.js");
+const { MAX_ROUTINES, MAX_ROUTINE_STEPS, MAX_ROUTINE_WAIT_MS } = await import(
+  "../../recorder/types.js"
+);
 type RoutineStep = import("../../recorder/types.js").RoutineStep;
 type RoutineTestStep = import("../../recorder/types.js").RoutineTestStep;
 
@@ -405,6 +407,77 @@ assert(
   assert(
     after?.kind === "group" && after.steps[0].testDeleted === true,
     "a marked step inside a group is KEPT and flagged, not removed",
+  );
+}
+
+
+// ── Waits ─────────────────────────────────────────────────────────────
+//
+// The first step kind that is not a run. What the store owes it is a bound:
+// the runner holds the batch open across a wait, so a stored duration nobody
+// checked is a batch that looks hung.
+
+{
+  const saved = routineStore.save({
+    id: "r-waits",
+    name: "Paused",
+    steps: [
+      { kind: "test", testId: "t-a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+      { kind: "wait", id: "w-1", ms: 30_000 },
+      // A day, from somebody who meant seconds. Clamped, not refused: it is a
+      // job somebody built, and the ceiling is the thing that matters.
+      { kind: "wait", id: "w-2", ms: 86_400_000 },
+      // Not a pause. A step that waits for no time would be drawn by the editor
+      // and ignored by the run.
+      { kind: "wait", id: "w-3", ms: 0 },
+      { kind: "wait", id: "w-4", ms: -5 },
+      { kind: "wait", id: "w-5", ms: "30s" },
+      // No id — nothing to key an edit or a reorder on.
+      { kind: "wait", ms: 1_000 },
+    ],
+    defaults: { captureArtifacts: false, concurrency: 1 },
+  } as unknown as Parameters<typeof routineStore.save>[0]);
+
+  const waits = (saved?.steps ?? []).filter((st) => st.kind === "wait");
+  assert(waits.length === 2, "only the two usable waits are stored");
+  assert(
+    waits[0].kind === "wait" && waits[0].ms === 30_000,
+    "a usable duration is kept as written",
+  );
+  assert(
+    waits[1].kind === "wait" && waits[1].ms === MAX_ROUTINE_WAIT_MS,
+    "a duration past the ceiling is clamped, not refused — the run must not be held open indefinitely",
+  );
+  assert(
+    saved?.steps[0].kind === "test",
+    "a wait does not disturb the position of the steps around it",
+  );
+}
+
+{
+  // A wait queues no runs, so it must not count against the step cap — a
+  // Routine of fifty pauses would otherwise crowd out the tests the cap exists
+  // to bound.
+  const steps: unknown[] = [];
+  for (let i = 0; i < MAX_ROUTINE_STEPS + 5; i++) {
+    steps.push({ kind: "wait", id: `w-${i}`, ms: 1_000 });
+  }
+  steps.push({
+    kind: "test",
+    testId: "t-late",
+    browsers: ["chromium"],
+    headless: false,
+    onFailure: "continue",
+  });
+  const saved = routineStore.save({
+    id: "r-waitcap",
+    name: "Many pauses",
+    steps,
+    defaults: { captureArtifacts: false, concurrency: 1 },
+  } as unknown as Parameters<typeof routineStore.save>[0]);
+  assert(
+    (saved?.steps ?? []).some((st) => st.kind === "test"),
+    "a run past a wall of waits still makes it in — the cap counts RUNS, not entries",
   );
 }
 

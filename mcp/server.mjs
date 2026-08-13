@@ -819,7 +819,18 @@ server.registerTool(
     // that says "4 at once" means it, and ignoring that here would make the
     // same job behave differently depending on who started it.
     const limit = clampParallel(parallel ?? plan.concurrency, queue.length);
-    await runPool(queue, limit, async (entry, i) => {
+
+    // SEGMENT BY SEGMENT, the same join the app's runner makes. A `wait` step
+    // means "everything before this has finished", so the pool has to DRAIN
+    // before the pause starts — running one segment's entries alongside the
+    // next would make the barrier a no-op wearing a label, and a Routine would
+    // then do something different depending on who started it, which is the
+    // failure `shared/routine-plan.mjs` exists to prevent.
+    //
+    // A Routine with no barriers is ONE segment, so this loop runs once and the
+    // body is exactly the pool that was here before.
+    const segments = [...new Set(queue.map((e) => e.segment ?? 0))].sort((a, b) => a - b);
+    const runOne = async (entry, i) => {
       if (stoppedByTest !== null) {
         results[i].status = "skipped";
         results[i].note = `Stopped — "${stoppedByTest}" failed`;
@@ -911,7 +922,20 @@ server.registerTool(
         skippedGroups.set(entry.groupId, results[i].testName);
       }
       persist(true);
-    });
+    };
+
+    for (const seg of segments) {
+      const indices = [];
+      for (let i = 0; i < queue.length; i++) if ((queue[i].segment ?? 0) === seg) indices.push(i);
+      await runPool(indices, limit, async (i) => runOne(queue[i], i));
+
+      const barrier = plan.barriers.find((b) => b.afterSegment === seg);
+      // Not after a `stopRoutine` failure: the job is over, and sitting out a
+      // pause before saying so would hold the tool open for a stretch in which
+      // nothing more can happen.
+      if (!barrier || stoppedByTest !== null) continue;
+      await new Promise((resolve) => setTimeout(resolve, barrier.ms));
+    }
     persist(false);
 
     const summary = summarizeResults(results, Date.now() - startedAt);

@@ -91,6 +91,14 @@ export interface BatchRunParams {
    *  any caller that never had rows) falls back to the batch-wide `browser` and
    *  `runHeadless` above, so those two must keep working unchanged. */
   perTest?: PerTestRunOption[];
+  /** Where the run must JOIN and pause. `routineRunPlan` cuts a Routine's steps
+   *  at each `wait` and labels every `perTest` entry with its segment; this is
+   *  the list of pauses between them.
+   *
+   *  Absent for every caller that has no `wait` steps — `batch:run`, the MCP's
+   *  `run_batch`, and every Routine that predates them — and an absent list is
+   *  one segment, which is exactly the execution those callers already had. */
+  barriers?: BatchBarrier[];
   /** The Routine this batch is a run OF, when there is one. Recorded on the
    *  state and so on the persisted record; the runner does nothing else with
    *  it. Absent for `batch:run` and for the MCP, which are not Routines. */
@@ -106,6 +114,13 @@ export interface BatchRunParams {
 // already import them from.
 export type { BatchEntry, PerTestRunOption } from "../../shared/batch-queue.mjs";
 export { buildQueue } from "../../shared/batch-queue.mjs";
+
+/** A join in the run: everything in `afterSegment` finishes, the run pauses for
+ *  `ms`, then the next segment starts. */
+export interface BatchBarrier {
+  afterSegment: number;
+  ms: number;
+}
 
 /**
  * Partition a queue into lanes of entry indices, one lane per distinct testId.
@@ -150,6 +165,14 @@ export interface BatchDeps {
   /** Resolves with the run's exit code, or null if the run isn't in flight. */
   waitFor: (runId: string) => Promise<number> | null;
   stopRun: (runId: string) => void;
+  /** Hold for `ms`, returning early when `cancelled()` becomes true.
+   *
+   *  INJECTED so `check:batch-runner` can drive a barrier without the check
+   *  actually sleeping — a real timer would make the one test that proves the
+   *  join happens the slowest thing in the suite, which is how a test gets
+   *  deleted. The real one polls rather than racing a single timeout, so a stop
+   *  during a wait ends it promptly instead of after the full duration. */
+  wait: (ms: number, cancelled: () => boolean) => Promise<void>;
   emit: (channel: string, payload: unknown) => void;
   now: () => number;
   /** Write-through persistence, called on every transition so a crash
@@ -169,6 +192,16 @@ const realDeps: BatchDeps = {
   startRun: (params) => playwrightRunner.start(params),
   waitFor: (runId) => playwrightRunner.waitFor(runId),
   stopRun: (runId) => playwrightRunner.stop(runId),
+  // Polled in slices rather than one `setTimeout(ms)`, so Stop ends a wait
+  // within a tick instead of after however long was left — for the one-hour
+  // ceiling that difference is "Stop is broken".
+  wait: async (ms, cancelled) => {
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      if (cancelled()) return;
+      await new Promise((r) => setTimeout(r, Math.min(200, until - Date.now())));
+    }
+  },
   emit: (channel, payload) => sendToMain(channel, payload),
   now: () => Date.now(),
   persist: (record) => {
@@ -294,6 +327,30 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
          * persisted on every transition and a per-step policy is not something
          * batch-history.json needs to carry.
          */
+        /**
+         * Hold the run for `ms`, and SAY SO.
+         *
+         * `waitingUntil` is what stops a pause from looking like a hang: with
+         * nothing running and nothing left to report, a batch mid-barrier is
+         * indistinguishable on screen from one that has stopped answering. The
+         * field is cleared in a `finally` so a stop mid-wait does not leave the
+         * batch claiming to be waiting forever.
+         *
+         * INTERRUPTIBLE. `stop()` has to end a wait, or Stop would appear not
+         * to work for however long the pause had left — which for the ceiling
+         * (an hour) is indistinguishable from a frozen app.
+         */
+        const pause = async (ms: number): Promise<void> => {
+          s.waitingUntil = deps.now() + ms;
+          emitProgress();
+          try {
+            await deps.wait(ms, () => cancelled);
+          } finally {
+            s.waitingUntil = undefined;
+            emitProgress();
+          }
+        };
+
         /**
          * A step said "skip the rest of my group if I fail", and it failed.
          *
@@ -448,17 +505,51 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
         // claim is a bare `nextLane++` with no await between the read and the
         // write, so on a single-threaded event loop two workers cannot take the
         // same lane.
-        let nextLane = 0;
-        const worker = async (): Promise<void> => {
-          for (;;) {
-            const laneIndex = nextLane++;
-            if (laneIndex >= lanes.length) return;
-            for (const entryIndex of lanes[laneIndex]) {
-              await runEntry(entryIndex);
+        //
+        // SEGMENT BY SEGMENT, and this is the whole of what a `wait` step costs
+        // the runner. A Routine with no barriers is ONE segment, so this loop
+        // runs once and the body below is byte-for-byte the pool that was here
+        // before — `batch:run`, the MCP and every pre-`wait` Routine take
+        // exactly the path they always took.
+        //
+        // The join is the point. A barrier means "everything before this has
+        // finished", so the pool must DRAIN before the pause starts; running a
+        // wait concurrently with the steps around it would be a no-op wearing a
+        // label. `Promise.all` over the workers is already that drain.
+        const segmentOf = (i: number): number => queue[i]?.segment ?? 0;
+        const segments = [...new Set(lanes.map((lane) => segmentOf(lane[0])))].sort(
+          (a, b) => a - b,
+        );
+        for (const seg of segments) {
+          // NO EARLY BREAK ON `cancelled`, deliberately. `runEntry` already
+          // refuses to start a cancelled entry and marks it skipped, so
+          // breaking here would skip that marking entirely — a stopped batch
+          // would persist the segments past the barrier sitting at "queued"
+          // forever, and `summarize` counts a pending row as neither passed,
+          // failed nor skipped, so the record's own total stops adding up.
+          // The BARRIER is guarded separately below; that is the part a stop
+          // must actually skip.
+          // A lane belongs to ONE segment: lanes are keyed by testId and the
+          // store collapses duplicate testIds across the whole Routine, so a
+          // test cannot straddle a barrier. Reading the segment off the lane's
+          // first entry is therefore reading it off all of them.
+          const segLanes = lanes.filter((lane) => segmentOf(lane[0]) === seg);
+          let nextLane = 0;
+          const worker = async (): Promise<void> => {
+            for (;;) {
+              const laneIndex = nextLane++;
+              if (laneIndex >= segLanes.length) return;
+              for (const entryIndex of segLanes[laneIndex]) {
+                await runEntry(entryIndex);
+              }
             }
-          }
-        };
-        await Promise.all(Array.from({ length: limit }, () => worker()));
+          };
+          await Promise.all(Array.from({ length: limit }, () => worker()));
+
+          const barrier = (params.barriers ?? []).find((b) => b.afterSegment === seg);
+          if (!barrier || cancelled) continue;
+          await pause(barrier.ms);
+        }
 
         s.running = false;
         s.currentIndex = -1;
