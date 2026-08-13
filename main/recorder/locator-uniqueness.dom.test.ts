@@ -31,23 +31,34 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { CAPTURE_SCRIPT, ATTR_INSTALLED, ATTR_QUEUE } from "./capture-script.js";
+import { buildCaptureScript, WORLD_STATE_KEY } from "./capture-script.js";
 import { normalizeRawSteps } from "./types.js";
 import type { Locator } from "./types.js";
 import { generateSpec } from "../services/script-generator.js";
 import type { TestRecord } from "./types.js";
 
+/** Capture state as the injected script keeps it, in this file's window. */
+interface CaptureState {
+  queue: { i: number; s: unknown }[];
+}
+function state(): CaptureState {
+  return (window as unknown as Record<string, CaptureState>)[WORLD_STATE_KEY];
+}
+
 /** Install the capture script into the current jsdom document.
  *
- *  The script is an IIFE guarded by `data-pw-installed`, and jsdom keeps one
- *  document per test file — so the guard has to be cleared between tests or
- *  every test after the first installs nothing and asserts against the first
- *  test's listeners. */
+ *  The script is an IIFE guarded by the presence of its own state object, and
+ *  jsdom keeps one window per test file — so the guard has to be cleared
+ *  between tests or every test after the first installs nothing and asserts
+ *  against the first test's listeners. Each install replaces the state object,
+ *  so `state()` always belongs to the newest copy: the earlier copies' handlers
+ *  still run and still push, but into an object nothing reads. That is enough
+ *  for the question THIS file asks (which locator was chosen); the one that
+ *  needs a genuinely clean window per test is capture-egress.dom.test.ts. */
 function install(html: string): void {
-  document.documentElement.removeAttribute(ATTR_INSTALLED);
-  document.documentElement.removeAttribute(ATTR_QUEUE);
+  delete (window as unknown as Record<string, unknown>)[WORLD_STATE_KEY];
   document.body.innerHTML = html;
-  eval(CAPTURE_SCRIPT);
+  eval(buildCaptureScript("test-nonce"));
 }
 
 /** Click an element and read back the step the capture script queued.
@@ -59,8 +70,10 @@ function install(html: string): void {
 function clickAndCapture(el: Element | null): Locator | undefined {
   expect(el, "the fixture element to click").not.toBeNull();
   (el as HTMLElement).click();
-  const raw = JSON.parse(document.documentElement.getAttribute(ATTR_QUEUE) ?? "[]");
-  const steps = normalizeRawSteps(raw);
+  // The queue holds `{i: seq, s: step}` envelopes — the sequence is what lets
+  // the two capture channels deliver the same step without recording it twice
+  // (see capture-channel.ts).
+  const steps = normalizeRawSteps(state().queue.map((e) => e.s));
   expect(steps.length).toBeGreaterThan(0);
   return steps[steps.length - 1].locator;
 }
@@ -165,7 +178,7 @@ describe("the locator the recorder chooses", () => {
     it("distinguishes the second match from the first", () => {
       install(FIREFOX);
       const first = clickAndCapture(document.querySelector("[data-testid] span"));
-      document.documentElement.setAttribute(ATTR_QUEUE, "[]");
+      state().queue.length = 0;
       const second = clickAndCapture(document.querySelector("footer span"));
       // Two different elements must not record the same locator — that is the
       // silent half of this bug, where the test passes against the wrong thing.

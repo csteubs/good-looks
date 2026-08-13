@@ -1,23 +1,62 @@
 // The recorder capture script.
 //
-// Injected into the target page via webContents.executeJavaScript on every
-// dom-ready. In Glaze, executeJavaScript runs each call in a fresh, ephemeral
-// content world, so JS globals set in one call are invisible to the next.
-// Everything that must survive between calls therefore lives on shared DOM
-// attributes of <html>, which persist for the document's lifetime and are
-// readable from any content world:
-//   - data-pw-installed : "1" once listeners are attached (dedupe guard)
-//   - data-pw-queue     : JSON array of captured steps, drained by the backend
-//   - data-pw-paused    : "1" while recording is paused
-//   - data-pw-assert    : "visible" | "text" | "" while in assertion mode
-// The event listeners installed here live in the world of the injecting call,
-// which WebKit keeps alive because the document retains the listeners.
+// Injected into the target page via `executeJavaScriptInIsolatedWorld` on every
+// dom-ready. Two things about that world decide the whole design of this file:
+//
+//  • It is THE SAME world on every call, for the life of the document (world id
+//    1999 — see `pageExecutor`). So the capture script, the drain script and
+//    the replayer share a global scope, and capture state can live in it. The
+//    Glaze SDK this app was ported from ran each call in a fresh ephemeral
+//    world, which is why that state used to live on DOM attributes; the comment
+//    describing that is gone because the constraint is.
+//  • The page cannot see into it. A global set here is invisible to the site's
+//    own scripts, and it is destroyed when the document is — which is exactly
+//    the lifetime a per-page capture sequence wants.
+//
+// So `window.__glCapture` holds the queue, the sequence, this document's id and
+// the install marker, and the page can neither read nor corrupt any of it.
+// (Verified rather than assumed: a page CAN strip every attribute off <html>,
+// which is what an attribute-based install marker used to promise and could not
+// deliver.) The mode flags stay on <html> — see ATTR_PAUSED below — because
+// they are written by the backend and only ever gate behaviour.
+//
+// ── Never lose the click that navigates ────────────────────────────────────
+// A step is captured in three layers, because a click that changes route used
+// to be lost at every one of them:
+//
+//  1. LISTENERS ON window, capture phase, ahead of the ones on document.
+//     A page that stops propagation in its own capture-phase handler — which
+//     is exactly what a client-side router does to intercept link clicks —
+//     used to make our document-level listener never fire at all. Window is
+//     the first target in the capture phase, so nothing on the page can get
+//     in front of it. Both sets stay installed and `freshEvent` keeps one
+//     dispatch from recording two steps.
+//  2. A POINTERDOWN FALLBACK. Some widgets navigate on mousedown, so the
+//     click event is never dispatched and there is nothing to listen for.
+//     pagehide flushes the pending pointerdown as the click it was about to
+//     become — and only for something actually activatable, so a redirect that
+//     happens to land mid-drag records nothing.
+//  3. IMMEDIATE EGRESS. `push` emits the step out of the document (see
+//     capture-channel.ts) inside the same dispatch, before returning. The
+//     queue is written too, but it is now the BACKUP: it lives in the document
+//     the click is destroying, and reading it is a race the recorder was
+//     losing.
 
+import { CAPTURE_MESSAGE_PREFIX } from "./capture-channel.js";
 import { CSS_ASSERT_PROPS } from "./types.js";
 
-// Marker/attribute names, shared with the backend.
-export const ATTR_INSTALLED = "data-pw-installed";
-export const ATTR_QUEUE = "data-pw-queue";
+/**
+ * Where capture state lives, in the recorder's isolated world.
+ *
+ * `{ doc, seq, queue }` — the document's id, the number of steps captured in
+ * it, and the ones the drain has not collected yet. Its PRESENCE is also the
+ * install guard, which is what makes re-injection safe: the object and the
+ * listeners are created together, in the same world, for the same document, so
+ * there is no state in which one exists without the other. An attribute could
+ * not promise that (the page can remove it), and re-injecting over live
+ * listeners would double every step from then on.
+ */
+export const WORLD_STATE_KEY = "__glCapture";
 export const ATTR_PAUSED = "data-pw-paused";
 export const ATTR_ASSERT = "data-pw-assert";
 export const ATTR_ASSERT_SOFT = "data-pw-assert-soft";
@@ -317,15 +356,56 @@ export const DOM_HELPERS = `
   }
 `;
 
-// Plain string (not type-checked against the Node backend lib). No backticks or
-// ${...} inside.
-export const CAPTURE_SCRIPT = `
+/**
+ * The injected capture script, for one recording session.
+ *
+ * `nonce` authenticates the steps this script emits over the console channel.
+ * It is generated by the backend per session and closed over here, inside an
+ * ISOLATED WORLD — the page cannot read it, so it cannot forge a step through
+ * that channel. Everything it emits is still rebuilt by `normalizeRawStep`;
+ * see the capture-boundary note in CLAUDE.md.
+ *
+ * Plain string (not type-checked against the Node backend lib). No backticks or
+ * ${…} inside except the interpolations spelled out here.
+ */
+export function buildCaptureScript(nonce: string): string {
+  return `
 (function () {
   var root = document.documentElement;
   if (!root) return;
-  if (root.getAttribute("${ATTR_INSTALLED}") === "1") return;
-  root.setAttribute("${ATTR_INSTALLED}", "1");
-  if (root.getAttribute("${ATTR_QUEUE}") == null) root.setAttribute("${ATTR_QUEUE}", "[]");
+
+  // ----- Capture state, in this world, for this document -----
+  //
+  // Also the install guard: state and listeners are created together here, so
+  // "the state object exists" and "the listeners are alive" cannot disagree.
+  // The backend re-injects whenever a drain reports no state (see DRAIN_SCRIPT),
+  // and that is only safe because of this.
+  if (window.${WORLD_STATE_KEY}) return;
+  var gl = {
+    doc: "d" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36),
+    seq: 0,
+    queue: [],
+  };
+  window.${WORLD_STATE_KEY} = gl;
+
+  // ----- Step egress: the channel a navigation cannot take away -----
+
+  var GL_NONCE = ${JSON.stringify(nonce)};
+  var GL_PREFIX = ${JSON.stringify(CAPTURE_MESSAGE_PREFIX)};
+
+  // Hand the step to the browser process NOW, inside the click's own dispatch.
+  // console.debug is not a diagnostic here, it is the transport: the message is
+  // queued to the browser process at the moment of the call, so it survives the
+  // document being torn down by the navigation the click just started. It is
+  // also the one egress a page's CSP cannot forbid (fetch/sendBeacon can be),
+  // and in an isolated world the page cannot replace the console object it
+  // reaches. Never allowed to throw — a failed emit must still leave the step
+  // in the queue for the poll to find.
+  function emit(entry) {
+    try {
+      console.debug(GL_PREFIX + JSON.stringify({ n: GL_NONCE, d: gl.doc, i: entry.i, s: entry.s }));
+    } catch (e) {}
+  }
 
   // Keep navigation inside the recorder window: default any target-less link to
   // the current frame instead of a new window/tab.
@@ -370,16 +450,51 @@ export const CAPTURE_SCRIPT = `
     return document.documentElement.getAttribute("${ATTR_REFINE}") === "1";
   }
 
+  // Two channels, one sequence. The seq is what lets the backend admit each
+  // step exactly once and in the order it was captured, however the two
+  // deliveries interleave — see CaptureLedger.
   function push(step) {
-    var e = document.documentElement;
-    var q;
-    try { q = JSON.parse(e.getAttribute("${ATTR_QUEUE}") || "[]"); } catch (err) { q = []; }
-    q.push(step);
-    e.setAttribute("${ATTR_QUEUE}", JSON.stringify(q));
+    gl.seq++;
+    var entry = { i: gl.seq, s: step };
+    emit(entry);
+    try { gl.queue.push(entry); } catch (err) {}
   }
 
   ${DOM_HELPERS}
   ${UNIQUENESS_HELPERS}
+
+  // ----- One dispatch, one step -----
+  //
+  // The same handler is registered on window and on document, both in the
+  // capture phase, so that a page which stops propagation in its own
+  // capture-phase listener cannot hide the click from us (a client-side router
+  // intercepting a link click is precisely that). When nothing stops it, both
+  // registrations fire for one dispatch, and this is what keeps that from
+  // recording the click twice.
+  //
+  // The test is the identity of the Event OBJECT, and nothing weaker. A DOM
+  // object has one JS wrapper per world, so two listeners registered from this
+  // world see the same object for one dispatch — verified in a real isolated
+  // world by e2e/capture-channel.spec.ts, not assumed.
+  //
+  // The tempting weaker test — same type, same target, same timeStamp — is
+  // wrong in the direction that matters: it would silently drop a second real
+  // click that happened to share a coarsened timestamp with the first, which is
+  // the exact class of bug this whole change exists to remove.
+  var seenEvents = typeof WeakSet === "function" ? new WeakSet() : null;
+  function freshEvent(e) {
+    if (!e) return false;
+    if (!seenEvents) return true;
+    if (seenEvents.has(e)) return false;
+    seenEvents.add(e);
+    return true;
+  }
+  function once(handler) {
+    return function (e) {
+      if (!freshEvent(e)) return;
+      handler(e);
+    };
+  }
 
   function interactiveTarget(el) {
     var node = el;
@@ -689,7 +804,101 @@ export const CAPTURE_SCRIPT = `
     clearHi();
   }
 
+  // ----- The click that never becomes a click -----
+  //
+  // A widget that navigates from its own mousedown handler leaves the click
+  // event undispatched: there is no event to capture, and the step the user
+  // performed is simply absent. So a pointerdown on something activatable is
+  // remembered, and if the document starts to go away before a click arrives,
+  // it is recorded as the click it was about to be.
+  //
+  // Only ACTIVATABLE targets, and only within a few seconds: the cost of being
+  // wrong here is a step the user did not perform, which is worse than a
+  // missing one because it looks deliberate. A link, a button, a submit input
+  // or an element carrying an activating role is a navigation waiting to
+  // happen; a div is not.
+  var pendingDown = null;
+  var PENDING_MAX_AGE_MS = 5000;
+  // What the rescue below already recorded, so the click event — if it turns
+  // up after all — is not recorded a second time. See flushPendingDown.
+  var rescued = null;
+  var RESCUE_DEDUPE_MS = 2000;
+
+  function activatableTarget(el) {
+    var node = el;
+    while (node && node.nodeType === 1) {
+      var tag = node.tagName ? node.tagName.toLowerCase() : "";
+      if (tag === "a" && node.hasAttribute && node.hasAttribute("href")) return node;
+      if (tag === "button") return node;
+      if (tag === "input") {
+        var ty = (node.getAttribute("type") || "").toLowerCase();
+        if (ty === "submit" || ty === "button" || ty === "image" || ty === "reset") return node;
+      }
+      var role = node.getAttribute ? (node.getAttribute("role") || "").toLowerCase() : "";
+      if (role === "button" || role === "link" || role === "menuitem" || role === "tab" ||
+          role === "option") {
+        return node;
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  function onPointerDown(e) {
+    var t = e.target;
+    var el = t && t.nodeType === 1 ? t : null;
+    if (!el) return;
+    keepInWindow(el);
+    pendingDown = null;
+    if (isPaused() || assertMode() || refineMode()) return;
+    var act = activatableTarget(el);
+    if (act) pendingDown = { el: act, at: Date.now() };
+  }
+
+  // Runs while the document is unloading. The DOM is still intact here, which
+  // is what makes building a locator possible at all; the step reaches the
+  // backend because push emits it rather than only queueing it.
+  //
+  // ORDERING, which cost a debugging session. This is deliberately NOT wired to
+  // beforeunload. That event fires SYNCHRONOUSLY the moment a navigation
+  // starts — which, for a router that navigates from its own click handler,
+  // is in the middle of the click dispatch, BEFORE the recorder's own click
+  // listener runs. The rescue then recorded the click, the real handler
+  // recorded it again, and the trainer showed the same click twice.
+  // rescued closes the mirror image of that race: if a pagehide beats the
+  // click event, the click that arrives afterwards is the one already recorded.
+  function flushPendingDown() {
+    var p = pendingDown;
+    pendingDown = null;
+    if (!p || !p.el) return;
+    if (Date.now() - p.at > PENDING_MAX_AGE_MS) return;
+    if (isPaused() || assertMode() || refineMode()) return;
+    try {
+      if (p.el.isConnected === false) return;
+      push(withFp({ type: "click", locator: locatorFor(p.el) }, p.el));
+      rescued = { el: p.el, at: Date.now() };
+    } catch (er) {}
+  }
+
+  /** True when this click is the one the rescue above already recorded. */
+  function alreadyRescued(el) {
+    if (!rescued) return false;
+    if (Date.now() - rescued.at > RESCUE_DEDUPE_MS) { rescued = null; return false; }
+    var r = rescued.el;
+    var same = r === el ||
+      (r.contains && r.contains(el)) ||
+      (el.contains && el.contains(r));
+    if (same) { rescued = null; return true; }
+    return false;
+  }
+
   function onClick(e) {
+    // The click arrived, so the pointerdown that preceded it needs no rescue.
+    // Cleared before any early return below: a click on a text input records no
+    // step, and leaving the pointerdown armed would let the next navigation
+    // record one for it.
+    pendingDown = null;
+
     var target = e.target;
     var el = target && target.nodeType === 1 ? target : (target ? target.parentElement : null);
     if (!el) return;
@@ -737,6 +946,7 @@ export const CAPTURE_SCRIPT = `
     if ((tag === "input" && textLike.indexOf(typ) >= 0) || tag === "textarea") return;
 
     var clickTarget = interactiveTarget(el);
+    if (alreadyRescued(clickTarget)) return;
     push(withFp({ type: "click", locator: locatorFor(clickTarget) }, clickTarget));
   }
 
@@ -778,23 +988,69 @@ export const CAPTURE_SCRIPT = `
     }
   }
 
-  document.addEventListener("click", onClick, true);
-  document.addEventListener("change", onChange, true);
-  document.addEventListener("keydown", onKeydown, true);
+  // Capture phase on both targets, window first. See once/freshEvent.
+  var onClickOnce = once(onClick);
+  var onChangeOnce = once(onChange);
+  var onKeydownOnce = once(onKeydown);
+  var onPointerDownOnce = once(onPointerDown);
+  window.addEventListener("click", onClickOnce, true);
+  window.addEventListener("change", onChangeOnce, true);
+  window.addEventListener("keydown", onKeydownOnce, true);
+  window.addEventListener("pointerdown", onPointerDownOnce, true);
+  document.addEventListener("click", onClickOnce, true);
+  document.addEventListener("change", onChangeOnce, true);
+  document.addEventListener("keydown", onKeydownOnce, true);
+  document.addEventListener("pointerdown", onPointerDownOnce, true);
+  // Hover highlighting is cosmetic and only ever reaches the document, so it
+  // needs neither the window registration nor the dedupe.
   document.addEventListener("mouseover", onOver, true);
   document.addEventListener("mouseout", onOut, true);
+  // pagehide ONLY — see the ordering note on flushPendingDown for why
+  // beforeunload is the wrong event here even though it sounds like the right
+  // one. The handler never calls preventDefault: a recorder that made the site
+  // prompt "Leave site?" would be worse than the bug it is fixing.
+  window.addEventListener("pagehide", flushPendingDown, true);
 })();
 `;
+}
 
-// Reads and clears the queued steps. Runs in its own ephemeral world; the DOM
-// attribute is shared, so it drains whatever the listeners have pushed.
+/**
+ * The capture script with an unusable nonce.
+ *
+ * For source-level checks and DOM tests, which care about what the script DOES
+ * and not about which session it belongs to. Deliberately not usable as a
+ * session's script: an empty nonce is rejected by `parseCaptureMessage`, so
+ * nothing built from this constant can smuggle steps into a live recording.
+ */
+export const CAPTURE_SCRIPT_FOR_INSPECTION = buildCaptureScript("");
+
+// Reads and clears the queued steps. Runs in the SAME isolated world as the
+// capture script, so it reads that script's own state rather than anything the
+// page can reach.
+//
+// THE BACKUP CHANNEL, not the primary one — see capture-channel.ts. It answers
+// with the document's id (so the backend can tell one page load's sequence from
+// the next) and with whether capture is still installed, which is what makes
+// injection SELF-HEALING: a document with no capture state (a `document.write`,
+// a load whose dom-ready we missed, an injection that failed) reports
+// installed:0 and gets the script back on the next poll, instead of recording
+// nothing for the rest of the session with nothing on screen to say so.
+//
+// The queue is cleared only AFTER it has been serialized successfully. Handing
+// back "" and keeping the steps beats clearing them into a string that could
+// not be built.
 export const DRAIN_SCRIPT = `
 (function () {
-  var e = document.documentElement;
-  if (!e) return "[]";
-  var q = e.getAttribute("${ATTR_QUEUE}") || "[]";
-  e.setAttribute("${ATTR_QUEUE}", "[]");
-  return q;
+  var gl = window.${WORLD_STATE_KEY};
+  if (!gl) return '{"d":"","installed":0,"q":[]}';
+  var json;
+  try {
+    json = JSON.stringify({ d: gl.doc, installed: 1, q: gl.queue });
+  } catch (e) {
+    return "";
+  }
+  gl.queue = [];
+  return json;
 })()
 `;
 
