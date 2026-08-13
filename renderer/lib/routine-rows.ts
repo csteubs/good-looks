@@ -32,13 +32,34 @@ import { RUN_BROWSERS } from "./recorder-types";
 import { applyOrder } from "./batch-order";
 import { defaultRow, resolveRow } from "./batch-run-plan";
 import type { RowDefaults, RowOptionsMap, RowTest } from "./batch-run-plan";
-import type { BatchRowOptions, Routine, RoutineStep, RunBrowser } from "./recorder-types";
+import type {
+  BatchRowOptions,
+  FailurePolicy,
+  Routine,
+  RoutineStep,
+  RunBrowser,
+} from "./recorder-types";
+
+/** What a step's failure does to the rest of the job, keyed by test id.
+ *
+ *  A THIRD MAP RATHER THAN A FIELD ON THE ROW, and the split is the one this
+ *  module already draws: `rowOptions` is the checklist's model, and an unticked
+ *  row's copy of it is SCRATCH that survives in `batchTestOptions`. A failure
+ *  policy is not scratch — it is part of what the job IS, so it belongs to the
+ *  Routine and only to the Routine. Putting it on the row would have persisted
+ *  a policy for tests that are not in the job, in a settings key the spec says
+ *  to delete a release from now. */
+export type PolicyMap = Record<string, FailurePolicy>;
 
 export interface RoutineRows {
   /** Every test in the library, in the order the checklist should show them. */
   order: string[];
   /** The row each one starts as. */
   rowOptions: RowOptionsMap;
+  /** The failure policy of each test that is IN the Routine. A test absent
+   *  here has none, which is not the same as having `continue`: it is not in
+   *  the job at all. */
+  policies: PolicyMap;
 }
 
 /**
@@ -70,6 +91,7 @@ export function rowsFromRoutine(
 ): RoutineRows {
   const byId = new Map(tests.map((t) => [t.id, t]));
   const rowOptions: RowOptionsMap = {};
+  const policies: PolicyMap = {};
   const order: string[] = [];
   const placed = new Set<string>();
 
@@ -78,6 +100,11 @@ export function rowsFromRoutine(
     if (!test || placed.has(step.testId)) continue;
     placed.add(step.testId);
     order.push(step.testId);
+    // Read back as stored, NOT normalised. The runner normalises what it acts
+    // on (see `failurePolicy` in shared/routine-plan.mjs); an editor that
+    // quietly rewrote a value it did not understand would re-date the Routine
+    // and discard whatever a future release wrote there.
+    policies[step.testId] = step.onFailure ?? "continue";
     rowOptions[step.testId] = {
       selected: true,
       // Filtered THROUGH RUN_BROWSERS so the row's engines are deduped and in
@@ -111,7 +138,7 @@ export function rowsFromRoutine(
     rowOptions[test.id] = { ...row, selected: false };
   }
 
-  return { order, rowOptions };
+  return { order, rowOptions, policies };
 }
 
 function enginesOf(step: RoutineStep, test: RowTest, defaults: RowDefaults): RunBrowser[] {
@@ -123,22 +150,26 @@ function enginesOf(step: RoutineStep, test: RowTest, defaults: RowDefaults): Run
 /**
  * The checklist's model back into steps.
  *
- * `previous` is the Routine's current steps, and it is read for ONE thing:
- * `onFailure`. The checklist has no control for a failure policy, so rebuilding
- * from rows alone would reset every step to `continue` the next time anybody
- * ticked a box — quietly turning a "stop the routine if seeding fails" step
- * into one that carries on, which is the failure that policy exists to prevent.
- * A field the editing surface cannot see is a field it must not overwrite.
+ * `policies` is the third map, and it used to be `previous` — the Routine's own
+ * steps, read for the one field the checklist had no control for. The rule then
+ * was that a field the editing surface cannot see is a field it must not
+ * overwrite; now the surface CAN see it, so the policy round-trips like every
+ * other choice and there is one authority for it instead of two.
+ *
+ * A policy for a test that is not ticked is DROPPED rather than kept, and that
+ * is deliberate asymmetry with `rowOptions`: an unticked row's engines are
+ * scratch worth remembering, but a policy is a statement about a job this test
+ * is no longer part of. Keeping it would mean re-ticking a row silently
+ * re-arming "stop the whole routine if this fails".
  */
 export function stepsFromRows(
   order: readonly string[],
   rowOptions: RowOptionsMap,
   tests: readonly RowTest[],
   defaults: RowDefaults,
-  previous: readonly RoutineStep[] = [],
+  policies: PolicyMap = {},
 ): RoutineStep[] {
   const byId = new Map(tests.map((t) => [t.id, t]));
-  const priorPolicy = new Map(previous.map((s) => [s.testId, s.onFailure]));
   const steps: RoutineStep[] = [];
   const seen = new Set<string>();
 
@@ -154,7 +185,7 @@ export function stepsFromRows(
       testId: id,
       browsers: RUN_BROWSERS.filter((b) => row.browsers.includes(b)),
       headless: row.headless,
-      onFailure: priorPolicy.get(id) ?? "continue",
+      onFailure: policies[id] ?? "continue",
     });
   }
   return steps;

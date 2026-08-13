@@ -12,7 +12,7 @@
 import { describe, it, expect } from "vitest";
 
 import type { Routine, RoutineStep } from "../recorder/types.js";
-import { routineBlockedReason, routineRunPlan } from "../../shared/routine-plan.mjs";
+import { failurePolicy, routineBlockedReason, routineRunPlan } from "../../shared/routine-plan.mjs";
 
 function step(over: Partial<RoutineStep> = {}): RoutineStep {
   return {
@@ -183,6 +183,44 @@ describe("why it cannot run", () => {
       ["t-a", "t-gone"],
     );
     expect(routineBlockedReason(plan)).toBeNull();
+  });
+});
+
+describe("the failure policy", () => {
+  it("reaches the plan, so the runner can act on it", () => {
+    const plan = routineRunPlan(
+      routine([step({ testId: "t-a", onFailure: "stopRoutine" }), step({ testId: "t-b" })]),
+      ["t-a", "t-b"],
+    );
+    expect(plan.perTest.map((e) => e.onFailure)).toEqual(["stopRoutine", "continue"]);
+  });
+
+  it("normalises anything it does not recognise to continue", () => {
+    // NOT a defensive nicety. This value now decides whether the REST of the
+    // job runs, and `routines.json` is a file on disk. An unrecognised string
+    // reaching the runner would be compared against "stopRoutine", come back
+    // false and carry on — right today, and only by accident.
+    expect(failurePolicy({ onFailure: "detonate" })).toBe("continue");
+    expect(failurePolicy({ onFailure: 7 })).toBe("continue");
+    expect(failurePolicy({})).toBe("continue");
+    expect(failurePolicy(null)).toBe("continue");
+    expect(failurePolicy(undefined)).toBe("continue");
+  });
+
+  it("degrades skipGroup to continue, because there are no groups yet", () => {
+    // "Skip the rest of this group" in a Routine with no groups is "skip
+    // nothing", which is continuing. When groups land (capability 3) this has
+    // to grow a real branch — until then the honest answer is the one that is
+    // actually true, not a third policy quietly behaving like the first.
+    expect(failurePolicy({ onFailure: "skipGroup" })).toBe("continue");
+  });
+
+  it("survives a stored value the app cannot produce", () => {
+    const plan = routineRunPlan(
+      routine([{ ...step(), onFailure: "stopEverything" } as unknown as RoutineStep]),
+      ["t-a"],
+    );
+    expect(plan.perTest[0].onFailure).toBe("continue");
   });
 });
 

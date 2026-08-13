@@ -31,6 +31,27 @@
 export const PLAN_BROWSERS = ["chromium", "firefox", "webkit"];
 
 /**
+ * What a step's failure does to the rest of the job.
+ *
+ * NORMALISED HERE, not trusted from the record. `routines.json` is on disk and
+ * this value now decides whether the remaining steps run at all, so an
+ * unrecognised string must land on the harmless answer rather than on
+ * `undefined` — which the runner would compare against "stopRoutine", get
+ * false, and continue on. That happens to be right today and only by accident.
+ *
+ * `skipGroup` DEGRADES TO CONTINUE and that is not a stub. It means "skip the
+ * rest of this group", and groups are capability 3 — a Routine has no groups,
+ * so the rest of the group is nothing, so skipping it is continuing. When
+ * groups land this has to grow a real branch; until then the honest answer is
+ * the one that is actually true, not a policy that silently behaves like a
+ * different one. Nothing in the app can produce this value; a hand-edited file
+ * can.
+ */
+export function failurePolicy(step) {
+  return step?.onFailure === "stopRoutine" ? "stopRoutine" : "continue";
+}
+
+/**
  * Turn a Routine into the batch payload, plus what it had to leave out.
  *
  * `knownTestIds` is what the library currently holds. Passing `null` skips the
@@ -84,7 +105,12 @@ export function routineRunPlan(routine, knownTestIds, options) {
     }
 
     testIds.push(testId);
-    perTest.push({ testId, browsers, headless: forceHeadless || step.headless === true });
+    perTest.push({
+      testId,
+      browsers,
+      headless: forceHeadless || step.headless === true,
+      onFailure: failurePolicy(step),
+    });
   }
 
   return {

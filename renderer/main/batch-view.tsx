@@ -54,6 +54,7 @@ import {
   sameSteps,
   stepsFromRows,
 } from "../lib/routine-rows";
+import type { PolicyMap } from "../lib/routine-rows";
 import { createRoutine, randomSuffix } from "../lib/create-routine";
 import { batchBelongsToRoutine } from "../../shared/routine-migration.mjs";
 import type {
@@ -163,6 +164,10 @@ export function BatchView() {
   // to be added to the selection automatically and joined the next "Run all"
   // without being asked.
   const [rowOptions, setRowOptions] = React.useState<RowOptionsMap>({});
+  // What each step in the job does when it fails. Held apart from `rowOptions`
+  // for the reason `PolicyMap` gives: a row's engines survive being unticked as
+  // scratch, a policy is a statement about the job and does not.
+  const [policies, setPolicies] = React.useState<PolicyMap>({});
   // A finished row's badge opens that run's console output — the row that made
   // you curious shouldn't need a detour through Stats to answer "why".
   const [logRun, setLogRun] = React.useState<{ id: string; title: string } | null>(null);
@@ -347,6 +352,7 @@ export function BatchView() {
     );
     setOrder(rows.order);
     setRowOptions(rows.rowOptions);
+    setPolicies(rows.policies);
     setSeedKey(key);
   }, [settingsQuery.data, routinesQuery.data, openRoutine, openId, tests, libraryKey, seedKey]);
 
@@ -476,9 +482,10 @@ export function BatchView() {
   // Both persists are best-effort, matching what the stored order always did:
   // the choice still applies to this session if the write fails.
   const persist = React.useCallback(
-    (nextOrder: string[], nextRows: RowOptionsMap) => {
+    (nextOrder: string[], nextRows: RowOptionsMap, nextPolicies: PolicyMap = policies) => {
       setOrder(nextOrder);
       setRowOptions(nextRows);
+      setPolicies(nextPolicies);
       const liveIds = tests.map((t) => t.id);
       api.recorder
         .setSettings({
@@ -489,12 +496,32 @@ export function BatchView() {
           batchTestOptions: pruneRowOptions(nextRows, liveIds),
         })
         .catch(() => {});
+      const steps = stepsFromRows(nextOrder, nextRows, tests, rowDefaults, nextPolicies);
+      // PRUNED TO WHAT IS ACTUALLY IN THE JOB, and set as state rather than
+      // left to the next re-seed. `stepsFromRows` already drops the policy of
+      // an unticked row on the way out, so without this the two disagree:
+      // untick a "stop on fail" row and tick it again before the Routine query
+      // comes back, and the screen shows the policy while the stored job has
+      // no such step — and `sameSteps` then reads the pair as unchanged and
+      // writes nothing, so the divergence persists rather than settling.
+      setPolicies(Object.fromEntries(steps.map((st) => [st.testId, st.onFailure])));
       if (!openRoutine) return;
-      const steps = stepsFromRows(nextOrder, nextRows, tests, rowDefaults, openRoutine.steps);
       if (sameSteps(steps, openRoutine.steps)) return;
       saveRoutine({ steps });
     },
-    [tests, rowDefaults, openRoutine, saveRoutine],
+    [tests, rowDefaults, openRoutine, saveRoutine, policies],
+  );
+
+  /** Flip one row's failure policy. Only ever reached from a ticked row — the
+   *  control does not render on one that is not in the job, because a policy
+   *  about a step that does not exist has nothing to say. */
+  const togglePolicy = React.useCallback(
+    (testId: string) =>
+      persist(order, rowOptions, {
+        ...policies,
+        [testId]: policies[testId] === "stopRoutine" ? "continue" : "stopRoutine",
+      }),
+    [order, rowOptions, policies, persist],
   );
 
   /** A row change: the order is untouched. */
@@ -1063,6 +1090,55 @@ export function BatchView() {
                       >
                         {row.headless ? "Headless" : "Headed"}
                       </button>
+                      {/* WHAT THIS STEP'S FAILURE DOES TO THE REST OF THE JOB.
+                          docs/ROUTINES.md: "continue" must stay the default or
+                          migrating the old Batch changes its behaviour
+                          silently, and "stopRoutine" is what makes a setup step
+                          mean anything — seed the data, and if that fails, do
+                          not go on to test against data that is not there.
+
+                          ONLY ON A ROW THAT IS IN THE JOB. An unticked row is
+                          not a step, and a policy about a step that does not
+                          exist has nothing to say. This is also what keeps the
+                          row from gaining a ninth cell on the forty rows that
+                          are only in the list so they can be added.
+
+                          AMBER, on the same terms `Headed` above claims it: the
+                          palette rule is that colour means OUTCOME, and this is
+                          the second setting allowed to break it because it
+                          changes what happens to OTHER work. Scanning a routine
+                          for where it can abort is worth a hue; the default
+                          carries none. */}
+                      {row.selected ? (
+                        <button
+                          type="button"
+                          aria-pressed={policies[t.id] === "stopRoutine"}
+                          disabled={running}
+                          aria-label={`Stop the routine if ${t.name} fails`}
+                          title={
+                            policies[t.id] === "stopRoutine"
+                              ? "If this fails, the rest of the routine does not run"
+                              : "If this fails, the routine carries on"
+                          }
+                          onClick={() => togglePolicy(t.id)}
+                          className="gl-batch-policy"
+                          style={
+                            policies[t.id] === "stopRoutine"
+                              ? toneSurface(TONE.amber)
+                              : undefined
+                          }
+                        >
+                          {policies[t.id] === "stopRoutine" ? "Stop on fail" : "Carry on"}
+                        </button>
+                      ) : (
+                        // A SPACER, not nothing. Omitting the cell entirely
+                        // slides every column after it — engines, headless,
+                        // duration — left by the width of the control, so the
+                        // checklist's columns jump between ticked and unticked
+                        // rows and the list stops reading as a table. Found by
+                        // looking at it; no test on this screen could have.
+                        <span className="gl-batch-policy-gap" aria-hidden="true" />
+                      )}
                       <span className="gl-batch-time">
                         {durationMs !== undefined ? fmtDuration(durationMs) : null}
                       </span>
