@@ -32,6 +32,13 @@ import {
   sanitizeOutput,
   secretVariableNames,
 } from "./run-plan.mjs";
+// The SAME plan the app builds, so a Routine run from here queues exactly what
+// pressing Run in the app would. ROUTINES.md's rename table calls for
+// `run_routine` alongside `run_batch` rather than a rename — renaming a tool
+// breaks every external client silently, since an MCP client gets "unknown
+// tool" rather than a redirect.
+import { routineBlockedReason, routineRunPlan } from "../shared/routine-plan.mjs";
+import { describeSchedule } from "../shared/routine-schedule.mjs";
 import { buildQueue } from "../shared/batch-queue.mjs";
 import {
   runEvidence,
@@ -92,6 +99,19 @@ function listRuns() {
 
 function listBatches() {
   return readJsonFile(dataDir, "recorder/batch-history.json", []);
+}
+
+/**
+ * Saved Routines. docs/ROUTINES.md.
+ *
+ * The file is an ENVELOPE, not a bare array — `routines.json` carries a version
+ * and the one-time migration flag beside the list, so reading it as an array
+ * would answer `undefined` and `list_routines` would report an empty library
+ * for every user who has one.
+ */
+function listRoutines() {
+  const file = readJsonFile(dataDir, "recorder/routines.json", {});
+  return Array.isArray(file?.routines) ? file.routines : [];
 }
 
 /** The app's global preferences. Read fresh per run rather than cached: this
@@ -625,6 +645,245 @@ server.registerTool(
           ),
         },
       ],
+    };
+  },
+);
+
+server.registerTool(
+  "list_routines",
+  {
+    title: "List saved routines",
+    description:
+      "List the saved Routines — named jobs, each holding a set of tests with the engines they run on and how many go at once. Use this to find a routine's id for run_routine. A routine's schedule (if any) runs only while the app itself is open; this server cannot run one on a schedule.",
+    inputSchema: {},
+  },
+  async () => {
+    const routines = listRoutines();
+    if (routines.length === 0) {
+      return { content: [{ type: "text", text: "No routines saved yet." }] };
+    }
+    // Reported through the app's OWN planner rather than by counting steps
+    // here. `plannedRuns` is the number of processes a routine actually
+    // spawns — a three-engine step is three — and a second arithmetic for
+    // that is how this tool and the app end up disagreeing in front of a
+    // user. `knownTestIds: null` means "don't check", which is right for a
+    // listing: whether a step's test still exists is run_routine's business.
+    const listed = routines.map((r) => {
+      const plan = routineRunPlan(r, null);
+      return {
+        id: r.id,
+        name: r.name,
+        steps: plan.perTest.length,
+        plannedRuns: plan.plannedRuns,
+        concurrency: plan.concurrency,
+        schedule: describeSchedule(r.schedule),
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      };
+    });
+    return { content: [{ type: "text", text: JSON.stringify(listed, null, 2) }] };
+  },
+);
+
+server.registerTool(
+  "run_routine",
+  {
+    title: "Run a saved routine",
+    description:
+      "Run a saved Routine — the tests it holds, on the engines it names, in the order it lists them. Identify it by id (see list_routines) or by exact name. Every run is headless whatever the routine's steps say (there is no screen here), and each is recorded in the app's run history; the batch itself appears in the app under that routine. A step whose test has been deleted is skipped and reported rather than failing the routine, and a test declaring secret variables is skipped with a note. This does NOT satisfy the routine's schedule: running it here is the same as pressing Run in the app, not the schedule firing.",
+    inputSchema: {
+      routineId: z.string().optional(),
+      name: z.string().optional().describe("Exact routine name, if you do not have the id."),
+      parallel: z.number().int().min(1).max(MAX_PARALLEL).optional(),
+    },
+  },
+  async ({ routineId, name, parallel }) => {
+    const routines = listRoutines();
+    // BY ID FIRST, and by name only as a convenience. Nothing stops two
+    // routines sharing a name — the app suggests a unique one but a rename is
+    // free text — and picking the first match would run a job the caller did
+    // not name, which is the one failure mode worth an error rather than a
+    // guess. This is a tool that spawns browsers and writes run history.
+    const byName = name ? routines.filter((r) => r.name === name) : [];
+    if (!routineId && byName.length > 1) {
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `${byName.length} routines are named "${name}". Pass routineId instead — ` +
+              byName.map((r) => r.id).join(", "),
+          },
+        ],
+        isError: true,
+      };
+    }
+    const routine = routineId ? routines.find((r) => r.id === routineId) : byName[0];
+    if (!routine) {
+      const how = routineId ? `id "${routineId}"` : name ? `name "${name}"` : "no id or name";
+      return {
+        content: [{ type: "text", text: `No routine matched ${how}. Try list_routines.` }],
+        isError: true,
+      };
+    }
+
+    const tests = listTests();
+    // THE APP'S OWN PLAN, not a second reading of the record. That is why it
+    // lives in `shared/` — two spellings of "what does this routine run" is how
+    // this tool and the app end up disagreeing about a job in front of a user.
+    const plan = routineRunPlan(
+      routine,
+      tests.map((t) => t.id),
+    );
+    const blocked = routineBlockedReason(plan);
+    if (blocked) {
+      return { content: [{ type: "text", text: blocked }], isError: true };
+    }
+
+    const playwright = findPlaywrightCli();
+    if (!playwright) {
+      return {
+        content: [{ type: "text", text: `Could not find @playwright/test under ${PROJECT_ROOT}/node_modules.` }],
+        isError: true,
+      };
+    }
+
+    // Expanded through `buildQueue`, the same function the app's Batch view and
+    // this server's own run_batch use — not a hand-rolled loop over
+    // `plan.perTest`. The nesting order is load-bearing (ENGINE-MAJOR inside a
+    // test, so a test's entries stay contiguous for the runner's lanes), and a
+    // second spelling of it here would agree until the day one of them changed.
+    // No dataset options: a Routine step names tests and engines, not rows.
+    const byId = new Map(tests.map((t) => [t.id, t]));
+    const queue = buildQueue({ testIds: plan.testIds, perTest: plan.perTest }, () => []);
+
+    const uninstalled = [...new Set(queue.map((q) => q.browser))].filter(
+      (engine) => !isBrowserInstalled(engine),
+    );
+    if (uninstalled.length > 0) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${uninstalled.join(", ")} not installed yet. Run a test once from the app on each (it installs the browser on first run), then retry.`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const batchId = randomUUID();
+    const startedAt = Date.now();
+    const results = queue.map((entry) => ({
+      testId: entry.testId,
+      testName: byId.get(entry.testId)?.name ?? entry.testId,
+      status: "pending",
+      browser: entry.browser,
+    }));
+
+    const persist = (running) => {
+      saveBatchRecord({
+        batchId,
+        // STAMPED WITH THE ROUTINE, so this batch lands under the right job in
+        // the app rather than under the migrated "Batch" that owns unattributed
+        // ones. See `ORPHAN_BATCH_OWNER`.
+        routineId: routine.id,
+        running,
+        startedAt,
+        ...(running ? {} : { finishedAt: Date.now() }),
+        currentIndex: results.findIndex((r) => r.status === "running"),
+        results,
+        stopped: false,
+        summary: summarizeResults(results, Date.now() - startedAt),
+      });
+    };
+    persist(true);
+
+    // The routine's own lane count unless the caller overrides it: a saved job
+    // that says "4 at once" means it, and ignoring that here would make the
+    // same job behave differently depending on who started it.
+    const limit = clampParallel(parallel ?? plan.concurrency, queue.length);
+    await runPool(queue, limit, async (entry, i) => {
+      const test = byId.get(entry.testId);
+      const secrets = test ? secretVariableNames(test) : [];
+      if (secrets.length > 0) {
+        results[i].status = "skipped";
+        results[i].note =
+          `Declares secret variable${secrets.length === 1 ? "" : "s"} (${secrets.join(", ")}), ` +
+          "which are encrypted to the app and unreadable from here. Run it from the app.";
+        results[i].finishedAt = Date.now();
+        results[i].durationMs = 0;
+        persist(true);
+        return;
+      }
+      results[i].status = "running";
+      results[i].startedAt = Date.now();
+      persist(true);
+
+      // Same shape as run_batch's, and for the same three reasons. `batchId`
+      // is what joins each RunRecord back to this batch — without it the app
+      // shows a routine's batch whose rows link to nothing, and every Stats
+      // query that groups by batch loses these runs. `runId` is renamed to
+      // `runRecordId` because that is the field the Batch view reads to reach
+      // a result's run. And the try/catch is not belt-and-braces: runPool
+      // swallows a throw, so without it a spawn failure leaves the entry at
+      // "running" in batch-history.json forever.
+      try {
+        const r = await executeTest(test, {
+          playwright,
+          browser: entry.browser,
+          batchId,
+        });
+        results[i].status = r.status;
+        results[i].exitCode = r.exitCode;
+        results[i].runRecordId = r.runId;
+        results[i].finishedAt = r.finishedAt;
+        results[i].durationMs = r.durationMs;
+      } catch (err) {
+        results[i].status = "failed";
+        results[i].note = String(err);
+        results[i].finishedAt = Date.now();
+        results[i].durationMs = Math.max(
+          0,
+          results[i].finishedAt - (results[i].startedAt ?? results[i].finishedAt),
+        );
+      }
+      persist(true);
+    });
+    persist(false);
+
+    const summary = summarizeResults(results, Date.now() - startedAt);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              routineId: routine.id,
+              routine: routine.name,
+              batchId,
+              parallel: limit,
+              summary,
+              // The steps that will NOT run, said out loud. A routine quietly
+              // running fewer tests than it lists is the same class of bug as
+              // a batch that reports a pass having skipped half of it.
+              ...(plan.skipped.length > 0 ? { skippedSteps: plan.skipped } : {}),
+              results: results.map((r) => ({
+                testId: r.testId,
+                testName: r.testName,
+                browser: r.browser,
+                status: r.status,
+                durationMs: r.durationMs,
+                runId: r.runRecordId,
+                ...(r.note ? { note: r.note } : {}),
+              })),
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+      isError: summary.failed > 0,
     };
   },
 );

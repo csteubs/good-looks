@@ -49,6 +49,7 @@ import { generateSpec, secretEnvName } from "../script-generator.js";
 import { resolveTestTimeoutMs, CRAWL_MIN_TEST_TIMEOUT_MS } from "../../../shared/run-pacing.mjs";
 import { playwrightConfigSource } from "../../../shared/playwright-config-source.mjs";
 import { buildQueue } from "../../../shared/batch-queue.mjs";
+import { routineRunPlan } from "../../../shared/routine-plan.mjs";
 import type { Step, TestVariable } from "../../recorder/types.js";
 
 let failures = 0;
@@ -529,6 +530,130 @@ function codeOnly(source: string): string {
   );
    
   assert(compareReplays(null, later as any) === null, "compare: a pruned run compares to null");
+}
+
+// ── 11. run_routine runs the routine the APP would run ────────────────
+//
+// `run_routine` is the second caller of `shared/routine-plan.mjs`, which is the
+// only reason that module is in `shared/` at all: ROUTINES.md's rename table
+// says to add the tool ALONGSIDE run_batch, so two processes build this payload
+// and a transcribed copy of "what does this routine run" is right the day it is
+// written and silently divergent after. What follows pins the four ways this
+// tool could look correct and be wrong, none of which surface as an error.
+
+{
+  const mcpSrc = codeOnly(readFileSync(resolve(process.cwd(), "mcp/server.mjs"), "utf8"));
+
+  // Renaming a tool breaks every external client SILENTLY — an MCP client gets
+  // "unknown tool", not a redirect. The rename table rules it out, so the two
+  // must coexist.
+  assert(
+    /registerTool\(\s*"run_batch"/.test(mcpSrc) && /registerTool\(\s*"run_routine"/.test(mcpSrc),
+    "mcp: run_routine is added ALONGSIDE run_batch, never as a rename of it",
+  );
+
+  // SCOPED TO THE TOOL, not searched for in the whole file, and this is not
+  // fastidiousness: the first draft of the `routineId` assertion below scanned
+  // the file, and deleting the stamp from the persisted batch left it green
+  // because the tool's own JSON RESPONSE contains the same text. Reporting
+  // which routine ran is not the same fact as recording it. Every assertion
+  // here reads only what run_routine's own body says. `run_batch` is registered
+  // straight after it, and is the natural end marker.
+  const routineSrc = mcpSrc.slice(
+    mcpSrc.indexOf('registerTool(\n  "run_routine"'),
+    mcpSrc.indexOf('registerTool(\n  "run_batch"'),
+  );
+  assert(
+    routineSrc.length > 0 && routineSrc.includes("run_routine"),
+    "mcp: isolated run_routine's own body (every assertion below reads only it)",
+  );
+
+  // The plan comes from the shared module, not from reading `routine.steps`
+  // here. A second reading is how this tool and the app end up disagreeing
+  // about a job in front of a user.
+  assert(
+    /routineRunPlan\(/.test(routineSrc) && !/step\.kind\s*===\s*"test"/.test(routineSrc),
+    "mcp: run_routine plans through routineRunPlan rather than re-reading the steps",
+  );
+  // A routine whose tests were all deleted must be refused, not run as an empty
+  // batch that reports a clean pass.
+  assert(
+    /routineBlockedReason\(/.test(routineSrc),
+    "mcp: a routine that cannot run is refused with the app's own reason",
+  );
+  // Engine fan-out through buildQueue, so the ENGINE-MAJOR nesting that keeps a
+  // test's entries contiguous is decided in one place. Hand-rolling it here
+  // reproduces today's order and stops the day the shared one changes.
+  assert(
+    /buildQueue\(\{\s*testIds: plan\.testIds,\s*perTest: plan\.perTest\s*\}/.test(routineSrc),
+    "mcp: run_routine expands engines through buildQueue, not a second loop",
+  );
+
+  // Stamped with the routine, or the batch lands under the migrated "Batch"
+  // that owns unattributed ones and the routine's history looks empty.
+  const persistBlock = /saveBatchRecord\(\{[\s\S]*?\n {6}\}\);/.exec(routineSrc)?.[0] ?? "";
+  assert(persistBlock.length > 0, "mcp: found run_routine's saveBatchRecord call");
+  assert(
+    /routineId: routine\.id,/.test(persistBlock),
+    "mcp: the persisted batch is stamped with the routine that ran it",
+  );
+  // `batchId` is the join key for every run in a batch, and it is passed to
+  // executeTest rather than derived — omitting it writes RunRecords that no
+  // batch can reach, which reads on screen as a batch whose rows link nowhere.
+  const routineCall = /await executeTest\(test, \{[\s\S]*?\}\);/.exec(routineSrc)?.[0] ?? "";
+  assert(routineCall.length > 0, "mcp: found run_routine's executeTest call");
+  assert(
+    routineCall.includes("batchId"),
+    "mcp: a routine's runs carry the batchId that joins them back to the batch",
+  );
+  // The field the Batch view actually reads to reach a result's run. Assigning
+  // executeTest's `runId` straight across leaves it undefined, and the symptom
+  // is a finished batch whose rows have no link — no error, nothing in a log.
+  assert(
+    /results\[i\]\.runRecordId = r\.runId;/.test(routineSrc),
+    "mcp: a result records runRecordId, the field the app reads, not runId",
+  );
+}
+
+{
+  // The queue a routine produces, exercised through the shared functions rather
+  // than asserted about the source. A three-engine step is three runs — the
+  // count the tool reports and the number of processes it spawns have to be the
+  // same number, and `plannedRuns` is what the app's own toolbar promises.
+  const routine = {
+    id: "r1",
+    name: "Nightly",
+    createdAt: 0,
+    updatedAt: 0,
+    defaults: { captureArtifacts: false, concurrency: 2 },
+    steps: [
+      { kind: "test", testId: "a", browsers: ["chromium", "firefox"], headless: true, onFailure: "continue" },
+      { kind: "test", testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue" },
+      { kind: "test", testId: "gone", browsers: ["chromium"], headless: true, onFailure: "continue" },
+    ],
+  };
+
+  const plan = routineRunPlan(routine as any, ["a", "b"]);
+  const queue = buildQueue({ testIds: plan.testIds, perTest: plan.perTest }, () => []);
+  assert(
+    queue.length === plan.plannedRuns,
+    "routine: the queue run_routine executes is exactly as long as the plannedRuns it reports",
+  );
+  // Contiguous per test, engine-major. The app's runner groups by testId, so an
+  // interleaved queue reorders itself on the way in and the batch record's rows
+  // stop matching the order the routine lists.
+  assert(
+    queue.map((e) => `${e.testId}:${e.browser}`).join(",") ===
+      "a:chromium,a:firefox,b:chromium",
+    "routine: entries are engine-major inside a test, in the routine's own order",
+  );
+  // The deleted step contributes nothing to the queue but is still REPORTED.
+  // A routine silently running fewer tests than it lists is the same class of
+  // bug as a batch that reports a pass having skipped half of it.
+  assert(
+    plan.skipped.join(",") === "gone",
+    "routine: a step whose test was deleted is skipped and named, not queued",
+  );
 }
 
 if (failures > 0) {

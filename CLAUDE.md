@@ -59,6 +59,7 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      .d.mts). Pure only: no fs, no @shell/backend, no IPC, no process
 mcp/                 standalone MCP server exposing the test library to external MCP clients
                      (list_tests, get_test, list_runs, get_run_log, run_test, run_batch,
+                      list_routines, run_routine,
                       get_visual_report, get_a11y_report, get_run_logs, list_heals,
                       list_batches, compare_runs, triage_run, get_step_health,
                       get_suite_cost, get_browser_matrix, get_flake_report,

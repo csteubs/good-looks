@@ -14,8 +14,10 @@
 // per-row engine multi-select (`perTest`). Both expand ENGINE-MAJOR INSIDE the
 // test and never across tests, because the app's runner groups the queue into
 // lanes by testId and a test's entries must stay contiguous for that grouping
-// to reproduce queue order. The MCP passes no `perTest`, so its queues are
-// byte-identical to what they were.
+// to reproduce queue order. The MCP's `run_batch` passes no `perTest`, so its
+// queues are byte-identical to what they were; `run_routine` does pass one,
+// built by `routineRunPlan`, which is the whole reason that expansion lives
+// here rather than in the two callers that need it.
 
 /**
  * Resolve a selection plus dataset options into the ordered list of executions.

@@ -16,7 +16,8 @@ open Routine's editor (`renderer/lib/routine-rows.ts` translates its checklist
 to and from steps). Of the step kinds below only `kind: "test"` is built, and
 `onFailure` is stored but not yet honoured — every step behaves as `continue`,
 which is what Batch already does, and nothing can set anything else. The MCP
-`run_routine` tool named in the rename table below is not built. The rail lists
+`run_routine` tool named in the rename table below IS built, alongside
+`list_routines` and alongside `run_batch` — see `mcp/README.md`. The rail lists
 Routines and the UI says "Routines" throughout (the route, the channels, the
 on-disk format and `RunRecord.batchId` are untouched, per the rename table
 below). Previous batches IS scoped to the open Routine: `BatchState` carries
@@ -30,8 +31,7 @@ fires occurrences arriving while the app is open; the catch-up offers ones
 missed while it was closed; `SCHEDULE_CAVEAT` is stated wherever a schedule is
 set. Note the two departures recorded under *Scheduling* below: the schedule is
 an ENUMERATION rather than a cron string, and `lastRunAt` lives on the Routine
-as `lastScheduledRunAt`. **Capability 3 (the flow builder) is untouched**, and
-so is the MCP `run_routine` tool named in the rename table.
+as `lastScheduledRunAt`. **Capability 3 (the flow builder) is untouched.**
 
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for what exists today,
 [DECISIONS.md](DECISIONS.md) for why the current Batch is shaped the way it is,
@@ -231,7 +231,7 @@ at once is a large, risky, mostly mechanical diff; the recommendation is to
 | `batch:*` IPC channels | **No** | Internal, invisible, and renaming them is pure churn |
 | `batch-history.json`, `BatchRecord` | **No** | On-disk format; a rename needs a migration that buys nothing |
 | `RunRecord.batchId` | **No** | Same, and it is the join key for every existing run |
-| MCP `run_batch` tool | **No** (add `run_routine` alongside) | Renaming a tool breaks every external client silently — an MCP client gets "unknown tool", not a redirect |
+| MCP `run_batch` tool | **No** (add `run_routine` alongside) — **done 2026-08-13** | Renaming a tool breaks every external client silently — an MCP client gets "unknown tool", not a redirect |
 | `batchOrder` / `batchTestOptions` | Read once for migration, then drop | See "A Routine is an entity" |
 
 A rename that reaches disk formats and external tool names costs a migration and

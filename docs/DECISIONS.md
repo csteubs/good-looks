@@ -16,6 +16,62 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-13 — `run_routine`: the rename table's one addition, and three stamps that fail silently
+
+`mcp/server.mjs`, `shared/batch-queue.mjs`, `check:mcp-parity`. ROUTINES.md's
+migration table says "No (add `run_routine` alongside)" for `run_batch`, and the
+reason is worth repeating because it is the sort of thing that reads as
+timidity: renaming an MCP tool does not redirect anybody. A client calling
+`run_batch` after a rename gets "unknown tool" — no deprecation, no hint, and
+the failure surfaces in whatever the client does with an error, which for an
+agent is usually "make something up". So the two coexist, and `run_batch` is
+untouched.
+
+**Resolving by name is a convenience with one sharp edge.** An id is
+unambiguous; a name is not, because the app only *suggests* a unique one and a
+rename is free text. Picking the first match would have been the obvious
+behaviour and the wrong one: this tool spawns browsers, executes specs and
+appends to run history, so running the wrong job is not a recoverable mistake.
+Two routines sharing a name is therefore an error that lists the candidate ids.
+
+**Three stamps, each silent when missed, and I got two of them wrong first.**
+
+- `routineId` on the `BatchRecord`. Without it the batch belongs to
+  `ORPHAN_BATCH_OWNER` — the migrated "Batch" — so an MCP-driven routine run
+  lands in the wrong job's history and the right one still reads empty.
+- `batchId` on every `RunRecord`. This is the join key for a batch's runs, and
+  `executeTest` only sets it when it is passed one. Omitting it writes runs no
+  batch can reach: the Batch view shows a finished batch whose rows link
+  nowhere, and nothing logs anything.
+- `runRecordId`, not `runId`, on each result. `executeTest` returns `runId`;
+  `BatchTestResult` reads `runRecordId`. Assigning the outcome across with
+  `Object.assign` — which is what the first draft did — produces a result object
+  that looks complete and has no link in it.
+
+**The queue expansion moved rather than being repeated.** The first version
+looped `plan.perTest` and pushed one entry per engine, which is a second
+spelling of what `buildQueue` already does. It agreed with the shared one on
+the day it was written, and the thing it would have diverged on is the nesting
+order — engine-major *inside* a test — which is load-bearing: the runner groups
+the queue into lanes by `testId`, so entries for one test must stay contiguous
+or the batch record's rows stop matching the order the routine lists. That is
+now one function, and the MCP passes `perTest` through it.
+
+**The parity check had to be scoped to the tool, and finding that out was the
+point of mutating it.** The first draft asserted `routineId: routine.id`
+appeared in `mcp/server.mjs`. Deleting the stamp from the persisted batch left
+the check green — because the tool's own JSON *response* contains the same
+text. Reporting which routine ran is not the same fact as recording it. Every
+source assertion in section 11 now reads only `run_routine`'s own body, and all
+four were re-run against a mutation to confirm they can fail. This is the third
+time in this repo an assertion has been satisfied by the wrong occurrence of a
+string; the rule that keeps falling out is that a source-level check must
+anchor on the construct it is about, never on the file.
+
+**Not built here:** capture parity (§7.4). An MCP run still loads no fixtures,
+and `describeRun` still says so — `run_routine` inherits that unchanged rather
+than papering over it.
+
 ### 2026-08-13 — The schedule picker, and the sentence it exists to make room for (Phase D, capability 2)
 
 `renderer/main/schedule-picker.tsx` and `renderer/main/missed-runs-dialog.tsx`.
