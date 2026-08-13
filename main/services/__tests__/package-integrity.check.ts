@@ -158,8 +158,16 @@ const criticals = runtimeCriticalNames();
  * level in the bundle — npm produces both layouts, both are correct, and a
  * check that compared directory listings instead of resolving would call this
  * a failure.
+ *
+ * `platform` picks where the bundled tree lands: `npm run package` builds the
+ * macOS `.app`, CI builds the Linux unpacked directory, and the guard has to
+ * find the same node_modules in both.
  */
-function buildFixture(omitFromBundle: string[] = [], withDist = true): string {
+function buildFixture(
+  omitFromBundle: string[] = [],
+  withDist = true,
+  platform: "mac" | "linux" = "mac",
+): string {
   const dir = mkdtempSync(join(tmpdir(), "gl-package-fixture-"));
   const deps: Record<string, string> = { alpha: "1.0.0" };
   for (const name of criticals) deps[name] = "1.0.0";
@@ -175,7 +183,10 @@ function buildFixture(omitFromBundle: string[] = [], withDist = true): string {
 
   if (!withDist) return dir;
 
-  const app = join(dir, "dist", "mac-arm64", "Fixture.app", "Contents", "Resources", "app");
+  const app =
+    platform === "linux"
+      ? join(dir, "dist", "linux-unpacked", "resources", "app")
+      : join(dir, "dist", "mac-arm64", "Fixture.app", "Contents", "Resources", "app");
   mkdirSync(app, { recursive: true });
   cpSync(join(dir, "package.json"), join(app, "package.json"));
   const bundled = join(app, "node_modules");
@@ -198,6 +209,28 @@ function buildFixture(omitFromBundle: string[] = [], withDist = true): string {
     );
   } finally {
     rmSync(complete, { recursive: true, force: true });
+  }
+}
+
+{
+  // The layout CI packages into. gate.yml runs electron-builder on Linux, so a
+  // guard that only knew the .app would report `No packaged app found` there —
+  // which reads as "the build produced nothing", not as "the check cannot see
+  // it", and would be believed.
+  const linux = buildFixture([], true, "linux");
+  try {
+    const ok = run(["--verify", "--root", linux]);
+    assert(ok.code === 0, "verify reads the Linux unpacked layout, which is what CI packages");
+  } finally {
+    rmSync(linux, { recursive: true, force: true });
+  }
+
+  const shallowLinux = buildFixture(["beta", "gamma"], true, "linux");
+  try {
+    const bad = run(["--verify", "--root", shallowLinux]);
+    assert(bad.code !== 0, "…and still fails there on a bundle missing its transitive deps");
+  } finally {
+    rmSync(shallowLinux, { recursive: true, force: true });
   }
 }
 

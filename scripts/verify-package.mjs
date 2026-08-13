@@ -197,11 +197,19 @@ function preflight(root) {
 
 /**
  * Every packaged app under `dist/`. Discovered rather than hardcoded: the
- * output directory carries the architecture (`mac-arm64`, `mac`, …), and a
- * check that silently finds nothing is worse than no check.
+ * output directory carries the architecture (`mac-arm64`, `mac`,
+ * `linux-unpacked`, …), and a check that silently finds nothing is worse than
+ * no check.
+ *
+ * Two layouts, because CI packages on Linux while `npm run package` packages
+ * on macOS. The dependency question is identical either way — the bundled
+ * `node_modules` sits under `resources/app` in both — so the only difference
+ * is how many directories deep it is. Missing the Linux one would not read as
+ * a broken check: it reads as `No packaged app found`, i.e. as a build that
+ * produced nothing.
  *
  * @param {string} root
- * @returns {string[]} the `Contents/Resources/app` directory of each bundle
+ * @returns {string[]} the bundled `app` directory of each packaged bundle
  */
 function packagedApps(root) {
   const dist = path.join(root, "dist");
@@ -210,9 +218,16 @@ function packagedApps(root) {
   const apps = [];
   for (const outDir of readdirSync(dist, { withFileTypes: true })) {
     if (!outDir.isDirectory()) continue;
-    for (const entry of readdirSync(path.join(dist, outDir.name), { withFileTypes: true })) {
+    const outPath = path.join(dist, outDir.name);
+
+    // Linux/Windows: dist/<target>-unpacked/resources/app
+    const unpacked = path.join(outPath, "resources", "app");
+    if (existsSync(unpacked)) apps.push(unpacked);
+
+    // macOS: dist/<target>/Name.app/Contents/Resources/app
+    for (const entry of readdirSync(outPath, { withFileTypes: true })) {
       if (!entry.name.endsWith(".app")) continue;
-      const appDir = path.join(dist, outDir.name, entry.name, "Contents", "Resources", "app");
+      const appDir = path.join(outPath, entry.name, "Contents", "Resources", "app");
       if (existsSync(appDir)) apps.push(appDir);
     }
   }
