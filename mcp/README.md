@@ -204,6 +204,61 @@ the app's batch history — so a batch run from MCP shows up in the app's
 **Batch** view alongside ones started from the UI. The response is flagged as
 an error when any test failed, so an agent can't read a red suite as success.
 
+### `list_routines`
+
+The saved **Routines** — named jobs, each holding a set of tests with the
+engines they run on and how many go at once. This is what `run_routine` selects
+from.
+
+Each entry reports `id`, `name`, `steps` (how many will actually run),
+`plannedRuns`, `concurrency`, and `schedule` in words. `plannedRuns` is the
+number of processes the routine spawns, which is larger than `steps` as soon as
+one step names two engines — it is the same number the app's own toolbar
+promises, computed by the same function.
+
+A routine's schedule runs **only while the app itself is open**. This server
+cannot fire one, and running a routine here does not satisfy its schedule.
+
+### `run_routine`
+
+Run a saved Routine: the tests it holds, on the engines it names, in the order
+it lists them.
+
+| Arg | Type | Required |
+|---|---|---|
+| `routineId` | string | one of these two — see `list_routines` |
+| `name` | string | exact routine name, if you don't have the id |
+| `parallel` | number 1–16 | no — defaults to the routine's own concurrency |
+
+Identify it by `routineId`, or by exact `name` as a convenience. Nothing stops
+two routines sharing a name, so an ambiguous one is an **error listing the
+candidate ids** rather than a guess — this tool spawns browsers and writes run
+history, and running the wrong job is not a recoverable mistake.
+
+Every run is headless whatever the routine's steps say; there is no screen
+here. `parallel` defaults to the routine's own concurrency, because a saved job
+that says "4 at once" means it and the same job should not behave differently
+depending on who started it.
+
+A step whose test has been **deleted** is skipped and named in `skippedSteps`,
+not run and not failed — a routine that quietly runs fewer tests than it lists
+is the same bug as a batch reporting a pass having skipped half of it. A
+routine with no runnable steps left is refused with a reason rather than run as
+an empty batch that reports a clean pass. A test declaring a secret variable is
+skipped with a note, exactly as in `run_batch`.
+
+```
+list_routines
+run_routine routineId="routine-migrated-batch"
+run_routine name="Nightly regression"
+run_routine name="Nightly regression" parallel=4
+```
+
+Each run is recorded in the app's run history tagged with the batch id, and the
+batch is stamped with the routine — so it appears in the app under that
+routine's **Previous batches**, not under the migrated "Batch" that owns
+unattributed ones.
+
 ### `get_visual_report`
 
 Per-step visual-diff outcome for one captured run: which steps changed against
@@ -507,26 +562,30 @@ past runs and their logs — stays readable from here.
 ## Notes
 
 - Read-only tools (`list_tests`, `get_test`, `list_runs`, `get_run_log`,
+  `list_routines`,
   `get_visual_report`, `get_a11y_report`, `get_run_logs`, `list_heals`,
   `list_batches`, `compare_runs`, `triage_run`, `get_step_health`,
   `get_suite_cost`, `get_browser_matrix`, `get_flake_report`, `get_step_matches`,
   `get_screenshot`)
   never modify app data. The metrics-backed ones open the metrics database but
   never create it — it is the app's to build.
-  `run_test` and `run_batch` execute Playwright and append run
-  records; `run_batch` also writes a batch record and persists progress after
+  `run_test`, `run_batch` and `run_routine` execute Playwright and append run
+  records; the latter two also write a batch record and persist progress after
   every test, so an interrupted batch keeps the results it already collected.
+  `run_routine` does not edit the routine it runs — not even its schedule.
 - There is **no mutation surface**: nothing here edits a test, accepts a
   baseline, or changes a setting. Retention and pruning stay the app's business,
   so two processes can't disagree about what they mean.
 - The reports read artifacts only a **captured** run produces, and the app
   prunes older run directories per its retention setting — so "no artifacts" is
   an ordinary answer, and the tools say which of the two it is.
-- Everything shared with the app (pacing, timeouts, dataset expansion, ANSI
-  stripping, the generated `playwright.config.ts`, run comparison) lives in
-  `shared/*.mjs` and is imported by both sides rather than transcribed. `npm run
-  check:mcp-parity` pins that the environment this server builds satisfies what
-  the generated spec actually reads.
+- Everything shared with the app (pacing, timeouts, dataset expansion, queue
+  expansion, what a routine runs, ANSI stripping, the generated
+  `playwright.config.ts`, run comparison) lives in `shared/*.mjs` and is
+  imported by both sides rather than transcribed. `npm run check:mcp-parity`
+  pins that the environment this server builds satisfies what the generated
+  spec actually reads, and that `run_routine` plans, queues and records a
+  routine the way the app does.
 - `capture_app` and `get_screenshot` talk to the app through plain files in
   `userData/recorder/debug-shots` — a request/response pair, no socket and no
   port. Both halves of that protocol are duplicated (TypeScript in the app,
