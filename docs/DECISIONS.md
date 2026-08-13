@@ -16,6 +16,46 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-12 — gate.yml runs entirely on Linux
+
+Every job in `.github/workflows/gate.yml` now runs on `ubuntu-latest`. The only
+holdout was `package` (the e2e suite plus an `electron-builder` run), on macOS
+because the product is a macOS app. macOS runner minutes bill at roughly ten
+times the Linux rate, and that job is the long one.
+
+**What survives the move.** The e2e suite drives a real Electron process with
+real windows; Linux has those too, under `xvfb-run` — without a display Electron
+exits at launch, and the symptom is a Playwright launch *timeout*, which reads
+like a hung app rather than a missing X server. `ELECTRON_DISABLE_SANDBOX=1`
+goes with it: the runner kernel restricts unprivileged user namespaces, which
+the Chromium sandbox needs, and the alternative is chowning `chrome-sandbox`
+root-owned inside `node_modules` on every run.
+
+**What does not, and is stated rather than hidden.** A macOS target cannot be
+built on Linux at all, so CI packages `--linux dir` where `npm run package`
+builds `--mac --dir`. CI therefore no longer proves the app packages *as a mac
+app*, nor that `npm run build` works on macOS. Both are exercised locally by
+`npm run package`, and neither is a failure this pipeline has ever caught — the
+bug `verify:package` exists for is a **dependency-closure** bug, and the
+unpacked tree is the same tree on both platforms.
+
+**`verify:package` learned the second layout instead of being skipped.** It
+looked only for `dist/<target>/Name.app/Contents/Resources/app`; the Linux
+bundle puts the identical `node_modules` at
+`dist/linux-unpacked/resources/app`. Skipping the step on Linux was the smaller
+diff and the wrong one: this job is the one place the guard is checked against a
+bundle that is *supposed* to pass, so a guard that had started rejecting good
+builds would show up as a red gate rather than as a local mystery. Worse, the
+un-taught version does not fail loudly — it reports `No packaged app found`,
+which reads as "the build produced nothing" and would be believed. Both layouts
+are now fixtures in `check:package-integrity`, and the Linux one was confirmed
+to fail before the fix.
+
+The artifact changed shape with the target: a `tar -czf` of `linux-unpacked`
+rather than a `ditto` archive of the `.app`. Same reason as before — the bundle
+is full of symlinks and `upload-artifact` dereferences them, which breaks it and
+multiplies its size.
+
 ### 2026-08-12 — Script changes join the Heals view, and split on "did you see it"
 
 The Heals tab knew about one way a test changes without the user writing it:
