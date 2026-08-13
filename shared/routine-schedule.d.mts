@@ -5,7 +5,7 @@
 // file is what keeps `npm run type-check` a real gate over every TypeScript
 // caller.
 
-import type { RoutineSchedule } from "../main/recorder/types.js";
+import type { Routine, RoutineSchedule } from "../main/recorder/types.js";
 
 export declare const HOUR_STEPS: readonly number[];
 
@@ -29,6 +29,22 @@ export declare function isDue(
   lastRunAt: number | undefined,
   now: number,
 ): boolean;
+
+/** Should this Routine fire now, in a session that began at
+ *  `sessionStartedAt`? The session bound is what keeps the timer and the
+ *  catch-up from firing the same occurrence — see the implementation. */
+export declare function firesNow(
+  routine: Routine | null | undefined,
+  sessionStartedAt: number,
+  now: number,
+): boolean;
+
+/** Routines with an occurrence missed while the app was closed. ONE per
+ *  Routine, not one per missed occurrence. */
+export declare function missedRoutines(
+  routines: readonly Routine[] | null | undefined,
+  now: number,
+): Routine[];
 
 export declare function describeSchedule(
   schedule: RoutineSchedule | null | undefined,

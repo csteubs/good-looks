@@ -348,6 +348,17 @@ export const api = {
     get: (id: string) => ipc().invoke<Routine | null>("routines:get", { id }),
     save: (routine: Routine) => ipc().invoke<Routine | null>("routines:save", { routine }),
     remove: (id: string) => ipc().invoke<{ removed: number }>("routines:delete", { id }),
+    /** Occurrences missed while the app was closed. REPORTS only — the
+     *  renderer offers them, and `runMissed` / `dismissMissed` are the two
+     *  answers. Declining still settles the occurrence, or the prompt returns
+     *  on every launch forever. */
+    missed: () => ipc().invoke<Routine[]>("routines:missed"),
+    runMissed: (id: string) =>
+      ipc().invoke<{ routineId: string; outcome: string; reason?: string }>("routines:runMissed", {
+        id,
+      }),
+    dismissMissed: (id: string) =>
+      ipc().invoke<{ dismissed: boolean }>("routines:dismissMissed", { id }),
     /** Run it. `skipped` lists steps that could not run — a deleted test, or
      *  one with no valid engine — and is a NOTE, not a failure: the batch still
      *  did most of what was asked. A Routine that can run nothing throws

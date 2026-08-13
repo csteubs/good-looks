@@ -16,6 +16,60 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-13 — The scheduler: two halves that must not overlap (Phase D, capability 2)
+
+`main/services/routine-scheduler.ts` makes schedules fire. ROUTINES.md picks the
+honest option of the three it weighs — **catch up on launch, plus a timer while
+the app is open** — and requires the weaker guarantee to be stated rather than
+implied. `launchd` stays v2: a plist in the user's LaunchAgents is a whole
+lifecycle that leaves state behind when it goes wrong.
+
+**The timer and the catch-up must never claim the same occurrence**, and the
+split is enforced by `firesNow`'s session bound rather than by bookkeeping in
+the service. The timer fires only occurrences that arrive AFTER the session
+began; the catch-up reports only ones from before. Without that bound the
+sequence is: the catch-up offers a missed run, the user declines, and sixty
+seconds later the timer runs it anyway.
+
+**The catch-up reports; it does not run.** A suite that seizes the machine the
+moment you launch the app, for a run you may not want right now, is how people
+turn scheduling off. `routines:missed` answers, and `runMissed` / `dismissMissed`
+are the two replies. **Declining still stamps the occurrence** — it is not a
+lie, the occurrence IS settled because somebody looked at it and said no, and
+without the stamp the same prompt returns on every launch forever.
+
+**`lastScheduledRunAt` is stamped for EVERY outcome, not just a start.** A
+Routine that could not run because a batch was already going has still had its
+occurrence; leaving the stamp alone turns one skipped run into a retry every
+sixty seconds until that batch finishes. The same applies to a Routine with
+nothing left to run.
+
+**A scheduled run is always headless**, via `forceHeadless` on `routineRunPlan`
+— applied where the payload is built so there is one place it can be true, and
+overriding the STEP's own setting rather than deferring to it. A step someone
+headed deliberately is still a step they headed for a run they were *watching*;
+a schedule fires when nobody asked, and a window stealing focus mid-work is the
+fastest way to have the feature turned off. `runHeadless: true` is set on the
+batch as well, as the fallback for a test the runner finds no entry for.
+
+**The tick swallows its own errors.** A scheduler that throws inside its own
+interval stops ticking silently for the rest of the session, and the symptom is
+"my nightly job stopped happening" noticed weeks later. The timer is also
+`unref`'d — it must never be the thing keeping a quit from completing.
+
+Deps are injected (`SchedulerDeps`) so `check:routine-scheduler` drives real
+firing decisions with no clock, no browser and no batch runner — the same seam
+`batch-runner.ts` uses and for the same reason. That check needed
+`--external:pngjs`: importing `batchRunner` drags in the visual pipeline, whose
+`pngjs` uses dynamic `require`, which an ESM bundle cannot do.
+
+22 assertions there plus 9 more in `routine-schedule.test.ts`, mutation-checked
+against six mutations of the service and three of the firing window.
+
+**Still not built: the picker.** Nothing can set a schedule yet, so nothing
+fires in practice. That is the next slice, and it is where `SCHEDULE_CAVEAT`
+finally appears on screen.
+
 ### 2026-08-13 — A schedule is an enumeration, not a cron string (Phase D, capability 2)
 
 `shared/routine-schedule.mjs` and the `schedule` field on `Routine`. The rules
