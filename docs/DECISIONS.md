@@ -16,6 +16,65 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-13 — A schedule is an enumeration, not a cron string (Phase D, capability 2)
+
+`shared/routine-schedule.mjs` and the `schedule` field on `Routine`. The rules
+only — nothing fires yet, and nothing on screen offers a schedule, because a
+schedule you can set that never runs is the exact promise ROUTINES.md says not
+to make.
+
+**Not cron, which is what the spec sketched.** `{ cron: string }` in a UI needs
+either a cron editor — a project in itself — or a text field, and a text field
+has the one failure mode this feature cannot afford: **a schedule that never
+fires looks exactly like a schedule that is not due yet.** No error, no red,
+nothing on screen; the user finds out days later that their nightly run never
+happened. An enumerated schedule cannot reach that state, because every value it
+holds came from a picker. The cost is expressiveness — "the 1st of every month
+at 03:00" is not sayable — and that is the right trade for a scheduler that only
+runs while the app is open, where the useful answers are "a few times a day" and
+"once a day".
+
+**Every-N-hours is anchored to local midnight, not to the last run.** Anchoring
+to the last run makes the cadence drift a little every time a run is slow or
+missed, so the job that started at 09:00 on Monday is running at 11:20 by
+Thursday and nobody can say why. `hours` is constrained to divisors of 24 for
+the same reason: "every 5 hours" from midnight leaves a short gap at the end of
+the day, and a schedule with an irregular gap is one people stop trusting. An
+hour step that is not a divisor is REFUSED rather than rounded — rounding 5 to 4
+silently runs the suite on a cadence nobody chose, and the screen would show the
+rounded value as though it had been picked.
+
+**`nextOccurrence` is STRICTLY after.** With a one-hour step and a run that
+takes under a minute, "at or after" fires the same occurrence twice. Two
+mutations pinned that.
+
+**`lastScheduledRunAt` lives on the Routine, not inside the schedule** — the
+spec put it inside. Outside, editing a schedule cannot clobber the record of
+what it has already done; inside, "I changed the time and it ran again
+immediately" is a bug nobody would think to look for. And it records only
+SCHEDULED fires: a manual run does not satisfy a schedule, because the schedule
+is a promise about time and someone who ran the job by hand at 23:00 may well
+still want the 23:30 occurrence. Counting manual runs would silently cancel
+scheduled ones.
+
+**With no last fire, nothing is due.** A schedule set five minutes ago has
+missed nothing, and treating "never fired" as "overdue" would run every suite
+the moment its schedule was saved. That falls out of the strictly-after search
+rather than needing its own guard — the third redundant guard this feature has
+produced, and removed for the same reason as the other two.
+
+DST needs no special case: `new Date(y, m, d, h, min)` normalises a local time
+that does not exist forward, so the 02:30 job runs at 03:00 on the day 02:30 is
+skipped, which is the answer a person would give.
+
+`SCHEDULE_CAVEAT` is exported as a constant rather than written into a
+component, because ROUTINES.md requires the weaker guarantee to be STATED — and
+that sentence will appear in the editor, in the catch-up prompt and in the docs,
+where three copies would drift.
+
+23 tests, mutation-checked against eight mutations, plus five assertions in
+`check:routine-store` for the round trip.
+
 ### 2026-08-12 — The rail's third job, and the word changes in the UI only (Phase D)
 
 REDESIGN §7.1's last unbuilt piece. On the Routines screen the rail lists saved
