@@ -294,7 +294,38 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
          * persisted on every transition and a per-step policy is not something
          * batch-history.json needs to carry.
          */
+        /**
+         * A step said "skip the rest of my group if I fail", and it failed.
+         *
+         * NARROWER THAN A STOP, and that is the whole point of having both:
+         * seed-then-test is a group, and the failure of the seed should take
+         * the tests that depend on it and nothing else. Only PENDING entries
+         * are skipped — one already running belongs to a lane that started
+         * before the failure, and killing it would make `skipGroup` the same
+         * thing as `stopRoutine` for anyone running more than one lane.
+         *
+         * An entry with NO group continues. `skipGroup` on an ungrouped step
+         * has no rest-of-group to skip, so it degrades to the harmless answer
+         * at the point of failure rather than in `failurePolicy` — a step's
+         * policy is a property of the step, and whether it sits in a group is
+         * not.
+         */
+        const skipRestOfGroup = (i: number, testName: string): void => {
+          const groupId = queue[i]?.groupId;
+          if (!groupId) return;
+          for (let j = 0; j < s.results.length; j++) {
+            if (j === i || queue[j]?.groupId !== groupId) continue;
+            if (s.results[j].status !== "pending") continue;
+            s.results[j].status = "skipped";
+            s.results[j].note = `Skipped — "${testName}" failed in this group`;
+          }
+        };
+
         const stopIfPolicySays = (i: number, testName: string): void => {
+          if (queue[i]?.onFailure === "skipGroup") {
+            skipRestOfGroup(i, testName);
+            return;
+          }
           if (cancelled) return;
           if (queue[i]?.onFailure !== "stopRoutine") return;
           cancelled = true;
@@ -314,6 +345,12 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
          *  of it may now be in flight, each on a different test. */
         const runEntry = async (i: number): Promise<void> => {
           const entry = s.results[i];
+          // ALREADY SETTLED, so leave it alone. `skipRestOfGroup` marks pending
+          // entries skipped without cancelling the batch, and the worker walks
+          // on to them regardless — without this the mark is cosmetic: the row
+          // reads "skipped" for a moment and then runs anyway, which is a
+          // group policy that does nothing and reports that it did.
+          if (entry.status === "skipped") return;
           if (cancelled) {
             entry.status = "skipped";
             // Says WHO stopped it. "Batch stopped" beside a run nobody touched

@@ -35,7 +35,14 @@ import {
 import { FAILURE_POLICIES, routineFromBatchSettings } from "../../shared/routine-migration.mjs";
 import { normalizeSchedule } from "../../shared/routine-schedule.mjs";
 
-import type { FailurePolicy, Routine, RoutineStep, RunBrowser } from "../recorder/types.js";
+import type {
+  FailurePolicy,
+  Routine,
+  RoutineGroupStep,
+  RoutineStep,
+  RoutineTestStep,
+  RunBrowser,
+} from "../recorder/types.js";
 
 /** A Routine with no name is a row in a list that cannot be pointed at. */
 const UNTITLED = "Untitled routine";
@@ -119,7 +126,7 @@ function normalizeFailurePolicy(raw: unknown): FailurePolicy {
  * because at this point the caller is an editor and a silent substitution is a
  * job that does not do what its screen says.
  */
-function normalizeStep(raw: unknown): RoutineStep | null {
+function normalizeTestStep(raw: unknown): RoutineTestStep | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const step = raw as Record<string, unknown>;
   if (step.kind !== "test") return null;
@@ -127,7 +134,7 @@ function normalizeStep(raw: unknown): RoutineStep | null {
   const wanted = Array.isArray(step.browsers) ? (step.browsers as unknown[]) : [];
   const browsers: RunBrowser[] = RUN_BROWSERS.filter((b) => wanted.includes(b));
   if (browsers.length === 0) return null;
-  const out: RoutineStep = {
+  const out: RoutineTestStep = {
     kind: "test",
     testId: step.testId,
     browsers,
@@ -136,6 +143,43 @@ function normalizeStep(raw: unknown): RoutineStep | null {
   };
   if (step.testDeleted === true) out.testDeleted = true;
   return out;
+}
+
+/**
+ * Rebuild a group and the test steps inside it.
+ *
+ * `seen` is the WHOLE ROUTINE's set of test ids, threaded through rather than
+ * per-group, and that is the load-bearing part. The lane invariant is global —
+ * the runner keys a live run by `testId` — so one test in two different groups
+ * is the same collision as one test twice at the top level, and a group that
+ * deduped only against itself would let it back in.
+ *
+ * A group that ends up EMPTY is dropped. Not for tidiness: an empty group is a
+ * container `skipGroup` can point at and nothing can happen inside, so keeping
+ * it would put a step in the editor that cannot ever do anything. The editor
+ * creates a group and fills it in one gesture for the same reason.
+ *
+ * A group nested inside a group is not an error, it is DROPPED — v1 is one
+ * level deep (see `RoutineGroupStep`), and `normalizeTestStep` returns null for
+ * anything whose `kind` is not "test", so this falls out rather than needing a
+ * branch.
+ */
+function normalizeGroupStep(raw: unknown, seen: Set<string>): RoutineGroupStep | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const step = raw as Record<string, unknown>;
+  if (step.kind !== "group") return null;
+  if (typeof step.id !== "string" || step.id === "") return null;
+
+  const steps: RoutineTestStep[] = [];
+  for (const rawChild of Array.isArray(step.steps) ? step.steps : []) {
+    if (seen.size >= MAX_ROUTINE_STEPS) break;
+    const child = normalizeTestStep(rawChild);
+    if (!child || seen.has(child.testId)) continue;
+    seen.add(child.testId);
+    steps.push(child);
+  }
+  if (steps.length === 0) return null;
+  return { kind: "group", id: step.id, label: clampName(step.label), steps };
 }
 
 function normalizeConcurrencyField(raw: unknown): number {
@@ -160,11 +204,23 @@ function normalizeRoutine(raw: unknown, now?: number): Routine | null {
   const stamp = typeof now === "number" ? now : Date.now();
 
   const steps: RoutineStep[] = [];
+  // ONE SET FOR THE WHOLE ROUTINE, top-level steps and group members alike:
+  // the lane invariant is global, so a test in a group and again at the top
+  // level is the same collision as the same test listed twice.
   const seen = new Set<string>();
+  // Counted over TESTS, not over top-level entries. A group is a container, so
+  // capping entries would let one group carry any number of steps past the
+  // cap — `seen.size` is the number of runs this Routine can actually queue,
+  // which is the thing the cap is about.
   const rawSteps = Array.isArray(r.steps) ? r.steps : [];
   for (const rawStep of rawSteps) {
-    if (steps.length >= MAX_ROUTINE_STEPS) break;
-    const step = normalizeStep(rawStep);
+    if (seen.size >= MAX_ROUTINE_STEPS) break;
+    const group = normalizeGroupStep(rawStep, seen);
+    if (group) {
+      steps.push(group);
+      continue;
+    }
+    const step = normalizeTestStep(rawStep);
     if (!step || seen.has(step.testId)) continue;
     seen.add(step.testId);
     steps.push(step);
@@ -263,13 +319,20 @@ export const routineStore = {
   markTestDeleted(testId: string): { marked: number } {
     const file = readFile();
     let marked = 0;
+    const markOne = (s: RoutineTestStep): RoutineTestStep => {
+      if (s.testId !== testId || s.testDeleted) return s;
+      marked++;
+      return { ...s, testDeleted: true };
+    };
     const next = file.routines.map((r) => ({
       ...r,
-      steps: r.steps.map((s) => {
-        if (s.testId !== testId || s.testDeleted) return s;
-        marked++;
-        return { ...s, testDeleted: true };
-      }),
+      // REACHES INSIDE GROUPS. A step is a step wherever it sits, and a broken
+      // one the editor cannot show is the silent shrink this whole method
+      // exists to prevent — the group would simply run one test fewer than it
+      // lists, which is the failure with no symptom.
+      steps: r.steps.map((s) =>
+        s.kind === "group" ? { ...s, steps: s.steps.map(markOne) } : markOne(s),
+      ),
     }));
     if (marked > 0) writeFile({ ...file, routines: next });
     return { marked };
@@ -308,7 +371,11 @@ export const routineStore = {
       routines: stored ? [...file.routines, stored] : file.routines,
     });
     logger.info("routines", "Migrated the Batch checklist", {
-      steps: stored ? stored.steps.length : 0,
+      // Tests, not entries: a group is one step holding many, and this line is
+      // a log of what the migration produced.
+      steps: stored
+        ? stored.steps.reduce((n, st) => n + (st.kind === "group" ? st.steps.length : 1), 0)
+        : 0,
     });
     return { migrated: stored !== null, routine: stored };
   },

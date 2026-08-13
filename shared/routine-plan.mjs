@@ -39,16 +39,18 @@ export const PLAN_BROWSERS = ["chromium", "firefox", "webkit"];
  * `undefined` — which the runner would compare against "stopRoutine", get
  * false, and continue on. That happens to be right today and only by accident.
  *
- * `skipGroup` DEGRADES TO CONTINUE and that is not a stub. It means "skip the
- * rest of this group", and groups are capability 3 — a Routine has no groups,
- * so the rest of the group is nothing, so skipping it is continuing. When
- * groups land this has to grow a real branch; until then the honest answer is
- * the one that is actually true, not a policy that silently behaves like a
- * different one. Nothing in the app can produce this value; a hand-edited file
- * can.
+ * `skipGroup` is a real answer as of capability 3's first slice. It used to
+ * degrade to `continue`, honestly — with no groups, "skip the rest of this
+ * group" was "skip nothing". Groups exist now, so it stands on its own, and a
+ * `skipGroup` step that is NOT in a group still degrades to continuing: the
+ * runner reads `groupId`, and an ungrouped entry has no rest-of-group to skip.
+ * That degradation lives at the point of failure rather than here, because a
+ * step's policy is a property of the step and whether it is in a group is not.
  */
 export function failurePolicy(step) {
-  return step?.onFailure === "stopRoutine" ? "stopRoutine" : "continue";
+  if (step?.onFailure === "stopRoutine") return "stopRoutine";
+  if (step?.onFailure === "skipGroup") return "skipGroup";
+  return "continue";
 }
 
 /**
@@ -76,8 +78,32 @@ export function routineRunPlan(routine, knownTestIds, options) {
   const skipped = [];
   const seen = new Set();
 
+  // FLATTENED IN PLACE, so a group's members queue exactly where the group sits
+  // rather than being gathered to the end. The order is the Routine's, and a
+  // group is structure over that order, not a second ordering of it.
+  //
+  // The group's id rides along on each of its members. That is the whole of
+  // what a group means at run time: `skipGroup` needs to know which entries are
+  // "the rest of this group", and re-deriving that from the Routine at the
+  // moment of failure would be a second reading of the same record.
+  const flat = [];
   for (const step of steps) {
-    if (!step || typeof step !== "object" || step.kind !== "test") continue;
+    if (!step || typeof step !== "object") continue;
+    if (step.kind === "group") {
+      const groupId = typeof step.id === "string" ? step.id : "";
+      for (const child of Array.isArray(step.steps) ? step.steps : []) {
+        // A group inside a group is dropped rather than walked: v1 is one level
+        // deep, and the store already refuses to store one.
+        if (child && typeof child === "object" && child.kind === "test") {
+          flat.push({ step: child, groupId });
+        }
+      }
+      continue;
+    }
+    if (step.kind === "test") flat.push({ step, groupId: "" });
+  }
+
+  for (const { step, groupId } of flat) {
     const testId = typeof step.testId === "string" ? step.testId : "";
     if (testId === "") continue;
     // A step marked broken, or one naming a test the library no longer has.
@@ -110,6 +136,11 @@ export function routineRunPlan(routine, knownTestIds, options) {
       browsers,
       headless: forceHeadless || step.headless === true,
       onFailure: failurePolicy(step),
+      // Omitted for a top-level step rather than set empty, so "belongs to no
+      // group" and "belongs to a group whose id did not survive" are the same
+      // harmless thing to the runner: `skipGroup` on an ungrouped step has
+      // nothing to skip, which is what it should do.
+      ...(groupId ? { groupId } : {}),
     });
   }
 

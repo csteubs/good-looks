@@ -11,10 +11,10 @@
 
 import { describe, it, expect } from "vitest";
 
-import type { Routine, RoutineStep } from "../recorder/types.js";
+import type { Routine, RoutineStep, RoutineTestStep } from "../recorder/types.js";
 import { failurePolicy, routineBlockedReason, routineRunPlan } from "../../shared/routine-plan.mjs";
 
-function step(over: Partial<RoutineStep> = {}): RoutineStep {
+function step(over: Partial<RoutineTestStep> = {}): RoutineTestStep {
   return {
     kind: "test",
     testId: "t-a",
@@ -207,12 +207,68 @@ describe("the failure policy", () => {
     expect(failurePolicy(undefined)).toBe("continue");
   });
 
-  it("degrades skipGroup to continue, because there are no groups yet", () => {
-    // "Skip the rest of this group" in a Routine with no groups is "skip
-    // nothing", which is continuing. When groups land (capability 3) this has
-    // to grow a real branch — until then the honest answer is the one that is
-    // actually true, not a third policy quietly behaving like the first.
-    expect(failurePolicy({ onFailure: "skipGroup" })).toBe("continue");
+  it("keeps skipGroup, now that there are groups for it to point at", () => {
+    // It used to degrade to `continue` here, honestly: with no groups, "skip
+    // the rest of this group" was "skip nothing". Groups landed, so it stands
+    // on its own — and the degradation moved to the point of failure, where
+    // the runner can see whether the entry HAS a group. A step's policy is a
+    // property of the step; whether it sits in a group is not.
+    expect(failurePolicy({ onFailure: "skipGroup" })).toBe("skipGroup");
+  });
+
+  it("carries the group each step came from, and only for grouped steps", () => {
+    // The whole of what a group means at run time. `skipGroup` needs to know
+    // which queue entries are "the rest of this group", and re-deriving that
+    // from the Routine at the moment of failure would be a second reading of
+    // the same record.
+    const plan = routineRunPlan(
+      routine([
+        step({ testId: "t-a" }),
+        {
+          kind: "group",
+          id: "g-1",
+          label: "Seed",
+          steps: [step({ testId: "t-b" }), step({ testId: "t-c" })],
+        },
+      ]),
+      ["t-a", "t-b", "t-c"],
+    );
+    expect(plan.perTest.map((e) => [e.testId, e.groupId])).toEqual([
+      ["t-a", undefined],
+      ["t-b", "g-1"],
+      ["t-c", "g-1"],
+    ]);
+  });
+
+  it("flattens a group IN PLACE, not to the end", () => {
+    // The order is the Routine's, and a group is structure over that order
+    // rather than a second ordering of it. Gathering members to the end is
+    // only visible when a step depends on an earlier one — which is precisely
+    // when a Routine is worth having.
+    const plan = routineRunPlan(
+      routine([
+        { kind: "group", id: "g-1", label: "Seed", steps: [step({ testId: "t-b" })] },
+        step({ testId: "t-a" }),
+      ]),
+      ["t-a", "t-b"],
+    );
+    expect(plan.testIds).toEqual(["t-b", "t-a"]);
+  });
+
+  it("reports a deleted test inside a group as skipped, like any other", () => {
+    const plan = routineRunPlan(
+      routine([
+        {
+          kind: "group",
+          id: "g-1",
+          label: "Seed",
+          steps: [step({ testId: "t-gone" }), step({ testId: "t-a" })],
+        },
+      ]),
+      ["t-a"],
+    );
+    expect(plan.skipped).toEqual(["t-gone"]);
+    expect(plan.testIds).toEqual(["t-a"]);
   });
 
   it("survives a stored value the app cannot produce", () => {

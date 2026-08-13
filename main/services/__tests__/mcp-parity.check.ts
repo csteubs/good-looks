@@ -643,6 +643,20 @@ function codeOnly(source: string): string {
     /stopped: stoppedByTest !== null/.test(routineSrc),
     "mcp: a routine stopped by a policy is persisted as stopped",
   );
+  // `skipGroup` too, and read off the queue entry's own `groupId` — the app's
+  // runner and this one must agree about which entries are "the rest of this
+  // group", or a saved job takes out different steps depending on who ran it.
+  assert(
+    /entry\.onFailure === "skipGroup"/.test(routineSrc) && /entry\.groupId/.test(routineSrc),
+    "mcp: run_routine honours skipGroup, scoped by the entry's own groupId",
+  );
+  // The ungrouped degradation. Without the `entry.groupId` guard a `skipGroup`
+  // step at the top level would key the map on undefined and take out every
+  // other ungrouped entry — which is a stop, wearing the wrong name.
+  assert(
+    /entry\.onFailure === "skipGroup" &&\s*entry\.groupId/.test(routineSrc),
+    "mcp: an ungrouped skipGroup step continues rather than skipping everything",
+  );
 }
 
 {
