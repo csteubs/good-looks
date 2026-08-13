@@ -1895,6 +1895,17 @@ export interface BatchSummary {
 
 export interface BatchState {
   batchId: string;
+  /** The Routine this batch was started from, when it was started from one.
+   *
+   *  ADDITIVE AND OPTIONAL, deliberately. ROUTINES.md's rename table says NOT
+   *  to rewrite `batch-history.json` — a rename there costs a migration and
+   *  buys a word — but a new optional field needs none: an older record simply
+   *  has no routine, which is TRUE of it. That is what lets the Routines screen
+   *  show one job's history without pretending the app had no history before.
+   *
+   *  Absent for a batch started any other way (the MCP's `run_batch`, an
+   *  older release), and `ORPHAN_BATCH_OWNER` decides who those belong to. */
+  routineId?: string;
   running: boolean;
   startedAt: number;
   finishedAt?: number;
@@ -1953,6 +1964,24 @@ export interface RoutineTestStep {
 
 export type RoutineStep = RoutineTestStep;
 
+/**
+ * When a Routine runs by itself. docs/ROUTINES.md capability 2.
+ *
+ * NOT A CRON STRING, which is what the spec sketched — see
+ * `shared/routine-schedule.mjs` for the argument. The short version: a cron
+ * text field's failure mode is a schedule that never fires, and that looks
+ * exactly like a schedule that is not due yet. An enumerated schedule cannot
+ * hold a value the picker could not produce.
+ *
+ * `everyHours` is anchored to LOCAL MIDNIGHT, not to the last run, so the
+ * cadence cannot drift; `hours` is constrained to divisors of 24 so the day has
+ * no short gap at the end. `minute` is minutes since local midnight.
+ */
+export type RoutineSchedule =
+  | { kind: "everyHours"; hours: number }
+  | { kind: "dailyAt"; minute: number }
+  | { kind: "weekdaysAt"; minute: number };
+
 export interface RoutineDefaults {
   captureArtifacts: boolean;
   /** Lanes. Clamped against the queue by `clampBatchConcurrency` at run time,
@@ -1967,6 +1996,18 @@ export interface Routine {
   createdAt: number;
   updatedAt: number;
   steps: RoutineStep[];
+  /** When it runs by itself. Absent means it only runs when you press Run. */
+  schedule?: RoutineSchedule;
+  /**
+   * When this Routine's SCHEDULE last fired — not when the Routine last ran.
+   *
+   * Held beside the schedule rather than inside it, which is where the spec put
+   * it: editing a schedule then cannot clobber the record of what it has
+   * already done, and "I changed the time and it ran again immediately" is a
+   * bug nobody would think to look for. A MANUAL run does not update it, so
+   * running the job by hand at 23:00 does not cancel its 23:30 occurrence.
+   */
+  lastScheduledRunAt?: number;
   defaults: RoutineDefaults;
 }
 

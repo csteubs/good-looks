@@ -696,9 +696,21 @@ export const ROUTINES: Routine[] = [
   },
 ];
 
+/**
+ * Past batches, ATTRIBUTED ACROSS THE TWO ROUTINES and one left unattributed.
+ *
+ * The Batch screen scopes its history to the job on screen, so a fixture where
+ * every batch belongs to the same Routine cannot show that scoping working —
+ * the list would look identical if the filter were missing. `b-stopped` carries
+ * no `routineId` on purpose: that is every batch run before Routines shipped,
+ * and it has to appear under the migrated "Batch" Routine and nowhere else.
+ * Here the migrated Routine does not exist, so it appears nowhere — which is
+ * itself the state worth being able to look at.
+ */
 export const BATCHES: BatchRecord[] = [
   {
     batchId: "b-mixed",
+    routineId: "r-smoke",
     running: false,
     startedAt: NOW - 2 * HOUR,
     finishedAt: NOW - 2 * HOUR + 3 * MINUTE,
@@ -713,6 +725,7 @@ export const BATCHES: BatchRecord[] = [
   },
   {
     batchId: "b-total",
+    routineId: "r-smoke",
     running: false,
     startedAt: NOW - 5 * HOUR,
     finishedAt: NOW - 5 * HOUR + 1 * MINUTE,
@@ -727,6 +740,7 @@ export const BATCHES: BatchRecord[] = [
   },
   {
     batchId: "b-clean",
+    routineId: "r-nightly",
     running: false,
     startedAt: NOW - 1 * DAY,
     finishedAt: NOW - 1 * DAY + 4 * MINUTE,
