@@ -803,6 +803,22 @@
   height: 11px;
 }
 
+.gl-batch-message {
+  flex: 1 1 auto;
+  min-width: 80px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dashed var(--gl-line);
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  color: var(--gl-tx-2);
+}
+
+.gl-batch-message:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
 .gl-batch-wait-note {
   font-family: var(--gl-mono);
   font-size: 8.5px;
@@ -835,7 +851,8 @@
 /* Same 24px mark as the group control, and the gap that holds its column open
    on a row that is not in the job. */
 .gl-batch-waitmark,
-.gl-batch-waitmark-gap {
+.gl-batch-waitmark-gap,
+.gl-batch-aftermark {
   flex: 0 0 20px;
 }
 

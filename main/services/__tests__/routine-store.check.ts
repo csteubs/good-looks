@@ -29,9 +29,8 @@ const userData = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-routines-"));
 process.env.GLAZE_TEST_USERDATA = userData;
 
 const { routineStore } = await import("../routine-store.js");
-const { MAX_ROUTINES, MAX_ROUTINE_STEPS, MAX_ROUTINE_WAIT_MS } = await import(
-  "../../recorder/types.js"
-);
+const { MAX_ROUTINES, MAX_ROUTINE_STEPS, MAX_ROUTINE_WAIT_MS, MAX_ROUTINE_MESSAGE } =
+  await import("../../recorder/types.js");
 type RoutineStep = import("../../recorder/types.js").RoutineStep;
 type RoutineTestStep = import("../../recorder/types.js").RoutineTestStep;
 
@@ -478,6 +477,60 @@ assert(
   assert(
     (saved?.steps ?? []).some((st) => st.kind === "test"),
     "a run past a wall of waits still makes it in — the cap counts RUNS, not entries",
+  );
+}
+
+
+// ── Notify ────────────────────────────────────────────────────────────
+//
+// The message can LEAVE THE MACHINE on the webhook channel, so what the store
+// owes it is a bound and a safe default.
+
+{
+  const saved = routineStore.save({
+    id: "r-notify",
+    name: "Announcing",
+    steps: [
+      { kind: "test", testId: "t-a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+      { kind: "notify", id: "n-1", channel: "webhook", message: "  Seeding done  " },
+      // An unrecognised channel falls back to the LOCAL one. That direction
+      // matters: defaulting the other way would turn a typo in a hand-edited
+      // file into an unintended send.
+      { kind: "notify", id: "n-2", channel: "carrier-pigeon", message: "Hello" },
+      { kind: "notify", id: "n-3", channel: 7, message: "Hello" },
+      // Nothing to say. The editor would draw it and the recipient would learn
+      // nothing from it.
+      { kind: "notify", id: "n-4", channel: "desktop", message: "   " },
+      { kind: "notify", id: "n-5", channel: "desktop", message: 42 },
+      // No id — nothing to key an edit or a reorder on.
+      { kind: "notify", channel: "desktop", message: "Hello" },
+      // Capped: a webhook body is not the place for a paste of something large.
+      { kind: "notify", id: "n-6", channel: "desktop", message: "x".repeat(500) },
+    ],
+    defaults: { captureArtifacts: false, concurrency: 1 },
+  } as unknown as Parameters<typeof routineStore.save>[0]);
+
+  const notifies = (saved?.steps ?? []).filter((st) => st.kind === "notify");
+  assert(notifies.length === 4, "only the usable notifies are stored");
+  assert(
+    notifies[0].kind === "notify" && notifies[0].message === "Seeding done",
+    "the message is trimmed",
+  );
+  assert(
+    notifies[0].kind === "notify" && notifies[0].channel === "webhook",
+    "a webhook channel is honoured when it was asked for",
+  );
+  assert(
+    notifies[1].kind === "notify" && notifies[1].channel === "desktop",
+    "an unrecognised channel falls back to the LOCAL one, never to the one that sends",
+  );
+  assert(
+    notifies[2].kind === "notify" && notifies[2].channel === "desktop",
+    "…and so does a channel that is not a string at all",
+  );
+  assert(
+    notifies[3].kind === "notify" && notifies[3].message.length === MAX_ROUTINE_MESSAGE,
+    "an over-long message is capped rather than sent whole",
   );
 }
 

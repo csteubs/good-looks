@@ -676,6 +676,23 @@ function codeOnly(source: string): string {
     /if \(!barrier \|\| stoppedByTest !== null\) continue;/.test(routineSrc),
     "mcp: a stopped routine does not sit out the pauses it never reached",
   );
+
+  // NOTIFY IS NOT SENT FROM HERE, and this is the assertion that keeps it that
+  // way. Both channels belong to the app: `desktop` is a native notification
+  // this process cannot post, and `webhook` goes through `alert-service`, which
+  // redacts with secret values only the app can decrypt. Reproducing the send
+  // here would be a SECOND EGRESS PATH with weaker redaction.
+  assert(
+    !/sendAlert|Notification|webhookUrl/.test(routineSrc),
+    "mcp: run_routine does not send a notify itself — that would be a second egress path",
+  );
+  // Reported rather than swallowed. A routine that announces things is one
+  // somebody is relying on to announce them, so a run where they did not fire
+  // has to say so.
+  assert(
+    /notificationsNotSent/.test(routineSrc),
+    "mcp: …and the response says which messages did not fire",
+  );
 }
 
 {

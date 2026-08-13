@@ -15,6 +15,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
+import { MAX_ROUTINE_MESSAGE } from "../lib/recorder-types";
 import type {
   BatchRecord,
   BatchRowOptions,
@@ -726,7 +727,11 @@ describe("BatchView groups", () => {
 });
 
 describe("BatchView waits", () => {
-  const waitBtn = (name: string) => screen.queryByLabelText(`Pause after ${name}`);
+  const afterMenu = (name: string) => screen.queryByLabelText(`After ${name}`);
+  const pickAfter = async (name: string, item: RegExp) => {
+    fireEvent.click(afterMenu(name)!);
+    fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+  };
 
   it("offers the control only on a row that is IN the job", async () => {
     // A pause after a step that does not run is a join with nothing on one
@@ -734,17 +739,17 @@ describe("BatchView waits", () => {
     routines = [routineRows({ a: {} })];
     renderView();
     await rowNames();
-    await waitFor(() => expect(waitBtn("Alpha")).toBeTruthy());
-    expect(waitBtn("Beta")).toBeNull();
+    await waitFor(() => expect(afterMenu("Alpha")).toBeTruthy());
+    expect(afterMenu("Beta")).toBeNull();
   });
 
   it("adds a pause after the row, as a `wait` step in the Routine", async () => {
     routines = [routineRows({ a: {}, b: {} })];
     renderView();
     await rowNames();
-    await waitFor(() => expect(waitBtn("Alpha")).toBeTruthy());
+    await waitFor(() => expect(afterMenu("Alpha")).toBeTruthy());
 
-    fireEvent.click(waitBtn("Alpha")!);
+    await pickAfter("Alpha", /pause here/i);
 
     await waitFor(() => {
       const steps = (routines ?? [])[0].steps;
@@ -758,13 +763,13 @@ describe("BatchView waits", () => {
     routines = [routineRows({ a: {}, b: {} })];
     renderView();
     await rowNames();
-    await waitFor(() => expect(waitBtn("Alpha")).toBeTruthy());
+    await waitFor(() => expect(afterMenu("Alpha")).toBeTruthy());
 
-    fireEvent.click(waitBtn("Alpha")!);
+    await pickAfter("Alpha", /pause here/i);
     await waitFor(() =>
       expect((routines ?? [])[0].steps.some((st) => st.kind === "wait")).toBe(true),
     );
-    fireEvent.click(waitBtn("Alpha")!);
+    await pickAfter("Alpha", /pause here/i);
     await waitFor(() =>
       expect((routines ?? [])[0].steps.some((st) => st.kind === "wait")).toBe(false),
     );
@@ -825,6 +830,100 @@ describe("BatchView waits", () => {
     renderView();
     await rowNames();
     await waitFor(() => expect(document.querySelector(".gl-batch-wait")).toBeTruthy());
+    expect(routineSave).not.toHaveBeenCalled();
+  });
+});
+
+describe("BatchView notifies", () => {
+  const afterMenu = (name: string) => screen.queryByLabelText(`After ${name}`);
+  const pickAfter = async (name: string, item: RegExp) => {
+    fireEvent.click(afterMenu(name)!);
+    fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+  };
+
+  it("adds a message that starts on the LOCAL channel", async () => {
+    // Adding a step must never send anything off the machine until the user
+    // says so, so a new notify starts on desktop.
+    routines = [routineRows({ a: {}, b: {} })];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(afterMenu("Alpha")).toBeTruthy());
+
+    await pickAfter("Alpha", /say something/i);
+
+    await waitFor(() => {
+      const step = (routines ?? [])[0].steps.find((st) => st.kind === "notify");
+      if (step?.kind !== "notify") throw new Error("expected a notify");
+      expect(step.channel).toBe("desktop");
+    });
+  });
+
+  it("says out loud whether the message leaves the machine", async () => {
+    // The one control on this screen that can send data off the box. The
+    // webhook promise is stated where the choice is made, not only in Settings.
+    routines = [
+      routineOf([
+        { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        { kind: "notify", id: "n-1", channel: "desktop", message: "Done" },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(document.querySelector(".gl-batch-message")).toBeTruthy());
+    expect(document.body.textContent).toContain("stays on this machine");
+
+    fireEvent.click(screen.getByRole("button", { name: /where the message after alpha goes/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Webhook" }));
+
+    await waitFor(() => expect(document.body.textContent).toContain("leaves this machine"));
+  });
+
+  it("writes the message the user typed, on blur", async () => {
+    routines = [
+      routineOf([
+        { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        { kind: "notify", id: "n-1", channel: "desktop", message: "Done" },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+    const field = await screen.findByLabelText("Text of the message after Alpha");
+
+    fireEvent.change(field, { target: { value: "Seeding finished" } });
+    fireEvent.blur(field);
+
+    await waitFor(() => {
+      const step = (routines ?? [])[0].steps.find((st) => st.kind === "notify");
+      if (step?.kind !== "notify") throw new Error("expected a notify");
+      expect(step.message).toBe("Seeding finished");
+    });
+  });
+
+  it("caps what can be typed at the store's own limit", async () => {
+    // The field cannot produce a value the store would have to truncate — the
+    // same reason the schedule is an enumeration.
+    routines = [
+      routineOf([
+        { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        { kind: "notify", id: "n-1", channel: "desktop", message: "Done" },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+    const field = await screen.findByLabelText("Text of the message after Alpha");
+    expect(field.getAttribute("maxlength")).toBe(String(MAX_ROUTINE_MESSAGE));
+  });
+
+  it("writes NOTHING when the view merely mounts", async () => {
+    routines = [
+      routineOf([
+        { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        { kind: "notify", id: "n-1", channel: "webhook", message: "Done" },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(document.querySelector(".gl-batch-message")).toBeTruthy());
     expect(routineSave).not.toHaveBeenCalled();
   });
 });
