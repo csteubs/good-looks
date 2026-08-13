@@ -21,6 +21,7 @@ import type {
   RecorderSettings,
   Routine,
   RoutineStep,
+  RoutineTestStep,
   RunBrowser,
   TestRecord,
 } from "../lib/recorder-types";
@@ -297,6 +298,17 @@ async function rowNames(): Promise<string[]> {
   return grips.map((g) => (g.getAttribute("aria-label") ?? "").replace("Drag to reorder ", ""));
 }
 
+
+/** A Routine's steps, narrowed to test steps. Every test below builds a
+ *  test-only Routine, so a `group` turning up here is a real defect — this
+ *  throws where a `filter` would quietly drop it. */
+function testSteps(steps: readonly RoutineStep[]): RoutineTestStep[] {
+  return steps.map((s) => {
+    if (s.kind !== "test") throw new Error(`expected a test step, got ${s.kind}`);
+    return s;
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   listeners.clear();
@@ -493,7 +505,7 @@ describe("BatchView per-row headless", () => {
 });
 
 describe("BatchView per-row failure policy", () => {
-  const policyBtn = (name: string) => screen.queryByLabelText(`Stop the routine if ${name} fails`);
+  const policyBtn = (name: string) => screen.queryByLabelText(`What happens if ${name} fails`);
 
   it("offers the control only on a row that is IN the job", async () => {
     // An unticked row is not a step, and a policy about a step that does not
@@ -533,13 +545,13 @@ describe("BatchView per-row failure policy", () => {
     fireEvent.click(policyBtn("Alpha")!);
 
     await waitFor(() =>
-      expect(routines?.[0].steps.find((st) => st.testId === "a")?.onFailure).toBe("stopRoutine"),
+      expect(testSteps(routines?.[0].steps ?? []).find((st) => st.testId === "a")?.onFailure).toBe("stopRoutine"),
     );
-    const step = routines[0].steps.find((st) => st.testId === "a");
+    const step = testSteps(routines?.[0].steps ?? []).find((st) => st.testId === "a");
     expect(step?.browsers).toEqual(["webkit"]);
     expect(step?.headless).toBe(true);
     // One row, not all of them.
-    expect(routines[0].steps.find((st) => st.testId === "b")?.onFailure).toBe("continue");
+    expect(testSteps(routines?.[0].steps ?? []).find((st) => st.testId === "b")?.onFailure).toBe("continue");
   });
 
   it("reads back a stored policy rather than resetting it on open", async () => {
@@ -609,17 +621,107 @@ describe("BatchView per-row failure policy", () => {
     await waitFor(() => expect(policyBtn("Alpha")).toBeTruthy());
 
     fireEvent.click(screen.getByLabelText("Include Alpha in the batch"));
-    await waitFor(() => expect(routines?.[0].steps.map((st) => st.testId)).toEqual(["b"]));
+    await waitFor(() => expect(testSteps(routines?.[0].steps ?? []).map((st) => st.testId)).toEqual(["b"]));
 
     fireEvent.click(screen.getByLabelText("Include Alpha in the batch"));
     await waitFor(() => expect(routines?.[0].steps).toHaveLength(2));
-    expect(routines[0].steps.find((st) => st.testId === "a")?.onFailure).toBe("continue");
+    expect(testSteps(routines?.[0].steps ?? []).find((st) => st.testId === "a")?.onFailure).toBe("continue");
     // And the screen agrees with the store. This is the half that was broken:
     // the policy left view state only via a re-seed, so re-ticking before the
     // Routine query came back showed "Stop on fail" for a step the stored job
     // did not have — and `sameSteps` then read the pair as unchanged and wrote
     // nothing, so it stayed diverged instead of settling.
     expect(policyBtn("Alpha")?.getAttribute("aria-pressed")).toBe("false");
+  });
+});
+
+describe("BatchView groups", () => {
+  const groupBtn = (name: string) => screen.queryByLabelText(`Group for ${name}`);
+
+  it("puts a row in a NEW group in one gesture, because an empty group cannot be saved", async () => {
+    // Creating a group and joining one are the same gesture deliberately: the
+    // store drops a group with no members, so an "add group" button would make
+    // a header that disappeared on the next read.
+    routines = [routineRows({ a: {}, b: {} })];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(groupBtn("Alpha")).toBeTruthy());
+
+    fireEvent.click(groupBtn("Alpha")!);
+    fireEvent.click(await screen.findByRole("menuitem", { name: /new group/i }));
+
+    await waitFor(() => {
+      const group = (routines ?? [])[0].steps.find((st) => st.kind === "group");
+      expect(group).toBeTruthy();
+      if (group?.kind !== "group") throw new Error("expected a group");
+      expect(group.steps.map((c) => c.testId)).toEqual(["a"]);
+    });
+  });
+
+  it("adds a second row to the group that already exists", async () => {
+    routines = [routineRows({ a: {}, b: {} })];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(groupBtn("Alpha")).toBeTruthy());
+
+    fireEvent.click(groupBtn("Alpha")!);
+    fireEvent.click(await screen.findByRole("menuitem", { name: /new group/i }));
+    await waitFor(() =>
+      expect((routines ?? [])[0].steps.some((st) => st.kind === "group")).toBe(true),
+    );
+
+    fireEvent.click(groupBtn("Beta")!);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Group 1" }));
+
+    await waitFor(() => {
+      const group = (routines ?? [])[0].steps.find((st) => st.kind === "group");
+      if (group?.kind !== "group") throw new Error("expected a group");
+      expect(group.steps.map((c) => c.testId)).toEqual(["a", "b"]);
+    });
+    // …and the Routine is ONE step now, not two: the group holds both.
+    expect((routines ?? [])[0].steps).toHaveLength(1);
+  });
+
+  it("takes a row back out, and drops the group when it empties", async () => {
+    routines = [routineRows({ a: {} })];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(groupBtn("Alpha")).toBeTruthy());
+
+    fireEvent.click(groupBtn("Alpha")!);
+    fireEvent.click(await screen.findByRole("menuitem", { name: /new group/i }));
+    await waitFor(() =>
+      expect((routines ?? [])[0].steps.some((st) => st.kind === "group")).toBe(true),
+    );
+
+    fireEvent.click(groupBtn("Alpha")!);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "No group" }));
+
+    await waitFor(() =>
+      expect((routines ?? [])[0].steps.every((st) => st.kind === "test")).toBe(true),
+    );
+  });
+
+  it("renders a header above the group's first member", async () => {
+    routines = [
+      routineOf([
+        {
+          kind: "group",
+          id: "g-1",
+          label: "Seed",
+          steps: [
+            { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+          ],
+        },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(screen.getByLabelText("Name of group Seed")).toBeTruthy());
+    // …and its member row is marked as nested, which is what the indent reads
+    // from. Without it the header sits above rows that look like every other
+    // row — a label pointing at nothing.
+    expect(document.querySelectorAll(".gl-batch-row[data-grouped]")).toHaveLength(1);
   });
 });
 
@@ -722,7 +824,7 @@ describe("BatchView selection and filtering", () => {
     fireEvent.click(screen.getByLabelText("Include Beta in the batch"));
 
     await waitFor(() => expect(checkedByName().Beta).toBe(true));
-    await waitFor(() => expect(routines?.[0].steps.map((st) => st.testId)).toEqual(["b"]));
+    await waitFor(() => expect(testSteps(routines?.[0].steps ?? []).map((st) => st.testId)).toEqual(["b"]));
   });
 
   it("keeps a test selected across a tag-filter change", async () => {
@@ -763,7 +865,7 @@ describe("BatchView selection and filtering", () => {
     fireEvent.click(runButton());
 
     expect(routineRun).toHaveBeenCalledTimes(1);
-    expect(routines?.[0].steps.map((st) => st.testId)).toEqual(["c", "b", "a"]);
+    expect(testSteps(routines?.[0].steps ?? []).map((st) => st.testId)).toEqual(["c", "b", "a"]);
   });
 });
 
@@ -795,7 +897,11 @@ describe("BatchView newly created tests", () => {
 
     fireEvent.click(runButton());
     expect(routineRun).toHaveBeenCalledTimes(1);
-    expect([...(routines ?? [])[0].steps.map((st) => st.testId)].sort()).toEqual(["a", "b", "c"]);
+    expect([...testSteps((routines ?? [])[0].steps).map((st) => st.testId)].sort()).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
   });
 
   it("shows the new test's own default engine, ready to be ticked", async () => {
@@ -883,7 +989,7 @@ describe("BatchView run options", () => {
     await waitFor(() => expect(routineRun).toHaveBeenCalled());
     await waitFor(() => {
       expect(routines?.[0].defaults.captureArtifacts).toBe(true);
-      expect(routines?.[0].steps.every((st) => st.headless)).toBe(true);
+      expect(testSteps(routines?.[0].steps ?? []).every((st) => st.headless)).toBe(true);
     });
   });
 });
@@ -1363,7 +1469,7 @@ describe("BatchView reset order", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Reset order" }));
 
-    await waitFor(() => expect(routines?.[0].steps.map((st) => st.testId)).toEqual(["a", "b", "c"]));
+    await waitFor(() => expect(testSteps(routines?.[0].steps ?? []).map((st) => st.testId)).toEqual(["a", "b", "c"]));
     expect(await rowNames()).toEqual(["Alpha", "Beta", "Gamma"]);
   });
 });
@@ -1508,7 +1614,7 @@ describe("BatchView as a Routine editor", () => {
     expect(await screen.findByText(/one step names a test that no longer exists/i)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^Remove it$/ }));
 
-    await waitFor(() => expect(routines?.[0].steps.map((st) => st.testId)).toEqual(["a"]));
+    await waitFor(() => expect(testSteps(routines?.[0].steps ?? []).map((st) => st.testId)).toEqual(["a"]));
     await waitFor(() =>
       expect(screen.queryByText(/names a test that no longer exists/i)).toBeNull(),
     );

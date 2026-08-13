@@ -60,6 +60,10 @@ export function buildQueue(params, getDatasets) {
     // carrying it on the entry means the runner asks the thing that failed
     // rather than re-deriving which step it belonged to.
     const onFailure = byTest.get(testId)?.onFailure;
+    // Carried for the same reason as the policy, and useless without it:
+    // `skipGroup` means "the rest of THIS group", so the entry has to know
+    // which group it came from.
+    const groupId = byTest.get(testId)?.groupId;
     const rows = wantsSweep
       ? getDatasets(testId).filter((d) => params.allDatasets === true || wanted.has(d.id))
       : [];
@@ -72,6 +76,7 @@ export function buildQueue(params, getDatasets) {
         // caller that has no policies is distinguishable from one that chose
         // the default. Both run the same way; only one of them is a choice.
         ...(onFailure ? { onFailure } : {}),
+        ...(groupId ? { groupId } : {}),
       };
       // A test with no matching rows still runs once, with its declared
       // defaults. Dropping it would turn "sweep my suite" into "silently skip

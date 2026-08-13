@@ -26,14 +26,18 @@ export declare const PLAN_BROWSERS: readonly RunBrowser[];
  *  around it. */
 export declare function failurePolicy(
   step: { onFailure?: unknown } | null | undefined,
-): "continue" | "stopRoutine";
+): "continue" | "stopRoutine" | "skipGroup";
 
 export interface RoutinePerTest {
   testId: string;
   browsers: RunBrowser[];
   headless: boolean;
   /** Normalised through `failurePolicy`, never the raw stored value. */
-  onFailure: "continue" | "stopRoutine";
+  onFailure: "continue" | "stopRoutine" | "skipGroup";
+  /** The group this step came from, absent for a top-level step. The whole of
+   *  what a group means at run time: `skipGroup` needs to know which queue
+   *  entries are "the rest of this group". */
+  groupId?: string;
 }
 
 export interface RoutineRunPlan {

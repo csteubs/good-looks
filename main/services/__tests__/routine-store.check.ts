@@ -30,6 +30,19 @@ process.env.GLAZE_TEST_USERDATA = userData;
 
 const { routineStore } = await import("../routine-store.js");
 const { MAX_ROUTINES, MAX_ROUTINE_STEPS } = await import("../../recorder/types.js");
+type RoutineStep = import("../../recorder/types.js").RoutineStep;
+type RoutineTestStep = import("../../recorder/types.js").RoutineTestStep;
+
+/** The test steps of a Routine, asserted rather than cast: everything below
+ *  builds a Routine of test steps, so a `group` appearing here would be a
+ *  real defect and `filter` would hide it where this throws. */
+function testSteps(steps: readonly RoutineStep[]): RoutineTestStep[] {
+  return steps.map((s) => {
+    if (s.kind !== "test") throw new Error(`expected a test step, got ${s.kind}`);
+    return s;
+  });
+}
+
 
 let failures = 0;
 
@@ -125,18 +138,21 @@ const hostile = routineStore.save(
 assert(hostile !== null, "a routine with junk in it still saves what is runnable");
 assert(hostile?.name === "Untitled routine", "a blank name becomes something pointable");
 assert(
-  hostile?.steps.map((s) => s.testId).join(",") === "t-b,t-d",
+  testSteps(hostile?.steps ?? []).map((s) => s.testId).join(",") === "t-b,t-d",
   "engines are validated and deduped, an engineless step is dropped, an unbuilt kind is dropped",
 );
 assert(
-  hostile?.steps[0].browsers.join(",") === "webkit",
+  testSteps(hostile?.steps ?? [])[0].browsers.join(",") === "webkit",
   "a duplicate engine cannot run one test twice on one browser",
 );
 assert(
   hostile?.steps.length === 2,
   "two steps naming one test collapse — the runner serialises them into one lane, so keeping both draws a job that lies",
 );
-assert(hostile?.steps[1].onFailure === "continue", "an unknown failure policy falls back");
+assert(
+  testSteps(hostile?.steps ?? [])[1].onFailure === "continue",
+  "an unknown failure policy falls back",
+);
 assert(hostile?.defaults.captureArtifacts === false, "a truthy non-boolean is not true");
 assert(hostile?.defaults.concurrency === 1, "a zero lane count is not honoured");
 assert(
@@ -196,7 +212,8 @@ assert(
   "the step is KEPT — silently shrinking a saved job is the bug this guards",
 );
 assert(
-  routineStore.get("r-2")?.steps.find((s) => s.testId === "t-b")?.testDeleted === true,
+  testSteps(routineStore.get("r-2")?.steps ?? []).find((s) => s.testId === "t-b")?.testDeleted ===
+    true,
   "and it is flagged so the editor can render it broken",
 );
 assert(routineStore.markTestDeleted("t-b").marked === 0, "marking twice is a no-op");
@@ -244,7 +261,7 @@ const first = routineStore.ensureMigrated(batchSettings, ["t-a", "t-b"], 5_000);
 assert(first.migrated === true, "the first launch migrates the Batch checklist");
 assert(first.routine?.name === "Batch", "the migrated routine keeps the word the user knows");
 assert(
-  first.routine?.steps.map((s) => s.testId).join(",") === "t-a",
+  testSteps(first.routine?.steps ?? []).map((s) => s.testId).join(",") === "t-a",
   "only the ticked row comes across — an absent or unticked row is not in the batch",
 );
 assert(first.routine?.defaults.concurrency === 3, "the batch's own lane count comes across");
@@ -301,6 +318,96 @@ assert(
     .join(",") === "r-old,r-new",
   "the list is oldest first and an edit does NOT jump a row to the top under the user",
 );
+
+// ── Groups ────────────────────────────────────────────────────────────
+//
+// Capability 3's first slice. A group is pure structure over test steps, and
+// the properties worth pinning are the ones that are silent when wrong.
+
+{
+  const saved = routineStore.save({
+    id: "r-groups",
+    name: "Grouped",
+    steps: [
+      { kind: "test", testId: "t-a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+      {
+        kind: "group",
+        id: "g-1",
+        label: "Seed",
+        steps: [
+          { kind: "test", testId: "t-b", browsers: ["webkit"], headless: true, onFailure: "skipGroup" },
+          // Same test as the top-level step above. The lane invariant is
+          // GLOBAL — the runner keys a live run by testId — so one test in a
+          // group and again outside it is the same collision as one test twice.
+          { kind: "test", testId: "t-a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        ],
+      },
+      // The reverse direction of the same rule: a test claimed INSIDE a group
+      // must not reappear at the top level after it. `seen` is threaded
+      // through rather than copied per group precisely so additions inside one
+      // are visible to everything that follows.
+      { kind: "test", testId: "t-b", browsers: ["chromium"], headless: false, onFailure: "continue" },
+      // Empty after normalisation: a group `skipGroup` can point at with
+      // nothing inside is a step that can never do anything.
+      { kind: "group", id: "g-2", label: "Empty", steps: [] },
+      // One level deep. A nested group is dropped rather than flattened.
+      { kind: "group", id: "g-3", label: "Outer", steps: [{ kind: "group", id: "g-4", label: "Inner", steps: [] }] },
+    ],
+    defaults: { captureArtifacts: false, concurrency: 1 },
+  } as unknown as Parameters<typeof routineStore.save>[0]);
+
+  assert(
+    saved?.steps.length === 2,
+    "a group is stored beside top-level steps, and a test claimed inside one does not reappear after it",
+  );
+  const group = saved?.steps[1];
+  assert(group?.kind === "group" && group.id === "g-1", "a group keeps the position it was written in");
+  assert(
+    group?.kind === "group" && group.steps.map((c) => c.testId).join(",") === "t-b",
+    "a test already claimed at the top level does not reappear inside a group",
+  );
+  assert(
+    group?.kind === "group" && group.steps[0].onFailure === "skipGroup",
+    "skipGroup survives now that there is a group for it to point at",
+  );
+  assert(
+    !saved?.steps.some((st) => st.kind === "group" && st.id === "g-2"),
+    "an empty group is dropped — it is a container nothing can happen in",
+  );
+  assert(
+    !saved?.steps.some((st) => st.kind === "group" && st.id === "g-3"),
+    "a group containing only another group is dropped: v1 is one level deep",
+  );
+}
+
+{
+  // `markTestDeleted` reaches inside. A broken step nested in a group is more
+  // invisible than one at the top level, not less: the group still renders and
+  // simply runs one test fewer than it lists.
+  routineStore.save({
+    id: "r-mark",
+    name: "Marked",
+    steps: [
+      {
+        kind: "group",
+        id: "g-1",
+        label: "Seed",
+        steps: [
+          { kind: "test", testId: "t-x", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        ],
+      },
+    ],
+    defaults: { captureArtifacts: false, concurrency: 1 },
+  } as unknown as Parameters<typeof routineStore.save>[0]);
+
+  assert(routineStore.markTestDeleted("t-x").marked === 1, "a step inside a group is marked");
+  const after = routineStore.get("r-mark")?.steps[0];
+  assert(
+    after?.kind === "group" && after.steps[0].testDeleted === true,
+    "a marked step inside a group is KEPT and flagged, not removed",
+  );
+}
+
 
 // ── Caps ─────────────────────────────────────────────────────────────
 const userData5 = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-routines-5-"));

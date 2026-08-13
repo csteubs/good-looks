@@ -789,6 +789,11 @@ server.registerTool(
     // so what it can honestly promise is that nothing FURTHER starts. The
     // record says which, per entry, rather than claiming the app's behaviour.
     let stoppedByTest = null;
+    // Groups whose remaining steps a `skipGroup` failure took out, and the step
+    // that did it. Narrower than the stop above and deliberately so: seed-then-
+    // test is a group, and the seed failing should take the tests that depend
+    // on it and nothing else.
+    const skippedGroups = new Map();
     const persist = (running) => {
       saveBatchRecord({
         batchId,
@@ -818,6 +823,19 @@ server.registerTool(
       if (stoppedByTest !== null) {
         results[i].status = "skipped";
         results[i].note = `Stopped — "${stoppedByTest}" failed`;
+        results[i].finishedAt = Date.now();
+        results[i].durationMs = 0;
+        persist(true);
+        return;
+      }
+      // Checked at the top of the entry rather than by marking others when the
+      // failure happens: runPool has no abort, and an entry already in flight
+      // cannot be recalled — so what this can honestly promise is that nothing
+      // FURTHER in the group starts.
+      const killedBy = entry.groupId ? skippedGroups.get(entry.groupId) : undefined;
+      if (killedBy) {
+        results[i].status = "skipped";
+        results[i].note = `Skipped — "${killedBy}" failed in this group`;
         results[i].finishedAt = Date.now();
         results[i].durationMs = 0;
         persist(true);
@@ -879,6 +897,18 @@ server.registerTool(
         stoppedByTest === null
       ) {
         stoppedByTest = results[i].testName;
+      }
+      // An ungrouped `skipGroup` has no rest-of-group to skip, so it continues
+      // — the same degradation the app's runner makes, at the same point, for
+      // the same reason: a step's policy is a property of the step and whether
+      // it sits in a group is not.
+      if (
+        results[i].status === "failed" &&
+        entry.onFailure === "skipGroup" &&
+        entry.groupId &&
+        !skippedGroups.has(entry.groupId)
+      ) {
+        skippedGroups.set(entry.groupId, results[i].testName);
       }
       persist(true);
     });
