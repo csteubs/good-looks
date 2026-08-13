@@ -175,6 +175,62 @@ const MEASURED_REQUIREMENT = 928;
   );
 }
 
+// ── 3. Visual's run header ────────────────────────────────────────────────
+{
+  const visual = read("../../../renderer/main/visual-view.tsx");
+
+  // The bug, measured in `npm run dev:web` at 1440x900 — NOT a narrow window,
+  // which is why the floor in §1 never protected it. Visual's header is one
+  // flex row: a `min-w-0 flex-1` title column, then Re-run, Masks & baselines,
+  // the threshold slider and the pager, all `shrink-0`. Those four take ~1000px
+  // of a 1140px pane, so the title column is squeezed to 141px while its own
+  // content needs 168px.
+  //
+  // Inside it the test name truncates away to nothing and the two `shrink-0`
+  // badges — "passed" and "1 visual change" — spill past the column's right
+  // edge. `elementFromPoint` at the end of the word returned the Re-run BUTTON:
+  // the outcome was being painted underneath a control, unreadable.
+  //
+  // WRAPPING IS THE FIX, not a floor and not `overflow: hidden`.
+  //  • A floor big enough for both badges (~240px) overflows the header at this
+  //    app's own minimum window size, which is the §1 bug reintroduced above
+  //    the floor — exactly what that section warns about.
+  //  • `overflow: hidden` stops the overlap and still eats the word, and a
+  //    status chip that silently drops its last word is the failure DECISIONS
+  //    records for `.gl-status-chip` on 2026-08-09. The name is the cell that
+  //    may give; the result never is.
+  //
+  // Source-level for this file's usual reason: jsdom has no layout engine, so
+  // nothing rendered in a test can observe a badge painted under a button.
+  const headerRow = visual.match(/\{\s*\/\* Header \*\/\s*\}\s*([\s\S]{0,900})/);
+  assert(headerRow !== null, "visual-view.tsx: found the run header block");
+  if (headerRow) {
+    // Anchored on the row's CONTENT — the div wrapping the test name — rather
+    // than on a class substring. Keying the match off `flex items-center` made
+    // this assertion vanish the moment the fix reordered the class list, which
+    // is a guard that reports "ok" by no longer looking at anything.
+    const identity = headerRow[1].match(
+      /<div className="([^"]*)">\s*<Text className="[^"]*">\{replay\.testName\}/,
+    );
+    assert(identity !== null, "visual-view.tsx: found the header's identity row (name + badges)");
+    if (identity) {
+      const cls = identity[1];
+      assert(
+        /\bflex-wrap\b/.test(cls),
+        `visual-view.tsx: the header's identity row wraps (got "${cls}") — without it the status badges are pushed out of the title column and painted under the Re-run button`,
+      );
+      assert(
+        /\bmin-w-0\b/.test(cls),
+        `visual-view.tsx: the header's identity row carries \`min-w-0\` (got "${cls}") so the name can truncate inside it rather than forcing the row wider than its column`,
+      );
+    }
+    assert(
+      !/\boverflow-hidden\b/.test(headerRow[1]),
+      "visual-view.tsx: the header does not clip its identity row — hiding the overlap would still swallow the badge's last word",
+    );
+  }
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);
