@@ -9,6 +9,7 @@ import { toast } from "@ui";
 
 import { api } from "../lib/api";
 import { newStepIds as computeNewStepIds } from "../lib/diff-steps";
+import { invalidateRunDerived } from "../lib/run-derived-cache";
 import type {
   DebugCaptureSession,
   AssertKind,
@@ -424,8 +425,13 @@ export function RecorderProvider({
     // until it passed stayed red until the window was reopened, while the run
     // panel one pane over showed the pass. Subscribing here puts it on the
     // provider that is mounted for the whole session instead.
+    //
+    // THE SAME ARGUMENT APPLIES TO THE OTHER FIVE CACHES A RUN WRITES, and for
+    // a long time it was only made for `["runs"]` — so Stability, Auto-Heal and
+    // Visual went stale exactly as the status dot used to. `run-derived-cache`
+    // now names all six in one place; see its header for what belongs there.
     const offRunsChanged = api.on("runs:changed", () => {
-      void qc.invalidateQueries({ queryKey: ["runs"] });
+      invalidateRunDerived(qc);
     });
     // A batch already running when this window opened. `batch:progress` fires
     // on every test transition so it would self-seed within seconds, but "the
@@ -444,8 +450,16 @@ export function RecorderProvider({
       // status dots are stale. This used to live in `batch-view`, where it only
       // fired if you happened to be looking at it — the same shape of bug as
       // the one `runs:changed` above was moved here to fix.
-      void qc.invalidateQueries({ queryKey: ["runs"] });
-      void qc.invalidateQueries({ queryKey: ["captureOverhead"] });
+      //
+      // Each member also pushed its own `runs:changed`, so the six derived
+      // caches are already handled above. Repeating them here is deliberate
+      // belt-and-braces: `batch:done` is the one event that fires when a
+      // ROUTINE finishes on a schedule, and a batch that ends without a final
+      // member push (stopped, or blocked before its first test) would otherwise
+      // leave the board describing the run before it.
+      invalidateRunDerived(qc);
+      // Not run-derived: the batch index is its own store, written once per
+      // batch rather than once per run.
       void qc.invalidateQueries({ queryKey: ["batch-history"] });
     });
     const offDebug = api.on<{ testId: string; entries: DebugEntry[] }>(
