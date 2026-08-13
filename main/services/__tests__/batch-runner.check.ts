@@ -113,6 +113,9 @@ function makeFake(opts: {
     liveByTest.set(testId, (liveByTest.get(testId) ?? 1) - 1);
   };
   const stopped: string[] = [];
+  /** Every barrier the runner sat in, in order, by duration. */
+  const waited: number[] = [];
+  let releaseWait: (() => void) | null = null;
   /** every write-through persist, in order — the last one is what a restart
    *  would load back. */
   const persisted: (BatchState & { summary: BatchSummary })[] = [];
@@ -155,6 +158,21 @@ function makeFake(opts: {
         });
       });
     },
+    // A CONTROLLED BARRIER, not a real sleep. The check has to prove the join
+    // happens — everything before a wait finishes before anything after it
+    // starts — and a real timer would make that the slowest assertion in the
+    // suite, which is how a test ends up deleted. Each call records its
+    // duration and parks until the harness releases it.
+    wait: (ms, cancelled) => {
+      waited.push(ms);
+      if (cancelled()) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        releaseWait = () => {
+          releaseWait = null;
+          resolve();
+        };
+      });
+    },
     stopRun: (runId) => {
       stopped.push(runId);
       // A killed Playwright process exits non-zero.
@@ -182,6 +200,13 @@ function makeFake(opts: {
     started,
     startedWithDataset,
     stopped,
+    waited,
+    /** Let the run out of the barrier it is sitting in. */
+    releaseWait: () => {
+      if (!releaseWait) throw new Error("Not waiting at a barrier");
+      releaseWait();
+    },
+    isWaiting: () => releaseWait !== null,
     persisted,
     alerts,
     notices,
@@ -740,6 +765,178 @@ async function main(): Promise<void> {
       byPolicy.body.includes("1 passed") && byPolicy.body.includes("1 not run"),
       "…without losing the counts",
     );
+  }
+
+  // ── Barriers: a `wait` step joins the run ──────────────────────────
+  //
+  // The first step kind that is not a run. What has to be true is the JOIN:
+  // everything before the barrier finishes before the clock starts, and nothing
+  // after it begins until the clock ends. A wait that ran concurrently with the
+  // steps around it would be a no-op wearing a label.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b", "c"],
+      concurrency: 4,
+      perTest: [
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 0 },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 0 },
+        { testId: "c", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 1 },
+      ],
+      barriers: [{ afterSegment: 0, ms: 30_000 }],
+    });
+    await tick();
+
+    // Segment 0 runs wide; segment 1 has not been touched.
+    assert(
+      fake.isPending("a") && fake.isPending("b"),
+      "both entries in the first segment start together",
+    );
+    assert(
+      !fake.started.includes("c"),
+      "a step AFTER the barrier does not start alongside one before it",
+    );
+
+    fake.finish("a", 0);
+    await tick();
+    // One of the two is done — the barrier must NOT have opened yet.
+    assert(fake.waited.length === 0, "the barrier does not start while the segment is still running");
+    assert(!fake.started.includes("c"), "…and the next segment still has not started");
+
+    fake.finish("b", 0);
+    await tick();
+    assert(fake.waited.join(",") === "30000", "the barrier starts once the segment has drained");
+    assert(fake.isWaiting(), "…and the run is sitting in it");
+    assert(!fake.started.includes("c"), "…with the next segment still not started");
+
+    fake.releaseWait();
+    await tick();
+    assert(fake.started.includes("c"), "the next segment starts when the barrier ends");
+    fake.finish("c", 0);
+    await tick();
+
+    const done = fake.doneEvent();
+    assert(done !== undefined, "the batch finished at all (barrier)");
+    assert(done?.summary.passed === 3, "every step ran exactly once");
+    assert(done?.waitingUntil === undefined, "a finished batch is not still claiming to wait");
+  }
+
+  // A batch with NO barriers must take the path it always took. This is the
+  // assertion that keeps `batch:run`, the MCP and every pre-`wait` Routine
+  // honest: one segment, one pool, no clock.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"], concurrency: 2 });
+    await tick();
+    assert(fake.isPending("a") && fake.isPending("b"), "no barriers means one segment, run wide");
+    fake.finish("a", 0);
+    fake.finish("b", 0);
+    await tick();
+    assert(fake.waited.length === 0, "…and the runner never touches the clock");
+  }
+
+  // `waitingUntil` is what stops a pause from looking like a hang: mid-barrier
+  // there is nothing running and nothing new to report.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b"],
+      perTest: [
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 0 },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 1 },
+      ],
+      barriers: [{ afterSegment: 0, ms: 5_000 }],
+    });
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+
+    const mid = fake.persisted[fake.persisted.length - 1];
+    assert(
+      typeof mid?.waitingUntil === "number",
+      "a run sitting in a barrier says so, or it is indistinguishable from a hang",
+    );
+    fake.releaseWait();
+    await tick();
+    const after = fake.persisted[fake.persisted.length - 1];
+    assert(
+      after?.waitingUntil === undefined,
+      "…and stops saying so the moment the barrier ends",
+    );
+    fake.finish("b", 0);
+    await tick();
+  }
+
+  // Stop must END a wait. For the one-hour ceiling, a Stop that took effect
+  // only after the pause elapsed is indistinguishable from a frozen app.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b"],
+      perTest: [
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 0 },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 1 },
+      ],
+      barriers: [{ afterSegment: 0, ms: 3_600_000 }],
+    });
+    await tick();
+    fake.finish("a", 0);
+    await tick();
+    assert(fake.isWaiting(), "the run is in the barrier before Stop");
+
+    batch.stop();
+    fake.releaseWait();
+    await tick();
+    await tick();
+
+    const done = fake.doneEvent();
+    assert(done !== undefined, "the batch finished at all (stop during a wait)");
+    assert(done?.stopped === true, "stopping during a wait stops the batch");
+    assert(!fake.started.includes("b"), "…and the segment after the barrier never starts");
+    // MARKED SKIPPED, not left pending. A `break` out of the segment loop would
+    // never reach those entries, so a stopped batch would persist rows that sit
+    // at "queued" forever — and `summarize` counts them as neither, so the
+    // record's own total stops adding up.
+    assert(
+      done?.results.find((r) => r.testId === "b")?.status === "skipped",
+      "…and its entries are marked skipped, the way a stop marks every other one",
+    );
+    assert(
+      done?.waitingUntil === undefined,
+      "…and the finished batch is not left claiming to be waiting",
+    );
+  }
+
+  // A stop BEFORE a barrier must not then sit in it. Distinct from the case
+  // above, where the stop lands mid-wait: here the guard that matters is the
+  // one that stops the run entering a pause it has already been told to
+  // abandon. Without it, Stop would appear to work and the batch would then
+  // hold the app for the full duration before finishing.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b"],
+      perTest: [
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 0 },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 1 },
+      ],
+      barriers: [{ afterSegment: 0, ms: 3_600_000 }],
+    });
+    await tick();
+    batch.stop();
+    await tick();
+    await tick();
+
+    assert(fake.waited.length === 0, "a run stopped before a barrier never enters it");
+    assert(!fake.isWaiting(), "…and is not left parked in one");
+    const done = fake.doneEvent();
+    assert(done !== undefined, "the batch finished at all (stop before a barrier)");
+    assert(done?.stopped === true, "…and reports as stopped");
   }
 
   // ── One batch at a time ───────────────────────────────────────────

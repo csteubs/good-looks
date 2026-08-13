@@ -400,6 +400,133 @@ describe("testCount", () => {
   });
 });
 
+describe("waits", () => {
+  const wait = (id: string, ms: number) => ({ kind: "wait" as const, id, ms });
+
+  it("pins each wait to the row it follows", () => {
+    const rows = rowsFromRoutine(
+      routine([
+        step({ testId: "t-a" }),
+        wait("w-1", 30_000) as unknown as RoutineStep,
+        step({ testId: "t-b" }),
+      ]),
+      tests("t-a", "t-b"),
+      DEFAULTS,
+    );
+    expect(rows.waits).toEqual([{ id: "w-1", ms: 30_000, after: "t-a" }]);
+  });
+
+  it("marks a LEADING wait with an empty `after`", () => {
+    // The only value that can mean "before everything": a Routine's first step
+    // has no predecessor to be pinned to.
+    const rows = rowsFromRoutine(
+      routine([wait("w-1", 5_000) as unknown as RoutineStep, step({ testId: "t-a" })]),
+      tests("t-a"),
+      DEFAULTS,
+    );
+    expect(rows.waits).toEqual([{ id: "w-1", ms: 5_000, after: "" }]);
+  });
+
+  it("pins a wait after a group to the group's LAST member", () => {
+    // That is the row actually drawn above it. Pinning to the group would name
+    // something `order` does not contain, and the wait would render nowhere.
+    const rows = rowsFromRoutine(
+      routine([
+        {
+          kind: "group",
+          id: "g-1",
+          label: "Seed",
+          steps: [step({ testId: "t-a" }), step({ testId: "t-b" })],
+        } as unknown as RoutineStep,
+        wait("w-1", 1_000) as unknown as RoutineStep,
+      ]),
+      tests("t-a", "t-b"),
+      DEFAULTS,
+    );
+    expect(rows.waits[0].after).toBe("t-b");
+  });
+
+  it("re-pins a wait whose row was deleted rather than dropping it", () => {
+    // Dropping it would silently shorten a job; leaving it pointing at a row
+    // that is not drawn renders it nowhere, which looks the same as dropping it
+    // and is harder to notice.
+    const rows = rowsFromRoutine(
+      routine([step({ testId: "t-gone" }), wait("w-1", 1_000) as unknown as RoutineStep]),
+      tests("t-a"),
+      DEFAULTS,
+    );
+    expect(rows.waits).toEqual([{ id: "w-1", ms: 1_000, after: "" }]);
+  });
+
+  it("puts the waits back where they were", () => {
+    const back = stepsFromRows(
+      ["t-a", "t-b"],
+      {
+        "t-a": { selected: true, browsers: ["chromium"], headless: false },
+        "t-b": { selected: true, browsers: ["chromium"], headless: false },
+      },
+      tests("t-a", "t-b"),
+      DEFAULTS,
+      {},
+      [],
+      {},
+      [{ id: "w-1", ms: 30_000, after: "t-a" }],
+    );
+    expect(back.map((st) => st.kind)).toEqual(["test", "wait", "test"]);
+  });
+
+  it("emits a leading wait before everything, including before a group", () => {
+    const back = stepsFromRows(
+      ["t-a"],
+      { "t-a": { selected: true, browsers: ["chromium"], headless: false } },
+      tests("t-a"),
+      DEFAULTS,
+      {},
+      [{ id: "g-1", label: "Seed" }],
+      { "t-a": "g-1" },
+      [{ id: "w-1", ms: 5_000, after: "" }],
+    );
+    expect(back.map((st) => st.kind)).toEqual(["wait", "group"]);
+  });
+
+  it("round-trips a Routine with a wait unchanged", () => {
+    const original = routine([
+      step({ testId: "t-a" }),
+      wait("w-1", 30_000) as unknown as RoutineStep,
+      step({ testId: "t-b" }),
+    ]);
+    const library = tests("t-a", "t-b");
+    const rows = rowsFromRoutine(original, library, DEFAULTS);
+    const back = stepsFromRows(
+      rows.order,
+      rows.rowOptions,
+      library,
+      DEFAULTS,
+      rows.policies,
+      rows.groups,
+      rows.groupOf,
+      rows.waits,
+    );
+    expect(back).toEqual(original.steps);
+    expect(sameSteps(back, original.steps)).toBe(true);
+  });
+
+  it("sameSteps notices a wait's LENGTH changing", () => {
+    // 30s to 5m is an edit worth a write; comparing only the id would call it
+    // unchanged and never save it.
+    const a = [wait("w-1", 30_000) as unknown as RoutineStep];
+    expect(sameSteps(a, [wait("w-1", 300_000) as unknown as RoutineStep])).toBe(false);
+    expect(sameSteps(a, [wait("w-1", 30_000) as unknown as RoutineStep])).toBe(true);
+  });
+
+  it("does not count a wait as a test", () => {
+    // The rail promises "N tests"; a pause is not one of them.
+    expect(
+      testCount(routine([step({ testId: "t-a" }), wait("w-1", 1_000) as unknown as RoutineStep])),
+    ).toBe(1);
+  });
+});
+
 describe("nextPolicy", () => {
   it("offers skipGroup only inside a group", () => {
     // `skipGroup` outside a group has no rest-of-group to skip, so offering it

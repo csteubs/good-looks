@@ -725,6 +725,110 @@ describe("BatchView groups", () => {
   });
 });
 
+describe("BatchView waits", () => {
+  const waitBtn = (name: string) => screen.queryByLabelText(`Pause after ${name}`);
+
+  it("offers the control only on a row that is IN the job", async () => {
+    // A pause after a step that does not run is a join with nothing on one
+    // side of it.
+    routines = [routineRows({ a: {} })];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(waitBtn("Alpha")).toBeTruthy());
+    expect(waitBtn("Beta")).toBeNull();
+  });
+
+  it("adds a pause after the row, as a `wait` step in the Routine", async () => {
+    routines = [routineRows({ a: {}, b: {} })];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(waitBtn("Alpha")).toBeTruthy());
+
+    fireEvent.click(waitBtn("Alpha")!);
+
+    await waitFor(() => {
+      const steps = (routines ?? [])[0].steps;
+      expect(steps.map((st) => st.kind)).toEqual(["test", "wait", "test"]);
+    });
+  });
+
+  it("toggles the pause away again rather than stacking a second one", async () => {
+    // Two pauses in a row means nothing a single longer one does not, so the
+    // control is "is there a wait here" — a question with an answer on screen.
+    routines = [routineRows({ a: {}, b: {} })];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(waitBtn("Alpha")).toBeTruthy());
+
+    fireEvent.click(waitBtn("Alpha")!);
+    await waitFor(() =>
+      expect((routines ?? [])[0].steps.some((st) => st.kind === "wait")).toBe(true),
+    );
+    fireEvent.click(waitBtn("Alpha")!);
+    await waitFor(() =>
+      expect((routines ?? [])[0].steps.some((st) => st.kind === "wait")).toBe(false),
+    );
+  });
+
+  it("renders the pause as its own row, not as a step with an outcome", async () => {
+    // Giving it a checkbox, engines and a status chip would promise a result it
+    // can never have.
+    routines = [
+      routineOf([
+        { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        { kind: "wait", id: "w-1", ms: 30_000 },
+        { kind: "test", testId: "b", browsers: ["chromium"], headless: false, onFailure: "continue" },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+
+    await waitFor(() => expect(document.querySelectorAll(".gl-batch-wait")).toHaveLength(1));
+    const row = document.querySelector(".gl-batch-wait")!;
+    expect(row.querySelector("input[type=checkbox]")).toBeNull();
+    expect(row.querySelector(".gl-batch-status")).toBeNull();
+    // It says WHAT it does, which is the only thing on screen that explains why
+    // the run appears to stall.
+    expect(row.textContent).toContain("everything above finishes first");
+  });
+
+  it("changes the pause's length", async () => {
+    routines = [
+      routineOf([
+        { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        { kind: "wait", id: "w-1", ms: 30_000 },
+        { kind: "test", testId: "b", browsers: ["chromium"], headless: false, onFailure: "continue" },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(document.querySelector(".gl-batch-wait")).toBeTruthy());
+
+    fireEvent.click(screen.getByRole("button", { name: /length of the pause after alpha/i }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "5m" }));
+
+    await waitFor(() => {
+      const wait = (routines ?? [])[0].steps.find((st) => st.kind === "wait");
+      if (wait?.kind !== "wait") throw new Error("expected a wait");
+      expect(wait.ms).toBe(300_000);
+    });
+  });
+
+  it("writes NOTHING when the view merely mounts", async () => {
+    routines = [
+      routineOf([
+        { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        { kind: "wait", id: "w-1", ms: 30_000 },
+        { kind: "test", testId: "b", browsers: ["chromium"], headless: false, onFailure: "continue" },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(document.querySelector(".gl-batch-wait")).toBeTruthy());
+    expect(routineSave).not.toHaveBeenCalled();
+  });
+});
+
 describe("BatchView ordering", () => {
   it("lists tests in library order when nothing is stored", async () => {
     renderView();

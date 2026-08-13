@@ -13,15 +13,18 @@ the "Batch" Routine described under *A Routine is an entity*, once, at startup;
 `shared/routine-plan.mjs` turns a Routine into the batch runner's own payload;
 `routines:*` IPC exposes list/get/save/delete/run; and the Batch view is the
 open Routine's editor (`renderer/lib/routine-rows.ts` translates its checklist
-to and from steps). Of the step kinds below, `test` and `group` are built.
+to and from steps). Of the step kinds below, `test`, `group` and `wait` are built.
 **`onFailure` is honoured as of 2026-08-13**, all three policies: a step can be
 set to `stopRoutine` or — inside a group — `skipGroup` from its row in the
-editor, and both runners act on it. `wait`, `notify` and `branch` are still
-unbuilt, and the reason is a line rather than a backlog: all three are steps
-that are NOT runs, so executing one means the batch runner walking a
-heterogeneous program with barriers instead of a queue of test entries. That is
-the "second execution engine" this document names as the main design risk, and
-it is worth its own slice. `group` needed none of it. The MCP
+editor, and both runners act on it. `notify` and `branch` are still unbuilt.
+
+**The barrier machinery landed with `wait` (2026-08-13)**, and it landed without
+a second execution engine: `routineRunPlan` cuts the steps into SEGMENTS at each
+barrier and labels every entry with the segment it belongs to, and the runner
+drains one segment's lanes with the pool it already had, joins, pauses, and
+moves on. Lanes, concurrency, write-through and the summary are untouched, and a
+Routine with no `wait` steps is one segment — byte-for-byte the execution every
+caller had before. `notify` and `branch` are additive on top of that. The MCP
 `run_routine` tool named in the rename table below IS built, alongside
 `list_routines` and alongside `run_batch` — see `mcp/README.md`. The rail lists
 Routines and the UI says "Routines" throughout (the route, the channels, the
@@ -37,8 +40,9 @@ fires occurrences arriving while the app is open; the catch-up offers ones
 missed while it was closed; `SCHEDULE_CAVEAT` is stated wherever a schedule is
 set. Note the two departures recorded under *Scheduling* below: the schedule is
 an ENUMERATION rather than a cron string, and `lastRunAt` lives on the Routine
-as `lastScheduledRunAt`. **Capability 3 has started**: `group` is built (2026-08-13), which is what
-gives `skipGroup` something to point at. See *Step kinds* below for what a
+as `lastScheduledRunAt`. **Capability 3 has started**: `group` and `wait` are built (2026-08-13) — the
+first gives `skipGroup` something to point at, the second is the first step that
+is not a run and brought the barrier machinery with it. See *Step kinds* below for what a
 group is allowed to be in v1 — one level deep, and with no `parallel` flag.
 
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for what exists today,
@@ -157,6 +161,29 @@ suite one at a time" — a single number can't say that.
 > flattens it in place — a group is structure over the Routine's order, not a
 > second ordering of it — and stamps each member's queue entry with the group's
 > id. `skipGroup` then skips the rest of that group and nothing else.
+
+> **`wait` as built (2026-08-13).**
+>
+> A BARRIER, not a sleep on one lane: everything queued before it finishes
+> before the clock starts, and nothing after it begins until the clock ends.
+> That is the only reading that makes a wait mean anything — "let what the last
+> step triggered settle" is a statement about the whole job, and a wait running
+> concurrently with the steps around it would be a no-op wearing a label.
+>
+> `ms` is **bounded at one hour** and clamped rather than refused. The runner
+> holds the batch open across a wait, so an unbounded one is a batch that looks
+> hung and can only be escaped with Stop — and Stop ENDS a wait, rather than
+> taking effect when it elapses, for the same reason. Anything longer than the
+> ceiling is what a schedule is for, and the app has one.
+>
+> A **trailing** wait is dropped by the plan: it gates nothing, and would hold
+> the batch open past the end of the job. So is one whose following steps have
+> all been deleted — trailing in effect rather than in position. A **leading**
+> wait is kept; it delays the start, which is a thing somebody might mean.
+>
+> `BatchState.waitingUntil` is what stops a pause from looking like a hang:
+> mid-barrier there is nothing running and nothing new to report, so a waiting
+> batch is otherwise indistinguishable from one that has stopped answering.
 
 ### Branching: the decision that has to be made explicitly
 

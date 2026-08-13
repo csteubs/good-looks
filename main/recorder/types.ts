@@ -1927,6 +1927,15 @@ export interface BatchState {
   /** The test whose failure stopped it, for `stoppedBy: "failure"`. The NAME,
    *  not the id: this is read straight into a notification. */
   stoppedByTest?: string;
+  /** When the run's current `wait` barrier ends, as a timestamp. Present ONLY
+   *  while the run is sitting in one.
+   *
+   *  This is what stops a pause from looking like a hang: mid-barrier there is
+   *  nothing running and nothing new to report, so a waiting batch is otherwise
+   *  indistinguishable on screen from one that has stopped answering. A
+   *  timestamp rather than a remaining-ms so the UI can count down without the
+   *  backend emitting once a second. */
+  waitingUntil?: number;
 }
 
 /** A batch as persisted to batch-history.json. Same shape as the live state
@@ -1945,17 +1954,22 @@ export interface BatchRecord extends BatchState {
 // and nothing else: it runs that test as its own process, with its own
 // RunRecord and its own row in Stats. A Routine never reaches inside a test.
 //
-// `test` and `group` exist. `wait`, `notify` and `branch` are designed in
-// ROUTINES.md and deliberately unbuilt, and the reason is a line rather than a
-// backlog: all three are steps that are NOT runs, so executing one means the
-// batch runner walking a heterogeneous program with barriers instead of a queue
-// of test entries. That is the "second execution engine" the spec names as this
-// feature's main design risk, and it is worth its own slice.
+// `test`, `group` and `wait` exist. `notify` and `branch` are designed in
+// ROUTINES.md and still unbuilt.
 //
-// `group` needs none of it. A group is pure STRUCTURE over test steps: the plan
+// `group` came first because it is pure STRUCTURE over test steps: the plan
 // flattens it in order, entries carry the group they came from, and the only
 // runtime meaning is `skipGroup` — which had nowhere to point until there were
-// groups. That is why it is capability 3's first slice rather than `wait`.
+// groups.
+//
+// `wait` is the first step that is NOT A RUN, and that is the whole of its
+// difficulty. A Routine stopped being a set of tests the runner can pour into
+// one queue: it is now a SEQUENCE with joins in it. The way that landed without
+// a second execution engine — the risk the spec names — is that the plan
+// SEGMENTS the steps at each barrier and the existing lane pool runs one
+// segment at a time. See `routineRunPlan`. `notify` and `branch` are additive
+// on top of that machinery; they were left out of this slice so the barrier
+// itself could be the thing under review.
 
 /** What a Routine does when one of its steps fails. `continue` FIRST and the
  *  default: it is Batch's current unwritten behaviour, so anything else changes
@@ -2005,7 +2019,38 @@ export interface RoutineGroupStep {
   steps: RoutineTestStep[];
 }
 
-export type RoutineStep = RoutineTestStep | RoutineGroupStep;
+/**
+ * Pause the Routine. docs/ROUTINES.md capability 3.
+ *
+ * A BARRIER, not a sleep on one lane. Everything queued before it finishes
+ * before the clock starts, and nothing after it begins until the clock ends —
+ * which is the only reading that makes a wait mean anything: "let the thing the
+ * last step triggered settle" is a statement about the whole job, and a wait
+ * that ran concurrently with the steps around it would be a no-op wearing a
+ * label.
+ *
+ * `ms` is bounded (see `MAX_ROUTINE_WAIT_MS`). A wait is a stretch of time the
+ * user cannot see progress through and can only escape with Stop, so an
+ * unbounded one is a job that looks hung.
+ */
+export interface RoutineWaitStep {
+  kind: "wait";
+  /** Stable across edits and reorders. Same reasoning as a group's: a wait has
+   *  no natural key, and two waits of the same length are different steps. */
+  id: string;
+  ms: number;
+}
+
+export type RoutineStep = RoutineTestStep | RoutineGroupStep | RoutineWaitStep;
+
+/** Longest a single `wait` step may pause a Routine: one hour.
+ *
+ *  A CEILING RATHER THAN A WARNING. The runner holds the batch open across a
+ *  wait, so a stored value of `Infinity` — or of `86_400_000` typed by someone
+ *  who meant seconds — is a batch that never finishes and reports nothing about
+ *  why. Anything longer than this is what a SCHEDULE is for, and the app has
+ *  one. */
+export const MAX_ROUTINE_WAIT_MS = 60 * 60 * 1000;
 
 /**
  * When a Routine runs by itself. docs/ROUTINES.md capability 2.

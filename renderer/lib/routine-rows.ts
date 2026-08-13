@@ -39,6 +39,7 @@ import type {
   RoutineGroupStep,
   RoutineStep,
   RoutineTestStep,
+  RoutineWaitStep,
   RunBrowser,
 } from "./recorder-types";
 
@@ -90,10 +91,13 @@ export const POLICY_LABELS: Record<FailurePolicy, string> = {
  * this is a named function rather than a `.length` at the call site.
  */
 export function testCount(routine: { steps: readonly RoutineStep[] } | null | undefined): number {
-  return (routine?.steps ?? []).reduce(
-    (n, s) => n + (s.kind === "group" ? s.steps.length : 1),
-    0,
-  );
+  return (routine?.steps ?? []).reduce((n, s) => {
+    if (s.kind === "group") return n + s.steps.length;
+    // A `wait` is not a test. Counting one would make the rail promise a run
+    // that never happens — the same class of lie as the group case above,
+    // which is why this is a switch rather than an `=== "group"` ternary.
+    return n + (s.kind === "test" ? 1 : 0);
+  }, 0);
 }
 
 /** A group, without its members — who belongs to it lives in `GroupOf`, keyed
@@ -110,6 +114,19 @@ export interface RoutineGroup {
 /** Which group each test in the job belongs to. Absent = top level. */
 export type GroupOf = Record<string, string>;
 
+/** A pause, pinned to the row it follows.
+ *
+ *  `after` is a TEST ID rather than an index, for the reason the whole module
+ *  keeps `order` flat: an index would have to be rewritten on every drag, and a
+ *  wait that drifted one row when something above it moved would silently gate
+ *  a different set of steps. `""` means the wait leads — it runs before
+ *  anything. */
+export interface RoutineWait {
+  id: string;
+  ms: number;
+  after: string;
+}
+
 export interface RoutineRows {
   /** Every test in the library, in the order the checklist should show them. */
   order: string[];
@@ -123,6 +140,29 @@ export interface RoutineRows {
   groups: RoutineGroup[];
   /** Which group each grouped test belongs to. */
   groupOf: GroupOf;
+  /** The Routine's `wait` steps, each pinned to the row it follows. */
+  waits: RoutineWait[];
+}
+
+/**
+ * The test a step at `index` follows, for pinning a `wait` back to a row.
+ *
+ * Walks BACKWARDS and reaches into a group for its last member, because that is
+ * the row actually drawn above the wait — pinning to the group would name
+ * something `order` does not contain, and the wait would render nowhere.
+ * Returns `""` when nothing precedes it, which is what marks a leading wait.
+ */
+export function lastTestIdBefore(steps: readonly RoutineStep[], index: number): string {
+  for (let i = index - 1; i >= 0; i--) {
+    const s = steps[i];
+    if (s.kind === "group") {
+      const last = s.steps[s.steps.length - 1];
+      if (last) return last.testId;
+      continue;
+    }
+    if (s.kind === "test") return s.testId;
+  }
+  return "";
 }
 
 /**
@@ -157,6 +197,7 @@ export function rowsFromRoutine(
   const policies: PolicyMap = {};
   const groups: RoutineGroup[] = [];
   const groupOf: GroupOf = {};
+  const waits: RoutineWait[] = [];
   const order: string[] = [];
   const placed = new Set<string>();
 
@@ -168,6 +209,17 @@ export function rowsFromRoutine(
   // stops being contiguous — which `stepsFromRows` then reads as leaving it.
   const flat: { step: RoutineTestStep; groupId: string }[] = [];
   for (const step of routine?.steps ?? []) {
+    if (step.kind === "wait") {
+      // A wait is NOT A ROW. It has no test to draw one from, so it is carried
+      // as its own list and rendered between rows — the same shape a group
+      // header takes, and for the same reason: `order` stays a flat list of
+      // test ids so drag-to-reorder never has to learn about anything else.
+      // Pinned to the step BEFORE it, read from `flat` rather than from `order`
+      // — `order` is not built until the loop below, so reading it here would
+      // pin every wait to "" and quietly turn them all into leading ones.
+      waits.push({ id: step.id, ms: step.ms, after: flat[flat.length - 1]?.step.testId ?? "" });
+      continue;
+    }
     if (step.kind === "group") {
       groups.push({ id: step.id, label: step.label });
       for (const child of step.steps) flat.push({ step: child, groupId: step.id });
@@ -224,7 +276,19 @@ export function rowsFromRoutine(
   // library) is dropped too. It cannot be rendered — there is no row to nest
   // under it — and the store would refuse to keep it anyway.
   const live = new Set(Object.values(groupOf));
-  return { order, rowOptions, policies, groups: groups.filter((g) => live.has(g.id)), groupOf };
+  // A wait pinned to a test the library no longer has is re-pinned to "" —
+  // leading — rather than dropped. Dropping it would silently shorten a job;
+  // leaving it pointing at a row that is not drawn would render it nowhere,
+  // which looks the same as dropping it and is harder to notice.
+  const drawn = new Set(order);
+  return {
+    order,
+    rowOptions,
+    policies,
+    groups: groups.filter((g) => live.has(g.id)),
+    groupOf,
+    waits: waits.map((w) => (w.after === "" || drawn.has(w.after) ? w : { ...w, after: "" })),
+  };
 }
 
 function enginesOf(step: RoutineTestStep, test: RowTest, defaults: RowDefaults): RunBrowser[] {
@@ -256,11 +320,28 @@ export function stepsFromRows(
   policies: PolicyMap = {},
   groups: readonly RoutineGroup[] = [],
   groupOf: GroupOf = {},
+  waits: readonly RoutineWait[] = [],
 ): RoutineStep[] {
   const byId = new Map(tests.map((t) => [t.id, t]));
   const labels = new Map(groups.map((g) => [g.id, g.label]));
   const steps: RoutineStep[] = [];
   const seen = new Set<string>();
+  // Waits by the row they follow. A row can carry more than one — nothing stops
+  // two pauses in a row, and collapsing them silently would lose time the user
+  // asked for.
+  const waitsAfter = new Map<string, RoutineWait[]>();
+  for (const w of waits) {
+    const list = waitsAfter.get(w.after);
+    if (list) list.push(w);
+    else waitsAfter.set(w.after, [w]);
+  }
+  const emitWaitsAfter = (id: string): void => {
+    for (const w of waitsAfter.get(id) ?? []) steps.push({ kind: "wait", id: w.id, ms: w.ms });
+  };
+  // A LEADING wait is emitted before anything, including before the group its
+  // first member opens. `""` is the only key that can mean this, because a
+  // Routine's first step has no predecessor to be pinned to.
+  emitWaitsAfter("");
   // A group is emitted at the position of its FIRST member and collects every
   // later member into itself. That is what turns the checklist's flat order
   // back into nesting without a second ordering to keep in sync — and it means
@@ -289,11 +370,18 @@ export function stepsFromRows(
     const groupId = groupOf[id];
     if (!groupId || !labels.has(groupId)) {
       steps.push(step);
+      emitWaitsAfter(id);
       continue;
     }
     const existing = open.get(groupId);
     if (existing) {
       existing.steps.push(step);
+      // A wait pinned to a row INSIDE a group lands after the group, not inside
+      // it: a group holds test steps only (v1), and the barrier's meaning —
+      // everything before it finishes — is the same either way. Emitting it
+      // inside would be a shape the store drops, so the screen and the stored
+      // job would disagree.
+      emitWaitsAfter(id);
       continue;
     }
     const group: RoutineGroupStep = {
@@ -304,6 +392,7 @@ export function stepsFromRows(
     };
     open.set(groupId, group);
     steps.push(group);
+    emitWaitsAfter(id);
   }
   return steps;
 }
@@ -331,6 +420,12 @@ export function sameSteps(a: readonly RoutineStep[], b: readonly RoutineStep[]):
       const o = other as RoutineGroupStep;
       return step.id === o.id && step.label === o.label && sameSteps(step.steps, o.steps);
     }
+    // A wait's LENGTH is part of what the job is: changing 30s to 5m is an edit
+    // worth a write, and comparing only the id would call it unchanged.
+    if (step.kind === "wait") {
+      const o = other as RoutineWaitStep;
+      return step.id === o.id && step.ms === o.ms;
+    }
     const o = other as RoutineTestStep;
     return (
       step.testId === o.testId &&
@@ -357,7 +452,9 @@ export function brokenSteps(
   // Reaches INSIDE groups. A broken step nested in one is exactly as invisible
   // as a broken step at the top level — more so, since the group still renders
   // and simply runs one test fewer than it lists.
-  const flat = (routine?.steps ?? []).flatMap((s) => (s.kind === "group" ? s.steps : [s]));
+  const flat = (routine?.steps ?? []).flatMap<RoutineTestStep>((s) =>
+    s.kind === "group" ? s.steps : s.kind === "test" ? [s] : [],
+  );
   return flat.filter((s) => s.testDeleted === true || !live.has(s.testId));
 }
 

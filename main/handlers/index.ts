@@ -1453,6 +1453,10 @@ export function registerHandlers(): void {
       // reason for the manual path to differ on a test it could not resolve.
       runHeadless: true,
       perTest: plan.perTest,
+      // Where the run joins and pauses. Empty for every Routine with no `wait`
+      // steps, and empty means one segment — the execution every Routine had
+      // before barriers existed.
+      barriers: plan.barriers,
       // Clamped against DISTINCT tests, same as `batch:run`: the runner keys a
       // lane by testId, so a multi-engine step still runs one window at a time
       // and counting queue entries here would promise workers that only idle.
