@@ -114,7 +114,7 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 3209 Vitest tests across 163 files and 62 checks in the chain as of 2026-08-13 (64 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 3214 Vitest tests across 164 files and 63 checks in the chain as of 2026-08-13 (65 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS gets checked: `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 
@@ -127,6 +127,8 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 ### Conventions that matter
 
 - **Touching the AI debug feature? Extend `renderer/main/ai-debug-icons.test.tsx`.** The status icon's colour (blue ready / orange thinking / green ready-for-review / red failed) is the whole contract of a minimized job, and a wrong colour is silent: the panel works perfectly while the icon lies, so the user walks away from a finished answer or waits on a dead one. Nothing else catches it — not lint, not type-check, not the panel's own tests. Cover every surface the change can reach (run panel, trainer step rows, global chip).
+
+- **A cache a RUN writes is invalidated in one place: `renderer/lib/run-derived-cache.ts`.** Never from a view. A `runs:changed` subscription inside a route component only runs while that route is mounted, so the refresh silently becomes "refresh this if the user happens to be looking" — that is how the Stats board's Stability, Auto-Heal and Visual tiles came to never refresh after a run, and it is the third time this exact shape has shipped (the sidebar's stale verdict dot, then `batch-view`'s invalidation). Adding a query key whose content depends on run history or run artifacts? Add it to `RUN_DERIVED_KEYS`. `check:derived-cache` enforces both halves. Note the mocking trap that hid it: `on: () => () => {}` makes the push bridge inert, so a component test can cover a whole view and never touch its live-refresh path.
 
 - **Verify a test can fail.** After writing a test that should catch a bug, revert the fix and confirm *that* test fails. Several tests in this repo were written against behaviour that turned out to differ from the assumption; the revert is what catches it.
 - **Never guard an assertion with `if (thing)`** — it passes vacuously the day `thing` stops rendering.

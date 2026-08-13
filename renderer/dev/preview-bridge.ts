@@ -1285,6 +1285,13 @@ function startFakeRun(
       recordId: stored?.id,
     }),
   );
+  // The real runner persists the record and then broadcasts `runs:changed`,
+  // which is what refreshes the six run-derived caches (see
+  // `renderer/lib/run-derived-cache.ts`). Omitting it here made the preview
+  // quietly unable to show a whole class of bug: the Stats board's tiles going
+  // stale after a run reproduced in the app and NEVER in `dev:web`, because
+  // nothing in a tab could make the event happen.
+  later(() => emit("runs:changed", {}));
   return { runId };
 }
 

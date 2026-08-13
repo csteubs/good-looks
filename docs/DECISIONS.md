@@ -16,6 +16,61 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-13 — One owner for the six caches a run writes
+
+The Stats board's Stability, Auto-Heal and Visual tiles never refreshed after a
+run. Not "refreshed late" — never, for as long as you stayed on the page. The
+metrics DB and every JSON store were correct the whole time; `metrics.db` on
+this machine held the newest run, with the same id run history had. The screen
+was the only thing that was wrong.
+
+**Two mechanisms, both structural.** `["flake"]` was invalidated by nothing in
+the app, anywhere, ever. `["heals"]` was invalidated only by the user's own
+accept/revert — but Auto-Heal journals a heal DURING a run
+(`playwright-runner.ts`, `source: "run"`), so the Heals view, whose entire job
+is to show new heals, showed nothing until it was remounted. And the three
+caches that DID refresh (`["metrics"]`, `["captureOverhead"]`, `["replays"]`)
+were invalidated from inside `StatsView` and `VisualView` — ROUTE components, so
+the refresh only happened if you were already standing on the right screen.
+
+That last shape is the one this codebase keeps rediscovering. It is the sidebar's
+stale verdict dot (fixed by moving `runs:changed` into `RecorderProvider`), and
+it is `batch-view`'s invalidation (fixed the same way in §6.8). Both fixes moved
+one key and left the rest behind, because the rule was written as a comment on a
+call site rather than as a list.
+
+**So the list exists now.** `renderer/lib/run-derived-cache.ts` names the six
+caches a finished run makes stale, and `RecorderProvider` — mounted for the whole
+session — is the only subscriber that invalidates them. `StatsView`'s and
+`VisualView`'s subscriptions are gone; Stats' Manage menu (Reset / Delete) calls
+the same helper, because it rewrites run history wholesale and used to leave the
+Stability tile quoting a verdict over runs it had just deleted.
+
+**What deliberately stays out: `["script-changes"]`.** It sits beside heals in
+the Heals view and looks symmetrical, but `scriptChangeStore.record` is reached
+only from an IPC handler on a user action — no run writes one. Adding it would
+refetch it after every run for nothing, so the check pins its absence.
+
+**Why nothing caught this.** `check:push-consumers` asks whether somebody listens
+to each push, and every one of these passed — somebody did. It cannot ask whether
+the listener is mounted when the event fires, and it cannot see a cache that goes
+stale with no push involved at all, which is what heals and flake were. The
+component tests could not catch it either: the usual way to mock the bridge is
+`on: () => () => {}`, which makes the subscription inert, and that is exactly
+what `stats-view.test.tsx` does — so the live-refresh path had never been
+exercised by a single test. The browser preview was blind too, because
+`startFakeRun` never emitted `runs:changed`; it does now, which is what made the
+before/after observable in `dev:web` at all (`["runner:run","runs:list"]` before,
+all six after, standing on Stats with no remount).
+
+`check:derived-cache` is the rule as a gate: no `runs:changed` handler outside
+the store may invalidate, every listed key must be read by a real `useQuery`, and
+the detector is run against a synthetic violating fixture so it fails if it ever
+goes blind. `run-derived-cache.test.tsx` drives a real push bus and counts
+`queryFn` calls rather than `invalidateQueries` calls — an invalidation aimed at
+the wrong key is still a call, and counting calls is how you write a test that
+passes against the bug.
+
 ### 2026-08-13 — Capability 3 starts with `group`, not `wait`
 
 `main/recorder/types.ts`, `main/services/routine-store.ts`,
