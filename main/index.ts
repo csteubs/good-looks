@@ -33,6 +33,7 @@ import {
 import { applyRetention } from "./services/retention.js";
 import { batchHistoryStore } from "./services/batch-history-store.js";
 import { routineStore } from "./services/routine-store.js";
+import { routineScheduler } from "./services/routine-scheduler.js";
 import { recorderSettingsStore } from "./services/recorder-settings-store.js";
 import { testStore } from "./services/test-store.js";
 import { aiDebugStore } from "./services/ai-debug-store.js";
@@ -100,6 +101,15 @@ registerHandlers();
   const knownTestIds = testStore.list().map((t) => t.id);
   routineStore.ensureMigrated(settings, knownTestIds);
 }
+
+// ── Routine scheduler ─────────────────────────────────────────────────
+// The in-process half of ROUTINES capability 2: while the app is open, a
+// Routine whose occurrence arrives runs itself. The OTHER half — occurrences
+// missed while the app was closed — is deliberately not started here; it is
+// offered, and the renderer asks for it (`routines:missed`). A suite that
+// seizes the machine the moment you launch the app is how people turn
+// scheduling off.
+routineScheduler.start();
 
 // ── AI debug session reconciliation ───────────────────────────────────
 // The llm request map dies with the process, so a session persisted as

@@ -23,13 +23,15 @@ below). Previous batches IS scoped to the open Routine: `BatchState` carries
 an optional `routineId`, and a batch without one belongs to the migrated
 Routine — see `ORPHAN_BATCH_OWNER`.
 
-**Capability 2 is started, and nothing fires yet.** `Routine.schedule` and
-`shared/routine-schedule.mjs` exist and are tested; no surface offers a
-schedule and no timer runs one, because a schedule you can set that never runs
-is the exact promise this document says not to make. Note the two departures
-recorded under *Scheduling* below: the schedule is an ENUMERATION rather than a
-cron string, and `lastRunAt` lives on the Routine as `lastScheduledRunAt`.
-Capability 3 (the flow builder) is untouched.
+**Capability 2 is most of the way there.** `Routine.schedule`,
+`shared/routine-schedule.mjs` and `main/services/routine-scheduler.ts` all
+exist: the timer fires occurrences that arrive while the app is open, and
+`routines:missed` reports the ones missed while it was closed for the renderer
+to offer. **What is missing is the picker** — nothing can set a schedule yet, so
+nothing fires in practice, and `SCHEDULE_CAVEAT` has nowhere on screen to
+appear. Note the two departures recorded under *Scheduling* below: the schedule
+is an ENUMERATION rather than a cron string, and `lastRunAt` lives on the
+Routine as `lastScheduledRunAt`. Capability 3 (the flow builder) is untouched.
 
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for what exists today,
 [DECISIONS.md](DECISIONS.md) for why the current Batch is shaped the way it is,

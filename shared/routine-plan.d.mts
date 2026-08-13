@@ -30,9 +30,17 @@ export interface RoutineRunPlan {
   concurrency: number;
 }
 
+export interface RoutinePlanOptions {
+  /** Force every step headless, whatever the step says. Set for a SCHEDULED
+   *  run: a window that steals focus while somebody is working is the fastest
+   *  way to have scheduling turned off. */
+  forceHeadless?: boolean;
+}
+
 export declare function routineRunPlan(
   routine: Routine | null | undefined,
   knownTestIds: readonly string[] | null,
+  options?: RoutinePlanOptions,
 ): RoutineRunPlan;
 
 export declare function routineBlockedReason(plan: RoutineRunPlan | null): string | null;

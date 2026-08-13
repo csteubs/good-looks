@@ -133,6 +133,31 @@ describe("what each entry carries", () => {
   });
 });
 
+describe("a scheduled run never opens a window", () => {
+  it("forces every step headless, overriding the step's own setting", () => {
+    // ROUTINES.md rules this out flatly. A step someone headed deliberately is
+    // still a step they headed for a run they were WATCHING; a schedule fires
+    // when nobody asked, and a window stealing focus mid-work is the fastest
+    // way to have the feature turned off.
+    const plan = routineRunPlan(
+      routine([
+        step({ testId: "t-a", headless: false }),
+        step({ testId: "t-b", headless: true }),
+      ]),
+      ["t-a", "t-b"],
+      { forceHeadless: true },
+    );
+    expect(plan.perTest.map((e) => e.headless)).toEqual([true, true]);
+  });
+
+  it("leaves headedness alone for a manual run", () => {
+    const plan = routineRunPlan(routine([step({ headless: false })]), ["t-a"]);
+    expect(plan.perTest[0].headless).toBe(false);
+    expect(routineRunPlan(routine([step({ headless: false })]), ["t-a"], {}).perTest[0].headless)
+      .toBe(false);
+  });
+});
+
 describe("why it cannot run", () => {
   it("distinguishes an unfinished Routine from one whose tests are gone", () => {
     // Different problems wanting different reactions. "Nothing to run" for both

@@ -38,7 +38,15 @@ export const PLAN_BROWSERS = ["chromium", "firefox", "webkit"];
  * tests — NOT a default, because "no list supplied" and "the library is empty"
  * would otherwise be the same value and the second one must skip everything.
  */
-export function routineRunPlan(routine, knownTestIds) {
+export function routineRunPlan(routine, knownTestIds, options) {
+  // NEVER A HEADED BROWSER ON A SCHEDULE. ROUTINES.md rules this out flatly,
+  // and the reason is not tidiness: a window that steals focus while somebody
+  // is working is the fastest way to have the feature turned off, and a
+  // schedule fires when nobody asked. It overrides the STEP's own setting
+  // rather than deferring to it — a step someone headed deliberately is still
+  // a step they headed for a run they were watching. Applied here, where the
+  // payload is built, so there is one place it can be true.
+  const forceHeadless = options?.forceHeadless === true;
   const known = knownTestIds ? new Set(knownTestIds) : null;
   const steps = Array.isArray(routine?.steps) ? routine.steps : [];
 
@@ -76,7 +84,7 @@ export function routineRunPlan(routine, knownTestIds) {
     }
 
     testIds.push(testId);
-    perTest.push({ testId, browsers, headless: step.headless === true });
+    perTest.push({ testId, browsers, headless: forceHeadless || step.headless === true });
   }
 
   return {

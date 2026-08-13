@@ -19,6 +19,7 @@ import { recorderService } from "../services/recorder-service.js";
 import { batchRunner } from "../services/batch-runner.js";
 import { batchHistoryStore } from "../services/batch-history-store.js";
 import { routineStore } from "../services/routine-store.js";
+import { routineScheduler } from "../services/routine-scheduler.js";
 import { routineBlockedReason, routineRunPlan } from "../../shared/routine-plan.mjs";
 import { webhookUrlStore } from "../services/webhook-url-store.js";
 import { postWebhook } from "../services/alert-service.js";
@@ -1405,6 +1406,24 @@ export function registerHandlers(): void {
    * have. The caller reports it; only a Routine that can run NOTHING throws,
    * and it throws the sentence explaining which kind of nothing.
    */
+  /**
+   * Occurrences missed while the app was closed. REPORTS, does not run.
+   *
+   * The renderer offers them; `routines:runMissed` accepts one and
+   * `routines:dismissMissed` declines it. Declining still settles the
+   * occurrence, or the same prompt returns on every launch forever.
+   */
+  ipcMain.handle("routines:missed", async () => routineScheduler.missed());
+  ipcMain.handle("routines:runMissed", async (_e, params: { id: string }) => {
+    const routine = routineStore.get(params.id);
+    if (!routine) throw new Error("That routine no longer exists.");
+    // The SAME path a timer fire takes — two routes to "the schedule ran this"
+    // would be two chances to forget that a scheduled run is always headless.
+    return routineScheduler.fire(routine);
+  });
+  ipcMain.handle("routines:dismissMissed", async (_e, params: { id: string }) =>
+    routineScheduler.dismissMissed(params.id),
+  );
   ipcMain.handle("routines:run", async (_e, params: { id: string }) => {
     const routine = routineStore.get(params.id);
     if (!routine) throw new Error("That routine no longer exists.");

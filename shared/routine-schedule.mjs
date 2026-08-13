@@ -150,6 +150,46 @@ export function isDue(schedule, lastRunAt, now) {
 }
 
 /**
+ * Should this Routine fire RIGHT NOW, in a session that started at
+ * `sessionStartedAt`?
+ *
+ * THE SESSION BOUND IS THE WHOLE POINT, and it is what keeps the two halves of
+ * this feature from fighting. A missed occurrence — one that came due while the
+ * app was closed — belongs to the CATCH-UP, which offers it rather than running
+ * it: a suite that seizes the machine the moment you launch the app, for a run
+ * you may not want now, is how people turn scheduling off. So the timer only
+ * fires occurrences that fall AFTER the session began, and the catch-up only
+ * reports ones from before. No occurrence belongs to both, and neither can
+ * double-fire the other's.
+ *
+ * Without it: the catch-up offers a missed run, the user declines, and sixty
+ * seconds later the timer runs it anyway.
+ */
+export function firesNow(routine, sessionStartedAt, now) {
+  const schedule = normalizeSchedule(routine?.schedule);
+  if (!schedule) return false;
+  const lastFire =
+    typeof routine.lastScheduledRunAt === "number" ? routine.lastScheduledRunAt : sessionStartedAt;
+  const due = nextOccurrence(schedule, lastFire);
+  if (due === null) return false;
+  return due <= now && due > sessionStartedAt;
+}
+
+/**
+ * Occurrences missed while the app was closed, for the launch prompt.
+ *
+ * ONE PER ROUTINE, not one per occurrence. The app being shut for a week does
+ * not mean seven nightly runs are owed — six of them would test a commit that
+ * has been superseded, and replaying them all is a machine nobody can use. What
+ * is owed is "this job has not run since Tuesday", and one run answers that.
+ */
+export function missedRoutines(routines, now) {
+  return (Array.isArray(routines) ? routines : []).filter((r) =>
+    isDue(r?.schedule, r?.lastScheduledRunAt, now),
+  );
+}
+
+/**
  * What the schedule says, in words.
  *
  * Rendered beside the picker rather than only inside it, because the picker

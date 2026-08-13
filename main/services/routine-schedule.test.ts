@@ -11,9 +11,11 @@
 
 import { describe, it, expect } from "vitest";
 
-import type { RoutineSchedule } from "../recorder/types.js";
+import type { Routine, RoutineSchedule } from "../recorder/types.js";
 import {
   describeSchedule,
+  firesNow,
+  missedRoutines,
   formatMinute,
   HOUR_STEPS,
   isDue,
@@ -174,6 +176,74 @@ describe("whether an occurrence has been missed", () => {
     // nobody can use, and five of the six would test the same commit anyway.
     const lastRun = at(2026, 7, 5, 9, 30);
     expect(isDue(at0930, lastRun, at(2026, 7, 12, 10, 0))).toBe(true);
+  });
+});
+
+describe("which occurrence belongs to the timer, and which to the catch-up", () => {
+  const at0930: RoutineSchedule = { kind: "dailyAt", minute: 9 * 60 + 30 };
+
+  function routine(over: Partial<Routine> = {}): Routine {
+    return {
+      id: "r-1",
+      name: "Nightly",
+      createdAt: 1,
+      updatedAt: 1,
+      steps: [],
+      defaults: { captureArtifacts: false, concurrency: 1 },
+      schedule: at0930,
+      ...over,
+    };
+  }
+
+  it("fires an occurrence that arrives while the app is open", () => {
+    const opened = at(2026, 7, 12, 9, 0);
+    expect(firesNow(routine(), opened, at(2026, 7, 12, 9, 31))).toBe(true);
+  });
+
+  it("does not fire before the occurrence arrives", () => {
+    const opened = at(2026, 7, 12, 9, 0);
+    expect(firesNow(routine(), opened, at(2026, 7, 12, 9, 29))).toBe(false);
+  });
+
+  it("does NOT fire an occurrence missed while the app was closed", () => {
+    // THE BUG THIS BOUND EXISTS FOR. Without it: the catch-up offers the missed
+    // run, the user declines, and sixty seconds later the timer runs it anyway.
+    const missedYesterday = routine({ lastScheduledRunAt: at(2026, 7, 11, 9, 30) });
+    const opened = at(2026, 7, 12, 14, 0);
+    expect(firesNow(missedYesterday, opened, at(2026, 7, 12, 14, 1))).toBe(false);
+    // …and the catch-up is the half that DOES claim it.
+    expect(missedRoutines([missedYesterday], at(2026, 7, 12, 14, 1))).toHaveLength(1);
+  });
+
+  it("does not fire an occurrence it has already run this session", () => {
+    const opened = at(2026, 7, 12, 9, 0);
+    const justRan = routine({ lastScheduledRunAt: at(2026, 7, 12, 9, 30) });
+    expect(firesNow(justRan, opened, at(2026, 7, 12, 9, 31))).toBe(false);
+  });
+
+  it("never fires a Routine with no schedule, or an unusable one", () => {
+    expect(firesNow(routine({ schedule: undefined }), 0, at(2026, 7, 12, 23, 0))).toBe(false);
+    expect(
+      firesNow(
+        routine({ schedule: { kind: "everyHours", hours: 5 } as RoutineSchedule }),
+        0,
+        at(2026, 7, 12, 23, 0),
+      ),
+    ).toBe(false);
+    expect(firesNow(null, 0, 1)).toBe(false);
+  });
+
+  it("reports one missed Routine per Routine, not one per missed occurrence", () => {
+    // The app shut for a week does not owe seven nightly runs: six would test a
+    // commit that has been superseded, and replaying them is a machine nobody
+    // can use. What is owed is "this has not run since Tuesday".
+    const stale = routine({ lastScheduledRunAt: at(2026, 7, 5, 9, 30) });
+    expect(missedRoutines([stale], at(2026, 7, 12, 10, 0))).toHaveLength(1);
+  });
+
+  it("reports nothing missed for a schedule that has never fired", () => {
+    expect(missedRoutines([routine()], at(2026, 7, 12, 23, 0))).toEqual([]);
+    expect(missedRoutines(null, 1)).toEqual([]);
   });
 });
 
