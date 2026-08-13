@@ -233,6 +233,46 @@ The preview's batch fixtures are now split across the two Routines with one left
 unattributed, because a fixture where every batch belongs to the same job would
 look identical with the filter missing.
 
+### 2026-08-12 — gate.yml runs entirely on Linux
+
+Every job in `.github/workflows/gate.yml` now runs on `ubuntu-latest`. The only
+holdout was `package` (the e2e suite plus an `electron-builder` run), on macOS
+because the product is a macOS app. macOS runner minutes bill at roughly ten
+times the Linux rate, and that job is the long one.
+
+**What survives the move.** The e2e suite drives a real Electron process with
+real windows; Linux has those too, under `xvfb-run` — without a display Electron
+exits at launch, and the symptom is a Playwright launch *timeout*, which reads
+like a hung app rather than a missing X server. `ELECTRON_DISABLE_SANDBOX=1`
+goes with it: the runner kernel restricts unprivileged user namespaces, which
+the Chromium sandbox needs, and the alternative is chowning `chrome-sandbox`
+root-owned inside `node_modules` on every run.
+
+**What does not, and is stated rather than hidden.** A macOS target cannot be
+built on Linux at all, so CI packages `--linux dir` where `npm run package`
+builds `--mac --dir`. CI therefore no longer proves the app packages *as a mac
+app*, nor that `npm run build` works on macOS. Both are exercised locally by
+`npm run package`, and neither is a failure this pipeline has ever caught — the
+bug `verify:package` exists for is a **dependency-closure** bug, and the
+unpacked tree is the same tree on both platforms.
+
+**`verify:package` learned the second layout instead of being skipped.** It
+looked only for `dist/<target>/Name.app/Contents/Resources/app`; the Linux
+bundle puts the identical `node_modules` at
+`dist/linux-unpacked/resources/app`. Skipping the step on Linux was the smaller
+diff and the wrong one: this job is the one place the guard is checked against a
+bundle that is *supposed* to pass, so a guard that had started rejecting good
+builds would show up as a red gate rather than as a local mystery. Worse, the
+un-taught version does not fail loudly — it reports `No packaged app found`,
+which reads as "the build produced nothing" and would be believed. Both layouts
+are now fixtures in `check:package-integrity`, and the Linux one was confirmed
+to fail before the fix.
+
+The artifact changed shape with the target: a `tar -czf` of `linux-unpacked`
+rather than a `ditto` archive of the `.app`. Same reason as before — the bundle
+is full of symlinks and `upload-artifact` dereferences them, which breaks it and
+multiplies its size.
+
 ### 2026-08-12 — Script changes join the Heals view, and split on "did you see it"
 
 The Heals tab knew about one way a test changes without the user writing it:
@@ -1369,6 +1409,99 @@ Reported as "the trash icons are too large on Heals". They are, but nothing abou
 **The "Sending" strip ships with the reskin because it is a privacy affordance, not decoration.** "Debug with AI" can send a user's script and a run's console output to a hosted provider, and until now the only way to know what left the machine was to read the prompt builder's source. A test script routinely carries staging hostnames, seeded credentials and customer-shaped fixture data. It is **derived from the same `ctx` the prompt is built from** — a hand-maintained second list eventually describes a request the app no longer sends, and an inaccurate privacy disclosure is worse than none because it is trusted. A drift test fails if the builder attaches a payload the strip does not name.
 
 Sizes are CHARACTERS, not tokens: a token count is a guess dressed as a measurement (it depends on the tokenizer, which depends on the provider), and the question being answered is "how much of my stuff", for which characters are honest and sufficient. The strip sits ABOVE the prompt preview — a disclosure you reach by scrolling past the thing it is about is one most people never see, the same reasoning as `risk` on a settings row.
+
+### 2026-08-10 — The new Menu promised a keyboard pattern its roles did not implement
+
+`Menu` shipped in B3 with `role="menu"` and `role="menuitem"` children. Those
+roles are a specific claim to assistive tech — arrow keys move between items,
+Tab leaves — and none of it was implemented. ArrowDown did nothing. Every item
+was `tabIndex 0`, which is the only reason the menu was operable at all: Tab
+walked the list, so a four-option menu was four stops on the way to the next
+control. All of this was free when it was a native `Menu.popup`.
+
+The primitive's own header enumerated "the four behaviours a hand-rolled
+dropdown always gets half-right". They were all correctly implemented. The hole
+was the fifth, and it survived review *because the list said there were four* —
+a scope statement read as a completeness statement. `menu.tsx` also had no test
+file while `menu-item.tsx` did: the box was unowned and unasserted.
+
+Opening focuses the item **in force** (`aria-current`), not the first one — where
+a native menu opens, and opening on "Off" when the batch is set to 2 invites
+changing a setting the user came only to read. Tab now closes rather than
+walking, and deliberately does not `preventDefault`: closing without letting Tab
+move strands the caret on the trigger, which reads as a dead Tab key.
+
+**Two things about how this was verified, both of which nearly produced a false
+result.**
+
+A synthetic `KeyboardEvent` dispatched at the wrong node reports exactly what a
+missing handler reports. The first probe dispatched Escape from the trigger —
+outside the menu subtree — and concluded Escape was broken. It was not; the
+listener is on `document` and the dispatch simply never reached it. Anything
+about this component asserted by hand-dispatching events needs the node it
+dispatches from stated, or the result means nothing.
+
+And the browser tool's `key` action silently accepts a name it does not map:
+`"Down"` delivers a keydown with `key: ""`, `keyCode: 0`. It reports "pressed
+Down" and the page receives an empty event, which is indistinguishable from a
+handler that ignored the key. `"ArrowDown"` is the name that works. The original
+finding survived only because it rested on reading the source, where there was
+no key handler to miss.
+
+The test file that came with the fix had the same class of bug and it is worth
+recording, because it passed: `expect(document.activeElement?.textContent)
+.toContain("4 at once")` is vacuous. When nothing has focus `activeElement` is
+`document.body`, whose `textContent` contains every label in the tree — so the
+ArrowDown and Home/End cases both went green against a component with no key
+handler whatsoever. They would have shipped as coverage over the exact hole they
+were written for. Focus is asserted by element identity now, with an explicit
+`not.toBe(document.body)`.
+
+### 2026-08-10 — Visual's run header was painting its outcome under the Re-run button
+
+Found by driving the browser preview at 1440×900 — an ordinary window, not a
+narrow one, which is why `minWindowWidth` never protected it.
+
+Visual's header is one flex row: a `min-w-0 flex-1` title column, then Re-run,
+Masks & baselines, the threshold slider and the pager, every one of them
+`shrink-0`. Those four take roughly 1000px of an 1140px pane, so the title
+column is squeezed to 141px while its own content needs 168. Inside it the test
+name truncated away to nothing and the two `shrink-0` badges spilled past the
+column's right edge — `elementFromPoint` at the end of the word returned the
+Re-run BUTTON. "1 visual change" read as "1 visual chang", and the missing word
+was underneath a control.
+
+This is the `.gl-status-chip` failure from 2026-08-09 in a second place: a
+status chip that silently drops its last word while looking entirely healthy.
+The `flex-shrink: 0` fix landed on the theme primitive, and these are ad-hoc
+`Badge` elements on the one screen B8 has not reskinned, so it never reached
+them.
+
+**Wrapping is the fix — a floor and `overflow: hidden` are both wrong here.**
+
+- A floor wide enough for both badges is about 240px. At this app's own minimum
+  window size the header has roughly 22px to give, so the floor would push the
+  pager out of the viewport: the exact bug `check:narrow-layout` §1 exists to
+  prevent, reintroduced *above* the floor where the window size protects
+  nothing. §2 already warns about this shape.
+- `overflow: hidden` stops the overlap and still eats the word. The name is the
+  cell that may give; the result never is.
+
+Wrap costs height only in the squeezed case and never hides anything. Measured
+after: at 1440 the row stacks and every word is readable, at 1728 it is a single
+20px line with the name untruncated.
+
+Pinned as §3 of `check:narrow-layout`, source-level for that file's usual
+reason — jsdom has no layout engine, so nothing rendered in a test can observe a
+badge painted under a button. The assertion is anchored on the div wrapping
+`{replay.testName}` rather than on a class substring: the first version keyed
+off `flex items-center` and stopped matching the moment the fix reordered the
+class list, which is a guard that goes green by no longer looking at anything.
+
+The real remedy is B8 finishing this toolbar — four `shrink-0` controls leaving
+141px for the run's identity is the underlying problem, and wrapping is a safety
+net under it, not a layout.
+
 
 ### 2026-08-10 — Visual gets the bezel it was designed for, and a fixture that makes the screen exist
 

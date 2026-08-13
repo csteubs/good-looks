@@ -31,8 +31,8 @@ jobs:
   # /var -> /private/var realpath handling) is written to be correct on a
   # platform where that aliasing does not exist.
   #
-  # The macOS-specific paths are still covered: `package` below runs
-  # `npm run build` on macOS before packaging.
+  # Every job here runs on Linux, including `package` — see the note there for
+  # what that does and does not still prove.
   gate:
     name: Lint, type-check, test, build
     runs-on: ubuntu-latest
@@ -158,13 +158,19 @@ jobs:
       - id: deploy
         uses: actions/deploy-pages@v4
 
-  # macOS because the app is a macOS app: electron-builder targets it, and the
-  # end-to-end suite launches a real Electron process with real windows. This
-  # job is also where `npm run build` gets exercised on macOS, which is why the
-  # ubuntu job above is a safe place to run everything else.
+  # Ubuntu, like everything else here: macOS minutes bill at roughly ten times
+  # the Linux rate, and both halves of this job survive the move. The e2e suite
+  # launches a real Electron process with real windows — Linux gives it real
+  # windows too, under Xvfb — and electron-builder produces a `dir` bundle for
+  # whichever platform it is asked for, which is what `verify:package` reads.
+  #
+  # What this no longer proves: that the app packages AS A MAC APP, and that
+  # `npm run build` works on macOS. Both are covered locally by `npm run
+  # package`, and neither has ever been the thing this pipeline caught. The
+  # shape of the checks is identical; only the target platform changed.
   package:
     name: End-to-end and package
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     needs: gate
     steps:
       - uses: actions/checkout@v4
@@ -189,8 +195,18 @@ jobs:
 
       # The only tests that boot the app: custom scheme, preload bridge, real
       # windows. jsdom cannot reach any of it, so a break here is invisible to
-      # the ubuntu job however green it is.
-      - run: npx playwright test --config e2e/playwright.config.ts
+      # the gate job however green it is.
+      #
+      # `xvfb-run` because a hosted Linux runner has no display and Electron
+      # exits immediately without one — the symptom is a launch timeout that
+      # reads like a hung app. ELECTRON_DISABLE_SANDBOX because the runner's
+      # kernel restricts unprivileged user namespaces, which the Chromium
+      # sandbox needs; the alternative is chowning chrome-sandbox root:root
+      # inside node_modules on every run.
+      - name: End-to-end suite
+        env:
+          ELECTRON_DISABLE_SANDBOX: 1
+        run: xvfb-run -a npx playwright test --config e2e/playwright.config.ts
 
       # Traces and screenshots for the failures, which is the whole reason
       # `trace: retain-on-failure` is set. Without this the report dies with
@@ -204,7 +220,12 @@ jobs:
             test-results/
           retention-days: 7
 
-      - run: npx electron-builder --mac --dir
+      # `--linux` rather than the `--mac` of `npm run package`: a macOS target
+      # cannot be built on Linux at all (electron-builder needs the platform's
+      # own codesigning and bundle tooling). `dir` on both, so what comes out
+      # is the same unpacked tree with the same node_modules inside it — which
+      # is the only part `verify:package` below looks at.
+      - run: npx electron-builder --linux dir
 
       # electron-builder reports a dependency tree it could not walk and then
       # exits 0, so its own exit code is not evidence that the bundle is whole.
@@ -216,13 +237,13 @@ jobs:
       # good builds would show up as a red gate rather than as a local mystery.
       - run: npm run verify:package
 
-      # `ditto` rather than handing the .app to upload-artifact directly: the
-      # bundle's Frameworks directory is a nest of symlinks, and the action
-      # dereferences them — which both breaks the bundle and multiplies its
-      # size. A ditto archive is also what macOS itself expects, so the
-      # download unzips into something Gatekeeper will treat normally.
+      # A tarball rather than handing the tree to upload-artifact directly: the
+      # bundle is full of symlinks and the action dereferences them, which both
+      # breaks it and multiplies its size. (On macOS this step was `ditto`, for
+      # the same reason plus Gatekeeper.) `-h` is deliberately NOT passed —
+      # preserving the links is the whole point.
       - name: Archive the bundle
-        run: ditto -c -k --keepParent "dist/mac-arm64/Good Looks!.app" good-looks-mac-arm64.zip
+        run: tar -czf good-looks-linux-x64.tar.gz -C dist linux-unpacked
 
       # Same slash problem as the preview job — see the comment there.
       - name: Slug for this ref
@@ -231,8 +252,8 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: good-looks-${{ steps.slug.outputs.value }}-mac-arm64
-          path: good-looks-mac-arm64.zip
+          name: good-looks-${{ steps.slug.outputs.value }}-linux-x64
+          path: good-looks-linux-x64.tar.gz
           # A preview build is interesting while its pull request is open and
           # noise afterwards.
           retention-days: 7
