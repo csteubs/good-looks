@@ -16,6 +16,63 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-13 — The schedule picker, and the sentence it exists to make room for (Phase D, capability 2)
+
+`renderer/main/schedule-picker.tsx` and `renderer/main/missed-runs-dialog.tsx`.
+Capability 2 is now complete: a schedule can be set, the timer fires it, and a
+missed one is offered on the next launch.
+
+**A chip that opens a dialog, not controls in the toolbar.** §7.1 asks for a
+"schedule chip" beside the name, and the dialog is what gives `SCHEDULE_CAVEAT`
+room. ROUTINES.md requires that sentence to be STATED — this only runs while
+the app is open — and a sentence that long cannot live in a toolbar. A tooltip
+would not count: "stated" is not satisfied by something you have to hover to
+find, when the thing it qualifies is a promise about unattended work.
+
+**The chip is neutral chrome, not phosphor.** §7.1 says so and the palette rule
+behind it is the app's oldest: colour means OUTCOME. A schedule has not passed
+or failed anything, and a green "Every day at 09:00" beside a red run history
+would be the loudest wrong signal on the screen.
+
+**Every value comes from a control that cannot produce a bad one** — the kind
+from a menu, the step from `HOUR_STEPS`, the time from a native
+`<input type="time">`. That is the same argument that made the schedule an
+enumeration rather than a cron string, carried into the UI: there is no free
+text here and there must never be. The one hole a time input still has is an
+empty value, which would put `NaN` in the schedule and be silently dropped by
+the store — so a time that does not parse is ignored rather than committed, and
+a test pins it.
+
+**Nothing commits until Save.** Committing per keystroke would re-date the
+Routine on every nudge of the clock, and a schedule saved half-typed fires at a
+time nobody chose. Cancel abandons the draft.
+
+**"Not scheduled" is a first-class option**, because it is the only way out. A
+Routine scheduled once would otherwise be scheduled forever, and the way people
+would find that out is by deleting the job to make it stop.
+
+**The launch prompt offers ONE Routine at a time, oldest first.** The batch
+runner runs one batch at a time, so offering four together would be offering
+three that get refused; answering one brings up the next. **Both answers
+settle the occurrence** — running it stamps it, and so does declining, and so
+does dismissing with Escape or the overlay. Any of those leaving the stamp
+alone means this dialog returns on every launch forever, which is how a helpful
+prompt becomes one people click through without reading.
+
+It lives outside `RootShell`, like `LoadFailedDialog`, so it can appear
+whatever screen the user landed on — including while a recording session has
+swapped the outlet out entirely.
+
+The preview's fixtures now carry a schedule on one Routine and an OVERDUE one
+on the other, which is what makes both halves drivable in a browser tab; the
+bridge computes "missed" with the same `missedRoutines` the backend uses rather
+than hard-coding a list, so a preview cannot disagree with the app about what
+is due.
+
+16 tests across the two components, mutation-checked against six mutations
+(drop the caveat, drop the headless note, commit per keystroke, store the
+unparseable time, make declining not settle, offer them all at once).
+
 ### 2026-08-13 — The scheduler: two halves that must not overlap (Phase D, capability 2)
 
 `main/services/routine-scheduler.ts` makes schedules fire. ROUTINES.md picks the

@@ -18,6 +18,7 @@ import { RUN_BROWSERS, RUN_BROWSER_LABELS } from "../lib/recorder-types";
 import { ALL_TAGS, UNTAGGED, filterByTag, tagCounts } from "../lib/test-tags";
 import { LogInspector } from "./log-inspector";
 import { useRecorder } from "./recorder-store";
+import { SchedulePicker } from "./schedule-picker";
 import { TagCluster } from "./tag-cluster";
 import { applyOrder, isCustomOrder, moveToTarget, orderIdsOf } from "../lib/batch-order";
 import {
@@ -687,6 +688,14 @@ export function BatchView() {
               if (e.key === "Escape") setNameDraft(openRoutine.name);
             }}
             className="gl-routine-name"
+          />
+        ) : null}
+
+        {openRoutine ? (
+          <SchedulePicker
+            schedule={openRoutine.schedule}
+            disabled={running}
+            onChange={(schedule) => saveRoutine({ schedule })}
           />
         ) : null}
 

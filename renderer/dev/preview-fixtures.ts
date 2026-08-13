@@ -669,6 +669,7 @@ export const ROUTINES: Routine[] = [
         onFailure: "continue",
       },
     ],
+    schedule: { kind: "everyHours", hours: 4 },
     defaults: { captureArtifacts: false, concurrency: 2 },
   },
   {
@@ -676,6 +677,11 @@ export const ROUTINES: Routine[] = [
     name: "Nightly regression",
     createdAt: NOW - 10 * DAY,
     updatedAt: NOW - 10 * DAY,
+    // SCHEDULED AND OVERDUE on purpose: this is what makes the launch prompt
+    // reachable in a browser tab. Its last scheduled fire was two days ago, so
+    // `routines:missed` claims it and `MissedRunsDialog` opens on load.
+    schedule: { kind: "dailyAt", minute: 3 * 60 },
+    lastScheduledRunAt: NOW - 2 * DAY,
     steps: [
       {
         kind: "test",
