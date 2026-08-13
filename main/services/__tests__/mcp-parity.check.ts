@@ -613,6 +613,50 @@ function codeOnly(source: string): string {
     /results\[i\]\.runRecordId = r\.runId;/.test(routineSrc),
     "mcp: a result records runRecordId, the field the app reads, not runId",
   );
+
+  // A step marked "stop on fail" has to mean the same thing here as in the
+  // app, or a saved job behaves differently depending on who started it —
+  // which is the failure `shared/routine-plan.mjs` exists to prevent, one
+  // layer down.
+  assert(
+    /entry\.onFailure === "stopRoutine"/.test(routineSrc),
+    "mcp: run_routine honours a step's stopRoutine policy",
+  );
+  // Read from the QUEUE ENTRY, not re-derived from the routine's steps here.
+  // buildQueue copies the policy onto every entry a step fans out to, so one
+  // red engine of a three-engine step triggers it — re-deriving would need a
+  // second answer to "which step was that".
+  assert(
+    !/routine\.steps/.test(routineSrc),
+    "mcp: the policy comes off the queue entry, not a second read of routine.steps",
+  );
+  // FIRST failure owns the stop. With entries in flight concurrently a second
+  // one arriving would rewrite whose failure stopped the job, and every note
+  // would then name a test that stopped nothing.
+  assert(
+    /stoppedByTest === null/.test(routineSrc),
+    "mcp: the first failure owns the stop; a later one does not rewrite it",
+  );
+  // The record has to SAY it stopped. Persisting `stopped: false` for a run
+  // that ended early is the app reading a truncated batch as a complete one.
+  assert(
+    /stopped: stoppedByTest !== null/.test(routineSrc),
+    "mcp: a routine stopped by a policy is persisted as stopped",
+  );
+  // `skipGroup` too, and read off the queue entry's own `groupId` — the app's
+  // runner and this one must agree about which entries are "the rest of this
+  // group", or a saved job takes out different steps depending on who ran it.
+  assert(
+    /entry\.onFailure === "skipGroup"/.test(routineSrc) && /entry\.groupId/.test(routineSrc),
+    "mcp: run_routine honours skipGroup, scoped by the entry's own groupId",
+  );
+  // The ungrouped degradation. Without the `entry.groupId` guard a `skipGroup`
+  // step at the top level would key the map on undefined and take out every
+  // other ungrouped entry — which is a stop, wearing the wrong name.
+  assert(
+    /entry\.onFailure === "skipGroup" &&\s*entry\.groupId/.test(routineSrc),
+    "mcp: an ungrouped skipGroup step continues rather than skipping everything",
+  );
 }
 
 {

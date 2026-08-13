@@ -688,6 +688,97 @@
   outline-offset: -1px;
 }
 
+/* The failure policy, in the same furniture as the headless toggle — it is the
+   same kind of thing (a per-step setting, two states, a word not an icon) and
+   giving it a second shape would suggest a second kind. Wider because "Stop on
+   fail" is wider than "Headless", and `flex: 0 0` because the NAME cell is the
+   only one on this row allowed to give; see `.gl-batch-name`, which reached
+   width zero the last time something here was allowed to grow. */
+.gl-batch-policy {
+  flex: 0 0 80px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--gl-line);
+  background: transparent;
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  cursor: pointer;
+}
+
+.gl-batch-policy:disabled {
+  cursor: default;
+}
+
+.gl-batch-policy:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+/* A group header, drawn above its first member. Not a row in the checklist —
+   the list stays flat and the nesting is redrawn from membership — so this sits
+   between rows rather than among them, and says so by having none of a row's
+   furniture. */
+.gl-batch-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 2px 16px;
+  border-bottom: 1px solid var(--gl-line-2);
+}
+
+.gl-batch-group-name {
+  flex: 0 1 auto;
+  min-width: 60px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dashed var(--gl-line);
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-2);
+}
+
+.gl-batch-group-name:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: 2px;
+}
+
+.gl-batch-group-count {
+  font-family: var(--gl-mono);
+  font-size: 8.5px;
+  color: var(--gl-tx-3);
+}
+
+/* Holds the group column open on a row that is not in the job — same reason as
+   `.gl-batch-policy-gap`: a missing cell slides every later column. */
+.gl-batch-group-gap,
+.gl-batch-groupmark {
+  flex: 0 0 24px;
+}
+
+/* A member of a group, indented under its header. The indent is what makes the
+   header read as a container — without it the header sits above rows that look
+   exactly like every other row, which is a label pointing at nothing. Applied
+   to the row's own padding rather than a wrapper so the drop-target and
+   running rules keep hitting the same element. */
+.gl-batch-row[data-grouped] {
+  padding-left: 16px;
+}
+
+/* Holds the policy column open on a row that has no policy. Same basis as the
+   control, so the cells after it line up whether or not a row is in the job. */
+.gl-batch-policy-gap {
+  flex: 0 0 80px;
+}
+
 .gl-batch-time {
   flex: 0 0 46px;
   text-align: end;

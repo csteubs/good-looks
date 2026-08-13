@@ -70,10 +70,16 @@ function makeFake(opts: {
   alreadyRunning?: string[];
   /** dataset rows each test declares, for sweep expansion */
   datasets?: Record<string, Dataset[]>;
+  /** testIds whose run the runner refuses to begin at all, by throwing. The
+   *  REAL runner does this for a missing or unreplayable test, and the batch
+   *  records it as a failure against that entry — a distinct path from a test
+   *  that runs and goes red, and one a failure policy has to reach too. */
+  throwOnStart?: string[];
 }) {
   const names = opts.names ?? {};
   const notInFlight = new Set(opts.notInFlight ?? []);
   const busy = new Set(opts.alreadyRunning ?? []);
+  const throwOnStart = new Set(opts.throwOnStart ?? []);
   const pending = new Map<string, (code: number) => void>();
   const events: { channel: string; payload: unknown }[] = [];
   /** every testId startRun was called with, in order */
@@ -123,6 +129,7 @@ function makeFake(opts: {
     getDatasets: (id) => datasets[id] ?? [],
     startRun: ({ testId, datasetId, vars, browser, runHeadless, headed }) => {
       startedWithDataset.push({ testId, datasetId, vars, browser, runHeadless, headed });
+      if (throwOnStart.has(testId)) throw new Error(`cannot start ${testId}`);
       if (busy.has(testId)) {
         // No new run started — and, like the real runner, a stale promise for
         // the OTHER run is still resolvable via waitFor.
@@ -351,6 +358,387 @@ async function main(): Promise<void> {
     assert(
       done?.results.find((r) => r.testId === "c")?.status === "skipped",
       "tests after the stop are skipped",
+    );
+  }
+
+  // ── onFailure: "stopRoutine" ends the job, and says who ────────────
+  //
+  // docs/ROUTINES.md: "continue" is the default so migrating the old Batch
+  // changes nothing, and "stopRoutine" is what makes a setup step mean
+  // anything — seed the data, and if that fails, do not go on to test against
+  // data that is not there. What it DOES is deliberately the same thing stop()
+  // does: anything gentler would be a second meaning of "stop", and with lanes
+  // running concurrently there is no "rest of the queue" to merely not start.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b", "c"],
+      perTest: [
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "stopRoutine" },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue" },
+        { testId: "c", browsers: ["chromium"], headless: true, onFailure: "continue" },
+      ],
+    });
+    await tick();
+    fake.finish("a", 1);
+    await tick();
+    await tick();
+
+    assert(!fake.started.includes("b"), "a stopRoutine failure prevents later tests from starting");
+    const done = fake.doneEvent();
+    // ASSERTED SEPARATELY, because everything below reads through it. Without
+    // this, a policy that never fires leaves "b" running forever, no batch:done
+    // is emitted, and every assertion in the block reports as a distinct
+    // failure — five wrong diagnoses for one bug.
+    assert(done !== undefined, "the batch finished at all");
+    assert(done?.stopped === true, "a routine stopped by a failure is marked stopped");
+    assert(
+      done?.stoppedBy === "failure",
+      "…and says a FAILURE stopped it, not a person — the notification is often all the user sees",
+    );
+    assert(
+      done?.stoppedByTest === "Test a",
+      "…naming the test, so the note is actionable rather than just early",
+    );
+    assert(
+      done?.results.find((r) => r.testId === "a")?.status === "failed",
+      "the step that stopped the routine keeps its own failure",
+    );
+    assert(
+      done?.results.find((r) => r.testId === "c")?.note === 'Stopped — "Test a" failed',
+      "the entries that never ran say WHO stopped them, not \"Batch stopped\"",
+    );
+  }
+
+  // A failing step whose policy is `continue` must change nothing. This is the
+  // default, so getting it wrong turns every existing checklist into one that
+  // aborts on its first red test.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b"],
+      perTest: [
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "continue" },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue" },
+      ],
+    });
+    await tick();
+    fake.finish("a", 1);
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+
+    const done = fake.doneEvent();
+    assert(done?.stopped === false, "a `continue` failure does not stop the batch");
+    assert(done?.stoppedBy === undefined, "…and records no cause, because there was none");
+    assert(
+      done?.results.find((r) => r.testId === "b")?.status === "passed",
+      "…and the rest of the batch still runs",
+    );
+  }
+
+  // A batch with no policies at all — every caller that predates Routines, and
+  // the MCP's run_batch. Nothing may change for them.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"] });
+    await tick();
+    fake.finish("a", 1);
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+    const done = fake.doneEvent();
+    assert(
+      done?.stopped === false && done?.results.every((r) => r.status !== "skipped"),
+      "a batch with no per-test policies is unaffected by any of this",
+    );
+  }
+
+  // A step that could not START is a step that did not do its job, so the
+  // policy has to hold there too. This is a DIFFERENT branch from a test that
+  // runs and goes red — the runner throws out of startRun and records the
+  // failure without ever awaiting a run — and the first version of this check
+  // did not reach it: the assertion below survived deleting the call, because
+  // the case it actually exercised was the multi-engine one that follows.
+  {
+    const fake = makeFake({ throwOnStart: ["a"] });
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b"],
+      perTest: [
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "stopRoutine" },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue" },
+      ],
+    });
+    await tick();
+    await tick();
+    const done = fake.doneEvent();
+    assert(done !== undefined, "the batch finished at all (failure-to-start)");
+    assert(
+      done?.results.find((r) => r.testId === "a")?.status === "failed",
+      "a test that cannot start is recorded as a failure (the branch this covers)",
+    );
+    assert(
+      done?.stoppedBy === "failure" && done?.stoppedByTest === "Test a",
+      "…and its policy stops the routine, exactly as a red assertion would",
+    );
+    assert(!fake.started.includes("b"), "…so nothing after it starts");
+  }
+
+  // One engine of a multi-engine step failing is enough: the policy belongs to
+  // the STEP, and its engines are several chances for it to come true.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b"],
+      perTest: [
+        { testId: "a", browsers: ["chromium", "firefox"], headless: true, onFailure: "stopRoutine" },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue" },
+      ],
+    });
+    await tick();
+    // The step's FIRST engine fails, and its second never runs.
+    fake.finish("a", 1);
+    await tick();
+    await tick();
+    const done = fake.doneEvent();
+    assert(done !== undefined, "the batch finished at all (multi-engine step)");
+    assert(
+      done?.stoppedBy === "failure",
+      "one engine of a multi-engine step failing is enough to trigger its policy",
+    );
+    assert(!fake.started.includes("b"), "…and the following step does not start");
+  }
+
+  // Two lanes failing in the same tick: the FIRST one owns the stop. Otherwise
+  // the note, the alert and the notification all name a test that stopped
+  // nothing — which is worse than not naming one, because it sends someone to
+  // read the wrong log.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b", "c"],
+      concurrency: 2,
+      perTest: [
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "stopRoutine" },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "stopRoutine" },
+        { testId: "c", browsers: ["chromium"], headless: true, onFailure: "continue" },
+      ],
+    });
+    await tick();
+    fake.finish("a", 1);
+    await tick();
+    await tick();
+    const done = fake.doneEvent();
+    assert(done !== undefined, "the batch finished at all (two lanes failing)");
+    assert(
+      done?.stoppedByTest === "Test a",
+      "the first failure owns the stop; a later one does not rewrite it",
+    );
+  }
+
+  // The user pressing Stop keeps its own attribution — `stoppedBy` must not be
+  // absent (which would be indistinguishable from a pre-Routines record) nor
+  // "failure".
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({ testIds: ["a", "b"] });
+    await tick();
+    batch.stop();
+    await tick();
+    await tick();
+    const done = fake.doneEvent();
+    assert(done?.stoppedBy === "user", "a batch the user stopped says the USER stopped it");
+    assert(
+      done?.results.find((r) => r.testId === "b")?.note === "Batch stopped",
+      "…and its skipped entries keep the wording that has always been right for it",
+    );
+  }
+
+  // ── onFailure: "skipGroup" ─────────────────────────────────────────
+  //
+  // Narrower than a stop, and that is the point of having both: seed-then-test
+  // is a group, and the seed failing should take the tests that depend on it
+  // and nothing else.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["seed", "a", "b", "after"],
+      perTest: [
+        { testId: "seed", browsers: ["chromium"], headless: true, onFailure: "skipGroup", groupId: "g1" },
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "continue", groupId: "g1" },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue", groupId: "g1" },
+        { testId: "after", browsers: ["chromium"], headless: true, onFailure: "continue" },
+      ],
+    });
+    await tick();
+    fake.finish("seed", 1);
+    await tick();
+    await tick();
+    // The ungrouped step still runs — that is the whole difference from a stop.
+    assert(fake.started.includes("after"), "a skipGroup failure does not stop the rest of the job");
+    fake.finish("after", 0);
+    await tick();
+
+    const done = fake.doneEvent();
+    assert(done !== undefined, "the batch finished at all (skipGroup)");
+    assert(done?.stopped === false, "a skipGroup failure does not mark the batch stopped");
+    assert(
+      done?.results.find((r) => r.testId === "a")?.status === "skipped" &&
+        done?.results.find((r) => r.testId === "b")?.status === "skipped",
+      "the rest of the group is skipped",
+    );
+    assert(
+      done?.results.find((r) => r.testId === "a")?.note ===
+        'Skipped — "Test seed" failed in this group',
+      "…and says which step in the group took them out",
+    );
+    assert(
+      done?.results.find((r) => r.testId === "after")?.status === "passed",
+      "a step outside the group is untouched",
+    );
+  }
+
+  // A `skipGroup` step that is NOT in a group has no rest-of-group to skip, so
+  // it continues. The degradation lives here rather than in `failurePolicy`
+  // because a step's policy is a property of the step and whether it sits in a
+  // group is not.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b"],
+      perTest: [
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "skipGroup" },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue" },
+      ],
+    });
+    await tick();
+    fake.finish("a", 1);
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+    const done = fake.doneEvent();
+    assert(
+      done?.results.find((r) => r.testId === "b")?.status === "passed",
+      "skipGroup on an ungrouped step degrades to continuing",
+    );
+  }
+
+  // A member that already FINISHED keeps its result. This is what `!== "pending"`
+  // is really protecting: skipping is about work not yet done, and overwriting
+  // a green result with "skipped" would lose a run that actually happened —
+  // silently, since the row still reads as a normal skip.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["first", "seed", "later"],
+      perTest: [
+        { testId: "first", browsers: ["chromium"], headless: true, onFailure: "continue", groupId: "g1" },
+        { testId: "seed", browsers: ["chromium"], headless: true, onFailure: "skipGroup", groupId: "g1" },
+        { testId: "later", browsers: ["chromium"], headless: true, onFailure: "continue", groupId: "g1" },
+      ],
+    });
+    await tick();
+    fake.finish("first", 0);
+    await tick();
+    fake.finish("seed", 1);
+    await tick();
+    await tick();
+    const done = fake.doneEvent();
+    assert(done !== undefined, "the batch finished at all (finished-member group)");
+    assert(
+      done?.results.find((r) => r.testId === "first")?.status === "passed",
+      "a group member that already passed keeps its result when a later one skips the group",
+    );
+    assert(
+      done?.results.find((r) => r.testId === "later")?.status === "skipped",
+      "…and the one that had not run is skipped",
+    );
+  }
+
+  // Only PENDING entries are skipped. One already running belongs to a lane
+  // that started before the failure, and killing it would make `skipGroup` the
+  // same thing as `stopRoutine` for anyone running more than one lane.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["seed", "a", "b"],
+      concurrency: 2,
+      perTest: [
+        { testId: "seed", browsers: ["chromium"], headless: true, onFailure: "skipGroup", groupId: "g1" },
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "continue", groupId: "g1" },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue", groupId: "g1" },
+      ],
+    });
+    await tick();
+    // "seed" and "a" are both in flight; "b" has not started.
+    assert(fake.isPending("a"), "the second lane really is in flight before the failure");
+    fake.finish("seed", 1);
+    await tick();
+    assert(
+      fake.isPending("a"),
+      "a group member already RUNNING is not killed — that would make skipGroup a stop",
+    );
+    fake.finish("a", 0);
+    await tick();
+    await tick();
+    const done = fake.doneEvent();
+    assert(
+      done?.results.find((r) => r.testId === "a")?.status === "passed",
+      "…and it keeps its own result",
+    );
+    assert(
+      done?.results.find((r) => r.testId === "b")?.status === "skipped",
+      "…while the one that had not started is skipped",
+    );
+  }
+
+  // The notification and the alert are where "who stopped it" actually pays
+  // off: a scheduled routine's notification is often the ONLY thing seen of it,
+  // and "Batch stopped" for a run nobody touched reads as somebody having
+  // intervened.
+  {
+    const byUser = buildBatchNotice({
+      total: 3,
+      passed: 1,
+      failed: 0,
+      skipped: 2,
+      stopped: true,
+    });
+    assert(byUser.title === "Batch stopped", "a user-stopped batch keeps its own wording");
+
+    const byPolicy = buildBatchNotice({
+      total: 3,
+      passed: 1,
+      failed: 1,
+      skipped: 1,
+      stopped: true,
+      stoppedBy: "failure",
+      stoppedByTest: "Seed data",
+    });
+    assert(
+      byPolicy.title !== "Batch stopped",
+      "a policy-stopped routine does not claim the user stopped it",
+    );
+    assert(
+      byPolicy.body.includes("Seed data"),
+      "…and names the step that stopped it, so the notification is actionable",
+    );
+    // The counts still have to be there — naming the cause must not cost the
+    // information the notification existed for.
+    assert(
+      byPolicy.body.includes("1 passed") && byPolicy.body.includes("1 not run"),
+      "…without losing the counts",
     );
   }
 

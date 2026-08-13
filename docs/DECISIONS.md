@@ -16,6 +16,154 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-13 — Capability 3 starts with `group`, not `wait`
+
+`main/recorder/types.ts`, `main/services/routine-store.ts`,
+`shared/routine-plan.mjs`, `main/services/batch-runner.ts`,
+`renderer/lib/routine-rows.ts`, `renderer/main/batch-view.tsx`,
+`mcp/server.mjs`.
+
+**Why `group` is the first step kind and not the obvious one.** `wait` looks
+like the smallest addition and is the largest: it is a step that is not a run,
+so executing it means the batch runner walking a heterogeneous program with
+barriers rather than a queue of test entries. `notify` and `branch` are the same
+shape. That is precisely the "second execution engine" ROUTINES.md names as this
+feature's main design risk, and it deserves its own slice rather than arriving
+as a side effect of the first one. `group` needs none of it: it is pure
+structure over test steps, the plan flattens it, entries carry the group they
+came from, and the only run-time meaning is `skipGroup` — the third failure
+policy, which had nowhere to point until there were groups and was degrading to
+`continue` with a comment saying so.
+
+**Two v1 constraints, both refusals rather than omissions.** A group holds test
+steps and never another group; the store drops a nested one rather than
+flattening it. And `group` ships WITHOUT the `parallel` flag the spec's sketch
+gives it, because the runner's concurrency is a single global lane limit —
+"these four together, then the checkout suite one at a time" cannot be said by a
+number. Shipping the flag anyway would draw two parallel branches and run them
+sequentially, which is the *lying in a diagram* the spec rules out. It lands
+with the barriers or not at all.
+
+**`skipGroup` skips PENDING entries only.** One already running belongs to a
+lane that started before the failure, and killing it would make `skipGroup` the
+same thing as `stopRoutine` for anyone running more than one lane. The guard is
+written `!== "pending"` rather than `=== "skipped"` for a second reason that
+took a mutation to surface: it also protects members that already FINISHED, and
+overwriting a green result with "skipped" would lose a run that actually
+happened — silently, since the row still reads as an ordinary skip.
+
+**A `skipGroup` step that is not in a group continues**, and that degradation
+lives at the point of failure rather than in `failurePolicy`. A step's policy is
+a property of the step; whether it sits in a group is not.
+
+**The bug the first run of the new check found.** Marking entries skipped is not
+the same as preventing them, and the worker walked straight on to them —
+`runEntry` had no reason to look at a status it had always been the one to set.
+The row read "skipped" for a moment and then ran anyway: a group policy that
+does nothing and reports that it did.
+
+**One `seen` set for the whole Routine.** The lane invariant is global — the
+runner keys a live run by `testId` — so one test in a group and again outside it
+is the same collision as one test listed twice. The first version of the store
+check only tested that direction; the mutation that copies the set per group
+survived it, because the fixture had the top-level step first. The reverse
+(claimed inside a group, then again after it) is what the shared set actually
+protects.
+
+**The editor keeps a FLAT ordered list.** `order` stays a list of test ids and
+the nesting is redrawn from a membership map, at render time and again in
+`stepsFromRows`. That is what lets drag-to-reorder stay exactly what it was, and
+it means a member dragged away from its siblings moves WITHIN its group rather
+than tearing it in two — a group is emitted at the position of its first member
+and collects the rest. Creating a group and joining one are the same gesture,
+because the store drops an empty group and an "add group" button would make a
+header that vanished on the next read.
+
+**Three things only looking at it caught.** The per-row group cell started as a
+150px control showing the group's NAME, which pushed the status chip off the end
+of every row — the name is already on the header, so the control became a 24px
+mark whose accessible name does the talking, the same trade the drag grip makes.
+Grouped rows were not indented, so the header sat above rows that looked like
+every other row: a label pointing at nothing. And the rail read "1 test" for a
+Routine of two, because `steps.length` stopped being the test count the moment a
+group could hold many — that is now `testCount`, a named function rather than a
+`.length` at the call site.
+
+### 2026-08-13 — `onFailure` becomes real, and what "stop" is allowed to mean
+
+`shared/routine-plan.mjs`, `shared/batch-queue.mjs`,
+`main/services/batch-runner.ts`, `renderer/main/batch-view.tsx`,
+`mcp/server.mjs`. The policy has been stored since capability 1 and honoured by
+nothing; a step can now be set to `stopRoutine` and both runners act on it.
+
+**Stop means what Stop means.** A `stopRoutine` failure does exactly what the
+Stop button does: kill every run in flight, skip everything not started, keep
+what finished. The gentler reading — "let the current ones finish, just don't
+start more" — was tempting and is wrong twice over. It would be a second
+meaning of the word on one screen, and with lanes running concurrently there is
+no "rest of the queue" left to merely not start: the entries are already open,
+so the user would watch browsers finish work the job had already said not to do.
+
+**The first failure owns the stop.** Two lanes can fail in the same tick. If a
+later one could overwrite the attribution, the skip note, the alert and the
+desktop notification would all name a test that stopped nothing — which is
+worse than naming none, because it sends someone to read the wrong log. The
+same guard means a user pressing Stop a moment earlier keeps its own cause.
+
+**`stoppedBy` is a field, not a note to parse back out.** Three consumers act on
+it. The one that decides it is the desktop notification: a scheduled routine's
+notification is often the only thing seen of that run, and "Batch stopped" for
+a run nobody touched reads as somebody having intervened. `stoppedBy` is
+optional, so every record written before today means what it always meant.
+
+**A failure to START counts.** A step that could not begin did not do its job,
+so the policy holds there as strongly as for a red assertion. This is a
+separate branch in the runner — the throw out of `startRun`, recorded without
+ever awaiting a run — and the first version of the check that was supposed to
+cover it did not: deleting the call left it green, because the case it actually
+exercised was the multi-engine one beside it. The fake runner grew a
+`throwOnStart` option so the branch could be reached at all.
+
+**`skipGroup` degrades to `continue`, and that is the honest answer rather than
+a stub.** It means "skip the rest of this group"; groups are capability 3, so
+there is no rest, so skipping it is continuing. `failurePolicy` normalises it
+along with anything else it does not recognise — and that normalisation is not
+tidiness. This value now decides whether the REST of the job runs, and it
+arrives from a file on disk and from the IPC wire. An unrecognised string
+reaching the runner would be compared against `"stopRoutine"`, come back false,
+and carry on: right today, and only by accident.
+
+**The policy left `routine-rows`' "previous steps" trick behind.** That module
+read `onFailure` off the Routine's existing steps because the checklist had no
+control for it, under the rule that a field the editing surface cannot see is a
+field it must not overwrite. The surface can see it now, so it round-trips like
+every other choice through a third map — deliberately NOT a field on
+`BatchRowOptions`, because that map is the SCRATCH memory of an unticked row
+and a policy is a statement about the job. Unticking a row therefore drops its
+policy, where unticking keeps its engines.
+
+**Two things only looking at it could have caught.** Writing the test for that
+drop found a real divergence: `persist` left the unticked row's policy in view
+state, so re-ticking before the Routine query came back showed "Stop on fail"
+for a step the stored job did not contain — and `sameSteps` then read the pair
+as unchanged and wrote nothing, so it stayed diverged instead of settling.
+`persist` now prunes the map to what the steps actually carry. And rendering
+the control only on ticked rows slid every cell after it — engines, headless,
+duration — left by the control's width, so the columns jumped down the list and
+the checklist stopped reading as a table. A spacer holds the column. jsdom has
+no layout engine and could not have reported either.
+
+**The MCP honours it with one difference, stated rather than papered over.**
+`run_routine` has no handle on a spawned Playwright CLI the way the app's runner
+does, so it stops anything FURTHER from starting rather than killing what is
+already running. Claiming the app's behaviour would have been the easy lie.
+
+**Amber for `stopRoutine`.** The palette rule is that colour means OUTCOME, and
+this is the second setting permitted to break it, on the same terms `Headed`
+already claims: it changes what happens to OTHER work, and scanning a routine
+for where it can abort is worth a hue. `continue` carries none.
+
+
 ### 2026-08-13 — The app grows a manual: one markdown file, two readers
 
 `docs/MCP-GUIDE.md`, `renderer/lib/doc-blocks.ts`, `renderer/settings/panes/documentation-pane.tsx`, `main/index.ts`, `check:docs-blocks`.

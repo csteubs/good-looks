@@ -7,15 +7,29 @@
 
 import { describe, it, expect } from "vitest";
 
-import type { Routine, RoutineStep } from "./recorder-types";
+import type { Routine, RoutineStep, RoutineTestStep } from "./recorder-types";
 import type { RowDefaults, RowOptionsMap, RowTest } from "./batch-run-plan";
 import {
   brokenSteps,
+  nextPolicy,
   rowsFromRoutine,
   sameSteps,
   stepsFromRows,
+  testCount,
   untickedRow,
 } from "./routine-rows";
+
+/** `stepsFromRows` for a call that passes no groups: every step it returns is
+ *  then a test step, and asserting that once here beats narrowing at each read.
+ *  A group appearing would be a real defect, so this throws where a `filter`
+ *  would quietly drop it. */
+function flatSteps(...args: Parameters<typeof stepsFromRows>): RoutineTestStep[] {
+  return stepsFromRows(...args).map((s) => {
+    if (s.kind !== "test") throw new Error(`expected a test step, got ${s.kind}`);
+    return s;
+  });
+}
+
 
 const DEFAULTS: RowDefaults = { defaultRunBrowser: "chromium", defaultRunHeadless: false };
 
@@ -23,7 +37,7 @@ function tests(...ids: string[]): RowTest[] {
   return ids.map((id) => ({ id }));
 }
 
-function step(over: Partial<RoutineStep> = {}): RoutineStep {
+function step(over: Partial<RoutineTestStep> = {}): RoutineTestStep {
   return {
     kind: "test",
     testId: "t-a",
@@ -167,32 +181,49 @@ describe("committing the checklist back to steps", () => {
       "t-b": { selected: false, browsers: ["chromium"], headless: false },
       "t-c": { selected: true, browsers: ["webkit"], headless: true },
     };
-    const steps = stepsFromRows(["t-c", "t-b", "t-a"], rowOptions, tests("t-a", "t-b", "t-c"), DEFAULTS);
+    const steps = flatSteps(["t-c", "t-b", "t-a"], rowOptions, tests("t-a", "t-b", "t-c"), DEFAULTS);
     expect(steps.map((s) => s.testId)).toEqual(["t-c", "t-a"]);
     expect(steps[0]).toMatchObject({ browsers: ["webkit"], headless: true });
   });
 
-  it("preserves a failure policy the checklist cannot show", () => {
-    // The checklist has no control for it, so rebuilding from rows alone would
-    // reset every step to `continue` the next time anyone ticked a box —
-    // turning "stop if seeding fails" into "carry on", silently.
-    const previous = [step({ testId: "t-a", onFailure: "stopRoutine" })];
+  it("carries the failure policy the row was given", () => {
     const rowOptions: RowOptionsMap = {
       "t-a": { selected: true, browsers: ["firefox"], headless: false },
     };
-    const steps = stepsFromRows(["t-a"], rowOptions, tests("t-a"), DEFAULTS, previous);
+    const steps = flatSteps(["t-a"], rowOptions, tests("t-a"), DEFAULTS, {
+      "t-a": "stopRoutine",
+    });
     expect(steps[0].onFailure).toBe("stopRoutine");
     // …and the rest of the step still comes from the row.
     expect(steps[0].browsers).toEqual(["firefox"]);
   });
 
-  it("defaults a newly ticked row to continue", () => {
+  it("defaults a row with no policy to continue", () => {
+    // The default is load-bearing, not incidental: ROUTINES.md requires it,
+    // because migrating the old Batch onto anything else would change what
+    // every existing checklist does the first time it ran.
     const rowOptions: RowOptionsMap = {
       "t-new": { selected: true, browsers: ["chromium"], headless: false },
     };
-    const steps = stepsFromRows(["t-new"], rowOptions, tests("t-new"), DEFAULTS, [
-      step({ testId: "t-a", onFailure: "stopRoutine" }),
-    ]);
+    const steps = flatSteps(["t-new"], rowOptions, tests("t-new"), DEFAULTS, {
+      "t-a": "stopRoutine",
+    });
+    expect(steps[0].onFailure).toBe("continue");
+  });
+
+  it("drops the policy of a row that was unticked", () => {
+    // Deliberate asymmetry with `rowOptions`, whose engines survive unticking
+    // as scratch. A policy is a statement about a job this test is no longer
+    // part of, and keeping it would mean re-ticking a row silently re-arming
+    // "stop the whole routine if this fails".
+    const rowOptions: RowOptionsMap = {
+      "t-a": { selected: false, browsers: ["chromium"], headless: false },
+      "t-b": { selected: true, browsers: ["chromium"], headless: false },
+    };
+    const steps = flatSteps(["t-a", "t-b"], rowOptions, tests("t-a", "t-b"), DEFAULTS, {
+      "t-a": "stopRoutine",
+    });
+    expect(steps.map((st) => st.testId)).toEqual(["t-b"]);
     expect(steps[0].onFailure).toBe("continue");
   });
 
@@ -200,7 +231,7 @@ describe("committing the checklist back to steps", () => {
     // `resolveRow` falls back to `defaultRow`, which is `selected: false`. This
     // is the same fact the migration turns on, asserted from the other side:
     // an id in the order with nothing stored for it is not in the job.
-    expect(stepsFromRows(["t-a"], {}, tests("t-a"), DEFAULTS)).toEqual([]);
+    expect(flatSteps(["t-a"], {}, tests("t-a"), DEFAULTS)).toEqual([]);
   });
 
   it("gives a ticked row with an engine the test's own record would not have", () => {
@@ -209,7 +240,7 @@ describe("committing the checklist back to steps", () => {
     const rowOptions: RowOptionsMap = {
       "t-a": { selected: true, browsers: ["webkit"], headless: false },
     };
-    const steps = stepsFromRows(["t-a"], rowOptions, [{ id: "t-a", runBrowser: "firefox" }], DEFAULTS);
+    const steps = flatSteps(["t-a"], rowOptions, [{ id: "t-a", runBrowser: "firefox" }], DEFAULTS);
     expect(steps[0].browsers).toEqual(["webkit"]);
   });
 
@@ -217,14 +248,171 @@ describe("committing the checklist back to steps", () => {
     const rowOptions: RowOptionsMap = {
       "t-gone": { selected: true, browsers: ["chromium"], headless: false },
     };
-    expect(stepsFromRows(["t-gone"], rowOptions, tests("t-a"), DEFAULTS)).toEqual([]);
+    expect(flatSteps(["t-gone"], rowOptions, tests("t-a"), DEFAULTS)).toEqual([]);
   });
 
   it("produces one step for an id listed twice", () => {
     const rowOptions: RowOptionsMap = {
       "t-a": { selected: true, browsers: ["chromium"], headless: false },
     };
-    expect(stepsFromRows(["t-a", "t-a"], rowOptions, tests("t-a"), DEFAULTS)).toHaveLength(1);
+    expect(flatSteps(["t-a", "t-a"], rowOptions, tests("t-a"), DEFAULTS)).toHaveLength(1);
+  });
+});
+
+describe("groups", () => {
+  function grouped(id: string, label: string, testIds: string[]) {
+    return {
+      kind: "group" as const,
+      id,
+      label,
+      steps: testIds.map((t) => step({ testId: t })),
+    };
+  }
+
+  it("opens a group into a flat order plus a membership map", () => {
+    // The checklist stays a FLAT ordered list — which is what lets
+    // drag-to-reorder stay exactly what it was — and the nesting is redrawn
+    // from `groupOf` at render time.
+    const rows = rowsFromRoutine(
+      routine([step({ testId: "t-a" }), grouped("g-1", "Seed", ["t-b", "t-c"])]),
+      tests("t-a", "t-b", "t-c"),
+      DEFAULTS,
+    );
+    expect(rows.order.slice(0, 3)).toEqual(["t-a", "t-b", "t-c"]);
+    expect(rows.groups).toEqual([{ id: "g-1", label: "Seed" }]);
+    expect(rows.groupOf).toEqual({ "t-b": "g-1", "t-c": "g-1" });
+  });
+
+  it("rebuilds the group at the position of its first member", () => {
+    const back = stepsFromRows(
+      ["t-a", "t-b", "t-c"],
+      {
+        "t-a": { selected: true, browsers: ["chromium"], headless: false },
+        "t-b": { selected: true, browsers: ["chromium"], headless: false },
+        "t-c": { selected: true, browsers: ["chromium"], headless: false },
+      },
+      tests("t-a", "t-b", "t-c"),
+      DEFAULTS,
+      {},
+      [{ id: "g-1", label: "Seed" }],
+      { "t-b": "g-1", "t-c": "g-1" },
+    );
+    expect(back.map((s) => s.kind)).toEqual(["test", "group"]);
+    const group = back[1];
+    if (group.kind !== "group") throw new Error("expected a group");
+    expect(group.steps.map((s) => s.testId)).toEqual(["t-b", "t-c"]);
+  });
+
+  it("collects members that are not adjacent, rather than tearing the group", () => {
+    // A member dragged away from its siblings moves WITHIN the group. The
+    // alternative — emitting two groups with one id — is a shape the store
+    // would collapse and the run would read as one, so the screen and the job
+    // would disagree.
+    const back = stepsFromRows(
+      ["t-b", "t-a", "t-c"],
+      {
+        "t-a": { selected: true, browsers: ["chromium"], headless: false },
+        "t-b": { selected: true, browsers: ["chromium"], headless: false },
+        "t-c": { selected: true, browsers: ["chromium"], headless: false },
+      },
+      tests("t-a", "t-b", "t-c"),
+      DEFAULTS,
+      {},
+      [{ id: "g-1", label: "Seed" }],
+      { "t-b": "g-1", "t-c": "g-1" },
+    );
+    expect(back.filter((s) => s.kind === "group")).toHaveLength(1);
+    const group = back[0];
+    if (group.kind !== "group") throw new Error("expected the group first");
+    expect(group.steps.map((s) => s.testId)).toEqual(["t-b", "t-c"]);
+  });
+
+  it("ignores a membership naming a group that does not exist", () => {
+    // A step silently sorted into a group nobody can see is a `skipGroup` that
+    // takes out rows for a reason not on screen.
+    const back = stepsFromRows(
+      ["t-a"],
+      { "t-a": { selected: true, browsers: ["chromium"], headless: false } },
+      tests("t-a"),
+      DEFAULTS,
+      {},
+      [],
+      { "t-a": "g-ghost" },
+    );
+    expect(back.map((s) => s.kind)).toEqual(["test"]);
+  });
+
+  it("round-trips a Routine with a group unchanged", () => {
+    const original = routine([
+      step({ testId: "t-a" }),
+      grouped("g-1", "Seed", ["t-b", "t-c"]),
+    ]);
+    const library = tests("t-a", "t-b", "t-c");
+    const rows = rowsFromRoutine(original, library, DEFAULTS);
+    const back = stepsFromRows(
+      rows.order,
+      rows.rowOptions,
+      library,
+      DEFAULTS,
+      rows.policies,
+      rows.groups,
+      rows.groupOf,
+    );
+    expect(back).toEqual(original.steps);
+    expect(sameSteps(back, original.steps)).toBe(true);
+  });
+
+  it("sameSteps notices a rename and a member moving between groups", () => {
+    const a = [grouped("g-1", "Seed", ["t-a"])];
+    expect(sameSteps(a, [grouped("g-1", "Setup", ["t-a"])])).toBe(false);
+    expect(sameSteps(a, [grouped("g-1", "Seed", ["t-b"])])).toBe(false);
+    expect(sameSteps(a, [grouped("g-1", "Seed", ["t-a"])])).toBe(true);
+    // A group and a bare test step are never the same step.
+    expect(sameSteps(a, [step({ testId: "t-a" })])).toBe(false);
+  });
+
+  it("finds a broken step nested inside a group", () => {
+    // More invisible than a broken step at the top level, not less: the group
+    // still renders and simply runs one test fewer than it lists.
+    const broken = brokenSteps(
+      routine([grouped("g-1", "Seed", ["t-a", "t-gone"])]),
+      tests("t-a"),
+    );
+    expect(broken.map((s) => s.testId)).toEqual(["t-gone"]);
+  });
+});
+
+describe("testCount", () => {
+  it("counts inside groups, because a group is one entry holding many", () => {
+    // `steps.length` said "1 test" for a Routine of two the first time a group
+    // was rendered in the rail. That is the bug this function exists for.
+    const r = routine([
+      step({ testId: "t-a" }),
+      { kind: "group", id: "g-1", label: "Seed", steps: [step({ testId: "t-b" }), step({ testId: "t-c" })] },
+    ]);
+    expect(testCount(r)).toBe(3);
+    expect(r.steps.length).toBe(2);
+  });
+
+  it("is 0 for nothing at all", () => {
+    expect(testCount(null)).toBe(0);
+    expect(testCount(routine([]))).toBe(0);
+  });
+});
+
+describe("nextPolicy", () => {
+  it("offers skipGroup only inside a group", () => {
+    // `skipGroup` outside a group has no rest-of-group to skip, so offering it
+    // would be offering a setting the run quietly ignores.
+    expect(nextPolicy("continue", false)).toBe("stopRoutine");
+    expect(nextPolicy("stopRoutine", false)).toBe("continue");
+    expect(nextPolicy("stopRoutine", true)).toBe("skipGroup");
+    expect(nextPolicy("skipGroup", true)).toBe("continue");
+  });
+
+  it("lands on stopRoutine from anything it does not recognise", () => {
+    expect(nextPolicy(undefined, false)).toBe("stopRoutine");
+    expect(nextPolicy("detonate" as never, true)).toBe("stopRoutine");
   });
 });
 
@@ -239,7 +427,7 @@ describe("round trip", () => {
     ]);
     const library = tests("t-a", "t-b", "t-c");
     const rows = rowsFromRoutine(original, library, DEFAULTS);
-    const back = stepsFromRows(rows.order, rows.rowOptions, library, DEFAULTS, original.steps);
+    const back = flatSteps(rows.order, rows.rowOptions, library, DEFAULTS, rows.policies);
     expect(back).toEqual(original.steps);
     expect(sameSteps(back, original.steps)).toBe(true);
   });

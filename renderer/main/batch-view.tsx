@@ -50,10 +50,13 @@ import {
 } from "../lib/batch-outcome";
 import {
   brokenSteps,
+  nextPolicy,
+  POLICY_LABELS,
   rowsFromRoutine,
   sameSteps,
   stepsFromRows,
 } from "../lib/routine-rows";
+import type { GroupOf, PolicyMap, RoutineGroup } from "../lib/routine-rows";
 import { createRoutine, randomSuffix } from "../lib/create-routine";
 import { batchBelongsToRoutine } from "../../shared/routine-migration.mjs";
 import type {
@@ -163,6 +166,18 @@ export function BatchView() {
   // to be added to the selection automatically and joined the next "Run all"
   // without being asked.
   const [rowOptions, setRowOptions] = React.useState<RowOptionsMap>({});
+  // What each step in the job does when it fails. Held apart from `rowOptions`
+  // for the reason `PolicyMap` gives: a row's engines survive being unticked as
+  // scratch, a policy is a statement about the job and does not.
+  const [policies, setPolicies] = React.useState<PolicyMap>({});
+  // The job's groups, and who is in them. docs/ROUTINES.md capability 3's first
+  // slice: a group is pure structure over test steps, and its only run-time
+  // meaning is `skipGroup`. Two maps rather than one nested list for the same
+  // reason `policies` is separate — the checklist stays a FLAT ordered list of
+  // rows, and the nesting is redrawn from `groupOf` at render time, so drag to
+  // reorder never has to learn about containers.
+  const [groups, setGroups] = React.useState<RoutineGroup[]>([]);
+  const [groupOf, setGroupOf] = React.useState<GroupOf>({});
   // A finished row's badge opens that run's console output — the row that made
   // you curious shouldn't need a detour through Stats to answer "why".
   const [logRun, setLogRun] = React.useState<{ id: string; title: string } | null>(null);
@@ -347,6 +362,9 @@ export function BatchView() {
     );
     setOrder(rows.order);
     setRowOptions(rows.rowOptions);
+    setPolicies(rows.policies);
+    setGroups(rows.groups);
+    setGroupOf(rows.groupOf);
     setSeedKey(key);
   }, [settingsQuery.data, routinesQuery.data, openRoutine, openId, tests, libraryKey, seedKey]);
 
@@ -476,9 +494,16 @@ export function BatchView() {
   // Both persists are best-effort, matching what the stored order always did:
   // the choice still applies to this session if the write fails.
   const persist = React.useCallback(
-    (nextOrder: string[], nextRows: RowOptionsMap) => {
+    (
+      nextOrder: string[],
+      nextRows: RowOptionsMap,
+      nextPolicies: PolicyMap = policies,
+      nextGroups: RoutineGroup[] = groups,
+      nextGroupOf: GroupOf = groupOf,
+    ) => {
       setOrder(nextOrder);
       setRowOptions(nextRows);
+      setPolicies(nextPolicies);
       const liveIds = tests.map((t) => t.id);
       api.recorder
         .setSettings({
@@ -489,12 +514,93 @@ export function BatchView() {
           batchTestOptions: pruneRowOptions(nextRows, liveIds),
         })
         .catch(() => {});
+      const steps = stepsFromRows(
+        nextOrder,
+        nextRows,
+        tests,
+        rowDefaults,
+        nextPolicies,
+        nextGroups,
+        nextGroupOf,
+      );
+      // PRUNED TO WHAT IS ACTUALLY IN THE JOB, and set as state rather than
+      // left to the next re-seed. `stepsFromRows` already drops the policy of
+      // an unticked row on the way out, so without this the two disagree:
+      // untick a "stop on fail" row and tick it again before the Routine query
+      // comes back, and the screen shows the policy while the stored job has
+      // no such step — and `sameSteps` then reads the pair as unchanged and
+      // writes nothing, so the divergence persists rather than settling.
+      const flat = steps.flatMap((st) => (st.kind === "group" ? st.steps : [st]));
+      setPolicies(Object.fromEntries(flat.map((st) => [st.testId, st.onFailure])));
+      setGroupOf(
+        Object.fromEntries(
+          steps.flatMap((st) =>
+            st.kind === "group" ? st.steps.map((c) => [c.testId, st.id] as const) : [],
+          ),
+        ),
+      );
+      // The groups themselves are pruned the same way, and to the same rule the
+      // STORE uses: a group with no members cannot be saved, so keeping it in
+      // view state would show a header that vanishes on the next reload.
+      setGroups((prev) => {
+        const kept = new Set(steps.filter((st) => st.kind === "group").map((st) => st.id));
+        return prev.filter((g) => kept.has(g.id));
+      });
       if (!openRoutine) return;
-      const steps = stepsFromRows(nextOrder, nextRows, tests, rowDefaults, openRoutine.steps);
       if (sameSteps(steps, openRoutine.steps)) return;
       saveRoutine({ steps });
     },
-    [tests, rowDefaults, openRoutine, saveRoutine],
+    [tests, rowDefaults, openRoutine, saveRoutine, policies, groups, groupOf],
+  );
+
+  /** Flip one row's failure policy. Only ever reached from a ticked row — the
+   *  control does not render on one that is not in the job, because a policy
+   *  about a step that does not exist has nothing to say. */
+  const togglePolicy = React.useCallback(
+    (testId: string) =>
+      persist(order, rowOptions, {
+        ...policies,
+        [testId]: nextPolicy(policies[testId], Boolean(groupOf[testId])),
+      }),
+    [order, rowOptions, policies, groupOf, persist],
+  );
+
+  /** Put a row in a group, or take it out. `groupId === ""` means top level.
+   *
+   *  Creating one is the SAME gesture as joining one — a group with no members
+   *  cannot be saved (the store drops it), so an "add group" button that made
+   *  an empty one would make a header that disappeared on the next read. */
+  const assignGroup = React.useCallback(
+    (testId: string, groupId: string, label?: string) => {
+      const nextGroupOf = { ...groupOf };
+      if (groupId) nextGroupOf[testId] = groupId;
+      else delete nextGroupOf[testId];
+      const nextGroups =
+        groupId && !groups.some((g) => g.id === groupId)
+          ? [...groups, { id: groupId, label: label ?? "Group" }]
+          : groups;
+      // A row leaving a group takes its `skipGroup` with it: outside a group
+      // that policy has nothing to skip, so leaving it set would show a policy
+      // the run cannot honour. `continue` is what it degrades to anyway.
+      const nextPolicies =
+        !groupId && policies[testId] === "skipGroup"
+          ? { ...policies, [testId]: "continue" as const }
+          : policies;
+      persist(order, rowOptions, nextPolicies, nextGroups, nextGroupOf);
+    },
+    [order, rowOptions, policies, groups, groupOf, persist],
+  );
+
+  const renameGroup = React.useCallback(
+    (groupId: string, label: string) =>
+      persist(
+        order,
+        rowOptions,
+        policies,
+        groups.map((g) => (g.id === groupId ? { ...g, label } : g)),
+        groupOf,
+      ),
+    [order, rowOptions, policies, groups, groupOf, persist],
   );
 
   /** A row change: the order is untouched. */
@@ -844,9 +950,26 @@ export function BatchView() {
                 disabled={running}
                 onClick={() =>
                   saveRoutine({
-                    steps: (openRoutine?.steps ?? []).filter(
-                      (step) => !broken.some((b) => b.testId === step.testId),
-                    ),
+                    // Reaches INSIDE groups, and drops a group left empty by
+                    // the removal — the store would refuse to keep one anyway,
+                    // so leaving it here would show a header that disappears on
+                    // the next read.
+                    steps: (openRoutine?.steps ?? [])
+                      .map((step) =>
+                        step.kind === "group"
+                          ? {
+                              ...step,
+                              steps: step.steps.filter(
+                                (c) => !broken.some((b) => b.testId === c.testId),
+                              ),
+                            }
+                          : step,
+                      )
+                      .filter((step) =>
+                        step.kind === "group"
+                          ? step.steps.length > 0
+                          : !broken.some((b) => b.testId === step.testId),
+                      ),
                   })
                 }
               >
@@ -923,7 +1046,23 @@ export function BatchView() {
               </div>
 
               <Panel title="Checklist">
-                {visibleTests.map((t) => {
+                {visibleTests.map((t, visibleIndex) => {
+                  // A GROUP HEADER IS DRAWN BEFORE ITS FIRST VISIBLE MEMBER,
+                  // rather than being a row in `order`. The checklist stays a
+                  // flat ordered list — which is what lets drag-to-reorder stay
+                  // exactly what it was — and the nesting is redrawn from
+                  // `groupOf`, the same way `stepsFromRows` rebuilds it.
+                  //
+                  // Keyed on the PREVIOUS VISIBLE row, not the previous row in
+                  // `order`: under a tag filter the visible rows are a
+                  // subsequence, and asking `order` would draw the header above
+                  // a member that is filtered out — or omit it entirely.
+                  const groupId = groupOf[t.id];
+                  const prev = visibleTests[visibleIndex - 1];
+                  const groupHead =
+                    groupId && (!prev || groupOf[prev.id] !== groupId)
+                      ? groups.find((g) => g.id === groupId)
+                      : undefined;
                   const results = resultsFor.get(t.id) ?? [];
                   const status = rowStatus(results);
                   const isCurrent = status === "running";
@@ -946,12 +1085,40 @@ export function BatchView() {
                       ? badgeResult?.runRecordId
                       : undefined;
                   return (
+                    <React.Fragment key={t.id}>
+                    {groupHead ? (
+                      <div className="gl-batch-group" data-testid="routine-group">
+                        <input
+                          className="gl-batch-group-name"
+                          aria-label={`Name of group ${groupHead.label}`}
+                          defaultValue={groupHead.label}
+                          disabled={running}
+                          // COMMITTED ON BLUR, not per keystroke: a Routine's
+                          // `updatedAt` is what the rail sorts by, and writing
+                          // on every character would re-date the job eleven
+                          // times for one rename. `defaultValue` because the
+                          // seed re-runs on every save and a controlled value
+                          // would fight the caret.
+                          onBlur={(e) => {
+                            const next = e.target.value.trim();
+                            if (next !== "" && next !== groupHead.label) {
+                              renameGroup(groupHead.id, next);
+                            } else {
+                              e.target.value = groupHead.label;
+                            }
+                          }}
+                        />
+                        <span className="gl-batch-group-count">
+                          {Object.values(groupOf).filter((g) => g === groupHead.id).length} in group
+                        </span>
+                      </div>
+                    ) : null}
                     <div
-                      key={t.id}
                       onDragEnter={running ? undefined : () => setOverId(t.id)}
                       onDragOver={running ? undefined : (e) => e.preventDefault()}
                       onDrop={running ? undefined : (e) => e.preventDefault()}
                       className="gl-batch-row"
+                      data-grouped={groupId ? "" : undefined}
                       data-running={isCurrent ? "" : undefined}
                       data-dragging={dragId === t.id ? "" : undefined}
                       data-drop-target={
@@ -1063,6 +1230,120 @@ export function BatchView() {
                       >
                         {row.headless ? "Headless" : "Headed"}
                       </button>
+                      {/* WHICH GROUP THIS STEP IS IN. Creating a group and
+                          joining one are the SAME gesture, deliberately: a
+                          group with no members cannot be saved (the store drops
+                          it), so an "add group" button would make a header that
+                          disappeared on the next read.
+
+                          A MENU RATHER THAN DRAG-INTO-CONTAINER. The checklist
+                          is a flat ordered list and its drag handle reorders it;
+                          teaching that same gesture to also mean "put inside"
+                          would make the two indistinguishable at the moment of
+                          the drop, which is the moment it matters. */}
+                      {row.selected ? (
+                        // A MARK, NOT THE GROUP'S NAME. The name is already on
+                        // the header this row is indented under, and repeating
+                        // it here cost more width than the row had: with a
+                        // name-width cell the status chip fell off the end of
+                        // every row. Same trade the grip makes — a small
+                        // affordance whose accessible name does the talking.
+                        <Menu
+                          value={groupOf[t.id] ? "▣" : "·"}
+                          label={`Group for ${t.name}`}
+                          width={24}
+                          disabled={running}
+                          className="gl-batch-groupmark"
+                        >
+                          {(close) => [
+                            <MenuItem
+                              key="none"
+                              label="No group"
+                              selected={!groupOf[t.id]}
+                              onSelect={() => {
+                                assignGroup(t.id, "");
+                                close();
+                              }}
+                            />,
+                            ...groups.map((g) => (
+                              <MenuItem
+                                key={g.id}
+                                label={g.label}
+                                selected={groupOf[t.id] === g.id}
+                                onSelect={() => {
+                                  assignGroup(t.id, g.id);
+                                  close();
+                                }}
+                              />
+                            )),
+                            <MenuItem
+                              key="new"
+                              label="New group…"
+                              onSelect={() => {
+                                assignGroup(
+                                  t.id,
+                                  `g-${randomSuffix()}`,
+                                  `Group ${groups.length + 1}`,
+                                );
+                                close();
+                              }}
+                            />,
+                          ]}
+                        </Menu>
+                      ) : (
+                        <span className="gl-batch-group-gap" aria-hidden="true" />
+                      )}
+                      {/* WHAT THIS STEP'S FAILURE DOES TO THE REST OF THE JOB.
+                          docs/ROUTINES.md: "continue" must stay the default or
+                          migrating the old Batch changes its behaviour
+                          silently, and "stopRoutine" is what makes a setup step
+                          mean anything — seed the data, and if that fails, do
+                          not go on to test against data that is not there.
+
+                          ONLY ON A ROW THAT IS IN THE JOB. An unticked row is
+                          not a step, and a policy about a step that does not
+                          exist has nothing to say. This is also what keeps the
+                          row from gaining a ninth cell on the forty rows that
+                          are only in the list so they can be added.
+
+                          AMBER, on the same terms `Headed` above claims it: the
+                          palette rule is that colour means OUTCOME, and this is
+                          the second setting allowed to break it because it
+                          changes what happens to OTHER work. Scanning a routine
+                          for where it can abort is worth a hue; the default
+                          carries none. */}
+                      {row.selected ? (
+                        <button
+                          type="button"
+                          aria-pressed={(policies[t.id] ?? "continue") !== "continue"}
+                          disabled={running}
+                          aria-label={`What happens if ${t.name} fails`}
+                          title={
+                            policies[t.id] === "stopRoutine"
+                              ? "If this fails, the rest of the routine does not run"
+                              : policies[t.id] === "skipGroup"
+                                ? "If this fails, the rest of this group does not run"
+                                : "If this fails, the routine carries on"
+                          }
+                          onClick={() => togglePolicy(t.id)}
+                          className="gl-batch-policy"
+                          style={
+                            (policies[t.id] ?? "continue") !== "continue"
+                              ? toneSurface(TONE.amber)
+                              : undefined
+                          }
+                        >
+                          {POLICY_LABELS[policies[t.id] ?? "continue"]}
+                        </button>
+                      ) : (
+                        // A SPACER, not nothing. Omitting the cell entirely
+                        // slides every column after it — engines, headless,
+                        // duration — left by the width of the control, so the
+                        // checklist's columns jump between ticked and unticked
+                        // rows and the list stops reading as a table. Found by
+                        // looking at it; no test on this screen could have.
+                        <span className="gl-batch-policy-gap" aria-hidden="true" />
+                      )}
                       <span className="gl-batch-time">
                         {durationMs !== undefined ? fmtDuration(durationMs) : null}
                       </span>
@@ -1085,6 +1366,7 @@ export function BatchView() {
                         </span>
                       )}
                     </div>
+                    </React.Fragment>
                   );
                 })}
               </Panel>

@@ -70,6 +70,11 @@ export interface BatchOutcomeNotice {
   failed: number;
   skipped: number;
   stopped: boolean;
+  /** Why it stopped. Absent = the user pressed Stop, which is what `stopped`
+   *  meant on its own. */
+  stoppedBy?: "user" | "failure";
+  /** The test whose failure stopped it, for `stoppedBy: "failure"`. */
+  stoppedByTest?: string;
 }
 
 /**
@@ -85,10 +90,17 @@ export interface BatchOutcomeNotice {
 export function buildBatchNotice(notice: BatchOutcomeNotice): { title: string; body: string } {
   const ran = notice.passed + notice.failed;
   if (notice.stopped) {
-    return {
-      title: "Batch stopped",
-      body: `${notice.passed} passed, ${notice.failed} failed, ${notice.skipped} not run.`,
-    };
+    // WHO stopped it, not just that it stopped. This notification is often the
+    // only thing seen of a scheduled routine, and "Batch stopped" for a run
+    // nobody touched reads as somebody having intervened.
+    const tail = `${notice.passed} passed, ${notice.failed} failed, ${notice.skipped} not run.`;
+    if (notice.stoppedBy === "failure") {
+      return {
+        title: "Routine stopped by a failure",
+        body: notice.stoppedByTest ? `"${notice.stoppedByTest}" failed. ${tail}` : tail,
+      };
+    }
+    return { title: "Batch stopped", body: tail };
   }
   if (notice.failed > 0) {
     return {

@@ -1912,8 +1912,21 @@ export interface BatchState {
   /** index in `results` currently executing, or -1 when idle */
   currentIndex: number;
   results: BatchTestResult[];
-  /** the user stopped the batch partway */
+  /** the batch ended before its queue did */
   stopped: boolean;
+  /** WHY it stopped, when it did. Absent means the user pressed Stop, which is
+   *  what `stopped` meant on its own and what every record written before
+   *  Routines honoured a failure policy means.
+   *
+   *  A SEPARATE FIELD rather than a note parsed back out, because three
+   *  consumers act on it: the skip note on the entries that never ran, the
+   *  alert, and the desktop notification. A scheduled routine's notification is
+   *  often the ONLY thing the user sees, and "Batch stopped" for a run nobody
+   *  touched is a lie about who did it. */
+  stoppedBy?: "user" | "failure";
+  /** The test whose failure stopped it, for `stoppedBy: "failure"`. The NAME,
+   *  not the id: this is read straight into a notification. */
+  stoppedByTest?: string;
 }
 
 /** A batch as persisted to batch-history.json. Same shape as the live state
@@ -1932,12 +1945,17 @@ export interface BatchRecord extends BatchState {
 // and nothing else: it runs that test as its own process, with its own
 // RunRecord and its own row in Stats. A Routine never reaches inside a test.
 //
-// Only `kind: "test"` exists in this first slice. `group`, `wait`, `notify` and
-// `branch` are designed in ROUTINES.md and deliberately unbuilt — the spec
-// sequences a saved configuration BEFORE a flow builder, because a builder with
-// nothing to save it into is the useless half. The union is written as a union
-// of one so adding the second kind is an additive change every `switch` on it
-// is already shaped for.
+// `test` and `group` exist. `wait`, `notify` and `branch` are designed in
+// ROUTINES.md and deliberately unbuilt, and the reason is a line rather than a
+// backlog: all three are steps that are NOT runs, so executing one means the
+// batch runner walking a heterogeneous program with barriers instead of a queue
+// of test entries. That is the "second execution engine" the spec names as this
+// feature's main design risk, and it is worth its own slice.
+//
+// `group` needs none of it. A group is pure STRUCTURE over test steps: the plan
+// flattens it in order, entries carry the group they came from, and the only
+// runtime meaning is `skipGroup` — which had nowhere to point until there were
+// groups. That is why it is capability 3's first slice rather than `wait`.
 
 /** What a Routine does when one of its steps fails. `continue` FIRST and the
  *  default: it is Batch's current unwritten behaviour, so anything else changes
@@ -1962,7 +1980,32 @@ export interface RoutineTestStep {
   testDeleted?: boolean;
 }
 
-export type RoutineStep = RoutineTestStep;
+/**
+ * A named run of steps, for the one thing groups mean at run time: `skipGroup`.
+ *
+ * ONE LEVEL DEEP. A group holds test steps and never another group, and that is
+ * a v1 constraint rather than an oversight — nesting multiplies the editor, the
+ * flattening and the skip semantics, and nothing asked for it. The type says so
+ * rather than the store quietly dropping what it cannot handle.
+ *
+ * NO `parallel` FLAG YET, which ROUTINES.md's sketch has. The runner's
+ * concurrency is a single global lane limit, so "these four together, then the
+ * checkout suite one at a time" cannot be expressed by a number — it needs the
+ * same barrier machinery `wait` does. Shipping the flag without it would be a
+ * builder that draws two parallel branches and runs them sequentially, which
+ * the spec calls lying in a diagram.
+ */
+export interface RoutineGroupStep {
+  kind: "group";
+  /** Stable across renames and reorders. Test steps are keyed by `testId` —
+   *  unique within a Routine, because the store collapses duplicates — but a
+   *  group has no natural key, and the run record refers to it by this. */
+  id: string;
+  label: string;
+  steps: RoutineTestStep[];
+}
+
+export type RoutineStep = RoutineTestStep | RoutineGroupStep;
 
 /**
  * When a Routine runs by itself. docs/ROUTINES.md capability 2.

@@ -43,6 +43,10 @@ export interface BatchAlert {
   /** names of the tests that failed, for a scannable message */
   failedTests: string[];
   stopped: boolean;
+  /** Why it stopped — see BatchState. Absent = the user pressed Stop. */
+  stoppedBy?: "user" | "failure";
+  /** The test whose failure stopped it, for `stoppedBy: "failure"`. */
+  stoppedByTest?: string;
   browser?: string;
 }
 
@@ -128,8 +132,13 @@ export function buildAlertPayload(alert: Alert): AlertPayload | null {
   const { summary } = alert;
   if (summary.failed === 0 && !alert.stopped) return null;
 
+  // A stop by policy is not the same event as a person pressing Stop, and this
+  // line is what a chat channel sees. Naming the test is the whole value: the
+  // suite did not merely end early, a specific step said it should.
   const headline = alert.stopped
-    ? `⏹ Batch stopped — ${summary.passed}/${summary.total} passed`
+    ? alert.stoppedBy === "failure"
+      ? `⏹ Routine stopped${alert.stoppedByTest ? ` — "${alert.stoppedByTest}" failed` : " by a failure"} — ${summary.passed}/${summary.total} passed`
+      : `⏹ Batch stopped — ${summary.passed}/${summary.total} passed`
     : `❌ Batch: ${summary.failed} of ${summary.total} failed`;
   const parts: string[] = [];
   if (alert.failedTests.length > 0) {
@@ -152,6 +161,7 @@ export function buildAlertPayload(alert: Alert): AlertPayload | null {
       failed: summary.failed,
       skipped: summary.skipped,
       stopped: alert.stopped,
+      ...(alert.stoppedBy ? { stoppedBy: alert.stoppedBy } : {}),
       failedTests: alert.failedTests,
       durationMs: summary.durationMs,
       ...(alert.browser ? { browser: alert.browser } : {}),

@@ -690,7 +690,7 @@ server.registerTool(
   {
     title: "Run a saved routine",
     description:
-      "Run a saved Routine — the tests it holds, on the engines it names, in the order it lists them. Identify it by id (see list_routines) or by exact name. Every run is headless whatever the routine's steps say (there is no screen here), and each is recorded in the app's run history; the batch itself appears in the app under that routine. A step whose test has been deleted is skipped and reported rather than failing the routine, and a test declaring secret variables is skipped with a note. This does NOT satisfy the routine's schedule: running it here is the same as pressing Run in the app, not the schedule firing.",
+      "Run a saved Routine — the tests it holds, on the engines it names, in the order it lists them. Identify it by id (see list_routines) or by exact name. Every run is headless whatever the routine's steps say (there is no screen here), and each is recorded in the app's run history; the batch itself appears in the app under that routine. A step whose test has been deleted is skipped and reported rather than failing the routine, and a test declaring secret variables is skipped with a note. A step marked \"stop on fail\" ends the routine when it fails: nothing further starts, and the remaining results say which step stopped them. This does NOT satisfy the routine's schedule: running it here is the same as pressing Run in the app, not the schedule firing.",
     inputSchema: {
       routineId: z.string().optional(),
       name: z.string().optional().describe("Exact routine name, if you do not have the id."),
@@ -781,6 +781,19 @@ server.registerTool(
       browser: entry.browser,
     }));
 
+    // A step said "stop the routine if I fail", and it did. There is no runPool
+    // abort — a worker that throws is swallowed on purpose, because one failing
+    // test is the normal case for a suite — so the flag is checked at the top
+    // of each entry instead. Nothing already in flight is killed: this process
+    // has no handle on a spawned Playwright CLI the way the app's runner does,
+    // so what it can honestly promise is that nothing FURTHER starts. The
+    // record says which, per entry, rather than claiming the app's behaviour.
+    let stoppedByTest = null;
+    // Groups whose remaining steps a `skipGroup` failure took out, and the step
+    // that did it. Narrower than the stop above and deliberately so: seed-then-
+    // test is a group, and the seed failing should take the tests that depend
+    // on it and nothing else.
+    const skippedGroups = new Map();
     const persist = (running) => {
       saveBatchRecord({
         batchId,
@@ -793,7 +806,10 @@ server.registerTool(
         ...(running ? {} : { finishedAt: Date.now() }),
         currentIndex: results.findIndex((r) => r.status === "running"),
         results,
-        stopped: false,
+        stopped: stoppedByTest !== null,
+        ...(stoppedByTest !== null
+          ? { stoppedBy: "failure", stoppedByTest }
+          : {}),
         summary: summarizeResults(results, Date.now() - startedAt),
       });
     };
@@ -804,6 +820,27 @@ server.registerTool(
     // same job behave differently depending on who started it.
     const limit = clampParallel(parallel ?? plan.concurrency, queue.length);
     await runPool(queue, limit, async (entry, i) => {
+      if (stoppedByTest !== null) {
+        results[i].status = "skipped";
+        results[i].note = `Stopped — "${stoppedByTest}" failed`;
+        results[i].finishedAt = Date.now();
+        results[i].durationMs = 0;
+        persist(true);
+        return;
+      }
+      // Checked at the top of the entry rather than by marking others when the
+      // failure happens: runPool has no abort, and an entry already in flight
+      // cannot be recalled — so what this can honestly promise is that nothing
+      // FURTHER in the group starts.
+      const killedBy = entry.groupId ? skippedGroups.get(entry.groupId) : undefined;
+      if (killedBy) {
+        results[i].status = "skipped";
+        results[i].note = `Skipped — "${killedBy}" failed in this group`;
+        results[i].finishedAt = Date.now();
+        results[i].durationMs = 0;
+        persist(true);
+        return;
+      }
       const test = byId.get(entry.testId);
       const secrets = test ? secretVariableNames(test) : [];
       if (secrets.length > 0) {
@@ -840,6 +877,9 @@ server.registerTool(
         results[i].finishedAt = r.finishedAt;
         results[i].durationMs = r.durationMs;
       } catch (err) {
+        // A test that could not START did not do its job either, so the policy
+        // applies here too. Missing this branch would make "stop if this fails"
+        // hold for a red assertion and quietly not for a broken spec.
         results[i].status = "failed";
         results[i].note = String(err);
         results[i].finishedAt = Date.now();
@@ -847,6 +887,28 @@ server.registerTool(
           0,
           results[i].finishedAt - (results[i].startedAt ?? results[i].finishedAt),
         );
+      }
+      // FIRST FAILURE WINS, like the app's runner: with several entries in
+      // flight a second one arriving would rewrite whose failure stopped the
+      // job, and every note would then name a test that stopped nothing.
+      if (
+        results[i].status === "failed" &&
+        entry.onFailure === "stopRoutine" &&
+        stoppedByTest === null
+      ) {
+        stoppedByTest = results[i].testName;
+      }
+      // An ungrouped `skipGroup` has no rest-of-group to skip, so it continues
+      // — the same degradation the app's runner makes, at the same point, for
+      // the same reason: a step's policy is a property of the step and whether
+      // it sits in a group is not.
+      if (
+        results[i].status === "failed" &&
+        entry.onFailure === "skipGroup" &&
+        entry.groupId &&
+        !skippedGroups.has(entry.groupId)
+      ) {
+        skippedGroups.set(entry.groupId, results[i].testName);
       }
       persist(true);
     });
@@ -864,6 +926,7 @@ server.registerTool(
               batchId,
               parallel: limit,
               summary,
+              ...(stoppedByTest !== null ? { stoppedBy: stoppedByTest } : {}),
               // The steps that will NOT run, said out loud. A routine quietly
               // running fewer tests than it lists is the same class of bug as
               // a batch that reports a pass having skipped half of it.

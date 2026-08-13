@@ -54,6 +54,16 @@ export function buildQueue(params, getDatasets) {
     // That is the MCP path and every stored batch replayed from it.
     const engines = byTest.get(testId)?.browsers ?? [undefined];
     const headless = byTest.get(testId)?.headless;
+    // Copied onto every entry a step fans out to, rather than looked up by
+    // testId at the point of failure. A step is one decision — "if this fails,
+    // stop" — and its three engines are three chances for that to come true;
+    // carrying it on the entry means the runner asks the thing that failed
+    // rather than re-deriving which step it belonged to.
+    const onFailure = byTest.get(testId)?.onFailure;
+    // Carried for the same reason as the policy, and useless without it:
+    // `skipGroup` means "the rest of THIS group", so the entry has to know
+    // which group it came from.
+    const groupId = byTest.get(testId)?.groupId;
     const rows = wantsSweep
       ? getDatasets(testId).filter((d) => params.allDatasets === true || wanted.has(d.id))
       : [];
@@ -62,6 +72,11 @@ export function buildQueue(params, getDatasets) {
         testId,
         ...(browser ? { browser } : {}),
         ...(headless !== undefined ? { headless } : {}),
+        // Omitted rather than defaulted to "continue", so an entry from a
+        // caller that has no policies is distinguishable from one that chose
+        // the default. Both run the same way; only one of them is a choice.
+        ...(onFailure ? { onFailure } : {}),
+        ...(groupId ? { groupId } : {}),
       };
       // A test with no matching rows still runs once, with its declared
       // defaults. Dropping it would turn "sweep my suite" into "silently skip

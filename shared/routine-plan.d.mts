@@ -14,10 +14,30 @@ import type { Routine, RunBrowser } from "../main/recorder/types.js";
 
 export declare const PLAN_BROWSERS: readonly RunBrowser[];
 
+/** A step's failure policy, normalised to one the runner acts on. Anything
+ *  unrecognised — including `skipGroup`, whose groups do not exist yet —
+ *  becomes `"continue"`.
+ *
+ *  `onFailure` is typed `unknown` DELIBERATELY. The two callers that matter are
+ *  a record read off disk and an object off the IPC wire, and the whole reason
+ *  this function exists is that a TypeScript type is not a runtime check.
+ *  Declaring the parameter as `Partial<RoutineStep>` would make the one call
+ *  site that most needs it — the `batch:run` handler — the one that has to cast
+ *  around it. */
+export declare function failurePolicy(
+  step: { onFailure?: unknown } | null | undefined,
+): "continue" | "stopRoutine" | "skipGroup";
+
 export interface RoutinePerTest {
   testId: string;
   browsers: RunBrowser[];
   headless: boolean;
+  /** Normalised through `failurePolicy`, never the raw stored value. */
+  onFailure: "continue" | "stopRoutine" | "skipGroup";
+  /** The group this step came from, absent for a top-level step. The whole of
+   *  what a group means at run time: `skipGroup` needs to know which queue
+   *  entries are "the rest of this group". */
+  groupId?: string;
 }
 
 export interface RoutineRunPlan {

@@ -274,14 +274,91 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
         const s = state;
         if (!s) return;
 
+        /**
+         * A step said "stop the routine if I fail", and it failed.
+         *
+         * THE SAME THING `stop()` DOES, deliberately — kill everything in
+         * flight, skip everything not started, keep what finished. Anything
+         * gentler would be a second meaning of "stop" and would leave the user
+         * watching browsers finish work the job already said not to do. With
+         * lanes running concurrently there is no "the rest of the queue" to
+         * simply not start: entries are already open.
+         *
+         * FIRST FAILURE WINS. Two lanes can fail in the same tick, and the
+         * second one arriving would otherwise rewrite whose failure stopped the
+         * job — the note, the alert and the notification would all name a test
+         * that stopped nothing. `cancelled` is the guard, so a user pressing
+         * Stop a moment earlier also keeps its own attribution.
+         *
+         * The policy is read from the QUEUE, not from `entry`: BatchState is
+         * persisted on every transition and a per-step policy is not something
+         * batch-history.json needs to carry.
+         */
+        /**
+         * A step said "skip the rest of my group if I fail", and it failed.
+         *
+         * NARROWER THAN A STOP, and that is the whole point of having both:
+         * seed-then-test is a group, and the failure of the seed should take
+         * the tests that depend on it and nothing else. Only PENDING entries
+         * are skipped — one already running belongs to a lane that started
+         * before the failure, and killing it would make `skipGroup` the same
+         * thing as `stopRoutine` for anyone running more than one lane.
+         *
+         * An entry with NO group continues. `skipGroup` on an ungrouped step
+         * has no rest-of-group to skip, so it degrades to the harmless answer
+         * at the point of failure rather than in `failurePolicy` — a step's
+         * policy is a property of the step, and whether it sits in a group is
+         * not.
+         */
+        const skipRestOfGroup = (i: number, testName: string): void => {
+          const groupId = queue[i]?.groupId;
+          if (!groupId) return;
+          for (let j = 0; j < s.results.length; j++) {
+            if (j === i || queue[j]?.groupId !== groupId) continue;
+            if (s.results[j].status !== "pending") continue;
+            s.results[j].status = "skipped";
+            s.results[j].note = `Skipped — "${testName}" failed in this group`;
+          }
+        };
+
+        const stopIfPolicySays = (i: number, testName: string): void => {
+          if (queue[i]?.onFailure === "skipGroup") {
+            skipRestOfGroup(i, testName);
+            return;
+          }
+          if (cancelled) return;
+          if (queue[i]?.onFailure !== "stopRoutine") return;
+          cancelled = true;
+          s.stoppedBy = "failure";
+          s.stoppedByTest = testName;
+          logger.info("batch", "Batch stopped by failure policy", {
+            batchId,
+            testId: s.results[i]?.testId,
+          });
+          for (const result of s.results) {
+            if (result.status === "running") deps.stopRun(result.testId);
+          }
+        };
+
         /** Run one queued entry to completion. This is the old sequential
          *  loop's body, unchanged — the only difference is that several copies
          *  of it may now be in flight, each on a different test. */
         const runEntry = async (i: number): Promise<void> => {
           const entry = s.results[i];
+          // ALREADY SETTLED, so leave it alone. `skipRestOfGroup` marks pending
+          // entries skipped without cancelling the batch, and the worker walks
+          // on to them regardless — without this the mark is cosmetic: the row
+          // reads "skipped" for a moment and then runs anyway, which is a
+          // group policy that does nothing and reports that it did.
+          if (entry.status === "skipped") return;
           if (cancelled) {
             entry.status = "skipped";
-            entry.note = "Batch stopped";
+            // Says WHO stopped it. "Batch stopped" beside a run nobody touched
+            // sends someone looking for the person who pressed the button.
+            entry.note =
+              s.stoppedBy === "failure"
+                ? `Stopped — "${s.stoppedByTest ?? "a test"}" failed`
+                : "Batch stopped";
             return;
           }
           // A test deleted after the batch was queued is skipped, not fatal —
@@ -350,6 +427,11 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
             entry.note = String(err);
             entry.finishedAt = deps.now();
             entry.durationMs = entry.finishedAt - (entry.startedAt ?? entry.finishedAt);
+            // A step that could not START is a step that did not do its job, so
+            // "stop if this fails" applies at least as strongly here as it does
+            // to a red assertion. Missing this branch would make the policy
+            // hold for a failing test and quietly not for a broken one.
+            stopIfPolicySays(i, entry.testName);
             emitProgress();
             return;
           }
@@ -358,6 +440,7 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
           entry.status = exitCode === 0 ? "passed" : "failed";
           entry.finishedAt = deps.now();
           entry.durationMs = entry.finishedAt - (entry.startedAt ?? entry.finishedAt);
+          if (entry.status === "failed") stopIfPolicySays(i, entry.testName);
           emitProgress();
         };
 
@@ -393,6 +476,8 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
           summary,
           failedTests: s.results.filter((r) => r.status === "failed").map((r) => r.testName),
           stopped: s.stopped,
+          ...(s.stoppedBy ? { stoppedBy: s.stoppedBy } : {}),
+          ...(s.stoppedByTest ? { stoppedByTest: s.stoppedByTest } : {}),
           browser: params.browser,
         });
         // And one desktop notification, for the same reason — plus the reason
@@ -405,6 +490,8 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
           failed: summary.failed,
           skipped: summary.skipped,
           stopped: s.stopped,
+          ...(s.stoppedBy ? { stoppedBy: s.stoppedBy } : {}),
+          ...(s.stoppedByTest ? { stoppedByTest: s.stoppedByTest } : {}),
         });
       })();
 
@@ -419,7 +506,11 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
      *  rest of the browsers open with the UI reporting the batch as stopped. */
     stop(): void {
       if (!state?.running) return;
+      // Already stopping — by a failure policy, or by a second click. Leaving
+      // `stoppedBy` alone keeps the first cause, which is the true one.
+      if (cancelled) return;
       cancelled = true;
+      state.stoppedBy = "user";
       for (const result of state.results) {
         if (result.status === "running") deps.stopRun(result.testId);
       }

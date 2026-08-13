@@ -13,9 +13,15 @@ the "Batch" Routine described under *A Routine is an entity*, once, at startup;
 `shared/routine-plan.mjs` turns a Routine into the batch runner's own payload;
 `routines:*` IPC exposes list/get/save/delete/run; and the Batch view is the
 open Routine's editor (`renderer/lib/routine-rows.ts` translates its checklist
-to and from steps). Of the step kinds below only `kind: "test"` is built, and
-`onFailure` is stored but not yet honoured — every step behaves as `continue`,
-which is what Batch already does, and nothing can set anything else. The MCP
+to and from steps). Of the step kinds below, `test` and `group` are built.
+**`onFailure` is honoured as of 2026-08-13**, all three policies: a step can be
+set to `stopRoutine` or — inside a group — `skipGroup` from its row in the
+editor, and both runners act on it. `wait`, `notify` and `branch` are still
+unbuilt, and the reason is a line rather than a backlog: all three are steps
+that are NOT runs, so executing one means the batch runner walking a
+heterogeneous program with barriers instead of a queue of test entries. That is
+the "second execution engine" this document names as the main design risk, and
+it is worth its own slice. `group` needed none of it. The MCP
 `run_routine` tool named in the rename table below IS built, alongside
 `list_routines` and alongside `run_batch` — see `mcp/README.md`. The rail lists
 Routines and the UI says "Routines" throughout (the route, the channels, the
@@ -31,7 +37,9 @@ fires occurrences arriving while the app is open; the catch-up offers ones
 missed while it was closed; `SCHEDULE_CAVEAT` is stated wherever a schedule is
 set. Note the two departures recorded under *Scheduling* below: the schedule is
 an ENUMERATION rather than a cron string, and `lastRunAt` lives on the Routine
-as `lastScheduledRunAt`. **Capability 3 (the flow builder) is untouched.**
+as `lastScheduledRunAt`. **Capability 3 has started**: `group` is built (2026-08-13), which is what
+gives `skipGroup` something to point at. See *Step kinds* below for what a
+group is allowed to be in v1 — one level deep, and with no `parallel` flag.
 
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for what exists today,
 [DECISIONS.md](DECISIONS.md) for why the current Batch is shaped the way it is,
@@ -131,6 +139,25 @@ type RoutineStep =
 because the useful shape is "these four smoke tests together, then the checkout
 suite one at a time" — a single number can't say that.
 
+> **As built (2026-08-13), `group` ships WITHOUT `parallel`, and one level
+> deep.**
+>
+> The runner's concurrency is a single global lane limit, so "these four
+> together, then the checkout suite one at a time" cannot be expressed by a
+> number — it needs the same barrier machinery `wait` does. Shipping the flag
+> without it would be a builder that draws two parallel branches and runs them
+> sequentially, which is the *lying in a diagram* this document rules out two
+> sections down. The flag lands with the barriers or not at all.
+>
+> Nesting is refused rather than flattened: a group holds test steps and never
+> another group. Nothing asked for it, and it multiplies the editor, the
+> flattening and the skip semantics.
+>
+> What a group DOES mean at run time is exactly one thing: `routineRunPlan`
+> flattens it in place — a group is structure over the Routine's order, not a
+> second ordering of it — and stamps each member's queue entry with the group's
+> id. `skipGroup` then skips the rest of that group and nothing else.
+
 ### Branching: the decision that has to be made explicitly
 
 Batch has exactly one failure policy, unwritten and unconfigurable: **a failing
@@ -143,6 +170,34 @@ type FailurePolicy = "continue" | "stopRoutine" | "skipGroup";
 
 `"continue"` must be the default, or migrating the existing Batch changes its
 behaviour silently. `"stopRoutine"` is what makes a setup step meaningful.
+
+> **As built (2026-08-13).** `stopRoutine` does exactly what pressing Stop
+> does: every run in flight is killed, everything not started is skipped, and
+> what finished is kept. Anything gentler would be a second meaning of "stop",
+> and with lanes running concurrently there is no "rest of the queue" left to
+> merely not start — entries are already open. The FIRST failure owns the stop,
+> because two lanes can fail in the same tick and a later one arriving would
+> rewrite whose failure stopped the job.
+>
+> A batch records **why** it stopped (`stoppedBy: "user" | "failure"`) and
+> which step did it, and that is not bookkeeping: a scheduled routine's desktop
+> notification is often the only thing seen of it, and "Batch stopped" for a
+> run nobody touched reads as somebody having intervened.
+>
+> `skipGroup` is narrower and that is the point of having both: seed-then-test
+> is a group, and the seed failing should take the tests that depend on it and
+> nothing else. Only PENDING entries are skipped — one already running belongs
+> to a lane that started before the failure, and killing it would make
+> `skipGroup` the same thing as `stopRoutine` for anyone running more than one
+> lane. A `skipGroup` step that is not IN a group continues, and that
+> degradation lives at the point of failure rather than in the normaliser: a
+> step's policy is a property of the step, and whether it sits in a group is
+> not.
+>
+> The MCP's `run_routine` honours both policies with one honest difference —
+> it has no handle on a spawned Playwright CLI, so it stops anything FURTHER
+> from starting rather than killing what is already running. See DECISIONS
+> 2026-08-13.
 
 **Do not add a `retry` policy in v1.** Auto-Heal already retries at the locator
 level, and a routine-level retry stacked on top makes a flaky test look stable —

@@ -1111,8 +1111,14 @@ export interface BatchState {
   /** index in `results` currently executing, or -1 when idle */
   currentIndex: number;
   results: BatchTestResult[];
-  /** the user stopped the batch partway */
+  /** the batch ended before its queue did */
   stopped: boolean;
+  /** Why — see the main-process copy. Absent means the user pressed Stop, which
+   *  is what `stopped` meant on its own and what every pre-Routines record
+   *  means. */
+  stoppedBy?: "user" | "failure";
+  /** The name of the test whose failure stopped it. */
+  stoppedByTest?: string;
   summary: BatchSummary;
 }
 
@@ -1123,8 +1129,10 @@ export type BatchRecord = BatchState;
 // ── Routines (mirror of main/recorder/types.ts) ──────────────────────
 // Batch v2: a saved, named job. docs/ROUTINES.md. A Routine composes RUNS;
 // `runFlow` composes STEPS — see the main-process copy for why that line
-// matters. Only `kind: "test"` is built; the rest of the union is designed
-// there and deliberately unwritten.
+// matters. `test` and `group` are built; `wait`, `notify` and `branch` are
+// designed there and deliberately unwritten, because all three are steps that
+// are NOT runs and executing one needs the runner to walk a program with
+// barriers rather than a queue.
 
 export type FailurePolicy = "continue" | "stopRoutine" | "skipGroup";
 
@@ -1141,7 +1149,20 @@ export interface RoutineTestStep {
   testDeleted?: boolean;
 }
 
-export type RoutineStep = RoutineTestStep;
+/** A named run of steps. ONE LEVEL DEEP and with no `parallel` flag yet — see
+ *  the main-process copy for both constraints and why they are deliberate. Its
+ *  only run-time meaning is `skipGroup`, which had nowhere to point until
+ *  groups existed. */
+export interface RoutineGroupStep {
+  kind: "group";
+  /** Stable across renames and reorders; a group has no natural key the way a
+   *  test step has its `testId`. */
+  id: string;
+  label: string;
+  steps: RoutineTestStep[];
+}
+
+export type RoutineStep = RoutineTestStep | RoutineGroupStep;
 
 /**
  * When a Routine runs by itself. docs/ROUTINES.md capability 2.
