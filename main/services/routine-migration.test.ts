@@ -15,7 +15,12 @@
 
 import { describe, it, expect } from "vitest";
 
-import type { BatchRowOptions, RecorderSettings } from "../recorder/types.js";
+import type {
+  BatchRowOptions,
+  RecorderSettings,
+  RoutineStep,
+  RoutineTestStep,
+} from "../recorder/types.js";
 import {
   batchBelongsToRoutine,
   FAILURE_POLICIES,
@@ -27,6 +32,17 @@ import {
   routineFromBatchSettings,
   stepsFromBatchSettings,
 } from "../../shared/routine-migration.mjs";
+
+/** The test steps of a Routine, asserted rather than cast: everything below
+ *  builds a Routine of test steps, so a `group` appearing here would be a
+ *  real defect and `filter` would hide it where this throws. */
+function testSteps(steps: readonly RoutineStep[]): RoutineTestStep[] {
+  return steps.map((s) => {
+    if (s.kind !== "test") throw new Error(`expected a test step, got ${s.kind}`);
+    return s;
+  });
+}
+
 
 /** A stored row, as `normalizeBatchTestOptions` writes it. Loosely typed on
  *  purpose — half the cases below are settings files no writer of ours would
@@ -192,7 +208,7 @@ describe("the migrated Routine", () => {
     expect(routine!.name).toBe(MIGRATED_NAME);
     expect(routine!.createdAt).toBe(1_234);
     expect(routine!.updatedAt).toBe(1_234);
-    expect(routine!.steps.map((s) => s.testId)).toEqual(["t-a"]);
+    expect(testSteps(routine!.steps).map((s) => s.testId)).toEqual(["t-a"]);
     expect(routine!.defaults).toEqual({ captureArtifacts: true, concurrency: 4 });
   });
 });

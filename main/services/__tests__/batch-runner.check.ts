@@ -561,6 +561,148 @@ async function main(): Promise<void> {
     );
   }
 
+  // ── onFailure: "skipGroup" ─────────────────────────────────────────
+  //
+  // Narrower than a stop, and that is the point of having both: seed-then-test
+  // is a group, and the seed failing should take the tests that depend on it
+  // and nothing else.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["seed", "a", "b", "after"],
+      perTest: [
+        { testId: "seed", browsers: ["chromium"], headless: true, onFailure: "skipGroup", groupId: "g1" },
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "continue", groupId: "g1" },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue", groupId: "g1" },
+        { testId: "after", browsers: ["chromium"], headless: true, onFailure: "continue" },
+      ],
+    });
+    await tick();
+    fake.finish("seed", 1);
+    await tick();
+    await tick();
+    // The ungrouped step still runs — that is the whole difference from a stop.
+    assert(fake.started.includes("after"), "a skipGroup failure does not stop the rest of the job");
+    fake.finish("after", 0);
+    await tick();
+
+    const done = fake.doneEvent();
+    assert(done !== undefined, "the batch finished at all (skipGroup)");
+    assert(done?.stopped === false, "a skipGroup failure does not mark the batch stopped");
+    assert(
+      done?.results.find((r) => r.testId === "a")?.status === "skipped" &&
+        done?.results.find((r) => r.testId === "b")?.status === "skipped",
+      "the rest of the group is skipped",
+    );
+    assert(
+      done?.results.find((r) => r.testId === "a")?.note ===
+        'Skipped — "Test seed" failed in this group',
+      "…and says which step in the group took them out",
+    );
+    assert(
+      done?.results.find((r) => r.testId === "after")?.status === "passed",
+      "a step outside the group is untouched",
+    );
+  }
+
+  // A `skipGroup` step that is NOT in a group has no rest-of-group to skip, so
+  // it continues. The degradation lives here rather than in `failurePolicy`
+  // because a step's policy is a property of the step and whether it sits in a
+  // group is not.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["a", "b"],
+      perTest: [
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "skipGroup" },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue" },
+      ],
+    });
+    await tick();
+    fake.finish("a", 1);
+    await tick();
+    fake.finish("b", 0);
+    await tick();
+    const done = fake.doneEvent();
+    assert(
+      done?.results.find((r) => r.testId === "b")?.status === "passed",
+      "skipGroup on an ungrouped step degrades to continuing",
+    );
+  }
+
+  // A member that already FINISHED keeps its result. This is what `!== "pending"`
+  // is really protecting: skipping is about work not yet done, and overwriting
+  // a green result with "skipped" would lose a run that actually happened —
+  // silently, since the row still reads as a normal skip.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["first", "seed", "later"],
+      perTest: [
+        { testId: "first", browsers: ["chromium"], headless: true, onFailure: "continue", groupId: "g1" },
+        { testId: "seed", browsers: ["chromium"], headless: true, onFailure: "skipGroup", groupId: "g1" },
+        { testId: "later", browsers: ["chromium"], headless: true, onFailure: "continue", groupId: "g1" },
+      ],
+    });
+    await tick();
+    fake.finish("first", 0);
+    await tick();
+    fake.finish("seed", 1);
+    await tick();
+    await tick();
+    const done = fake.doneEvent();
+    assert(done !== undefined, "the batch finished at all (finished-member group)");
+    assert(
+      done?.results.find((r) => r.testId === "first")?.status === "passed",
+      "a group member that already passed keeps its result when a later one skips the group",
+    );
+    assert(
+      done?.results.find((r) => r.testId === "later")?.status === "skipped",
+      "…and the one that had not run is skipped",
+    );
+  }
+
+  // Only PENDING entries are skipped. One already running belongs to a lane
+  // that started before the failure, and killing it would make `skipGroup` the
+  // same thing as `stopRoutine` for anyone running more than one lane.
+  {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["seed", "a", "b"],
+      concurrency: 2,
+      perTest: [
+        { testId: "seed", browsers: ["chromium"], headless: true, onFailure: "skipGroup", groupId: "g1" },
+        { testId: "a", browsers: ["chromium"], headless: true, onFailure: "continue", groupId: "g1" },
+        { testId: "b", browsers: ["chromium"], headless: true, onFailure: "continue", groupId: "g1" },
+      ],
+    });
+    await tick();
+    // "seed" and "a" are both in flight; "b" has not started.
+    assert(fake.isPending("a"), "the second lane really is in flight before the failure");
+    fake.finish("seed", 1);
+    await tick();
+    assert(
+      fake.isPending("a"),
+      "a group member already RUNNING is not killed — that would make skipGroup a stop",
+    );
+    fake.finish("a", 0);
+    await tick();
+    await tick();
+    const done = fake.doneEvent();
+    assert(
+      done?.results.find((r) => r.testId === "a")?.status === "passed",
+      "…and it keeps its own result",
+    );
+    assert(
+      done?.results.find((r) => r.testId === "b")?.status === "skipped",
+      "…while the one that had not started is skipped",
+    );
+  }
+
   // The notification and the alert are where "who stopped it" actually pays
   // off: a scheduled routine's notification is often the ONLY thing seen of it,
   // and "Batch stopped" for a run nobody touched reads as somebody having

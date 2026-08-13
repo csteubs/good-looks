@@ -22,6 +22,7 @@ import { toast } from "@ui";
 
 import { RailEmpty, RailRow } from "../theme";
 import { api } from "../lib/api";
+import { testCount } from "../lib/routine-rows";
 import { createRoutine, randomSuffix } from "../lib/create-routine";
 import { useRecorder } from "./recorder-store";
 import type { Routine } from "../lib/recorder-types";
@@ -77,7 +78,10 @@ export function RoutinesRail(): React.ReactElement {
           key={r.id}
           icon={<ListChecks aria-hidden="true" />}
           title={r.name}
-          subtitle={r.steps.length === 1 ? "1 test" : `${r.steps.length} tests`}
+          // COUNTED THROUGH THE GROUPS, not `steps.length` — a group is one
+          // entry holding many, and this read "1 test" for a Routine of two
+          // the first time a group was rendered.
+          subtitle={testCount(r) === 1 ? "1 test" : `${testCount(r)} tests`}
           // FALLS BACK TO THE FIRST when nothing has been chosen this session,
           // because that is what the view opens — a rail showing no selection
           // beside a screen that is plainly editing something reads as the two

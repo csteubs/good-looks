@@ -36,7 +36,9 @@ import type {
   BatchRowOptions,
   FailurePolicy,
   Routine,
+  RoutineGroupStep,
   RoutineStep,
+  RoutineTestStep,
   RunBrowser,
 } from "./recorder-types";
 
@@ -51,6 +53,63 @@ import type {
  *  to delete a release from now. */
 export type PolicyMap = Record<string, FailurePolicy>;
 
+/**
+ * The next failure policy when the row's control is clicked.
+ *
+ * A CYCLE, not a menu, because there are two or three states and a menu for
+ * three is heavier than the thing it selects. The cycle DEPENDS on whether the
+ * row is in a group: `skipGroup` outside one has no rest-of-group to skip, so
+ * offering it would be offering a setting that does nothing — the run degrades
+ * it to `continue`, and a control whose value the run quietly ignores is worse
+ * than a control that never offered it.
+ *
+ * An unrecognised stored value lands on `continue` for the same reason
+ * `failurePolicy` normalises: this is what the click produces next, and it must
+ * not depend on a value the app could not have written.
+ */
+export function nextPolicy(current: FailurePolicy | undefined, inGroup: boolean): FailurePolicy {
+  if (current === "stopRoutine") return inGroup ? "skipGroup" : "continue";
+  if (current === "skipGroup") return "continue";
+  return "stopRoutine";
+}
+
+/** What the row's policy control says. Exported so the view and its test agree
+ *  on one spelling rather than two. */
+export const POLICY_LABELS: Record<FailurePolicy, string> = {
+  continue: "Carry on",
+  stopRoutine: "Stop on fail",
+  skipGroup: "Skip group",
+};
+
+/**
+ * How many TESTS a Routine holds, counting inside its groups.
+ *
+ * `steps.length` is not this number and stopped being it the moment groups
+ * landed: a group is one entry holding many. The rail said "1 test" for a
+ * Routine of two the first time this was rendered, which is the whole reason
+ * this is a named function rather than a `.length` at the call site.
+ */
+export function testCount(routine: { steps: readonly RoutineStep[] } | null | undefined): number {
+  return (routine?.steps ?? []).reduce(
+    (n, s) => n + (s.kind === "group" ? s.steps.length : 1),
+    0,
+  );
+}
+
+/** A group, without its members — who belongs to it lives in `GroupOf`, keyed
+ *  the same way `PolicyMap` is. Kept apart from the membership map so a group
+ *  survives having its last member unticked long enough for the user to put
+ *  another one in; the STORE drops an empty group, which is the right place for
+ *  that rule because it is about what can be saved, not about what can be
+ *  edited. */
+export interface RoutineGroup {
+  id: string;
+  label: string;
+}
+
+/** Which group each test in the job belongs to. Absent = top level. */
+export type GroupOf = Record<string, string>;
+
 export interface RoutineRows {
   /** Every test in the library, in the order the checklist should show them. */
   order: string[];
@@ -60,6 +119,10 @@ export interface RoutineRows {
    *  here has none, which is not the same as having `continue`: it is not in
    *  the job at all. */
   policies: PolicyMap;
+  /** The Routine's groups, in the order they appear in it. */
+  groups: RoutineGroup[];
+  /** Which group each grouped test belongs to. */
+  groupOf: GroupOf;
 }
 
 /**
@@ -92,14 +155,33 @@ export function rowsFromRoutine(
   const byId = new Map(tests.map((t) => [t.id, t]));
   const rowOptions: RowOptionsMap = {};
   const policies: PolicyMap = {};
+  const groups: RoutineGroup[] = [];
+  const groupOf: GroupOf = {};
   const order: string[] = [];
   const placed = new Set<string>();
 
+  // FLATTENED, exactly as `routineRunPlan` flattens it, and for the same
+  // reason: `order` is the one list the checklist draws, and a group is
+  // structure over that order rather than a second ordering of it. The nesting
+  // is redrawn from `groupOf` at render time, so drag-to-reorder keeps working
+  // on a flat list and a member dragged out of its group's run of rows simply
+  // stops being contiguous — which `stepsFromRows` then reads as leaving it.
+  const flat: { step: RoutineTestStep; groupId: string }[] = [];
   for (const step of routine?.steps ?? []) {
+    if (step.kind === "group") {
+      groups.push({ id: step.id, label: step.label });
+      for (const child of step.steps) flat.push({ step: child, groupId: step.id });
+      continue;
+    }
+    flat.push({ step, groupId: "" });
+  }
+
+  for (const { step, groupId } of flat) {
     const test = byId.get(step.testId);
     if (!test || placed.has(step.testId)) continue;
     placed.add(step.testId);
     order.push(step.testId);
+    if (groupId) groupOf[step.testId] = groupId;
     // Read back as stored, NOT normalised. The runner normalises what it acts
     // on (see `failurePolicy` in shared/routine-plan.mjs); an editor that
     // quietly rewrote a value it did not understand would re-date the Routine
@@ -138,10 +220,14 @@ export function rowsFromRoutine(
     rowOptions[test.id] = { ...row, selected: false };
   }
 
-  return { order, rowOptions, policies };
+  // A group whose every member was dropped (its tests are gone from the
+  // library) is dropped too. It cannot be rendered — there is no row to nest
+  // under it — and the store would refuse to keep it anyway.
+  const live = new Set(Object.values(groupOf));
+  return { order, rowOptions, policies, groups: groups.filter((g) => live.has(g.id)), groupOf };
 }
 
-function enginesOf(step: RoutineStep, test: RowTest, defaults: RowDefaults): RunBrowser[] {
+function enginesOf(step: RoutineTestStep, test: RowTest, defaults: RowDefaults): RunBrowser[] {
   const wanted = Array.isArray(step.browsers) ? step.browsers : [];
   const browsers = RUN_BROWSERS.filter((b) => wanted.includes(b));
   return browsers.length > 0 ? browsers : defaultRow(test, defaults).browsers;
@@ -168,10 +254,19 @@ export function stepsFromRows(
   tests: readonly RowTest[],
   defaults: RowDefaults,
   policies: PolicyMap = {},
+  groups: readonly RoutineGroup[] = [],
+  groupOf: GroupOf = {},
 ): RoutineStep[] {
   const byId = new Map(tests.map((t) => [t.id, t]));
+  const labels = new Map(groups.map((g) => [g.id, g.label]));
   const steps: RoutineStep[] = [];
   const seen = new Set<string>();
+  // A group is emitted at the position of its FIRST member and collects every
+  // later member into itself. That is what turns the checklist's flat order
+  // back into nesting without a second ordering to keep in sync — and it means
+  // a member dragged away from its siblings does not tear the group in two, it
+  // just moves within it. Rendering nests the same way, so the two agree.
+  const open = new Map<string, RoutineGroupStep>();
 
   for (const id of order) {
     if (seen.has(id)) continue;
@@ -180,13 +275,35 @@ export function stepsFromRows(
     const row = resolveRow(test, rowOptions, defaults);
     if (!row.selected) continue;
     seen.add(id);
-    steps.push({
+    const step: RoutineTestStep = {
       kind: "test",
       testId: id,
       browsers: RUN_BROWSERS.filter((b) => row.browsers.includes(b)),
       headless: row.headless,
       onFailure: policies[id] ?? "continue",
-    });
+    };
+    // A membership naming a group that is not in `groups` is treated as no
+    // membership rather than inventing one. The store would drop a group with
+    // no label anyway, and a step silently sorted into a group nobody can see
+    // is a `skipGroup` that takes out rows for a reason not on screen.
+    const groupId = groupOf[id];
+    if (!groupId || !labels.has(groupId)) {
+      steps.push(step);
+      continue;
+    }
+    const existing = open.get(groupId);
+    if (existing) {
+      existing.steps.push(step);
+      continue;
+    }
+    const group: RoutineGroupStep = {
+      kind: "group",
+      id: groupId,
+      label: labels.get(groupId) ?? "",
+      steps: [step],
+    };
+    open.set(groupId, group);
+    steps.push(group);
   }
   return steps;
 }
@@ -205,12 +322,22 @@ export function sameSteps(a: readonly RoutineStep[], b: readonly RoutineStep[]):
   if (a.length !== b.length) return false;
   return a.every((step, i) => {
     const other = b[i];
+    if (step.kind !== other.kind) return false;
+    // Recursive for a group, so renaming one or moving a test between two
+    // counts as a change. Comparing only the members would call a rename
+    // "unchanged" and never write it; comparing only the label would miss a
+    // test moving between groups, which changes what `skipGroup` takes out.
+    if (step.kind === "group") {
+      const o = other as RoutineGroupStep;
+      return step.id === o.id && step.label === o.label && sameSteps(step.steps, o.steps);
+    }
+    const o = other as RoutineTestStep;
     return (
-      step.testId === other.testId &&
-      step.headless === other.headless &&
-      step.onFailure === other.onFailure &&
-      step.browsers.length === other.browsers.length &&
-      step.browsers.every((br, j) => br === other.browsers[j])
+      step.testId === o.testId &&
+      step.headless === o.headless &&
+      step.onFailure === o.onFailure &&
+      step.browsers.length === o.browsers.length &&
+      step.browsers.every((br, j) => br === o.browsers[j])
     );
   });
 }
@@ -225,9 +352,13 @@ export function sameSteps(a: readonly RoutineStep[], b: readonly RoutineStep[]):
 export function brokenSteps(
   routine: Routine | null,
   tests: readonly RowTest[],
-): RoutineStep[] {
+): RoutineTestStep[] {
   const live = new Set(tests.map((t) => t.id));
-  return (routine?.steps ?? []).filter((s) => s.testDeleted === true || !live.has(s.testId));
+  // Reaches INSIDE groups. A broken step nested in one is exactly as invisible
+  // as a broken step at the top level — more so, since the group still renders
+  // and simply runs one test fewer than it lists.
+  const flat = (routine?.steps ?? []).flatMap((s) => (s.kind === "group" ? s.steps : [s]));
+  return flat.filter((s) => s.testDeleted === true || !live.has(s.testId));
 }
 
 /** A row for a test that is not in the Routine — the shape `rowsFromRoutine`

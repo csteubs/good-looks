@@ -10,7 +10,7 @@
 // is the point: a field added to the interface with nothing produced for it
 // here is a compile error instead of an `undefined` that reads as a default.
 
-import type { RecorderSettings, Routine, RoutineStep } from "../main/recorder/types.js";
+import type { RecorderSettings, Routine, RoutineTestStep } from "../main/recorder/types.js";
 
 export declare const FAILURE_POLICIES: readonly ["continue", "stopRoutine", "skipGroup"];
 
@@ -31,7 +31,7 @@ export declare function stepsFromBatchSettings(
   order: unknown,
   options: unknown,
   knownTestIds?: readonly string[] | null,
-): RoutineStep[];
+): RoutineTestStep[];
 
 export declare function routineFromBatchSettings(
   settings: Partial<RecorderSettings> | null | undefined,
