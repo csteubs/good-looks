@@ -13,7 +13,7 @@
 // The Linear half pins the one distinction the pane is built around: "a key is
 // saved" and "the key works" are different claims, and the pane makes both.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 import { makeController, renderPane, savedPatch } from "../__tests__/harness";
@@ -231,6 +231,159 @@ describe("the default destination", () => {
     });
     renderPane(<IntegrationsPane />, { controller });
     expect(within(row("linear-default-project")).getByText(/Checkout revamp/)).toBeTruthy();
+  });
+});
+
+/** The labels a native-menu-backed `Select` would show. See the note on
+ *  `chooseFromNativeMenu` — this is the same seam, read rather than clicked. */
+function nativeMenuLabels(triggerId: string): string[] {
+  interface Item { label?: string; commandId?: number }
+  const seen: string[] = [];
+  const popup = vi.fn(async ({ items }: { items: Item[] }) => {
+    for (const i of items) if (i.label) seen.push(i.label);
+    return {};
+  });
+  (window as unknown as { glazeAPI: { Menu: unknown } }).glazeAPI = { Menu: { popup } };
+  fireEvent.click(document.getElementById(triggerId) as HTMLElement);
+  return seen;
+}
+
+/**
+ * Choose an option from the app's native-menu-backed `Select`.
+ *
+ * Same seam and same reasoning as `appearance-pane.test.tsx`: the OPTIONS never
+ * enter the DOM, but the menu is opened through `glazeAPI.Menu.popup`, which is
+ * an ordinary promise a test can answer.
+ */
+function chooseFromNativeMenu(triggerId: string, label: string): void {
+  interface Item { label?: string; commandId?: number }
+  const popup = vi.fn(async ({ items }: { items: Item[] }) => {
+    const hit = items.find((i) => i.label === label && i.commandId !== undefined);
+    if (!hit) {
+      throw new Error(`no menu item labelled "${label}" (saw: ${items.map((i) => i.label).join(", ")})`);
+    }
+    return { commandId: hit.commandId };
+  });
+  (window as unknown as { glazeAPI: { Menu: unknown } }).glazeAPI = { Menu: { popup } };
+  fireEvent.click(document.getElementById(triggerId) as HTMLElement);
+}
+
+describe("the tracker is chosen here", () => {
+  const LINEAR = {
+    id: "linear" as const,
+    hasKey: false,
+    vocabulary: {
+      name: "Linear",
+      container: "Team",
+      containerPlural: "Teams",
+      subContainer: "Project",
+      keyHelpUrl: "",
+      keyPlaceholder: "lin_api_…",
+      supportsImageUpload: true,
+    },
+  };
+
+  const GITHUB = {
+    id: "github" as const,
+    hasKey: false,
+    vocabulary: {
+      name: "GitHub",
+      container: "Repository",
+      containerPlural: "Repositories",
+      subContainer: "Milestone",
+      keyHelpUrl: "https://github.com/settings/tokens",
+      keyPlaceholder: "ghp_…",
+      supportsImageUpload: false,
+    },
+  };
+
+  it("offers the choice at all", () => {
+    // The row exists and is a control, not prose. Before this the provider was
+    // a constant in the main process and there was nothing to click.
+    renderPane(<IntegrationsPane />, { controller: connected() });
+    expect(fieldById("issue-tracker-provider")).toBeTruthy();
+  });
+
+  it("shows the tracker in use, not a placeholder", () => {
+    // Same constraint as the team Select: native-menu-backed, so its options
+    // never enter the DOM and the displayed value is the assertable half.
+    renderPane(<IntegrationsPane />, { controller: connected() });
+    expect(within(row("issue-tracker-provider")).getByText(/Linear/)).toBeTruthy();
+  });
+
+  it("labels every row with the SELECTED provider's own words", () => {
+    // The whole reason the vocabulary crosses IPC. A pane that hardcoded "Team"
+    // would ask a GitHub user to choose a default team, which is not a thing
+    // GitHub has.
+    const controller = connected({
+      issuesStatus: {
+        provider: "github",
+        hasKey: true,
+        account: { accountName: "Sam Rivera", workspaceName: null },
+        error: null,
+      },
+      issuesVocabulary: GITHUB.vocabulary,
+      issueContainers: [{ id: "acme/storefront", name: "storefront", key: "acme" }],
+      issueDefaults: { containerId: "acme/storefront", subContainerId: null },
+    });
+    renderPane(<IntegrationsPane />, { controller });
+    expect(row("linear-default-team").textContent).toMatch(/default repository/i);
+    expect(row("linear-default-project").textContent).toMatch(/default milestone/i);
+    expect(within(row("linear-connection")).getByLabelText(/Save GitHub API key/i)).toBeTruthy();
+  });
+
+  it("switches when a different tracker is picked", async () => {
+    // The options never enter the DOM (native-menu-backed Select), but the menu
+    // is opened through `glazeAPI.Menu.popup` — an ordinary promise this test
+    // answers, which runs exactly the handler a real click would. Worth the
+    // scaffolding here: this row IS the feature, and a picker wired to nothing
+    // renders identically to one that works.
+    const controller = connected({ issueProviders: [LINEAR, GITHUB] });
+    renderPane(<IntegrationsPane />, { controller });
+    chooseFromNativeMenu("issue-tracker-provider", "GitHub");
+    await waitFor(() => expect(controller.selectIssueProvider).toHaveBeenCalledWith("github"));
+  });
+
+  it("says which trackers already have a key", () => {
+    // The only on-screen answer to "which of these am I set up for?". Without
+    // it, switching to an unconfigured tracker looks identical to switching to
+    // a configured one until the next send fails.
+    const controller = connected({
+      issueProviders: [{ ...GITHUB, hasKey: true }, LINEAR],
+    });
+    renderPane(<IntegrationsPane />, { controller });
+    // Read off the menu the trigger actually builds, since the items never
+    // reach the DOM to be queried.
+    expect(nativeMenuLabels("issue-tracker-provider")).toEqual(
+      expect.arrayContaining(["GitHub — key saved", "Linear"]),
+    );
+  });
+
+  it("warns that a tracker without image upload will not carry screenshots", () => {
+    // Said in Settings as well as in the dialog, because this is where somebody
+    // chooses it — and a visual-difference workflow whose evidence silently
+    // stops arriving is the expensive way to find out.
+    renderPane(<IntegrationsPane />, {
+      controller: connected({ issuesVocabulary: GITHUB.vocabulary }),
+    });
+    expect(row("issue-tracker-provider").textContent).toMatch(/cannot accept image attachments/i);
+  });
+
+  it("says nothing about attachments for a tracker that does carry them", () => {
+    // A warning shown on every provider is one nobody reads on the provider it
+    // is true for.
+    renderPane(<IntegrationsPane />, { controller: connected() });
+    expect(row("issue-tracker-provider").textContent).not.toMatch(/cannot accept image/i);
+  });
+
+  it("keeps the branch switcher's token as a separate field", () => {
+    // Two GitHub token fields is confusing enough to be worth pinning: they are
+    // separate because disconnecting the issue tracker clears its key, and
+    // pointing that at this one would silently stop the branch switcher listing
+    // pull requests in another window.
+    renderPane(<IntegrationsPane />, { controller: connected() });
+    expect(fieldById("github-token")).toBeTruthy();
+    expect(row("github-token").textContent).toMatch(/branch switcher/i);
   });
 });
 
@@ -505,5 +658,39 @@ describe("search filtering", () => {
   it("keeps the credential rows reachable by search", () => {
     renderPane(<IntegrationsPane />, { matchedIds: ["alert-webhook-url"] });
     expect(fieldById("alert-webhook-url")).toBeTruthy();
+  });
+});
+
+describe("counting destinations uses the provider's own plural", () => {
+  it("does not invent one by appending an s", () => {
+    // "3 repositorys" shipped the first time this pane saw a container word
+    // other than "Team". English has no rule a caller can apply, so the
+    // provider that names the container names its plural too.
+    const controller = connected({
+      issuesVocabulary: {
+        name: "GitHub",
+        container: "Repository",
+        containerPlural: "Repositories",
+        subContainer: "Milestone",
+        keyHelpUrl: "https://github.com/settings/tokens",
+        keyPlaceholder: "ghp_…",
+        supportsImageUpload: false,
+      },
+      issueContainers: [
+        { id: "acme/one", name: "one", key: "acme" },
+        { id: "acme/two", name: "two", key: "acme" },
+      ],
+    });
+    renderPane(<IntegrationsPane />, { controller });
+    expect(row("linear-default-team").textContent).toMatch(/2 repositories available/i);
+    expect(row("linear-default-team").textContent).not.toMatch(/repositorys/i);
+  });
+
+  it("still uses the singular for one", () => {
+    const controller = connected({
+      issueContainers: [{ id: "team-eng", name: "Engineering", key: "ENG" }],
+    });
+    renderPane(<IntegrationsPane />, { controller });
+    expect(row("linear-default-team").textContent).toMatch(/1 team available/i);
   });
 });

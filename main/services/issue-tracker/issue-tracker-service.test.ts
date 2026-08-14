@@ -31,10 +31,17 @@ const KEY = "lin_api_TESTVALUE_LONG_ENOUGH";
  *  module factory runs. */
 const fake: { provider: IssueProvider } = { provider: undefined as unknown as IssueProvider };
 
+// The registry is faked whole, so this file must supply everything anything in
+// the graph imports from it — including the pieces `issue-config-store` reads to
+// resolve and validate the active provider. A missing export here does not fail
+// at import; it fails deep inside an unrelated assertion, which is how it reads
+// as a bug in the thing under test.
 vi.mock("./provider-registry.js", async () => {
   const { linearTokenStore } = await import("./linear-token-store.js");
   return {
-    ACTIVE_PROVIDER: "linear" as const,
+    DEFAULT_PROVIDER: "linear" as const,
+    PROVIDER_IDS: ["linear"] as const,
+    isProviderId: (v: unknown) => v === "linear",
     providerFor: () => fake.provider,
     keyStoreFor: () => ({
       get: () => linearTokenStore.getKey(),
@@ -51,9 +58,11 @@ function makeProvider(over: Partial<IssueProvider> = {}): IssueProvider {
     vocabulary: {
       name: "Linear",
       container: "Team",
+      containerPlural: "Teams",
       subContainer: "Project",
       keyHelpUrl: "https://linear.app/settings/api",
       keyPlaceholder: "lin_api_…",
+      supportsImageUpload: true,
     },
     verify: vi.fn(async () => ({ accountName: "Sam", workspaceName: "Northwind" })),
     listContainers: vi.fn(async () => []),

@@ -83,6 +83,7 @@ import type {
   IssueLabel,
   IssueLink,
   IssueSubContainer,
+  ProviderChoice,
   ProviderVocabulary,
 } from "../lib/issue-types";
 import type { TriageResult } from "../../shared/triage.mjs";
@@ -205,6 +206,11 @@ function seed() {
     issues: {
       connected: false,
       error: null as string | null,
+      // Which tracker the preview is filing into. Switchable in a tab, because
+      // the switch is the thing that has to be LOOKED at: the pane's whole job
+      // is to make the destination obvious, and that cannot be reviewed from a
+      // fixture pinned to one provider.
+      provider: "linear" as "linear" | "github",
       defaults: { containerId: null as string | null, subContainerId: null as string | null },
       // Grows as issues are filed, so the recurrence branch is reachable in a tab:
       // send the same defect twice and the second opens on "already filed".
@@ -212,6 +218,33 @@ function seed() {
     },
   };
 }
+
+/** What each tracker calls its own concepts. A copy of the real providers'
+ *  vocabularies, which is what a preview fixture IS — the preview has no
+ *  backend to ask, and the pane's labels are the thing being looked at. */
+const VOCABULARIES: Record<"linear" | "github", ProviderVocabulary> = {
+  linear: {
+    name: "Linear",
+    container: "Team",
+    containerPlural: "Teams",
+    subContainer: "Project",
+    keyHelpUrl: "https://linear.app/settings/api",
+    keyPlaceholder: "lin_api_…",
+    supportsImageUpload: true,
+  },
+  github: {
+    name: "GitHub",
+    container: "Repository",
+    containerPlural: "Repositories",
+    subContainer: "Milestone",
+    keyHelpUrl: "https://github.com/settings/tokens",
+    keyPlaceholder: "ghp_… or github_pat_…",
+    // False, so the compose dialog's "these will NOT be attached" warning is
+    // reachable in a tab. It is a security-relevant piece of copy and jsdom
+    // cannot show what it looks like next to the thumbnails.
+    supportsImageUpload: false,
+  },
+};
 
 function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> {
   const findTest = (id: unknown) => state.tests.find((t) => t.id === id) ?? null;
@@ -227,10 +260,14 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
 
   /** One place the connection state is shaped, since four handlers return it. */
   const issuesStatus = (): ConnectionStatus => ({
-    provider: "linear",
+    provider: state.issues.provider,
     hasKey: state.issues.connected,
     account: state.issues.connected
-      ? { accountName: "Sam Rivera", workspaceName: "Northwind" }
+      ? state.issues.provider === "github"
+        ? // No workspace name, matching the real provider: a GitHub token is not
+          // scoped to one organisation the way a Linear key is to one workspace.
+          { accountName: "Sam Rivera", workspaceName: null }
+        : { accountName: "Sam Rivera", workspaceName: "Northwind" }
       : null,
     error: state.issues.error,
   });
@@ -924,13 +961,25 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     // else connects. A preview cannot reach Linear, so "verify" is local — the
     // thing being previewed is the pane, not the network.
     "issues:status": (): ConnectionStatus => issuesStatus(),
-    "issues:vocabulary": (): ProviderVocabulary => ({
-      name: "Linear",
-      container: "Team",
-      subContainer: "Project",
-      keyHelpUrl: "https://linear.app/settings/api",
-      keyPlaceholder: "lin_api_…",
-    }),
+    "issues:vocabulary": (): ProviderVocabulary => VOCABULARIES[state.issues.provider],
+    "issues:providers": (): ProviderChoice[] =>
+      (["linear", "github"] as const).map((id) => ({
+        id,
+        vocabulary: VOCABULARIES[id],
+        hasKey: state.issues.connected && state.issues.provider === id,
+      })),
+    "issues:setActiveProvider": (p): ConnectionStatus => {
+      const next = p?.provider;
+      if (next !== "linear" && next !== "github") return issuesStatus();
+      state.issues.provider = next;
+      // Mirrors the real backend: each provider has its own key and its own
+      // destination, so switching lands on the other one's connection rather
+      // than carrying this one's across.
+      state.issues.connected = false;
+      state.issues.error = null;
+      state.issues.defaults = { containerId: null, subContainerId: null };
+      return issuesStatus();
+    },
     "issues:connect": (p): ConnectionStatus => {
       const key = typeof p?.key === "string" ? p.key.trim() : "";
       state.issues.connected = key.length > 0;
@@ -944,21 +993,53 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       state.issues.defaults = { containerId: null, subContainerId: null };
       return issuesStatus();
     },
-    "issues:listContainers": (): IssueContainer[] => [
-      { id: "team-eng", name: "Engineering", key: "ENG" },
-      { id: "team-design", name: "Design", key: "DES" },
-      { id: "team-web", name: "Web Platform", key: "WEB" },
-    ],
-    "issues:listSubContainers": (): IssueSubContainer[] => [
-      { id: "proj-checkout", name: "Checkout revamp", containerId: "team-eng" },
-      { id: "proj-a11y", name: "Accessibility debt", containerId: null },
-      { id: "proj-design-sys", name: "Design system", containerId: "team-design" },
-    ],
-    "issues:listLabels": (): IssueLabel[] => [
-      { id: "lbl-bug", name: "Bug", color: "#ff4d61" },
-      { id: "lbl-a11y", name: "Accessibility", color: "#35e0ff" },
-      { id: "lbl-visual", name: "Visual", color: "#b98cff" },
-    ],
+    "issues:listContainers": (): IssueContainer[] =>
+      state.issues.provider === "github"
+        ? [
+            { id: "acme/storefront", name: "storefront", key: "acme" },
+            { id: "acme/checkout-api", name: "checkout-api", key: "acme" },
+            { id: "csteubs/good-looks", name: "good-looks", key: "csteubs" },
+          ]
+        : [
+            { id: "team-eng", name: "Engineering", key: "ENG" },
+            { id: "team-design", name: "Design", key: "DES" },
+            { id: "team-web", name: "Web Platform", key: "WEB" },
+          ],
+    // Scoped for GitHub and workspace-wide for Linear, exactly as the real
+    // providers answer — so the preview shows the empty-until-you-pick-a-repo
+    // state, which is the one a Linear-only fixture would hide.
+    "issues:listSubContainers": (p): IssueSubContainer[] => {
+      const containerId = typeof p?.containerId === "string" ? p.containerId : null;
+      if (state.issues.provider === "github") {
+        return containerId
+          ? [
+              { id: "1", name: "v2.0", containerId },
+              { id: "2", name: "Bug bash", containerId },
+            ]
+          : [];
+      }
+      return [
+        { id: "proj-checkout", name: "Checkout revamp", containerId: "team-eng" },
+        { id: "proj-a11y", name: "Accessibility debt", containerId: null },
+        { id: "proj-design-sys", name: "Design system", containerId: "team-design" },
+      ];
+    },
+    "issues:listLabels": (p): IssueLabel[] => {
+      const containerId = typeof p?.containerId === "string" ? p.containerId : null;
+      if (state.issues.provider === "github") {
+        return containerId
+          ? [
+              { id: "bug", name: "bug", color: "#d73a4a" },
+              { id: "accessibility", name: "accessibility", color: "#0e8a16" },
+            ]
+          : [];
+      }
+      return [
+        { id: "lbl-bug", name: "Bug", color: "#ff4d61" },
+        { id: "lbl-a11y", name: "Accessibility", color: "#35e0ff" },
+        { id: "lbl-visual", name: "Visual", color: "#b98cff" },
+      ];
+    },
     /** A draft shaped like the real one, so the compose dialog can be looked at
      *  in a tab. The attachments carry a 1×1 PNG rather than a real screenshot:
      *  the strip's LAYOUT is the thing worth seeing here, and a fixture holding
@@ -1007,15 +1088,26 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     },
     "issues:createIssue": (p): CreatedIssue => {
       const source = (p?.source ?? {}) as IssueLink;
-      const issue = {
-        id: `iss-${state.issues.links.length + 1}`,
-        identifier: `ENG-${42 + state.issues.links.length}`,
-        url: "https://linear.app/northwind/issue/ENG-42",
-      };
+      const n = state.issues.links.length;
+      // Shaped like the real answer for whichever provider is selected. The
+      // identifier is what the toast and the "already filed" branch render, and
+      // the two providers spell it very differently.
+      const issue =
+        state.issues.provider === "github"
+          ? {
+              id: `acme/storefront#${101 + n}`,
+              identifier: `acme/storefront#${101 + n}`,
+              url: `https://github.com/acme/storefront/issues/${101 + n}`,
+            }
+          : {
+              id: `iss-${n + 1}`,
+              identifier: `ENG-${42 + n}`,
+              url: "https://linear.app/northwind/issue/ENG-42",
+            };
       // Recorded, so the SECOND send of the same defect shows the recurrence
       // branch — which is the half of this feature worth being able to look at.
       state.issues.links.push({
-        provider: "linear",
+        provider: state.issues.provider,
         testId: String(source.testId ?? ""),
         stepId: String(source.stepId ?? ""),
         runId: String((source as { runId?: string }).runId ?? ""),

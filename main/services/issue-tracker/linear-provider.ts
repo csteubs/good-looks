@@ -301,9 +301,11 @@ function str(v: unknown): string | null {
 const VOCABULARY: ProviderVocabulary = {
   name: "Linear",
   container: "Team",
+  containerPlural: "Teams",
   subContainer: "Project",
   keyHelpUrl: "https://linear.app/settings/api",
   keyPlaceholder: "lin_api_…",
+  supportsImageUpload: true,
 };
 
 /**
@@ -348,7 +350,10 @@ export function createLinearProvider(fetchImpl?: FetchLike): IssueProvider {
       return out;
     },
 
-    async listLabels(key: string): Promise<IssueLabel[]> {
+    /** `containerId` is ignored: Linear's labels are workspace-wide, so
+     *  narrowing to a team would hide labels that are legitimately available.
+     *  See the interface note on why the parameter exists at all. */
+    async listLabels(key: string, _containerId: string | null): Promise<IssueLabel[]> {
       const data = await query<{ issueLabels?: unknown }>(
         key,
         `query { issueLabels(first: ${PAGE_SIZE}) { nodes { id name color } } }`,
@@ -427,7 +432,10 @@ export function createLinearProvider(fetchImpl?: FetchLike): IssueProvider {
       }
     },
 
-    async listSubContainers(key: string): Promise<IssueSubContainer[]> {
+    /** `containerId` is ignored: Linear answers workspace-wide and attributes
+     *  each project to a team below, which the caller filters on. Narrowing the
+     *  query would drop the cross-team projects that report null. */
+    async listSubContainers(key: string, _containerId: string | null): Promise<IssueSubContainer[]> {
       const data = await query<{ projects?: unknown }>(
         key,
         `query { projects(first: ${PAGE_SIZE}) { nodes { id name teams { nodes { id } } } } }`,

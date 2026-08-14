@@ -14,8 +14,16 @@
 // reasoning for each is in the backend types file, next to the interface that
 // forced it.
 
-/** The only implemented provider. */
-export type ProviderId = "linear";
+/**
+ * The implemented providers.
+ *
+ * The runtime list deliberately does NOT live here. This file is imported
+ * type-only by the main process (see the note above), and a `const` array would
+ * be the first runtime import to cross that boundary. `provider-registry.ts`
+ * owns the list, and the renderer learns it over IPC — which is also what stops
+ * a pane from hardcoding a product name next to an id.
+ */
+export type ProviderId = "linear" | "github";
 
 /** Who a stored key belongs to. Shown so a user can tell at a glance that they
  *  pasted the key they meant to. */
@@ -46,9 +54,44 @@ export interface IssueSubContainer {
 export interface ProviderVocabulary {
   name: string;
   container: string;
+  /**
+   * The plural of `container`, because English does not have a rule a caller
+   * can apply. The pane used to append an "s", which was invisibly fine while
+   * Linear was the only provider and produced "3 repositorys" the moment GitHub
+   * existed. Naming the container is already the provider's job — see the note
+   * on `ProviderVocabulary` in the backend types — and this is the same job.
+   */
+  containerPlural: string;
   subContainer: string;
   keyHelpUrl: string;
   keyPlaceholder: string;
+  /**
+   * Whether `createIssue` can carry the screenshots with it.
+   *
+   * False for GitHub, and it is a capability rather than a detail because the
+   * dialog has to SAY SO BEFORE the send. GitHub's attachment upload is a
+   * browser-only endpoint with no public API counterpart, so a visual-difference
+   * issue filed there arrives as prose about pictures nobody can see. Silently
+   * dropping them would be the worst outcome available: the issue looks
+   * complete, and the person who files it never learns otherwise.
+   */
+  supportsImageUpload: boolean;
+}
+
+/**
+ * One row in the provider picker.
+ *
+ * Carries the vocabulary rather than just a name so the pane can render the
+ * whole choice — label, placeholder, help URL — without a second round trip per
+ * option, and without a table of product names living in the renderer.
+ */
+export interface ProviderChoice {
+  id: ProviderId;
+  vocabulary: ProviderVocabulary;
+  /** Whether a key is already stored for it. Lets the picker show which
+   *  providers are ready without verifying — a local, cheap claim, the same
+   *  distinction `ConnectionStatus` draws between `hasKey` and `account`. */
+  hasKey: boolean;
 }
 
 /**

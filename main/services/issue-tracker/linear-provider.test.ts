@@ -226,7 +226,11 @@ describe("remote lists are rebuilt, not trusted", () => {
         },
       }),
     );
-    expect(await provider.listSubContainers(KEY)).toEqual([
+    // The container argument is passed and deliberately ignored: Linear answers
+    // workspace-wide and attributes each project below, which is what lets a
+    // cross-team project report null and be offered everywhere. Narrowing here
+    // would drop exactly those.
+    expect(await provider.listSubContainers(KEY, "t1")).toEqual([
       { id: "p1", name: "One team", containerId: "t1" },
       { id: "p2", name: "Two teams", containerId: null },
       { id: "p3", name: "No teams", containerId: null },

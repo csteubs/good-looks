@@ -209,12 +209,27 @@ Good Looks! *does* talk to those three services — from the app, through its ow
 integrations, configured in **Settings → Integrations** (⌘, then *Integrations*).
 Here is each one, and how it relates to the MCP.
 
-### Linear — filing a failure as an issue
+### Linear or GitHub — filing a failure as an issue
 
-**Where:** Settings → Integrations → *Linear*. Paste a Linear API key
-(`lin_api_…`); the pane reports "saved" and "works" as two separate claims, so a
-revoked key stops reading as Connected. Optionally set a default team and
-project, which prefill the compose dialog.
+**Where:** Settings → Integrations. The **Issue tracker** row at the top of the
+pane is where you choose between *Linear* and *GitHub*; everything below it then
+speaks that tracker's language — Linear has teams and projects, GitHub has
+repositories and milestones.
+
+Paste the key for whichever you picked: a Linear API key (`lin_api_…`) or a
+GitHub token with Issues write access (`ghp_…` or `github_pat_…`). The pane
+reports "saved" and "works" as two separate claims, so a revoked key stops
+reading as Connected. Optionally set a default destination, which prefills the
+compose dialog.
+
+Each tracker keeps its own key, its own default destination and its own record
+of what has already been filed, so switching is reversible and switching back
+finds everything where you left it.
+
+**The GitHub token here is not the one in the branch switcher row further down**,
+even if it is the same string. They are separate on purpose: disconnecting the
+issue tracker clears its key, and sharing one would silently stop pull requests
+listing in the branch switcher.
 
 **How you use it:** on a failed run, click the **Send to issue tracker** button
 (the paper-plane icon in the run output header). A compose dialog opens with a
@@ -227,6 +242,14 @@ If that same defect already has an issue, the dialog offers to **comment the
 recurrence** on it instead of filing a duplicate.
 
 The raw run log never leaves the app — only the reduced failure line does.
+
+**One difference between the two trackers, and the dialog says so before you
+send.** GitHub's API has no image upload, so screenshots and diffs cannot travel
+with a GitHub issue. When GitHub is selected the attachment strip says the
+screenshots will **not** be attached, and the issue body names them so nobody
+reads it as complete. Linear uploads them normally. If the pictures are the
+point — as they usually are for a visual difference — that is worth knowing
+before you choose.
 
 **With MCP:** the assistant can diagnose (`triage_run`, `get_run_logs`) but it
 cannot file. Filing is a click you make.

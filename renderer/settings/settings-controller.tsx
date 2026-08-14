@@ -26,6 +26,8 @@ import type {
   IssueContainer,
   IssueDefaults,
   IssueSubContainer,
+  ProviderChoice,
+  ProviderId,
   ProviderVocabulary,
 } from "../lib/issue-types";
 import type { ArtifactUsage, RecorderSettings } from "../lib/recorder-types";
@@ -93,10 +95,17 @@ export interface SettingsController {
   /** The provider's own words. Null until the load resolves; the pane falls
    *  back rather than rendering "undefined Team". */
   issuesVocabulary: ProviderVocabulary | null;
+  /** Every tracker that can be chosen, newest read wins. Empty until the load
+   *  resolves, which the pane renders as "just the current one". */
+  issueProviders: ProviderChoice[];
   issuesBusy: boolean;
   issueContainers: IssueContainer[];
   issueSubContainers: IssueSubContainer[];
   issueDefaults: IssueDefaults;
+  /** Switch trackers. Reloads everything downstream of the choice — the
+   *  connection, the vocabulary and both pickers all belong to the provider,
+   *  not to this pane. */
+  selectIssueProvider: (provider: ProviderId) => Promise<void>;
   /** Resolves true when the key was accepted, so the pane knows whether to
    *  clear its input — same contract as `saveWebhookUrl`. */
   connectIssues: (key: string) => Promise<boolean>;
@@ -162,6 +171,7 @@ export function useSettingsControllerState(): SettingsController {
   // and what comes back is whether one is stored and who it belongs to.
   const [issuesStatus, setIssuesStatus] = useState<ConnectionStatus>(DISCONNECTED);
   const [issuesVocabulary, setIssuesVocabulary] = useState<ProviderVocabulary | null>(null);
+  const [issueProviders, setIssueProviders] = useState<ProviderChoice[]>([]);
   const [issuesBusy, setIssuesBusy] = useState(false);
   const [issueContainers, setIssueContainers] = useState<IssueContainer[]>([]);
   const [issueSubContainers, setIssueSubContainers] = useState<IssueSubContainer[]>([]);
@@ -246,6 +256,10 @@ export function useSettingsControllerState(): SettingsController {
     load(
       () => api.issues.getDefaults(),
       (next) => setIssueDefaultsState(next ?? NO_DEFAULTS),
+    );
+    load(
+      () => api.issues.providers(),
+      (next) => setIssueProviders(next ?? []),
     );
     load(
       () => api.branches.status(),
@@ -510,10 +524,17 @@ export function useSettingsControllerState(): SettingsController {
    *  to offer, and the connection row above already carries the reason. */
   const loadIssueLists = useCallback(async () => {
     try {
+      // The defaults are re-read rather than taken from state, and that is not
+      // belt-and-braces: sub-containers are scoped to the selected container for
+      // providers that scope them, so this call NEEDS the container id, and the
+      // one in state belongs to whichever provider was active when it was set.
+      // Reading first is what makes this correct immediately after a switch.
+      const defaults = (await api.issues.getDefaults().catch(() => null)) ?? NO_DEFAULTS;
       const [containers, subContainers] = await Promise.all([
         api.issues.listContainers(),
-        api.issues.listSubContainers(),
+        api.issues.listSubContainers(defaults.containerId),
       ]);
+      setIssueDefaultsState(defaults);
       setIssueContainers(containers ?? []);
       setIssueSubContainers(subContainers ?? []);
     } catch {
@@ -521,6 +542,51 @@ export function useSettingsControllerState(): SettingsController {
       setIssueSubContainers([]);
     }
   }, []);
+
+  /** Re-read which providers have a key. Called after anything that stores or
+   *  removes one, so the picker's "key saved" marks do not go stale — they are
+   *  the only on-screen answer to "which of these am I set up for?". */
+  const refreshIssueProviders = useCallback(async () => {
+    setIssueProviders((await api.issues.providers().catch(() => null)) ?? []);
+  }, []);
+
+  /**
+   * Switch trackers.
+   *
+   * Everything downstream of the choice is dropped BEFORE the new provider's
+   * lists arrive, rather than replaced when they do. A Linear team id and a
+   * GitHub repository are both strings, so a picker left holding the old list
+   * across the switch is a picker offering destinations that do not exist in
+   * the tracker now selected — and the failure lands at send time, on someone
+   * who has already written the report.
+   */
+  const selectIssueProvider = useCallback(
+    async (provider: ProviderId) => {
+      setIssuesBusy(true);
+      try {
+        const next = await api.issues.setActiveProvider(provider);
+        setIssuesStatus(next);
+        setIssueContainers([]);
+        setIssueSubContainers([]);
+        setIssueDefaultsState(NO_DEFAULTS);
+        setIssuesVocabulary((await api.issues.vocabulary().catch(() => null)) ?? null);
+        // Verified here rather than left to the auto-verify effect below: that
+        // one is keyed on `hasKey`, and switching between two providers that
+        // both have a key does not change it — so the effect would not fire and
+        // the pane would sit on the previous provider's verified account.
+        if (next.hasKey) {
+          const verifiedNext = await api.issues.verify().catch(() => next);
+          setIssuesStatus(verifiedNext);
+          if (verifiedNext.account) await loadIssueLists();
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : `Failed to switch tracker: ${error}`);
+      } finally {
+        setIssuesBusy(false);
+      }
+    },
+    [loadIssueLists],
+  );
 
   const connectIssues = useCallback(
     async (raw: string) => {
@@ -543,6 +609,8 @@ export function useSettingsControllerState(): SettingsController {
           // send someone off to paste it again for nothing.
           toast.error(next.error ?? "Saved, but the key could not be verified.");
         }
+        // Stored either way, so the picker's marks are stale either way.
+        await refreshIssueProviders();
         // True either way: the key was stored, so the field should clear. A
         // verification that failed on a flaky network is not a reason to make
         // someone paste it again.
@@ -554,7 +622,7 @@ export function useSettingsControllerState(): SettingsController {
         setIssuesBusy(false);
       }
     },
-    [loadIssueLists],
+    [loadIssueLists, refreshIssueProviders],
   );
 
   const verifyIssues = useCallback(async () => {
@@ -591,20 +659,30 @@ export function useSettingsControllerState(): SettingsController {
       setIssueDefaultsState(NO_DEFAULTS);
       setIssueContainers([]);
       setIssueSubContainers([]);
+      await refreshIssueProviders();
       toast.success("Disconnected.");
     } catch (error) {
       toast.error(`Failed to disconnect: ${error}`);
     } finally {
       setIssuesBusy(false);
     }
-  }, []);
+  }, [refreshIssueProviders]);
 
   const setIssueDefaults = useCallback(async (patch: Partial<IssueDefaults>) => {
     try {
       // Authoritative: the backend clears the sub-container when the container
       // changes, so echoing the patch optimistically would leave a project
       // showing under a team it no longer belongs to.
-      setIssueDefaultsState(await api.issues.setDefaults(patch));
+      const next = await api.issues.setDefaults(patch);
+      setIssueDefaultsState(next);
+      // A container change re-fetches the sub-containers, because for a provider
+      // that scopes them the previous list belongs to the previous container.
+      // Filtering the stale list client-side — which is all the Linear-only
+      // version had to do — would leave the picker empty against GitHub and read
+      // as "this repository has no milestones".
+      if (patch.containerId !== undefined) {
+        setIssueSubContainers(await api.issues.listSubContainers(next.containerId).catch(() => []));
+      }
     } catch (error) {
       toast.error(`Failed to save the destination: ${error}`);
     }
@@ -730,10 +808,12 @@ export function useSettingsControllerState(): SettingsController {
     testWebhook,
     issuesStatus,
     issuesVocabulary,
+    issueProviders,
     issuesBusy,
     issueContainers,
     issueSubContainers,
     issueDefaults,
+    selectIssueProvider,
     connectIssues,
     verifyIssues,
     disconnectIssues,

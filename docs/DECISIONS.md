@@ -10,6 +10,93 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-14 — The issue tracker is a setting, not a constant
+
+`renderer/lib/issue-types.ts`, `main/services/issue-tracker/types.ts`,
+`main/services/issue-tracker/github-provider.ts` (new),
+`main/services/issue-tracker/github-issue-token-store.ts` (new),
+`main/services/issue-tracker/provider-registry.ts`,
+`main/services/issue-tracker/issue-config-store.ts`,
+`main/services/issue-tracker/issue-tracker-service.ts`,
+`renderer/settings/panes/integrations-pane.tsx`,
+`renderer/components/issue-compose-dialog.tsx`.
+
+**The report:** issues could only be filed into Linear, and the choice of
+tracker was `ACTIVE_PROVIDER`, a constant in the main process.
+
+**Why the interface was already right.** `types.ts` was designed against two
+APIs on purpose, with GitHub named in the comments as "the adversary that keeps
+the shape honest". That paid: `verify`, `createIssue` and `addComment` took
+GitHub with no change at all, and every call site already asked "which
+provider?" rather than naming Linear. The doc also said an escape hatch through
+the interface would be the signal the abstraction was premature. Two things did
+change, and neither is one:
+
+- **`listSubContainers` and `listLabels` gained a `containerId`.** Linear scopes
+  neither — its labels are workspace-wide and its projects attribute themselves
+  to a team — and GitHub scopes both, because a milestone and a label live
+  inside one repository and there is no cross-repository list to return. No
+  amount of interface taste removes that disagreement. It is a narrowing hint
+  both providers answer honestly, one by using it and one by ignoring it.
+- **The vocabulary gained `supportsImageUpload` and `containerPlural`.** Both
+  are facts about a provider that the UI must state, not behaviour it branches
+  on.
+
+**Where the choice lives, and where it deliberately does not.** In Settings →
+Integrations. The compose dialog has no picker: it opens at the moment someone
+is looking at a failure and wants it recorded, and a destination question there
+is one more thing to get wrong on the way. The provider is a configuration
+decision, made once, in the window whose whole subject is what this app connects
+to.
+
+The choice is stored in `issue-tracker-config.json` beside the per-provider
+defaults rather than in `RecorderSettings`, where a "pick from a fixed list"
+value would normally go. It is meaningless apart from the ids next to it:
+selecting GitHub and reading a Linear team id is the exact failure that file
+exists to prevent, and both are strings so nothing would throw. Only an explicit
+choice is written, so the fallback can change later without silently overriding
+somebody's decision — and the choice survives a disconnect, because removing a
+key does not mean "and go back to the other tracker".
+
+**Two GitHub tokens, deliberately.** `github-token-store.ts` already existed for
+the branch switcher. Reusing it looked obviously right and is wrong twice over.
+`disconnect()` clears the provider's key — that is the contract, and it should
+be — so disconnecting the issue tracker would silently stop pull requests
+listing in a different window, with nothing on screen connecting the two. And
+the scopes differ: listing PRs is read-only and works unauthenticated on a
+public repository, while filing an issue needs write access, so sharing one
+token quietly promotes the low-privilege credential. The cost is pasting two
+tokens. That is visible and explainable; the other failure is neither.
+
+**The container id is a URL path segment**, which nothing in the Linear
+implementation prepared for. Linear's ids are opaque UUIDs travelling in a
+GraphQL variable; GitHub's is `owner/repo`, interpolated into a REST route. It
+arrives from a remote list, is written to disk as a default, comes back over IPC
+as a destination, and only then becomes a URL — so `repoPath` re-validates it at
+the point of use rather than trusting any hop, and refuses **before** the
+request. `check`-style coverage lives in `github-provider.test.ts`, which
+asserts no fetch happened at all for a hostile id: a validator that rejected the
+*response* would already have sent the token wherever the traversal pointed.
+
+**GitHub cannot attach images, and this is stated rather than worked around.**
+The attachment upload is a browser-only endpoint with no REST counterpart. Every
+documented alternative — a gist, a release asset, a branch — means publishing a
+screenshot of the app under test to a URL anyone can fetch, which is a decision
+a user makes deliberately and not a default a provider may take for them. So
+`supportsImageUpload` is false, the dialog says the screenshots will **NOT** be
+attached before the send and next to the pictures it is about, and the issue
+body names what stayed behind. An issue that silently lost its evidence looks
+complete, which is the expensive way to find out. The rejected alternative was
+refusing to file at all when images are present; that makes GitHub unusable for
+the visual-difference case it is most likely to be used for.
+
+**One bug the screenshot caught that no test would have.** The pane counted
+destinations as `` `${vocab.container.toLowerCase()}s` ``, which was invisibly
+fine for "Teams" and rendered "3 repositorys" the first time a second provider
+existed. English has no rule a caller can apply, so the provider that names its
+container now names its plural. It was found by running the browser preview and
+looking at it — the step CLAUDE.md says is the most easily skipped.
+
 ### 2026-08-14 — The user gets to say which element they meant
 
 `main/recorder/types.ts`, `main/recorder/capture-script.ts`,

@@ -19,7 +19,7 @@ import { testSecretsStore } from "../test-secrets-store.js";
 import { defectLoader } from "./defect-loader.js";
 import { issueConfigStore } from "./issue-config-store.js";
 import { issueLinkStore, type IssueLink } from "./issue-link-store.js";
-import { ACTIVE_PROVIDER, keyStoreFor, providerFor } from "./provider-registry.js";
+import { keyStoreFor, PROVIDER_IDS, providerFor } from "./provider-registry.js";
 import {
   IssueProviderError,
   type ConnectionStatus,
@@ -32,6 +32,7 @@ import {
   type IssueDefaults,
   type IssueSubContainer,
   type ProviderAccount,
+  type ProviderChoice,
   type ProviderId,
   type ProviderVocabulary,
 } from "./types.js";
@@ -71,15 +72,46 @@ export const issueTrackerService = {
   /** The provider in use. Exposed so the renderer can label its own UI without
    *  hardcoding a product name. */
   activeProvider(): ProviderId {
-    return ACTIVE_PROVIDER;
+    return issueConfigStore.activeProvider();
   },
 
-  vocabulary(provider: ProviderId = ACTIVE_PROVIDER): ProviderVocabulary {
+  /**
+   * Change which tracker issues are filed into.
+   *
+   * Nothing is migrated and nothing is cleared. Each provider keeps its own key,
+   * its own defaults and its own issue links, so switching is reversible and
+   * switching back finds everything where it was — which is the whole reason the
+   * stores were keyed by provider before there was a second one.
+   */
+  setActiveProvider(provider: ProviderId): ProviderId {
+    return issueConfigStore.setActiveProvider(provider);
+  },
+
+  /**
+   * Every provider, for the settings picker.
+   *
+   * The vocabulary travels with each row so the pane can render the whole
+   * choice without a call per option — and, more to the point, without a table
+   * of product names in the renderer. `hasKey` is the local, cheap claim only;
+   * verifying every provider to build a menu would put two network calls behind
+   * opening a settings pane.
+   */
+  async providers(): Promise<ProviderChoice[]> {
+    return Promise.all(
+      PROVIDER_IDS.map(async (id) => ({
+        id,
+        vocabulary: providerFor(id).vocabulary,
+        hasKey: await keyStoreFor(id).has().catch(() => false),
+      })),
+    );
+  },
+
+  vocabulary(provider: ProviderId = issueConfigStore.activeProvider()): ProviderVocabulary {
     return providerFor(provider).vocabulary;
   },
 
   /** Local only — never a network call. See the note at the top. */
-  async status(provider: ProviderId = ACTIVE_PROVIDER): Promise<ConnectionStatus> {
+  async status(provider: ProviderId = issueConfigStore.activeProvider()): Promise<ConnectionStatus> {
     const hasKey = await keyStoreFor(provider).has().catch(() => false);
     return {
       provider,
@@ -98,13 +130,13 @@ export const issueTrackerService = {
    * retry with. The opposite order (verify, then save) fails the same person by
    * refusing work that is only temporarily impossible.
    */
-  async connect(plain: string, provider: ProviderId = ACTIVE_PROVIDER): Promise<ConnectionStatus> {
+  async connect(plain: string, provider: ProviderId = issueConfigStore.activeProvider()): Promise<ConnectionStatus> {
     await keyStoreFor(provider).set(plain);
     return this.verify(provider);
   },
 
   /** Ask the provider who this key belongs to, and record the answer. */
-  async verify(provider: ProviderId = ACTIVE_PROVIDER): Promise<ConnectionStatus> {
+  async verify(provider: ProviderId = issueConfigStore.activeProvider()): Promise<ConnectionStatus> {
     try {
       const account = await providerFor(provider).verify(await requireKey(provider));
       verified.set(provider, account);
@@ -125,7 +157,7 @@ export const issueTrackerService = {
    * else's workspace — which fails by filing an issue somewhere unintended
    * rather than by erroring.
    */
-  async disconnect(provider: ProviderId = ACTIVE_PROVIDER): Promise<ConnectionStatus> {
+  async disconnect(provider: ProviderId = issueConfigStore.activeProvider()): Promise<ConnectionStatus> {
     await keyStoreFor(provider).clear();
     verified.delete(provider);
     lastError.delete(provider);
@@ -134,15 +166,22 @@ export const issueTrackerService = {
     return this.status(provider);
   },
 
-  async listContainers(provider: ProviderId = ACTIVE_PROVIDER): Promise<IssueContainer[]> {
+  async listContainers(provider: ProviderId = issueConfigStore.activeProvider()): Promise<IssueContainer[]> {
     return providerFor(provider).listContainers(await requireKey(provider));
   },
 
-  async listSubContainers(provider: ProviderId = ACTIVE_PROVIDER): Promise<IssueSubContainer[]> {
-    return providerFor(provider).listSubContainers(await requireKey(provider));
+  /** `containerId` narrows the list where the provider scopes it. Passing null
+   *  is legitimate — Linear answers workspace-wide regardless — but it is what
+   *  GitHub has no answer to, so the pickers pass whatever container is
+   *  currently selected rather than omitting it. */
+  async listSubContainers(
+    containerId: string | null,
+    provider: ProviderId = issueConfigStore.activeProvider(),
+  ): Promise<IssueSubContainer[]> {
+    return providerFor(provider).listSubContainers(await requireKey(provider), containerId);
   },
 
-  defaults(provider: ProviderId = ACTIVE_PROVIDER): IssueDefaults {
+  defaults(provider: ProviderId = issueConfigStore.activeProvider()): IssueDefaults {
     return issueConfigStore.get(provider);
   },
 
@@ -153,7 +192,7 @@ export const issueTrackerService = {
    * same patch: a project belongs to a team, and a team change that left the
    * project in place would leave a pair that looks configured and is not.
    */
-  setDefaults(patch: Partial<IssueDefaults>, provider: ProviderId = ACTIVE_PROVIDER): IssueDefaults {
+  setDefaults(patch: Partial<IssueDefaults>, provider: ProviderId = issueConfigStore.activeProvider()): IssueDefaults {
     const containerChanged =
       patch.containerId !== undefined &&
       patch.containerId !== issueConfigStore.get(provider).containerId;
@@ -164,8 +203,12 @@ export const issueTrackerService = {
     return issueConfigStore.set(provider, effective);
   },
 
-  async listLabels(provider: ProviderId = ACTIVE_PROVIDER): Promise<IssueLabel[]> {
-    return providerFor(provider).listLabels(await requireKey(provider));
+  /** Scoped the same way as `listSubContainers`. */
+  async listLabels(
+    containerId: string | null,
+    provider: ProviderId = issueConfigStore.activeProvider(),
+  ): Promise<IssueLabel[]> {
+    return providerFor(provider).listLabels(await requireKey(provider), containerId);
   },
 
   /** The pre-filled issue for one defect, assembled from disk. Null when the
@@ -232,7 +275,7 @@ export const issueTrackerService = {
   async createIssue(
     draft: { source: DefectSource; title: string; body: string; attachmentFiles: string[] },
     destination: IssueDestination,
-    provider: ProviderId = ACTIVE_PROVIDER,
+    provider: ProviderId = issueConfigStore.activeProvider(),
   ): Promise<CreatedIssue> {
     const key = await requireKey(provider);
     const secrets = await testSecretsStore.allValues().catch(() => [] as string[]);
@@ -254,7 +297,7 @@ export const issueTrackerService = {
   },
 
   /** The issue already filed for this defect, if any. */
-  linkFor(source: DefectSource, provider: ProviderId = ACTIVE_PROVIDER): IssueLink | null {
+  linkFor(source: DefectSource, provider: ProviderId = issueConfigStore.activeProvider()): IssueLink | null {
     return issueLinkStore.find(provider, source);
   },
 
@@ -277,7 +320,7 @@ export const issueTrackerService = {
   async commentRecurrence(
     source: DefectSource,
     attachmentFiles: string[],
-    provider: ProviderId = ACTIVE_PROVIDER,
+    provider: ProviderId = issueConfigStore.activeProvider(),
   ): Promise<IssueLink> {
     const link = issueLinkStore.find(provider, source);
     if (!link) throw new IssueProviderError("unknown", "This defect has no issue to comment on.");

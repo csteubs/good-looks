@@ -54,6 +54,8 @@ import type {
   IssueLabel,
   IssueLink,
   IssueSubContainer,
+  ProviderChoice,
+  ProviderId,
   ProviderVocabulary,
 } from "./issue-types";
 import type { TriageResult } from "../../shared/triage.mjs";
@@ -416,6 +418,14 @@ export const api = {
     status: () => ipc().invoke<ConnectionStatus>("issues:status"),
     /** The provider's own words for its concepts, so views don't hardcode them. */
     vocabulary: () => ipc().invoke<ProviderVocabulary>("issues:vocabulary"),
+    /** Every tracker this app can file into, for the settings picker. Carries
+     *  each one's vocabulary, so no renderer holds a table of product names. */
+    providers: () => ipc().invoke<ProviderChoice[]>("issues:providers"),
+    /** Change which tracker issues go to. Resolves with the NEW provider's
+     *  status, which is usually a different connection entirely — the caller
+     *  has to reload its lists, not patch a name. */
+    setActiveProvider: (provider: ProviderId) =>
+      ipc().invoke<ConnectionStatus>("issues:setActiveProvider", { provider }),
     /** Save a key and immediately prove it. Resolves with the resulting status
      *  rather than throwing on a bad key — a rejected key is a state the pane
      *  renders, not an exception it catches. */
@@ -425,8 +435,14 @@ export const api = {
     /** Throws when there is no key or the provider refuses — the caller is a
      *  list that has nothing to show, so the failure has to be visible. */
     listContainers: () => ipc().invoke<IssueContainer[]>("issues:listContainers"),
-    listSubContainers: () => ipc().invoke<IssueSubContainer[]>("issues:listSubContainers"),
-    listLabels: () => ipc().invoke<IssueLabel[]>("issues:listLabels"),
+    /** `containerId` narrows the list where the provider scopes it — GitHub's
+     *  milestones and labels are per-repository and it returns nothing without
+     *  one, while Linear answers workspace-wide and ignores it. Pass whatever
+     *  container is selected; null is a valid "none chosen yet". */
+    listSubContainers: (containerId: string | null) =>
+      ipc().invoke<IssueSubContainer[]>("issues:listSubContainers", { containerId }),
+    listLabels: (containerId: string | null) =>
+      ipc().invoke<IssueLabel[]>("issues:listLabels", { containerId }),
     /** The pre-filled issue for one defect. Null when its evidence is gone —
      *  a pruned run, a re-recorded step — which the dialog reports rather than
      *  opening onto an empty form. */
