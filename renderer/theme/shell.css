@@ -348,6 +348,56 @@
   gap: 6px;
 }
 
+/* ── Rail folders (REDESIGN §7.2) ──────────────────────────────────────── */
+/*
+ * A folder row is the test row with a caret in front of it, so it inherits
+ * everything above and adds almost nothing. That is the point: groups and
+ * tests have to stack into ONE column with one edge, and a header drawn as its
+ * own kind of thing is a second column pretending to be the same one.
+ *
+ * The caret cell is reserved on the folder only — a test row has no caret and
+ * never gains one, so there is nothing to keep aligned across the two. Its
+ * members are indented instead, which is what says "these are under that".
+ */
+.gl-rail-group-row {
+  /* Left of the icon, so the caret does not steal from the title's width. */
+  padding-left: 4px;
+}
+
+.gl-rail-group-caret {
+  flex: 0 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gl-tx-3);
+}
+
+.gl-rail-group-row .gl-rail-row-title {
+  /* The one difference in the type: a folder names a container and its members
+     name themselves, so the header carries slightly more weight rather than a
+     different family or size. */
+  color: var(--gl-tx-1);
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+/* A member sits INSIDE its folder, so its icon is right of the folder's — 24px
+   (4 padding + 12 caret + 8 gap) — rather than level with it. Ten past that is
+   enough to read as nesting in a 245px rail and cheap enough not to push the
+   title into an ellipsis it would not otherwise need.
+   
+   Top-level tests stay at the base 10px and are therefore LEFT of the folder's
+   own icon, which the caret pays for. Reserving an empty caret cell on every
+   row would line the two up properly, and it would cost 20px of title on every
+   row in the rail — including the views nav and the Routines list, which have
+   no folders and never will. The folder's title is uppercase and bold; it
+   reads as a header, not as a sibling that drifted. */
+.gl-rail-row-nested {
+  padding-left: 34px;
+}
+
 /* ── The boot plate ────────────────────────────────────────────────────── */
 /*
  * REDESIGN §6.9. A full-window title card on the palette's only true black,

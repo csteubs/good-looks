@@ -11,7 +11,9 @@ import { describe, it, expect } from "vitest";
 import type { RunRecord } from "./recorder-types";
 import {
   HEAL_TOLERANCE,
+  groupVerdictTone,
   tally,
+  testVerdicts,
   toneForVerdict,
   verdictFor,
   verdictsByTest,
@@ -64,7 +66,9 @@ describe("verdictFor", () => {
     const over = [run({ healedSteps: HEAL_TOLERANCE + 1 })];
     expect(verdictFor(atLimit)).toBe("passed");
     expect(verdictFor(over)).toBe("healed");
-    expect(toneForVerdict("healed", tally(over)).className).toBe("bg-support-green-yellow");
+    expect(toneForVerdict("healed", tally(over)).className).toBe(
+      "bg-support-green-yellow",
+    );
   });
 
   it("counts heals across the whole cohort, not per run", () => {
@@ -90,7 +94,9 @@ describe("verdictFor", () => {
 
   it("is red only when every browser failed", () => {
     expect(verdictFor(batch(3))).toBe("failed");
-    expect(toneForVerdict("failed", tally(batch(3))).className).toBe("bg-support-red");
+    expect(toneForVerdict("failed", tally(batch(3))).className).toBe(
+      "bg-support-red",
+    );
   });
 
   it("keeps a single failing run red rather than mixed", () => {
@@ -101,11 +107,15 @@ describe("verdictFor", () => {
   });
 
   it("names the counts on a mixed verdict and not on a plain one", () => {
-    expect(toneForVerdict("mostly-passed", tally(batch(1))).label).toBe("2 of 3 runs passed");
-    expect(toneForVerdict("passed", tally([run()])).label).toBe("Last run passed");
-    expect(toneForVerdict("failed", tally([run({ status: "failed" })])).label).toBe(
-      "Last run failed",
+    expect(toneForVerdict("mostly-passed", tally(batch(1))).label).toBe(
+      "2 of 3 runs passed",
     );
+    expect(toneForVerdict("passed", tally([run()])).label).toBe(
+      "Last run passed",
+    );
+    expect(
+      toneForVerdict("failed", tally([run({ status: "failed" })])).label,
+    ).toBe("Last run failed");
   });
 });
 
@@ -123,7 +133,10 @@ describe("verdictsByTest", () => {
     // app, and the only way it can never get stuck is that nothing is sticky:
     // the newest cohort is the whole answer.
     const failed = [...batch(3)];
-    const v = verdictsByTest([...failed, run({ id: "rerun", status: "passed", startedAt: 999 })]);
+    const v = verdictsByTest([
+      ...failed,
+      run({ id: "rerun", status: "passed", startedAt: 999 }),
+    ]);
     expect(v.get("t1")?.className).toBe("bg-support-green");
   });
 
@@ -140,11 +153,18 @@ describe("verdictsByTest", () => {
     // alone it reports green for a batch that lost two of three.
     const cohort = batch(2); // chromium + firefox failed, webkit (newest) passed
     expect(cohort[2].status).toBe("passed");
-    expect(verdictsByTest(cohort).get("t1")?.className).toBe("bg-support-orange-red");
+    expect(verdictsByTest(cohort).get("t1")?.className).toBe(
+      "bg-support-orange-red",
+    );
   });
 
   it("does not mix an older batch into a newer one's verdict", () => {
-    const older = batch(3).map((r) => ({ ...r, id: `old-${r.id}`, batchId: "b0", startedAt: 1 }));
+    const older = batch(3).map((r) => ({
+      ...r,
+      id: `old-${r.id}`,
+      batchId: "b0",
+      startedAt: 1,
+    }));
     const v = verdictsByTest([...older, ...batch(0)]);
     expect(v.get("t1")?.className).toBe("bg-support-green");
   });
@@ -157,5 +177,84 @@ describe("verdictsByTest", () => {
     expect(v.get("t1")?.className).toBe("bg-support-green");
     expect(v.get("t2")?.className).toBe("bg-support-red");
     expect(v.get("t3")).toBeUndefined();
+  });
+});
+
+describe("groupVerdictTone — one dot for a library folder (REDESIGN §7.2)", () => {
+  it("counts TESTS, not runs", () => {
+    // A folder of two where one failed on three browsers is "1 of 2 tests
+    // passed". Counting runs would say "3 of 4", which is arithmetic about a
+    // thing nobody grouped.
+    expect(groupVerdictTone(["passed", "failed"])?.label).toBe(
+      "1 of 2 tests passed",
+    );
+  });
+
+  it("is green when every member passed, and says how many", () => {
+    expect(groupVerdictTone(["passed", "passed"])).toEqual({
+      className: "bg-support-green",
+      label: "All 2 tests passed",
+    });
+  });
+
+  it("is red when every member failed", () => {
+    expect(groupVerdictTone(["failed", "failed"])).toEqual({
+      className: "bg-support-red",
+      label: "All 2 tests failed",
+    });
+  });
+
+  it("counts a member that PASSED WITH HEALS as passed", () => {
+    // The heal warning is a per-test early signal about that test's locators.
+    // Propagating it would tint a folder yellow and send you to look at five
+    // tests to find one.
+    expect(groupVerdictTone(["healed", "passed"])?.className).toBe(
+      "bg-support-green",
+    );
+  });
+
+  it("uses the same ratio the run scale does, so a folder and a test agree", () => {
+    // A third or less failing is the lighter mix; more than that is the darker
+    // one. Same rule as `verdictFor`, so "mostly" means one thing in this app.
+    expect(groupVerdictTone(["passed", "passed", "failed"])?.className).toBe(
+      "bg-support-yellow-orange",
+    );
+    expect(groupVerdictTone(["passed", "failed", "failed"])?.className).toBe(
+      "bg-support-orange-red",
+    );
+  });
+
+  it("is null when nothing in the folder has ever run", () => {
+    // No dot, rather than a grey one claiming a result. The caller passes only
+    // the members that HAVE a verdict, so an empty list means exactly that.
+    expect(groupVerdictTone([])).toBeNull();
+  });
+
+  it("speaks in the singular for a folder of one", () => {
+    expect(groupVerdictTone(["passed"])?.label).toBe("Its test passed");
+    expect(groupVerdictTone(["failed"])?.label).toBe("Its test failed");
+  });
+});
+
+describe("testVerdicts", () => {
+  it("reports the verdict as well as the tone, which is what a folder counts", () => {
+    const v = testVerdicts([run({ id: "a", testId: "t1", status: "failed" })]);
+    expect(v.get("t1")?.verdict).toBe("failed");
+    expect(v.get("t1")?.tone.className).toBe("bg-support-red");
+    expect(v.get("t1")?.tally.total).toBe(1);
+  });
+
+  it("agrees with verdictsByTest, which is its projection", () => {
+    // One traversal, not two: if these ever disagreed, two dots for the same
+    // test would be drawn from two different readings of the same runs.
+    const runs = [
+      run({ id: "a", testId: "t1", status: "passed" }),
+      run({ id: "b", testId: "t2", status: "failed" }),
+    ];
+    const tones = verdictsByTest(runs);
+    for (const [id, v] of testVerdicts(runs)) {
+      expect(tones.get(id)).toEqual(v.tone);
+    }
+    expect([...tones.keys()].sort()).toEqual(["t1", "t2"]);
   });
 });

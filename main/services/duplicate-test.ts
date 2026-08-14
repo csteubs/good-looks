@@ -55,6 +55,11 @@ export const DUPLICATED_FIELDS = [
   "runBrowser",
   "testTimeoutMs",
   "tags",
+  // The folder the original sits in. A copy that landed at the top level would
+  // be somewhere the user was not looking — the whole visible result of
+  // duplicating is a new row, and putting it in a different part of the rail
+  // reads as nothing having happened.
+  "group",
   "variables",
   "datasets",
   "isFlow",

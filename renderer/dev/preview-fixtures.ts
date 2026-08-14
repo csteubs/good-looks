@@ -58,6 +58,7 @@ export const TESTS: TestRecord[] = [
     updatedAt: NOW - 2 * HOUR,
     scriptPath: "/preview/scripts/checkout.spec.ts",
     tags: ["smoke", "checkout"],
+    group: "Storefront",
     runBrowser: "chromium",
     captureArtifacts: true,
     a11yChecks: true,
@@ -93,6 +94,7 @@ export const TESTS: TestRecord[] = [
     updatedAt: NOW - 30 * MINUTE,
     scriptPath: "/preview/scripts/login.spec.ts",
     tags: ["smoke", "auth"],
+    group: "Storefront",
     runBrowser: "webkit",
     steps: steps(
       { type: "goto", url: "https://app.example.com/login" },
@@ -601,6 +603,7 @@ export const SETTINGS: RecorderSettings = {
   defaultTestTimeoutMs: 60_000,
   alertWebhookEnabled: false,
   batchOrder: [],
+  collapsedTestGroups: [],
   batchTestOptions: {},
   defaultBatchConcurrency: 2,
   artifactRetainedRuns: 10,

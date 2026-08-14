@@ -148,6 +148,10 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   defaultTestTimeoutMs: DEFAULT_TEST_TIMEOUT_MS,
   alertWebhookEnabled: false,
   batchOrder: [],
+  // Nothing collapsed. This is the direction that matters: the list stores
+  // what is HIDDEN, so an empty one shows the whole library — see
+  // `collapsedTestGroups`.
+  collapsedTestGroups: [],
   // Empty is the correct default and needs no migration: every test resolves
   // its row from its own record and the defaults above until the user touches
   // a control. See BatchRowOptions.
@@ -259,6 +263,14 @@ function read(): RecorderSettings {
       batchOrder: Array.isArray(parsed.batchOrder)
         ? parsed.batchOrder.filter((v: unknown) => typeof v === "string").slice(0, MAX_BATCH_ORDER)
         : DEFAULT_SETTINGS.batchOrder,
+      // Names only, capped with the same ceiling the order uses. A name no test
+      // carries is inert rather than pruned — groups have no records to clean
+      // up, so a folder that comes back keeps the state it had.
+      collapsedTestGroups: Array.isArray(parsed.collapsedTestGroups)
+        ? parsed.collapsedTestGroups
+            .filter((v: unknown) => typeof v === "string")
+            .slice(0, MAX_BATCH_ORDER)
+        : DEFAULT_SETTINGS.collapsedTestGroups,
       batchTestOptions: normalizeBatchTestOptions(parsed.batchTestOptions),
       defaultBatchConcurrency: clampBatchDefault(
         parsed.defaultBatchConcurrency,
@@ -397,6 +409,14 @@ export const recorderSettingsStore = {
       batchOrder: Array.isArray(update.batchOrder)
         ? update.batchOrder.filter((v) => typeof v === "string").slice(0, MAX_BATCH_ORDER)
         : current.batchOrder,
+      // Whole-list replace, like the order above: the rail always sends the
+      // complete set of collapsed names, so expanding one has to be able to
+      // shorten the list.
+      collapsedTestGroups: Array.isArray(update.collapsedTestGroups)
+        ? update.collapsedTestGroups
+            .filter((v) => typeof v === "string")
+            .slice(0, MAX_BATCH_ORDER)
+        : current.collapsedTestGroups,
       // Whole-map replace, not a merge: the Batch view always sends the
       // complete map, and a merge would make deleting a row impossible.
       batchTestOptions:

@@ -34,7 +34,7 @@ type-check, 141 test files / 2764 Vitest tests, 56 `check:*` scripts.
 | **Stats → Report mode** | No report mode, no weekly digest, no exports (PDF / CSV / JUnit XML / public link), no channel list. | Stats |
 | **Emit adapters** | None of the five emitters (JUnit XML, GitHub Actions annotations, OTLP JSON, ticket markdown, NDJSON/CSV of step metrics). | Would ship with Report mode |
 | **Routines / Batch v2** | Batch is still a single implicit checklist. No saved named configurations, no schedules, no flow builder. The nav still reads "Batch". | [ROUTINES.md](ROUTINES.md) |
-| **Test groups / folders** | The library rail is flat. No group rows, no expand/collapse, no aggregate verdict. | Library rail |
+| ~~**Test groups / folders**~~ | ~~The library rail is flat.~~ **Built 2026-08-14** — folder rows with expand/collapse, a monogram, a count and an aggregate verdict. `run_group` over MCP is still absent. | Library rail |
 | **Capture parity (MCP)** | `replay.json` is not produced, so captured app state is not a frame series. | Visual tab |
 
 ## 2. Built, deliberately partial

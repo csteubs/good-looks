@@ -131,6 +131,22 @@ const UTILITY =
 const LOOKS_LIKE_CLASSES =
   /(?<![\w-])(?:flex|grid|rounded|absolute|relative|inline-flex|truncate|shrink-0|w-full|h-full|min-w-0|items-center|justify-between|overflow-hidden|whitespace-pre-wrap|px-\d|py-\d|p-\d|gap-\d|size-\d|mt-\d|ml-\d)(?![\w-])/;
 
+/** THE HOLE THE CORROBORATION ABOVE LEAVES, closed for the one family where it
+ *  cost something. A literal holding exactly ONE class, which is missing, is
+ *  indistinguishable from an ordinary string: there is nothing emitted beside
+ *  it to corroborate against, and no layout utility either. So it is skipped —
+ *  and a lone missing class is precisely the bug this check exists to find.
+ *
+ *  `support-*` is this repo's OWN colour vocabulary. It is not a word that
+ *  turns up in prose or in a CSS property name, so a token naming it is a class
+ *  with near-certainty and needs no second opinion. That is enough to catch the
+ *  shape that shipped: `run-verdict.ts` builds its tones as
+ *  `{ className: "bg-support-yellow-orange" }` — one class, alone, in an object
+ *  literal — and three of the verdict dot's five states were transparent for as
+ *  long as the scale existed. */
+const OWN_COLOUR_VOCABULARY =
+  /(?<![\w-])(?:bg|text|border|ring|fill|stroke|outline)-support-[a-z][a-z0-9]*(?:-[a-z0-9]+)*(?![\w-])/;
+
 const missingClasses = new Map<string, string[]>();
 for (const file of tsFiles) {
   const src = stripComments(readFileSync(file, "utf-8"));
@@ -141,7 +157,13 @@ for (const file of tsFiles) {
     literal = literal.replace(/\[[^\]]*\]/g, "[]");
     const tokens = [...literal.matchAll(UTILITY)].map((x) => x[0]);
     if (tokens.length === 0) continue;
-    if (!tokens.some(isEmitted) && !LOOKS_LIKE_CLASSES.test(literal)) continue;
+    if (
+      !tokens.some(isEmitted) &&
+      !LOOKS_LIKE_CLASSES.test(literal) &&
+      !OWN_COLOUR_VOCABULARY.test(literal)
+    ) {
+      continue;
+    }
     for (const token of tokens) {
       if (isEmitted(token)) continue;
       const line = src.slice(0, m.index).split("\n").length;

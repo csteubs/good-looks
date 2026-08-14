@@ -241,6 +241,20 @@ export const api = {
      *  renderer sees excludes hidden tests. */
     deleteTag: (tag: string) =>
       ipc().invoke<{ tag: string; removed: number }>("tests:deleteTag", { tag }),
+    /** Move a test into a folder in the library rail, or out of every folder
+     *  with `""`. One group per test — see `TestRecord.group` for why that is
+     *  not the same field as `tags`. */
+    setGroup: (id: string, group: string) =>
+      ipc().invoke<TestRecord>("tests:setGroup", { id, group }),
+    /** Rename a group across every test that carries it, in one write. `to: ""`
+     *  DELETES the group by moving its members to the top level — there is no
+     *  group record to remove. Returns how many records changed, which can
+     *  exceed what the rail counted, since it does not see hidden tests. */
+    renameGroup: (from: string, to: string) =>
+      ipc().invoke<{ from: string; to: string; changed: number }>("tests:renameGroup", {
+        from,
+        to,
+      }),
     setHidden: (id: string, hidden: boolean) =>
       ipc().invoke<TestRecord | null>("tests:setHidden", { id, hidden }),
     setA11yChecks: (id: string, a11yChecks: boolean) =>

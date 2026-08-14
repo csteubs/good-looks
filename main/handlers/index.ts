@@ -102,6 +102,7 @@ import {
   normalizeDatasets,
   buildStepStructures,
   normalizeStep,
+  normalizeGroup,
   normalizeTags,
   normalizeVariables,
   RUN_BROWSERS,
@@ -546,6 +547,42 @@ export function registerHandlers(): void {
     if (!tag) throw new Error("A tag is required.");
     return { tag, removed: testStore.removeTag(tag) };
   });
+
+  // Which folder a test lives in, in the library rail (REDESIGN §7.2).
+  // Normalized backend-side like the tags above, so "what is a valid group
+  // name" has exactly one definition. An empty result UNGROUPS rather than
+  // erroring: "move to no group" is a thing the menu offers, and the rail
+  // draws groups from the names its tests carry — a name it cannot render
+  // would be a test that disappeared from the list.
+  ipcMain.handle("tests:setGroup", async (_e, params: { id: string; group: unknown }) => {
+    const rec = testStore.get(params.id);
+    if (!rec) throw new Error("Test not found: " + params.id);
+    const group = normalizeGroup(params.group);
+    // Deleted rather than stored empty, so "ungrouped" is one condition
+    // everywhere — see `renameGroup`.
+    if (group) rec.group = group;
+    else delete rec.group;
+    rec.updatedAt = Date.now();
+    testStore.save(rec);
+    return rec;
+  });
+
+  // Rename a group across the whole library at once. Deliberately NOT a
+  // renderer loop over `tests:setGroup`, for the reason `tests:deleteTag` is
+  // not one: that rewrites tests.json once per test and can strand half the
+  // library under the old name, which the rail would draw as two folders.
+  //
+  // `to: ""` is how the group is DELETED — there is no group record to remove,
+  // so deleting one is moving its members to the top level.
+  ipcMain.handle(
+    "tests:renameGroup",
+    async (_e, params: { from: unknown; to: unknown }) => {
+      const from = normalizeGroup(params?.from);
+      if (!from) throw new Error("A group is required.");
+      const to = normalizeGroup(params?.to);
+      return { from, to, changed: testStore.renameGroup(from, to) };
+    },
+  );
 
   // ── Variables, secrets and datasets ──────────────────────────────────────
   //

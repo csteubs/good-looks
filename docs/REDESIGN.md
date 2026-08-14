@@ -1328,21 +1328,53 @@ Design notes that follow from the redesign's own rules:
   `batch-history.json`, `RunRecord.batchId` or the MCP `run_batch` tool. The
   redesign changes only the word in the UI. Nothing here disturbs that.
 
-### 7.2 Test groups / folders — phase 1 and 3 exist on an unmerged branch
+### 7.2 Test groups / folders — BUILT (2026-08-14)
 
-Not in `main`. The mockup anticipates it explicitly: `SiteIcon` is *"built as its
-own component because folders will need exactly this next."*
+The mockup anticipated it explicitly: `SiteIcon` is *"built as its own component
+because folders will need exactly this next."* It is now that.
 
-**Where it lands.** The library rail. A group is a row that expands, using the
-same disclosure vocabulary as the batch history drawer (`▸`/`▾`, `gl-fly`
-animation, indented children). The group row carries:
+**Where it landed.** The library rail, as planned. A group is a row that
+expands, using the batch history drawer's disclosure vocabulary (`▸`/`▾`,
+indented children). The group row carries a `SiteIcon` monogram of the group's
+own name, the aggregate verdict in the same accessory cell the test rows use —
+so groups and tests stack into one column with one edge — and a count. The views
+nav does not change.
 
-- a `SiteIcon` — for a group, the monogram of the group's name rather than a host;
-- the aggregate verdict in the fixed 46px meta cell the test rows already use, so
-  groups and tests stack into one column with one edge;
-- a count.
+**A group is not a tag, and that is the design.** Tags already existed and are
+many-to-many labels for SELECTION: a Routine's checklist filters by them, and a
+test being both `smoke` and `checkout` is the point. A folder is a PLACE in a
+navigation rail, so a test needs exactly one home — with many, a test would be
+drawn under several folders and the counts would not add up to the library. So
+`TestRecord.group` is a single string, beside `tags` rather than instead of it.
 
-The views nav does not change. `run_group` over MCP needs no UI.
+**The name IS the identity — there is no groups store.** A group is a tag you
+can only have one of, so it needs no more machinery than a tag does: a second
+entity with its own file, its own ids and its own orphan cleanup would be a
+parallel system to maintain for a folder. Three consequences, all wanted:
+groups sort alphabetically for free and deterministically; a group with no
+members ceases to exist, which is the right rule for a rail folder (a row with
+nothing under it is a row you can only collapse); and deleting a group IS
+moving its members to the top level, which is the only deletion there is.
+Renaming is one write across the library (`tests:renameGroup`), not a renderer
+loop, so it cannot land on half of it and draw two folders.
+
+Collapsed state lives in `RecorderSettings.collapsedTestGroups`, keyed by name.
+COLLAPSED rather than expanded is the list stored, because the default has to
+be "everything visible": a new folder appearing shut would hide the tests just
+put in it.
+
+**Still to do: `run_group` over MCP.** It needs no UI, per the note this
+section always carried, and the app-side model it would read is now in place.
+
+**Found on the way, and fixed with it:** three of the run-verdict dot's five
+states drew a TRANSPARENT circle. `renderer/styles.css` never mapped
+`--color-support-green-yellow` / `-yellow-orange` / `-orange-red`, so Tailwind
+emitted no rule for the class names `run-verdict.ts` hands out, and "2 of 3
+runs passed" was indistinguishable from a test that had never run.
+`check:renderer-classes` could not see it: a literal holding exactly ONE class,
+which is missing, has nothing emitted beside it to corroborate that it is a
+class list at all. It now recognises this repo's own `support-*` vocabulary
+without needing a second opinion.
 
 ### 7.3 MCP Phase 5 — emit adapters (unstarted)
 

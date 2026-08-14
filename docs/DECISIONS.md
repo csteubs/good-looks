@@ -16,6 +16,97 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-14 — Folders in the library rail, and a group that is only its name
+
+`main/recorder/types.ts`, `main/services/test-store.ts`,
+`main/handlers/index.ts`, `main/services/recorder-settings-store.ts`,
+`renderer/lib/library-groups.ts`, `renderer/lib/run-verdict.ts`,
+`renderer/main/library-sidebar.tsx`, `renderer/main/group-name-dialog.tsx`.
+REDESIGN §7.2, the last outstanding item in §7 that is not blocked.
+
+**A group is not a tag, and the app now has both on purpose.** The obvious move
+was to reuse tags — they exist, they already say "group tests", and the Routine
+checklist filters by them. It is wrong for one reason that decides everything
+else: tags are MANY-TO-MANY. A test that is both `smoke` and `checkout` would be
+drawn under two folders, and every count on screen would then exceed the size of
+the library. A rail is navigation; a test needs exactly one home. So the two
+fields sit side by side and mean different things — a tag is a label you match,
+a folder is a place you look.
+
+**The name is the identity; there is no groups store.** A group is a tag you can
+only have one of, so it needs no more machinery than a tag: a second entity with
+its own file, its own ids and its own orphan cleanup is a parallel system to
+maintain for a folder. Three consequences, all of them wanted rather than
+tolerated. Groups sort alphabetically for free and deterministically. A group
+with no members ceases to exist, which is the right rule for a rail folder,
+since a row with nothing under it is a row you can only collapse. And deleting a
+group IS moving its members out — there is no record to remove, which is why the
+menu says "Ungroup Tests" rather than "Delete Group" and why it needs no
+confirmation.
+
+The cost is that a rename touches N records. It is one `writeAll`, in the store,
+for the same reason `removeTag` is: a renderer loop can land on half the library
+and the rail would then draw two folders. It re-dates each record's `updatedAt`,
+which is honest — the record did change — and harmless, because `list()` sorts
+by `createdAt`.
+
+**Case-sensitive, where tags are not.** `Smoke` and `smoke` must be one tag or
+deleting that chip leaves a copy behind, because a tag is MATCHED. A group is
+only ever DISPLAYED, so two spellings are two folders, and case-folding would
+mean the name on the row is not the name the user typed. They are sorted
+adjacently as the consolation.
+
+**Folders first, then the loose tests.** This pushes a just-recorded test below
+the folders, which is the complaint the Batch view's `applyOrder` answers the
+other way. Accepted here because a folder collapses — so the rows above a new
+test are a handful of one-line headers, not the library — and because a new
+recording is ungrouped, so it is at the top of the only section it could be in.
+Interleaving by date would make a folder's position depend on when its members
+were recorded, which is a rail that reorders itself for reasons nobody can see.
+
+**The folder's dot counts TESTS, not runs.** A folder of five where one failed
+on three browsers is "4 of 5 tests passed"; "6 of 8 runs passed" is arithmetic
+about a thing nobody grouped. A member that passed with heals counts as passed —
+the heal warning is a per-test early signal about that test's locators, and
+propagating it would tint a folder yellow and send you to look at five tests to
+find one. Members that have never run are not counted at all, and a folder where
+none has carries NO dot rather than a grey one claiming a result.
+
+**A folder is not selectable.** There is no group screen, and a second
+`data-selected` row would make the rail's selection — which means "this is what
+the main pane is showing" — mean two things.
+
+**Collapsed, not expanded, is what is stored.** `collapsedTestGroups` in
+settings. The default has to be everything visible: a new folder appearing shut
+would hide the tests just put in it, and a library restored on a fresh install
+would open showing nothing. The toggle writes optimistically, because a
+disclosure that waits for a settings round-trip reads as a dead control on the
+click that matters most. A rename carries the collapsed state to the new name,
+or every folder the user had shut springs open under them.
+
+**And a real bug, found because the folder's dot landed on the same scale.**
+Three of `run-verdict.ts`'s five states — `healed`, `mostly-passed`,
+`mostly-failed` — drew a TRANSPARENT circle, and had for as long as the five-way
+scale existed. `renderer/styles.css` never mapped `--color-support-green-yellow`
+/ `-yellow-orange` / `-orange-red`, so Tailwind emitted no rule for the class
+names the tone table hands out. "2 of 3 runs passed" was indistinguishable from
+a test that had never run — precisely the silent-colour failure the top of that
+file says it exists to prevent.
+
+`check:renderer-classes` could not see it, and the reason is worth writing down
+because it is the general shape. The check skips a string literal when nothing
+in it is emitted AND it holds no layout utility, on the grounds that it is
+probably prose or a CSS property rather than a class list. A literal holding
+exactly ONE class, which is missing, satisfies both conditions — and one missing
+class alone in a literal is exactly the bug. `run-verdict.ts` builds its tones
+as `{ className: "bg-support-yellow-orange" }`, one class, alone, in an object
+literal. The fix is narrow rather than a rewrite of the heuristic: a token
+naming this repo's own `support-*` vocabulary is a class with near-certainty —
+it is not a word that turns up in prose or a CSS property — so it needs no
+second opinion. Verified by deleting the mapping again and watching the check go
+red.
+
+
 ### 2026-08-14 — An imported suite arrived without the one line that made it runnable
 
 `main/services/imported-config.ts` (new), `main/services/import-service.ts`,

@@ -456,6 +456,31 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       if (test && Array.isArray(p?.tags)) test.tags = p.tags as string[];
       return test;
     },
+    // Folders. Trimmed here as well, matching `normalizeGroup` — the preview's
+    // job is to behave like the backend, and a bridge that stored what the
+    // renderer sent would let a bug through that the real app catches.
+    "tests:setGroup": (p) => {
+      const test = findTest(p?.id);
+      if (!test) return null;
+      const group = typeof p?.group === "string" ? p.group.trim() : "";
+      if (group) test.group = group;
+      else delete test.group;
+      return test;
+    },
+    "tests:renameGroup": (p) => {
+      const from = typeof p?.from === "string" ? p.from.trim() : "";
+      const to = typeof p?.to === "string" ? p.to.trim() : "";
+      let changed = 0;
+      if (from) {
+        for (const test of state.tests) {
+          if ((test.group ?? "") !== from) continue;
+          if (to) test.group = to;
+          else delete test.group;
+          changed++;
+        }
+      }
+      return { from, to, changed };
+    },
     /** One row per declared variable, not a single boolean. Empty is honest:
      *  no fixture test declares a secret. */
     "tests:secretStatus": (): SecretStatus[] => [],
