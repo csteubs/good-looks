@@ -18,7 +18,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import { readJsonFile, resolveDataDir, writeJsonFile } from "./glaze-data.mjs";
-import { selectTests, summarizeResults, UNTAGGED } from "./select-tests.mjs";
+import { selectTests, summarizeResults, UNGROUPED, UNTAGGED } from "./select-tests.mjs";
 import { clampParallel, MAX_PARALLEL, runPool } from "./run-pool.mjs";
 import { listSessions, readShots, requestCapture } from "./debug-shots.mjs";
 import { readReplay, readRunLogs, readStepStructures } from "./artifacts.mjs";
@@ -375,7 +375,7 @@ server.registerTool(
   {
     title: "List recorded tests",
     description:
-      "List the recorded Playwright tests: id, name, target URL, step count, and timestamps. Newest-updated first, capped at 200.",
+      "List the recorded Playwright tests: id, name, target URL, step count, tags, the library folder each is in, and timestamps. Newest-updated first, capped at 200. `group` is absent on a test that is in no folder — there is no separate folder record, so the set of folders is whatever these names say it is.",
     inputSchema: {},
   },
   async () => {
@@ -389,6 +389,10 @@ server.registerTool(
         url: t.url,
         stepCount: Array.isArray(t.steps) ? t.steps.length : 0,
         tags: t.tags ?? [],
+        // The library folder, and only when there is one. Omitted rather than
+        // reported as `""`, so "ungrouped" reads the same here as it does on
+        // the record — one condition, not two.
+        ...(t.group ? { group: t.group } : {}),
         speed: t.speed ?? "fast",
         runBrowser: t.runBrowser ?? "chromium",
         scriptEdited: Boolean(t.scriptEdited),
@@ -439,6 +443,7 @@ server.registerTool(
       })),
       datasets: (test.datasets ?? []).map((d) => ({ id: d.id, name: d.name, values: d.values })),
       tags: test.tags ?? [],
+      ...(test.group ? { group: test.group } : {}),
       runBrowser: test.runBrowser ?? "chromium",
       testTimeoutMs: test.testTimeoutMs,
       captureArtifacts: test.captureArtifacts,
@@ -1015,217 +1020,268 @@ server.registerTool(
   },
 );
 
+/**
+ * The batch. ONE implementation behind TWO tools.
+ *
+ * `run_batch` and `run_group` are the same execution — the same selection, the
+ * same queue expansion, the same pool, the same written-through BatchRecord —
+ * differing only in which selector the caller reaches for. Registering
+ * `run_group` as a tool of its own rather than leaving `group` as a parameter
+ * is the call ROUTINES made for `run_routine`, for its reason: an MCP client
+ * DISCOVERS TOOLS, not parameters, and a folder is now a thing the library
+ * models. Sharing the body is what stops a second entry point from becoming a
+ * second batch runner with its own drift.
+ */
+async function runBatchTool({ testIds, tag, group, browser, datasetIds, allDatasets, parallel }) {
+  const engine = browser ?? "chromium";
+  if (!RUN_BROWSERS.includes(engine)) {
+    return { content: [{ type: "text", text: `Unknown browser: ${engine}` }], isError: true };
+  }
+
+  const { tests: selected, missing } = selectTests(listTests(), { testIds, tag, group });
+  if (selected.length === 0) {
+    // Names the selector that actually applied, in the order `selectTests`
+    // resolves them. Saying "the library" for an empty folder would send
+    // someone to look at the wrong thing.
+    const how = testIds
+      ? "those ids"
+      : group === UNGROUPED
+        ? "the tests in no group"
+        : group
+          ? `group "${group}"`
+          : tag
+            ? `tag "${tag}"`
+            : "the library";
+    return {
+      content: [{ type: "text", text: `No tests matched ${how}. Nothing to run.` }],
+      isError: true,
+    };
+  }
+
+  const playwright = findPlaywrightCli();
+  if (!playwright) {
+    return {
+      content: [{ type: "text", text: `Could not find @playwright/test under ${PROJECT_ROOT}/node_modules.` }],
+      isError: true,
+    };
+  }
+  if (!isBrowserInstalled(engine)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: `${engine} isn't installed yet. Run a test once from the app on ${engine} (it installs the browser on first run), then retry.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  // Expand the selection into the queue actually executed, through the SAME
+  // function the app's Batch view uses. Without dataset options the queue is
+  // exactly the selection, so an ordinary batch is unchanged.
+  const byId = new Map(selected.map((t) => [t.id, t]));
+  const queue = buildQueue(
+    { testIds: selected.map((t) => t.id), datasetIds, allDatasets },
+    (id) => byId.get(id)?.datasets ?? [],
+  );
+
+  const batchId = randomUUID();
+  const startedAt = Date.now();
+  const results = queue.map((entry) => ({
+    testId: entry.testId,
+    testName: byId.get(entry.testId)?.name ?? entry.testId,
+    status: "pending",
+    // The row's ID and NAME, never its values: this record is written to
+    // batch-history.json, and a dataset row's values have no business on disk
+    // in a file the app reads back for display.
+    ...(entry.datasetId ? { datasetId: entry.datasetId } : {}),
+    ...(entry.datasetName ? { datasetName: entry.datasetName } : {}),
+  }));
+
+  // Write-through, matching the app: a crash mid-batch still leaves the
+  // results collected so far, and the app's Batch view can watch progress.
+  //
+  // `currentIndex` is DERIVED rather than passed in: with several tests in
+  // flight there's no single current one, and the app reads this field back
+  // out of batch-history.json. The lowest running index is the closest honest
+  // answer and degrades to the old meaning when only one runs. -1 when idle.
+  const persist = (running) => {
+    saveBatchRecord({
+      batchId,
+      running,
+      startedAt,
+      ...(running ? {} : { finishedAt: Date.now() }),
+      currentIndex: results.findIndex((r) => r.status === "running"),
+      results,
+      stopped: false,
+      summary: summarizeResults(results, Date.now() - startedAt),
+    });
+  };
+  persist(true);
+
+  // Over the QUEUE, not the selection: a dataset sweep expands one test into
+  // one entry per row, and the pool has to see all of them or a sweep runs
+  // one row and reports the rest as pending forever.
+  //
+  // Running the same test's rows concurrently is safe for exactly the reason
+  // run-pool.mjs gives for having no lanes: executeTest mints a fresh uuid per
+  // run and each gets its own PW_OUTPUT_DIR, so two runs of one spec never
+  // share Playwright's scratch directory.
+  const limit = clampParallel(parallel, queue.length);
+  await runPool(queue, limit, async (entry, i) => {
+    const test = byId.get(entry.testId);
+    // Skipped, not failed, and the batch carries on. A suite that aborts —
+    // or reports red — because one of its tests happens to log in would make
+    // run_batch useless against any real library.
+    const secrets = test ? secretVariableNames(test) : [];
+    if (secrets.length > 0) {
+      results[i].status = "skipped";
+      results[i].note =
+        `Declares secret variable${secrets.length === 1 ? "" : "s"} (${secrets.join(", ")}), ` +
+        "which are encrypted to the app and unreadable from here. Run it from the app.";
+      results[i].finishedAt = Date.now();
+      results[i].durationMs = 0;
+      persist(true);
+      return;
+    }
+
+
+    results[i].status = "running";
+    results[i].startedAt = Date.now();
+    persist(true);
+
+    // One test failing must not abort the batch — that's the whole point of
+    // running a suite. runPool swallows a throw as a backstop, but the record
+    // has to be written here or the entry would sit at "running" forever.
+    try {
+      const r = await executeTest(test, {
+        playwright,
+        browser: engine,
+        batchId,
+        // Read from the QUEUE entry, not from `results`: the values belong in
+        // the child process's env and nowhere near the persisted batch record.
+        vars: entry.vars,
+        datasetId: entry.datasetId,
+        datasetName: entry.datasetName,
+      });
+      results[i].status = r.status;
+      results[i].exitCode = r.exitCode;
+      results[i].runRecordId = r.runId;
+      results[i].finishedAt = r.finishedAt;
+      results[i].durationMs = r.durationMs;
+    } catch (err) {
+      results[i].status = "failed";
+      results[i].note = String(err);
+      results[i].finishedAt = Date.now();
+      results[i].durationMs = Math.max(0, results[i].finishedAt - (results[i].startedAt ?? results[i].finishedAt));
+    }
+    persist(true);
+  });
+
+  const finishedAt = Date.now();
+  const summary = summarizeResults(results, finishedAt - startedAt);
+  persist(false);
+
+  // Said once for the batch rather than per result: every run in it went
+  // through the same fixture-free path, and repeating that per row would
+  // bury the results. Reported against the tests actually queued, so a suite
+  // that wanted none of it is told nothing.
+  const settings = readSettings();
+  const suiteSkips = [
+    ...new Set(
+      [...byId.values()].flatMap(
+        (t) =>
+          describeRun(t, settings, {
+            speed: t.speed ?? "fast",
+            timeoutMs: 0,
+            timeoutRaised: false,
+          }).skipped ?? [],
+      ),
+    ),
+  ];
+
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            batchId,
+            browser: engine,
+            parallel: limit,
+            ...(missing.length > 0 ? { missingTestIds: missing } : {}),
+            summary,
+            ...(suiteSkips.length > 0 ? { fixturesSkipped: suiteSkips } : {}),
+            results: results.map((r) => ({
+              testId: r.testId,
+              testName: r.testName,
+              status: r.status,
+              durationMs: r.durationMs,
+              runId: r.runRecordId,
+              ...(r.datasetId ? { datasetId: r.datasetId, datasetName: r.datasetName } : {}),
+              ...(r.note ? { note: r.note } : {}),
+            })),
+          },
+          null,
+          2,
+        ),
+      },
+    ],
+    // Surface a failing suite as an error so an agent doesn't read a red
+    // batch as success.
+    ...(summary.failed > 0 ? { isError: true } : {}),
+  };
+}
+
+/** The dataset, browser and pool options both batch tools take. Declared once
+ *  so the two schemas cannot drift into offering different runs. */
+const BATCH_RUN_OPTIONS = {
+  browser: z.enum(["chromium", "firefox", "webkit"]).optional(),
+  datasetIds: z
+    .array(z.string())
+    .optional()
+    .describe("Sweep only these dataset rows. A selected test with no matching row still runs once."),
+  allDatasets: z
+    .boolean()
+    .optional()
+    .describe("Sweep every dataset row each selected test declares."),
+  parallel: z.number().int().min(1).max(MAX_PARALLEL).optional(),
+};
+
 server.registerTool(
   "run_batch",
   {
     title: "Run many tests",
     description:
-      `Run several recorded tests and report an aggregate pass/fail summary. Select them by explicit testIds, by tag (see list_tests; pass "${UNTAGGED}" for tests with no tags), or omit both to run every visible test. Pass allDatasets (or datasetIds) to sweep each selected test once per dataset row instead of once. Tests run headless, one at a time by default — set "parallel" to run that many at once (1-${MAX_PARALLEL}), which is much faster for a large suite at the cost of CPU. A failing test does not stop the batch, and a test declaring secret variables is skipped with a note rather than failing the suite. Each test is recorded in the app's run history, and the batch itself appears in the app's Batch view.`,
+      `Run several recorded tests and report an aggregate pass/fail summary. Select them by explicit testIds, by tag (see list_tests; pass "${UNTAGGED}" for tests with no tags), by group (a library folder — run_group is the same run under a name you can discover), or omit all three to run every visible test. Pass allDatasets (or datasetIds) to sweep each selected test once per dataset row instead of once. Tests run headless, one at a time by default — set "parallel" to run that many at once (1-${MAX_PARALLEL}), which is much faster for a large suite at the cost of CPU. A failing test does not stop the batch, and a test declaring secret variables is skipped with a note rather than failing the suite. Each test is recorded in the app's run history, and the batch itself appears in the app's Batch view.`,
     inputSchema: {
       testIds: z.array(z.string()).optional(),
       tag: z.string().optional(),
-      browser: z.enum(["chromium", "firefox", "webkit"]).optional(),
-      datasetIds: z
-        .array(z.string())
+      group: z
+        .string()
         .optional()
-        .describe("Sweep only these dataset rows. A selected test with no matching row still runs once."),
-      allDatasets: z
-        .boolean()
-        .optional()
-        .describe("Sweep every dataset row each selected test declares."),
-      parallel: z.number().int().min(1).max(MAX_PARALLEL).optional(),
+        .describe(
+          `A library folder's name, matched EXACTLY — unlike a tag, folder names are case-sensitive. "${UNGROUPED}" selects the tests in no folder.`,
+        ),
+      ...BATCH_RUN_OPTIONS,
     },
   },
-  async ({ testIds, tag, browser, datasetIds, allDatasets, parallel }) => {
-    const engine = browser ?? "chromium";
-    if (!RUN_BROWSERS.includes(engine)) {
-      return { content: [{ type: "text", text: `Unknown browser: ${engine}` }], isError: true };
-    }
+  runBatchTool,
+);
 
-    const { tests: selected, missing } = selectTests(listTests(), { testIds, tag });
-    if (selected.length === 0) {
-      const how = tag ? `tag "${tag}"` : testIds ? "those ids" : "the library";
-      return {
-        content: [{ type: "text", text: `No tests matched ${how}. Nothing to run.` }],
-        isError: true,
-      };
-    }
-
-    const playwright = findPlaywrightCli();
-    if (!playwright) {
-      return {
-        content: [{ type: "text", text: `Could not find @playwright/test under ${PROJECT_ROOT}/node_modules.` }],
-        isError: true,
-      };
-    }
-    if (!isBrowserInstalled(engine)) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `${engine} isn't installed yet. Run a test once from the app on ${engine} (it installs the browser on first run), then retry.`,
-          },
-        ],
-        isError: true,
-      };
-    }
-
-    // Expand the selection into the queue actually executed, through the SAME
-    // function the app's Batch view uses. Without dataset options the queue is
-    // exactly the selection, so an ordinary batch is unchanged.
-    const byId = new Map(selected.map((t) => [t.id, t]));
-    const queue = buildQueue(
-      { testIds: selected.map((t) => t.id), datasetIds, allDatasets },
-      (id) => byId.get(id)?.datasets ?? [],
-    );
-
-    const batchId = randomUUID();
-    const startedAt = Date.now();
-    const results = queue.map((entry) => ({
-      testId: entry.testId,
-      testName: byId.get(entry.testId)?.name ?? entry.testId,
-      status: "pending",
-      // The row's ID and NAME, never its values: this record is written to
-      // batch-history.json, and a dataset row's values have no business on disk
-      // in a file the app reads back for display.
-      ...(entry.datasetId ? { datasetId: entry.datasetId } : {}),
-      ...(entry.datasetName ? { datasetName: entry.datasetName } : {}),
-    }));
-
-    // Write-through, matching the app: a crash mid-batch still leaves the
-    // results collected so far, and the app's Batch view can watch progress.
-    //
-    // `currentIndex` is DERIVED rather than passed in: with several tests in
-    // flight there's no single current one, and the app reads this field back
-    // out of batch-history.json. The lowest running index is the closest honest
-    // answer and degrades to the old meaning when only one runs. -1 when idle.
-    const persist = (running) => {
-      saveBatchRecord({
-        batchId,
-        running,
-        startedAt,
-        ...(running ? {} : { finishedAt: Date.now() }),
-        currentIndex: results.findIndex((r) => r.status === "running"),
-        results,
-        stopped: false,
-        summary: summarizeResults(results, Date.now() - startedAt),
-      });
-    };
-    persist(true);
-
-    // Over the QUEUE, not the selection: a dataset sweep expands one test into
-    // one entry per row, and the pool has to see all of them or a sweep runs
-    // one row and reports the rest as pending forever.
-    //
-    // Running the same test's rows concurrently is safe for exactly the reason
-    // run-pool.mjs gives for having no lanes: executeTest mints a fresh uuid per
-    // run and each gets its own PW_OUTPUT_DIR, so two runs of one spec never
-    // share Playwright's scratch directory.
-    const limit = clampParallel(parallel, queue.length);
-    await runPool(queue, limit, async (entry, i) => {
-      const test = byId.get(entry.testId);
-      // Skipped, not failed, and the batch carries on. A suite that aborts —
-      // or reports red — because one of its tests happens to log in would make
-      // run_batch useless against any real library.
-      const secrets = test ? secretVariableNames(test) : [];
-      if (secrets.length > 0) {
-        results[i].status = "skipped";
-        results[i].note =
-          `Declares secret variable${secrets.length === 1 ? "" : "s"} (${secrets.join(", ")}), ` +
-          "which are encrypted to the app and unreadable from here. Run it from the app.";
-        results[i].finishedAt = Date.now();
-        results[i].durationMs = 0;
-        persist(true);
-        return;
-      }
-
-
-      results[i].status = "running";
-      results[i].startedAt = Date.now();
-      persist(true);
-
-      // One test failing must not abort the batch — that's the whole point of
-      // running a suite. runPool swallows a throw as a backstop, but the record
-      // has to be written here or the entry would sit at "running" forever.
-      try {
-        const r = await executeTest(test, {
-          playwright,
-          browser: engine,
-          batchId,
-          // Read from the QUEUE entry, not from `results`: the values belong in
-          // the child process's env and nowhere near the persisted batch record.
-          vars: entry.vars,
-          datasetId: entry.datasetId,
-          datasetName: entry.datasetName,
-        });
-        results[i].status = r.status;
-        results[i].exitCode = r.exitCode;
-        results[i].runRecordId = r.runId;
-        results[i].finishedAt = r.finishedAt;
-        results[i].durationMs = r.durationMs;
-      } catch (err) {
-        results[i].status = "failed";
-        results[i].note = String(err);
-        results[i].finishedAt = Date.now();
-        results[i].durationMs = Math.max(0, results[i].finishedAt - (results[i].startedAt ?? results[i].finishedAt));
-      }
-      persist(true);
-    });
-
-    const finishedAt = Date.now();
-    const summary = summarizeResults(results, finishedAt - startedAt);
-    persist(false);
-
-    // Said once for the batch rather than per result: every run in it went
-    // through the same fixture-free path, and repeating that per row would
-    // bury the results. Reported against the tests actually queued, so a suite
-    // that wanted none of it is told nothing.
-    const settings = readSettings();
-    const suiteSkips = [
-      ...new Set(
-        [...byId.values()].flatMap(
-          (t) =>
-            describeRun(t, settings, {
-              speed: t.speed ?? "fast",
-              timeoutMs: 0,
-              timeoutRaised: false,
-            }).skipped ?? [],
-        ),
-      ),
-    ];
-
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify(
-            {
-              batchId,
-              browser: engine,
-              parallel: limit,
-              ...(missing.length > 0 ? { missingTestIds: missing } : {}),
-              summary,
-              ...(suiteSkips.length > 0 ? { fixturesSkipped: suiteSkips } : {}),
-              results: results.map((r) => ({
-                testId: r.testId,
-                testName: r.testName,
-                status: r.status,
-                durationMs: r.durationMs,
-                runId: r.runRecordId,
-                ...(r.datasetId ? { datasetId: r.datasetId, datasetName: r.datasetName } : {}),
-                ...(r.note ? { note: r.note } : {}),
-              })),
-            },
-            null,
-            2,
-          ),
-        },
-      ],
-      // Surface a failing suite as an error so an agent doesn't read a red
-      // batch as success.
-      ...(summary.failed > 0 ? { isError: true } : {}),
-    };
+server.registerTool(
+  "run_group",
+  {
+    title: "Run a library folder",
+    description:
+      `Run every test in one of the library's folders and report an aggregate pass/fail summary — the same run as run_batch, selected by folder. A folder is where a test LIVES: each test is in exactly one, which is what separates it from a tag, a label a test can carry several of and what run_batch's "tag" selects by. Folder names are matched EXACTLY, because two casings are two folders in the app. Pass "${UNGROUPED}" for the tests in no folder. Names come from list_tests, which reports each test's folder — there is no separate folder record, so the set of folders is whatever the library's tests say it is. Everything else behaves as run_batch: datasets sweep, "parallel" runs several at once (1-${MAX_PARALLEL}), a failing test does not stop the run, and a test declaring secret variables is skipped with a note.`,
+    inputSchema: {
+      group: z.string(),
+      ...BATCH_RUN_OPTIONS,
+    },
   },
+  runBatchTool,
 );
 
 // ── Evidence already on disk ────────────────────────────────────────────────

@@ -1363,8 +1363,16 @@ COLLAPSED rather than expanded is the list stored, because the default has to
 be "everything visible": a new folder appearing shut would hide the tests just
 put in it.
 
-**Still to do: `run_group` over MCP.** It needs no UI, per the note this
-section always carried, and the app-side model it would read is now in place.
+**`run_group` over MCP is built** (2026-08-14), and it needs no UI as this
+section always said. It is registered ALONGSIDE `run_batch` rather than as a
+`group` parameter on it — an MCP client discovers tools, not parameters — but
+both names hand the server the SAME function, so there is one selection, one
+queue expansion, one pool and one batch record rather than a second batch
+runner that starts identical and drifts. `run_batch` gains `group` as a
+selector too, since the library now models something its schema could not
+express. Selection lives in `mcp/select-tests.mjs` beside the tag rule, and
+folder names match EXACTLY where tags fold case — the same asymmetry the store
+draws, for the same reason.
 
 **Found on the way, and fixed with it:** three of the run-verdict dot's five
 states drew a TRANSPARENT circle. `renderer/styles.css` never mapped

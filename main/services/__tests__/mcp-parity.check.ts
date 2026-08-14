@@ -695,6 +695,66 @@ function codeOnly(source: string): string {
   );
 }
 
+// ── 12. run_group is run_batch, not a second batch runner ─────────────
+//
+// REDESIGN §7.2 asked for `run_group` and said it needs no UI. The risk in
+// granting a second entry point is the one this repo has spent two phases
+// avoiding elsewhere: a second implementation that starts identical and
+// diverges silently. What follows pins that there is exactly ONE, and that the
+// selection semantics the folder feature depends on are the app's own.
+
+{
+  const mcpSrc = codeOnly(readFileSync(resolve(process.cwd(), "mcp/server.mjs"), "utf8"));
+
+  // Both registered, and neither a rename of the other — same rule that keeps
+  // run_batch and run_routine coexisting. An MCP client meeting a renamed tool
+  // gets "unknown tool", not a redirect.
+  assert(
+    /registerTool\(\s*"run_batch"/.test(mcpSrc) && /registerTool\(\s*"run_group"/.test(mcpSrc),
+    "mcp: run_group is added ALONGSIDE run_batch, never as a rename of it",
+  );
+
+  // THE WHOLE POINT: one body. Both registrations hand the SAME function to the
+  // server, so there is no second queue expansion, no second pool and no second
+  // BatchRecord shape that can drift. A `run_group` with an inline handler of
+  // its own would satisfy the assertion above and defeat the reason for it.
+  const registrations = [
+    ...mcpSrc.matchAll(/registerTool\(\s*"(run_batch|run_group)"[\s\S]*?\n\);/g),
+  ];
+  assert(registrations.length === 2, "mcp: found both batch tool registrations");
+  assert(
+    registrations.every((m) => /\n {2}runBatchTool,\n\);$/.test(m[0])),
+    "mcp: run_batch and run_group are the SAME handler, not two copies of one",
+  );
+  // …and that handler exists exactly once.
+  assert(
+    (mcpSrc.match(/async function runBatchTool\(/g) ?? []).length === 1,
+    "mcp: there is one runBatchTool, so there is one batch runner",
+  );
+
+  // The selector reaches `selectTests` rather than being filtered here. The
+  // app's rail and this tool have to agree about what "the Checkout folder"
+  // contains, and that answer lives in one module for the reason the tags one
+  // does — a second read is how the two end up running different sets.
+  const batchSrc = /async function runBatchTool\([\s\S]*?\n\}\n/.exec(mcpSrc)?.[0] ?? "";
+  assert(batchSrc.length > 0, "mcp: isolated runBatchTool's own body");
+  assert(
+    /selectTests\(listTests\(\), \{ testIds, tag, group \}\)/.test(batchSrc),
+    "mcp: the group selector goes through selectTests, not a filter written here",
+  );
+  assert(
+    !/\.group ===/.test(batchSrc) && !/\.group\?\./.test(batchSrc),
+    "mcp: …and the tool does not read a test's group itself",
+  );
+
+  // A folder that selected nothing must SAY it was a folder. "No tests matched
+  // the library" for an empty group sends someone to look at the wrong thing.
+  assert(
+    /group "\$\{group\}"/.test(batchSrc),
+    "mcp: an empty folder is reported as that folder, not as the library",
+  );
+}
+
 {
   // The segmentation itself, exercised through the shared planner rather than
   // asserted about the source — the two runners have to agree about WHICH
