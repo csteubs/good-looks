@@ -301,3 +301,30 @@ describe("occlusion: the click a real run refuses", () => {
     expect(run(step({ type: "click", locator: { k: "testid", v: "b" } })).ok).toBe(true);
   });
 });
+
+describe("the scan cap belongs to capture, not to preview", () => {
+  it("resolves a locator past the capture-path element cap", () => {
+    // MAX_UNIQUENESS_SCAN (6000) exists because CAPTURE runs the uniqueness
+    // scan on the click path. The replayer does not — it is a preview the user
+    // asked for and is waiting on. Sharing the engine silently imported the cap
+    // with it, so on a page bigger than that the trainer reported "element not
+    // found" for an element a real run resolves perfectly well: the same
+    // trainer-lies-about-the-run failure, reintroduced through code reuse.
+    const filler: string[] = [];
+    for (let i = 0; i < 6500; i++) filler.push("<i>x</i>");
+    document.body.innerHTML = `<div>${filler.join("")}<button id="target">Checkout</button></div>`;
+    let clicked = false;
+    document.getElementById("target")!.addEventListener("click", () => { clicked = true; });
+    const r = run(step({ type: "click", locator: { k: "text", v: "Checkout" } }));
+    expect(r.ok, why(r)).toBe(true);
+    expect(clicked).toBe(true);
+  });
+
+  it("counts every match on a large page, rather than the first 6000", () => {
+    const parts: string[] = [];
+    for (let i = 0; i < 7000; i++) parts.push("<span>Row</span>");
+    document.body.innerHTML = parts.join("");
+    const r = run(step({ type: "assert", assert: "count", count: 7000, locator: { k: "css", v: "span" } }));
+    expect(r.ok, why(r)).toBe(true);
+  });
+});

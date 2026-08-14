@@ -13,7 +13,7 @@
 // inspect the live DOM in the training window. It reuses the shared DOM_HELPERS
 // so locator semantics stay aligned with the capture script + replayer.
 
-import { DOM_HELPERS, UNIQUENESS_HELPERS } from "../recorder/capture-script.js";
+import { DOM_HELPERS, UNCAPPED_SCAN, UNIQUENESS_HELPERS } from "../recorder/capture-script.js";
 import type { DebugEntry, HealCandidate, HealResult, Step } from "../recorder/types.js";
 
 /** Race a page `executeJavaScript` against a timeout so a hanging probe can't
@@ -47,6 +47,10 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
   return `(function () {
   ${DOM_HELPERS}
   ${UNIQUENESS_HELPERS}
+
+  // Not on the click path either — this runs after a step has already failed.
+  // See UNCAPPED_SCAN.
+  GL_SCAN_LIMIT = ${UNCAPPED_SCAN};
 
   var step = ${JSON.stringify(step)};
   var hints = ${hintsJson};

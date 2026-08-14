@@ -116,14 +116,44 @@ describe("roles the recorder can actually find", () => {
     expect(proposed(step).filter((l) => l.k === "role").map((l) => l.role)).toContain("spinbutton");
   });
 
-  it("a password input has NO role, so no role locator is offered for it", () => {
+  it("a password input is a TEXTBOX, because that is Playwright's fallback", () => {
+    // The spec says an `input[type=password]` has no implicit role. Playwright
+    // says otherwise: every input type it does not name falls back to "textbox",
+    // so `getByRole("textbox")` really does find one. Playwright's table is the
+    // ground truth here, because Playwright is what runs the generated test —
+    // an earlier version of this fix used the spec answer and would have
+    // removed a role locator that works.
     document.body.innerHTML = '<input type="password" aria-label="Password" data-testid="gone" />';
+    const step = { id: "s", type: "fill", locator: { k: "testid", v: "gone" } } as Step;
+    expect(proposed(step).filter((l) => l.k === "role").map((l) => l.role)).toContain("textbox");
+  });
+
+  it("a hidden input is the one with no role at all", () => {
+    document.body.innerHTML = '<input type="hidden" data-testid="gone" /><p>x</p>';
     const step = { id: "s", type: "fill", locator: { k: "testid", v: "gone" } } as Step;
     expect(proposed(step).some((l) => l.k === "role")).toBe(false);
   });
 
+  it("a file input is a BUTTON, which is surprising and is why it is pinned", () => {
+    document.body.innerHTML = '<input type="file" aria-label="Upload" data-testid="gone" />';
+    const step = { id: "s", type: "click", locator: { k: "testid", v: "gone" } } as Step;
+    expect(proposed(step).filter((l) => l.k === "role").map((l) => l.role)).toContain("button");
+  });
+
   it("a multi-select is a listbox, not a combobox", () => {
     document.body.innerHTML = '<select multiple aria-label="Tags" data-testid="gone"><option>a</option></select>';
+    const step = { id: "s", type: "select", locator: { k: "testid", v: "gone" } } as Step;
+    const roles = proposed(step).filter((l) => l.k === "role").map((l) => l.role);
+    expect(roles).toContain("listbox");
+    expect(roles).not.toContain("combobox");
+  });
+
+  it("a select with size > 1 is ALSO a listbox, without `multiple`", () => {
+    // `multiple || size > 1`, straight out of Playwright's mapping. Checking
+    // only `multiple` — as the first version of this fix did — leaves the
+    // everyday `<select size="4">` recording a combobox locator that matches
+    // nothing.
+    document.body.innerHTML = '<select size="4" aria-label="Country" data-testid="gone"><option>a</option></select>';
     const step = { id: "s", type: "select", locator: { k: "testid", v: "gone" } } as Step;
     const roles = proposed(step).filter((l) => l.k === "role").map((l) => l.role);
     expect(roles).toContain("listbox");

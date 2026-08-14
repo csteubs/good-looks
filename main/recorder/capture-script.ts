@@ -119,6 +119,24 @@ export const CSS_PROPS_HELPER = `
 export const MAX_UNIQUENESS_SCAN = 6000;
 
 /**
+ * What a caller that is NOT on the click path sets `GL_SCAN_LIMIT` to.
+ *
+ * The replayer and the heal probe include these helpers but are user-initiated
+ * — a preview somebody asked for and is waiting on, not a click being recorded
+ * — so the reason for the cap does not apply to them. Inheriting it was a real
+ * regression the moment the replayer started sharing this engine: on a page
+ * with more elements than the cap, a locator's target was never scanned, and
+ * the trainer reported "element not found" for an element a real run resolves
+ * without difficulty. That is the exact failure direction this whole change
+ * exists to remove, reintroduced by sharing code with a caller that had a
+ * different constraint.
+ *
+ * A large number rather than `Infinity`: it is interpolated into a script, and
+ * it reads as a bound rather than as a promise to walk an unbounded document.
+ */
+export const UNCAPPED_SCAN = 1_000_000;
+
+/**
  * `matchesFor(loc, root)` — the elements a recorded locator would resolve to.
  *
  * ── Why this has to exist ──────────────────────────────────────────────────
@@ -163,10 +181,17 @@ export const UNIQUENESS_HELPERS = `
     return pwNorm(haystack).indexOf(n) >= 0;
   }
 
+  /** How many elements a scan will look at. Overridable by the including
+   *  script — see the note on MAX_UNIQUENESS_SCAN. The cap exists because
+   *  CAPTURE runs this on the click path; the replayer and the heal probe do
+   *  not, and inheriting it there would make a large page's elements invisible
+   *  to a preview that a real run resolves perfectly well. */
+  var GL_SCAN_LIMIT = ${MAX_UNIQUENESS_SCAN};
+
   function scanAll(selector) {
     try {
       var list = document.querySelectorAll(selector);
-      return Array.prototype.slice.call(list, 0, ${MAX_UNIQUENESS_SCAN});
+      return Array.prototype.slice.call(list, 0, GL_SCAN_LIMIT);
     } catch (e) {
       return [];
     }
@@ -323,31 +348,60 @@ export const DOM_HELPERS = `
    *  The input types below were all collapsed to "textbox". They are reached
    *  whenever a control has no label and no placeholder, which is exactly the
    *  case where a role locator is the last legible option before xpath. */
+  /** The element's ARIA role, transcribed from PLAYWRIGHT's mapping.
+   *
+   *  Not from the ARIA spec, and the difference is not academic. Playwright's
+   *  \`getByRole\` is what the generated test runs against, so its table is the
+   *  ground truth here even where it departs from HTML-AAM — and it does: an
+   *  \`input[type=password]\` has no implicit role in the spec, but Playwright
+   *  falls back to "textbox" for every input type it does not name, so a
+   *  \`getByRole("textbox")\` DOES find one. Writing the spec-correct answer
+   *  here would have removed a role locator that works.
+   *
+   *  Kept deliberately parallel to
+   *  playwright-core/lib/generated/injectedScriptSource.js (search for
+   *  \`inputTypeToRole\`), so a future reader can diff the two.
+   *
+   *  Every deviation is a locator that records cleanly, verifies as unique
+   *  against this same function, previews green — and matches nothing in the
+   *  run, because \`matchesFor\` grades uniqueness with this function too. The
+   *  recorder was marking its own homework. \`e2e/assert-parity.spec.ts\` is
+   *  what checks the answers against a real browser. */
   function roleOf(el) {
     var explicit = el.getAttribute ? el.getAttribute("role") : null;
     if (explicit) return explicit;
     var tag = el.tagName.toLowerCase();
     if (tag === "a" && el.hasAttribute("href")) return "link";
     if (tag === "button") return "button";
-    // A multi-select is a listbox, not a combobox — different role, and the
-    // generated getByRole("combobox") matched nothing.
-    if (tag === "select") return el.multiple ? "listbox" : "combobox";
+    // A select is a listbox when it shows more than one row — which is
+    // \`multiple\` OR \`size > 1\`, NOT just \`multiple\`. A \`<select size="4">\`
+    // is the everyday version and it is a listbox.
+    if (tag === "select") return el.multiple || el.size > 1 ? "listbox" : "combobox";
     if (tag === "textarea") return "textbox";
     if (tag === "input") {
-      var ty = (el.getAttribute("type") || "text").toLowerCase();
+      // The IDL property, not the attribute: \`el.type\` normalises an unknown
+      // or absent type to "text", which is what Playwright reads.
+      var ty = String(el.type || "text").toLowerCase();
+      // A text-ish input wired to a <datalist> is a combobox, not a textbox.
+      if (ty === "search") return el.hasAttribute("list") ? "combobox" : "searchbox";
+      if (ty === "email" || ty === "tel" || ty === "text" || ty === "url" || ty === "") {
+        var listId = el.getAttribute("list");
+        var listEl = listId ? document.getElementById(listId) : null;
+        return listEl && listEl.tagName === "DATALIST" ? "combobox" : "textbox";
+      }
+      // The only input with no role at all. Everything else has one.
+      if (ty === "hidden") return "";
+      // A file input is a BUTTON to Playwright, which is genuinely surprising
+      // and is why it is spelled out rather than left to the table below.
+      if (ty === "file") return "button";
       if (ty === "checkbox") return "checkbox";
       if (ty === "radio") return "radio";
-      if (ty === "button" || ty === "submit" || ty === "reset") return "button";
-      if (ty === "range") return "slider";
-      if (ty === "search") return "searchbox";
       if (ty === "number") return "spinbutton";
-      if (ty === "email" || ty === "tel" || ty === "url" || ty === "text") return "textbox";
-      // password, date, datetime-local, month, week, time, color, file and
-      // hidden have NO implicit ARIA role. Returning "" is what stops a role
-      // locator from being offered for them at all, which is correct: there is
-      // no role for \`getByRole\` to find, so the recorder must fall through to
-      // the next candidate rather than write one that cannot match.
-      return "";
+      if (ty === "range") return "slider";
+      if (ty === "button" || ty === "image" || ty === "reset" || ty === "submit") return "button";
+      // password, date, datetime-local, month, week, time, color — Playwright's
+      // fallback, and the reason the spec-accurate "no role" answer is wrong here.
+      return "textbox";
     }
     return "";
   }

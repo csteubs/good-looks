@@ -39,6 +39,11 @@ const FIXTURE = `<!doctype html>
   <input data-testid="email" placeholder="Email address" value="a@b.test" />
   <input data-testid="search" type="search" aria-label="Find things" />
   <input data-testid="qty" type="number" aria-label="Quantity" />
+  <input data-testid="pw" type="password" aria-label="Passphrase" />
+  <input data-testid="when" type="date" aria-label="Start date" />
+  <input data-testid="upload" type="file" aria-label="Upload a file" />
+  <select data-testid="sized" size="4" aria-label="Pick a region"><option>North</option><option>South</option></select>
+  <select data-testid="multi" multiple aria-label="Pick tags"><option>red</option></select>
   <select data-testid="country"><option value="uk">UK</option><option value="us">US</option></select>
   <div data-testid="aria-btn" role="button" aria-disabled="true">Disabled widget</div>
   <div data-testid="aria-chk" role="checkbox" aria-checked="true">Agree</div>
@@ -149,6 +154,18 @@ function rows(origin: string): Row[] {
     { label: "getByPlaceholder is a substring match", step: s({ assert: "visible", locator: { k: "placeholder", v: "Email" } }), expected: true },
     { label: "a role locator finds a searchbox", step: s({ assert: "visible", locator: { k: "role", role: "searchbox", name: "Find things" } }), expected: true },
     { label: "a role locator finds a spinbutton", step: s({ assert: "visible", locator: { k: "role", role: "spinbutton", name: "Quantity" } }), expected: true },
+    // The roles the recorder used to get wrong, judged by a real browser rather
+    // than by anyone's reading of the ARIA spec. `password` and `date` are
+    // TEXTBOX to Playwright even though the spec gives them no role, `file` is
+    // a BUTTON, and a `size > 1` select is a listbox without `multiple`.
+    // Getting any of these wrong records a locator that verifies as unique
+    // against the recorder's own mapping and then matches nothing in the run.
+    { label: "a password input is a textbox to Playwright", step: s({ assert: "visible", locator: { k: "role", role: "textbox", name: "Passphrase" } }), expected: true },
+    { label: "a date input is a textbox to Playwright", step: s({ assert: "visible", locator: { k: "role", role: "textbox", name: "Start date" } }), expected: true },
+    { label: "a file input is a button", step: s({ assert: "visible", locator: { k: "role", role: "button", name: "Upload a file" } }), expected: true },
+    { label: "a size>1 select is a listbox", step: s({ assert: "visible", locator: { k: "role", role: "listbox", name: "Pick a region" } }), expected: true },
+    { label: "a multiple select is a listbox", step: s({ assert: "visible", locator: { k: "role", role: "listbox", name: "Pick tags" } }), expected: true },
+    { label: "a size>1 select is NOT a combobox", step: s({ assert: "visible", locator: { k: "role", role: "combobox", name: "Pick a region" } }), expected: false },
     { label: "count with a unique testid", step: s({ assert: "count", count: 1, locator: { k: "testid", v: "only" } }), expected: true },
   ];
 }

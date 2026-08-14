@@ -172,3 +172,69 @@ describe("the emitted code and the replayer agree", () => {
     });
   }
 });
+
+describe("the UNGENERATABLE comment is not a code sink", () => {
+  // A comment is where people stop thinking about escaping, which is exactly
+  // what made this one dangerous. `describeStep` interpolates step fields RAW —
+  // it was UI copy until the generator started emitting it — and a `//` comment
+  // ends at the first LINE TERMINATOR. Anything after one lands in the spec as a
+  // statement inside the `test()` callback, which Playwright executes in Node
+  // with the user's privileges: the same class of hole as the `count` field that
+  // was RCE for having the right TypeScript type.
+  //
+  // Found by review of the very commit that introduced it, which is the only
+  // reason it is a test rather than an incident.
+
+  /** All four JS line terminators. U+2028/U+2029 matter as much as `\n`: they
+   *  end a comment identically, and unlike a control character they survive
+   *  places that reject one — a hostile page can put one in `document.cookie`,
+   *  and the Cookies panel pre-fills a step from that live read. */
+  const TERMINATORS: [string, string][] = [
+    ["LF", String.fromCharCode(10)],
+    ["CR", String.fromCharCode(13)],
+    ["U+2028", String.fromCharCode(0x2028)],
+    ["U+2029", String.fromCharCode(0x2029)],
+  ];
+
+  /** Steps that reach the UNGENERATABLE arm, each through a different builder
+   *  that interpolates raw text: capture (describeCapture), cookie
+   *  (describeCookie) and runFlow-shaped labels (describeFlow). */
+  function sinks(payload: string): Step[] {
+    return [
+      { id: "c1", type: "capture", captureVar: "v" + payload, captureFrom: "attribute", captureAttr: "href" + payload },
+      { id: "k1", type: "cookie", cookieAction: "set", cookie: { name: "sid" + payload, value: "1" + payload } },
+    ] as unknown as Step[];
+  }
+
+  for (const [name, term] of TERMINATORS) {
+    it(`a ${name} in a step field cannot escape the comment`, () => {
+      const payload = term + "globalThis.__PWNED = 1;";
+      for (const step of sinks(payload)) {
+        const src = generateSpec({ name: "t", url: "https://x.test", steps: [step] });
+        const body = src.slice(src.indexOf("=> {") + 4, src.lastIndexOf("});"));
+        // The generated body, split on every terminator: no line that came from
+        // the comment may survive as a statement.
+        const lines = body
+          .split(new RegExp("[" + String.fromCharCode(10, 13, 0x2028, 0x2029) + "]"))
+          .map((l) => l.trim())
+          .filter(Boolean);
+        const leaked = lines.filter((l) => l.includes("__PWNED") && !l.startsWith("//"));
+        expect(leaked, `payload escaped its comment in:\n${src}`).toEqual([]);
+      }
+    });
+
+    it(`a ${name} payload does not execute when the spec body is run`, () => {
+      const payload = term + "globalThis.__PWNED = 1;";
+      for (const step of sinks(payload)) {
+        const src = generateSpec({ name: "t", url: "https://x.test", steps: [step] });
+        const body = src.slice(src.indexOf("=> {") + 4, src.lastIndexOf("});"));
+        const g = globalThis as unknown as Record<string, unknown>;
+        g.__PWNED = 0;
+        // Runs the generated body the way Playwright would. A syntax error is
+        // also a failure — the feature exists to keep the spec runnable.
+        expect(() => new Function("page", "expect", body)({}, () => ({}))).not.toThrow();
+        expect(g.__PWNED, "the generated spec executed injected code").toBe(0);
+      }
+    });
+  }
+});

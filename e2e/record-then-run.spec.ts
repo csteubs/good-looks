@@ -18,6 +18,8 @@
 
 import * as fs from "node:fs";
 import * as http from "node:http";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { AddressInfo } from "node:net";
 
 import { test, expect, type AppFixtures } from "./fixtures.js";
@@ -87,6 +89,54 @@ function invoke<T>(window: AppFixtures["window"], channel: string, params?: unkn
 /** The training browser's own page — a WebContentsView target, found by URL. */
 function trainingPage(app: AppFixtures["app"]) {
   return app.windows().find((p) => p.url().startsWith("http://127.0.0.1"));
+}
+
+/**
+ * Point the app's browser store at one that already exists.
+ *
+ * The app installs Playwright browsers into `<userData>/recorder/browsers`, and
+ * the `app` fixture hands every test a FRESH userData dir — so without this,
+ * each test in this file downloads Chromium from scratch before it can run
+ * anything. That is ~140MB per test of network flakiness bolted onto a test
+ * about assertion semantics, and it is what made this spec fail intermittently
+ * for reasons that had nothing to do with the app.
+ *
+ * A symlink rather than a copy: the store is only ever read.
+ *
+ * Returns false when no local install can be found, so the caller can skip with
+ * a real explanation instead of timing out sixty seconds later.
+ */
+function seedBrowsers(userDataDir: string): boolean {
+  const sources = [
+    process.env.PLAYWRIGHT_BROWSERS_PATH,
+    path.join(os.homedir(), "Library", "Caches", "ms-playwright"),
+    path.join(os.homedir(), ".cache", "ms-playwright"),
+  ].filter((p): p is string => !!p && fs.existsSync(p));
+  // The engine must match the Playwright the APP will spawn, so a build number
+  // from a different Playwright is worse than nothing — it launches and fails.
+  const wanted = `chromium-${chromiumBuild()}`;
+  const src = sources.find((dir) => fs.existsSync(path.join(dir, wanted)));
+  if (!src) return false;
+  const dest = path.join(userDataDir, "recorder", "browsers");
+  fs.mkdirSync(dest, { recursive: true });
+  for (const name of fs.readdirSync(src)) {
+    if (!name.startsWith("chromium")) continue;
+    const link = path.join(dest, name);
+    if (!fs.existsSync(link)) fs.symlinkSync(path.join(src, name), link, "dir");
+  }
+  return true;
+}
+
+/** The Chromium build the installed Playwright expects, read from its own
+ *  browser registry rather than hard-coded — it changes with every bump. */
+function chromiumBuild(): string {
+  const json = JSON.parse(
+    fs.readFileSync(
+      path.join(process.cwd(), "node_modules", "playwright-core", "browsers.json"),
+      "utf-8",
+    ),
+  ) as { browsers: { name: string; revision: string }[] };
+  return json.browsers.find((b) => b.name === "chromium")?.revision ?? "";
 }
 
 async function waitForPageReady(window: AppFixtures["window"]): Promise<void> {
@@ -165,7 +215,8 @@ async function runTest(
   return { status: mine.status, output: output ?? "" };
 }
 
-test("a recording becomes a test that passes, with no healing", async ({ app, window }) => {
+test("a recording becomes a test that passes, with no healing", async ({ app, window, userDataDir }) => {
+  test.skip(!seedBrowsers(userDataDir), "no local Chromium matching this Playwright — run `npx playwright install chromium`");
   const site = await serveSite();
   try {
     const record = await recordSession(app, window, site.url, "record-then-run", [
@@ -200,7 +251,8 @@ test("a recording becomes a test that passes, with no healing", async ({ app, wi
   }
 });
 
-test("a recording with a false assertion produces a RED run", async ({ app, window }) => {
+test("a recording with a false assertion produces a RED run", async ({ app, window, userDataDir }) => {
+  test.skip(!seedBrowsers(userDataDir), "no local Chromium matching this Playwright — run `npx playwright install chromium`");
   // The control. Without this, "the run passed" could mean the harness never
   // asserted anything — which is precisely the failure mode being fixed, one
   // level up.

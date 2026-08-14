@@ -502,6 +502,30 @@ function cookieLine(step: Step): string | null {
  * value here is that SOMETHING appears in the spec, not that the diagnosis is
  * complete.
  */
+/**
+ * Render text as a `//` comment that cannot stop being one.
+ *
+ * A comment is a place people stop thinking about escaping, and that is exactly
+ * what makes it a code sink here. `describeStep` interpolates step fields RAW —
+ * it was UI copy until this file started emitting it — and a `//` comment ends
+ * at the first LINE TERMINATOR, so anything after one lands in the spec as a
+ * top-level statement inside the `test()` callback, which Playwright executes
+ * in Node with the user's privileges. Same class of hole as the `count` field
+ * that was RCE for being the right TypeScript type: page input → generated code
+ * → executed.
+ *
+ * All FOUR terminators, not just `\n`. U+2028 and U+2029 end a comment exactly
+ * as a newline does, and unlike `\n` they survive places that reject control
+ * characters — a hostile page can put one in `document.cookie`, and the Cookies
+ * panel pre-fills a step from that live read.
+ *
+ * Replaced with a space rather than stripped, so the message stays readable and
+ * two words cannot silently fuse into a third.
+ */
+function commentSafe(text: string): string {
+  return String(text ?? "").replace(/[\n\r\u2028\u2029]/g, " ");
+}
+
 function ungeneratableReason(step: Step): string {
   const needsLocator =
     step.type === "click" || step.type === "fill" || step.type === "select" ||
@@ -959,7 +983,7 @@ export function generateSpecDetailed(
       // is a step the user can see in the list and the runner will never
       // execute, so it says so in the file rather than disappearing from it.
       if (step.type !== "runFlow") {
-        body.push("  // UNGENERATABLE STEP — " + describeStep(step) + ": " + ungeneratableReason(step));
+        body.push(commentSafe("  // UNGENERATABLE STEP — " + describeStep(step) + ": " + ungeneratableReason(step)));
       }
       continue;
     }
@@ -975,8 +999,13 @@ export function generateSpecDetailed(
     // in the script for round-tripping and readability. Structural `if`/
     // `endif` are never commented — disabling them would break block pairing.
     if (step.disabled && step.type !== "if" && step.type !== "endif") {
-      body.push(indent + "// disabled — skipped: " + line);
-      if (logLine) body.push(indent + "// disabled — skipped: " + logLine);
+      // Same sink as the UNGENERATABLE comment below, and older: a step's line
+      // reaches here through `valueExpr`, which escapes a value into a JS
+      // literal — but a `${var}` reference emits a TEMPLATE literal, and a raw
+      // newline is legal inside one. Commenting that line out puts the text
+      // after the newline back into the file as a statement.
+      body.push(commentSafe(indent + "// disabled — skipped: " + line));
+      if (logLine) body.push(commentSafe(indent + "// disabled — skipped: " + logLine));
     } else if (step.continueOnFailure && step.type !== "if" && step.type !== "endif") {
       // "Continue on Failure" wraps the step's statement in a try/catch so a
       // failure is swallowed and the test proceeds to the next step. Only

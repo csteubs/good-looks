@@ -9,7 +9,7 @@
 // with the capture script. The `logs` array carries verbose, ordered
 // diagnostics for the trainer's step debug panel.
 
-import { DOM_HELPERS, UNIQUENESS_HELPERS } from "../recorder/capture-script.js";
+import { DOM_HELPERS, UNCAPPED_SCAN, UNIQUENESS_HELPERS } from "../recorder/capture-script.js";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "./script-generator.js";
 import {
   ASSERT_SEMANTICS,
@@ -49,6 +49,13 @@ export function buildReplayScript(step: Step): string {
   ${UNIQUENESS_HELPERS}
   ${matchSource()}
   ${visibilitySource()}
+
+  // The uniqueness scan's element cap exists because CAPTURE runs it on the
+  // click path. A preview does not: the user asked for it and is watching it,
+  // and this call already runs under an 8s budget. Left at the capture cap, a
+  // page with more elements than it would hide a locator's target from the
+  // trainer while a real run resolved it perfectly well.
+  GL_SCAN_LIMIT = ${UNCAPPED_SCAN};
 
   // The SAME tables the generator reads, shipped in as data. A predicate the
   // trainer evaluates one way and the spec evaluates another is the entire
