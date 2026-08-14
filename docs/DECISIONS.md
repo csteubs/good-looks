@@ -58,7 +58,82 @@ answering it.
 for a group that selected nothing sends someone to look at the wrong thing, and
 that message is the only thing an agent with no eyes on the app has.
 
+### 2026-08-14 — The MCP server could not start for six months, and the check that would have said so
+
+`mcp/data-dir.mjs` (replacing `mcp/glaze-data.mjs`),
+`shared/user-data-rules.mjs`, `main/shell/user-data.ts`, `mcp/server.mjs`,
+`mcp/boot.check.mjs`, `main/services/__tests__/mcp-parity.check.ts`. The fix
+for the entry below.
+
+**The bug.** `glaze-data.mjs` resolved the data directory from `package.json`'s
+`id` — a Glaze identity the SDK port removed on 2026-08-08 — so it threw at
+module load. Not one tool: the whole server, every tool, unreachable from any
+client, for six months. Everything built for the MCP in that window
+(`list_routines`, `run_routine`, `run_group`) shipped into a process that could
+not run.
+
+**Why nothing caught it, which is the more useful half.** `check:mcp-parity`
+and `check:mcp-select` were green throughout. They read the server's SOURCE and
+import its pure modules — neither of which requires the thing to start. Every
+assertion was true and the subject of them was dead. So the first thing built
+here is `check:mcp-boot`: spawn the server, speak stdio JSON-RPC to it, ask for
+its tool list. It costs a second and it is the only check that could ever have
+noticed. The general lesson is worth more than this instance — a suite that
+only ever inspects a program is a suite that cannot tell you the program is a
+corpse.
+
+**The two resolvers must agree, and the reason is not symmetry.** BOTH
+PROCESSES WRITE: the MCP appends run history and batch history. A disagreement
+is therefore the app reading a library the server is not writing to — the exact
+bug `user-data.ts` exists to fix, one process over, and just as quiet, since
+each store would be internally consistent. This is why the answer could not be
+"let the MCP guess something reasonable".
+
+**Shared rules, separate probing.** `shared/` is pure by rule (CLAUDE.md), and
+resolving a directory is irreducibly filesystem work — so the whole thing could
+not move there, and the rule was not worth bending. What went in is the part
+that drifts silently when someone edits one side: the override variable, the
+store markers, the legacy pattern, and the ORDER. The `fs` calls stayed on each
+side, where they are mechanical. `check:mcp-parity` §13 then drives both
+against one fixture tree, because sharing constants only helps while both sides
+still use them.
+
+**`productName`, not `name`.** Electron prefers `productName` when deriving
+userData, so the directory is `Good Looks!`. Reading `name` would land the
+server in `good-looks` — an empty directory beside the real store, which is the
+misdirected read this whole family of bugs is made of. Worth recording because
+the first version of the assertion guarding it PASSED when the preference was
+swapped: it called `electronDefaultDir(pkg.productName, …)`, handing in the
+right value rather than exercising the function that chooses it. The boot check
+could not have caught it either — it drives the server through the override,
+which short-circuits the default. Two guards, both blind to the same thing, for
+different reasons.
+
+**Adoption is permanent, not one-shot, and that is what makes "newest legacy
+store" safe.** Since userData is redirected, the app never writes to Electron's
+default, so the adopt branch fires on every launch and each launch keeps the
+adopted directory's mtime newest. Whoever wrote last is whoever gets picked
+next — so two processes running `stat` at different moments converge rather
+than racing. The header of `user-data.ts` said "idempotent", which was the
+wrong word for a useful property.
+
+**Kept narrow on purpose:** `LEGACY_DIR_RE` is anchored at `-local`, so a
+flavoured Glaze directory (`…-local.dev`) does not match. The Glaze-era resolver
+had a whole `readHostFlavor` branch for those. Widening it here would quietly
+change which store an existing install adopts, so the app's shipped rule wins
+and the asymmetry is written down instead.
+
+**Two smaller things fixed in passing.** `--print-data-dir` sat BELOW an
+unguarded `resolveDataDir()` at module scope — so the one diagnostic a user has
+died of the failure it exists to explain, printing a trace from inside
+`node_modules`. And `writeJsonFile` created the data directory but not the
+`recorder/` subdirectory every caller writes into, which nothing had noticed
+because the app always made it first.
+
 ### 2026-08-14 — The standalone MCP server has not been able to start since the SDK port
+
+Superseded by the entry above, which fixes it. Kept because the reasoning about
+why the gate could not see it is what the fix was built around.
 
 Not fixed here, and recorded because it is invisible from inside this repo's
 gate. `mcp/glaze-data.mjs` resolves the app's data directory from

@@ -32,8 +32,29 @@
 //
 // Run with: npm run check:mcp-parity
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
+
+import { chooseDataDir } from "../../../shared/user-data-rules.mjs";
+import {
+  appName,
+  electronDefaultDir,
+  findLegacyStores as mcpFindLegacy,
+  hasRecorderStore as mcpHasStore,
+} from "../../../mcp/data-dir.mjs";
+import {
+  findLegacyStores as appFindLegacy,
+  hasRecorderStore as appHasStore,
+  resolveUserData,
+} from "../../shell/user-data.js";
 
 import {
   consoleNetworkWithheldReason,
@@ -822,6 +843,127 @@ function codeOnly(source: string): string {
   assert(
     plan.skipped.join(",") === "gone",
     "routine: a step whose test was deleted is skipped and named, not queued",
+  );
+}
+
+// ── 13. The two data-dir resolvers agree ──────────────────────────────
+//
+// THE PARITY THAT COST THE MOST. Both processes resolve where the app's data
+// lives, and BOTH WRITE — the MCP appends run history and batch history — so a
+// disagreement is the app reading a library the server is not writing to. That
+// is the bug `main/shell/user-data.ts` was itself written against, one process
+// over, and it would be just as quiet: two stores, each internally consistent.
+//
+// The DECISION is shared (`shared/user-data-rules.mjs`), so it cannot differ
+// once the inputs match. What can still drift is the PROBING — each side does
+// its own `fs` work, because `shared/` is pure by rule. So this drives both
+// against ONE fixture tree and compares.
+
+{
+  const root = mkdtempSync(join(tmpdir(), "gl-userdata-parity-"));
+  try {
+    const appSupport = join(root, "Application Support");
+    const defaultDir = join(appSupport, "Good Looks!");
+    const legacyOld = join(appSupport, "app.glaze.macos.aaa-local");
+    const legacyNew = join(appSupport, "app.glaze.macos.bbb-local");
+    // Shapes that matter, and one that must NOT match: a flavoured directory.
+    // The Glaze-era resolver handled `-local.<flavor>`; the rule the app has
+    // shipped since the port does not, and widening it here would quietly
+    // change which store an existing install adopts.
+    const flavoured = join(appSupport, "app.glaze.macos.ccc-local.dev");
+    for (const dir of [defaultDir, legacyOld, legacyNew, flavoured]) {
+      mkdirSync(join(dir, "recorder"), { recursive: true });
+    }
+    // Only the legacy pair and the flavoured one get a store; the default is
+    // the empty directory the port started writing to.
+    for (const dir of [legacyOld, legacyNew, flavoured]) {
+      writeFileSync(join(dir, "recorder", "tests.json"), "[]");
+    }
+    // `legacyNew` is the newer of the two, by the mtime both sides sort on.
+    const now = Date.now();
+    utimesSync(join(legacyOld, "recorder"), new Date(now - 60_000), new Date(now - 60_000));
+    utimesSync(join(legacyNew, "recorder"), new Date(now), new Date(now));
+
+    // Same question, both implementations.
+    for (const dir of [defaultDir, legacyOld, flavoured, join(root, "nope")]) {
+      assert(
+        appHasStore(dir) === mcpHasStore(dir),
+        `user-data: both resolvers agree whether ${basename(dir)} is a store`,
+      );
+    }
+    // The empty default is the case the whole feature turns on.
+    assert(!appHasStore(defaultDir), "user-data: an empty default is not a store");
+
+    const appLegacy = appFindLegacy(appSupport);
+    const mcpLegacy = mcpFindLegacy(appSupport);
+    assert(
+      appLegacy.join(",") === mcpLegacy.join(","),
+      "user-data: both resolvers find the same legacy stores, in the same order",
+    );
+    // Not vacuous: it has to find something, and it has to exclude the
+    // flavoured one rather than merely returning a short list.
+    assert(
+      appLegacy.length === 2 && appLegacy[0] === legacyNew,
+      "user-data: …newest first, and a FLAVOURED directory is not one of them",
+    );
+
+    // And the whole decision, composed the way each side composes it.
+    const appChoice = resolveUserData(defaultDir, {});
+    const mcpChoice = chooseDataDir({
+      override: undefined,
+      defaultDir,
+      defaultHasStore: mcpHasStore(defaultDir),
+      legacyDirs: mcpFindLegacy(dirname(defaultDir)),
+    });
+    assert(
+      appChoice.dir === mcpChoice.dir && appChoice.reason === mcpChoice.reason,
+      "user-data: both reach the same directory FOR THE SAME REASON",
+    );
+    assert(
+      appChoice.reason === "adopted-legacy" && appChoice.dir === legacyNew,
+      "user-data: …which here is adopting the newest legacy store",
+    );
+
+    // The override short-circuits both, or the escape hatch is only an escape
+    // from one of them.
+    const env = { GOOD_LOOKS_USERDATA: join(root, "elsewhere") };
+    assert(
+      resolveUserData(defaultDir, env).dir === env.GOOD_LOOKS_USERDATA &&
+        chooseDataDir({ override: env.GOOD_LOOKS_USERDATA, defaultDir, defaultHasStore: true })
+          .dir === env.GOOD_LOOKS_USERDATA,
+      "user-data: the override wins on both sides, even over an existing store",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// The MCP derives the default from `productName`, which Electron PREFERS over
+// `name`. Getting that backwards lands the server in `good-looks` beside a real
+// store in `Good Looks!` — the misdirected-read bug, exactly.
+{
+  const pkg = JSON.parse(readFileSync(resolve(process.cwd(), "package.json"), "utf8"));
+  assert(
+    pkg.productName === "Good Looks!" && pkg.name !== pkg.productName,
+    "user-data: productName and name differ, so preferring the wrong one is observable",
+  );
+  // Reads `appName()`'s OWN answer rather than handing it `productName` — the
+  // first draft of this did the latter and survived swapping the preference,
+  // because it only ever exercised the function it fed the right value to.
+  // Nor would the boot check catch it: that drives the server through the
+  // override, which short-circuits the default entirely. This assertion is the
+  // only thing standing between a rename and a silently misdirected read.
+  assert(
+    appName(process.cwd()) === pkg.productName,
+    "mcp: the app's name is productName — the one Electron PREFERS, not `name`",
+  );
+  assert(
+    electronDefaultDir(appName(process.cwd()), "darwin").endsWith("/Library/Application Support/Good Looks!"),
+    "mcp: the default dir is Electron's own — productName under Application Support",
+  );
+  assert(
+    electronDefaultDir(appName(process.cwd()), "linux").includes("Good Looks!"),
+    "mcp: …and it still resolves off macOS, which is what lets CI boot the server",
   );
 }
 

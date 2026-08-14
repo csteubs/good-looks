@@ -17,7 +17,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { readJsonFile, resolveDataDir, writeJsonFile } from "./glaze-data.mjs";
+import { readJsonFile, resolveDataDir, writeJsonFile } from "./data-dir.mjs";
 import { selectTests, summarizeResults, UNGROUPED, UNTAGGED } from "./select-tests.mjs";
 import { clampParallel, MAX_PARALLEL, runPool } from "./run-pool.mjs";
 import { listSessions, readShots, requestCapture } from "./debug-shots.mjs";
@@ -82,7 +82,18 @@ const RUN_BROWSERS = ["chromium", "firefox", "webkit"];
 const OUTPUT_TAIL_CHARS = 4000;
 const LOG_TAIL_CHARS = 20000;
 
-const dataDir = resolveDataDir();
+// RESOLVED IN A GUARD, and `--print-data-dir` is the reason. That flag is the
+// one diagnostic a user has when this goes wrong, and until 2026-08-14 it sat
+// BELOW an unguarded `resolveDataDir()` at module scope — so the command that
+// exists to explain the failure died of it, printing a stack trace from inside
+// node_modules instead of the sentence the error carries.
+let dataDir;
+try {
+  dataDir = resolveDataDir();
+} catch (error) {
+  console.error(String(error?.message ?? error));
+  process.exit(1);
+}
 
 if (process.argv.includes("--print-data-dir")) {
   console.log(dataDir);

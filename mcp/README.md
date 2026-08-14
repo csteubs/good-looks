@@ -644,6 +644,17 @@ past runs and their logs — stays readable from here.
   JavaScript here), and a drift between them produces no error on either side,
   so `main/services/debug-capture.test.ts` compares the two implementations
   directly. Captures are pruned to the newest 10 and downscaled to 1400px.
-- Data directory resolution (`mcp/glaze-data.mjs`) is machine-independent — it
-  derives the path from `package.json`'s `id` field, so the server keeps
-  working if the project moves machines.
+- Data directory resolution (`mcp/data-dir.mjs`) reaches the same answer the
+  app does, because **both processes write** — this server appends run history
+  and batch history, so a disagreement means the app reads a library the server
+  is not writing to. The order is: `GOOD_LOOKS_USERDATA` if set, else the
+  directory Electron would use (`productName` under the platform's app-data
+  root), else the newest Glaze-era store beside it, adopted in place. The rules
+  live in `shared/user-data-rules.mjs` so the two cannot drift; the probing is
+  each side's own, and `check:mcp-parity` drives both against one fixture tree.
+
+  Set `GOOD_LOOKS_USERDATA` to point the server somewhere explicit — the escape
+  hatch when the layout is unusual, and the way to run it off macOS.
+
+  `node mcp/server.mjs --print-data-dir` prints where it resolved to, and on
+  failure explains what it looked for rather than throwing a stack trace.
