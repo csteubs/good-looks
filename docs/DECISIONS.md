@@ -16,6 +16,74 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-14 — `run_group`: a second door, deliberately not a second room
+
+`mcp/select-tests.mjs`, `mcp/server.mjs`, `mcp/README.md`,
+`main/services/__tests__/mcp-parity.check.ts`. REDESIGN §7.2's last piece.
+
+**A tool, not a parameter — and one body behind both.** `group` could have been
+a fourth field on `run_batch` and nothing would have been missing
+functionally. It is its own tool because an MCP client DISCOVERS TOOLS, not
+parameters: an agent listing the surface sees `run_group` and learns the
+library has folders, where a `group` key inside another tool's schema is
+something it has to already be looking for. That is the same call ROUTINES made
+for `run_routine`, for the same reason.
+
+The risk in a second entry point is the one this repo has spent two phases
+avoiding elsewhere: a second implementation that starts identical and diverges
+in silence. So `run_batch` and `run_group` are handed the SAME function. There
+is one selection, one queue expansion, one pool, one written-through
+`BatchRecord`. `check:mcp-parity` §12 pins exactly that — both registrations
+reference `runBatchTool`, and `runBatchTool` is defined once — because a
+`run_group` with an inline handler of its own would satisfy "both tools exist"
+while defeating the reason for the assertion. `run_batch` gains `group` too:
+the library now models something its schema could not express, and a selector
+missing from the general tool is a hole rather than a simplification.
+
+**Folder names match EXACTLY where tags fold case.** The asymmetry is inherited
+rather than invented — it is the one `TestRecord.group` and
+`testStore.renameGroup` already draw. A tag is MATCHED, so `Smoke` and `smoke`
+have to be one thing. A folder is DISPLAYED, so they are two folders in the
+rail, and folding them here would run a folder the caller can see is a
+different one. The query is trimmed, so a pasted name still finds its folder.
+
+**Precedence is ids > group > tag.** Explicit ids because the caller was
+specific; a group over a tag because a folder is where a test lives and a tag
+is a label it happens to carry, which makes the folder the more deliberate of
+the two. Passing both is not an error: an agent that sent them meant the one it
+was more specific about, and refusing a runnable call would be worse than
+answering it.
+
+**An empty folder is reported as that folder.** "No tests matched the library"
+for a group that selected nothing sends someone to look at the wrong thing, and
+that message is the only thing an agent with no eyes on the app has.
+
+### 2026-08-14 — The standalone MCP server has not been able to start since the SDK port
+
+Not fixed here, and recorded because it is invisible from inside this repo's
+gate. `mcp/glaze-data.mjs` resolves the app's data directory from
+`package.json`'s `id` field — a Glaze identity — and throws
+`package.json is missing the "id" field` when it is absent. The SDK port (#18,
+2026-08-08) removed `"id": "2ovdvu33"` from `package.json`. `node mcp/server.mjs`
+has therefore failed at module load ever since, which means the ENTIRE MCP
+surface is unreachable from an external client: not just `run_group`, but every
+tool, including `list_routines` and `run_routine`.
+
+Nothing caught it because nothing boots the server. `check:mcp-parity` and
+`check:mcp-select` read the source and import the pure modules; both are green
+against a server that cannot start.
+
+The app already answers this question for itself in `main/shell/user-data.ts`,
+which the same port needed: honour `GOOD_LOOKS_USERDATA`, else the Electron
+default under `productName`, else adopt the legacy Glaze directory in place.
+The MCP wants the same order and, by this repo's own rule about logic two
+processes need, it wants it from `shared/` rather than transcribed — a copy of
+"where does the data live" is right the day it is written and silently
+divergent after. That is a larger change than the tool this entry is about, and
+it has a real decision in it (does the MCP adopt the legacy directory, or only
+read it?), so it is written down rather than folded in.
+
+
 ### 2026-08-14 — Folders in the library rail, and a group that is only its name
 
 `main/recorder/types.ts`, `main/services/test-store.ts`,

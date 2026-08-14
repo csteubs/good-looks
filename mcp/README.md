@@ -64,9 +64,16 @@ root, so the Glaze agent can use these tools in this workspace too.
 
 ### `list_tests`
 
-List every recorded test: id, name, target URL, step count, tags, speed,
-browser, and timestamps. Newest-updated first, capped at 200. No arguments.
-The `tags` field is what `run_batch` selects on.
+List every recorded test: id, name, target URL, step count, tags, the library
+folder it is in, speed, browser, and timestamps. Newest-updated first, capped
+at 200. No arguments.
+
+Two selectors come off this list and they are not the same thing. `tags` are
+labels a test can carry several of — what `run_batch tag=…` selects on.
+`group` is the one folder the test lives in, in the app's library rail — what
+`run_group` selects on. It is **absent** on a test that is in no folder; there
+is no separate folder record, so the set of folders is exactly the set of
+names these fields carry.
 
 ```
 list_tests
@@ -157,6 +164,7 @@ headless, **one at a time by default**. A failing test does not stop the batch.
 |---|---|---|
 | `testIds` | string[] | no — explicit selection, run in the order given |
 | `tag` | string | no — every test carrying that tag |
+| `group` | string | no — every test in that library folder (see `run_group`) |
 | `browser` | `chromium` \| `firefox` \| `webkit` | no — defaults to Chromium |
 | `allDatasets` | boolean | no — run each selected test once per dataset row it declares |
 | `datasetIds` | string[] | no — sweep only these rows |
@@ -174,11 +182,15 @@ A sweep parallelises across rows too: each run gets its own id and its own
 Playwright scratch directory, so several rows of one test run side by side
 safely.
 
-Selection rules: `testIds` wins if given; otherwise `tag`; otherwise every
-visible test. Tags match case-insensitively. Pass `tag="__untagged__"` for
-tests with no tags. Hidden tests are skipped by tag/all selections but still
-run when named explicitly by id. A requested id that doesn't exist is reported
-back in `missingTestIds` rather than silently dropped.
+Selection rules: `testIds` wins if given; otherwise `group`; otherwise `tag`;
+otherwise every visible test. A group beats a tag because a folder is the more
+deliberate statement of the two — it is where the test lives, not a label it
+happens to carry. Tags match case-insensitively; **folder names do not**, for
+the reason given under `run_group`. Pass `tag="__untagged__"` for tests with no
+tags, or `group="__ungrouped__"` for tests in no folder. Hidden tests are
+skipped by tag/group/all selections but still run when named explicitly by id.
+A requested id that doesn't exist is reported back in `missingTestIds` rather
+than silently dropped.
 
 With `allDatasets` or `datasetIds`, each selected test runs once per matching
 row, in the order the rows are declared. A selected test with no matching rows
@@ -195,6 +207,7 @@ run_batch tag="smoke" browser="webkit"
 run_batch tag="smoke" parallel=4
 run_batch testIds=["3f2a1c9e-...", "8b7d2f10-..."]
 run_batch tag="checkout" allDatasets=true
+run_batch group="Storefront"
 run_batch
 ```
 
@@ -203,6 +216,45 @@ with the dataset row when it was a sweep), and the batch itself is written to
 the app's batch history — so a batch run from MCP shows up in the app's
 **Batch** view alongside ones started from the UI. The response is flagged as
 an error when any test failed, so an agent can't read a red suite as success.
+
+### `run_group`
+
+Run every test in one of the library's folders. **The same run as `run_batch`,
+selected by folder** — one implementation, two names — so everything above
+about datasets, `parallel`, secret-bearing tests and the written-through batch
+record applies here unchanged.
+
+| Arg | Type | Required |
+|---|---|---|
+| `group` | string | **yes** — the folder's name, or `"__ungrouped__"` |
+| `browser` | `chromium` \| `firefox` \| `webkit` | no — defaults to Chromium |
+| `allDatasets` | boolean | no — run each test once per dataset row it declares |
+| `datasetIds` | string[] | no — sweep only these rows |
+| `parallel` | number 1–16 | no — how many to run at once; defaults to 1 |
+
+**A folder is not a tag.** Each test is in exactly one folder, where it can
+carry any number of tags — that is the whole difference, and it is why the two
+are separate selectors rather than one. A folder is where a test lives; a tag
+is a label on it.
+
+**Folder names are matched EXACTLY, unlike tags.** `Checkout` and `checkout`
+are two different folders in the app — the rail displays a folder's name rather
+than matching on it, so the name you typed is the name on the row. Matching
+case-insensitively here would run a folder the caller can see is a different
+one. The name you pass is trimmed, so a pasted one still finds its folder.
+
+Folder names come from `list_tests`. There is no folder record to enumerate: a
+folder exists exactly as long as a test says it is in one, so an empty folder
+is not a thing that can be run — it is a thing that does not exist. A name that
+matches nothing is reported as that folder rather than as "the library", so you
+are not sent to look at the wrong thing.
+
+```
+run_group group="Storefront"
+run_group group="Storefront" parallel=4
+run_group group="Storefront" browser="webkit"
+run_group group="__ungrouped__"
+```
 
 ### `list_routines`
 
@@ -531,7 +583,7 @@ server has no route to that API — so:
   does not run it: the generated spec resolves an unset secret to `""`, so the
   test would type empty strings into the login form and fail several steps later
   with nothing connecting the two.
-- **`run_batch` skips** such a test with a note and carries on.
+- **`run_batch` / `run_group` skip** such a test with a note and carry on.
 - **`get_test`** lists secret variables by name so this is knowable up front.
 - **`get_run_logs` withholds** every run's console and network whenever *any*
   test in the library declares a secret. Those files are stored raw and the app
@@ -569,7 +621,7 @@ past runs and their logs — stays readable from here.
   `get_screenshot`)
   never modify app data. The metrics-backed ones open the metrics database but
   never create it — it is the app's to build.
-  `run_test`, `run_batch` and `run_routine` execute Playwright and append run
+  `run_test`, `run_batch`, `run_group` and `run_routine` execute Playwright and append run
   records; the latter two also write a batch record and persist progress after
   every test, so an interrupted batch keeps the results it already collected.
   `run_routine` does not edit the routine it runs — not even its schedule.

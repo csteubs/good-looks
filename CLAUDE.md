@@ -63,8 +63,13 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      by the injected replayer (as JSON + `toString`d source) and
                      by the renderer's step list. Three copies of those rules is
                      what made a "URL contains" assertion that could never pass
-mcp/                 standalone MCP server exposing the test library to external MCP clients
-                     (list_tests, get_test, list_runs, get_run_log, run_test, run_batch,
+mcp/                 standalone MCP server exposing the test library to external MCP clients.
+                     NOTE: it cannot currently START — `glaze-data.mjs` resolves the data
+                     dir from `package.json`'s `id`, which the SDK port removed, so
+                     `node mcp/server.mjs` throws at load. Nothing catches it because
+                     nothing boots the server; check:mcp-* read the source and import the
+                     pure modules. See DECISIONS 2026-08-14
+                     (list_tests, get_test, list_runs, get_run_log, run_test, run_batch, run_group,
                       list_routines, run_routine,
                       get_visual_report, get_a11y_report, get_run_logs, list_heals,
                       list_batches, compare_runs, triage_run, get_step_health,
