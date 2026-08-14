@@ -234,6 +234,14 @@ export function isLocatorFailure(error: string | undefined, step: Step): boolean
     e.includes("not found") ||
     e.includes("0 match") ||
     e.includes("couldn't resolve") ||
+    // An AMBIGUOUS locator is a locator problem, and healing is the right
+    // answer to it: `identifiesOnly` only ever proposes a candidate that
+    // resolves to exactly one element, so a heal here replaces "matched 2" with
+    // a locator that matches the element the user meant. The run-time fixture's
+    // `isResolveFailure` has always listed this; the trainer's classifier had
+    // not, so the same failure was healable in a run and not in the trainer —
+    // the wrong way round, since the trainer is where someone is watching.
+    e.includes("strict mode violation") ||
     e.includes("did not resolve")
   );
 }
@@ -363,6 +371,18 @@ interface ReplayStepResult {
  *  (the window may not have navigated yet). */
 function currentPageUrl(): string {
   return pageWc()?.getURL() || session?.liveUrl || session?.url || "";
+}
+
+/** The training page's current title, for the title assertions' prefill.
+ *
+ *  They used to prefill from `prefillValue` — the right-clicked element's
+ *  `.value` — which is a form field's contents and has nothing to do with the
+ *  document title. Right-clicking a filled-in email box and choosing "Page
+ *  title is…" opened the dialog suggesting the email address. That exact bug
+ *  was found and fixed for the three URL items directly below; the title item
+ *  was left on the old argument and kept it. */
+function currentPageTitle(): string {
+  return pageWc()?.getTitle() || "";
 }
 
 /**
@@ -1640,7 +1660,8 @@ export const recorderService = {
           { label: "URL contains…", click: () => ctxAction({ kind: "assertion", assert: "url", picked: null, prefillText: "", prefillValue: urlAssertPrefill("url", currentPageUrl()) }) },
           { label: "URL ends with…", click: () => ctxAction({ kind: "assertion", assert: "urlEndsWith", picked: null, prefillText: "", prefillValue: urlAssertPrefill("urlEndsWith", currentPageUrl()) }) },
           { label: "URL is…", click: () => ctxAction({ kind: "assertion", assert: "urlIs", picked: null, prefillText: "", prefillValue: urlAssertPrefill("urlIs", currentPageUrl()) }) },
-          { label: "Page title is…", click: () => ctxAction({ kind: "assertion", assert: "title", picked: null, prefillText: "", prefillValue }) },
+          { label: "Page title is…", click: () => ctxAction({ kind: "assertion", assert: "title", picked: null, prefillText: "", prefillValue: currentPageTitle() }) },
+          { label: "Page title contains…", click: () => ctxAction({ kind: "assertion", assert: "titleContains", picked: null, prefillText: "", prefillValue: currentPageTitle() }) },
         ];
         const waitItems: MenuItemConstructorOptions[] = [
           { label: "For element visible", click: () => ctxAction({ kind: "wait", waitMode: "element", picked, prefillText: "", prefillValue: "" }) },

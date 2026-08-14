@@ -311,13 +311,27 @@ export const DOM_HELPERS = `
     return title ? title.trim() : "";
   }
 
+  /** The element's ARIA role, as Playwright's \`getByRole\` computes it.
+   *
+   *  Every deviation here is a locator that RECORDS cleanly, verifies as
+   *  unique against this same function, previews green in the trainer — and
+   *  then matches nothing in the run, because Playwright consults the real role
+   *  mapping. The whole path is self-consistent and wrong together, which is
+   *  why it survived: \`matchesFor\` validates uniqueness with this function, so
+   *  the recorder was grading its own homework.
+   *
+   *  The input types below were all collapsed to "textbox". They are reached
+   *  whenever a control has no label and no placeholder, which is exactly the
+   *  case where a role locator is the last legible option before xpath. */
   function roleOf(el) {
     var explicit = el.getAttribute ? el.getAttribute("role") : null;
     if (explicit) return explicit;
     var tag = el.tagName.toLowerCase();
     if (tag === "a" && el.hasAttribute("href")) return "link";
     if (tag === "button") return "button";
-    if (tag === "select") return "combobox";
+    // A multi-select is a listbox, not a combobox — different role, and the
+    // generated getByRole("combobox") matched nothing.
+    if (tag === "select") return el.multiple ? "listbox" : "combobox";
     if (tag === "textarea") return "textbox";
     if (tag === "input") {
       var ty = (el.getAttribute("type") || "text").toLowerCase();
@@ -325,7 +339,15 @@ export const DOM_HELPERS = `
       if (ty === "radio") return "radio";
       if (ty === "button" || ty === "submit" || ty === "reset") return "button";
       if (ty === "range") return "slider";
-      return "textbox";
+      if (ty === "search") return "searchbox";
+      if (ty === "number") return "spinbutton";
+      if (ty === "email" || ty === "tel" || ty === "url" || ty === "text") return "textbox";
+      // password, date, datetime-local, month, week, time, color, file and
+      // hidden have NO implicit ARIA role. Returning "" is what stops a role
+      // locator from being offered for them at all, which is correct: there is
+      // no role for \`getByRole\` to find, so the recorder must fall through to
+      // the next candidate rather than write one that cannot match.
+      return "";
     }
     return "";
   }

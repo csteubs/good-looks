@@ -13,7 +13,7 @@
 // inspect the live DOM in the training window. It reuses the shared DOM_HELPERS
 // so locator semantics stay aligned with the capture script + replayer.
 
-import { DOM_HELPERS } from "../recorder/capture-script.js";
+import { DOM_HELPERS, UNIQUENESS_HELPERS } from "../recorder/capture-script.js";
 import type { DebugEntry, HealCandidate, HealResult, Step } from "../recorder/types.js";
 
 /** Race a page `executeJavaScript` against a timeout so a hanging probe can't
@@ -46,6 +46,7 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
   const hintsJson = JSON.stringify(pastHints);
   return `(function () {
   ${DOM_HELPERS}
+  ${UNIQUENESS_HELPERS}
 
   var step = ${JSON.stringify(step)};
   var hints = ${hintsJson};
@@ -190,19 +191,41 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
         var it = document.evaluate(loc.v || "", document, null, 7, null);
         for (var xi = 0; xi < it.snapshotLength; xi++) out.push(it.snapshotItem(xi));
       } else {
+        // pwHas, NOT ===. This claimed to mirror Playwright and did the
+        // opposite: getByText / getByLabel / getByPlaceholder / getByRole with
+        // a name all match a case-insensitive SUBSTRING with whitespace
+        // normalized, and comparing exact strings UNDER-counts. Under-counting
+        // is the direction that matters, because it is the one that declares a
+        // candidate unique when it is not — so identifiesOnly approved the
+        // text candidate "Save" on a page that also had "Save changes", and the
+        // applied heal raised the very strict-mode violation that function
+        // exists to prevent.
         var alls = Array.prototype.slice.call(document.querySelectorAll("*"));
         for (var i = 0; i < alls.length; i++) {
           var el = alls[i];
           if (loc.k === "text") {
-            if (el.children.length === 0 && txt(el) === loc.v) out.push(el);
+            if (pwHas(el.textContent, loc.v)) out.push(el);
           } else if (loc.k === "label") {
-            if (labelFor(el) === loc.v) out.push(el);
+            if (pwHas(labelFor(el), loc.v)) out.push(el);
           } else if (loc.k === "placeholder") {
-            if (el.getAttribute && el.getAttribute("placeholder") === loc.v) out.push(el);
+            if (el.getAttribute && pwHas(el.getAttribute("placeholder"), loc.v)) out.push(el);
           } else if (loc.k === "role") {
             if (roleOf(el) !== loc.role) continue;
-            if (loc.name == null || accName(el) === loc.name) out.push(el);
+            if (loc.name == null || loc.name === "" || pwHas(accName(el), loc.name)) out.push(el);
           }
+        }
+        // "Smallest element containing the text" — Playwright's text engine
+        // returns the DEEPEST match, so without this every ancestor up to
+        // <body> counts and nothing is ever unique. The old leaf-only test
+        // (el.children.length === 0) was a rough stand-in for this and got
+        // the common case of a button wrapping a span wrong.
+        if (loc.k === "text") {
+          out = out.filter(function (el) {
+            for (var j = 0; j < out.length; j++) {
+              if (out[j] !== el && el.contains(out[j])) return false;
+            }
+            return true;
+          });
         }
       }
     } catch (e) {}

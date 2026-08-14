@@ -224,7 +224,12 @@ const ASSERT_TO_WAIT_UNTIL: Partial<Record<AssertKind, WaitUntilKind>> = {
   value: "value",
   count: "count",
   url: "urlContains",
-  title: "titleContains",
+  // `titleContains`, not `title`. A marked `toHaveTitle` used to come back as
+  // the exact `title` assert and then be mapped to a CONTAINS wait, quietly
+  // widening the predicate on the way through the parser. Now that the two
+  // title kinds are distinct on both sides, each maps to itself and neither
+  // changes meaning by being round-tripped.
+  titleContains: "titleContains",
 };
 
 /** Undo script-generator.ts's `reEscape` — drop the backslash in front of a
@@ -433,7 +438,16 @@ function matchBrace(s: string, openIdx: number): number {
 function parseCondition(raw: string): Partial<Step> | null {
   const c = raw.trim();
   // Page-level conditions.
-  let m = c.match(/^page\.url\(\)\.includes\(\s*(['"`])([\s\S]*?)\1\s*\)$/);
+  //
+  // The optional `.toLowerCase()` on both sides is the URL condition's case
+  // rule made visible in the source. It has to be OPTIONAL rather than
+  // required: specs generated before the rule was fixed carry the bare
+  // `page.url().includes(...)` form, and they are re-parsed by every hand edit
+  // and applied AI fix. Refusing to read the old shape would turn each of those
+  // into an unclassified statement and silently drop the whole `if` body.
+  let m = c.match(
+    /^page\.url\(\)(?:\.toLowerCase\(\))?\.includes\(\s*(?:String\(\s*)?(['"`])([\s\S]*?)\1\s*\)?\s*(?:\.toLowerCase\(\)\s*)?\)$/,
+  );
   if (m) return { cond: "urlContains", value: unescapeLit(m[2]) };
   if (/page\.title\(\)/.test(c)) {
     m = c.match(/\.includes\(\s*(['"`])([\s\S]*?)\1\s*\)\s*$/);
@@ -879,25 +893,49 @@ function parseBody(
           const aClose = matchParen(src, aOpen);
           if (aClose >= 0) {
             const argStr = src.slice(aOpen + 1, aClose).trim();
-            if (pageAssertM[1] === "toHaveURL") {
-              // toHaveURL(string) → url (substring). toHaveURL(new RegExp("…", "i"))
-              // → urlEndsWith (trailing $) or urlIs (^…$).
-              const reM = argStr.match(/^new\s+RegExp\s*\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*(?:,\s*"(?:[^"\\]|\\.)*"\s*)?\)/);
-              if (reM) {
-                const pattern = unescapeLit(reM[1].slice(1, -1));
-                const assert: AssertKind = pattern.startsWith("^") && pattern.endsWith("$") ? "urlIs" : pattern.endsWith("$") ? "urlEndsWith" : "url";
-                const bare = pattern.replace(/^\^/, "").replace(/\$$/, "");
-                // A conditional wait stores the user's literal substring, so
-                // the generator's reEscape has to be undone here — otherwise
-                // the round trip turns "example.com" into "example\.com" and
-                // the next regeneration escapes the backslash too.
-                emit(assert, { ...(soft ? { soft: true } : {}) }, { value: isWait ? reUnescape(bare) : bare });
-                i = isWait ? lineEnd : aClose + 1;
-                continue;
-              }
+            // A RegExp argument means the generator embedded the user's literal
+            // value in a pattern, and the anchors say which kind it was:
+            // `^…$` exact, `…$` ends-with, bare substring. Both matchers use
+            // the shape now — a bare `toHaveURL(string)` is an EXACT whole-URL
+            // check, so "URL contains" cannot be written that way.
+            const reM = argStr.match(/^new\s+RegExp\s*\(\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')\s*(?:,\s*"(?:[^"\\]|\\.)*"\s*)?\)/);
+            if (reM) {
+              const pattern = unescapeLit(reM[1].slice(1, -1));
+              const anchoredStart = pattern.startsWith("^");
+              const anchoredEnd = pattern.endsWith("$");
+              const isUrl = pageAssertM[1] === "toHaveURL";
+              const assert: AssertKind = isUrl
+                ? anchoredStart && anchoredEnd
+                  ? "urlIs"
+                  : anchoredEnd
+                    ? "urlEndsWith"
+                    : "url"
+                : anchoredStart && anchoredEnd
+                  ? "title"
+                  : "titleContains";
+              const bare = pattern.replace(/^\^/, "").replace(/\$$/, "");
+              // ALWAYS unescape, not just for a conditional wait.
+              //
+              // The step stores the user's literal substring; the generator
+              // escapes it into a pattern. Reading a pattern back without
+              // undoing that escape stores `example\.com`, and the NEXT
+              // generation escapes the backslash too — so every hand edit and
+              // every applied AI fix pushed the value one escape further from
+              // what the user typed, until the assertion could not match
+              // anything. `urlEndsWith` and `urlIs` had been drifting this way
+              // since they were written; only the wait path was ever correct,
+              // and only because it was the only one passing `isWait`.
+              emit(assert, { ...(soft ? { soft: true } : {}) }, { value: reUnescape(bare) });
+              i = isWait ? lineEnd : aClose + 1;
+              continue;
             }
             const value = parseValueArg(argStr);
-            const assert: AssertKind = pageAssertM[1] === "toHaveURL" ? "url" : "title";
+            // A plain string reaching here is an EXACT whole-value match, which
+            // is `urlIs` for a URL and `title` for a title. Reading it back as
+            // `url` was the parser agreeing with the generator's old bug: it
+            // round-tripped perfectly and preserved an assertion that could not
+            // pass, which is how the check suite stayed green over it.
+            const assert: AssertKind = pageAssertM[1] === "toHaveURL" ? "urlIs" : "title";
             emit(
               assert,
               { ...(soft ? { soft: true } : {}) },

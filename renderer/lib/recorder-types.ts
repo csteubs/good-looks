@@ -93,7 +93,10 @@ export type AssertKind =
   | "url"
   | "urlEndsWith"
   | "urlIs"
+  // `title` is exact ("Page title is"); `titleContains` is the substring kind
+  // the vocabulary was missing. See the note in main/recorder/types.ts.
   | "title"
+  | "titleContains"
   | "css";
 
 /** Pseudo-state a `state` step applies (mirror of main types).
