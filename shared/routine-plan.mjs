@@ -117,6 +117,47 @@ export function routineRunPlan(routine, knownTestIds, options) {
   const flat = [];
   for (const step of steps) {
     if (!step || typeof step !== "object") continue;
+    if (step.kind === "branch") {
+      // BOTH SIDES QUEUED, one skipped at run time. See `RoutineBranchStep` for
+      // why: a queue that grew mid-run would break write-through, the summary,
+      // `currentIndex` and the view's row lookup, all of which assume the list
+      // is decided at start.
+      //
+      // The branch itself is a BARRIER — the condition is about the run so far,
+      // so everything before it has to have finished for the answer to be true.
+      // Each side gets its OWN segment, which is what lets the runner mark one
+      // of them skipped without touching the other.
+      const branchId = typeof step.id === "string" ? step.id : "";
+      const thenSteps = Array.isArray(step.then) ? step.then : [];
+      const elseSteps = Array.isArray(step.else) ? step.else : [];
+      if (branchId !== "" && (thenSteps.length > 0 || elseSteps.length > 0)) {
+        barriers.push({
+          afterSegment: segment,
+          ms: 0,
+          branch: {
+            id: branchId,
+            on: step.on === "allPassed" ? "allPassed" : "anyFailed",
+            // The segments each side's entries land in. The runner skips the
+            // one the condition did not choose.
+            thenSegment: segment + 1,
+            elseSegment: segment + 2,
+          },
+        });
+        for (const child of thenSteps) {
+          if (child && typeof child === "object" && child.kind === "test") {
+            flat.push({ step: child, groupId: "", segment: segment + 1 });
+          }
+        }
+        for (const child of elseSteps) {
+          if (child && typeof child === "object" && child.kind === "test") {
+            flat.push({ step: child, groupId: "", segment: segment + 2 });
+          }
+        }
+        // Three forward: the two sides, then whatever follows the branch.
+        segment += 3;
+      }
+      continue;
+    }
     if (step.kind === "notify") {
       // A BARRIER TOO, with no pause. "Tell me when the seeding is done" is a
       // claim about the steps above it, so it fires at a join for the same
@@ -219,11 +260,22 @@ export function routineRunPlan(routine, knownTestIds, options) {
     // is the most useful message there is, and it is by definition the last
     // thing in the job — filtering it out with the pauses would delete the one
     // notify anybody actually writes.
-    barriers: barriers.filter((b) => b.notify || b.afterSegment < lastLiveSegment),
+    // A trailing PAUSE is dropped; a trailing NOTIFY is not (see above), and
+    // neither is a BRANCH — a branch whose chosen side is empty still has to
+    // mark the other side skipped, or the rows for a path that was never taken
+    // sit at "queued" in the record forever.
+    barriers: barriers.filter(
+      (b) => b.notify || b.branch || b.afterSegment < lastLiveSegment,
+    ),
     /** Queue entries, which is the sum of each step's engines rather than the
      *  test count — the two differ the moment one step names two engines, and
      *  the toolbar has to report the number that will actually run. */
     plannedRuns: perTest.reduce((n, e) => n + e.browsers.length, 0),
+    /** True once a branch is present, which makes `plannedRuns` a MAXIMUM
+     *  rather than a count: both sides are queued and one is always skipped, so
+     *  a toolbar reporting the raw number would promise runs that cannot all
+     *  happen. */
+    hasBranch: barriers.some((b) => b.branch),
     skipped,
     captureArtifacts: routine?.defaults?.captureArtifacts === true,
     /** Requested lanes. NOT clamped here — the ceiling is the number of

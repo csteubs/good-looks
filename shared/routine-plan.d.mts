@@ -61,6 +61,15 @@ export interface RoutineBarrier {
    *  is PLAIN TEXT the user wrote — never interpolated from run data. See
    *  `RoutineNotifyStep` for why that is a security decision. */
   notify?: { channel: "desktop" | "webhook"; message: string };
+  /** A two-way choice at this join. Both sides' entries are already in the
+   *  queue, in `thenSegment` and `elseSegment`; the runner marks whichever the
+   *  condition did not choose as skipped. */
+  branch?: {
+    id: string;
+    on: "anyFailed" | "allPassed";
+    thenSegment: number;
+    elseSegment: number;
+  };
 }
 
 export interface RoutineRunPlan {
@@ -70,6 +79,9 @@ export interface RoutineRunPlan {
    *  dropped — it would hold the batch open past the end of the job. */
   barriers: RoutineBarrier[];
   plannedRuns: number;
+  /** True when the Routine has a `branch`, which makes `plannedRuns` a MAXIMUM:
+   *  both sides are queued and one is always skipped. */
+  hasBranch: boolean;
   /** Steps that will not run: a deleted test, or one with no valid engine. */
   skipped: string[];
   captureArtifacts: boolean;

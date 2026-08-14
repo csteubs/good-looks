@@ -36,6 +36,7 @@ import type {
   BatchRowOptions,
   FailurePolicy,
   Routine,
+  RoutineBranchStep,
   RoutineGroupStep,
   RoutineStep,
   RoutineNotifyStep,
@@ -69,7 +70,10 @@ export type PolicyMap = Record<string, FailurePolicy>;
  * `failurePolicy` normalises: this is what the click produces next, and it must
  * not depend on a value the app could not have written.
  */
-export function nextPolicy(current: FailurePolicy | undefined, inGroup: boolean): FailurePolicy {
+export function nextPolicy(
+  current: FailurePolicy | undefined,
+  inGroup: boolean,
+): FailurePolicy {
   if (current === "stopRoutine") return inGroup ? "skipGroup" : "continue";
   if (current === "skipGroup") return "continue";
   return "stopRoutine";
@@ -91,9 +95,15 @@ export const POLICY_LABELS: Record<FailurePolicy, string> = {
  * Routine of two the first time this was rendered, which is the whole reason
  * this is a named function rather than a `.length` at the call site.
  */
-export function testCount(routine: { steps: readonly RoutineStep[] } | null | undefined): number {
+export function testCount(
+  routine: { steps: readonly RoutineStep[] } | null | undefined,
+): number {
   return (routine?.steps ?? []).reduce((n, s) => {
     if (s.kind === "group") return n + s.steps.length;
+    // BOTH sides of a branch. Only one will run, but the rail is reporting what
+    // the job CONTAINS — and `plannedRuns` is where the "a branch makes this a
+    // maximum" caveat belongs, not here.
+    if (s.kind === "branch") return n + s.then.length + s.else.length;
     // A `wait` is not a test. Counting one would make the rail promise a run
     // that never happens — the same class of lie as the group case above,
     // which is why this is a switch rather than an `=== "group"` ternary.
@@ -114,6 +124,17 @@ export interface RoutineGroup {
 
 /** Which group each test in the job belongs to. Absent = top level. */
 export type GroupOf = Record<string, string>;
+
+/** A two-way choice, pinned to the row it follows. Its MEMBERS live in
+ *  `BranchOf`, the same split `RoutineGroup` and `GroupOf` take. */
+export interface RoutineBranch {
+  id: string;
+  on: "anyFailed" | "allPassed";
+  after: string;
+}
+
+/** Which branch each test belongs to, and which side of it. */
+export type BranchOf = Record<string, { id: string; side: "then" | "else" }>;
 
 /** A message, pinned to the row it follows. Same shape as a pause and for the
  *  same reason — see `RoutineWait`. */
@@ -154,6 +175,10 @@ export interface RoutineRows {
   waits: RoutineWait[];
   /** The Routine's `notify` steps, pinned the same way. */
   notifies: RoutineNotify[];
+  /** The Routine's `branch` steps. */
+  branches: RoutineBranch[];
+  /** Which branch and side each branched test belongs to. */
+  branchOf: BranchOf;
 }
 
 /**
@@ -164,7 +189,10 @@ export interface RoutineRows {
  * something `order` does not contain, and the wait would render nowhere.
  * Returns `""` when nothing precedes it, which is what marks a leading wait.
  */
-export function lastTestIdBefore(steps: readonly RoutineStep[], index: number): string {
+export function lastTestIdBefore(
+  steps: readonly RoutineStep[],
+  index: number,
+): string {
   for (let i = index - 1; i >= 0; i--) {
     const s = steps[i];
     if (s.kind === "group") {
@@ -211,6 +239,8 @@ export function rowsFromRoutine(
   const groupOf: GroupOf = {};
   const waits: RoutineWait[] = [];
   const notifies: RoutineNotify[] = [];
+  const branches: RoutineBranch[] = [];
+  const branchOf: BranchOf = {};
   const order: string[] = [];
   const placed = new Set<string>();
 
@@ -220,7 +250,11 @@ export function rowsFromRoutine(
   // is redrawn from `groupOf` at render time, so drag-to-reorder keeps working
   // on a flat list and a member dragged out of its group's run of rows simply
   // stops being contiguous — which `stepsFromRows` then reads as leaving it.
-  const flat: { step: RoutineTestStep; groupId: string }[] = [];
+  const flat: {
+    step: RoutineTestStep;
+    groupId: string;
+    branch?: BranchOf[string];
+  }[] = [];
   for (const step of routine?.steps ?? []) {
     if (step.kind === "wait") {
       // A wait is NOT A ROW. It has no test to draw one from, so it is carried
@@ -230,7 +264,40 @@ export function rowsFromRoutine(
       // Pinned to the step BEFORE it, read from `flat` rather than from `order`
       // — `order` is not built until the loop below, so reading it here would
       // pin every wait to "" and quietly turn them all into leading ones.
-      waits.push({ id: step.id, ms: step.ms, after: flat[flat.length - 1]?.step.testId ?? "" });
+      waits.push({
+        id: step.id,
+        ms: step.ms,
+        after: flat[flat.length - 1]?.step.testId ?? "",
+      });
+      continue;
+    }
+    if (step.kind === "branch") {
+      // Both sides' tests become ordinary rows, tagged with which side they are
+      // on — the same shape `groupOf` takes, and for the same reason: `order`
+      // stays a flat list of test ids, and the two-sided structure is redrawn
+      // from the membership at render time.
+      branches.push({
+        id: step.id,
+        on: step.on,
+        after: flat[flat.length - 1]?.step.testId ?? "",
+      });
+      // Carried on the FLAT ENTRY, not written into `branchOf` here, for the
+      // same reason `groupId` is: the loop below is what decides a step becomes
+      // a row, and a step whose test is gone from the library never does.
+      // Recording the membership up here would leave `branchOf` naming a row
+      // nothing draws, which is what keeps an emptied branch alive forever.
+      for (const child of step.then)
+        flat.push({
+          step: child,
+          groupId: "",
+          branch: { id: step.id, side: "then" },
+        });
+      for (const child of step.else)
+        flat.push({
+          step: child,
+          groupId: "",
+          branch: { id: step.id, side: "else" },
+        });
       continue;
     }
     if (step.kind === "notify") {
@@ -246,18 +313,20 @@ export function rowsFromRoutine(
     }
     if (step.kind === "group") {
       groups.push({ id: step.id, label: step.label });
-      for (const child of step.steps) flat.push({ step: child, groupId: step.id });
+      for (const child of step.steps)
+        flat.push({ step: child, groupId: step.id });
       continue;
     }
     flat.push({ step, groupId: "" });
   }
 
-  for (const { step, groupId } of flat) {
+  for (const { step, groupId, branch } of flat) {
     const test = byId.get(step.testId);
     if (!test || placed.has(step.testId)) continue;
     placed.add(step.testId);
     order.push(step.testId);
     if (groupId) groupOf[step.testId] = groupId;
+    if (branch) branchOf[step.testId] = branch;
     // Read back as stored, NOT normalised. The runner normalises what it acts
     // on (see `failurePolicy` in shared/routine-plan.mjs); an editor that
     // quietly rewrote a value it did not understand would re-date the Routine
@@ -300,6 +369,7 @@ export function rowsFromRoutine(
   // library) is dropped too. It cannot be rendered — there is no row to nest
   // under it — and the store would refuse to keep it anyway.
   const live = new Set(Object.values(groupOf));
+  const liveBranches = new Set(Object.values(branchOf).map((m) => m.id));
   // A wait pinned to a test the library no longer has is re-pinned to "" —
   // leading — rather than dropped. Dropping it would silently shorten a job;
   // leaving it pointing at a row that is not drawn would render it nowhere,
@@ -311,14 +381,24 @@ export function rowsFromRoutine(
     policies,
     groups: groups.filter((g) => live.has(g.id)),
     groupOf,
-    waits: waits.map((w) => (w.after === "" || drawn.has(w.after) ? w : { ...w, after: "" })),
+    waits: waits.map((w) =>
+      w.after === "" || drawn.has(w.after) ? w : { ...w, after: "" },
+    ),
     notifies: notifies.map((n) =>
       n.after === "" || drawn.has(n.after) ? n : { ...n, after: "" },
     ),
+    // A branch with no members left is dropped, like an empty group: it cannot
+    // be rendered, and the store refuses to keep one.
+    branches: branches.filter((b) => liveBranches.has(b.id)),
+    branchOf,
   };
 }
 
-function enginesOf(step: RoutineTestStep, test: RowTest, defaults: RowDefaults): RunBrowser[] {
+function enginesOf(
+  step: RoutineTestStep,
+  test: RowTest,
+  defaults: RowDefaults,
+): RunBrowser[] {
   const wanted = Array.isArray(step.browsers) ? step.browsers : [];
   const browsers = RUN_BROWSERS.filter((b) => wanted.includes(b));
   return browsers.length > 0 ? browsers : defaultRow(test, defaults).browsers;
@@ -349,6 +429,8 @@ export function stepsFromRows(
   groupOf: GroupOf = {},
   waits: readonly RoutineWait[] = [],
   notifies: readonly RoutineNotify[] = [],
+  branches: readonly RoutineBranch[] = [],
+  branchOf: BranchOf = {},
 ): RoutineStep[] {
   const byId = new Map(tests.map((t) => [t.id, t]));
   const labels = new Map(groups.map((g) => [g.id, g.label]));
@@ -375,9 +457,15 @@ export function stepsFromRows(
   // no message.
   const emitWaitsAfter = (id: string): void => {
     for (const n of notifiesAfter.get(id) ?? []) {
-      steps.push({ kind: "notify", id: n.id, channel: n.channel, message: n.message });
+      steps.push({
+        kind: "notify",
+        id: n.id,
+        channel: n.channel,
+        message: n.message,
+      });
     }
-    for (const w of waitsAfter.get(id) ?? []) steps.push({ kind: "wait", id: w.id, ms: w.ms });
+    for (const w of waitsAfter.get(id) ?? [])
+      steps.push({ kind: "wait", id: w.id, ms: w.ms });
   };
   // A LEADING wait is emitted before anything, including before the group its
   // first member opens. `""` is the only key that can mean this, because a
@@ -389,6 +477,10 @@ export function stepsFromRows(
   // a member dragged away from its siblings does not tear the group in two, it
   // just moves within it. Rendering nests the same way, so the two agree.
   const open = new Map<string, RoutineGroupStep>();
+  // A branch is emitted at its FIRST member, like a group, and collects the
+  // rest into whichever side each one belongs to.
+  const openBranch = new Map<string, RoutineBranchStep>();
+  const branchById = new Map(branches.map((b) => [b.id, b]));
 
   for (const id of order) {
     if (seen.has(id)) continue;
@@ -404,6 +496,30 @@ export function stepsFromRows(
       headless: row.headless,
       onFailure: policies[id] ?? "continue",
     };
+    // A branch claims the row BEFORE a group can: a test cannot be both, and
+    // the branch is the stronger statement (it decides whether the step runs at
+    // all, where a group only decides what a failure takes out with it).
+    const member = branchOf[id];
+    const branch = member ? branchById.get(member.id) : undefined;
+    if (member && branch) {
+      const existing = openBranch.get(branch.id);
+      if (existing) {
+        existing[member.side === "else" ? "else" : "then"].push(step);
+      } else {
+        const made: RoutineBranchStep = {
+          kind: "branch",
+          id: branch.id,
+          on: branch.on,
+          then: member.side === "then" ? [step] : [],
+          else: member.side === "else" ? [step] : [],
+        };
+        openBranch.set(branch.id, made);
+        steps.push(made);
+      }
+      emitWaitsAfter(id);
+      continue;
+    }
+
     // A membership naming a group that is not in `groups` is treated as no
     // membership rather than inventing one. The store would drop a group with
     // no label anyway, and a step silently sorted into a group nobody can see
@@ -448,7 +564,10 @@ export function stepsFromRows(
  * part of the meaning, and two equal jobs serialising differently would defeat
  * the whole check.
  */
-export function sameSteps(a: readonly RoutineStep[], b: readonly RoutineStep[]): boolean {
+export function sameSteps(
+  a: readonly RoutineStep[],
+  b: readonly RoutineStep[],
+): boolean {
   if (a.length !== b.length) return false;
   return a.every((step, i) => {
     const other = b[i];
@@ -459,7 +578,11 @@ export function sameSteps(a: readonly RoutineStep[], b: readonly RoutineStep[]):
     // test moving between groups, which changes what `skipGroup` takes out.
     if (step.kind === "group") {
       const o = other as RoutineGroupStep;
-      return step.id === o.id && step.label === o.label && sameSteps(step.steps, o.steps);
+      return (
+        step.id === o.id &&
+        step.label === o.label &&
+        sameSteps(step.steps, o.steps)
+      );
     }
     // A wait's LENGTH is part of what the job is: changing 30s to 5m is an edit
     // worth a write, and comparing only the id would call it unchanged.
@@ -473,7 +596,24 @@ export function sameSteps(a: readonly RoutineStep[], b: readonly RoutineStep[]):
     // machine at all.
     if (step.kind === "notify") {
       const o = other as RoutineNotifyStep;
-      return step.id === o.id && step.channel === o.channel && step.message === o.message;
+      return (
+        step.id === o.id &&
+        step.channel === o.channel &&
+        step.message === o.message
+      );
+    }
+    // A branch's CONDITION and both its sides are part of what the job is.
+    // Flipping `anyFailed` to `allPassed` inverts which path runs, and moving a
+    // test between the sides changes what happens on each — comparing only the
+    // id would call either "unchanged" and never write it.
+    if (step.kind === "branch") {
+      const o = other as RoutineBranchStep;
+      return (
+        step.id === o.id &&
+        step.on === o.on &&
+        sameSteps(step.then, o.then) &&
+        sameSteps(step.else, o.else)
+      );
     }
     const o = other as RoutineTestStep;
     return (
@@ -501,9 +641,13 @@ export function brokenSteps(
   // Reaches INSIDE groups. A broken step nested in one is exactly as invisible
   // as a broken step at the top level — more so, since the group still renders
   // and simply runs one test fewer than it lists.
-  const flat = (routine?.steps ?? []).flatMap<RoutineTestStep>((s) =>
-    s.kind === "group" ? s.steps : s.kind === "test" ? [s] : [],
-  );
+  const flat = (routine?.steps ?? []).flatMap<RoutineTestStep>((s) => {
+    if (s.kind === "group") return s.steps;
+    // Both sides. A broken step on the path that does not run is still one the
+    // user has to be able to see and take out.
+    if (s.kind === "branch") return [...s.then, ...s.else];
+    return s.kind === "test" ? [s] : [];
+  });
   return flat.filter((s) => s.testDeleted === true || !live.has(s.testId));
 }
 

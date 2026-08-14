@@ -10,7 +10,16 @@ import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertDialog, Checkbox, ScrollArea, toast } from "@ui";
-import { Bell, ChevronDown, ChevronRight, GripVertical, Play, Square, Timer } from "lucide-react";
+import {
+  Bell,
+  ChevronDown,
+  ChevronRight,
+  GitBranch,
+  GripVertical,
+  Play,
+  Square,
+  Timer,
+} from "lucide-react";
 
 import { Btn, Menu, MenuItem, Panel, StatusChip, TONE, toneSurface } from "../theme";
 import { api } from "../lib/api";
@@ -58,8 +67,10 @@ import {
   stepsFromRows,
 } from "../lib/routine-rows";
 import type {
+  BranchOf,
   GroupOf,
   PolicyMap,
+  RoutineBranch,
   RoutineGroup,
   RoutineNotify,
   RoutineWait,
@@ -215,6 +226,10 @@ export function BatchView() {
   const [waits, setWaits] = React.useState<RoutineWait[]>([]);
   // The job's messages, pinned the same way as its pauses.
   const [notifies, setNotifies] = React.useState<RoutineNotify[]>([]);
+  // The job's two-way choices, and which side each branched row is on. Same
+  // split as groups: the checklist stays flat and the structure is redrawn.
+  const [branches, setBranches] = React.useState<RoutineBranch[]>([]);
+  const [branchOf, setBranchOf] = React.useState<BranchOf>({});
   // A finished row's badge opens that run's console output — the row that made
   // you curious shouldn't need a detour through Stats to answer "why".
   const [logRun, setLogRun] = React.useState<{ id: string; title: string } | null>(null);
@@ -404,6 +419,8 @@ export function BatchView() {
     setGroupOf(rows.groupOf);
     setWaits(rows.waits);
     setNotifies(rows.notifies);
+    setBranches(rows.branches);
+    setBranchOf(rows.branchOf);
     setSeedKey(key);
   }, [settingsQuery.data, routinesQuery.data, openRoutine, openId, tests, libraryKey, seedKey]);
 
@@ -551,6 +568,8 @@ export function BatchView() {
       nextGroupOf: GroupOf = groupOf,
       nextWaits: RoutineWait[] = waits,
       nextNotifies: RoutineNotify[] = notifies,
+      nextBranches: RoutineBranch[] = branches,
+      nextBranchOf: BranchOf = branchOf,
     ) => {
       setOrder(nextOrder);
       setRowOptions(nextRows);
@@ -575,6 +594,8 @@ export function BatchView() {
         nextGroupOf,
         nextWaits,
         nextNotifies,
+        nextBranches,
+        nextBranchOf,
       );
       // PRUNED TO WHAT IS ACTUALLY IN THE JOB, and set as state rather than
       // left to the next re-seed. `stepsFromRows` already drops the policy of
@@ -612,6 +633,25 @@ export function BatchView() {
             : [],
         ),
       );
+      setBranches(
+        steps.flatMap((st, i) =>
+          st.kind === "branch"
+            ? [{ id: st.id, on: st.on, after: lastTestIdBefore(steps, i) }]
+            : [],
+        ),
+      );
+      setBranchOf(
+        Object.fromEntries(
+          steps.flatMap((st) =>
+            st.kind === "branch"
+              ? [
+                  ...st.then.map((c) => [c.testId, { id: st.id, side: "then" as const }] as const),
+                  ...st.else.map((c) => [c.testId, { id: st.id, side: "else" as const }] as const),
+                ]
+              : [],
+          ),
+        ),
+      );
       setGroupOf(
         Object.fromEntries(
           steps.flatMap((st) =>
@@ -619,13 +659,16 @@ export function BatchView() {
           ),
         ),
       );
-      // The groups themselves are pruned the same way, and to the same rule the
-      // STORE uses: a group with no members cannot be saved, so keeping it in
-      // view state would show a header that vanishes on the next reload.
-      setGroups((prev) => {
-        const kept = new Set(steps.filter((st) => st.kind === "group").map((st) => st.id));
-        return prev.filter((g) => kept.has(g.id));
-      });
+      // The groups themselves come off the STEPS, like every list above, rather
+      // than by filtering what was already in state. Same rule the store uses —
+      // a group with no members cannot be saved, so keeping it here would show
+      // a header that vanishes on the next reload — but stated once, in the one
+      // shape all five lists take. Filtering `prev` also could not contain a
+      // group just created, and leaned on the Routine query re-seeding to put
+      // its header on screen; deriving does not need that to have happened.
+      setGroups(
+        steps.flatMap((st) => (st.kind === "group" ? [{ id: st.id, label: st.label }] : [])),
+      );
       if (!openRoutine) return;
       // Compared against the FRESHEST record, not against `openRoutine`. The
       // query's answer is one edit behind while a save is in flight, so an edit
@@ -649,6 +692,8 @@ export function BatchView() {
       groupOf,
       waits,
       notifies,
+      branches,
+      branchOf,
     ],
   );
 
@@ -668,7 +713,13 @@ export function BatchView() {
    *
    *  Creating one is the SAME gesture as joining one — a group with no members
    *  cannot be saved (the store drops it), so an "add group" button that made
-   *  an empty one would make a header that disappeared on the next read. */
+   *  an empty one would make a header that disappeared on the next read.
+   *
+   *  Joining a group takes the row OFF any branch it was on. A row can be in a
+   *  group or on one side of a branch and never both; `stepsFromRows` already
+   *  enforces that, but enforcing it only there would mean a row left in both
+   *  shows one structure on screen and is saved into the other — the
+   *  screen/disk divergence this view has already produced twice. */
   const assignGroup = React.useCallback(
     (testId: string, groupId: string, label?: string) => {
       const nextGroupOf = { ...groupOf };
@@ -678,6 +729,8 @@ export function BatchView() {
         groupId && !groups.some((g) => g.id === groupId)
           ? [...groups, { id: groupId, label: label ?? "Group" }]
           : groups;
+      const nextBranchOf = { ...branchOf };
+      if (groupId) delete nextBranchOf[testId];
       // A row leaving a group takes its `skipGroup` with it: outside a group
       // that policy has nothing to skip, so leaving it set would show a policy
       // the run cannot honour. `continue` is what it degrades to anyway.
@@ -685,9 +738,19 @@ export function BatchView() {
         !groupId && policies[testId] === "skipGroup"
           ? { ...policies, [testId]: "continue" as const }
           : policies;
-      persist(order, rowOptions, nextPolicies, nextGroups, nextGroupOf);
+      persist(
+        order,
+        rowOptions,
+        nextPolicies,
+        nextGroups,
+        nextGroupOf,
+        waits,
+        notifies,
+        branches,
+        nextBranchOf,
+      );
     },
-    [order, rowOptions, policies, groups, groupOf, persist],
+    [order, rowOptions, policies, groups, groupOf, waits, notifies, branches, branchOf, persist],
   );
 
   /** Add a pause after this row, or take the one that is there away.
@@ -769,6 +832,71 @@ export function BatchView() {
         notifies.map((n) => (n.id === id ? { ...n, ...patch } : n)),
       ),
     [order, rowOptions, policies, groups, groupOf, waits, notifies, persist],
+  );
+
+  /** Put a row on one side of a branch, or take it out.
+   *
+   *  Creating and joining are the same gesture, like a group's — the store
+   *  drops a branch with nothing on either side, so an "add branch" button
+   *  would make a header that vanished on the next read.
+   *
+   *  It does NOT have to clear the row's group, where `assignGroup` above has
+   *  to clear its branch. The asymmetry is `stepsFromRows`: a branch claims a
+   *  row before a group can, so joining one already takes the row out of any
+   *  group, and `persist` re-derives `groupOf` from the steps it emitted. The
+   *  other direction has no such backstop — the branch would win, and clicking
+   *  "New group…" on a branched row would do nothing at all. */
+  const assignBranch = React.useCallback(
+    (testId: string, branchId: string, side: "then" | "else") => {
+      const nextBranchOf = { ...branchOf };
+      if (branchId) nextBranchOf[testId] = { id: branchId, side };
+      else delete nextBranchOf[testId];
+      const nextBranches =
+        branchId && !branches.some((b) => b.id === branchId)
+          ? [...branches, { id: branchId, on: "anyFailed" as const, after: "" }]
+          : branches;
+      // Same reasoning as leaving a group: `skipGroup` outside a group has
+      // nothing to skip, and a branch side is not a group. This one is NOT
+      // redundant — the policy is read from `policies`, which nothing else
+      // reconciles, so it would show a control the run cannot honour.
+      const nextPolicies =
+        branchId && policies[testId] === "skipGroup"
+          ? { ...policies, [testId]: "continue" as const }
+          : policies;
+      persist(
+        order,
+        rowOptions,
+        nextPolicies,
+        groups,
+        groupOf,
+        waits,
+        notifies,
+        nextBranches,
+        nextBranchOf,
+      );
+    },
+    [order, rowOptions, policies, groups, groupOf, waits, notifies, branches, branchOf, persist],
+  );
+
+  /** Flip a branch's condition. Two values, so a toggle rather than a menu. */
+  const flipBranch = React.useCallback(
+    (branchId: string) =>
+      persist(
+        order,
+        rowOptions,
+        policies,
+        groups,
+        groupOf,
+        waits,
+        notifies,
+        branches.map((b) =>
+          b.id === branchId
+            ? { ...b, on: b.on === "anyFailed" ? ("allPassed" as const) : ("anyFailed" as const) }
+            : b,
+        ),
+        branchOf,
+      ),
+    [order, rowOptions, policies, groups, groupOf, waits, notifies, branches, branchOf, persist],
   );
 
   const renameGroup = React.useCallback(
@@ -1238,6 +1366,35 @@ export function BatchView() {
                   // `order`: under a tag filter the visible rows are a
                   // subsequence, and asking `order` would draw the header above
                   // a member that is filtered out — or omit it entirely.
+                  const branchMember = branchOf[t.id];
+                  const branch = branchMember
+                    ? branches.find((b) => b.id === branchMember.id)
+                    : undefined;
+                  // A header per SIDE, drawn above that side's first visible
+                  // row — the same rule the group header follows, applied twice
+                  // because a branch has two runs of rows rather than one.
+                  const prevBranch = visibleTests[visibleIndex - 1]
+                    ? branchOf[visibleTests[visibleIndex - 1].id]
+                    : undefined;
+                  // Which sides this branch actually HAS. A branch keeps
+                  // existing with rows on only one side — the store drops it
+                  // only when both are empty — and the two headers say
+                  // different things in that case. See the render below.
+                  const sidesOf = (id: string) => {
+                    const members = Object.values(branchOf).filter((m) => m.id === id);
+                    return {
+                      then: members.some((m) => m.side === "then"),
+                      else: members.some((m) => m.side === "else"),
+                    };
+                  };
+                  const branchHead =
+                    branch &&
+                    branchMember &&
+                    (!prevBranch ||
+                      prevBranch.id !== branchMember.id ||
+                      prevBranch.side !== branchMember.side)
+                      ? { branch, side: branchMember.side, sides: sidesOf(branchMember.id) }
+                      : undefined;
                   const groupId = groupOf[t.id];
                   const prev = visibleTests[visibleIndex - 1];
                   const groupHead =
@@ -1269,6 +1426,52 @@ export function BatchView() {
                       : undefined;
                   return (
                     <React.Fragment key={t.id}>
+                    {branchHead ? (
+                      <div className="gl-batch-branch" data-testid="routine-branch">
+                        <GitBranch aria-hidden="true" />
+                        {/* THE CONDITION GOES ON WHICHEVER HEADER COMES FIRST.
+                            Normally that is the "then" side and the second
+                            header is a plain "Otherwise". But a branch survives
+                            with rows on ONE side only — take the last row off
+                            the "then" side and the store keeps the branch — and
+                            an "Otherwise" alone is a header that names a side
+                            without naming what it is otherwise TO, with the
+                            condition then unreachable: no control on screen
+                            flips it back. So a lone "else" header carries the
+                            condition, read NEGATED, because negated is literally
+                            what runs. */}
+                        {branchHead.side === "then" || !branchHead.sides.then ? (
+                          <button
+                            type="button"
+                            className="gl-batch-branch-cond"
+                            disabled={running}
+                            aria-label={`Condition for the branch before ${t.name}`}
+                            title="Click to flip the condition"
+                            onClick={() => flipBranch(branchHead.branch.id)}
+                          >
+                            {(branchHead.branch.on === "anyFailed") ===
+                            (branchHead.side === "then")
+                              ? "If anything failed"
+                              : "If everything passed"}
+                          </button>
+                        ) : (
+                          <span className="gl-batch-branch-cond" data-otherwise="">
+                            Otherwise
+                          </span>
+                        )}
+                        {/* SAID OUT LOUD, because it is the one thing about a
+                            branch that surprises people: both sides are queued
+                            and one is always skipped, so the run count above is
+                            a maximum rather than a promise. With one side there
+                            is no other side to run, and saying there is would
+                            be the wrong surprise. */}
+                        <span className="gl-batch-wait-note">
+                          {branchHead.sides.then && branchHead.sides.else
+                            ? "only one side runs"
+                            : "otherwise nothing runs"}
+                        </span>
+                      </div>
+                    ) : null}
                     {groupHead ? (
                       <div className="gl-batch-group" data-testid="routine-group">
                         <input
@@ -1301,7 +1504,7 @@ export function BatchView() {
                       onDragOver={running ? undefined : (e) => e.preventDefault()}
                       onDrop={running ? undefined : (e) => e.preventDefault()}
                       className="gl-batch-row"
-                      data-grouped={groupId ? "" : undefined}
+                      data-grouped={groupId || branchMember ? "" : undefined}
                       data-running={isCurrent ? "" : undefined}
                       data-dragging={dragId === t.id ? "" : undefined}
                       data-drop-target={
@@ -1413,11 +1616,17 @@ export function BatchView() {
                       >
                         {row.headless ? "Headless" : "Headed"}
                       </button>
-                      {/* WHICH GROUP THIS STEP IS IN. Creating a group and
-                          joining one are the SAME gesture, deliberately: a
-                          group with no members cannot be saved (the store drops
-                          it), so an "add group" button would make a header that
-                          disappeared on the next read.
+                      {/* WHAT STRUCTURE THIS STEP IS PART OF — one menu, because
+                          it is one question. A row can be in a group or on one
+                          side of a branch and never both; `stepsFromRows`
+                          already enforces that, so offering two controls was
+                          asking one question twice and cost a cell the row did
+                          not have. Second time this phase; the lesson stuck.
+
+                          Creating and joining are the SAME gesture for both: the
+                          store drops an empty group and an empty branch, so an
+                          "add" button would make a header that disappeared on
+                          the next read.
 
                           A MENU RATHER THAN DRAG-INTO-CONTAINER. The checklist
                           is a flat ordered list and its drag handle reorders it;
@@ -1432,8 +1641,16 @@ export function BatchView() {
                         // every row. Same trade the grip makes — a small
                         // affordance whose accessible name does the talking.
                         <Menu
-                          value={groupOf[t.id] ? "▣" : "·"}
-                          label={`Group for ${t.name}`}
+                          value={
+                            branchMember
+                              ? branchMember.side === "then"
+                                ? "◄"
+                                : "►"
+                              : groupOf[t.id]
+                                ? "▣"
+                                : "·"
+                          }
+                          label={`Structure for ${t.name}`}
                           width={24}
                           disabled={running}
                           className="gl-batch-groupmark"
@@ -1441,10 +1658,11 @@ export function BatchView() {
                           {(close) => [
                             <MenuItem
                               key="none"
-                              label="No group"
-                              selected={!groupOf[t.id]}
+                              label="On its own"
+                              selected={!groupOf[t.id] && !branchMember}
                               onSelect={() => {
-                                assignGroup(t.id, "");
+                                if (branchMember) assignBranch(t.id, "", "then");
+                                else assignGroup(t.id, "");
                                 close();
                               }}
                             />,
@@ -1471,18 +1689,39 @@ export function BatchView() {
                                 close();
                               }}
                             />,
+                            ...branches.flatMap((b) =>
+                              (["then", "else"] as const).map((side) => (
+                                <MenuItem
+                                  key={`${b.id}-${side}`}
+                                  label={
+                                    side === "then" ? "Branch: if matched" : "Branch: otherwise"
+                                  }
+                                  selected={branchMember?.id === b.id && branchMember.side === side}
+                                  onSelect={() => {
+                                    assignBranch(t.id, b.id, side);
+                                    close();
+                                  }}
+                                />
+                              )),
+                            ),
+                            <MenuItem
+                              key="new-branch"
+                              label="New branch…"
+                              onSelect={() => {
+                                assignBranch(t.id, `b-${randomSuffix()}`, "then");
+                                close();
+                              }}
+                            />,
                           ]}
                         </Menu>
                       ) : (
                         <span className="gl-batch-group-gap" aria-hidden="true" />
                       )}
-                      {/* ADD A PAUSE AFTER THIS ROW. Only on a row that is in
+                      {/* WHAT HAPPENS AFTER THIS ROW. Only on a row that is in
                           the job: a pause after a step that does not run is a
-                          join with nothing on one side of it. Same 24px mark as
-                          the group control, for the same reason — the row has
-                          no width left for a word, and the accessible name
-                          carries the meaning. */}
-                      {/* ONE CONTROL, TWO ANSWERS. A pause and a message are
+                          join with nothing on one side of it.
+
+                          ONE CONTROL, TWO ANSWERS. A pause and a message are
                           the same kind of thing — a step that is not a run,
                           inserted after this row — so "what happens after this
                           step" is one question and deserves one cell. It was
