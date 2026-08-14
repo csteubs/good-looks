@@ -971,8 +971,12 @@ export function RecordingView() {
         // (StepRow's `justAdded`), and these two must never both be on.
         autoScrollToBottom={cursorAtEnd}
         autoScrollDeps={[liveSteps.length]}
+        scrollbars="both"
       >
-        <div className="flex flex-col p-3">
+        {/* `--tight` because the trainer's rows are separated by their own
+            insert cursors rather than by a gap — the two together would double
+            the space between every step. */}
+        <div className="gl-step-list gl-step-list--tight">
           {liveSteps.length === 0 ? (
             <>
               {/* The empty list has no gaps to sit between, and the composer

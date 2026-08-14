@@ -2997,10 +2997,12 @@
   color: var(--gl-cyan);
 }
 
+/* The docked panel's step list is `.gl-step-list` (shared.css) — this only
+   narrows its gutter. The panel sits beside a real browser window, so it is
+   the narrowest surface in the app and cannot afford the column's 12px. */
 .gl-panelwin-list {
-  display: flex;
-  flex-direction: column;
   padding: 6px;
+  padding-bottom: 40px;
 }
 
 /* The empty state, before the user has touched the page. */

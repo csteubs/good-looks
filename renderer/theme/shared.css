@@ -125,6 +125,69 @@
   white-space: nowrap;
 }
 
+/* ── The step list ────────────────────────────────────────────────────
+   The column every step list is drawn in — the detail view's Steps tab, its
+   Edit Steps editor, and both trainers. One class because the four disagreed:
+   the editor's list had no scroll container at all, so a long test's steps
+   simply stopped at the bottom of the window with nothing to reach them, and
+   the same list truncated a long step with an ellipsis while its neighbours
+   sat inside a viewport that could have scrolled to it.
+
+   `min-width: max-content` is what turns a too-long step into a HORIZONTAL
+   scroll rather than an ellipsis: the column sizes to its widest row, the
+   viewport scrolls to it, and `> * { min-width: 100% }` keeps every shorter
+   row full-width so hover, selection and the status rail still span the list
+   instead of stopping at the end of their own text. The row's description
+   drops `flex: 1` here for the same reason — a flex item with a zero basis
+   contributes nothing to the column's max-content width, so the rows would
+   size to their chrome and the long text would be clipped with no way to
+   scroll to it, which is strictly worse than the ellipsis it replaced.
+
+   The tail is deliberate empty space, not a margin nobody noticed. Steps are
+   dragged to reorder and appended from "+ Add step", and both need somewhere
+   to drop past the last row — a list that ends flush against the bottom edge
+   gives the final position no target. */
+.gl-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  padding-bottom: 96px;
+  min-width: max-content;
+}
+
+.gl-step-list > * {
+  min-width: 100%;
+}
+
+/* Both trainers. Their rows are already separated by their own insert cursors,
+   so the column's gap would be added on top of one — and the list ends in a
+   cursor gap plus the composer, which is the drop target the tail exists to
+   provide everywhere else, so it needs far less of one. The trainer also
+   follows the bottom as steps arrive, and every pixel of tail is a pixel the
+   newest step is pushed up by. */
+.gl-step-list--tight {
+  gap: 0;
+  padding-bottom: 40px;
+}
+
+.gl-step-list .gl-mono-value {
+  flex: 0 0 auto;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* Every row is as wide as the widest step, so a row's controls would otherwise
+   be parked past the right edge of the viewport — a horizontal scroll to reach
+   the ✕ on a row whose own text fits is a worse trade than the ellipsis this
+   replaced. Sticky pins them to the scrollport instead. `right: 0` and no
+   background: the buttons only appear on hover, and a hovered row has a fill
+   for them to sit on. */
+.gl-step-list .gl-step-row-actions {
+  position: sticky;
+  right: 0;
+}
+
 /* ── Step-row furniture ───────────────────────────────────────────────
    The app's step row (renderer/main/step-row.tsx) is not the theme's `StepRow`
    primitive yet — it carries drag-to-reorder, inline editing, per-step replay

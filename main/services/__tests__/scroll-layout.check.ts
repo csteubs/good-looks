@@ -186,6 +186,96 @@ for (const rel of VIEWS) {
   );
 }
 
+// ── The step list ──────────────────────────────────────────────────────────
+//
+// The bug: the detail view's Edit Steps editor drew its steps in a bare flex
+// column with no scroll container anywhere in the screen. A test long enough
+// to overflow the pane — which the two warning callouts above it make happen
+// sooner, since they eat the same height — put its later steps below the
+// bottom of the window with nothing able to reach them. Not clipped-with-a-
+// scrollbar: the whole screen had ZERO scrollable elements, so the steps were
+// simply gone. Dragging and deleting still worked on the rows you could see.
+//
+// Three properties, all source-level, and for the usual reason: jsdom has no
+// layout engine, so a rendered test cannot tell a list that scrolls from one
+// that runs off the end of the window.
+{
+  /** Every view that draws the app's step rows. */
+  const STEP_LISTS = [
+    "../../../renderer/main/test-detail-view.tsx",
+    "../../../renderer/main/edit-steps-view.tsx",
+    "../../../renderer/main/recording-view.tsx",
+    "../../../renderer/trainer/trainer-panel-view.tsx",
+  ];
+
+  for (const rel of STEP_LISTS) {
+    const src = readFileSync(resolve(here, rel), "utf8");
+    const name = rel.split("/").pop();
+
+    assert(/<StepRow\b/.test(src), `${name}: still renders StepRow`);
+
+    // One class for all four, so a list cannot be given the column's padding
+    // and overflow behaviour in one view and not another.
+    const at = src.indexOf('className="gl-step-list');
+    assert(at > 0, `${name}: draws its steps in a .gl-step-list column`);
+    if (at < 0) continue;
+
+    // The container the list sits in has to be a real scroller. Matching the
+    // nearest PRECEDING ScrollArea rather than any of them: these files hold
+    // several (console output, the debug panel), and only this one is about
+    // the steps.
+    const before = src.slice(0, at);
+    const open = before.lastIndexOf("<ScrollArea");
+    assert(open >= 0, `${name}: the step list is inside a ScrollArea`);
+    if (open < 0) continue;
+
+    const tag = before.slice(open);
+    assert(
+      /scrollbars="both"/.test(tag),
+      `${name}: the step list's ScrollArea allows BOTH axes — a step longer than the pane is reachable nowhere else`,
+    );
+  }
+
+  // What the class itself has to do. `min-width: max-content` is the half that
+  // turns a too-long step into a horizontal scroll instead of an ellipsis, and
+  // the padding-bottom is deliberate empty space below the last row: steps are
+  // dragged to reorder and appended, and a list ending flush against the
+  // bottom edge gives the final position no target.
+  const shared = readFileSync(resolve(here, "../../../renderer/theme/shared.css"), "utf8");
+  const noComments = shared.replace(/\/\*[\s\S]*?\*\//g, "");
+  const listRule = /\.gl-step-list\s*\{([^}]*)\}/.exec(noComments)?.[1] ?? "";
+  const stretchRule = /\.gl-step-list\s*>\s*\*\s*\{([^}]*)\}/.exec(noComments)?.[1] ?? "";
+
+  assert(listRule !== "", "shared.css: found the .gl-step-list rule");
+  assert(
+    /min-width\s*:\s*max-content/.test(listRule),
+    ".gl-step-list: `min-width: max-content` — without it a long step is ellipsed and there is nothing to scroll to",
+  );
+  assert(
+    /padding-bottom\s*:/.test(listRule),
+    ".gl-step-list: carries an explicit tail, so the last row is never flush against the bottom edge",
+  );
+  assert(
+    /min-width\s*:\s*100%/.test(stretchRule),
+    ".gl-step-list > *: rows stretch to the column — otherwise hover, selection and the status rail stop at the end of each row's own text",
+  );
+
+  // The rows all stretch to the widest step, so a row's own controls end up
+  // past the right edge of the viewport. Sticky is what keeps the ✕ on a
+  // short row reachable without a horizontal scroll it has no reason to need.
+  const actionsRule =
+    /\.gl-step-list\s+\.gl-step-row-actions\s*\{([^}]*)\}/.exec(noComments)?.[1] ?? "";
+  assert(
+    /position\s*:\s*sticky/.test(actionsRule) && /right\s*:\s*0/.test(actionsRule),
+    ".gl-step-list .gl-step-row-actions: sticky to the right edge, or every row's controls sit off-screen once one step is long",
+  );
+  const stepRow = readFileSync(resolve(here, "../../../renderer/main/step-row.tsx"), "utf8");
+  assert(
+    stepRow.includes("gl-step-row-actions"),
+    "step-row.tsx: still carries gl-step-row-actions — a rule nothing uses guards nothing",
+  );
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);
