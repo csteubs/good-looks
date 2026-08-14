@@ -91,6 +91,163 @@ cannot contain a group that was just created — so a new group's header only
 appeared once the Routine query happened to re-seed. Deriving states the rule
 once, in the shape all five lists take.
 
+### 2026-08-13 — One meaning per step: `shared/step-semantics.mjs`, and the assertion that had never passed
+
+`shared/step-semantics.mjs` (new), `main/services/script-generator.ts`,
+`main/services/step-replayer.ts`, `main/services/spec-parser.ts`,
+`main/services/auto-heal.ts`, `main/services/heal-fixture-source.ts`,
+`main/recorder/capture-script.ts`, `renderer/lib/describe-step.ts`,
+`shared/playwright-config-source.mjs`, `e2e/assert-parity.spec.ts` (new).
+
+**The report:** generated tests are flaky even with Auto-Heal on, it is not
+clear *why* a step that passes in the trainer fails in a full run, and "assert
+URL contains" has never once been validated since it was written.
+
+**The last of those is literally true, and it is not a flake.** `assert: "url"`
+generated `await expect(page).toHaveURL("<value>")`. A **string** argument to
+`toHaveURL` is an exact, whole-URL, case-sensitive equality check — not a
+substring, and not a glob (Playwright has an open feature request for glob
+support; it does not exist). The field is pre-filled by `shared/url-assert.mjs`
+with a **path** (`/cart?step=2`), and the generated `playwright.config.ts`
+declares no `baseURL` for a relative string to resolve against. So the emitted
+line asserted `page.url() === "/cart?step=2"`, which is false for every page
+that has ever existed. It failed 100% of runs, after burning the full expect
+timeout, and it was green in the trainer every time.
+
+**The proof it was an oversight rather than a trade-off is one screen away.**
+The `urlContains` *wait* — the same predicate, in the same file — emitted
+`toHaveURL(new RegExp(reEscape(value)))` correctly the entire time. Two spellings
+of one idea, and nothing compared them.
+
+**Because a step meant three different things.** It was interpreted by the
+injected replayer (its own resolver, its own matching, no auto-wait, no
+actionability), by the generated spec (Playwright's rules), and by the UI copy
+that named it for the user. Three implementations, no shared code, and — this is
+the part that let it ship — **no test that could express a disagreement**, since
+the replayer's tests and the generator's tests shared no fixtures. 3292 tests
+passed before the fix and after it.
+
+**So the fix is a single semantic definition, not a patch per bug.**
+`shared/step-semantics.mjs` declares, per predicate, the three things Playwright
+itself varies: match mode, case rule, whitespace rule. The generator maps that to
+matcher calls; the replayer receives the same table as JSON and the same
+comparator as *source text* via `Function.prototype.toString`; the renderer's
+`describeStep` builds its display string from the same helper. `shared/` because
+the two consumers cannot share a `.ts` — one is compiled TypeScript, the other is
+a string of JavaScript injected into an untrusted page.
+
+**`toString()` rather than a second hand-written copy**, because a second copy is
+the failure being fixed. The cost is a rule the file has to state and a check has
+to enforce: those functions may not close over anything, or they type-check,
+build, and throw a `ReferenceError` inside a page the user is watching.
+`check:step-semantics` evaluates them in an isolated scope for exactly that.
+
+**Where the two disagreed, the label decided — and it did not always favour the
+generator.** `url` is labelled "URL contains", so the generator was wrong and now
+emits an escaped unanchored `RegExp`. But `title` is labelled "Page title is",
+so the **replayer** was wrong: it read a case-insensitive substring, and "Cart"
+passed live against a page titled "Cart | Acme". Making it honest would have
+removed the only way to assert on part of a title, so `titleContains` was added
+alongside it — the assert counterpart of a wait kind that already existed.
+
+**URLs ignore case; content does not.** Not an inconsistency: a URL's host is
+case-insensitive by RFC 3986, the prefill hands back a bare host at a site root,
+and a recorder that fails on `HTTPS://Example.com` has invented a failure the
+product does not have. Page text is the opposite — "Checkout" becoming
+"CHECKOUT" is a real change, and case-sensitive is Playwright's own default for
+every text matcher.
+
+**The trainer now refuses what the run refuses.** The largest single change is
+strict mode: the replayer took the first of N matches, so *the most common
+real-world failure in Playwright* was the one thing the trainer was structurally
+incapable of showing. It could only be discovered on a run, against a page the
+user was no longer looking at. Same argument for `nth` (ignored entirely, so the
+preview acted on a different element than the spec addresses), for occlusion (a
+bare `el.click()` dispatches through a cookie banner that a real run refuses),
+and for a `select` whose option no longer exists (`el.value = x` sets
+`selectedIndex` to -1 and reports success; `selectOption` throws).
+
+**Visibility had two mismatches pointing in opposite directions**, which is worth
+naming because the second kind is more corrosive. `width <= 0 && height <= 0`
+called a 0×10 element visible where the run calls it hidden — trainer green, run
+red. And consulting `opacity`, which Playwright does not, called a faded element
+hidden where the run calls it visible — trainer red, run green. The first wastes
+an afternoon; the second teaches the user to ignore red steps.
+
+**Two more bugs surfaced while fixing the first.** `urlEndsWith`/`urlIs`
+round-trips **drifted**: the parser unescaped only on the wait path, so every
+hand edit and every applied AI fix pushed the stored value one escape further
+from what the user typed (`/cart\?step=2` → `/cart\\\?step=2`) until it could
+match nothing. And "Page title is…" prefilled the right-clicked element's
+`.value` — the identical bug that was found and fixed for the three URL items in
+the comment *directly above it*.
+
+**Auto-Heal was blind in the place it was needed most.** `__glazeKey` is attached
+by the locator factories, and `Locator.nth()` returns a new, untagged object — so
+healing and structure-recording were silently off for every `.nth()` step, and
+`.nth()` is only ever written when the recorder could **not** find a unique
+locator. The narrowing methods now carry the tag. Separately, the probe measured
+uniqueness with exact string equality while Playwright matches a case-insensitive
+substring; it therefore *under*-counted, approved candidates that were not unique,
+and the applied heal raised the very strict-mode violation `identifiesOnly`
+exists to prevent. Under-counting is the direction that matters — over-counting
+only costs a heal that might have worked.
+
+**`roleOf` was grading its own homework.** Every `<input>` except
+checkbox/radio/button/range mapped to `"textbox"`, and a multi-select to
+`"combobox"`. Because `matchesFor` validates uniqueness with the *same* function,
+a `getByRole("textbox")` for a `type="search"` box recorded cleanly, verified as
+unique, and previewed green — then matched nothing in the run. `password`, `date`
+and `file` have no implicit role at all, so they now return `""`, which correctly
+stops a role locator being offered rather than offering one that cannot match.
+
+**The parity harness is the part that makes this stay fixed.**
+`main/services/assert-emission.test.ts` evaluates the emitted matcher argument
+and applies Playwright's own rule to it, catching escaping, anchoring and case
+bugs in milliseconds with no browser. `e2e/assert-parity.spec.ts` is the
+authority behind that model: one fixture page, every row run through **both** the
+real injected replayer and the **real emitted source executed by real
+Playwright**, asserting the verdicts are equal — *and* that both equal what the
+fixture independently says should happen, since two engines can agree and both be
+wrong. It is deliberately not an Electron test; its subject is matcher semantics,
+not a window.
+
+Rejected: emitting a predicate (`toHaveURL(u => u.href.includes(…))`) instead of
+a `RegExp`. It is supported, reads well, and avoids escaping entirely — but the
+`urlContains` wait already emitted a `RegExp` and the parser already read one
+back, so a second shape for one predicate would have re-created, in a single
+change, precisely the divergence this entry is about.
+
+**A comment turned out to be a code sink, and the review of this very change
+is the only reason it is a test rather than an incident.** The
+"UNGENERATABLE STEP" line concatenates `describeStep(step)` into generated
+source, and `describeStep` interpolates step fields raw — it was UI copy until
+this change made it a code sink. A `//` comment ends at the first LINE
+TERMINATOR, so anything after one lands in the spec as a statement inside the
+`test()` callback, which Playwright executes in Node. All four terminators
+matter, not just `\n`: U+2028 and U+2029 end a comment identically and, unlike
+a control character, survive places that reject one — a hostile page can put one
+in `document.cookie`, and the Cookies panel pre-fills a step from that live
+read. `commentSafe` now covers this line and the older `// disabled — skipped:`
+one, which had the same hole via a `${var}` template literal. It is the same
+lesson as the `count` field that was RCE for having the right TypeScript type:
+on this path, a field is untrusted no matter how harmless its destination looks.
+
+**And `roleOf` was fixed twice, because the first fix used the wrong source of
+truth.** The ARIA spec says an `input[type=password]` has no implicit role.
+Playwright falls back to `"textbox"` for every input type it does not name, so
+`getByRole("textbox")` finds one — and Playwright is what runs the generated
+test. Writing the spec-correct answer would have removed a role locator that
+works. The mapping is now transcribed from playwright-core's own table
+(`select` is a listbox on `multiple` OR `size > 1`; a file input is a `button`),
+and six rows in the parity harness make a real browser the judge rather than
+anyone's reading of any source.
+
+Rejected: emitting a `toHaveURL` assertion after every navigating click (the
+Chrome DevTools Recorder's `assertedEvents` idea). Playwright's own codegen
+deliberately relies on auto-waiting instead, and a recorded URL carrying an order
+ID would have turned a timing fix into a new and worse flake.
+
 
 ### 2026-08-13 — The click that navigates: capture gets a second exit
 

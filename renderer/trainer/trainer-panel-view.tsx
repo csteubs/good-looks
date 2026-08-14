@@ -86,10 +86,15 @@ const ASSERT_PICKABLE: { kind: AssertKind; label: string }[] = [
  * with the live URL prefilled, same as the main window and the browser's own
  * URL strip.
  */
-const ASSERT_URL: { kind: AssertKind; label: string }[] = [
+const ASSERT_PAGE: { kind: AssertKind; label: string }[] = [
   { kind: "url", label: "URL contains" },
   { kind: "urlEndsWith", label: "URL ends with" },
   { kind: "urlIs", label: "URL is" },
+  // Prefill EMPTY, deliberately — this panel tracks the live URL but not the
+  // live title, and `urlAssertPrefill` answers "" for any kind it cannot stand
+  // behind. See the same note in renderer/main/recording-view.tsx.
+  { kind: "title", label: "Page title is" },
+  { kind: "titleContains", label: "Page title contains" },
 ];
 
 /** Order matters: index === commandId in the native "+ Add step" menu. */
@@ -350,7 +355,7 @@ export function TrainerPanelView() {
       items: [
         ...ASSERT_PICKABLE.map((a, i) => ({ label: a.label, commandId: i })),
         { type: "separator" as const },
-        ...ASSERT_URL.map((a, i) => ({ label: a.label, commandId: 100 + i })),
+        ...ASSERT_PAGE.map((a, i) => ({ label: a.label, commandId: 100 + i })),
       ],
     });
     if (typeof res.commandId !== "number") return;
@@ -359,7 +364,7 @@ export function TrainerPanelView() {
       if (chosen) setAssert(chosen.kind, false);
       return;
     }
-    const urlKind = ASSERT_URL[res.commandId - 100];
+    const urlKind = ASSERT_PAGE[res.commandId - 100];
     if (!urlKind) return;
     // A URL assertion takes a typed value, so it opens the Add-step dialog
     // rather than arming the element picker — prefilled from where the page is

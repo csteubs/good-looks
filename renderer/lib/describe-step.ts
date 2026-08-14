@@ -3,15 +3,11 @@
 // script generator so what the user sees matches the generated script.
 
 import { DEFAULT_WAIT_TIMEOUT_MS, ELEMENT_STATES, isCssPropName } from "./recorder-types";
+import { ASSERT_SEMANTICS, reEscape, textMatchExpr } from "../../shared/step-semantics.mjs";
 import type { Locator, Step, StepType } from "./recorder-types";
 
 function q(s: string): string {
   return JSON.stringify(s ?? "");
-}
-
-/** Escape regex metacharacters so a literal string can be embedded in a RegExp. */
-function reEscape(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function locatorExpr(loc: Locator): string {
@@ -38,12 +34,25 @@ function locatorExpr(loc: Locator): string {
 
 function describeAssert(step: Step, target: string | null): string {
   const e = step.soft ? "expect.soft" : "expect";
-  if (step.assert === "url") return e + "(page).toHaveURL(" + q(step.value ?? "") + ")";
-  if (step.assert === "urlEndsWith")
-    return e + "(page).toHaveURL(new RegExp(" + q(reEscape(step.value ?? "") + "$") + ", \"i\"))";
-  if (step.assert === "urlIs")
-    return e + "(page).toHaveURL(new RegExp(" + q("^" + reEscape(step.value ?? "") + "$") + ", \"i\"))";
-  if (step.assert === "title") return e + "(page).toHaveTitle(" + q(step.value ?? "") + ")";
+  // The page-level kinds build their pattern with the SHARED helper, off the
+  // SHARED table, because this string is what the user reads in the step list
+  // and the generator's is what actually runs. Those two disagreeing is the
+  // worst version of this bug: a correct-looking assertion on screen standing
+  // in for one that could never pass. See shared/step-semantics.mjs.
+  if (step.assert === "url" || step.assert === "urlEndsWith" || step.assert === "urlIs") {
+    const s = ASSERT_SEMANTICS[step.assert];
+    if (!s || (step.value ?? "") === "") return "assert";
+    return e + "(page).toHaveURL(" + textMatchExpr(step.value ?? "", s) + ")";
+  }
+  if (step.assert === "title") {
+    if ((step.value ?? "") === "") return "assert";
+    return e + "(page).toHaveTitle(" + q(step.value ?? "") + ")";
+  }
+  if (step.assert === "titleContains") {
+    const s = ASSERT_SEMANTICS.titleContains;
+    if (!s || (step.value ?? "") === "") return "assert";
+    return e + "(page).toHaveTitle(" + textMatchExpr(step.value ?? "", s) + ")";
+  }
   if (!target) return "assert";
   const x = e + "(" + target + ")";
   switch (step.assert) {

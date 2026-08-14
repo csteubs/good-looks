@@ -69,6 +69,20 @@ const HEALABLE = [
   "selectOption", "tap", "hover", "focus", "clear", "waitFor",
 ];
 
+// Locator methods that NARROW an existing locator rather than creating one.
+//
+// Each returns a brand-new Locator object, and the tag the factory attached
+// does not come with it — so getByText("Save").nth(1) arrived at the patched
+// action with __glazeKey undefined, and healing bailed out on its very first
+// line. The consequence ran the whole length of the pipeline: no heal, and no
+// recordMatches either, so no matches.json, no structureAvailable, and an
+// AI-debug session with nothing to look at.
+//
+// The steps this silently excluded are precisely the ones most likely to need
+// it: .nth() is only ever written when the recorder could NOT find a unique
+// locator, i.e. for the most fragile steps in the suite.
+const REFINERS = ["nth", "first", "last", "filter", "and", "or"];
+
 /** Rebuild a Playwright locator from the app's Locator model. */
 function fromModel(page, loc) {
   if (!loc) return null;
@@ -280,6 +294,22 @@ export function installHealing(page) {
     process.stderr.write("[glaze-heal] could not patch the locator prototype: " + String(err) + "\\n");
     return;
   }
+
+  // Carry the tag across a narrowing call, so a .nth() step is still healable
+  // and still records its matches. Best-effort and defensive on every arm: a
+  // Playwright version without one of these methods must degrade to the old
+  // behaviour, not take the run down.
+  REFINERS.forEach(function (method) {
+    const orig = proto[method];
+    if (typeof orig !== "function") return;
+    proto[method] = function (...args) {
+      const next = orig.apply(this, args);
+      try {
+        if (next && this.__glazeKey && !next.__glazeKey) next.__glazeKey = this.__glazeKey;
+      } catch (e) { /* tagging is best-effort */ }
+      return next;
+    };
+  });
 
   HEALABLE.forEach(function (method) {
     const orig = proto[method];

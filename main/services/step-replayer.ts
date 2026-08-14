@@ -9,8 +9,14 @@
 // with the capture script. The `logs` array carries verbose, ordered
 // diagnostics for the trainer's step debug panel.
 
-import { DOM_HELPERS } from "../recorder/capture-script.js";
+import { DOM_HELPERS, UNCAPPED_SCAN, UNIQUENESS_HELPERS } from "../recorder/capture-script.js";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "./script-generator.js";
+import {
+  ASSERT_SEMANTICS,
+  matchSource,
+  visibilitySource,
+  WAIT_SEMANTICS,
+} from "../../shared/step-semantics.mjs";
 import type { DebugLogLine, Step } from "../recorder/types.js";
 
 /** Ceiling on how long a conditional wait blocks the PREVIEW, whatever the
@@ -40,6 +46,22 @@ export function buildReplayScript(step: Step): string {
   // constants). `\\s` produces a literal \s in the emitted script.
   return `(function () {
   ${DOM_HELPERS}
+  ${UNIQUENESS_HELPERS}
+  ${matchSource()}
+  ${visibilitySource()}
+
+  // The uniqueness scan's element cap exists because CAPTURE runs it on the
+  // click path. A preview does not: the user asked for it and is watching it,
+  // and this call already runs under an 8s budget. Left at the capture cap, a
+  // page with more elements than it would hide a locator's target from the
+  // trainer while a real run resolved it perfectly well.
+  GL_SCAN_LIMIT = ${UNCAPPED_SCAN};
+
+  // The SAME tables the generator reads, shipped in as data. A predicate the
+  // trainer evaluates one way and the spec evaluates another is the entire
+  // failure this file was rewritten to end — see shared/step-semantics.mjs.
+  var ASSERT_SEMANTICS = ${JSON.stringify(ASSERT_SEMANTICS)};
+  var WAIT_SEMANTICS = ${JSON.stringify(WAIT_SEMANTICS)};
 
   var step = ${JSON.stringify(step)};
   var logs = [];
@@ -56,114 +78,217 @@ export function buildReplayScript(step: Step): string {
   if (step.locator) log("info", "Locator: " + locDesc(step.locator));
   if (step.type === "fill" || step.type === "select") log("info", "Value: " + (step.value || ""));
   if (step.type === "assert") {
-    if (step.assert === "url" || step.assert === "urlEndsWith" || step.assert === "urlIs" || step.assert === "title") log("info", "Expect " + step.assert + " contains: " + (step.value || ""));
-    else if (step.assert === "count") log("info", "Expect count = " + step.count);
-    else if (step.assert === "value" || step.assert === "attribute") log("info", "Expect " + step.assert + " = " + (step.value || ""));
-    else if (step.assert === "text" || step.assert === "exactText") log("info", "Expect text: " + (step.text || ""));
-    else log("info", "Expect " + step.assert);
+    // The VERB comes from the shared table rather than from the word
+    // "contains" — this line said "contains" for every URL and title kind
+    // including the two EXACT ones, which is the same lie the predicates
+    // themselves used to tell, printed into the log the user reads to decide
+    // whether the step is right.
+    var sem = ASSERT_SEMANTICS[step.assert];
+    if (sem) {
+      var verb = sem.match === "exact" ? "to be exactly" : sem.match === "endsWith" ? "to end with" : "to contain";
+      log("info", "Expect " + step.assert + " " + verb + ": " + (step.text || step.value || ""));
+    } else if (step.assert === "count") {
+      log("info", "Expect count = " + step.count);
+    } else {
+      log("info", "Expect " + step.assert);
+    }
   }
 
   function ci(s) { return String(s == null ? "" : s).toLowerCase(); }
   function norm(s) { return String(s == null ? "" : s).replace(/\\s+/g, " ").trim(); }
 
+  /** Compare against the step's expectation using the SHARED rule for its kind.
+   *  A kind with no declared semantics (visible, count, css…) never reaches
+   *  here — those compare something other than a string. */
+  function matchKind(table, kind, actual, expected) {
+    var s = table[kind];
+    if (!s) return false;
+    return matchesValue(actual, expected, s);
+  }
+
+  /** Playwright's visibility rule, from the shared module.
+   *
+   *  Was: \`width <= 0 && height <= 0\` (so a 0×10 element counted as VISIBLE
+   *  here and hidden in the run) plus an \`opacity === "0"\` test Playwright
+   *  does not perform at all (so a faded element counted as hidden here and
+   *  visible in the run). Two mismatches, in opposite directions, on the most
+   *  common assertion in the product. */
   function visible(el) {
     if (!el) return false;
     try {
-      var r = el.getBoundingClientRect();
-      if (r.width <= 0 && r.height <= 0) return false;
-      var st = getComputedStyle(el);
-      if (st.visibility === "hidden" || st.display === "none" || st.opacity === "0") return false;
+      return isVisibleByRect(el.getBoundingClientRect(), getComputedStyle(el));
     } catch (e) {}
     return true;
   }
 
-  function resolveAll(loc) {
-    if (!loc) return [];
-    var k = loc.k, v = loc.v || "";
-    try {
-      if (k === "css") {
-        var list = Array.prototype.slice.call(document.querySelectorAll(v));
-        log(list.length ? "info" : "warn", "css querySelectorAll(\\"" + v + "\\") → " + list.length + " match(es)");
-        return list;
-      }
-      if (k === "xpath") {
-        var out = [];
-        var r = document.evaluate(v, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-        for (var i = 0; i < r.snapshotLength; i++) out.push(r.snapshotItem(i));
-        log(out.length ? "info" : "warn", "xpath \\"" + v + "\\" → " + out.length + " match(es)");
-        return out;
-      }
-      if (k === "testid") {
-        var tid = Array.prototype.slice.call(document.querySelectorAll("*")).filter(function (el) {
-          var t = el.getAttribute("data-testid") || el.getAttribute("data-test-id") || el.getAttribute("data-test");
-          return t === v;
-        });
-        log(tid.length ? "info" : "warn", "data-testid=\\"" + v + "\\" → " + tid.length + " match(es)");
-        return tid;
-      }
-      if (k === "placeholder") {
-        var ph = Array.prototype.slice.call(document.querySelectorAll("input,textarea")).filter(function (el) {
-          return (el.getAttribute("placeholder") || "") === v;
-        });
-        log(ph.length ? "info" : "warn", "placeholder=\\"" + v + "\\" → " + ph.length + " match(es)");
-        return ph;
-      }
-      if (k === "label") {
-        var lb = Array.prototype.slice.call(document.querySelectorAll("input,textarea,select")).filter(function (el) {
-          return labelFor(el) === v;
-        });
-        log(lb.length ? "info" : "warn", "label=\\"" + v + "\\" → " + lb.length + " match(es)");
-        return lb;
-      }
-      if (k === "role") {
-        var role = loc.role || "";
-        var name = loc.name;
-        var rb = Array.prototype.slice.call(document.querySelectorAll("*")).filter(function (el) {
-          if (roleOf(el) !== role) return false;
-          if (name == null || name === "") return true;
-          return ci(accName(el)).indexOf(ci(name)) >= 0;
-        });
-        log(rb.length ? "info" : "warn", "role=" + role + (name ? " name~\\"" + name + "\\"" : "") + " → " + rb.length + " match(es)");
-        return rb;
-      }
-      if (k === "text") {
-        var all = Array.prototype.slice.call(document.querySelectorAll("body *"));
-        var matches = all.filter(function (el) { return ci(txt(el)).indexOf(ci(v)) >= 0; });
-        matches.sort(function (a, b) { return txt(a).length - txt(b).length; });
-        log(matches.length ? "info" : "warn", "text~\\"" + v + "\\" → " + matches.length + " match(es)");
-        return matches;
-      }
-    } catch (e) { log("error", "resolve " + k + " threw: " + String(e)); }
-    return [];
+  /** Playwright treats \`aria-disabled\`/\`aria-checked\` as authoritative for
+   *  elements that are not native form controls, and the replayer read only the
+   *  DOM properties — which are \`undefined\` on a div-with-a-role, so every
+   *  custom widget answered "enabled" and "unchecked" regardless of its state. */
+  function isDisabled(el) {
+    if (el.disabled === true) return true;
+    var a = el.getAttribute ? el.getAttribute("aria-disabled") : null;
+    return a === "true";
+  }
+  function isChecked(el) {
+    if (typeof el.checked === "boolean" && el.tagName === "INPUT") return el.checked;
+    var a = el.getAttribute ? el.getAttribute("aria-checked") : null;
+    if (a === "true") return true;
+    if (a === "false") return false;
+    return !!el.checked;
   }
 
-  function resolve(loc) { var a = resolveAll(loc); return a.length ? a[0] : null; }
+  /** Every element this locator matches, using the SAME engine the capture
+   *  script uses to decide whether a locator is unique (\`matchesFor\`).
+   *
+   *  This file used to carry its own resolver, and it disagreed with that one —
+   *  and therefore with Playwright — in four ways at once: \`getByLabel\` and
+   *  \`getByPlaceholder\` were EXACT here and substring there; \`getByText\` had
+   *  no containment filter and was sorted by text length rather than document
+   *  order, so it previewed a different element AND reported a wildly higher
+   *  \`count\`; and \`getByTestId\`/\`getByRole\` walked every node in the
+   *  document. Sharing the engine is what makes "the trainer agrees with the
+   *  run" a property rather than a coincidence that has to be re-established
+   *  every time either side is touched. */
+  function resolveAll(loc) {
+    if (!loc) return [];
+    try {
+      var found = matchesFor(loc);
+      log(found.length ? "info" : "warn", locDesc(loc) + " → " + found.length + " match(es)");
+      return found;
+    } catch (e) {
+      log("error", "resolve " + (loc.k || "?") + " threw: " + String(e));
+      return [];
+    }
+  }
+
+  /**
+   * The ONE element a step acts on — or a refusal, on the same terms as the run.
+   *
+   * Two behaviours this did not have, both of which let the trainer act on
+   * something the spec never would:
+   *
+   *  • \`nth\` was ignored ENTIRELY. A step recorded as "the 4th Save button"
+   *    was previewed against the 1st, so the trainer's green tick was about a
+   *    different element than the one the generated \`.nth(3)\` addresses.
+   *  • An ambiguous locator silently took the first match. Playwright runs in
+   *    STRICT MODE and refuses a locator matching two elements — it does not
+   *    degrade to the first, it throws. So the single most common real failure
+   *    ("resolved to 2 elements") was the one the trainer was structurally
+   *    incapable of showing, and it could only be discovered on a run, against
+   *    a page the user was no longer looking at.
+   *
+   * Returns \`{ el }\`, \`{ strict: n }\` for the violation, or \`{ el: null }\`.
+   */
+  function resolveOne(loc) {
+    var all = resolveAll(loc);
+    if (loc && typeof loc.nth === "number") {
+      var picked = all[loc.nth] || null;
+      log(picked ? "info" : "warn", ".nth(" + loc.nth + ") of " + all.length + " match(es)" + (picked ? "" : " — index out of range"));
+      return { el: picked };
+    }
+    if (all.length > 1) {
+      log("error", "strict mode violation: " + locDesc(loc) + " resolved to " + all.length + " elements — a real run refuses this rather than taking the first. Refine the selector, or give it an index.");
+      return { el: null, strict: all.length };
+    }
+    return { el: all.length ? all[0] : null };
+  }
+
+  /** The strict-mode refusal as a step error, or null when there was none. */
+  function strictError(r) {
+    return r.strict ? "Locator matched " + r.strict + " elements (strict mode violation)" : null;
+  }
+
+  /**
+   * Playwright's "receives events" actionability check, as far as a page can
+   * perform it: is the element at the click point actually this element?
+   *
+   * The trainer's click was a bare \`el.click()\`, which dispatches on the
+   * element no matter what is drawn on top of it. A real run does not: it waits
+   * for the element to receive pointer events and fails with "element
+   * intercepts pointer events" when something covers it. Cookie banners, sticky
+   * headers, toasts and modals are the everyday version of this, and a human
+   * recording a test dismisses them by reflex without ever noticing they were
+   * in the way — so the step passes in the trainer and fails at 3am.
+   *
+   * Reports WHAT is covering the element, because "the click failed" and "a
+   * cookie banner is over the button" send you to completely different places.
+   *
+   * Returns null when it cannot tell. \`elementFromPoint\` is unimplemented in
+   * jsdom and the point may legitimately be outside the viewport, and a check
+   * that cannot see must not invent a failure.
+   */
+  /** Name the covering element the way a person would recognise it on screen.
+   *  A bare tag name is not enough to find a full-page overlay in a strange
+   *  site's markup; its id, class or visible text usually is. */
+  function describeOccluder(el) {
+    var tag = (el.tagName || "?").toLowerCase();
+    var id = el.id ? "#" + el.id : "";
+    var cls = el.className && typeof el.className === "string"
+      ? "." + el.className.split(/\\s+/).filter(Boolean).slice(0, 2).join(".")
+      : "";
+    var label = txt(el).slice(0, 40);
+    return tag + id + cls + (label ? " — \\"" + label + "\\"" : "");
+  }
+
+  function occludedBy(el) {
+    try {
+      if (typeof document.elementFromPoint !== "function") return null;
+      var r = el.getBoundingClientRect();
+      if (!(r.width > 0) || !(r.height > 0)) return null;
+      var cx = r.left + r.width / 2;
+      var cy = r.top + r.height / 2;
+      if (cx < 0 || cy < 0 || cx > window.innerWidth || cy > window.innerHeight) return null;
+      var hit = document.elementFromPoint(cx, cy);
+      if (!hit) return null;
+      // A descendant receiving the click is the normal case — a <span> inside a
+      // <button> — and the event still reaches the element. Only something
+      // OUTSIDE the subtree is an interception.
+      if (hit === el || el.contains(hit)) return null;
+      return hit;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function resolve(loc) { return resolveOne(loc).el; }
 
   function runAssert() {
     var a = step.assert;
+    // Page-level kinds. Every one of these goes through the shared table, so
+    // "URL contains" means here exactly what it means in the generated spec.
+    // It did not: this read a case-insensitive SUBSTRING while the spec
+    // asserted exact whole-URL equality against a pre-filled PATH, so the step
+    // was green here and impossible to pass there.
     if (a === "url" || a === "urlEndsWith" || a === "urlIs") {
-      var cur = ci(location.href);
-      var exp = ci(step.value || "");
-      var ok;
-      if (a === "urlEndsWith") ok = cur.slice(-exp.length) === exp;
-      else if (a === "urlIs") ok = cur === exp;
-      else ok = cur.indexOf(exp) >= 0;
+      var ok = matchKind(ASSERT_SEMANTICS, a, location.href, step.value || "");
       log(ok ? "info" : "error", "page URL = \\"" + location.href + "\\"; expected " + (a === "urlEndsWith" ? "to end with" : a === "urlIs" ? "to be" : "to contain") + " \\"" + (step.value || "") + "\\"");
       return { ok: ok, error: ok ? undefined : "URL is " + location.href };
     }
-    if (a === "title") {
-      var titleOk = ci(document.title).indexOf(ci(step.value || "")) >= 0;
-      log(titleOk ? "info" : "error", "page title = \\"" + document.title + "\\"; expected to contain \\"" + (step.value || "") + "\\"");
+    // \`title\` is EXACT ("Page title is") and \`titleContains\` is the substring
+    // kind. This used to read both as a case-insensitive substring, so "Cart"
+    // passed against a page titled "Cart | Acme" and then failed every run.
+    if (a === "title" || a === "titleContains") {
+      var titleOk = matchKind(ASSERT_SEMANTICS, a, document.title, step.value || "");
+      log(titleOk ? "info" : "error", "page title = \\"" + document.title + "\\"; expected " + (a === "title" ? "to be" : "to contain") + " \\"" + (step.value || "") + "\\"");
       return { ok: titleOk, error: titleOk ? undefined : "Title is " + document.title };
     }
     if (a === "count") {
+      // No strict-mode check here on purpose: \`toHaveCount\` is the one matcher
+      // whose whole job is to count many matches.
       var n = resolveAll(step.locator).length;
       var want = step.count || 0;
       var cOk = n === want;
       log(cOk ? "info" : "error", "count = " + n + "; expected " + want);
       return { ok: cOk, error: cOk ? undefined : "Found " + n + ", expected " + want };
     }
-    var el = resolve(step.locator);
+    var res = resolveOne(step.locator);
+    var el = res.el;
+    var strict = strictError(res);
+    // An ambiguous locator fails the run whatever the assertion was, so it is
+    // reported before the predicate rather than as "element not found" — those
+    // need opposite fixes, and saying the wrong one costs the user the session.
+    if (strict) return { ok: false, error: strict };
     if (a === "hidden") {
       var hidOk = !el || !visible(el);
       log(hidOk ? "info" : "error", "hidden: " + (el ? "element is " + (visible(el) ? "visible" : "not visible") : "no element"));
@@ -173,35 +298,42 @@ export function buildReplayScript(step: Step): string {
     switch (a) {
       case "visible": {
         var vOk = visible(el);
-        log(vOk ? "info" : "error", "visible: " + (vOk ? "yes" : "no (zero-size, hidden, or opacity 0)"));
+        log(vOk ? "info" : "error", "visible: " + (vOk ? "yes" : "no (empty box, visibility:hidden, or display:none)"));
         return { ok: vOk };
       }
       case "text": {
         var got = txt(el).slice(0, 80);
-        var tOk = ci(txt(el)).indexOf(ci(step.text || "")) >= 0;
+        var tOk = matchKind(ASSERT_SEMANTICS, "text", txt(el), step.text || "");
         log(tOk ? "info" : "error", "text contains \\"" + (step.text || "") + "\\": " + (tOk ? "yes" : "no — got \\"" + got + "\\""));
         return { ok: tOk, error: tOk ? undefined : "Text is " + got };
       }
       case "exactText": {
         var egot = txt(el).slice(0, 80);
-        var eOk = norm(txt(el)) === norm(step.text || "");
+        var eOk = matchKind(ASSERT_SEMANTICS, "exactText", txt(el), step.text || "");
         log(eOk ? "info" : "error", "exact text \\"" + (step.text || "") + "\\": " + (eOk ? "yes" : "no — got \\"" + egot + "\\""));
         return { ok: eOk, error: eOk ? undefined : "Text is " + egot };
       }
-      case "enabled": { var enOk = !el.disabled; log(enOk ? "info" : "error", "enabled: " + (enOk ? "yes" : "no")); return { ok: enOk }; }
-      case "disabled": { var dOk = !!el.disabled; log(dOk ? "info" : "error", "disabled: " + (dOk ? "yes" : "no")); return { ok: dOk }; }
-      case "checked": { var chOk = !!el.checked; log(chOk ? "info" : "error", "checked: " + (chOk ? "yes" : "no")); return { ok: chOk }; }
-      case "unchecked": { var uOk = !el.checked; log(uOk ? "info" : "error", "unchecked: " + (uOk ? "yes" : "no")); return { ok: uOk }; }
+      case "enabled": { var enOk = !isDisabled(el); log(enOk ? "info" : "error", "enabled: " + (enOk ? "yes" : "no")); return { ok: enOk }; }
+      case "disabled": { var dOk = isDisabled(el); log(dOk ? "info" : "error", "disabled: " + (dOk ? "yes" : "no")); return { ok: dOk }; }
+      case "checked": { var chOk = isChecked(el); log(chOk ? "info" : "error", "checked: " + (chOk ? "yes" : "no")); return { ok: chOk }; }
+      case "unchecked": { var uOk = !isChecked(el); log(uOk ? "info" : "error", "unchecked: " + (uOk ? "yes" : "no")); return { ok: uOk }; }
       case "value": {
-        var valOk = (el.value || "") === (step.value || "");
+        var valOk = matchKind(ASSERT_SEMANTICS, "value", el.value || "", step.value || "");
         log(valOk ? "info" : "error", "value = \\"" + (el.value || "") + "\\"; expected \\"" + (step.value || "") + "\\"");
         return { ok: valOk, error: valOk ? undefined : "Value is " + (el.value || "") };
       }
       case "attribute": {
-        var av = el.getAttribute(step.attr || "") || "";
-        var aOk = av === (step.value || "");
-        log(aOk ? "info" : "error", "attr[" + (step.attr || "") + "] = \\"" + av + "\\"; expected \\"" + (step.value || "") + "\\"");
-        return { ok: aOk, error: aOk ? undefined : "Attribute is " + av };
+        var rawAttr = el.getAttribute(step.attr || "");
+        // A MISSING attribute is not an attribute equal to "". Coercing the two
+        // together made \`toHaveAttribute(name, "")\` pass here and fail in the
+        // run, which is the whole class of bug this pass exists to remove.
+        if (rawAttr === null) {
+          log("error", "attr[" + (step.attr || "") + "] is not present on the element");
+          return { ok: false, error: "Attribute " + (step.attr || "") + " is not present" };
+        }
+        var aOk = matchKind(ASSERT_SEMANTICS, "attribute", rawAttr, step.value || "");
+        log(aOk ? "info" : "error", "attr[" + (step.attr || "") + "] = \\"" + rawAttr + "\\"; expected \\"" + (step.value || "") + "\\"");
+        return { ok: aOk, error: aOk ? undefined : "Attribute is " + rawAttr };
       }
       case "css": {
         var prop = step.cssProp || "";
@@ -231,10 +363,10 @@ export function buildReplayScript(step: Step): string {
   function evalWaitUntil() {
     var w = step.waitUntil || "visible";
     if (w === "urlContains") {
-      return { met: ci(location.href).indexOf(ci(step.value || "")) >= 0, detail: "URL is \\"" + location.href + "\\"" };
+      return { met: matchKind(WAIT_SEMANTICS, w, location.href, step.value || ""), detail: "URL is \\"" + location.href + "\\"" };
     }
     if (w === "titleContains") {
-      return { met: ci(document.title).indexOf(ci(step.value || "")) >= 0, detail: "title is \\"" + document.title + "\\"" };
+      return { met: matchKind(WAIT_SEMANTICS, w, document.title, step.value || ""), detail: "title is \\"" + document.title + "\\"" };
     }
     if (w === "exists") {
       var n0 = resolveAll(step.locator).length;
@@ -244,18 +376,23 @@ export function buildReplayScript(step: Step): string {
       var n = resolveAll(step.locator).length;
       return { met: n === (step.count || 0), detail: "count is " + n + ", expected " + (step.count || 0) };
     }
-    var el = resolve(step.locator);
+    var wres = resolveOne(step.locator);
+    var el = wres.el;
+    // A wait can never come true through an ambiguous locator — the run would
+    // refuse it on the first attempt — so it is reported rather than polled to
+    // the timeout with a misleading "element not found".
+    if (wres.strict) return { met: false, detail: strictError(wres), fatal: true };
     if (w === "hidden") {
       return { met: !el || !visible(el), detail: el ? "element is visible" : "no element" };
     }
     if (!el) return { met: false, detail: "element not found" };
     switch (w) {
-      case "enabled": return { met: !el.disabled, detail: el.disabled ? "element is disabled" : "element is enabled" };
-      case "disabled": return { met: !!el.disabled, detail: el.disabled ? "element is disabled" : "element is enabled" };
-      case "checked": return { met: !!el.checked, detail: el.checked ? "checked" : "not checked" };
-      case "unchecked": return { met: !el.checked, detail: el.checked ? "checked" : "not checked" };
-      case "text": return { met: ci(txt(el)).indexOf(ci(step.text || "")) >= 0, detail: "text is \\"" + txt(el).slice(0, 80) + "\\"" };
-      case "value": return { met: (el.value || "") === (step.value || ""), detail: "value is \\"" + (el.value || "") + "\\"" };
+      case "enabled": return { met: !isDisabled(el), detail: isDisabled(el) ? "element is disabled" : "element is enabled" };
+      case "disabled": return { met: isDisabled(el), detail: isDisabled(el) ? "element is disabled" : "element is enabled" };
+      case "checked": return { met: isChecked(el), detail: isChecked(el) ? "checked" : "not checked" };
+      case "unchecked": return { met: !isChecked(el), detail: isChecked(el) ? "checked" : "not checked" };
+      case "text": return { met: matchKind(WAIT_SEMANTICS, "text", txt(el), step.text || ""), detail: "text is \\"" + txt(el).slice(0, 80) + "\\"" };
+      case "value": return { met: matchKind(WAIT_SEMANTICS, "value", el.value || "", step.value || ""), detail: "value is \\"" + (el.value || "") + "\\"" };
       case "visible":
       default: return { met: visible(el), detail: visible(el) ? "element is visible" : "element is not visible" };
     }
@@ -278,10 +415,23 @@ export function buildReplayScript(step: Step): string {
       log("info", "condition already met (" + first.detail + ")");
       return { ok: true };
     }
+    // A strict-mode violation cannot become untrue by waiting, and polling it
+    // to the cap would report a timeout — which reads as "the page was slow"
+    // and sends the user to fix the wrong thing.
+    if (first.fatal) {
+      log("error", first.detail);
+      return { ok: false, error: first.detail };
+    }
     return new Promise(function (res) {
       var timer = setInterval(function () {
         var r = evalWaitUntil();
         var waited = Date.now() - started;
+        if (r.fatal) {
+          clearInterval(timer);
+          log("error", r.detail);
+          res({ ok: false, error: r.detail });
+          return;
+        }
         if (r.met) {
           clearInterval(timer);
           log("info", "condition met after " + waited + "ms (" + r.detail + ")");
@@ -301,12 +451,12 @@ export function buildReplayScript(step: Step): string {
   function evalCondition() {
     var c = step.cond || "visible";
     if (c === "urlContains") {
-      var uMet = ci(location.href).indexOf(ci(step.value || "")) >= 0;
+      var uMet = matchKind(WAIT_SEMANTICS, c, location.href, step.value || "");
       log("info", "condition: URL \\"" + location.href + "\\" contains \\"" + (step.value || "") + "\\" → " + uMet);
       return uMet;
     }
     if (c === "titleContains") {
-      var tiMet = ci(document.title).indexOf(ci(step.value || "")) >= 0;
+      var tiMet = matchKind(WAIT_SEMANTICS, c, document.title, step.value || "");
       log("info", "condition: title \\"" + document.title + "\\" contains \\"" + (step.value || "") + "\\" → " + tiMet);
       return tiMet;
     }
@@ -315,14 +465,23 @@ export function buildReplayScript(step: Step): string {
       log("info", "condition: exists → " + n + " match(es) → " + (n > 0));
       return n > 0;
     }
-    var el = resolve(step.locator);
+    var cres = resolveOne(step.locator);
+    var el = cres.el;
+    // A branch taken on an ambiguous locator is a branch the run never takes —
+    // it throws instead. Reported here rather than silently resolving false,
+    // because a conditional that quietly skips its body looks like the page
+    // simply not being in that state.
+    if (cres.strict) {
+      log("error", "condition: " + strictError(cres) + " — the run would fail here rather than choose a branch");
+      return false;
+    }
     var met;
     switch (c) {
       case "hidden": met = !el || !visible(el); break;
-      case "enabled": met = !!el && !el.disabled; break;
-      case "disabled": met = !!el && !!el.disabled; break;
-      case "checked": met = !!el && !!el.checked; break;
-      case "unchecked": met = !!el && !el.checked; break;
+      case "enabled": met = !!el && !isDisabled(el); break;
+      case "disabled": met = !!el && isDisabled(el); break;
+      case "checked": met = !!el && isChecked(el); break;
+      case "unchecked": met = !!el && !isChecked(el); break;
       case "visible":
       default: met = !!el && visible(el); break;
     }
@@ -407,11 +566,28 @@ export function buildReplayScript(step: Step): string {
       return { ok: true, captured: got };
     }
 
-    var el = resolve(step.locator);
+    var ares = resolveOne(step.locator);
+    var el = ares.el;
+    var aStrict = strictError(ares);
+    if (aStrict) return { ok: false, error: aStrict };
     if (!el) { log("error", "Element not found — cannot " + t); return { ok: false, error: "Element not found" }; }
     log("info", "Resolved to <" + (el.tagName || "").toLowerCase() + ">" + (el.id ? "#" + el.id : "") + (el.className && typeof el.className === "string" ? "." + el.className.split(" ").filter(Boolean).slice(0, 2).join(".") : ""));
     try {
-      if (t === "click") { try { el.scrollIntoView({ block: "center" }); } catch (e) {} el.click(); log("info", "clicked"); return { ok: true }; }
+      if (t === "click") {
+        try { el.scrollIntoView({ block: "center" }); } catch (e) {}
+        // Checked AFTER scrolling into view, because that is the order a real
+        // run does it in — an element below the fold is not occluded, it is
+        // just not scrolled to yet.
+        var over = occludedBy(el);
+        if (over) {
+          var what = describeOccluder(over);
+          log("error", "another element (" + what + ") is on top of this one — a real run fails here with \\"element intercepts pointer events\\"");
+          return { ok: false, error: "Element is covered by " + what };
+        }
+        el.click();
+        log("info", "clicked");
+        return { ok: true };
+      }
       if (t === "fill") {
         el.focus();
         try { el.value = step.value || ""; } catch (e) {}
@@ -421,9 +597,25 @@ export function buildReplayScript(step: Step): string {
         return { ok: true };
       }
       if (t === "select") {
-        try { el.value = step.value || ""; } catch (e) {}
+        // Playwright's \`selectOption\` THROWS when no option matches. Assigning
+        // to \`.value\` does not: it silently sets selectedIndex to -1 and the
+        // step reported success, so a select whose options had been renamed
+        // previewed green and failed every run. Checked explicitly, because the
+        // assignment cannot be made to fail.
+        var want = step.value || "";
+        var opts = el.options ? Array.prototype.slice.call(el.options) : [];
+        var hit = null;
+        for (var oi = 0; oi < opts.length; oi++) {
+          if (opts[oi].value === want || txt(opts[oi]) === want) { hit = opts[oi]; break; }
+        }
+        if (!hit) {
+          var names = opts.map(function (o) { return o.value; }).slice(0, 8).join(", ");
+          log("error", "no option matches \\"" + want + "\\" — the element offers: " + (names || "(none)"));
+          return { ok: false, error: "No option matching \\"" + want + "\\"" };
+        }
+        try { el.value = hit.value; } catch (e) {}
         el.dispatchEvent(new Event("change", { bubbles: true }));
-        log("info", "selected value=\\"" + (step.value || "") + "\\"");
+        log("info", "selected value=\\"" + hit.value + "\\"");
         return { ok: true };
       }
       if (t === "check") { if (!el.checked) { el.click(); log("info", "checked"); } else log("info", "already checked"); return { ok: true }; }

@@ -123,7 +123,16 @@ export type AssertKind =
   | "url"
   | "urlEndsWith"
   | "urlIs"
+  // `title` is an EXACT whole-title match, which is what its "Page title is"
+  // label has always promised and what the generator has always emitted. The
+  // trainer's replayer read it as a case-insensitive substring, so "Cart"
+  // passed live against a page titled "Cart | Acme" and then failed in every
+  // run. Aligning the replayer to the label would have removed the only way to
+  // assert on part of a title, so `titleContains` exists to keep that reachable
+  // — it is the assert counterpart of the `titleContains` wait, which the
+  // vocabulary was already missing.
   | "title"
+  | "titleContains"
   // Computed CSS property, e.g. background-color is "rgb(0, 82, 204)". Reads
   // `Step.cssProp` / `Step.cssMatch`, with the expected value in `Step.value`.
   | "css";
@@ -639,7 +648,7 @@ export const STEP_TYPES: StepType[] = [
 export const ASSERT_KINDS: AssertKind[] = [
   "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked",
   "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs", "title",
-  "css",
+  "titleContains", "css",
 ];
 
 export const ELEMENT_STATES: ElementState[] = ["hover", "focus", "press", "release"];
