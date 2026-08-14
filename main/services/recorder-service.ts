@@ -20,11 +20,17 @@ import {
   ATTR_ASSERT_SOFT,
   ATTR_PAUSED,
   ATTR_REFINE,
-  CAPTURE_SCRIPT,
+  buildCaptureScript,
   DRAIN_PICKED_SCRIPT,
   DRAIN_SCRIPT,
   PICK_AT_POINT_SCRIPT,
 } from "../recorder/capture-script.js";
+import {
+  CaptureLedger,
+  parseCaptureMessage,
+  parseDrainPayload,
+  type CaptureEntry,
+} from "../recorder/capture-channel.js";
 import { buildReplayScript } from "./step-replayer.js";
 import {
   applyStateStep,
@@ -491,6 +497,13 @@ interface Session {
   pageReady: boolean;
   /** set when the window failed to open within the load timeout */
   loadFailed: boolean;
+  /**
+   * Authenticates steps arriving over the console channel (see
+   * capture-channel.ts). Generated once per session and interpolated into every
+   * injection of the capture script, which runs in an isolated world — so the
+   * page cannot read it and cannot forge a step through that channel.
+   */
+  captureNonce: string;
 }
 
 const POLL_INTERVAL_MS = 250;
@@ -515,6 +528,24 @@ let pageView: InstanceType<typeof WebContentsView> | null = null;
 let chromeView: InstanceType<typeof WebContentsView> | null = null;
 let session: Session | null = null;
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Which captured steps have already been recorded, and in what order.
+ *
+ * Every step arrives twice — once over the console channel the instant it is
+ * captured, once in the queue the poll drains — and this is what makes that
+ * safe. Module-level rather than per-session because it must outlive the moment
+ * a session ends: a console message emitted by a page that is still unloading
+ * can arrive after `session` is null, and there is no answer to that but to
+ * drop it. Reset by `stopPolling`, which every teardown path goes through.
+ */
+const captureLedger = new CaptureLedger();
+/** Per-session tally of where steps actually came from. The console channel is
+ *  the one that fixes the navigation bug, so "how many arrived that way" is the
+ *  number that says whether it is working — logged when the session ends,
+ *  because a channel that silently stopped working would otherwise look exactly
+ *  like a channel that was never needed. */
+let captureStats = { console: 0, drain: 0, late: 0 };
 
 /** The training PAGE's webContents, or null if the session is gone. Every
  *  page-directed call in this file goes through here — see `pageView`. */
@@ -775,7 +806,7 @@ async function injectCapture(): Promise<void> {
   if (!page || !session) return;
   const wc = pageExecutor(page);
   try {
-    await wc.executeJavaScript(CAPTURE_SCRIPT);
+    await wc.executeJavaScript(buildCaptureScript(session.captureNonce));
     await applyStateAttributes();
   } catch (err) {
     logger.warn("recorder", "Failed to inject capture script", { err: String(err) });
@@ -906,28 +937,77 @@ async function drainPicked(): Promise<void> {
   }
 }
 
-/** Poll the capture queue and ingest whatever the injected script recorded.
+/**
+ * Record steps the ledger has released.
  *
- *  The queue is a DOM attribute, and the DOM belongs to the page — an arbitrary
- *  website. So this is a trust boundary, not an internal handoff: what comes
- *  back is treated as hostile input and rebuilt by `normalizeRawSteps` before
- *  anything downstream sees it. Steps compile into a spec that is later
- *  executed, so an unchecked field here is remote code execution later. */
+ * THE ONE PLACE page-captured steps enter the session, whichever channel
+ * carried them. The page is an arbitrary website and a step compiles into a
+ * spec that is later executed in Node, so what arrives is treated as hostile
+ * input and REBUILT by `normalizeRawSteps` — an unchecked field here is remote
+ * code execution later. Both channels land here for exactly that reason: a
+ * second entry point is a second boundary to forget.
+ */
+function recordCaptured(steps: unknown[]): void {
+  if (steps.length === 0 || !session) return;
+  for (const step of normalizeRawSteps(steps)) addStep(step);
+}
+
+/** Take one arrival from either channel. */
+function ingestCapture(entry: CaptureEntry, source: "console" | "drain"): void {
+  if (!session) return;
+  const ready = captureLedger.admit(entry, Date.now());
+  if (ready.length > 0) captureStats[source] += ready.length;
+  recordCaptured(ready);
+}
+
+/**
+ * Poll the capture queue — the BACKUP channel — and keep capture installed.
+ *
+ * Two jobs, and the second is the one that is easy to miss. Draining picks up
+ * anything the console channel dropped. Re-injecting covers a document that
+ * never got the capture script: `dom-ready` is a single shot, so a load that
+ * misses it — a `document.write`, an injection that threw, a navigation that
+ * raced it — would otherwise record nothing for the rest of the session, with
+ * no error anywhere and a training browser that looks perfectly normal. The
+ * drain answers with whether capture is installed precisely so this can notice,
+ * and that answer comes from the same isolated-world object the script's own
+ * install guard checks — which is what makes re-injecting safe rather than a
+ * way to record every later step twice.
+ */
 async function drain(): Promise<void> {
   const page = pageWc();
   if (!page || !session) return;
+  let json: unknown;
   try {
-    const json = (await pageExecutor(page).executeJavaScript(DRAIN_SCRIPT)) as string;
-    if (typeof json !== "string") return;
-    if (json.length > MAX_DRAIN_BYTES) {
-      logger.warn("recorder", "Discarded an oversized capture queue", { bytes: json.length });
-      return;
-    }
-    const steps = normalizeRawSteps(JSON.parse(json));
-    for (const step of steps) addStep(step);
+    json = await pageExecutor(page).executeJavaScript(DRAIN_SCRIPT);
   } catch {
-    // Page may be mid-navigation; the next poll will catch up.
+    // Page is mid-navigation. Anything it captured has already left over the
+    // console channel; the next poll re-reads the queue for the rest.
+    return;
   }
+  if (typeof json !== "string") return;
+  if (json.length > MAX_DRAIN_BYTES) {
+    logger.warn("recorder", "Discarded an oversized capture queue", { bytes: json.length });
+    return;
+  }
+  const payload = parseDrainPayload(json);
+  if (!payload) return;
+  for (const entry of payload.entries) ingestCapture(entry, "drain");
+  if (!payload.installed) {
+    logger.info("recorder", "Capture script was missing from the page — reinstalling");
+    void injectCapture();
+  }
+}
+
+/** Release steps stuck behind a gap no channel is going to fill. Runs on the
+ *  poll, i.e. after the drain has had its chance to supply the missing one. */
+function sweepCapture(): void {
+  if (!session) return;
+  const late = captureLedger.sweep(Date.now());
+  if (late.length === 0) return;
+  captureStats.late += late.length;
+  logger.warn("recorder", "Recorded steps that arrived out of order", { count: late.length });
+  recordCaptured(late);
 }
 
 function windowLabel(): string {
@@ -1040,6 +1120,7 @@ function startPolling(): void {
   pollTimer = setInterval(() => {
     void drain();
     void drainPicked();
+    sweepCapture();
   }, POLL_INTERVAL_MS);
 }
 
@@ -1048,6 +1129,16 @@ function stopPolling(): void {
     clearInterval(pollTimer);
     pollTimer = null;
   }
+  // Anything still held behind a gap belongs to a session that is ending, and
+  // there is no list left to append it to — but a step that was captured and
+  // never recorded is the whole bug this machinery exists for, so it is logged
+  // rather than dropped in silence.
+  const stranded = captureLedger.pendingCount();
+  if (captureStats.console || captureStats.drain || captureStats.late || stranded) {
+    logger.info("recorder", "Capture channels for this session", { ...captureStats, stranded });
+  }
+  captureLedger.reset();
+  captureStats = { console: 0, drain: 0, late: 0 };
 }
 
 export const recorderService = {
@@ -1121,6 +1212,7 @@ export const recorderService = {
       liveUrl: url,
       pageReady: false,
       loadFailed: false,
+      captureNonce: randomUUID(),
     };
 
     // The pointer position remembered from the previous session was measured
@@ -1374,6 +1466,25 @@ export const recorderService = {
     });
 
     wc.on("dom-ready", () => void injectCapture());
+
+    // ── The capture channel ──────────────────────────────────────────────
+    //
+    // THE FIX FOR THE CLICK THAT NAVIGATES. The page emits each captured step
+    // as a console message inside the click's own dispatch, so it reaches this
+    // process before the navigation that click started can destroy the document
+    // the step was sitting in. Everything else about capture — the queue, the
+    // poll, `will-navigate`'s best-effort drain — is now the backup path.
+    //
+    // Every console message an arbitrary website prints arrives here, so the
+    // prefix test comes first and the nonce decides trust: it lives only in the
+    // capture script's isolated-world closure, which the page cannot read.
+    // What survives both is still page-authored, and still rebuilt by
+    // `normalizeRawSteps` in `recordCaptured`.
+    wc.on("console-message", (details) => {
+      if (!session) return;
+      const entry = parseCaptureMessage(details.message, session.captureNonce);
+      if (entry) ingestCapture(entry, "console");
+    });
 
     // Glaze routes cross-origin main-frame navigations to the SYSTEM BROWSER by
     // default, so every event that can carry one has to be intercepted — not

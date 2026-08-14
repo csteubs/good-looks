@@ -2776,16 +2776,23 @@
 
 .gl-detail-tabs {
   flex: 0 0 auto;
-  padding: 8px 12px 0;
+  padding: 8px 16px 0;
 }
 
+/* Horizontal padding matches `Toolbar`'s `px-4` (16px), not the 12px this bar
+ * used before — that mismatch put Edit script's right edge 4px inside of Run
+ * test's, above. `max-height` is `.gl-btn`'s fixed 30px plus this bar's own
+ * vertical padding: the bar can never grow past its one button, which is what
+ * "condensed" means here — it used to carry 6px of padding on each side of
+ * that same 30px button for no reason tied to its content. */
 .gl-detail-script-bar {
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
   flex: 0 0 auto;
-  padding: 6px 12px;
+  max-height: 38px;
+  padding: 4px 16px;
   border-bottom: 1px solid var(--gl-line);
 }
 
