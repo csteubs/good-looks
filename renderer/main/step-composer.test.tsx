@@ -30,6 +30,11 @@ const PICKED: PickedElement = {
   ],
   css: {},
   attributes: {},
+  // A picked element whose best candidate already identifies it — the ordinary
+  // case, and the one where the context picker must stay out of the way.
+  ambiguous: false,
+  contextBaseCount: 1,
+  contextSignals: [],
 };
 
 function renderWait(opts: { picked?: PickedElement | null; initialWaitMode?: WaitDialogMode } = {}) {

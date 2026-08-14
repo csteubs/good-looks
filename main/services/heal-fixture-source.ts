@@ -29,10 +29,19 @@
 // Plain JavaScript (no TypeScript) because Playwright loads it through its own
 // Babel transform.
 
+import { healKeyOperatorSource } from "../../shared/heal-key.mjs";
+
 export const HEAL_FIXTURE_FILE = "glaze-heal.mjs";
 
 export const healFixtureSource = `import * as fs from "fs";
 import * as path from "path";
+
+// How a chained locator's key is spelled, embedded as SOURCE from
+// shared/heal-key.mjs rather than written again here. The runner composes the
+// identical key from the app's Locator model when it writes the map; a second
+// hand-written copy of the grammar is how the two would come to disagree, and
+// the symptom of disagreeing is that healing silently does nothing.
+${healKeyOperatorSource()}
 
 const HEAL_DIR = process.env.GLAZE_HEAL_DIR || "";
 const MAP_FILE = process.env.GLAZE_HEAL_MAP || "";
@@ -83,18 +92,46 @@ const HEALABLE = [
 // locator, i.e. for the most fragile steps in the suite.
 const REFINERS = ["nth", "first", "last", "filter", "and", "or"];
 
-/** Rebuild a Playwright locator from the app's Locator model. */
+/** One builder call, against whatever root it is given — the page, or a
+ *  container locator when the model carries element context. */
+function baseFromModel(root, loc) {
+  if (loc.k === "testid") return root.getByTestId(loc.v);
+  if (loc.k === "label") return root.getByLabel(loc.v);
+  if (loc.k === "placeholder") return root.getByPlaceholder(loc.v);
+  if (loc.k === "text") return root.getByText(loc.v);
+  if (loc.k === "xpath") return root.locator("xpath=" + loc.v);
+  if (loc.k === "role") {
+    return loc.name ? root.getByRole(loc.role, { name: loc.name }) : root.getByRole(loc.role);
+  }
+  return root.locator(loc.v);
+}
+
+/** Rebuild a Playwright locator from the app's Locator model, INCLUDING the
+ *  user's pinned context.
+ *
+ *  Auto-Heal's candidates now inherit the failing step's context (see
+ *  \`withCtx\` in auto-heal.ts), so this is what an applied heal is actually
+ *  re-run through. Building only the bare locator here would resolve the
+ *  substitute against the whole page while the probe had judged it unique
+ *  within a container — and the heal would raise the very strict-mode violation
+ *  \`identifiesOnly\` exists to prevent.
+ *
+ *  Mirrors \`locatorExpr\` in script-generator.ts clause for clause; that
+ *  correspondence is what e2e/context-parity.spec.ts holds. */
 function fromModel(page, loc) {
   if (!loc) return null;
-  if (loc.k === "testid") return page.getByTestId(loc.v);
-  if (loc.k === "label") return page.getByLabel(loc.v);
-  if (loc.k === "placeholder") return page.getByPlaceholder(loc.v);
-  if (loc.k === "text") return page.getByText(loc.v);
-  if (loc.k === "xpath") return page.locator("xpath=" + loc.v);
-  if (loc.k === "role") {
-    return loc.name ? page.getByRole(loc.role, { name: loc.name }) : page.getByRole(loc.role);
+  const ctx = loc.ctx;
+  let root = page;
+  if (ctx && ctx.within) {
+    let container = baseFromModel(page, ctx.within);
+    if (ctx.withinHasText != null) container = container.filter({ hasText: ctx.withinHasText });
+    root = container;
   }
-  return page.locator(loc.v);
+  let out = baseFromModel(root, loc);
+  if (ctx && ctx.and) {
+    for (let i = 0; i < ctx.and.length; i++) out = out.and(baseFromModel(page, ctx.and[i]));
+  }
+  return out;
 }
 
 /** A locator timeout, as opposed to the app genuinely misbehaving.
@@ -305,7 +342,46 @@ export function installHealing(page) {
     proto[method] = function (...args) {
       const next = orig.apply(this, args);
       try {
-        if (next && this.__glazeKey && !next.__glazeKey) next.__glazeKey = this.__glazeKey;
+        if (next && this.__glazeKey && !next.__glazeKey) {
+          // Two refiners CHANGE the key rather than propagating it, because the
+          // app models what they express: \`.filter({hasText})\` narrows a
+          // container and \`.and()\` adds a predicate, and both are part of what
+          // makes a step's locator that step's locator. The rest (nth, first,
+          // last, or) still propagate unchanged — an index is not a different
+          // locator, which is exactly what makes a .nth() step healable.
+          if (method === "filter" && args[0] && typeof args[0].hasText === "string") {
+            next.__glazeKey = healKeyHasText(this.__glazeKey, args[0].hasText);
+          } else if (method === "and" && args[0] && args[0].__glazeKey) {
+            next.__glazeKey = healKeyAnd(this.__glazeKey, args[0].__glazeKey);
+          } else {
+            next.__glazeKey = this.__glazeKey;
+          }
+        }
+      } catch (e) { /* tagging is best-effort */ }
+      return next;
+    };
+  });
+
+  // Locator-level BUILDERS — \`page.getByTestId("card").getByRole("button")\`.
+  //
+  // These were not patched at all, and the omission silently switched healing
+  // off for every step carrying element context. Only \`page[name]\` was
+  // wrapped, so the CONTAINER got a tag and the chained call — a different
+  // function, on the Locator prototype — returned an untagged locator. The
+  // action then found \`__glazeKey\` undefined and bailed on its first line.
+  //
+  // That is precisely the \`.nth()\` bug documented above, in a new place: the
+  // steps it excluded are again the ones most likely to need healing, because a
+  // step only carries context when the user had to disambiguate it by hand.
+  Object.keys(FACTORIES).forEach(function (name) {
+    const orig = proto[name];
+    if (typeof orig !== "function") return;
+    proto[name] = function (...args) {
+      const next = orig.apply(this, args);
+      try {
+        if (next && this.__glazeKey && !next.__glazeKey) {
+          next.__glazeKey = healKeyWithin(this.__glazeKey, FACTORIES[name](args));
+        }
       } catch (e) { /* tagging is best-effort */ }
       return next;
     };

@@ -36,6 +36,7 @@ import {
   SCRIPT_CHANGES,
   LLM_CONFIG,
   LLM_STATUS,
+  PICKED_ELEMENT,
   REPLAY,
   REPLAY_HISTORY,
   REPLAY_SUMMARIES,
@@ -59,6 +60,7 @@ import type {
   EmitResult,
   CaptureOverheadSummary,
   FlakeReport,
+  Locator,
   RecorderState,
   RunLogs,
   StepStructure,
@@ -1109,6 +1111,28 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     // NOT pretend to capture, and the banner still says so.
     "recorder:getSteps": () => (recorderPreview() ? structuredClone(TESTS[0].steps) : []),
     "recorder:getDebugLogs": () => [],
+    // Element context. The picker's live readout asks the page how many
+    // elements the CURRENT selection matches; there is no page here, so the
+    // answer comes from the fixture's own per-signal counts. Several ticked
+    // signals report the tightest of them, which is what a real intersection
+    // would do for this fixture — every signal here narrows the same two-button
+    // set. A ctx the fixture does not recognise reports the base count rather
+    // than 0: "we could not price this" must never render as "nothing matches".
+    "recorder:countMatches": (p: Payload) => {
+      const ctx = (p?.locator as Locator | undefined)?.ctx;
+      if (!ctx) return PICKED_ELEMENT.contextBaseCount;
+      const key = JSON.stringify(ctx);
+      const exact = PICKED_ELEMENT.contextSignals.find((s) => JSON.stringify(s.ctx) === key);
+      if (exact) return exact.count;
+      const parts = PICKED_ELEMENT.contextSignals.filter(
+        (s) =>
+          (ctx.within && JSON.stringify(s.ctx.within) === JSON.stringify(ctx.within)) ||
+          (ctx.and ?? []).some((a) => JSON.stringify(s.ctx.and?.[0]) === JSON.stringify(a)),
+      );
+      return parts.length > 0
+        ? Math.min(...parts.map((s) => s.count))
+        : PICKED_ELEMENT.contextBaseCount;
+    },
     "recorder:listCookies": () => [],
     "recorder:getState": (): RecorderState =>
       recorderPreview()
@@ -1421,6 +1445,15 @@ export function installPreviewBridge(): PreviewDiagnostics {
     diagnostics.calls.push(channel);
     if (channel === "runner:run") return startFakeRun(args[0] as Payload, state, emit);
     if (channel === "llm:chat") return startFakeChat(emit);
+    // Refine mode, which in the real app pauses the session and waits for the
+    // user to click an element in the training browser. There is no training
+    // browser here, so the pick is delivered on a timer — without it neither
+    // the Refine dialog nor the composer's target picker (nor, now, the
+    // element-context picker) can be reached in a browser tab at all.
+    if (channel === "recorder:startRefine") {
+      setTimeout(() => emit("recorder:picked", structuredClone(PICKED_ELEMENT)), 400);
+      return handlers["recorder:getState"]?.({} as Payload);
+    }
     const handler = handlers[channel];
     if (handler) return handler(args[0] as Payload);
 
@@ -1465,8 +1498,23 @@ export function installPreviewBridge(): PreviewDiagnostics {
     // Native menus have no browser equivalent. Returning "dismissed" leaves
     // the UI in the state it has when a user presses Escape — a real state,
     // and better than a menu that appears to open and then does nothing.
+    //
+    // But "dismissed" is also a DEAD END, and it hides more of this app than it
+    // looks: every step the composer can add is reached through one of these,
+    // so the whole Add-step flow — and with it the target picker, the element
+    // context picker and the per-kind forms — has no address in the preview at
+    // all. `?menu=<label>` picks the item whose label contains that text, so a
+    // flow can be driven to the screen being worked on. Off by default, because
+    // a menu that silently chooses for you is worse than one that closes.
     Menu: {
-      popup: async () => ({ commandId: undefined }),
+      popup: async (options?: { items?: { label?: string; commandId?: number }[] }) => {
+        const want = new URLSearchParams(window.location.search).get("menu");
+        if (!want) return { commandId: undefined };
+        const hit = (options?.items ?? []).find(
+          (i) => i.label && i.label.toLowerCase().includes(want.toLowerCase()),
+        );
+        return { commandId: hit?.commandId };
+      },
       setApplicationMenu: async () => {},
     },
     shell: {

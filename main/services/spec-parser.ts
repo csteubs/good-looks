@@ -25,6 +25,7 @@ import type {
   ConditionKind,
   CookieSpec,
   Locator,
+  LocatorContext,
   LocatorKind,
   Step,
   StepType,
@@ -156,10 +157,19 @@ function stripComments(src: string): string {
   return out;
 }
 
-/** Pull the first string-literal argument out of `fn("x"…)` / `fn('x'…)` / `fn(`x`…)`. */
+/** Pull the first string-literal argument out of `fn("x"…)` / `fn('x'…)` / `fn(`x`…)`.
+ *
+ *  ESCAPE-AWARE, and it has to be. The naive character class stops at the first
+ *  quote of ANY kind, so a value containing one — which the generator writes as
+ *  `"a\"b"` — came back as `a\`, and regenerating produced a different literal
+ *  than the one that was read. A round trip that CHANGES a locator's value is
+ *  worse than one that drops it: the step still runs, still looks right in the
+ *  step list, and points at nothing. Every caller already passes the result
+ *  through `unescapeLit`, so the backslashes this now preserves are undone
+ *  exactly where they always were. */
 function firstStringLiteral(s: string): string | null {
-  const m = s.match(/['"`]([^'"`\n]*)['"`]/);
-  return m ? m[1] : null;
+  const m = s.match(/(['"`])((?:\\.|(?!\1)[^\n])*)\1/);
+  return m ? m[2] : null;
 }
 
 /**
@@ -270,26 +280,31 @@ function parseRoleOptions(s: string): { role?: string; name?: string } {
   return out;
 }
 
+const BUILDER_RE = "getByTestId|getByRole|getByLabel|getByPlaceholder|getByText|locator";
+
 /**
- * Parse a Playwright locator expression starting at `expr` and return the
- * modeled Locator plus the remainder of the string (the action tail).
- * Recognizes getByTestId / getByRole / getByLabel / getByPlaceholder /
- * getByText / locator(...) chains. Returns null if no locator is found.
+ * Parse exactly ONE locator-builder call beginning at `idx`, and return the
+ * modeled Locator plus everything after its closing paren.
+ *
+ * Split out of `parseLocator` because a context-carrying locator contains up to
+ * three builder calls — the container, the target, and each `and` predicate —
+ * and they must be parsed INDEPENDENTLY. `parseRoleOptions` anchors its regex
+ * on the first `getByRole(` in whatever string it is handed, so passing it the
+ * whole expression (as the single-builder version could safely do) would read
+ * the CONTAINER's role and name onto the target the moment a chain had two role
+ * locators in it. It is given this call's text alone.
  */
-function parseLocator(expr: string): { locator: Locator; rest: string } | null {
-  // Match the first locator-builder call.
-  const m = expr.match(
-    /(?:page\.)?(getByTestId|getByRole|getByLabel|getByPlaceholder|getByText|locator)\s*\(/,
-  );
+function parseBuilderAt(s: string, idx: number): { locator: Locator; rest: string } | null {
+  const m = s.slice(idx).match(new RegExp(`^(?:page\\.)?(${BUILDER_RE})\\s*\\(`));
   if (!m) return null;
   const kind = m[1];
-  const openIdx = expr.indexOf("(", m.index);
+  const openIdx = idx + m[0].length - 1;
   // Find the matching close paren of the builder call.
   let depth = 0;
   let end = -1;
-  for (let i = openIdx; i < expr.length; i++) {
-    if (expr[i] === "(") depth++;
-    else if (expr[i] === ")") {
+  for (let i = openIdx; i < s.length; i++) {
+    if (s[i] === "(") depth++;
+    else if (s[i] === ")") {
       depth--;
       if (depth === 0) {
         end = i;
@@ -298,12 +313,11 @@ function parseLocator(expr: string): { locator: Locator; rest: string } | null {
     }
   }
   if (end < 0) return null;
-  const argsStr = expr.slice(openIdx + 1, end);
+  const call = s.slice(idx, end + 1);
+  const argsStr = s.slice(openIdx + 1, end);
   let locator: Locator;
   if (kind === "getByRole") {
-    // parseRoleOptions regex-anchors on `getByRole(...)`, so pass the whole
-    // expression (which contains the builder call), not the args-only slice.
-    const { role, name } = parseRoleOptions(expr);
+    const { role, name } = parseRoleOptions(call);
     locator = { k: "role", role: role ?? "", name };
   } else {
     const map: Record<string, LocatorKind> = {
@@ -317,7 +331,82 @@ function parseLocator(expr: string): { locator: Locator; rest: string } | null {
     const v = firstStringLiteral(argsStr);
     locator = { k, v: v ? unescapeLit(v) : "" };
   }
-  let rest = expr.slice(end + 1);
+  // `locator("xpath=…")` is how the generator writes an xpath — read it back as
+  // one, or a round trip turns every xpath step into a css step whose selector
+  // begins with "xpath=" and matches nothing.
+  if (locator.k === "css" && locator.v?.startsWith("xpath=")) {
+    locator = { k: "xpath", v: locator.v.slice("xpath=".length) };
+  }
+  return { locator, rest: s.slice(end + 1) };
+}
+
+/**
+ * Parse a Playwright locator expression starting at `expr` and return the
+ * modeled Locator plus the remainder of the string (the action tail).
+ * Recognizes getByTestId / getByRole / getByLabel / getByPlaceholder /
+ * getByText / locator(...) chains. Returns null if no locator is found.
+ */
+function parseLocator(expr: string): { locator: Locator; rest: string } | null {
+  // Match the first locator-builder call.
+  const m = expr.match(new RegExp(`(?:page\\.)?(${BUILDER_RE})\\s*\\(`));
+  if (!m || m.index === undefined) return null;
+  const first = parseBuilderAt(expr, m.index);
+  if (!first) return null;
+  let locator = first.locator;
+  let rest = first.rest;
+
+  // ── The user's pinned context, read back off the chain ───────────────────
+  //
+  // THIS IS NOT OPTIONAL POLISH. The comment on `.nth()` below records what
+  // happens when the generator emits something this function cannot read: the
+  // action shape does not match, and the WHOLE STEP is dropped — silently, on
+  // every hand edit of the Script tab and every applied AI fix. `.filter()`,
+  // `.first()` and `.or()` were listed there as refinements the model had no
+  // field for, and were left unclassified for exactly that reason. `within`,
+  // `withinHasText` and `and` now HAVE fields, so they are read, and the pair
+  // is held by check:locator-roundtrip.
+
+  // `.filter({ hasText })` belongs to the CONTAINER, so it is held until a
+  // chained builder proves there is one.
+  let hasText: string | undefined;
+  const fm = rest.match(/^\s*\.filter\(\s*\{\s*hasText\s*:\s*(['"`])((?:\\.|(?!\1).)*)\1\s*\}\s*\)/);
+  if (fm) {
+    hasText = unescapeLit(fm[2]);
+    rest = rest.slice(fm[0].length);
+  }
+
+  // A second builder chained onto the first makes the first a CONTAINER and the
+  // second the target — `page.getByTestId("card").getByRole("button")`.
+  const chained = rest.match(new RegExp(`^\\s*\\.(${BUILDER_RE})\\s*\\(`));
+  if (chained && chained.index !== undefined) {
+    const dot = rest.indexOf(".", chained.index);
+    const inner = parseBuilderAt(rest, dot + 1);
+    if (!inner) return null;
+    const ctx: LocatorContext = { within: locator };
+    if (hasText !== undefined) ctx.withinHasText = hasText;
+    locator = { ...inner.locator, ctx };
+    rest = inner.rest;
+  } else if (hasText !== undefined) {
+    // A `.filter()` with nothing chained after it is a refinement of the TARGET,
+    // which the model still has no field for. Refused rather than dropped: the
+    // step becomes unclassified (a skip the caller reports), instead of
+    // regenerating as a locator that silently matches more than it did.
+    return null;
+  }
+
+  // `.and(page.<builder>)`, repeatable — extra predicates on the target.
+  for (;;) {
+    const am = rest.match(/^\s*\.and\(/);
+    if (!am) break;
+    const inner = parseBuilderAt(rest, am[0].length);
+    if (!inner) return null;
+    const close = inner.rest.match(/^\s*\)/);
+    if (!close) return null;
+    const ctx: LocatorContext = { ...(locator.ctx ?? {}) };
+    ctx.and = [...(ctx.and ?? []), inner.locator];
+    locator = { ...locator, ctx };
+    rest = inner.rest.slice(close[0].length);
+  }
   // `.nth(k)` is part of the LOCATOR, not a refinement to be refused.
   //
   // The generator emits it (`locatorExpr`), and this parser could not read it
@@ -684,15 +773,19 @@ function parseBody(
       const openIdx = i + locVarM[0].length - 1;
       const close = matchParen(src, openIdx);
       if (close < 0) break;
-      const parsed = parseLocator(src.slice(i, close + 1));
+      const parsed = parseLocator(src.slice(i));
       // End of the declaration statement: its `;`, or the line's end when the
-      // model omitted one. Everything between the builder's close paren and
-      // there is a refinement chain we don't model.
+      // model omitted one. Everything between the end of the locator EXPRESSION
+      // and there is a refinement chain we don't model — measured from what
+      // `parseLocator` consumed rather than from the first builder's close
+      // paren, so a container chain reads as part of the locator (which it is)
+      // instead of as an unmodelled refinement.
       const semi = src.indexOf(";", close + 1);
       const nl = src.indexOf("\n", close + 1);
       const stmtEnd =
         semi >= 0 && (nl < 0 || semi < nl) ? semi + 1 : nl < 0 ? src.length : nl;
-      const tail = src.slice(close + 1, stmtEnd).replace(/[\s;]/g, "");
+      const locEnd = parsed ? src.length - parsed.rest.length : close + 1;
+      const tail = src.slice(locEnd, stmtEnd).replace(/[\s;]/g, "");
       if (parsed && tail === "") {
         vars.set(locVarM[1], parsed.locator);
       } else {
@@ -1103,19 +1196,25 @@ function parseBody(
       const locOpen = i + locM[0].length - 1;
       const locClose = matchParen(src, locOpen);
       if (locClose < 0) break;
-      // Parse the locator from the whole statement prefix (from `i`, which
-      // includes the `await page.getByRole(...)` text) — parseLocator's regex
-      // anchors on the builder name, so it needs the name, not just the args
-      // slice that starts at the open paren.
-      // `.nth(k)` sits BETWEEN the builder and the action, so the action match
-      // below has to start past it — otherwise the statement matches no action
-      // shape and the whole step is dropped rather than losing just its index.
-      // `parseLocator` reads the index itself; this only moves the cursor.
-      const nthAfter = src.slice(locClose + 1).match(/^\s*\.nth\(\s*\d+\s*\)/);
-      const locEnd = locClose + (nthAfter ? nthAfter[0].length : 0);
-      const parsed = parseLocator(src.slice(i, locEnd + 1));
+      // Hand `parseLocator` the whole remaining source and let IT say where the
+      // locator ends, rather than slicing to the first builder's close paren and
+      // hoping nothing follows.
+      //
+      // This used to slice, and allow exactly one known continuation after the
+      // slice — `.nth(k)` — because that was the only thing the generator
+      // emitted between the builder and the action. Every other continuation
+      // left `after` starting at `.getByRole(`, which matches no action shape,
+      // so the statement fell through to `skipped++` and the step vanished.
+      // Element context emits three more (`.filter()`, a chained builder, and
+      // `.and()`), so the fix is to stop enumerating them here: the locator
+      // grammar lives in one place, and the caller asks how much it consumed.
+      //
+      // `parsed.rest` is the remainder of the FILE, not of the statement — only
+      // its start is ever matched against, so that is exactly what is wanted.
+      const parsed = parseLocator(src.slice(i));
       if (parsed) {
-        const after = src.slice(locEnd + 1);
+        const locEnd = src.length - parsed.rest.length - 1;
+        const after = parsed.rest;
         const actionM = after.match(new RegExp(`^\\s*\\.(${LOCATOR_ACTION_RE})\\s*\\(`));
         if (actionM) {
           const action = actionM[1];
@@ -1131,6 +1230,18 @@ function parseBody(
         }
         // Locator resolved but chained to an action we don't round-trip
         // (e.g. .hover(), .dblclick()) — count it as a skip.
+        skipped++;
+      } else {
+        // `parseLocator` REFUSED this statement — a refinement it will not read
+        // as a bare locator, today `.filter()` on the target. This branch only
+        // runs when `locM` already matched a builder call, so we know it is a
+        // locator statement, and a locator statement that yields no step must
+        // yield a skip.
+        //
+        // Without this the statement produces no step AND no skip, which is the
+        // exact combination the `const <name> = page.…` branch above documents
+        // as the worst outcome: the spec silently loses a step and the count
+        // that exists to say so agrees that nothing was lost.
         skipped++;
       }
       // Couldn't classify — skip past the locator's close paren to avoid a loop.

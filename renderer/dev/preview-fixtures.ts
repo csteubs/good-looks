@@ -18,6 +18,7 @@ import type {
   Routine,
   BatchTestResult,
   HealListEntry,
+  PickedElement,
   ScriptChangeListEntry,
   RecorderSettings,
   RunRecord,
@@ -827,3 +828,87 @@ export const BATCHES: BatchRecord[] = [
     summary: { total: 3, passed: 1, failed: 1, skipped: 0, ok: false, durationMs: 52_000 },
   },
 ];
+
+/**
+ * The element a refine-mode pick reports — and the only way to see the
+ * element-context picker outside a packaged build.
+ *
+ * `recorder:picked` is pushed by the backend when the user clicks an element in
+ * the training browser. A browser tab has no training browser, so nothing in
+ * the preview could ever produce one, and both consumers of a picked element —
+ * the Refine dialog and the composer's target picker — were unreachable here.
+ *
+ * Deliberately the AMBIGUOUS case: two identical "Edit" buttons in two cards,
+ * which is the shape the whole feature exists for and the one where the picker
+ * opens expanded. `contextBaseCount: 2` is what makes it so, and the per-signal
+ * counts are the ones the real capture script would compute against this DOM.
+ */
+export const PICKED_ELEMENT: PickedElement = {
+  tag: "button",
+  description: "button.btn.edit",
+  candidates: [
+    { k: "role", role: "button", name: "Edit" },
+    { k: "text", v: "Edit" },
+    { k: "css", v: "body > section:nth-of-type(1) > button" },
+    { k: "xpath", v: "/html[1]/body[1]/section[1]/button[1]" },
+  ],
+  css: { color: "rgb(17, 17, 17)", "font-size": "14px" },
+  attributes: { class: "btn edit", "aria-label": "Edit" },
+  ambiguous: true,
+  contextBase: { k: "role", role: "button", name: "Edit" },
+  contextBaseCount: 2,
+  contextSignals: [
+    {
+      kind: "within",
+      name: "within",
+      value: "section",
+      locator: { k: "testid", v: "billing-card" },
+      ctx: { within: { k: "testid", v: "billing-card" } },
+      count: 1,
+      resolves: true,
+    },
+    {
+      kind: "withinHasText",
+      name: "within + text",
+      value: "Billing Edit",
+      locator: { k: "testid", v: "billing-card" },
+      ctx: { within: { k: "testid", v: "billing-card" }, withinHasText: "Billing Edit" },
+      count: 1,
+      resolves: true,
+    },
+    {
+      kind: "attr",
+      name: "data-qa",
+      value: "edit-billing",
+      ctx: { and: [{ k: "css", v: '[data-qa="edit-billing"]' }] },
+      count: 1,
+      resolves: true,
+    },
+    {
+      kind: "attr",
+      name: "aria-label",
+      value: "Edit",
+      ctx: { and: [{ k: "css", v: '[aria-label="Edit"]' }] },
+      count: 2,
+      resolves: false,
+    },
+    {
+      kind: "class",
+      name: "class",
+      value: "edit",
+      ctx: { and: [{ k: "css", v: ".edit" }] },
+      count: 2,
+      resolves: false,
+    },
+    {
+      kind: "class",
+      name: "class",
+      value: "btn",
+      ctx: { and: [{ k: "css", v: ".btn" }] },
+      count: 6,
+      resolves: false,
+    },
+  ],
+  text: "Edit",
+  neighborText: "Billing",
+};

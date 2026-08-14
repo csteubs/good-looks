@@ -62,6 +62,9 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      RULES are shared — the override name, the store markers, the legacy
                      pattern, the order. Both processes write, so a drift is the app
                      reading a library the MCP is not writing to.
+                     heal-key.mjs is the same shape again: how a chained locator's
+                     heal-map key is SPELLED, built from a Locator model on one side
+                     and from factory ARGUMENTS on the other.
                      step-semantics.mjs is the load-bearing one: the single
                      definition of what each assert/wait/condition MEANS (match
                      mode, case rule, whitespace rule), read by the generator,
@@ -133,11 +136,21 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 3563 Vitest tests across 173 files and 67 checks in the chain as of 2026-08-14 (69 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 3605 Vitest tests across 175 files and 68 checks in the chain as of 2026-08-14 (70 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 
-**One spec there is not about windows at all: `assert-parity.spec.ts`.** It is the authority on what a step MEANS, running every row through the real injected replayer AND the real generated source executed by real Playwright, and asserting the two verdicts agree — the property whose absence let "URL contains" generate an assertion that could not pass while the trainer showed it green. It uses a plain browser page rather than `_electron` because its subject is matcher semantics, not a window; it lives here because nothing short of real Playwright can answer the question. **Changing what any assertion, wait or condition emits? Add a row.** The fast counterpart is `main/services/assert-emission.test.ts`, which models the same rules in Node — but a model is only worth what validates it.
+**Two specs there are not about windows at all.** `assert-parity.spec.ts` and
+`context-parity.spec.ts` — the second answers the neighbouring question, not
+"what does this step MEAN" but "which element does it POINT AT". Element context
+is resolved twice, by a DOM walk in the trainer (`ctxFilter` inside `matchesFor`)
+and by real Playwright resolving the chain the generator emits; if those
+disagree, the picker says "matches 1 of 9", the user believes the step is pinned,
+and the run acts on something else. A model of Playwright's chaining rules cannot
+settle it, because the question is whether our model of them is right. **Changing
+what a context clause emits or resolves to? Add a row.**
+
+**`assert-parity.spec.ts`.** It is the authority on what a step MEANS, running every row through the real injected replayer AND the real generated source executed by real Playwright, and asserting the two verdicts agree — the property whose absence let "URL contains" generate an assertion that could not pass while the trainer showed it green. It uses a plain browser page rather than `_electron` because its subject is matcher semantics, not a window; it lives here because nothing short of real Playwright can answer the question. **Changing what any assertion, wait or condition emits? Add a row.** The fast counterpart is `main/services/assert-emission.test.ts`, which models the same rules in Node — but a model is only worth what validates it.
 
 **`check:shell-drift` has retired itself.** It guarded the Glaze tree and the Electron tree against drifting apart, and on 2026-08-09 they became one: `main` carries no `@glaze/*` dependency, and the stale `shell/electron` branch was deleted (preserved as the tag `archive/shell-electron`). The script was written to expect exactly this — with no counterpart ref it prints `nothing to compare` and exits 0, deliberately rather than failing, because a guard that goes red because its problem was *solved* trains people to ignore it. Leave it wired up: it costs nothing and it is what would notice a second shell reappearing.
 

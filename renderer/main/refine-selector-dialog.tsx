@@ -6,7 +6,8 @@
 import * as React from "react";
 import { Badge, Dialog, Text } from "@ui";
 
-import type { Locator, PickedElement } from "../lib/recorder-types";
+import { ElementContextPicker } from "./element-context-picker";
+import type { Locator, LocatorContext, PickedElement } from "../lib/recorder-types";
 
 /** Playwright-style label for a locator candidate. */
 export function formatLocator(l: Locator): string {
@@ -55,10 +56,12 @@ export function RefineSelectorDialog({
   onClose: () => void;
 }) {
   const [selected, setSelected] = React.useState(0);
+  const [ctx, setCtx] = React.useState<LocatorContext | null>(null);
 
   // Reset selection whenever a new element is picked.
   React.useEffect(() => {
     setSelected(0);
+    setCtx(null);
   }, [picked]);
 
   const candidates = picked.candidates ?? [];
@@ -66,7 +69,17 @@ export function RefineSelectorDialog({
 
   function apply() {
     const loc = candidates[selected];
-    if (loc) onApply(loc);
+    if (!loc) {
+      onClose();
+      return;
+    }
+    // Context rides on the locator, so it is applied here rather than as a
+    // second patch — `updateStep` drops a step's fingerprint when its locator
+    // changes, and two separate writes would make that fire twice for one edit.
+    const next: Locator = { ...loc };
+    if (ctx) next.ctx = ctx;
+    else delete next.ctx;
+    onApply(next);
     onClose();
   }
 
@@ -135,6 +148,10 @@ export function RefineSelectorDialog({
             )}
           </div>
         </div>
+
+        {candidates.length > 0 ? (
+          <ElementContextPicker picked={picked} onChange={setCtx} />
+        ) : null}
 
         {cssEntries.length > 0 ? (
           <div className="flex flex-col gap-2">

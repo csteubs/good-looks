@@ -247,6 +247,12 @@ export function registerHandlers(): void {
   );
   ipcMain.handle("recorder:startRefine", async () => recorderService.startRefine());
   ipcMain.handle("recorder:endRefine", async () => recorderService.endRefine());
+  // The element-context picker's live readout. `params` is page-derived data
+  // that came out to the renderer and is going back in, so it is normalized on
+  // the way through like any other IPC-borne locator — see `countMatches`.
+  ipcMain.handle("recorder:countMatches", async (_e, params: { locator?: unknown }) =>
+    recorderService.countMatches(params?.locator),
+  );
   ipcMain.handle("recorder:stop", async () => {
     recorderService.stop();
   });

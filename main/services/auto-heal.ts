@@ -60,7 +60,31 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
   // the locator-only path still works on its own.
   var fp = step.fingerprint || null;
 
+  // What the USER said about which element they meant. Absent on almost every
+  // step, and load-bearing where it is present — see the hard filter in
+  // \`collectElements\` and the inheritance in \`withCtx\`.
+  var stepCtx = (step.locator && step.locator.ctx) || null;
+
   function ci(s) { return String(s == null ? "" : s).toLowerCase(); }
+
+  /** Put the step's context onto a candidate locator.
+   *
+   *  A heal REPLACES the locator, so without this the replacement would drop
+   *  the user's disambiguation — healing a step that said "the Edit button in
+   *  the Billing card" into one that says "an Edit button". That is the
+   *  mis-heal this feature exists to prevent, performed by the feature itself.
+   *
+   *  Rebuilt field-by-field rather than spread, to match how every other
+   *  locator on this path is assembled. */
+  function withCtx(loc) {
+    if (!stepCtx) return loc;
+    var out = { k: loc.k };
+    if (loc.v != null) out.v = loc.v;
+    if (loc.role != null) out.role = loc.role;
+    if (loc.name != null) out.name = loc.name;
+    out.ctx = stepCtx;
+    return out;
+  }
 
   // Reuse the capture script's candidate-locator generator so a healed locator
   // is expressed in the same strategies the recorder understands.
@@ -127,7 +151,22 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
       if (!visible(el)) continue;
       out.push(el);
     }
-    return out;
+    // Drop elements outside the user's pinned container.
+    //
+    // NOT the mechanism that makes context a hard filter — \`withCtx\` is, by
+    // putting the context on every candidate so \`identifiesOnly\` resolves it
+    // scoped, at which point an outside element's candidates match nothing and
+    // are rejected anyway. Removing this line breaks no test, and that was
+    // checked rather than assumed.
+    //
+    // It stays for cost. Everything downstream is per-element and expensive:
+    // \`candidatesFor\`, \`scoreElementIdentity\`, \`scoreGeometry\`, and then an
+    // \`identifiesOnly\` per candidate — each of which scans the document, at
+    // UNCAPPED_SCAN. Excluding an element here removes all of it; excluding it
+    // downstream pays for it first and discards the answer. On the pages this
+    // feature is for — a long list of near-identical rows, where the user
+    // pinned one — that is most of the probe's work.
+    return ctxFilter(out, stepCtx);
   }
 
   // Score a candidate locator against the step's original locator + hints.
@@ -176,65 +215,20 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
     return !!a && !!b && a.k === b.k && a.v === b.v && a.role === b.role && a.name === b.name;
   }
 
-  /** Every element the given locator would resolve to, right now.
-   *
-   *  Mirrors the semantics the replayer and Playwright use, closely enough to
-   *  answer the only question asked of it: does this locator identify exactly
-   *  ONE element? */
-  function resolveAllFor(loc) {
-    var out = [];
-    try {
-      if (loc.k === "testid") {
-        var v = cssEscape(loc.v || "");
-        out = Array.prototype.slice.call(document.querySelectorAll(
-          '[data-testid="' + v + '"], [data-test-id="' + v + '"], [data-test="' + v + '"]'
-        ));
-      } else if (loc.k === "css") {
-        out = Array.prototype.slice.call(document.querySelectorAll(loc.v || ""));
-      } else if (loc.k === "xpath") {
-        var it = document.evaluate(loc.v || "", document, null, 7, null);
-        for (var xi = 0; xi < it.snapshotLength; xi++) out.push(it.snapshotItem(xi));
-      } else {
-        // pwHas, NOT ===. This claimed to mirror Playwright and did the
-        // opposite: getByText / getByLabel / getByPlaceholder / getByRole with
-        // a name all match a case-insensitive SUBSTRING with whitespace
-        // normalized, and comparing exact strings UNDER-counts. Under-counting
-        // is the direction that matters, because it is the one that declares a
-        // candidate unique when it is not — so identifiesOnly approved the
-        // text candidate "Save" on a page that also had "Save changes", and the
-        // applied heal raised the very strict-mode violation that function
-        // exists to prevent.
-        var alls = Array.prototype.slice.call(document.querySelectorAll("*"));
-        for (var i = 0; i < alls.length; i++) {
-          var el = alls[i];
-          if (loc.k === "text") {
-            if (pwHas(el.textContent, loc.v)) out.push(el);
-          } else if (loc.k === "label") {
-            if (pwHas(labelFor(el), loc.v)) out.push(el);
-          } else if (loc.k === "placeholder") {
-            if (el.getAttribute && pwHas(el.getAttribute("placeholder"), loc.v)) out.push(el);
-          } else if (loc.k === "role") {
-            if (roleOf(el) !== loc.role) continue;
-            if (loc.name == null || loc.name === "" || pwHas(accName(el), loc.name)) out.push(el);
-          }
-        }
-        // "Smallest element containing the text" — Playwright's text engine
-        // returns the DEEPEST match, so without this every ancestor up to
-        // <body> counts and nothing is ever unique. The old leaf-only test
-        // (el.children.length === 0) was a rough stand-in for this and got
-        // the common case of a button wrapping a span wrong.
-        if (loc.k === "text") {
-          out = out.filter(function (el) {
-            for (var j = 0; j < out.length; j++) {
-              if (out[j] !== el && el.contains(out[j])) return false;
-            }
-            return true;
-          });
-        }
-      }
-    } catch (e) {}
-    return out;
-  }
+  // \`resolveAllFor\` used to live here: a fourth near-copy of \`matchesFor\`,
+  // written against the same Playwright semantics and sharing no code with it.
+  // It is gone, and \`matchesFor\` from UNIQUENESS_HELPERS — already injected
+  // above — answers the question instead.
+  //
+  // Collapsing it was not tidiness. Element context has to be honoured by
+  // whatever decides "does this locator identify one element", and with two
+  // implementations that is two places to teach and one to forget; the one that
+  // forgot would disagree with the recorder about which element a step means,
+  // and the disagreement would only ever surface on a run. The comments the old
+  // copy carried — pwHas rather than \`===\` because exact comparison UNDER-counts
+  // and under-counting is what ships a locator we have declared safe, and the
+  // smallest-element rule for text — are the same comments \`matchesFor\` carries,
+  // because they were learned twice.
 
   /** A heal candidate has to identify ONE element.
    *
@@ -243,9 +237,15 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
    *  ELEMENT, but the locator it proposed matched both — so applying it would
    *  raise a Playwright strict-mode violation, or in the trainer's replayer
    *  (which takes the first match) silently act on the wrong button. An
-   *  ambiguous candidate is not a heal, so it is not offered. */
+   *  ambiguous candidate is not a heal, so it is not offered.
+   *
+   *  Judged WITH the step's context, because the candidates carry it (see
+   *  \`withCtx\`). That is what lets a locator which is hopelessly ambiguous on
+   *  the page — \`getByRole("button", { name: "Edit" })\` on a page of cards —
+   *  qualify as a heal when the user has said which card. Before context, the
+   *  only way to heal such a step was an index or a generated css path. */
   function identifiesOnly(loc, el) {
-    var hits = resolveAllFor(loc);
+    var hits = matchesFor(loc);
     return hits.length === 1 && hits[0] === el;
   }
 
@@ -348,7 +348,12 @@ export function buildHealProbeScript(step: Step, pastHints: string[]): string {
     // we happen to be scoring.
     var identity = scoreElementIdentity(el) + scoreGeometry(el);
     for (var j = 0; j < cands.length; j++) {
-      var c = cands[j];
+      // The step's context rides on every candidate from here on: it is what
+      // \`identifiesOnly\` judges uniqueness against, and it is what the applied
+      // heal will carry. Scoring still compares the BARE locator, because the
+      // context is the same on all of them and says nothing about which
+      // candidate resembles the recorded element.
+      var c = withCtx(cands[j]);
       // Skip the exact original locator (it already failed).
       if (sameLocator(c, orig)) continue;
       // Skip anything that doesn't pin down this exact element.

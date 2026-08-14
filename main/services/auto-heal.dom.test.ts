@@ -50,6 +50,23 @@ function resolve(loc: Locator): Element | null {
           (el) => el.textContent?.trim() === loc.name || el.getAttribute("aria-label") === loc.name,
         ) ?? null
       );
+    // `labelFor` in the capture script reads `label[for]`, an enclosing
+    // `<label>`, then `aria-label` — so a label candidate is generated for an
+    // element carrying any of the three, and a resolver missing this branch
+    // reports a perfectly good candidate as pointing at nothing.
+    case "label":
+      return (
+        [...document.querySelectorAll("input, textarea, select, button, [aria-label]")].find(
+          (el) => {
+            if (el.getAttribute("aria-label") === loc.v) return true;
+            if (el.id) {
+              const lab = document.querySelector(`label[for="${el.id}"]`);
+              if (lab?.textContent?.trim() === loc.v) return true;
+            }
+            return el.closest("label")?.textContent?.trim() === loc.v;
+          },
+        ) ?? null
+      );
     default:
       return null;
   }
@@ -334,5 +351,128 @@ describe("fingerprint-guided scoring", () => {
     );
     const proposedSame = cands.some((c) => c.locator.k === "testid" && c.locator.v === "same");
     expect(proposedSame).toBe(false);
+  });
+});
+
+// ── Element context: the user's own disambiguation, as a HARD filter ───────
+//
+// The decision these pin: a candidate outside the pinned container is not a
+// worse candidate, it is not a candidate. The alternative — scoring it down —
+// lets it win whenever nothing else scores, which is exactly the run where a
+// heal is most likely to be wrong and least likely to be noticed. A mis-heal
+// usually SUCCEEDS: clicking the wrong button rarely throws, so the step is
+// marked passed and the test quietly stops testing what it was written to test.
+describe("element context", () => {
+  /** Two cards, each with an identical Edit button, and a stale testid on the
+   *  step. Without context there is nothing to tell the two apart. */
+  const TWO_CARDS = `
+    <section data-testid="billing-card">
+      <h3>Billing</h3>
+      <button data-testid="edit-billing" aria-label="Edit">Edit</button>
+    </section>
+    <section data-testid="shipping-card">
+      <h3>Shipping</h3>
+      <button data-testid="edit-shipping" aria-label="Edit">Edit</button>
+    </section>`;
+
+  it("offers nothing from outside the pinned container", () => {
+    document.body.innerHTML = TWO_CARDS;
+    const cands = probe(
+      step({
+        type: "click",
+        locator: {
+          k: "testid",
+          v: "gone",
+          ctx: { within: { k: "testid", v: "billing-card" } },
+        },
+      }),
+    );
+    expect(cands.length).toBeGreaterThan(0);
+    for (const c of cands) {
+      const el = resolve(c.locator);
+      expect(el, `${JSON.stringify(c.locator)} resolved to nothing`).not.toBeNull();
+      expect(
+        document.querySelector('[data-testid="billing-card"]')?.contains(el as Node),
+        `${JSON.stringify(c.locator)} is outside the pinned container`,
+      ).toBe(true);
+    }
+  });
+
+  it("excludes an outside element even when it would outrank everything", () => {
+    // The shipping button is an EXACT testid match for the failed locator, so
+    // locator scoring puts it first by a wide margin. The user said Billing.
+    document.body.innerHTML = `
+      <section data-testid="billing-card"><button data-testid="edit-b">Edit</button></section>
+      <section data-testid="shipping-card"><button data-testid="edit-x">Edit</button></section>`;
+    const cands = probe(
+      step({
+        type: "click",
+        locator: {
+          k: "testid",
+          v: "edit-x",
+          ctx: { within: { k: "testid", v: "billing-card" } },
+        },
+        fingerprint: {
+          tag: "button",
+          description: "button",
+          candidates: [{ k: "testid", v: "edit-x" }],
+          attributes: {},
+          depth: 3,
+        },
+      }),
+    );
+    const leaked = cands.some((c) => {
+      const el = resolve(c.locator);
+      return !!el && document.querySelector('[data-testid="shipping-card"]')?.contains(el);
+    });
+    expect(leaked, "a candidate from the excluded card was offered").toBe(false);
+  });
+
+  it("every proposed candidate carries the context forward", () => {
+    // A heal REPLACES the locator. Without inheritance the substitute would drop
+    // the user's disambiguation — healing "the Edit button in the Billing card"
+    // into "an Edit button", which is the mis-heal this feature exists to
+    // prevent, performed by the feature itself.
+    document.body.innerHTML = TWO_CARDS;
+    const ctx = { within: { k: "testid" as const, v: "billing-card" } };
+    const cands = probe(step({ type: "click", locator: { k: "testid", v: "gone", ctx } }));
+    expect(cands.length).toBeGreaterThan(0);
+    for (const c of cands) {
+      expect(c.locator.ctx, `${JSON.stringify(c.locator)} lost its context`).toEqual(ctx);
+    }
+  });
+
+  it("context makes an otherwise-ambiguous locator healable", () => {
+    // The whole payoff. `getByRole("button", { name: "Edit" })` matches both
+    // cards, so uniqueness rejects it outright — the sibling test above pins
+    // exactly that for the un-scoped case. Scoped to one card it identifies a
+    // single element, so it becomes offerable, and the step heals to a locator
+    // that READS like what the user meant rather than to an index or a
+    // generated css path.
+    document.body.innerHTML = TWO_CARDS;
+    const cands = probe(
+      step({
+        type: "click",
+        locator: {
+          k: "testid",
+          v: "gone",
+          ctx: { within: { k: "testid", v: "billing-card" } },
+        },
+      }),
+    );
+    const role = cands.find((c) => c.locator.k === "role" && c.locator.name === "Edit");
+    expect(role, "a scoped role candidate is offered").toBeDefined();
+
+    const unscoped = probe(step({ type: "click", locator: { k: "testid", v: "gone" } }));
+    const unscopedRole = unscoped.find((c) => c.locator.k === "role" && c.locator.name === "Edit");
+    expect(unscopedRole, "…and is NOT offered without the context").toBeUndefined();
+  });
+
+  it("a step with no context is unaffected", () => {
+    // The overwhelming majority of steps. Context must cost them nothing.
+    document.body.innerHTML = TWO_CARDS;
+    const cands = probe(step({ type: "click", locator: { k: "testid", v: "gone" } }));
+    expect(cands.length).toBeGreaterThan(0);
+    for (const c of cands) expect(c.locator.ctx).toBeUndefined();
   });
 });
