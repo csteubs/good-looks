@@ -60,9 +60,13 @@ describe("extractName", () => {
 });
 
 describe("extractUrl", () => {
+  // An absolute target now comes back as `URL.href` — every URL this module
+  // yields goes through the same gate a typed-in base URL does, which is what
+  // keeps a `file:` or `javascript:` goto from ever reaching the record. The
+  // visible cost is normalization: a bare origin gains its trailing slash.
   it("takes the first goto", () => {
     expect(extractUrl('await page.goto("https://a.test");await page.goto("https://b.test");')).toBe(
-      "https://a.test",
+      "https://a.test/",
     );
   });
 
@@ -71,8 +75,43 @@ describe("extractUrl", () => {
   });
 
   it("handles all quote styles", () => {
-    expect(extractUrl("page.goto('https://s.test')")).toBe("https://s.test");
-    expect(extractUrl("page.goto(`https://b.test`)")).toBe("https://b.test");
+    expect(extractUrl("page.goto('https://s.test')")).toBe("https://s.test/");
+    expect(extractUrl("page.goto(`https://b.test`)")).toBe("https://b.test/");
+  });
+
+  it("still prefers an absolute goto over the project's base URL", () => {
+    // A spec that names its own destination is not asking for one.
+    expect(extractUrl('await page.goto("https://a.test/x");', "https://base.test/")).toBe(
+      "https://a.test/x",
+    );
+  });
+
+  it("resolves a relative goto against the project's base URL", () => {
+    // `page.goto("/cart")` is the idiomatic way to write a navigation WITH a
+    // baseURL, so this is what most imported suites look like.
+    expect(extractUrl('await page.goto("/cart");', "https://shop.test/")).toBe(
+      "https://shop.test/cart",
+    );
+  });
+
+  it("returns empty for a relative goto with no base URL, rather than '/'", () => {
+    // Storing "/" would look like a URL to everything downstream that treats
+    // this field as one — the sidebar, the run header, the MCP payload — and
+    // there is no honest answer until somebody supplies a base URL.
+    expect(extractUrl('await page.goto("/cart");')).toBe("");
+  });
+
+  it("finds a goto wrapped in the project's own navigation helper", () => {
+    // A `.goto(` pattern matches `page.goto(` and nothing else, so a suite that
+    // routes every navigation through `gotoWithRetry(page, "/cart")` looked
+    // like it had no navigations at all — and therefore no need of a base URL.
+    expect(extractUrl('await gotoWithRetry(page, "/cart");', "https://shop.test/")).toBe(
+      "https://shop.test/cart",
+    );
+  });
+
+  it("falls back to the base URL itself when the spec names no navigation", () => {
+    expect(extractUrl("await page.click('#go');", "https://shop.test/")).toBe("https://shop.test/");
   });
 });
 

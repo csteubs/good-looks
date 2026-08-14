@@ -427,6 +427,30 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       if (test) test.stepsDivergedDismissed = p?.dismissed === false ? undefined : true;
       return test;
     },
+    /** Validates the way the real handler does — empty clears, a non-URL is
+     *  refused — because the field's error path (revert + toast) is the half
+     *  worth looking at, and a preview that accepted anything would never show
+     *  it. */
+    "tests:setBaseUrl": (p) => {
+      const test = findTest(p?.id);
+      if (!test) return null;
+      const raw = typeof p?.baseUrl === "string" ? p.baseUrl.trim() : "";
+      if (raw === "") {
+        delete test.baseUrl;
+        return test;
+      }
+      let url: URL;
+      try {
+        url = new URL(raw);
+      } catch {
+        throw new Error("Invalid base URL: " + raw);
+      }
+      if (url.protocol !== "http:" && url.protocol !== "https:") {
+        throw new Error("Invalid base URL: " + raw);
+      }
+      test.baseUrl = url.href;
+      return test;
+    },
     "tests:setTags": (p) => {
       const test = findTest(p?.id);
       if (test && Array.isArray(p?.tags)) test.tags = p.tags as string[];

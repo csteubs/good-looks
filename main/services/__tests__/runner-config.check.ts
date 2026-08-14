@@ -69,6 +69,10 @@ const required: [string, string][] = [
   ["outputDir", 'outputDir: process.env.PW_OUTPUT_DIR || "test-results"'],
   ["timeout", "timeout: Number(process.env.PW_TEST_TIMEOUT_MS || 60000)"],
   ["slowMo", "slowMo: Number(process.env.PW_SLOWMO_MS || 0)"],
+  // An imported spec navigates relative to a baseURL that lived in ITS project's
+  // config. Without this line the config declares none and every such
+  // navigation fails in Playwright's protocol layer, naming neither.
+  ["baseURL", "baseURL: process.env.PW_BASE_URL || undefined"],
 ];
 for (const [name, line] of required) {
   assert(playwrightConfigSource.includes(line), `the config still sets ${name} from the environment`);
@@ -90,6 +94,28 @@ for (const [label, relPath] of [
 ] as const) {
   const src = readFileSync(resolve(process.cwd(), relPath), "utf8");
   assert(src.includes("PW_OUTPUT_DIR"), `${label} passes a per-run PW_OUTPUT_DIR`);
+}
+
+// Same shape, same reason, for the base URL an imported test runs against.
+// Setting it in one writer only is the drift this whole file exists to catch:
+// the same imported test would pass from the app and fail from the MCP, or the
+// reverse, depending on nothing the user can see.
+for (const [label, relPath] of [
+  ["the app runner", "main/services/playwright-runner.ts"],
+  ["the MCP run planner", "mcp/run-plan.mjs"],
+] as const) {
+  const src = readFileSync(resolve(process.cwd(), relPath), "utf8");
+  assert(src.includes("PW_BASE_URL"), `${label} passes the test's PW_BASE_URL`);
+}
+
+// The value has to come off the RECORD in both. A hard-coded or globally
+// configured base URL would be one address for a library of imported projects.
+for (const [label, relPath, needle] of [
+  ["the app runner", "main/services/playwright-runner.ts", "rec.baseUrl"],
+  ["the MCP server", "mcp/server.mjs", "test.baseUrl"],
+] as const) {
+  const src = readFileSync(resolve(process.cwd(), relPath), "utf8");
+  assert(src.includes(needle), `${label} reads the base URL from the test record`);
 }
 
 if (failures > 0) {

@@ -915,6 +915,46 @@ for (const c of WAIT_UNTIL_CASES) {
   assertEqual(parsedValue.skipped, 1, "…and is reported as unclassified rather than ignored");
 }
 
+// ── 21. `.nth(k)` survives the round trip ──────────────────────────────────
+//
+// The generator emits it (`locatorExpr`) and this parser could not read it, so
+// `page.getByText("Save").nth(1).click()` matched no action shape and the WHOLE
+// STEP was dropped. Not its index — the step. Every hand edit of the Script tab
+// and every applied AI fix silently deleted the recorder's own output, for
+// exactly the steps that needed an index: the ones where nothing unique existed.
+//
+// Checked across all four shapes, because the action, assertion and wait paths
+// reach `parseLocator` differently and only one of them happened to work.
+{
+  const nthSteps: Step[] = [
+    step({ type: "click", locator: { k: "text", v: "Save", nth: 1 } }),
+    step({ type: "assert", assert: "visible", locator: { k: "text", v: "Row", nth: 2 } }),
+    step({ type: "fill", value: "x", locator: { k: "role", role: "textbox", name: "Email", nth: 0 } }),
+    step({ type: "wait", waitUntil: "visible", locator: { k: "testid", v: "t", nth: 3 } }),
+  ];
+  for (const s of nthSteps) {
+    const src = generateSpec({ name: "nth", url: "https://example.com", steps: [s] });
+    const parsed = parseSpecDetailed(src);
+    const got = parsed.steps.filter((x) => x.type !== "goto")[0];
+    assertEqual(got?.type, s.type, `a ${s.type} step with .nth() survives the round trip`);
+    assertEqual(got?.locator?.nth, s.locator?.nth, `…and keeps its index (${s.type})`);
+    assertEqual(parsed.skipped, 0, `…and is not counted as unclassified (${s.type})`);
+  }
+
+  // And it regenerates byte-identically, which is what makes an edit safe.
+  const chain = [
+    step({ type: "click", locator: { k: "text", v: "Save", nth: 1 } }),
+    step({ type: "assert", assert: "text", text: "Done", locator: { k: "testid", v: "out", nth: 0 } }),
+  ];
+  const once = generateSpec({ name: "nth", url: "https://example.com", steps: chain });
+  const twice = generateSpec({
+    name: "nth",
+    url: "https://example.com",
+    steps: parseSpecDetailed(once).steps,
+  });
+  assertEqual(twice, once, "a spec with .nth() locators regenerates byte-identically");
+}
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed`);
   process.exit(1);

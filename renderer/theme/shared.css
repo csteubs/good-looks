@@ -125,6 +125,79 @@
   white-space: nowrap;
 }
 
+/* ── The step list ────────────────────────────────────────────────────
+   The column every step list is drawn in — the detail view's Steps tab, its
+   Edit Steps editor, and both trainers. One class because the four disagreed:
+   the editor's list had no scroll container at all, so a long test's steps
+   simply stopped at the bottom of the window with nothing to reach them, and
+   the same list truncated a long step with an ellipsis while its neighbours
+   sat inside a viewport that could have scrolled to it.
+
+   THE WIDTH SITS ON THE ROW, NOT THE COLUMN, and that is a correction rather
+   than a preference: `min-width: max-content` on the column looks equivalent
+   and is not. Percentage widths inside it resolve against the STRETCHED
+   column, so `> * { min-width: 100% }` — there to keep short rows full-width —
+   handed the same 594px to the trainer's step composer, a form that belongs to
+   the 360px panel, and pushed half of its controls off the edge behind a
+   horizontal scroll. `e2e/panel-overflow.spec.ts` is what caught it; nothing
+   short of a real window could.
+
+   So the row sizes itself: `width: max-content` extends it past the viewport
+   when its step is long, `min-width: 100%` keeps a short one filling the
+   column so hover, selection and the status rail still span the list rather
+   than stopping at the end of their own text. Everything else in the list —
+   the composer, the insert cursors, the empty-state note — belongs to the
+   viewport and is left alone. The row's description drops `flex: 1` for the
+   same reason the row takes `max-content`: a flex item with a zero basis
+   contributes nothing to its row's max-content width, so the row would size to
+   its chrome and the long text would be clipped with no way to scroll to it,
+   which is strictly worse than the ellipsis it replaced.
+
+   The tail is deliberate empty space, not a margin nobody noticed. Steps are
+   dragged to reorder and appended from "+ Add step", and both need somewhere
+   to drop past the last row — a list that ends flush against the bottom edge
+   gives the final position no target. */
+.gl-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  padding-bottom: 96px;
+}
+
+.gl-step-list-row {
+  width: max-content;
+  min-width: 100%;
+}
+
+/* Both trainers. Their rows are already separated by their own insert cursors,
+   so the column's gap would be added on top of one — and the list ends in a
+   cursor gap plus the composer, which is the drop target the tail exists to
+   provide everywhere else, so it needs far less of one. The trainer also
+   follows the bottom as steps arrive, and every pixel of tail is a pixel the
+   newest step is pushed up by. */
+.gl-step-list--tight {
+  gap: 0;
+  padding-bottom: 40px;
+}
+
+.gl-step-list .gl-mono-value {
+  flex: 0 0 auto;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* A long step's row runs past the right edge of the viewport, taking its own
+   controls with it — a horizontal scroll to reach the ✕ on the row you are
+   already looking at is a worse trade than the ellipsis this replaced. Sticky
+   pins them to the scrollport instead. `right: 0` and no background: the
+   buttons only appear on hover, and a hovered row has a fill for them to sit
+   on. */
+.gl-step-list .gl-step-row-actions {
+  position: sticky;
+  right: 0;
+}
+
 /* ── Step-row furniture ───────────────────────────────────────────────
    The app's step row (renderer/main/step-row.tsx) is not the theme's `StepRow`
    primitive yet — it carries drag-to-reorder, inline editing, per-step replay

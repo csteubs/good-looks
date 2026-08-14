@@ -107,6 +107,230 @@ second opinion. Verified by deleting the mapping again and watching the check go
 red.
 
 
+### 2026-08-14 — An imported suite arrived without the one line that made it runnable
+
+`main/services/imported-config.ts` (new), `main/services/import-service.ts`,
+`main/services/playwright-runner.ts`, `main/handlers/index.ts`,
+`main/recorder/types.ts`, `main/services/duplicate-test.ts`,
+`shared/playwright-config-source.mjs`, `mcp/run-plan.mjs`, `mcp/server.mjs`,
+`renderer/lib/import-warnings.ts` (new), `renderer/main/test-detail-view.tsx`.
+
+Importing a real Playwright suite succeeded and every test in it failed. The
+report was a Playwright protocol error about a `page.goto` that could not resolve
+`"/"`, and it took a whole AI-debug session to read — the model correctly
+identified a missing base URL and then, reasonably, concluded the spec was fine
+and the environment was broken.
+
+It was right. The suite navigated relatively — `gotoWithRetry(page, "/")` — the
+way a suite written WITH a `baseURL` is supposed to. That `baseURL` lived in the
+project's `playwright.config`, and import copies the spec and its relative-import
+siblings and nothing else. Every imported spec then ran under this app's own
+generated config, which declares no `baseURL` at all.
+
+**What the import was missing was not a file, it was the config's meaning.**
+Copying the config wholesale is not an option: this app runs one shared config
+for every test in the library, and the source config also carries `projects`,
+`webServer` and reporters that would be wrong or dangerous here. So the import
+now reads that file and carries the two fields that decide whether the test can
+run: `baseURL`, and the top-level `timeout` (a suite written against 120s failed
+at this app's 30s default for reasons that had nothing to do with the test, which
+would have been the very next bug reported).
+
+**The config is read as text and never evaluated.** `import()`ing a
+`playwright.config.ts` from a cloned repository executes it at IMPORT time —
+before any test is run, before the user has done anything but look, and with none
+of the isolation a run gets. That is the same boundary the import sandbox and the
+branch-name validator already defend, so the parser is deliberately dumb: string
+literals, plus the `process.env.X || "…"` shape most checked-in configs use.
+A config that COMPUTES its base URL yields nothing, and the answer to that is the
+user typing one into a field, not a cleverer parser. Both paths — parsed and
+typed — go through one `normalizeBaseUrl`, because the value ends up in the
+environment of a Playwright process.
+
+**The search deliberately looks above the folder the user picked.** The suite
+this was found on was imported twice, once from the repository root and once from
+`tests/` — and in the second case the config sits one level above the scan root.
+Refusing to look up would have made the common layout the broken one. The walk is
+bounded (3 levels past the root, stopping after a `package.json`) because "walk
+up until something matches" ends at a stray config in a home directory. It reads
+a fixed filename we chose and copies nothing, which is a strictly weaker act than
+the sibling copy the import already bounds.
+
+**One definition of "navigates relatively", used three times.** Looking for
+`page.goto(` alone finds nothing in a suite that wraps navigation in a helper —
+which is most real suites, and was this one. So `navigationTargets` matches any
+`goto`-ish call and requires the literal to LOOK like a location, so that
+`page.goto(url, { waitUntil: "domcontentloaded" })` doesn't confidently report a
+navigation to `"domcontentloaded"`. The import warning, the record's URL, and the
+runner's refusal all read that one answer; two of them disagreeing would flag a
+test at import that then ran fine, or the reverse.
+
+**A run that cannot work is refused before it is spawned.** With no base URL and
+relative navigation, the run now stops with three sentences naming the field to
+fill in, instead of spending the full timeout to produce the protocol error this
+started with. It is recorded as a failed run, because it is one.
+
+**But it asks the source project first.** Every test imported before this
+existed is in exactly the broken state — `sourceDir` and nothing else — and a
+library imported in one action would have needed the same URL typed into it once
+per test. `tests:repairImports`, the obvious place to hang a fix, turns out to
+have no UI at all. So a refusal first re-reads the config of the project the test
+came from, and if it is still on disk and still says, adopts the value and runs.
+Deferred, not magic: it happens only where the alternative is refusing, it is
+announced in the output with the URL and where it came from, it is saved so it
+happens once, and it never overwrites a base URL the user set by hand.
+
+`PW_BASE_URL` is set by the app runner AND `mcp/run-plan.mjs`, and
+`check:runner-config` pins both. One writer would mean the same imported test
+passing from the app and failing from the MCP depending on nothing the user can
+see — the exact drift that check already existed for.
+
+**The refusal is app-side only, deliberately.** Answering "does this test need a
+base URL?" means reading the test's files, and `shared/` is pure by rule — no
+`fs` — so a copy of that scan would have to live in `mcp/` and drift. The MCP now
+passes the base URL, which is the bug; what it does not do is explain the failure
+when there isn't one. That is the right side to leave thin: the app is where
+somebody is looking at a screen with a field on it.
+
+
+### 2026-08-14 — A menu placed before its contents arrive, and five notes rescued off a dead branch
+
+Two unrelated things, landed together because both were found the same way:
+auditing every branch in this repo against `main` to see what had never merged.
+
+**The flyout was anchored by the wrong edge.** `RailFlyout` computed a `top`
+from the panel's measured height. That is correct only when the contents are
+known at placement time, and this menu's contents are *never* known then —
+nothing is fetched until the first open, so the panel is positioned while it
+still reads "Reading branches…" and then gets five rows taller. Pinned by
+`top`, that growth goes downward, off the bottom of the window. It had already
+cost a second measure pass and a re-measure on resize and was still wrong.
+Anchoring `bottom` makes upward growth a property of the layout instead of a
+number to keep recomputing: whatever height the panel takes, its bottom stays on
+the row and its top rises, with `maxHeight` bounding it against the window's top
+margin so a long list scrolls inside itself.
+
+**jsdom cannot see this, which is why it survived.** `getBoundingClientRect`
+returns zeros there, so every placement number is 0 and the tests pass against
+both the fixed and the broken version. The unit test therefore pins the
+*contract* — that placement is expressed as `bottom`, never `top` — rather than
+a measured pixel, because the pixel is unobservable in the only environment that
+runs it.
+
+**The geometry itself is now pinned in `e2e/rail-flyout-placement.spec.ts`**,
+where the window has a height. Reverting the fix there measures the panel's
+bottom edge at **821px against a 668px window** — 153px of menu below the
+bottom of the app. That number is the whole argument for the file existing: it
+is the same bug, in the same code, that the unit suite reports as green.
+
+Two things that test does deliberately. It **forces** the growth by appending a
+filler element rather than waiting for the branch list, because on a repo whose
+branches resolve quickly the panel is already at full height by the first
+measurement and "it got taller" then passes with nothing having moved — measured
+here, both readings were identical, which is exactly the vacuous assertion this
+was meant to replace. And it asserts the contract AND the geometry, because with
+the contract assertion alone a future reader cannot tell the test would still
+catch a placement that is wrong for some other reason.
+
+**And the notes.** `claude/transcribe-notes-plan-work-e36d77` held five design
+and research documents written 2026-08-08 from working notes, plus a "groups"
+feature that `main` later shipped under the name Routines. The documents came
+across; the feature did not. Carrying prose is nearly free and the reasoning in
+it exists nowhere else — the rejected alternatives in `LINEAR.md`, and
+`VISUAL-TUNING.md`'s argument that visual flake is *not* a tuning problem, which
+is still unbuilt advice. Carrying the code would have meant reconciling a
+superseded feature against its own replacement for no gain.
+
+Each document keeps its original `Status:` line and gains a dated banner saying
+what has shipped since, verified against the tree on the day it landed. That
+split matters: rewriting the status line would destroy the record of what was
+believed when the note was written, while leaving it alone would put "nothing
+built" above a description of `main/services/issue-tracker/`, which exists. A
+document that lies about the code is worse than no document.
+
+
+### 2026-08-14 — The AI features believed things about this app that stopped being true
+
+`renderer/lib/llm-prompts.ts`, `renderer/lib/parse-llm-response.ts`,
+`renderer/lib/ai-log-request.ts`, `renderer/lib/ai-log-payload.ts`,
+`renderer/lib/recorder-types.ts`, `renderer/main/ai-debug-panel.tsx`,
+`main/services/spec-parser.ts`, `shared/triage.mjs`,
+`shared/playwright-config-source.mjs`, `renderer/lib/llm-knowledge.test.ts` (new).
+
+Asked whether the step-semantics work suggested anything for the AI features, the
+honest answer turned out to be that the LLM stack was a **fourth copy** of the
+conventions that change had just collapsed into one — written in prose, in a
+hand-copied `Set`, and in nothing that compared them to the code.
+
+**A step the model wrote could vanish with no error.** The AI-steps prompt tells
+the model it may emit `urlEndsWith`; `parse-llm-response.ts` kept its own
+`ASSERT_KINDS` and omitted `urlEndsWith`, `urlIs` and `css`. `validateStep`
+drops an assert step with no recognised kind, so those steps were deleted
+silently — the user got fewer steps than the model produced and nothing said
+why. Measured: of four page-level asserts emitted exactly as the prompt asks,
+one survived. The kinds now derive from one list, and the prompt's schema is
+GENERATED from it, so a kind added to the app is reachable on the same commit.
+
+**`.nth(k)` did not survive a round trip, and lost the whole step.** The
+generator emits it; `spec-parser.ts` had no case for it, so
+`page.getByText("Save").nth(1).click()` matched no action shape and was dropped
+entirely on re-parse — on every hand edit of the Script tab and every applied AI
+fix, for exactly the steps that needed an index. Deliberately not treated like
+`.first()`/`.filter()`/`.or()`, which stay unclassified because the model has no
+field for them and storing the base locator would regenerate a selector matching
+the wrong element. `nth` HAS a field with the same meaning.
+
+**And the model was shown a locator that could not produce the failure.**
+`locatorToPrompt` dropped `.nth()` too, in both the step-debug prompt and the
+structure payload. That got worse this week rather than better: propagating
+`__glazeKey` through `nth()` means those steps now record `matches.json` for the
+first time, and `recordMatches` evaluates the REFINED locator — so a `.nth(3)`
+step on a page with three matches reports zero, and the payload said "the locator
+resolved to no elements at all". With the index hidden, "matched nothing" reads
+as "the element is gone" when it means "the index is one past the end".
+
+**The trainer grew two failure modes its prompt had never heard of.** Strict-mode
+ambiguity and occlusion are both new this week, and the step-debug prompt's four
+causes had no room for either — the only bullet that fits "matched 2 elements" is
+"the locator no longer matches the page", whose fix is the inversion of the
+truth. The run-level prompt's strict-mode paragraph could not simply be copied:
+it tells the model to read the disambiguated locators Playwright prints after
+`aka`, and the TRAINER's error has none, so the copy would send it looking for
+something absent. The new text says so explicitly.
+
+**`triage_run` recommended the one fix guaranteed not to work.** A strict-mode
+failure's text contains "Timeout … exceeded" and "waiting for locator", so it
+matched `WAIT_FAILURE`, came out as `clean-wait`, and advised "re-pick the
+failing step's element" — which hands back the same non-unique locator.
+Ambiguity is now its own verdict, checked first, pointing at `get_step_matches`.
+
+**The trace comment was mine and it was wrong.** `trace: "retain-on-failure"`
+landed with a comment claiming it answered the AI-debug session's request for
+page evidence. It does not: an app run writes the trace into `PW_OUTPUT_DIR`,
+which the runner deletes in its `finally`, as does the MCP server, and nothing
+reads it. Worse, Playwright prints the path into stdout and the prompt keeps the
+tail of that output — so the model received a pointer to a deleted file while
+being told the page no longer existed. The setting is kept, because the config is
+also what a HAND-RUN outside the app gets and a trace is the best failure
+artifact Playwright produces; the comment now says that and nothing more, and
+`NOTHING_AVAILABLE` tells the model the pointer is already dead. Retaining traces
+as a real app artifact is a feature with storage and retention consequences, not
+a config line.
+
+**The privacy strip understated what leaves the machine.** It named console and
+network and never page structure — ids, class names, aria-labels and text from
+the live page — even though the prompt offers it off a flag the panel had simply
+omitted when building the strip. Its own doc comment claims it is derived from
+the same context the prompt is built from; leaving a field out is how that
+stopped being true. An inaccurate privacy disclosure is worse than none, because
+it is trusted.
+
+Rejected: pinning the prompt's prose against the code with a text-matching
+check. That is what the existing drift guard does, and it is why this drifted —
+a marker-based assertion cannot notice a payload class nobody named. The list is
+generated instead, and `llm-knowledge.test.ts` asserts the property that
+matters: every kind the prompt offers survives the validator.
+
 ### 2026-08-14 — `branch`, and the queue that is decided at start
 
 `main/recorder/types.ts`, `shared/routine-plan.mjs`,
@@ -181,6 +405,227 @@ It filtered the previous state, which is right for pruning an emptied group and
 cannot contain a group that was just created — so a new group's header only
 appeared once the Routine query happened to re-seed. Deriving states the rule
 once, in the shape all five lists take.
+
+### 2026-08-13 — The step list scrolls, in both directions, and ends in empty space
+
+`renderer/theme/shared.css`, `renderer/main/edit-steps-view.tsx`,
+`renderer/main/test-detail-view.tsx`, `renderer/main/recording-view.tsx`,
+`renderer/trainer/trainer-panel-view.tsx`, `renderer/main/step-row.tsx`,
+`main/services/__tests__/scroll-layout.check.ts`.
+
+**The bug: Edit Steps had no scroll container at all.** Not a clipped one — the
+screen contained zero scrollable elements while the editor was open, so a test
+long enough to overflow the pane simply had no way to reach its later steps.
+The read-only Steps tab beside it has scrolled correctly since it was written,
+which is why this survived: the two look identical and only one of them is a
+`ScrollArea`. The warnings are what surfaced it rather than caused it. A
+diverged-steps callout and the editor's own scriptEdited callout eat about 90px
+between them, so the same test that fit yesterday overflows today, and the
+report arrives as "I can't scroll when there are warnings".
+
+**One class for all four lists, not a fix in the one that was broken.** The four
+step lists had drifted into four layouts — two `gap-1 p-3`, one `p-3`, one
+`padding: 6px`, one of them not scrolling. `.gl-step-list` is what stops the
+next divergence being invisible: `check:scroll-layout` can then ask one question
+of four views instead of describing four layouts.
+
+**Horizontal overflow is `width: max-content` on the ROW, and the row's
+description giving up `flex: 1`.** The second half is not optional and is the
+part that looks wrong: a flex item with a zero basis contributes nothing to its
+container's max-content width, so leaving `flex-1` on the description sizes the
+row to its chrome and the long text is clipped with *no* scroll to reach it —
+strictly worse than the ellipsis it replaced. The ellipsis stays for
+`.gl-mono-value` everywhere else; only a `.gl-step-list` descendant drops it, so
+a step description in some future panel with no scroller is not silently made
+worse.
+
+**It shipped on the COLUMN first, and that was wrong in a way only a real window
+could show.** `min-width: max-content` on `.gl-step-list` reads as equivalent —
+the column sizes to its widest row either way — and it is not, because
+percentage widths inside then resolve against the stretched column.
+`> * { min-width: 100% }`, which was there to keep short rows full-width, thereby
+handed the trainer's step composer the width of the longest step: a form that
+belongs to a 360px panel laid out at 594px with half its controls off the edge
+behind a horizontal scroll. `e2e/panel-overflow.spec.ts` caught it on the PR and
+nothing else could have — the local gate was green, because jsdom reports every
+rectangle as zeros and the browser preview has no docked panel to draw. Sizing
+the row instead leaves every non-row child (composer, insert cursors, the
+empty-state note) belonging to the viewport, which is what they are.
+
+**The long row takes its own controls off the right edge with it.** A horizontal
+scroll to reach the ✕ on the row you are already looking at is not a trade worth
+making, so `.gl-step-row-actions` is `position: sticky; right: 0` and the cluster
+rides the scrollport. No background under it: the buttons only render on hover,
+and a hovered row already has a fill.
+
+**The tail is 96px, and 40px in the trainers.** It is deliberate empty space,
+not a margin nobody noticed — steps are dragged to reorder and appended, and a
+list ending flush against the bottom edge gives the last position no target. The
+trainers get less of one for two reasons: their list already ends in a cursor
+gap plus the composer, which is that target; and they follow the bottom as steps
+arrive, so every pixel of tail is a pixel the newest step is pushed up by.
+
+Source-level guard, in `check:scroll-layout` beside the rest of the family, for
+the reason all of them are there: jsdom has no layout engine, so a rendered test
+cannot tell a list that scrolls from one that runs off the end of the window —
+it reports both as a list with rows in it.
+
+### 2026-08-13 — One meaning per step: `shared/step-semantics.mjs`, and the assertion that had never passed
+
+`shared/step-semantics.mjs` (new), `main/services/script-generator.ts`,
+`main/services/step-replayer.ts`, `main/services/spec-parser.ts`,
+`main/services/auto-heal.ts`, `main/services/heal-fixture-source.ts`,
+`main/recorder/capture-script.ts`, `renderer/lib/describe-step.ts`,
+`shared/playwright-config-source.mjs`, `e2e/assert-parity.spec.ts` (new).
+
+**The report:** generated tests are flaky even with Auto-Heal on, it is not
+clear *why* a step that passes in the trainer fails in a full run, and "assert
+URL contains" has never once been validated since it was written.
+
+**The last of those is literally true, and it is not a flake.** `assert: "url"`
+generated `await expect(page).toHaveURL("<value>")`. A **string** argument to
+`toHaveURL` is an exact, whole-URL, case-sensitive equality check — not a
+substring, and not a glob (Playwright has an open feature request for glob
+support; it does not exist). The field is pre-filled by `shared/url-assert.mjs`
+with a **path** (`/cart?step=2`), and the generated `playwright.config.ts`
+declares no `baseURL` for a relative string to resolve against. So the emitted
+line asserted `page.url() === "/cart?step=2"`, which is false for every page
+that has ever existed. It failed 100% of runs, after burning the full expect
+timeout, and it was green in the trainer every time.
+
+**The proof it was an oversight rather than a trade-off is one screen away.**
+The `urlContains` *wait* — the same predicate, in the same file — emitted
+`toHaveURL(new RegExp(reEscape(value)))` correctly the entire time. Two spellings
+of one idea, and nothing compared them.
+
+**Because a step meant three different things.** It was interpreted by the
+injected replayer (its own resolver, its own matching, no auto-wait, no
+actionability), by the generated spec (Playwright's rules), and by the UI copy
+that named it for the user. Three implementations, no shared code, and — this is
+the part that let it ship — **no test that could express a disagreement**, since
+the replayer's tests and the generator's tests shared no fixtures. 3292 tests
+passed before the fix and after it.
+
+**So the fix is a single semantic definition, not a patch per bug.**
+`shared/step-semantics.mjs` declares, per predicate, the three things Playwright
+itself varies: match mode, case rule, whitespace rule. The generator maps that to
+matcher calls; the replayer receives the same table as JSON and the same
+comparator as *source text* via `Function.prototype.toString`; the renderer's
+`describeStep` builds its display string from the same helper. `shared/` because
+the two consumers cannot share a `.ts` — one is compiled TypeScript, the other is
+a string of JavaScript injected into an untrusted page.
+
+**`toString()` rather than a second hand-written copy**, because a second copy is
+the failure being fixed. The cost is a rule the file has to state and a check has
+to enforce: those functions may not close over anything, or they type-check,
+build, and throw a `ReferenceError` inside a page the user is watching.
+`check:step-semantics` evaluates them in an isolated scope for exactly that.
+
+**Where the two disagreed, the label decided — and it did not always favour the
+generator.** `url` is labelled "URL contains", so the generator was wrong and now
+emits an escaped unanchored `RegExp`. But `title` is labelled "Page title is",
+so the **replayer** was wrong: it read a case-insensitive substring, and "Cart"
+passed live against a page titled "Cart | Acme". Making it honest would have
+removed the only way to assert on part of a title, so `titleContains` was added
+alongside it — the assert counterpart of a wait kind that already existed.
+
+**URLs ignore case; content does not.** Not an inconsistency: a URL's host is
+case-insensitive by RFC 3986, the prefill hands back a bare host at a site root,
+and a recorder that fails on `HTTPS://Example.com` has invented a failure the
+product does not have. Page text is the opposite — "Checkout" becoming
+"CHECKOUT" is a real change, and case-sensitive is Playwright's own default for
+every text matcher.
+
+**The trainer now refuses what the run refuses.** The largest single change is
+strict mode: the replayer took the first of N matches, so *the most common
+real-world failure in Playwright* was the one thing the trainer was structurally
+incapable of showing. It could only be discovered on a run, against a page the
+user was no longer looking at. Same argument for `nth` (ignored entirely, so the
+preview acted on a different element than the spec addresses), for occlusion (a
+bare `el.click()` dispatches through a cookie banner that a real run refuses),
+and for a `select` whose option no longer exists (`el.value = x` sets
+`selectedIndex` to -1 and reports success; `selectOption` throws).
+
+**Visibility had two mismatches pointing in opposite directions**, which is worth
+naming because the second kind is more corrosive. `width <= 0 && height <= 0`
+called a 0×10 element visible where the run calls it hidden — trainer green, run
+red. And consulting `opacity`, which Playwright does not, called a faded element
+hidden where the run calls it visible — trainer red, run green. The first wastes
+an afternoon; the second teaches the user to ignore red steps.
+
+**Two more bugs surfaced while fixing the first.** `urlEndsWith`/`urlIs`
+round-trips **drifted**: the parser unescaped only on the wait path, so every
+hand edit and every applied AI fix pushed the stored value one escape further
+from what the user typed (`/cart\?step=2` → `/cart\\\?step=2`) until it could
+match nothing. And "Page title is…" prefilled the right-clicked element's
+`.value` — the identical bug that was found and fixed for the three URL items in
+the comment *directly above it*.
+
+**Auto-Heal was blind in the place it was needed most.** `__glazeKey` is attached
+by the locator factories, and `Locator.nth()` returns a new, untagged object — so
+healing and structure-recording were silently off for every `.nth()` step, and
+`.nth()` is only ever written when the recorder could **not** find a unique
+locator. The narrowing methods now carry the tag. Separately, the probe measured
+uniqueness with exact string equality while Playwright matches a case-insensitive
+substring; it therefore *under*-counted, approved candidates that were not unique,
+and the applied heal raised the very strict-mode violation `identifiesOnly`
+exists to prevent. Under-counting is the direction that matters — over-counting
+only costs a heal that might have worked.
+
+**`roleOf` was grading its own homework.** Every `<input>` except
+checkbox/radio/button/range mapped to `"textbox"`, and a multi-select to
+`"combobox"`. Because `matchesFor` validates uniqueness with the *same* function,
+a `getByRole("textbox")` for a `type="search"` box recorded cleanly, verified as
+unique, and previewed green — then matched nothing in the run. `password`, `date`
+and `file` have no implicit role at all, so they now return `""`, which correctly
+stops a role locator being offered rather than offering one that cannot match.
+
+**The parity harness is the part that makes this stay fixed.**
+`main/services/assert-emission.test.ts` evaluates the emitted matcher argument
+and applies Playwright's own rule to it, catching escaping, anchoring and case
+bugs in milliseconds with no browser. `e2e/assert-parity.spec.ts` is the
+authority behind that model: one fixture page, every row run through **both** the
+real injected replayer and the **real emitted source executed by real
+Playwright**, asserting the verdicts are equal — *and* that both equal what the
+fixture independently says should happen, since two engines can agree and both be
+wrong. It is deliberately not an Electron test; its subject is matcher semantics,
+not a window.
+
+Rejected: emitting a predicate (`toHaveURL(u => u.href.includes(…))`) instead of
+a `RegExp`. It is supported, reads well, and avoids escaping entirely — but the
+`urlContains` wait already emitted a `RegExp` and the parser already read one
+back, so a second shape for one predicate would have re-created, in a single
+change, precisely the divergence this entry is about.
+
+**A comment turned out to be a code sink, and the review of this very change
+is the only reason it is a test rather than an incident.** The
+"UNGENERATABLE STEP" line concatenates `describeStep(step)` into generated
+source, and `describeStep` interpolates step fields raw — it was UI copy until
+this change made it a code sink. A `//` comment ends at the first LINE
+TERMINATOR, so anything after one lands in the spec as a statement inside the
+`test()` callback, which Playwright executes in Node. All four terminators
+matter, not just `\n`: U+2028 and U+2029 end a comment identically and, unlike
+a control character, survive places that reject one — a hostile page can put one
+in `document.cookie`, and the Cookies panel pre-fills a step from that live
+read. `commentSafe` now covers this line and the older `// disabled — skipped:`
+one, which had the same hole via a `${var}` template literal. It is the same
+lesson as the `count` field that was RCE for having the right TypeScript type:
+on this path, a field is untrusted no matter how harmless its destination looks.
+
+**And `roleOf` was fixed twice, because the first fix used the wrong source of
+truth.** The ARIA spec says an `input[type=password]` has no implicit role.
+Playwright falls back to `"textbox"` for every input type it does not name, so
+`getByRole("textbox")` finds one — and Playwright is what runs the generated
+test. Writing the spec-correct answer would have removed a role locator that
+works. The mapping is now transcribed from playwright-core's own table
+(`select` is a listbox on `multiple` OR `size > 1`; a file input is a `button`),
+and six rows in the parity harness make a real browser the judge rather than
+anyone's reading of any source.
+
+Rejected: emitting a `toHaveURL` assertion after every navigating click (the
+Chrome DevTools Recorder's `assertedEvents` idea). Playwright's own codegen
+deliberately relies on auto-waiting instead, and a recorded URL carrying an order
+ID would have turned a timing fix into a new and worse flake.
 
 
 ### 2026-08-13 — The click that navigates: capture gets a second exit

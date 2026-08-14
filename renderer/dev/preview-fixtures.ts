@@ -72,8 +72,18 @@ export const TESTS: TestRecord[] = [
         type: "assert",
         assert: "text",
         locator: { k: "testid", v: "confirmation" },
-        value: "Thank you",
+        // `text`, not `value`. A text assertion reads `step.text`, so the
+        // fixture rendered `toContainText("")` in the preview's step list —
+        // the empty-expectation shape the generator now refuses outright.
+        text: "Thank you",
       },
+      // The page-level kinds, so the preview shows what they COMPILE TO. They
+      // are the assertions this app got wrong for longest, and the step list is
+      // where a user would have had to notice: "URL contains" rendered as
+      // `toHaveURL("/order/confirmed")` — an exact whole-URL match, which is
+      // not what the label says and could never pass.
+      { type: "assert", assert: "url", value: "/order/confirmed" },
+      { type: "assert", assert: "titleContains", value: "Order" },
     ),
   },
   {
@@ -111,7 +121,47 @@ export const TESTS: TestRecord[] = [
       { type: "goto", url: "https://docs.example.com" },
       { type: "fill", locator: { k: "role", role: "searchbox" }, value: "locator" },
       { type: "press", value: "Enter" },
+      // Long enough to overflow the pane in both directions, which is the
+      // state the step list's scrolling exists for and the one nothing in the
+      // preview showed: 43 steps outrun the viewport vertically, and the fill
+      // below outruns it sideways. See `.gl-step-list` in theme/shared.css.
+      {
+        type: "fill",
+        locator: { k: "label", v: "Search the documentation for a locator strategy" },
+        value:
+          "a query long enough that this row runs past the right edge of the panel it is drawn in, rather than ending in an ellipsis",
+      },
+      ...Array.from({ length: 40 }, (_, i) => ({
+        type: "click" as const,
+        locator: { k: "role" as const, role: "link", name: `Result ${i + 1}` },
+      })),
     ),
+  },
+  {
+    // An IMPORTED test, which is a materially different screen: no Steps tab,
+    // no Variables, no Heals — and a Base URL field none of the others have.
+    // Nothing in the preview showed that state, so the only way to look at the
+    // field was to build the app and import a real project.
+    //
+    // Base URL filled in, as it is for an import whose project wrote one down
+    // in its playwright.config. Clear it in the field to see the other half.
+    id: "t-imported",
+    name: "adds a product to cart and shows quantity of 1",
+    url: "https://shop.example.com/",
+    createdAt: NOW - 5 * DAY,
+    updatedAt: NOW - 5 * DAY,
+    scriptPath: "/preview/scripts/imported/t-imported/tests/add-to-cart.spec.js",
+    // The two fields that make a record an import: where it came from, and the
+    // base URL its relative navigations resolve against.
+    sourceDir: "/projects/shop-e2e/tests",
+    baseUrl: "https://shop.example.com/",
+    scriptEdited: true,
+    // Adopted from the source project's own config, like a real import.
+    testTimeoutMs: 120_000,
+    tags: ["imported"],
+    // An imported spec is never regenerated from steps, and the parser only
+    // recovers what it recognises — a helper-wrapped navigation is not one.
+    steps: steps(),
   },
   {
     id: "t-archived",

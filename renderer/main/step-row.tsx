@@ -364,7 +364,12 @@ export function StepRow({
       data-new-step={isNew ? "true" : undefined}
       data-just-added={justAdded ? "true" : undefined}
       data-replay-flash={replayFlash}
-      className={`group flex items-center gap-2 rounded-md px-2 py-1 ${flash} ${outlineClass} ${
+      // `gl-step-list-row` is what makes the row — and only the row — size to
+      // its own step: it extends past the viewport when the step is long, and
+      // fills the column when it is short. It sits on the row rather than on
+      // the list because a `max-content` COLUMN stretches everything else in
+      // the list with it (see `.gl-step-list` in theme/shared.css).
+      className={`gl-step-list-row group flex items-center gap-2 rounded-md px-2 py-1 ${flash} ${outlineClass} ${
         drag?.isOver ? "border-t-2 border-accent" : ""
       } ${drag?.isDragging ? "opacity-50" : ""} ${onSelect ? "cursor-pointer" : ""}`}
       // SELECTION IS NEUTRAL, and that is the palette's load-bearing rule rather
@@ -460,7 +465,12 @@ export function StepRow({
       )}
 
       {!editing ? (
-        <div className="ml-auto flex shrink-0 items-center gap-0.5">
+        // `gl-step-row-actions` is what keeps this cluster reachable once a
+        // long step widens the column past the viewport (`.gl-step-list`): the
+        // rows all stretch to the widest one, so without it every row's delete
+        // and edit buttons would sit off the right edge and cost a horizontal
+        // scroll to reach — on rows whose own text fits perfectly.
+        <div className="gl-step-row-actions ml-auto flex shrink-0 items-center gap-0.5">
           {/* Before the run glyph, because the glyph is about THIS run and the
               temp is about the step's history — and the row reads outward from
               what is happening now. `rule` rather than `tint`: the numbers sit

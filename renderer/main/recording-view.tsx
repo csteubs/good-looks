@@ -47,12 +47,19 @@ const ASSERT_PICKABLE: { kind: AssertKind; label: string }[] = [
   { kind: "unchecked", label: "Is unchecked" },
 ];
 
-// URL assertions need a typed string (not an element click), so selecting one
-// from the dropdown opens the Add-step → Assertion dialog prefilled.
-const ASSERT_URL: { kind: AssertKind; label: string }[] = [
+// Page-level assertions need a typed string (not an element click), so
+// selecting one from the dropdown opens the Add-step → Assertion dialog
+// prefilled. The two title kinds prefill EMPTY here on purpose: this window
+// tracks the page's live URL but not its live title, and `urlAssertPrefill`
+// already answers "" for any kind it cannot stand behind. An empty field the
+// user knows to fill beats a plausible value they do not check — the training
+// browser's own right-click menu, which can read the real title, prefills it.
+const ASSERT_PAGE: { kind: AssertKind; label: string }[] = [
   { kind: "url", label: "URL contains" },
   { kind: "urlEndsWith", label: "URL ends with" },
   { kind: "urlIs", label: "URL is" },
+  { kind: "title", label: "Page title is" },
+  { kind: "titleContains", label: "Page title contains" },
 ];
 
 const ASSERT_LABEL: Record<AssertKind, string> = {
@@ -71,6 +78,7 @@ const ASSERT_LABEL: Record<AssertKind, string> = {
   urlEndsWith: "URL ends with",
   urlIs: "URL is",
   title: "Page title is",
+  titleContains: "Page title contains",
   css: "Has CSS property",
 };
 
@@ -674,14 +682,14 @@ export function RecordingView() {
       items: [
         ...ASSERT_PICKABLE.map((a, i) => ({ label: a.label, commandId: i })),
         { type: "separator" as const },
-        ...ASSERT_URL.map((a, i) => ({ label: a.label, commandId: 100 + i })),
+        ...ASSERT_PAGE.map((a, i) => ({ label: a.label, commandId: 100 + i })),
       ],
     });
     if (typeof res.commandId !== "number") return;
     if (res.commandId < 100 && ASSERT_PICKABLE[res.commandId]) {
       setAssert(ASSERT_PICKABLE[res.commandId].kind, soft);
     } else if (res.commandId >= 100) {
-      const urlKind = ASSERT_URL[res.commandId - 100];
+      const urlKind = ASSERT_PAGE[res.commandId - 100];
       if (urlKind) {
         // Prefilled with where the page actually is. This used to open with an
         // EMPTY field, which meant the user had to know the URL — and the only
@@ -963,8 +971,12 @@ export function RecordingView() {
         // (StepRow's `justAdded`), and these two must never both be on.
         autoScrollToBottom={cursorAtEnd}
         autoScrollDeps={[liveSteps.length]}
+        scrollbars="both"
       >
-        <div className="flex flex-col p-3">
+        {/* `--tight` because the trainer's rows are separated by their own
+            insert cursors rather than by a gap — the two together would double
+            the space between every step. */}
+        <div className="gl-step-list gl-step-list--tight">
           {liveSteps.length === 0 ? (
             <>
               {/* The empty list has no gaps to sit between, and the composer

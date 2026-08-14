@@ -16,6 +16,7 @@ import type { RecorderSettings, RunRecord, Step, StepType, TestRecord } from "..
 import { TestDetailView, persistRunBrowser } from "./test-detail-view";
 import { runSessionKey, useAiDebug, type AiDebugRunContext } from "./ai-debug-store";
 import { withAiDebug } from "../__tests__/ai-debug-harness";
+import { clearToastCalls, toastTexts } from "../__tests__/sonner-stub";
 
 let test_: TestRecord | null = null;
 let settings: Partial<RecorderSettings> = {};
@@ -34,6 +35,10 @@ const setHeadless = vi.fn(async () => ({}) as TestRecord);
 const setBrowser = vi.fn(async () => ({}) as TestRecord);
 const setCaptureArtifacts = vi.fn(async () => ({}) as TestRecord);
 const setTestTimeout = vi.fn(async () => ({}) as TestRecord);
+// Typed with the real signature: the assertions below read BOTH arguments, and
+// the difference between `""` and `null` in the second one is the difference
+// between "clear it" and a value the backend refuses.
+const setBaseUrl = vi.fn(async (_id: string, _baseUrl: string | null) => ({}) as TestRecord);
 // Typed with the real signature, unlike the setters above: these assertions
 // read the third argument, and a zero-arg mock makes indexing it a type error.
 const updateSteps = vi.fn(
@@ -84,6 +89,7 @@ vi.mock("../lib/api", () => ({
       setBrowser: (...a: unknown[]) => setBrowser(...(a as [])),
       setCaptureArtifacts: (...a: unknown[]) => setCaptureArtifacts(...(a as [])),
       setTestTimeout: (...a: unknown[]) => setTestTimeout(...(a as [])),
+      setBaseUrl: (...a: Parameters<typeof setBaseUrl>) => setBaseUrl(...a),
       remove: async () => {},
       rename: async () => ({}) as TestRecord,
       updateScript: (...a: Parameters<typeof updateScript>) => updateScript(...a),
@@ -362,6 +368,118 @@ describe("run controls", () => {
     ]) {
       expect(block!.contains(screen.getByLabelText(label))).toBe(true);
     }
+  });
+});
+
+// The Base URL field, on the toolbar of an IMPORTED test.
+//
+// An imported suite navigates relatively (`page.goto("/")`) and resolves that
+// against its own project's `use.baseURL`. Import reads that config, but a
+// config can compute the value rather than write it down — and then this field
+// is the only repair, so what it persists is what decides whether the test can
+// run at all. Two silent shapes are pinned here: a value that looks saved and
+// wasn't, and a rejected value left on screen as if it had been accepted.
+describe("the Base URL field", () => {
+  const LABEL = /Base URL that this imported test/i;
+
+  beforeEach(() => {
+    clearToastCalls();
+  });
+
+  /** The field, after the toolbar has seeded it from the record.
+   *
+   *  The seed runs in an effect, so the input exists — empty — before it lands.
+   *  Reading it without waiting races that effect and reports the pre-seeded
+   *  empty string, which is also what a blur would then try to persist. */
+  async function seededField(expected: string): Promise<HTMLInputElement> {
+    const input = (await screen.findByLabelText(LABEL)) as HTMLInputElement;
+    await waitFor(() => expect(input.value).toBe(expected));
+    return input;
+  }
+
+  it("is not offered for a recorded test", async () => {
+    // A recorded test navigates to the absolute URL the recorder watched, so
+    // the box would do nothing at all.
+    renderView();
+    await screen.findByText("Checkout");
+    // Anchor on a sibling control of the same toolbar: without it the absence
+    // assertion passes against a toolbar that simply hasn't rendered yet.
+    await screen.findByLabelText(/per-test timeout/i);
+    expect(screen.queryByLabelText(LABEL)).toBeNull();
+  });
+
+  it("shows an imported test's stored base URL", async () => {
+    test_ = record({ sourceDir: "/imported/project", baseUrl: "https://staging.example.com/" });
+    renderView();
+    await screen.findByText("Checkout");
+    await seededField("https://staging.example.com/");
+  });
+
+  it("persists on blur, and not on a keystroke", async () => {
+    // Deliberate: a URL is invalid for most of the time it is being typed, and
+    // the backend refuses anything that isn't a full http(s) address — so a
+    // per-keystroke persist is an error toast per character.
+    test_ = record({ sourceDir: "/imported/project" });
+    renderView();
+    const input = await seededField("");
+
+    fireEvent.change(input, { target: { value: "https://staging.example.com" } });
+    // Flush effects and microtasks, so a persist scheduled off the change
+    // rather than fired inline is still caught here.
+    await act(async () => {});
+    expect(setBaseUrl).not.toHaveBeenCalled();
+
+    fireEvent.blur(input);
+    await waitFor(() =>
+      expect(setBaseUrl).toHaveBeenCalledWith("t1", "https://staging.example.com"),
+    );
+    expect(setBaseUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears the base URL when the field is emptied", async () => {
+    // `null`, not `""`. The handler treats the empty string as "not a URL" and
+    // throws, so a field emptied by the user would fail to clear and revert.
+    test_ = record({ sourceDir: "/imported/project", baseUrl: "https://staging.example.com/" });
+    renderView();
+    const input = await seededField("https://staging.example.com/");
+
+    fireEvent.change(input, { target: { value: "" } });
+    fireEvent.blur(input);
+
+    await waitFor(() => expect(setBaseUrl).toHaveBeenCalledWith("t1", null));
+  });
+
+  it("writes nothing when the field is blurred unedited", async () => {
+    // Tabbing through the toolbar must not re-persist — and, more to the point,
+    // must not invalidate the record's cache for no reason.
+    test_ = record({ sourceDir: "/imported/project", baseUrl: "https://staging.example.com/" });
+    renderView();
+    const input = await seededField("https://staging.example.com/");
+
+    fireEvent.blur(input);
+    await act(async () => {});
+    expect(setBaseUrl).not.toHaveBeenCalled();
+  });
+
+  it("reverts and says so when the backend refuses the URL", async () => {
+    // The silent failure this pins: the refusal is swallowed, the typed text
+    // stays on screen, and the user reads the run's next "no base URL" refusal
+    // as the app ignoring a setting they can see.
+    test_ = record({ sourceDir: "/imported/project", baseUrl: "https://staging.example.com/" });
+    setBaseUrl.mockRejectedValueOnce(new Error("not a base URL"));
+    renderView();
+    const input = await seededField("https://staging.example.com/");
+
+    fireEvent.change(input, { target: { value: "staging.example.com" } });
+    fireEvent.blur(input);
+
+    await waitFor(() => expect(setBaseUrl).toHaveBeenCalledWith("t1", "staging.example.com"));
+    await waitFor(() => expect(input.value).toBe("https://staging.example.com/"));
+    // A toast is recorded as a CALL and never rendered by the stub, so this is
+    // the only place the message exists to be asserted on.
+    const errors = toastTexts().filter((t) => t.type === "error");
+    expect(errors).toHaveLength(1);
+    expect(errors[0].title).toMatch(/base URL/i);
   });
 });
 

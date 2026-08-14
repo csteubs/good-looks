@@ -141,6 +141,11 @@ export function TestDetailView() {
   // Per-test Playwright timeout override, in seconds for the input. null means
   // "use the global Settings default" (no override stored on the record).
   const [testTimeoutSec, setTestTimeoutSec] = React.useState<number | null>(null);
+  // The Base URL field's draft text. Held locally and persisted on blur rather
+  // than on every keystroke: the backend refuses anything that isn't a full
+  // http(s) address, and a URL being typed is invalid for most of its length —
+  // persisting per character would mean an error toast per character.
+  const [baseUrlDraft, setBaseUrlDraft] = React.useState("");
   // Which test the six controls above currently hold the settings OF.
   //
   // Not a boolean. This view is a route component, and the router does not
@@ -290,6 +295,7 @@ export function TestDetailView() {
     setTestTimeoutSec(
       typeof test.testTimeoutMs === "number" ? Math.round(test.testTimeoutMs / 1000) : null,
     );
+    setBaseUrlDraft(test.baseUrl ?? "");
     setSeededFor(test.id);
   }, [seededFor, test, settingsQuery.data, settingsQuery.isPending]);
   // Earliest step the run reported as failed, if any — lets the AI debug
@@ -697,6 +703,47 @@ export function TestDetailView() {
             />
             <span className="gl-detail-unit">s</span>
           </label>
+          {/* Imported tests only. A recorded test navigates to the absolute URL
+              the recorder watched, so a base URL would be a box that does
+              nothing; an imported spec is idiomatically relative
+              (`page.goto("/")`) and cannot run without one. It is usually filled
+              in already, from the source project's playwright.config — this is
+              where that lands, and the only repair when the config computed it
+              rather than writing it down. */}
+          {test.sourceDir ? (
+            <label className="gl-run-option gl-detail-baseurl">
+              <span className="whitespace-nowrap">Base URL</span>
+              <Input
+                type="url"
+                className="gl-input w-52"
+                value={baseUrlDraft}
+                placeholder="https://example.com"
+                disabled={runInfo?.running}
+                aria-label="Base URL that this imported test's relative navigations resolve against"
+                onChange={(e) => setBaseUrlDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                }}
+                onBlur={() => {
+                  const next = baseUrlDraft.trim();
+                  if (next === (test.baseUrl ?? "")) return; // nothing changed
+                  api.tests
+                    .setBaseUrl(id, next === "" ? null : next)
+                    .then(() => {
+                      // Unlike the toggles beside it, this one invalidates: the
+                      // run guard reads `baseUrl` off the RECORD, so a stale
+                      // cache would keep refusing a run the user just fixed.
+                      qc.invalidateQueries({ queryKey: ["test", id] });
+                      qc.invalidateQueries({ queryKey: ["tests"] });
+                    })
+                    .catch(() => {
+                      setBaseUrlDraft(test.baseUrl ?? "");
+                      toast.error("That isn't a valid base URL — try https://example.com");
+                    });
+                }}
+              />
+            </label>
+          ) : null}
           {/* The gang of four, a compact 2×2 block. The column-track rule that
               keeps it from overlapping itself at narrow widths moved into
               `.gl-run-options` (screens.css) in B5a — the reasoning is written
@@ -876,8 +923,8 @@ export function TestDetailView() {
               </Tabs>
             </div>
             <TabsContent value="steps" className="min-h-0 flex-1">
-              <ScrollArea className="h-full">
-                <div className="flex flex-col gap-1 p-3">
+              <ScrollArea className="h-full" scrollbars="both">
+                <div className="gl-step-list">
                   {computeStepDepths(test.steps).map((depth, i) => (
                     <StepRow
                       key={test.steps[i].id}

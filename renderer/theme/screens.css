@@ -2832,6 +2832,16 @@
   cursor: default;
 }
 
+/* The imported-test base URL. Wider than the toolbar's other inputs because a
+   URL that is cut off mid-host cannot be checked at a glance, and this is the
+   field the user is sent to when a run refuses. It stays on the toolbar's own
+   wrap rules — `.gl-run-option` — so a narrow window moves it to the next line
+   instead of squeezing the controls beside it. */
+.gl-detail-baseurl {
+  cursor: default;
+  min-width: 0;
+}
+
 .gl-detail-unit {
   color: var(--gl-tx-3);
 }
@@ -2997,10 +3007,12 @@
   color: var(--gl-cyan);
 }
 
+/* The docked panel's step list is `.gl-step-list` (shared.css) — this only
+   narrows its gutter. The panel sits beside a real browser window, so it is
+   the narrowest surface in the app and cannot afford the column's 12px. */
 .gl-panelwin-list {
-  display: flex;
-  flex-direction: column;
   padding: 6px;
+  padding-bottom: 40px;
 }
 
 /* The empty state, before the user has touched the page. */

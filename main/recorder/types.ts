@@ -123,7 +123,16 @@ export type AssertKind =
   | "url"
   | "urlEndsWith"
   | "urlIs"
+  // `title` is an EXACT whole-title match, which is what its "Page title is"
+  // label has always promised and what the generator has always emitted. The
+  // trainer's replayer read it as a case-insensitive substring, so "Cart"
+  // passed live against a page titled "Cart | Acme" and then failed in every
+  // run. Aligning the replayer to the label would have removed the only way to
+  // assert on part of a title, so `titleContains` exists to keep that reachable
+  // — it is the assert counterpart of the `titleContains` wait, which the
+  // vocabulary was already missing.
   | "title"
+  | "titleContains"
   // Computed CSS property, e.g. background-color is "rgb(0, 82, 204)". Reads
   // `Step.cssProp` / `Step.cssMatch`, with the expected value in `Step.value`.
   | "css";
@@ -398,6 +407,20 @@ export interface TestRecord {
    *  test's spec is allowed to pull in. Absent on tests imported before the
    *  import sandbox existed — see `repairImports` for what that costs them. */
   sourceRoot?: string;
+  /** Base URL a spec's relative navigations resolve against, carried over from
+   *  the imported project's own `playwright.config` (or typed in afterwards).
+   *
+   *  Only imported tests have one. A recorded test navigates to an absolute URL
+   *  because the recorder watched it happen, but a hand-written suite is
+   *  idiomatically relative — `page.goto("/")` — and that is meaningless
+   *  without this. Travels to a run as `PW_BASE_URL`, which the generated
+   *  config reads into `use.baseURL`; absent means the config declares none,
+   *  exactly as before this field existed.
+   *
+   *  Always an http(s) URL: `normalizeBaseUrl` in `imported-config.ts` is the
+   *  only way a value gets in, whether it came from a config file we parsed or
+   *  from an IPC caller. */
+  baseUrl?: string;
   /** true when the user removed the test from the sidebar view — the record
    *  and its script file are kept on disk; the sidebar just hides it. */
   hidden?: boolean;
@@ -659,7 +682,7 @@ export const STEP_TYPES: StepType[] = [
 export const ASSERT_KINDS: AssertKind[] = [
   "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked",
   "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs", "title",
-  "css",
+  "titleContains", "css",
 ];
 
 export const ELEMENT_STATES: ElementState[] = ["hover", "focus", "press", "release"];

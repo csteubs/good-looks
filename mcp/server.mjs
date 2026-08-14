@@ -254,6 +254,9 @@ async function executeTest(test, { playwright, browser, batchId, vars, datasetId
     testTimeoutMs,
     outputDir,
     vars,
+    // Read straight off the record, exactly as the app reads it. An imported
+    // test whose navigations are relative has one; a recorded test does not.
+    baseUrl: test.baseUrl,
   });
   // Relative to the scripts root, so a sandboxed spec resolves as
   // `imported/<id>/tests/foo.spec.ts` rather than a bare basename that only

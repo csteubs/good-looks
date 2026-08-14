@@ -77,6 +77,13 @@ export interface ImportResult {
   imported: number;
   names: string[];
   ids: string[];
+  /** Names of tests that navigate relatively with no base URL to resolve
+   *  against — each one fails on its first `goto` until somebody supplies one.
+   *  Mirrors the backend `ImportResult`. */
+  needsBaseUrl: string[];
+  /** Config features the source project relied on that this app does not
+   *  reproduce (`webServer`, `globalSetup`, `storageState`). */
+  unsupported: string[];
 }
 
 interface Ipc {
@@ -221,6 +228,11 @@ export const api = {
      *  back to the global Settings default. */
     setTestTimeout: (id: string, testTimeoutMs: number | null) =>
       ipc().invoke<TestRecord>("tests:setTestTimeout", { id, testTimeoutMs }),
+    /** Base URL an imported spec's relative navigations resolve against. Pass
+     *  null (or an empty string) to clear it. The backend validates and
+     *  normalizes; it throws on anything that isn't an http(s) address. */
+    setBaseUrl: (id: string, baseUrl: string | null) =>
+      ipc().invoke<TestRecord>("tests:setBaseUrl", { id, baseUrl }),
     setTags: (id: string, tags: string[]) =>
       ipc().invoke<TestRecord>("tests:setTags", { id, tags }),
     /** Remove a tag from every test that carries it (case-insensitive, hidden

@@ -1,6 +1,7 @@
 // Convert recorded steps into a @playwright/test spec file.
 
 import { GLAZE_RUNTIME_FILE } from "./glaze-runtime-source.js";
+import { ASSERT_SEMANTICS, reEscape, textMatchExpr, WAIT_SEMANTICS } from "../../shared/step-semantics.mjs";
 import {
   cookieScopeIsValid,
   ELEMENT_STATES,
@@ -8,6 +9,7 @@ import {
   toPlaywrightSameSite,
   VAR_REF_RE,
 } from "../recorder/types.js";
+import type { MatchSemantics } from "../../shared/step-semantics.mjs";
 import type {
   CookieSpec,
   Locator,
@@ -87,11 +89,6 @@ function valueExpr(raw: string | undefined, vars: ReadonlySet<string>): string {
   return out + escTemplate(text.slice(last)) + "`";
 }
 
-/** Escape regex metacharacters so a literal string can be embedded in a RegExp. */
-function reEscape(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 function locatorBase(loc: Locator): string {
   switch (loc.k) {
     case "testid":
@@ -140,18 +137,36 @@ function locatorExpr(loc: Locator): string {
 function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>): string | null {
   const e = step.soft ? "expect.soft" : "expect";
   // Page-level assertions don't need an element locator.
-  if (step.assert === "url")
-    return "await " + e + "(page).toHaveURL(" + valueExpr(step.value, vars) + ");";
-  // The regex asserts embed their expected value INSIDE a pattern, so they take
-  // the literal text rather than an expression — an interpolated value would
-  // have to be regex-escaped at run time, and `reEscape` only works on a string
-  // known now. Variables in these two assert kinds stay literal by design.
-  if (step.assert === "urlEndsWith")
-    return "await " + e + "(page).toHaveURL(new RegExp(" + q(reEscape(step.value ?? "") + "$") + ", \"i\"));";
-  if (step.assert === "urlIs")
-    return "await " + e + "(page).toHaveURL(new RegExp(" + q("^" + reEscape(step.value ?? "") + "$") + ", \"i\"));";
-  if (step.assert === "title")
-    return "await " + e + "(page).toHaveTitle(" + valueExpr(step.value, vars) + ");";
+  //
+  // All four embed their expected value INSIDE a pattern, so they take the
+  // literal text rather than an expression: an interpolated value would have to
+  // be regex-escaped at run time and `reEscape` only works on a string known
+  // now. A `${var}` reference in these kinds stays literal by design — the same
+  // trade-off `urlEndsWith` and `urlIs` have always made, now paid by `url` too
+  // in exchange for the assertion being able to pass at all.
+  if (step.assert === "url" || step.assert === "urlEndsWith" || step.assert === "urlIs") {
+    const semantics = ASSERT_SEMANTICS[step.assert];
+    if (!semantics) return null;
+    // An empty expectation is not an assertion. `urlEndsWith` with no value
+    // emits `/$/i`, which matches every URL on every host — green forever,
+    // testing nothing, and the most expensive kind of wrong because nobody
+    // looks at it again. `shared/url-assert.mjs` already refuses to SUGGEST a
+    // value it cannot stand behind; this refuses to GENERATE one.
+    if ((step.value ?? "") === "") return null;
+    return "await " + e + "(page).toHaveURL(" + textMatchExpr(step.value ?? "", semantics) + ");";
+  }
+  if (step.assert === "title" || step.assert === "titleContains") {
+    const semantics = ASSERT_SEMANTICS[step.assert];
+    if (!semantics) return null;
+    if ((step.value ?? "") === "") return null;
+    // `title` is exact and case-sensitive, so it emits the plain string form —
+    // which is what `toHaveTitle` means by a string, and reads better in a spec
+    // than an anchored pattern. It also keeps `${var}` working for the one
+    // title kind whose semantics do not need a pattern.
+    if (step.assert === "title")
+      return "await " + e + "(page).toHaveTitle(" + valueExpr(step.value, vars) + ");";
+    return "await " + e + "(page).toHaveTitle(" + textMatchExpr(step.value ?? "", semantics) + ");";
+  }
   if (!target) return null;
   const x = e + "(" + target + ")";
   switch (step.assert) {
@@ -249,15 +264,44 @@ function stateLine(step: Step, target: string | null): string | null {
   }
 }
 
+/**
+ * A `contains` test as a plain boolean expression, for the one place that
+ * cannot use a Playwright matcher: an `if` step's condition compiles to a JS
+ * `if (...)`, so there is no `expect` to carry the semantics.
+ *
+ * Written to keep the SAME case and whitespace rules as the matching assert, by
+ * reading the same descriptor. Without this the generated `if` branched on a
+ * case-SENSITIVE `page.url().includes(...)` while the assertion one step later
+ * matched case-insensitively — the same page taking two different paths through
+ * one spec, which is worse than either rule chosen consistently.
+ *
+ * The expected value keeps the case the user typed and is lowered at RUN time
+ * rather than folded here. Folding reads better in the file, and it silently
+ * rewrites the user's data: the spec is re-parsed on every hand edit and every
+ * applied AI fix, so a folded `"/Checkout"` comes back as `"/checkout"` and the
+ * step list now shows a value nobody entered. The extra `.toLowerCase()` also
+ * says out loud, in the generated source, which rule this comparison follows.
+ */
+function containsExpr(subject: string, raw: string | undefined, semantics: MatchSemantics, vars: ReadonlySet<string>): string {
+  let subj = subject;
+  if (semantics.normalizeWhitespace) subj = subj + ".replace(/\\s+/g, \" \").trim()";
+  const expr = valueExpr(raw, vars);
+  if (semantics.caseSensitive) return subj + ".includes(" + expr + ")";
+  // `String(...)` only where it earns its place: a captured variable can hold a
+  // number, and `.toLowerCase()` on one throws mid-run. A quoted literal cannot.
+  const lowered = expr.startsWith("\"") ? expr + ".toLowerCase()" : "String(" + expr + ").toLowerCase()";
+  return subj + ".toLowerCase().includes(" + lowered + ")";
+}
+
 /** Build the boolean expression for an `if` step's condition. */
 function conditionExpr(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string {
   const loc = step.locator;
   const target = loc ? "page." + locatorExpr(loc) : "page.locator(\"html\")";
   switch (step.cond) {
     case "urlContains":
-      return "page.url().includes(" + valueExpr(step.value, vars) + ")";
+      return containsExpr("page.url()", step.value, WAIT_SEMANTICS.urlContains as MatchSemantics, vars);
     case "titleContains":
-      return "(await page.title()).includes(" + valueExpr(step.value, vars) + ")";
+      return containsExpr("(await page.title())", step.value, WAIT_SEMANTICS.titleContains as MatchSemantics, vars);
     case "hidden":
       return "await " + target + ".isHidden()";
     case "exists":
@@ -324,20 +368,30 @@ function waitLine(step: Step, target: string | null, vars: ReadonlySet<string>):
 
     // Page-level predicates. Both embed the expected text in a RegExp, so they
     // take the literal value rather than a variable expression — the same
-    // trade-off `assertLine` makes for urlEndsWith/urlIs, and for the same
-    // reason: `reEscape` can only escape a string known now.
-    case "urlContains":
+    // trade-off `assertLine` makes for the URL kinds, and for the same reason:
+    // `reEscape` can only escape a string known now.
+    //
+    // These go through the SAME `textMatchExpr` as their assert counterparts,
+    // reading the same table. "Wait until the URL contains X" and "assert the
+    // URL contains X" disagreeing about case would be this file's own bug one
+    // level down — and they did disagree: the wait emitted no `i` flag while
+    // every URL assert emitted one.
+    case "urlContains": {
+      const s = WAIT_SEMANTICS.urlContains;
+      if (!s || (step.value ?? "") === "") break;
       return (
-        "await expect(page).toHaveURL(new RegExp(" +
-        q(reEscape(step.value ?? "")) +
-        "), " + opts + ");" + WAIT_UNTIL_MARKER
+        "await expect(page).toHaveURL(" + textMatchExpr(step.value ?? "", s) + ", " + opts + ");" +
+        WAIT_UNTIL_MARKER
       );
-    case "titleContains":
+    }
+    case "titleContains": {
+      const s = WAIT_SEMANTICS.titleContains;
+      if (!s || (step.value ?? "") === "") break;
       return (
-        "await expect(page).toHaveTitle(new RegExp(" +
-        q(reEscape(step.value ?? "")) +
-        "), " + opts + ");" + WAIT_UNTIL_MARKER
+        "await expect(page).toHaveTitle(" + textMatchExpr(step.value ?? "", s) + ", " + opts + ");" +
+        WAIT_UNTIL_MARKER
       );
+    }
 
     default:
       break;
@@ -430,6 +484,70 @@ function cookieLine(step: Step): string | null {
         ? "await page.context().addCookies([" + cookieLiteral(step.cookie!) + "]);"
         : null;
   }
+}
+
+/**
+ * Why a step produced no line — the sentence that goes into the spec in its
+ * place.
+ *
+ * A step that generated nothing used to VANISH: no code, no comment, no error,
+ * no count. The step stayed in the trainer's list, previewed green, and had no
+ * counterpart in the file the runner executed — so the run "passed" it by never
+ * attempting it, which is the one failure mode worse than a red step. Every
+ * `return null` in the line builders above is a way to reach that, and there
+ * are eight of them.
+ *
+ * Best-effort and deliberately non-exhaustive: an unrecognised shape falls
+ * through to a generic sentence rather than being asserted about, because the
+ * value here is that SOMETHING appears in the spec, not that the diagnosis is
+ * complete.
+ */
+/**
+ * Render text as a `//` comment that cannot stop being one.
+ *
+ * A comment is a place people stop thinking about escaping, and that is exactly
+ * what makes it a code sink here. `describeStep` interpolates step fields RAW —
+ * it was UI copy until this file started emitting it — and a `//` comment ends
+ * at the first LINE TERMINATOR, so anything after one lands in the spec as a
+ * top-level statement inside the `test()` callback, which Playwright executes
+ * in Node with the user's privileges. Same class of hole as the `count` field
+ * that was RCE for being the right TypeScript type: page input → generated code
+ * → executed.
+ *
+ * All FOUR terminators, not just `\n`. U+2028 and U+2029 end a comment exactly
+ * as a newline does, and unlike `\n` they survive places that reject control
+ * characters — a hostile page can put one in `document.cookie`, and the Cookies
+ * panel pre-fills a step from that live read.
+ *
+ * Replaced with a space rather than stripped, so the message stays readable and
+ * two words cannot silently fuse into a third.
+ */
+function commentSafe(text: string): string {
+  return String(text ?? "").replace(/[\n\r\u2028\u2029]/g, " ");
+}
+
+function ungeneratableReason(step: Step): string {
+  const needsLocator =
+    step.type === "click" || step.type === "fill" || step.type === "select" ||
+    step.type === "check" || step.type === "uncheck";
+  if (needsLocator && !step.locator) return "this step needs an element and none was recorded";
+  if (step.type === "assert") {
+    const a = step.assert;
+    if (a === "url" || a === "urlEndsWith" || a === "urlIs" || a === "title" || a === "titleContains") {
+      // The only way to reach here for a page-level assert. Said plainly,
+      // because the alternative — generating it — is an assertion that either
+      // matches every page or no page.
+      return "the expected value is empty, which would assert nothing";
+    }
+    if (a === "css" && !isCssPropName(step.cssProp))
+      return "the CSS property name is missing or not a valid kebab-case property";
+    if (!step.locator) return "this assertion needs an element and none was recorded";
+  }
+  if (step.type === "capture" && !step.captureVar) return "no variable name was set to capture into";
+  if (step.type === "cookie") return "the cookie is missing a name, or a domain/path to scope it to";
+  if (step.type === "state") return "the element state is missing or not one this app can replay";
+  if (step.type === "wait" && !step.locator) return "this wait needs an element and none was recorded";
+  return "this app could not turn it into a Playwright statement";
 }
 
 function stepLine(step: Step, vars: ReadonlySet<string> = EMPTY_VARS): string | null {
@@ -859,7 +977,16 @@ export function generateSpecDetailed(
       continue;
     }
     const line = stepLine(step, vars);
-    if (line == null) continue;
+    if (line == null) {
+      // `runFlow` is the one step that legitimately emits nothing — its target
+      // flow's steps were inlined in its place. Everything else reaching here
+      // is a step the user can see in the list and the runner will never
+      // execute, so it says so in the file rather than disappearing from it.
+      if (step.type !== "runFlow") {
+        body.push(commentSafe("  // UNGENERATABLE STEP — " + describeStep(step) + ": " + ungeneratableReason(step)));
+      }
+      continue;
+    }
     if (step.type === "endif") depth = Math.max(1, depth - 1);
     const indent = "  ".repeat(depth);
     // A trailing log statement (viewport only) travels with its step through
@@ -872,8 +999,13 @@ export function generateSpecDetailed(
     // in the script for round-tripping and readability. Structural `if`/
     // `endif` are never commented — disabling them would break block pairing.
     if (step.disabled && step.type !== "if" && step.type !== "endif") {
-      body.push(indent + "// disabled — skipped: " + line);
-      if (logLine) body.push(indent + "// disabled — skipped: " + logLine);
+      // Same sink as the UNGENERATABLE comment below, and older: a step's line
+      // reaches here through `valueExpr`, which escapes a value into a JS
+      // literal — but a `${var}` reference emits a TEMPLATE literal, and a raw
+      // newline is legal inside one. Commenting that line out puts the text
+      // after the newline back into the file as a statement.
+      body.push(commentSafe(indent + "// disabled — skipped: " + line));
+      if (logLine) body.push(commentSafe(indent + "// disabled — skipped: " + logLine));
     } else if (step.continueOnFailure && step.type !== "if" && step.type !== "endif") {
       // "Continue on Failure" wraps the step's statement in a try/catch so a
       // failure is swallowed and the test proceeds to the next step. Only

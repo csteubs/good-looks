@@ -76,6 +76,14 @@ export interface Locator {
   v?: string;
   role?: string;
   name?: string;
+  /** Index into the matches, when the recorder could not find a locator that
+   *  identifies exactly one element (mirror of main types).
+   *
+   *  Absent from this mirror until now, which is why `locatorToPrompt` had no
+   *  branch for it and showed the model `getByText("Save")` for a step whose
+   *  spec line is `getByText("Save").nth(3)` — a locator that cannot produce
+   *  the failure being diagnosed. */
+  nth?: number;
 }
 
 export type AssertKind =
@@ -93,8 +101,40 @@ export type AssertKind =
   | "url"
   | "urlEndsWith"
   | "urlIs"
+  // `title` is exact ("Page title is"); `titleContains` is the substring kind
+  // the vocabulary was missing. See the note in main/recorder/types.ts.
   | "title"
+  | "titleContains"
   | "css";
+
+/**
+ * Every assert kind, as a runtime list (mirror of `ASSERT_KINDS` in
+ * main/recorder/types.ts).
+ *
+ * Exported because two things downstream had hand-written copies of it and both
+ * had drifted: the AI-steps prompt's schema line and, worse, the validator in
+ * `parse-llm-response.ts` — which omitted `urlEndsWith`, `urlIs` and `css`, and
+ * SILENTLY DROPPED any step using one. The prompt told the model to emit
+ * `urlEndsWith`; the validator deleted it; the user simply got fewer steps than
+ * the model wrote, with no error and no count. `check:step-semantics` pins this
+ * list against the backend's.
+ */
+export const ASSERT_KINDS: AssertKind[] = [
+  "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked",
+  "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs",
+  "title", "titleContains", "css",
+];
+
+/** Every `waitUntil` predicate, as a runtime list (mirror of main types). */
+export const WAIT_UNTIL_KINDS: WaitUntilKind[] = [
+  "visible", "hidden", "exists", "enabled", "disabled", "checked", "unchecked",
+  "text", "value", "count", "urlContains", "titleContains",
+];
+
+/** Every locator kind, as a runtime list (mirror of main types). */
+export const LOCATOR_KINDS: LocatorKind[] = [
+  "testid", "role", "label", "placeholder", "text", "css", "xpath",
+];
 
 /** Pseudo-state a `state` step applies (mirror of main types).
  *
@@ -343,6 +383,10 @@ export interface TestRecord {
   scriptEdited?: boolean;
   speed?: TestSpeed;
   sourceDir?: string;
+  /** Base URL an imported spec's relative navigations resolve against (mirrors
+   *  main TestRecord). Only imported tests have one — it comes from the source
+   *  project's `playwright.config`, or from the field on the detail toolbar. */
+  baseUrl?: string;
   hidden?: boolean;
   stepsDiverged?: boolean;
   /** Why the steps and the script disagree (mirrors main TestRecord).
