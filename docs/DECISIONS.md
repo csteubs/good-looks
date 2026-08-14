@@ -16,6 +16,47 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-14 — A menu placed before its contents arrive, and five notes rescued off a dead branch
+
+Two unrelated things, landed together because both were found the same way:
+auditing every branch in this repo against `main` to see what had never merged.
+
+**The flyout was anchored by the wrong edge.** `RailFlyout` computed a `top`
+from the panel's measured height. That is correct only when the contents are
+known at placement time, and this menu's contents are *never* known then —
+nothing is fetched until the first open, so the panel is positioned while it
+still reads "Reading branches…" and then gets five rows taller. Pinned by
+`top`, that growth goes downward, off the bottom of the window. It had already
+cost a second measure pass and a re-measure on resize and was still wrong.
+Anchoring `bottom` makes upward growth a property of the layout instead of a
+number to keep recomputing: whatever height the panel takes, its bottom stays on
+the row and its top rises, with `maxHeight` bounding it against the window's top
+margin so a long list scrolls inside itself.
+
+**jsdom cannot see this, which is why it survived.** `getBoundingClientRect`
+returns zeros there, so every placement number is 0 and the tests pass against
+both the fixed and the broken version. The added test pins the *contract* —
+that placement is expressed as `bottom`, never `top` — rather than a measured
+pixel, because the pixel is unobservable in the only environment that runs it.
+Anything checking the real geometry belongs in `e2e/`.
+
+**And the notes.** `claude/transcribe-notes-plan-work-e36d77` held five design
+and research documents written 2026-08-08 from working notes, plus a "groups"
+feature that `main` later shipped under the name Routines. The documents came
+across; the feature did not. Carrying prose is nearly free and the reasoning in
+it exists nowhere else — the rejected alternatives in `LINEAR.md`, and
+`VISUAL-TUNING.md`'s argument that visual flake is *not* a tuning problem, which
+is still unbuilt advice. Carrying the code would have meant reconciling a
+superseded feature against its own replacement for no gain.
+
+Each document keeps its original `Status:` line and gains a dated banner saying
+what has shipped since, verified against the tree on the day it landed. That
+split matters: rewriting the status line would destroy the record of what was
+believed when the note was written, while leaving it alone would put "nothing
+built" above a description of `main/services/issue-tracker/`, which exists. A
+document that lies about the code is worse than no document.
+
+
 ### 2026-08-14 — The AI features believed things about this app that stopped being true
 
 `renderer/lib/llm-prompts.ts`, `renderer/lib/parse-llm-response.ts`,
