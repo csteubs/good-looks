@@ -42,6 +42,7 @@ import type {
   Routine,
   RoutineGroupStep,
   RoutineStep,
+  RoutineBranchStep,
   RoutineNotifyStep,
   RoutineTestStep,
   RoutineWaitStep,
@@ -219,6 +220,55 @@ function normalizeNotifyStep(raw: unknown): RoutineNotifyStep | null {
   };
 }
 
+/**
+ * Rebuild a `branch`.
+ *
+ * `seen` is threaded through, so a test cannot appear on both sides — nor on a
+ * side and again outside the branch. The lane invariant is global, and a test
+ * queued twice is the same collision here as anywhere else; the difference is
+ * that with a branch it would ALSO make the two paths overlap, so the run would
+ * skip an entry it had already executed.
+ *
+ * A branch with NOTHING on either side is dropped: it is a choice between two
+ * empty paths, which is not a choice. One empty side is fine and meaningful —
+ * "if anything failed, run the teardown, otherwise carry on" is exactly that.
+ *
+ * v1 is ONE LEVEL DEEP, so `normalizeTestStep` returning null for anything that
+ * is not a test is what refuses a nested branch, rather than a branch of its own.
+ */
+function normalizeBranchStep(raw: unknown, seen: Set<string>): RoutineBranchStep | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const step = raw as Record<string, unknown>;
+  if (step.kind !== "branch") return null;
+  if (typeof step.id !== "string" || step.id === "") return null;
+
+  const side = (rawSide: unknown): RoutineTestStep[] => {
+    const out: RoutineTestStep[] = [];
+    for (const rawChild of Array.isArray(rawSide) ? rawSide : []) {
+      if (seen.size >= MAX_ROUTINE_STEPS) break;
+      const child = normalizeTestStep(rawChild);
+      if (!child || seen.has(child.testId)) continue;
+      seen.add(child.testId);
+      out.push(child);
+    }
+    return out;
+  };
+  const thenSteps = side(step.then);
+  const elseSteps = side(step.else);
+  if (thenSteps.length === 0 && elseSteps.length === 0) return null;
+
+  return {
+    kind: "branch",
+    id: step.id,
+    // Defaults to `anyFailed`, which is the conservative reading: a Routine
+    // whose condition was garbled runs its "something went wrong" path rather
+    // than its "all clear" one.
+    on: step.on === "allPassed" ? "allPassed" : "anyFailed",
+    then: thenSteps,
+    else: elseSteps,
+  };
+}
+
 function normalizeGroupStep(raw: unknown, seen: Set<string>): RoutineGroupStep | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const step = raw as Record<string, unknown>;
@@ -288,6 +338,11 @@ function normalizeRoutine(raw: unknown, now?: number): Routine | null {
     const notify = normalizeNotifyStep(rawStep);
     if (notify) {
       steps.push(notify);
+      continue;
+    }
+    const branch = normalizeBranchStep(rawStep, seen);
+    if (branch) {
+      steps.push(branch);
       continue;
     }
     const step = normalizeTestStep(rawStep);
@@ -402,6 +457,12 @@ export const routineStore = {
       // lists, which is the failure with no symptom.
       steps: r.steps.map((s) => {
         if (s.kind === "group") return { ...s, steps: s.steps.map(markOne) };
+        // BOTH sides. A broken step on the path that does not run this time is
+        // still one the user has to be able to see and take out — and the path
+        // it is on may well be the one that runs next time.
+        if (s.kind === "branch") {
+          return { ...s, then: s.then.map(markOne), else: s.else.map(markOne) };
+        }
         // A `wait` names no test, so there is nothing to mark. Falling through
         // to `markOne` would compare `undefined` to the deleted id — harmless
         // today and wrong the moment a future step kind grows a `testId`.

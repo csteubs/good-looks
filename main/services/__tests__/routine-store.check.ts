@@ -535,6 +535,151 @@ assert(
 }
 
 
+// ── Branches ──────────────────────────────────────────────────────────
+//
+// The last step kind capability 3 adds, and the only one with two child lists.
+// What the store owes it is the SAME lane invariant everything else obeys —
+// one test, one entry — because a test on both sides would make the two paths
+// overlap, and the runner skips the side it does not take by entry.
+
+{
+  const saved = routineStore.save({
+    id: "r-branch",
+    name: "Forked",
+    steps: [
+      { kind: "test", testId: "t-a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+      {
+        kind: "branch",
+        id: "b-1",
+        on: "allPassed",
+        then: [
+          { kind: "test", testId: "t-b", browsers: ["webkit"], headless: true, onFailure: "continue" },
+          // Already claimed at the top level, so it does not reappear here —
+          // `seen` is threaded through the branch exactly as through a group.
+          { kind: "test", testId: "t-a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        ],
+        else: [
+          // And the two SIDES share one `seen` as well: `t-b` is on the then
+          // side above, so a copy here is dropped. Without that, the run would
+          // queue one test twice and skip an entry it had already executed.
+          { kind: "test", testId: "t-b", browsers: ["chromium"], headless: false, onFailure: "continue" },
+          { kind: "test", testId: "t-c", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        ],
+      },
+      // The reverse direction, the same rule: claimed INSIDE the branch, so it
+      // must not reappear after it.
+      { kind: "test", testId: "t-c", browsers: ["chromium"], headless: false, onFailure: "continue" },
+      // Nothing on either side: a choice between two empty paths is not a
+      // choice, and the editor would draw a header with no rows under it.
+      { kind: "branch", id: "b-2", on: "anyFailed", then: [], else: [] },
+      // One empty side IS meaningful — "if anything failed run the teardown,
+      // otherwise carry on" is exactly this shape — so it is kept.
+      {
+        kind: "branch",
+        id: "b-3",
+        on: "anyFailed",
+        then: [
+          { kind: "test", testId: "t-d", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        ],
+        else: [],
+      },
+      // Garbled condition. `anyFailed` is the conservative reading: run the
+      // "something went wrong" path rather than the "all clear" one.
+      {
+        kind: "branch",
+        id: "b-4",
+        on: "whenever",
+        then: [
+          { kind: "test", testId: "t-e", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        ],
+        else: [],
+      },
+      // No id — nothing to key an edit or a reorder on.
+      {
+        kind: "branch",
+        on: "anyFailed",
+        then: [
+          { kind: "test", testId: "t-f", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        ],
+        else: [],
+      },
+      // v1 is ONE LEVEL DEEP. A nested branch is not a test step, so the side
+      // drops it — and with nothing else on either side the outer one goes too.
+      {
+        kind: "branch",
+        id: "b-5",
+        on: "anyFailed",
+        then: [{ kind: "branch", id: "b-6", on: "anyFailed", then: [], else: [] }],
+        else: [],
+      },
+      // Sides that are not arrays at all.
+      { kind: "branch", id: "b-7", on: "anyFailed", then: "t-g", else: 3 },
+    ],
+    defaults: { captureArtifacts: false, concurrency: 1 },
+  } as unknown as Parameters<typeof routineStore.save>[0]);
+
+  const branches = (saved?.steps ?? []).filter((st) => st.kind === "branch");
+  assert(
+    branches.map((b) => b.id).join(",") === "b-1,b-3,b-4",
+    "only the usable branches are stored, in the order they were written",
+  );
+  const first = branches[0];
+  assert(
+    first?.kind === "branch" && first.then.map((c) => c.testId).join(",") === "t-b",
+    "a test already claimed at the top level does not reappear inside a branch",
+  );
+  assert(
+    first?.kind === "branch" && first.else.map((c) => c.testId).join(",") === "t-c",
+    "and a test on one side does not reappear on the other",
+  );
+  assert(
+    saved?.steps.filter((st) => st.kind === "test").length === 1,
+    "a test claimed inside a branch does not reappear after it either",
+  );
+  assert(first?.kind === "branch" && first.on === "allPassed", "a stated condition is kept");
+  assert(
+    branches[2]?.kind === "branch" && branches[2].on === "anyFailed",
+    "a garbled condition falls back to anyFailed — the path that assumes something went wrong",
+  );
+  assert(
+    branches[1]?.kind === "branch" && branches[1].else.length === 0,
+    "one empty side is kept: 'run the teardown, otherwise carry on' is a real shape",
+  );
+}
+
+{
+  // `markTestDeleted` reaches BOTH sides. A broken step on the path that does
+  // not run this time is still one the user has to see and take out, and that
+  // path may well be the one that runs next time.
+  routineStore.save({
+    id: "r-branch-mark",
+    name: "Marked",
+    steps: [
+      {
+        kind: "branch",
+        id: "b-1",
+        on: "anyFailed",
+        then: [
+          { kind: "test", testId: "t-x", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        ],
+        else: [
+          { kind: "test", testId: "t-y", browsers: ["chromium"], headless: false, onFailure: "continue" },
+        ],
+      },
+    ],
+    defaults: { captureArtifacts: false, concurrency: 1 },
+  } as unknown as Parameters<typeof routineStore.save>[0]);
+
+  assert(routineStore.markTestDeleted("t-x").marked === 1, "a step on a branch's then side is marked");
+  assert(routineStore.markTestDeleted("t-y").marked === 1, "a step on a branch's ELSE side is marked too");
+  const after = routineStore.get("r-branch-mark")?.steps[0];
+  assert(
+    after?.kind === "branch" && after.then[0].testDeleted === true && after.else[0].testDeleted === true,
+    "a marked step inside a branch is KEPT and flagged on both sides, not removed",
+  );
+}
+
+
 // ── Caps ─────────────────────────────────────────────────────────────
 const userData5 = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-routines-5-"));
 process.env.GLAZE_TEST_USERDATA = userData5;

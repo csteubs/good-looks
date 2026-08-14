@@ -1187,11 +1187,24 @@ export interface RoutineNotifyStep {
   message: string;
 }
 
+/** Take one of two paths. BOTH SIDES ARE QUEUED UP FRONT and the untaken one is
+ *  marked skipped when the branch is reached — see the main-process copy for
+ *  why a dynamic queue was not an option, and for why `plannedRuns` becomes a
+ *  maximum once a Routine has one. */
+export interface RoutineBranchStep {
+  kind: "branch";
+  id: string;
+  on: "anyFailed" | "allPassed";
+  then: RoutineTestStep[];
+  else: RoutineTestStep[];
+}
+
 export type RoutineStep =
   | RoutineTestStep
   | RoutineGroupStep
   | RoutineWaitStep
-  | RoutineNotifyStep;
+  | RoutineNotifyStep
+  | RoutineBranchStep;
 
 /** Longest a `notify` message may be — user text that can leave the machine. */
 export const MAX_ROUTINE_MESSAGE = 200;

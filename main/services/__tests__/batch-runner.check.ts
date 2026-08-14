@@ -1040,6 +1040,110 @@ async function main(): Promise<void> {
     );
   }
 
+  // ── Branch: both sides queued, one skipped ─────────────────────────
+  //
+  // The design in one assertion: the queue is decided at START, and the branch
+  // marks the side it did not take. A queue that grew mid-run would break
+  // write-through, the summary, `currentIndex` and the view's row lookup.
+  const branchRun = async (opts: {
+    on: "anyFailed" | "allPassed";
+    firstExit: number;
+  }) => {
+    const fake = makeFake({});
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["first", "onFail", "onPass"],
+      perTest: [
+        { testId: "first", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 0 },
+        { testId: "onFail", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 1 },
+        { testId: "onPass", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 2 },
+      ],
+      barriers: [
+        {
+          afterSegment: 0,
+          ms: 0,
+          branch: { id: "b1", on: opts.on, thenSegment: 1, elseSegment: 2 },
+        },
+      ],
+    });
+    await tick();
+    fake.finish("first", opts.firstExit);
+    await tick();
+    await tick();
+    return fake;
+  };
+
+  {
+    // `anyFailed` and something failed → the THEN side runs.
+    const fake = await branchRun({ on: "anyFailed", firstExit: 1 });
+    assert(fake.started.includes("onFail"), "anyFailed + a failure runs the `then` side");
+    assert(!fake.started.includes("onPass"), "…and never starts the other side");
+    fake.finish("onFail", 0);
+    await tick();
+    const done = fake.doneEvent();
+    assert(done !== undefined, "the batch finished at all (branch taken)");
+    assert(
+      done?.results.find((r) => r.testId === "onPass")?.status === "skipped",
+      "the untaken side is marked SKIPPED, not left at queued",
+    );
+    // A pending row counts as neither passed, failed nor skipped, so leaving it
+    // there makes the record's own total stop adding up.
+    assert(
+      (done?.summary.passed ?? 0) + (done?.summary.failed ?? 0) + (done?.summary.skipped ?? 0) ===
+        done?.summary.total,
+      "…so the summary still adds up",
+    );
+    assert(
+      (done?.results.find((r) => r.testId === "onPass")?.note ?? "").includes("branch"),
+      "…and says the branch is why",
+    );
+  }
+
+  {
+    // `anyFailed` and nothing failed → the ELSE side runs.
+    const fake = await branchRun({ on: "anyFailed", firstExit: 0 });
+    assert(fake.started.includes("onPass"), "anyFailed with no failure runs the `else` side");
+    assert(!fake.started.includes("onFail"), "…and never starts the other side");
+  }
+
+  {
+    // `allPassed` inverts it. Worth its own case: the condition is stored, and
+    // a runner that ignored it would look correct on the default.
+    const fake = await branchRun({ on: "allPassed", firstExit: 0 });
+    assert(fake.started.includes("onFail"), "allPassed with no failure takes the `then` side");
+    const other = await branchRun({ on: "allPassed", firstExit: 1 });
+    assert(other.started.includes("onPass"), "allPassed with a failure takes the `else` side");
+  }
+
+  {
+    // A SKIP is not a failure. A test that never ran did not fail — saying
+    // otherwise would send a Routine down its failure path because an unrelated
+    // test had been deleted.
+    const fake = makeFake({ names: { gone: null } });
+    const batch = createBatchRunner(fake.deps);
+    batch.start({
+      testIds: ["gone", "onFail", "onPass"],
+      perTest: [
+        { testId: "gone", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 0 },
+        { testId: "onFail", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 1 },
+        { testId: "onPass", browsers: ["chromium"], headless: true, onFailure: "continue", segment: 2 },
+      ],
+      barriers: [
+        {
+          afterSegment: 0,
+          ms: 0,
+          branch: { id: "b1", on: "anyFailed", thenSegment: 1, elseSegment: 2 },
+        },
+      ],
+    });
+    await tick();
+    await tick();
+    assert(
+      fake.started.includes("onPass") && !fake.started.includes("onFail"),
+      "a skipped test is not a failure, so anyFailed takes the `else` side",
+    );
+  }
+
   // ── One batch at a time ───────────────────────────────────────────
   {
     const fake = makeFake({});

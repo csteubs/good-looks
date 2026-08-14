@@ -13,10 +13,10 @@ the "Batch" Routine described under *A Routine is an entity*, once, at startup;
 `shared/routine-plan.mjs` turns a Routine into the batch runner's own payload;
 `routines:*` IPC exposes list/get/save/delete/run; and the Batch view is the
 open Routine's editor (`renderer/lib/routine-rows.ts` translates its checklist
-to and from steps). Of the step kinds below, `test`, `group`, `wait` and `notify` are built.
+to and from steps). **Every step kind below is built.**
 **`onFailure` is honoured as of 2026-08-13**, all three policies: a step can be
 set to `stopRoutine` or — inside a group — `skipGroup` from its row in the
-editor, and both runners act on it. Only `branch` is still unbuilt.
+editor, and both runners act on it.
 
 **The barrier machinery landed with `wait` (2026-08-13)**, and it landed without
 a second execution engine: `routineRunPlan` cuts the steps into SEGMENTS at each
@@ -24,8 +24,11 @@ barrier and labels every entry with the segment it belongs to, and the runner
 drains one segment's lanes with the pool it already had, joins, pauses, and
 moves on. Lanes, concurrency, write-through and the summary are untouched, and a
 Routine with no `wait` steps is one segment — byte-for-byte the execution every
-caller had before. `notify` landed on top of it as a barrier with no pause; `branch` is the last
-one left. The MCP
+caller had before. `notify` landed on top of it as a barrier with no pause, and
+`branch` (2026-08-14) as a barrier that TAKES ONE — the plan queues both sides
+and the runner marks the losing side skipped when it reaches the barrier, so
+the two paths cost one extra pass over a list rather than a second scheduler.
+The MCP
 `run_routine` tool named in the rename table below IS built, alongside
 `list_routines` and alongside `run_batch` — see `mcp/README.md`. The rail lists
 Routines and the UI says "Routines" throughout (the route, the channels, the
@@ -41,10 +44,13 @@ fires occurrences arriving while the app is open; the catch-up offers ones
 missed while it was closed; `SCHEDULE_CAVEAT` is stated wherever a schedule is
 set. Note the two departures recorded under *Scheduling* below: the schedule is
 an ENUMERATION rather than a cron string, and `lastRunAt` lives on the Routine
-as `lastScheduledRunAt`. **Capability 3 has started**: `group` and `wait` are built (2026-08-13) — the
-first gives `skipGroup` something to point at, the second is the first step that
-is not a run and brought the barrier machinery with it. See *Step kinds* below for what a
-group is allowed to be in v1 — one level deep, and with no `parallel` flag.
+as `lastScheduledRunAt`. **Capability 3 is built** (2026-08-13/14), in four
+slices: `group` gives `skipGroup` something to point at; `wait` is the first
+step that is not a run and brought the barrier machinery with it; `notify` is a
+barrier with no pause; `branch` is a barrier that chooses. See *Step kinds*
+below for what each is allowed to be in v1 — one level deep, no `parallel`
+flag, and a branch condition that reads the segments BEFORE it rather than an
+expression.
 
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for what exists today,
 [DECISIONS.md](DECISIONS.md) for why the current Batch is shaped the way it is,
@@ -198,6 +204,42 @@ suite one at a time" — a single number can't say that.
 > other way would turn a typo in a hand-edited file into an unintended send.
 > The editor states which channel does what where the choice is made — "stays on
 > this machine" / "leaves this machine" — rather than only in Settings.
+
+> **`branch` as built (2026-08-14).** A barrier that CHOOSES. The condition is
+> about the run so far — "did anything fail yet" — so everything before it has
+> to have finished for the answer to be true, which is the same join a `wait`
+> pauses at.
+>
+> **Both sides are queued up front and one is marked skipped**, rather than the
+> chosen side being appended when the answer is known. A queue that grew
+> mid-run would break write-through, the summary, `currentIndex` and the view's
+> row lookup — every one of which assumes the list is decided at start. The
+> cost is that `plannedRuns` becomes a MAXIMUM, so the plan carries `hasBranch`
+> and the toolbar says so rather than promising runs that cannot all happen.
+>
+> Each side gets its own SEGMENT (`thenSegment`, `elseSegment`), which is what
+> lets the runner mark one of them skipped without touching the other, and why
+> a branch advances the segment counter by three: the two sides, then whatever
+> follows. Only PENDING entries are skipped, the same rule `skipGroup` follows.
+> Each skipped row carries a note saying which way the branch went and why —
+> "the routine branched because something failed" — because a row that reads
+> `Skipped` with no reason looks like the runner lost it.
+>
+> A **trailing** branch is NOT dropped the way a trailing pause is. It gates
+> nothing, but it still has to mark the losing side skipped, or the rows for a
+> path that was never taken sit at `queued` in the record forever.
+>
+> **One level deep, and the condition is not an expression.** `anyFailed` /
+> `allPassed` read the whole run so far, not a named step — the same restraint
+> `group` takes. Anything richer is a query language, and the thing it would
+> buy is a routine nobody can read at a glance.
+>
+> In the editor a row is in a group or on one side of a branch and **never
+> both**; the translation resolves any overlap by letting the branch claim the
+> row, since it decides whether the step runs at all where a group only decides
+> what a failure takes out with it. A branch with rows on ONE side is kept —
+> "if anything failed run the teardown, otherwise carry on" is exactly that
+> shape — so the lone header carries the condition, read negated.
 
 ### Branching: the decision that has to be made explicitly
 

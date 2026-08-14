@@ -2069,11 +2069,45 @@ export interface RoutineNotifyStep {
   message: string;
 }
 
+/**
+ * Take one of two paths. docs/ROUTINES.md capability 3, the last step kind.
+ *
+ * BOTH SIDES ARE QUEUED UP FRONT and the untaken one is marked skipped when the
+ * branch is reached. That is the whole design, and the alternative is what makes
+ * it worth stating: building the queue as the run goes would mean
+ * `BatchState.results` growing mid-run, which every part of this feature assumes
+ * it does not — write-through persistence, the summary, `currentIndex`, and the
+ * view's per-row result lookup are all written against a fixed list decided at
+ * start. Queueing both and skipping one keeps every one of them true, and the
+ * skipped rows say WHY, which a queue that never mentioned them could not.
+ *
+ * The cost is that `plannedRuns` becomes a MAXIMUM rather than a count. A
+ * Routine with a branch will run fewer entries than it queues, always. The
+ * toolbar says so.
+ *
+ * `on` is evaluated against THE RUN SO FAR, not against the immediately
+ * preceding step. "If anything has failed, run the teardown" is the thing
+ * people mean, and scoping it to the last segment would make the answer depend
+ * on where the user happened to put a pause.
+ *
+ * ONE LEVEL DEEP, like `group`: each side holds test steps and never another
+ * branch. Nesting multiplies the editor and the skip semantics, and a flat
+ * checklist cannot draw it honestly.
+ */
+export interface RoutineBranchStep {
+  kind: "branch";
+  id: string;
+  on: "anyFailed" | "allPassed";
+  then: RoutineTestStep[];
+  else: RoutineTestStep[];
+}
+
 export type RoutineStep =
   | RoutineTestStep
   | RoutineGroupStep
   | RoutineWaitStep
-  | RoutineNotifyStep;
+  | RoutineNotifyStep
+  | RoutineBranchStep;
 
 /** Longest a `notify` message may be. Bounded because it is user text that can
  *  leave the machine: a webhook body is not the place for a paste of something
