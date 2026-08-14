@@ -78,11 +78,20 @@ export function buildReplayScript(step: Step): string {
   if (step.locator) log("info", "Locator: " + locDesc(step.locator));
   if (step.type === "fill" || step.type === "select") log("info", "Value: " + (step.value || ""));
   if (step.type === "assert") {
-    if (step.assert === "url" || step.assert === "urlEndsWith" || step.assert === "urlIs" || step.assert === "title") log("info", "Expect " + step.assert + " contains: " + (step.value || ""));
-    else if (step.assert === "count") log("info", "Expect count = " + step.count);
-    else if (step.assert === "value" || step.assert === "attribute") log("info", "Expect " + step.assert + " = " + (step.value || ""));
-    else if (step.assert === "text" || step.assert === "exactText") log("info", "Expect text: " + (step.text || ""));
-    else log("info", "Expect " + step.assert);
+    // The VERB comes from the shared table rather than from the word
+    // "contains" — this line said "contains" for every URL and title kind
+    // including the two EXACT ones, which is the same lie the predicates
+    // themselves used to tell, printed into the log the user reads to decide
+    // whether the step is right.
+    var sem = ASSERT_SEMANTICS[step.assert];
+    if (sem) {
+      var verb = sem.match === "exact" ? "to be exactly" : sem.match === "endsWith" ? "to end with" : "to contain";
+      log("info", "Expect " + step.assert + " " + verb + ": " + (step.text || step.value || ""));
+    } else if (step.assert === "count") {
+      log("info", "Expect count = " + step.count);
+    } else {
+      log("info", "Expect " + step.assert);
+    }
   }
 
   function ci(s) { return String(s == null ? "" : s).toLowerCase(); }
