@@ -71,8 +71,18 @@ export const TESTS: TestRecord[] = [
         type: "assert",
         assert: "text",
         locator: { k: "testid", v: "confirmation" },
-        value: "Thank you",
+        // `text`, not `value`. A text assertion reads `step.text`, so the
+        // fixture rendered `toContainText("")` in the preview's step list —
+        // the empty-expectation shape the generator now refuses outright.
+        text: "Thank you",
       },
+      // The page-level kinds, so the preview shows what they COMPILE TO. They
+      // are the assertions this app got wrong for longest, and the step list is
+      // where a user would have had to notice: "URL contains" rendered as
+      // `toHaveURL("/order/confirmed")` — an exact whole-URL match, which is
+      // not what the label says and could never pass.
+      { type: "assert", assert: "url", value: "/order/confirmed" },
+      { type: "assert", assert: "titleContains", value: "Order" },
     ),
   },
   {

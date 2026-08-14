@@ -183,6 +183,58 @@ export function buildReplayScript(step: Step): string {
     return r.strict ? "Locator matched " + r.strict + " elements (strict mode violation)" : null;
   }
 
+  /**
+   * Playwright's "receives events" actionability check, as far as a page can
+   * perform it: is the element at the click point actually this element?
+   *
+   * The trainer's click was a bare \`el.click()\`, which dispatches on the
+   * element no matter what is drawn on top of it. A real run does not: it waits
+   * for the element to receive pointer events and fails with "element
+   * intercepts pointer events" when something covers it. Cookie banners, sticky
+   * headers, toasts and modals are the everyday version of this, and a human
+   * recording a test dismisses them by reflex without ever noticing they were
+   * in the way — so the step passes in the trainer and fails at 3am.
+   *
+   * Reports WHAT is covering the element, because "the click failed" and "a
+   * cookie banner is over the button" send you to completely different places.
+   *
+   * Returns null when it cannot tell. \`elementFromPoint\` is unimplemented in
+   * jsdom and the point may legitimately be outside the viewport, and a check
+   * that cannot see must not invent a failure.
+   */
+  /** Name the covering element the way a person would recognise it on screen.
+   *  A bare tag name is not enough to find a full-page overlay in a strange
+   *  site's markup; its id, class or visible text usually is. */
+  function describeOccluder(el) {
+    var tag = (el.tagName || "?").toLowerCase();
+    var id = el.id ? "#" + el.id : "";
+    var cls = el.className && typeof el.className === "string"
+      ? "." + el.className.split(/\\s+/).filter(Boolean).slice(0, 2).join(".")
+      : "";
+    var label = txt(el).slice(0, 40);
+    return tag + id + cls + (label ? " — \\"" + label + "\\"" : "");
+  }
+
+  function occludedBy(el) {
+    try {
+      if (typeof document.elementFromPoint !== "function") return null;
+      var r = el.getBoundingClientRect();
+      if (!(r.width > 0) || !(r.height > 0)) return null;
+      var cx = r.left + r.width / 2;
+      var cy = r.top + r.height / 2;
+      if (cx < 0 || cy < 0 || cx > window.innerWidth || cy > window.innerHeight) return null;
+      var hit = document.elementFromPoint(cx, cy);
+      if (!hit) return null;
+      // A descendant receiving the click is the normal case — a <span> inside a
+      // <button> — and the event still reaches the element. Only something
+      // OUTSIDE the subtree is an interception.
+      if (hit === el || el.contains(hit)) return null;
+      return hit;
+    } catch (e) {
+      return null;
+    }
+  }
+
   function resolve(loc) { return resolveOne(loc).el; }
 
   function runAssert() {
@@ -505,7 +557,21 @@ export function buildReplayScript(step: Step): string {
     if (!el) { log("error", "Element not found — cannot " + t); return { ok: false, error: "Element not found" }; }
     log("info", "Resolved to <" + (el.tagName || "").toLowerCase() + ">" + (el.id ? "#" + el.id : "") + (el.className && typeof el.className === "string" ? "." + el.className.split(" ").filter(Boolean).slice(0, 2).join(".") : ""));
     try {
-      if (t === "click") { try { el.scrollIntoView({ block: "center" }); } catch (e) {} el.click(); log("info", "clicked"); return { ok: true }; }
+      if (t === "click") {
+        try { el.scrollIntoView({ block: "center" }); } catch (e) {}
+        // Checked AFTER scrolling into view, because that is the order a real
+        // run does it in — an element below the fold is not occluded, it is
+        // just not scrolled to yet.
+        var over = occludedBy(el);
+        if (over) {
+          var what = describeOccluder(over);
+          log("error", "another element (" + what + ") is on top of this one — a real run fails here with \\"element intercepts pointer events\\"");
+          return { ok: false, error: "Element is covered by " + what };
+        }
+        el.click();
+        log("info", "clicked");
+        return { ok: true };
+      }
       if (t === "fill") {
         el.focus();
         try { el.value = step.value || ""; } catch (e) {}

@@ -255,3 +255,49 @@ describe("locator resolution now uses the capture script's engine", () => {
     expect(r.ok).toBe(true);
   });
 });
+
+describe("occlusion: the click a real run refuses", () => {
+  // jsdom has no hit-testing, so `elementFromPoint` is stubbed to model the one
+  // thing that matters: what is drawn on top at the click point. The check
+  // itself — subtree containment, viewport bounds, the graceful "cannot tell"
+  // path — is the real code.
+  function stubTopmost(el: Element | null): void {
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null })
+      .elementFromPoint = () => el;
+  }
+
+  it("refuses a click on an element covered by something else", () => {
+    // The everyday version: a cookie banner over the button. A human recording
+    // dismisses one by reflex and never notices it was in the way, so the step
+    // passes in the trainer and fails at 3am with "element intercepts pointer
+    // events".
+    document.body.innerHTML = '<button data-testid="b">Buy</button><div id="banner" class="cookie-bar">Accept cookies</div>';
+    stubTopmost(document.getElementById("banner"));
+    const r = run(step({ type: "click", locator: { k: "testid", v: "b" } }));
+    expect(r.ok).toBe(false);
+    expect(why(r)).toMatch(/intercepts pointer events/i);
+  });
+
+  it("names the covering element, not just the failure", () => {
+    document.body.innerHTML = '<button data-testid="b">Buy</button><div id="banner" class="cookie-bar">Accept cookies</div>';
+    stubTopmost(document.getElementById("banner"));
+    const r = run(step({ type: "click", locator: { k: "testid", v: "b" } }));
+    expect(r.error ?? "").toContain("#banner");
+    expect(r.error ?? "").toContain("Accept cookies");
+  });
+
+  it("a descendant receiving the click is NOT occlusion", () => {
+    // A <span> inside a <button> is the normal case and the event still
+    // reaches the button. Treating it as interception would fail almost every
+    // real click.
+    document.body.innerHTML = '<button data-testid="b"><span id="inner">Buy</span></button>';
+    stubTopmost(document.getElementById("inner"));
+    expect(run(step({ type: "click", locator: { k: "testid", v: "b" } })).ok).toBe(true);
+  });
+
+  it("cannot-tell degrades to allowing the click, never to inventing a failure", () => {
+    document.body.innerHTML = '<button data-testid="b">Buy</button>';
+    stubTopmost(null);
+    expect(run(step({ type: "click", locator: { k: "testid", v: "b" } })).ok).toBe(true);
+  });
+});

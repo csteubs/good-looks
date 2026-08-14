@@ -56,7 +56,13 @@ renderer/theme/      the indie redesign's bespoke layer: --gl-* tokens, self-hos
                      so `check:theme-tokens` can catch a name that resolves to nothing
 renderer/dev/        the browser preview's fake backend (`npm run dev:web`) — never shipped
 shared/              the ONE pure core both the app and the MCP import (.mjs + hand-written
-                     .d.mts). Pure only: no fs, no @shell/backend, no IPC, no process
+                     .d.mts). Pure only: no fs, no @shell/backend, no IPC, no process.
+                     step-semantics.mjs is the load-bearing one: the single
+                     definition of what each assert/wait/condition MEANS (match
+                     mode, case rule, whitespace rule), read by the generator,
+                     by the injected replayer (as JSON + `toString`d source) and
+                     by the renderer's step list. Three copies of those rules is
+                     what made a "URL contains" assertion that could never pass
 mcp/                 standalone MCP server exposing the test library to external MCP clients
                      (list_tests, get_test, list_runs, get_run_log, run_test, run_batch,
                       list_routines, run_routine,
@@ -114,9 +120,11 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 3292 Vitest tests across 166 files and 65 checks in the chain as of 2026-08-13 (67 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 3349 Vitest tests across 169 files and 66 checks in the chain as of 2026-08-13 (68 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
+
+**One spec there is not about windows at all: `assert-parity.spec.ts`.** It is the authority on what a step MEANS, running every row through the real injected replayer AND the real generated source executed by real Playwright, and asserting the two verdicts agree — the property whose absence let "URL contains" generate an assertion that could not pass while the trainer showed it green. It uses a plain browser page rather than `_electron` because its subject is matcher semantics, not a window; it lives here because nothing short of real Playwright can answer the question. **Changing what any assertion, wait or condition emits? Add a row.** The fast counterpart is `main/services/assert-emission.test.ts`, which models the same rules in Node — but a model is only worth what validates it.
 
 **`check:shell-drift` has retired itself.** It guarded the Glaze tree and the Electron tree against drifting apart, and on 2026-08-09 they became one: `main` carries no `@glaze/*` dependency, and the stale `shell/electron` branch was deleted (preserved as the tag `archive/shell-electron`). The script was written to expect exactly this — with no counterpart ref it prints `nothing to compare` and exits 0, deliberately rather than failing, because a guard that goes red because its problem was *solved* trains people to ignore it. Leave it wired up: it costs nothing and it is what would notice a second shell reappearing.
 
