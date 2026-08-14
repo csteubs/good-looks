@@ -135,3 +135,69 @@ describe("a stored file is untrusted input", () => {
     });
   });
 });
+
+describe("the active provider", () => {
+  it("falls back before anything has been chosen", () => {
+    // Every existing install is in this state: a Linear key, no stored
+    // preference. It has to keep filing into Linear, not become unconfigured.
+    expect(issueConfigStore.activeProvider()).toBe("linear");
+  });
+
+  it("survives a write and a read", () => {
+    issueConfigStore.setActiveProvider("github");
+    expect(issueConfigStore.activeProvider()).toBe("github");
+    expect(JSON.parse(fs.readFileSync(configPath(), "utf-8"))).toMatchObject({
+      activeProvider: "github",
+    });
+  });
+
+  it("keeps each provider's defaults separate across a switch", () => {
+    // The failure this prevents is filing into a Linear team id that was read
+    // while GitHub was selected — both are strings, so nothing would throw.
+    issueConfigStore.set("linear", { containerId: "team-eng" });
+    issueConfigStore.setActiveProvider("github");
+    issueConfigStore.set("github", { containerId: "acme/storefront" });
+
+    expect(issueConfigStore.get("linear").containerId).toBe("team-eng");
+    expect(issueConfigStore.get("github").containerId).toBe("acme/storefront");
+
+    issueConfigStore.setActiveProvider("linear");
+    expect(issueConfigStore.get("linear").containerId).toBe("team-eng");
+  });
+
+  it("does not lose the choice when defaults are written", () => {
+    // The two live in one file and one write. A `set` that rebuilt the object
+    // without carrying the choice would silently move the user back to Linear
+    // the next time they picked a destination.
+    issueConfigStore.setActiveProvider("github");
+    issueConfigStore.set("github", { containerId: "acme/storefront" });
+    expect(issueConfigStore.activeProvider()).toBe("github");
+  });
+
+  it("keeps the choice when a provider is disconnected", () => {
+    // Disconnecting removes a key. It does not say "and go back to the other
+    // tracker" — someone clearing a token to paste a fresh one would otherwise
+    // find their next issue filed somewhere else.
+    issueConfigStore.setActiveProvider("github");
+    issueConfigStore.set("github", { containerId: "acme/storefront" });
+    issueConfigStore.clear("github");
+    expect(issueConfigStore.activeProvider()).toBe("github");
+    expect(issueConfigStore.get("github").containerId).toBeNull();
+  });
+
+  it("refuses a provider that is not one", () => {
+    issueConfigStore.setActiveProvider("github");
+    issueConfigStore.setActiveProvider("nonesuch" as never);
+    // Unchanged rather than written: the value indexes the provider registry
+    // directly, so storing it would throw on the next read instead of here.
+    expect(issueConfigStore.activeProvider()).toBe("github");
+  });
+
+  it("ignores a hostile value already on disk", () => {
+    // The file is editable, and this string reaches `REGISTRY[id]`.
+    writeRaw(JSON.stringify({ activeProvider: "__proto__", linear: {} }));
+    expect(issueConfigStore.activeProvider()).toBe("linear");
+    writeRaw(JSON.stringify({ activeProvider: "constructor" }));
+    expect(issueConfigStore.activeProvider()).toBe("linear");
+  });
+});

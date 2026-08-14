@@ -55,10 +55,12 @@ export function IntegrationsPane() {
     testWebhook,
     issuesStatus,
     issuesVocabulary,
+    issueProviders,
     issuesBusy,
     issueContainers,
     issueSubContainers,
     issueDefaults,
+    selectIssueProvider,
     connectIssues,
     verifyIssues,
     disconnectIssues,
@@ -88,9 +90,11 @@ export function IntegrationsPane() {
   const vocab = issuesVocabulary ?? {
     name: "Linear",
     container: "Team",
+    containerPlural: "Teams",
     subContainer: "Project",
     keyHelpUrl: "",
     keyPlaceholder: "lin_api_…",
+    supportsImageUpload: true,
   };
 
   const connected = !!issuesStatus.account;
@@ -119,8 +123,47 @@ export function IntegrationsPane() {
     (p) => p.containerId === null || p.containerId === issueDefaults.containerId,
   );
 
+  // Always at least the current provider, so the row renders a real choice
+  // rather than an empty menu during the first paint.
+  const providerOptions = issueProviders.length
+    ? issueProviders
+    : [{ id: issuesStatus.provider, vocabulary: vocab, hasKey: issuesStatus.hasKey }];
+
   return (
     <PaneSection>
+      {/* The tracker is chosen HERE and nowhere else. The compose dialog
+          deliberately has no picker: filing a defect is a moment when someone
+          is looking at a failure and wants it recorded, and a destination
+          question at that moment is one more thing to get wrong on the way. It
+          is a configuration decision, made once, in the window whose whole
+          subject is what this app connects to. */}
+      <SettingRow
+        id="issue-tracker-provider"
+        label="Issue tracker"
+        summary={`Where “Send to…” files defects from a run, a visual difference or an accessibility violation. Each tracker keeps its own key, its own default destination and its own record of what has already been filed, so switching is reversible and switching back finds everything where you left it.${
+          vocab.supportsImageUpload
+            ? ""
+            : ` ${vocab.name} cannot accept image attachments through its API, so screenshots stay on this Mac and the issue says so.`
+        }`}
+      >
+        <Select
+          value={issuesStatus.provider}
+          onValueChange={(v) => void selectIssueProvider(v as typeof issuesStatus.provider)}
+          disabled={issuesBusy}
+        >
+          <SelectTrigger id="issue-tracker-provider" className="w-64">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {providerOptions.map((p) => (
+              <SelectItem key={p.id} value={p.id}>
+                {p.hasKey ? `${p.vocabulary.name} — key saved` : p.vocabulary.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </SettingRow>
+
       <SettingRow
         id="linear-connection"
         label={vocab.name}
@@ -209,11 +252,14 @@ export function IntegrationsPane() {
           id="linear-default-team"
           label={`Default ${vocab.container.toLowerCase()}`}
           nested
-          summary={`Where issues go unless you pick somewhere else when sending. ${issueContainers.length} ${
-            issueContainers.length === 1
-              ? vocab.container.toLowerCase()
-              : `${vocab.container.toLowerCase()}s`
-          } available.`}
+          // The plural comes from the provider rather than from appending an
+          // "s" here. That worked for exactly as long as "Team" was the only
+          // word this could hold, and said "3 repositorys" the first time it
+          // was not.
+          summary={`Where issues go unless you pick somewhere else when sending. ${issueContainers.length} ${(issueContainers.length === 1
+            ? vocab.container
+            : vocab.containerPlural
+          ).toLowerCase()} available.`}
         >
           <Select
             value={issueDefaults.containerId ?? NONE}
@@ -370,14 +416,14 @@ export function IntegrationsPane() {
 
       <SettingRow
         id="github-token"
-        label="GitHub token"
+        label="GitHub token (branch switcher)"
         stacked
         summary={
           hasGithubToken
             ? "Saved — stored encrypted on this Mac and never shown again. Paste a new one to replace it."
             : "Optional. Only used to list pull requests in the branch switcher. Without one, public repositories still work at GitHub's unauthenticated rate limit."
         }
-        details="A token buys two things: private repositories, which answer 404 rather than 403 without one — so the failure reads as 'no such repository' rather than 'you aren't allowed' — and the authenticated rate limit, which matters because 60 requests an hour is shared with everything else on this machine's IP."
+        details="Separate from the token above, deliberately, even when it is the same token. Disconnecting an issue tracker clears its key — and pointing that at this one would silently stop the branch switcher listing pull requests, in another window, with nothing on screen connecting the two. The scopes also differ: listing pull requests is read-only and works unauthenticated on a public repository, while filing an issue needs write access. A token buys two things here: private repositories, which answer 404 rather than 403 without one — so the failure reads as 'no such repository' rather than 'you aren't allowed' — and the authenticated rate limit, which matters because 60 requests an hour is shared with everything else on this machine's IP."
       >
         <div className="flex w-full items-center gap-2">
           <Input

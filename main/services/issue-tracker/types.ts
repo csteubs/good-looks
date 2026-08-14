@@ -7,16 +7,25 @@
 // `branch-types.ts` gives: a type crossing IPC has two ends, and a mirror is a
 // promise someone has to keep.
 //
-// The interface below is deliberately designed against TWO APIs rather than
-// one. An interface derived from a single example becomes that example renamed,
-// and then fits the second provider badly — so every decision is the one that
-// survives Linear (GraphQL, UUIDs plus a human identifier, labels as node ids,
-// team → project, upload-then-reference) AND GitHub Issues (REST,
-// repository-scoped integers, labels as plain strings, repo → milestone, asset
-// embedded in markdown). Only Linear is implemented; GitHub exists here as the
-// adversary that keeps the shape honest. If a future member needs an escape
-// hatch through this interface, that is the signal the abstraction was
-// premature and Linear should have been built directly.
+// The interface below was designed against TWO APIs rather than one. An
+// interface derived from a single example becomes that example renamed, and then
+// fits the second provider badly — so every decision is the one that survives
+// Linear (GraphQL, UUIDs plus a human identifier, labels as node ids, team →
+// project, upload-then-reference) AND GitHub Issues (REST, repository-scoped
+// integers, labels as plain strings, repo → milestone, asset embedded in
+// markdown). BOTH ARE NOW IMPLEMENTED, and the bet mostly paid: `createIssue`,
+// `addComment` and `verify` took GitHub with no change at all.
+//
+// Two places it did not, both recorded here because they are what the second
+// provider actually costs:
+//
+//   • `listSubContainers` and `listLabels` had no container argument. Linear
+//     scopes neither, GitHub scopes both, and no amount of interface taste
+//     removes that disagreement — so they take one now. Not an escape hatch: a
+//     narrowing hint both providers answer honestly, one by using it and one by
+//     ignoring it.
+//   • `supportsImageUpload` on the vocabulary. Not every provider can carry the
+//     evidence, and the dialog has to say so before the send rather than after.
 //
 // Four consequences, each traceable to a disagreement between the two:
 //
@@ -45,6 +54,7 @@ import type {
 
 export type {
   ConnectionStatus,
+  ProviderChoice,
   CreatedIssue,
   DefectSource,
   DraftAttachment,
@@ -112,10 +122,12 @@ export class IssueProviderError extends Error {
 /**
  * What every provider can do.
  *
- * Phase 1 is the read half only — enough to prove a key works and to choose
- * where issues will go. Creating issues, uploading images and commenting arrive
- * with the compose dialog, and are deliberately absent here so this interface
- * cannot be half-implemented and look finished.
+ * Every method is required. There is no optional member and no capability
+ * negotiation through this interface, deliberately: a provider that cannot do
+ * one of these is a provider whose issues would silently be worse, and the one
+ * real asymmetry found so far — GitHub cannot upload images — is declared on the
+ * vocabulary where the UI can read it BEFORE sending, rather than discovered
+ * here by a method that quietly does less.
  */
 export interface IssueProvider {
   readonly id: ProviderId;
@@ -129,16 +141,28 @@ export interface IssueProvider {
    *  @throws {IssueProviderError} */
   listContainers(key: string): Promise<IssueContainer[]>;
 
-  /** Sub-containers across the workspace. Filtering to a container is the
-   *  caller's job, since a provider may not scope them at all.
-   *  @throws {IssueProviderError} */
-  listSubContainers(key: string): Promise<IssueSubContainer[]>;
+  /**
+   * Sub-containers, optionally narrowed to one container.
+   *
+   * `containerId` is a HINT, not a filter the caller can rely on: Linear
+   * answers workspace-wide and attributes each project to a team, so the UI
+   * still filters. GitHub cannot answer at all without it — a milestone lives
+   * in a repository and there is no cross-repository milestone list — so it
+   * returns nothing when none is named. That disagreement is the reason the
+   * parameter exists rather than the caller passing everything through a
+   * workspace-shaped call that GitHub would have to fake.
+   *
+   * @throws {IssueProviderError}
+   */
+  listSubContainers(key: string, containerId: string | null): Promise<IssueSubContainer[]>;
 
   /** Labels the user can pick, by NAME. Resolving names to whatever the
    *  provider actually wants — node ids for Linear, plain strings for GitHub —
-   *  is the provider's job, not a caller's.
+   *  is the provider's job, not a caller's. `containerId` is scoped the same way
+   *  as `listSubContainers`: GitHub's labels are per-repository, Linear's are
+   *  workspace-wide and ignore it.
    *  @throws {IssueProviderError} */
-  listLabels(key: string): Promise<IssueLabel[]>;
+  listLabels(key: string, containerId: string | null): Promise<IssueLabel[]>;
 
   /**
    * File one issue, uploading its images first.

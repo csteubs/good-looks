@@ -69,14 +69,48 @@ export function makeController(overrides: Partial<SettingsController> = {}): Set
     issuesVocabulary: {
       name: "Linear",
       container: "Team",
+      containerPlural: "Teams",
       subContainer: "Project",
       keyHelpUrl: "https://linear.app/settings/api",
       keyPlaceholder: "lin_api_…",
+      supportsImageUpload: true,
     },
+    // Both providers offered, Linear selected — the shape the pane actually
+    // renders. An empty list would exercise the fallback path instead, and the
+    // fallback is precisely the case where a switching bug cannot show up.
+    issueProviders: [
+      {
+        id: "linear",
+        hasKey: false,
+        vocabulary: {
+          name: "Linear",
+          container: "Team",
+          containerPlural: "Teams",
+          subContainer: "Project",
+          keyHelpUrl: "https://linear.app/settings/api",
+          keyPlaceholder: "lin_api_…",
+          supportsImageUpload: true,
+        },
+      },
+      {
+        id: "github",
+        hasKey: false,
+        vocabulary: {
+          name: "GitHub",
+          container: "Repository",
+          containerPlural: "Repositories",
+          subContainer: "Milestone",
+          keyHelpUrl: "https://github.com/settings/tokens",
+          keyPlaceholder: "ghp_… or github_pat_…",
+          supportsImageUpload: false,
+        },
+      },
+    ],
     issuesBusy: false,
     issueContainers: [],
     issueSubContainers: [],
     issueDefaults: { containerId: null, subContainerId: null },
+    selectIssueProvider: vi.fn(async () => {}),
     connectIssues: vi.fn(async () => true),
     verifyIssues: vi.fn(async () => {}),
     disconnectIssues: vi.fn(async () => {}),

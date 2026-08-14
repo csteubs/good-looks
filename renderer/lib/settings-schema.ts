@@ -507,23 +507,35 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
   // what `SettingRow` hides on, what search matches, and what every existing
   // test addresses — renaming them to match the new pane would break all three
   // to make the strings tidier.
+  // The three issue-tracker rows keep their `linear-*` ids for the same reason
+  // the webhook rows kept theirs, now that the tracker can also be GitHub: the
+  // id is what `SettingRow` hides on, what search matches, and what every
+  // existing test addresses. Their LABELS are provider-neutral, and their
+  // keywords carry both product names so searching either one finds the row.
+  {
+    id: "issue-tracker-provider",
+    pane: "integrations",
+    label: "Issue tracker",
+    keywords: "issue tracker provider linear github switch choose ticket bug destination",
+  },
   {
     id: "linear-connection",
     pane: "integrations",
-    label: "Linear",
-    keywords: "issue tracker ticket bug api key connect linear team project workspace",
+    label: "Issue tracker connection",
+    keywords:
+      "issue tracker ticket bug api key token connect linear github team project repository workspace",
   },
   {
     id: "linear-default-team",
     pane: "integrations",
-    label: "Default team",
-    keywords: "linear team default destination triage",
+    label: "Default destination",
+    keywords: "linear team github repository default destination triage",
   },
   {
     id: "linear-default-project",
     pane: "integrations",
-    label: "Default project",
-    keywords: "linear project default destination milestone",
+    label: "Default sub-destination",
+    keywords: "linear project github milestone default destination",
   },
   {
     id: "alert-webhook-enabled",

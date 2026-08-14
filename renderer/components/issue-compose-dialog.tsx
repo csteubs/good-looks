@@ -18,7 +18,7 @@
 // someone pressed a button and is waiting, and closing over a long typed
 // description on a transient network blip is how you lose it.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge, Button, Dialog, Input, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Text, Textarea } from "@ui";
 import { AlertTriangle, X } from "lucide-react";
 
@@ -93,6 +93,11 @@ export function IssueComposeDialog({
   const [subContainerId, setSubContainerId] = useState<string | null>(null);
   const [labelIds, setLabelIds] = useState<string[]>([]);
 
+  /** Which container the sub-container and label lists were fetched against.
+   *  Declared here rather than beside the effect that uses it so the load
+   *  effect below can claim the first fetch and stop it happening twice. */
+  const loadedFor = useRef<string | null>(null);
+
   /** Non-null when this defect already has an issue — the dialog then offers a
    *  comment instead of a second issue. */
   const [existing, setExisting] = useState<IssueLink | null>(null);
@@ -143,12 +148,18 @@ export function IssueComposeDialog({
 
         // Destinations are best-effort: a failure here leaves the pickers empty
         // and the send disabled, which the empty destination already says.
+        //
+        // The sub-container and label lists are scoped to the container, which
+        // for GitHub is the only way to ask for them at all — so they are
+        // fetched against the DEFAULT here, and re-fetched by the effect below
+        // whenever the user picks a different one.
         const [teams, projects, allLabels] = await Promise.all([
           api.issues.listContainers().catch(() => []),
-          api.issues.listSubContainers().catch(() => []),
-          api.issues.listLabels().catch(() => []),
+          api.issues.listSubContainers(defaults.containerId).catch(() => []),
+          api.issues.listLabels(defaults.containerId).catch(() => []),
         ]);
         if (cancelled) return;
+        loadedFor.current = defaults.containerId ?? "";
         setContainers(teams);
         setSubContainers(projects);
         setLabels(allLabels);
@@ -166,9 +177,58 @@ export function IssueComposeDialog({
     };
   }, [open, source]);
 
+  /**
+   * Re-fetch what the chosen container scopes.
+   *
+   * Linear answers workspace-wide and this changes nothing for it. GitHub's
+   * milestones and labels live inside one repository, so without this the
+   * pickers would keep the previous repository's rows — offering a milestone
+   * that the repository being filed into does not have, which fails at send
+   * time after the report is written.
+   *
+   * Skips the first pass: the load effect above already fetched against the
+   * default, and repeating it here would double every open.
+   */
+  useEffect(() => {
+    if (!open || !draft) return;
+    if (loadedFor.current === containerId) return;
+    loadedFor.current = containerId;
+    let cancelled = false;
+    (async () => {
+      const scope = containerId || null;
+      const [projects, allLabels] = await Promise.all([
+        api.issues.listSubContainers(scope).catch(() => []),
+        api.issues.listLabels(scope).catch(() => []),
+      ]);
+      if (cancelled) return;
+      setSubContainers(projects);
+      setLabels(allLabels);
+      // Anything the new container does not offer is dropped rather than left
+      // selected-but-invisible: a label id that survives the switch would be
+      // sent with the issue while nothing on screen shows it chosen.
+      const names = new Set(allLabels.map((l) => l.id));
+      setLabelIds((prev) => prev.filter((id) => names.has(id)));
+      setSubContainerId((prev) => (prev && projects.some((p) => p.id === prev) ? prev : null));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, draft, containerId]);
+
+  // Reset when the dialog closes, so the next open re-fetches rather than
+  // trusting a scope that belonged to the previous defect.
+  useEffect(() => {
+    if (!open) loadedFor.current = null;
+  }, [open]);
+
   const containerName = vocab?.container ?? "Team";
   const subContainerName = vocab?.subContainer ?? "Project";
   const providerName = vocab?.name ?? "Linear";
+  /** Defaults to "uploads work" while the vocabulary is still loading: the
+   *  warning is about a specific provider, and flashing it at every dialog for
+   *  the fraction of a second before the answer arrives would train people to
+   *  ignore it on the one provider it is true for. */
+  const noUploads = vocab ? !vocab.supportsImageUpload : false;
 
   const projectsForTeam = useMemo(
     () => subContainers.filter((p) => p.containerId === null || p.containerId === containerId),
@@ -272,7 +332,9 @@ export function IssueComposeDialog({
           </Text>
           {kept.length > 0 ? (
             <Text variant="small" color="tertiary">
-              {kept.length} screenshot{kept.length === 1 ? "" : "s"} from this run will go with it.
+              {noUploads
+                ? `${providerName} cannot attach images through its API, so the comment will name these ${kept.length} screenshot${kept.length === 1 ? "" : "s"} without carrying them.`
+                : `${kept.length} screenshot${kept.length === 1 ? "" : "s"} from this run will go with it.`}
             </Text>
           ) : null}
           {sendError ? (
@@ -314,8 +376,24 @@ export function IssueComposeDialog({
               <Text variant="small">
                 {kept.length === 0
                   ? "No screenshots will be attached."
-                  : `${kept.length} screenshot${kept.length === 1 ? "" : "s"} will be attached`}
+                  : noUploads
+                    ? `${kept.length} screenshot${kept.length === 1 ? "" : "s"} will NOT be attached`
+                    : `${kept.length} screenshot${kept.length === 1 ? "" : "s"} will be attached`}
               </Text>
+              {/* Said BEFORE the send, next to the pictures it is about, rather
+                  than discovered afterwards in an issue that looks complete.
+                  It sits inside the attachment block so it cannot be read as a
+                  general warning about the whole dialog. */}
+              {noUploads && kept.length > 0 ? (
+                <div className="flex items-start gap-2 rounded-md border border-separator p-2">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                  <Text variant="small" color="secondary">
+                    {providerName} has no image upload in its API, so these stay on this Mac. The
+                    issue will name them so nobody reads it as complete, and you can drag them on by
+                    hand afterwards.
+                  </Text>
+                </div>
+              ) : null}
               {/* The consent strip. Large enough to actually read — a 40px
                   thumbnail is a checkbox with a picture on it, and "you saw it"
                   stops being true. */}

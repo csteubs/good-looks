@@ -11,7 +11,10 @@ from the note *"Linear integration — A11y feature: send to Linear"*.
 > tracker" action. Read what follows as the reasoning that led there, not as a
 > description of the code — for that, `docs/ARCHITECTURE.md`. Kept because the
 > rejected alternatives and the data-leaves-the-Mac argument are not recorded
-> anywhere else.
+> anywhere else. **Superseded in one respect on 2026-08-14**: the tracker is no
+> longer Linear-only. GitHub Issues is implemented behind the same interface and
+> the choice is a user setting in Settings → Integrations — see the DECISIONS
+> entry of that date for what the second provider cost.
 
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md),
 [DECISIONS.md](DECISIONS.md).

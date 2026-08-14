@@ -25,6 +25,7 @@ import { failurePolicy, routineBlockedReason, routineRunPlan } from "../../share
 import { webhookUrlStore } from "../services/webhook-url-store.js";
 import { postWebhook } from "../services/alert-service.js";
 import { issueTrackerService } from "../services/issue-tracker/issue-tracker-service.js";
+import { isProviderId } from "../services/issue-tracker/provider-registry.js";
 import { playwrightRunner } from "../services/playwright-runner.js";
 import { runHistoryStore } from "../services/run-history-store.js";
 import { emitReport } from "../services/report-emitter.js";
@@ -1245,9 +1246,31 @@ export function registerHandlers(): void {
   });
   ipcMain.handle("issues:verify", async () => issueTrackerService.verify());
   ipcMain.handle("issues:disconnect", async () => issueTrackerService.disconnect());
+  // Which trackers exist and which one is in use. The renderer is told rather
+  // than knowing: a picker built from a hardcoded list in the settings pane is
+  // one that silently disagrees with the registry the day a provider is added.
+  ipcMain.handle("issues:providers", async () => issueTrackerService.providers());
+  ipcMain.handle("issues:setActiveProvider", async (_e, params: { provider?: unknown }) => {
+    // Validated against the registry, never cast. This string indexes it
+    // directly, and it arrives from a renderer.
+    if (!isProviderId(params?.provider)) throw new Error("That is not a tracker this app supports.");
+    issueTrackerService.setActiveProvider(params.provider);
+    return issueTrackerService.status();
+  });
   ipcMain.handle("issues:listContainers", async () => issueTrackerService.listContainers());
-  ipcMain.handle("issues:listSubContainers", async () => issueTrackerService.listSubContainers());
-  ipcMain.handle("issues:listLabels", async () => issueTrackerService.listLabels());
+  // `containerId` is optional and null is a real value — it means "nothing
+  // selected yet", which Linear answers anyway and GitHub cannot. Absent and
+  // null are therefore the same request, unlike `setDefaults` below.
+  ipcMain.handle("issues:listSubContainers", async (_e, params: { containerId?: unknown }) =>
+    issueTrackerService.listSubContainers(
+      typeof params?.containerId === "string" ? params.containerId : null,
+    ),
+  );
+  ipcMain.handle("issues:listLabels", async (_e, params: { containerId?: unknown }) =>
+    issueTrackerService.listLabels(
+      typeof params?.containerId === "string" ? params.containerId : null,
+    ),
+  );
   // The source becomes a filesystem path, so it is rebuilt rather than trusted
   // — see `normalizeSource`. A coordinate that does not survive that, or no
   // longer resolves on disk, answers null: the dialog says the evidence is gone
