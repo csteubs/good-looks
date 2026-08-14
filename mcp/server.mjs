@@ -847,6 +847,10 @@ server.registerTool(
       // failure happens: runPool has no abort, and an entry already in flight
       // cannot be recalled — so what this can honestly promise is that nothing
       // FURTHER in the group starts.
+      // Already settled — by a branch that went the other way, or by anything
+      // else that marked it. Without this the mark is cosmetic: the row reads
+      // "skipped" and then runs anyway. Same defect the app's runner had.
+      if (results[i].status === "skipped") return;
       const killedBy = entry.groupId ? skippedGroups.get(entry.groupId) : undefined;
       if (killedBy) {
         results[i].status = "skipped";
@@ -945,6 +949,21 @@ server.registerTool(
       // with secret values only the app can decrypt. Reproducing the send here
       // would mean a second egress path with weaker redaction, which is exactly
       // the divergence `check:mcp-parity` exists to catch.
+      // The branch, decided the same way the app decides it: against the run
+      // SO FAR, with a skip counting as neither. A second reading of that rule
+      // would be a Routine that takes a different path depending on who ran it.
+      if (barrier.branch) {
+        const anyFailed = results.some((r) => r.status === "failed");
+        const taken = barrier.branch.on === "anyFailed" ? anyFailed : !anyFailed;
+        const dead = taken ? barrier.branch.elseSegment : barrier.branch.thenSegment;
+        for (let j = 0; j < queue.length; j++) {
+          if ((queue[j].segment ?? 0) !== dead) continue;
+          if (results[j].status !== "pending") continue;
+          results[j].status = "skipped";
+          results[j].note = "Skipped — the routine branched the other way";
+        }
+        persist(true);
+      }
       if (barrier.notify) notSent.push(barrier.notify.message);
       if (barrier.ms > 0) await new Promise((resolve) => setTimeout(resolve, barrier.ms));
     }

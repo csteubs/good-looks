@@ -21,6 +21,7 @@ import type {
   BatchRowOptions,
   RecorderSettings,
   Routine,
+  RoutineBranchStep,
   RoutineStep,
   RoutineTestStep,
   RunBrowser,
@@ -637,7 +638,10 @@ describe("BatchView per-row failure policy", () => {
 });
 
 describe("BatchView groups", () => {
-  const groupBtn = (name: string) => screen.queryByLabelText(`Group for ${name}`);
+  // ONE menu asks what structure a row is part of — a group or a side of a
+  // branch — because a row can only be one of them. See the comment on the
+  // control in `batch-view.tsx`.
+  const groupBtn = (name: string) => screen.queryByLabelText(`Structure for ${name}`);
 
   it("puts a row in a NEW group in one gesture, because an empty group cannot be saved", async () => {
     // Creating a group and joining one are the same gesture deliberately: the
@@ -657,6 +661,10 @@ describe("BatchView groups", () => {
       if (group?.kind !== "group") throw new Error("expected a group");
       expect(group.steps.map((c) => c.testId)).toEqual(["a"]);
     });
+    // …and the header is on screen, named. Not a redundant read of the store:
+    // `groups` is separate view state, and the label is the only part of a
+    // group that lives nowhere else on the row.
+    expect(await screen.findByLabelText("Name of group Group 1")).toBeTruthy();
   });
 
   it("adds a second row to the group that already exists", async () => {
@@ -696,7 +704,7 @@ describe("BatchView groups", () => {
     );
 
     fireEvent.click(groupBtn("Alpha")!);
-    fireEvent.click(await screen.findByRole("menuitem", { name: "No group" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "On its own" }));
 
     await waitFor(() =>
       expect((routines ?? [])[0].steps.every((st) => st.kind === "test")).toBe(true),
@@ -924,6 +932,263 @@ describe("BatchView notifies", () => {
     renderView();
     await rowNames();
     await waitFor(() => expect(document.querySelector(".gl-batch-message")).toBeTruthy());
+    expect(routineSave).not.toHaveBeenCalled();
+  });
+});
+
+describe("BatchView branches", () => {
+  const structure = (name: string) => screen.queryByLabelText(`Structure for ${name}`);
+  const pickStructure = async (name: string, item: RegExp | string) => {
+    fireEvent.click(structure(name)!);
+    fireEvent.click(await screen.findByRole("menuitem", { name: item }));
+  };
+  const branchOf = (): RoutineBranchStep => {
+    const step = (routines ?? [])[0].steps.find((st) => st.kind === "branch");
+    if (step?.kind !== "branch") throw new Error("expected a branch");
+    return step;
+  };
+
+  it("puts a row on a NEW branch in one gesture, like a group", async () => {
+    routines = [routineRows({ a: {}, b: {} })];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(structure("Alpha")).toBeTruthy());
+
+    await pickStructure("Alpha", /new branch/i);
+
+    await waitFor(() => expect(branchOf().then.map((c) => c.testId)).toEqual(["a"]));
+    // The default condition is the conservative one — the "something went
+    // wrong" path, not the "all clear" one.
+    expect(branchOf().on).toBe("anyFailed");
+  });
+
+  it("puts a second row on the OTHER side of the branch that exists", async () => {
+    routines = [routineRows({ a: {}, b: {} })];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(structure("Alpha")).toBeTruthy());
+
+    await pickStructure("Alpha", /new branch/i);
+    await waitFor(() => expect(branchOf().then).toHaveLength(1));
+
+    await pickStructure("Beta", "Branch: otherwise");
+
+    await waitFor(() => expect(branchOf().else.map((c) => c.testId)).toEqual(["b"]));
+    // ONE step, holding both sides — not two steps side by side.
+    expect((routines ?? [])[0].steps).toHaveLength(1);
+  });
+
+  it("takes a row off the branch, and drops the branch when both sides empty", async () => {
+    routines = [routineRows({ a: {} })];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(structure("Alpha")).toBeTruthy());
+
+    await pickStructure("Alpha", /new branch/i);
+    await waitFor(() => expect(branchOf().then).toHaveLength(1));
+
+    await pickStructure("Alpha", "On its own");
+
+    await waitFor(() =>
+      expect((routines ?? [])[0].steps.every((st) => st.kind === "test")).toBe(true),
+    );
+  });
+
+  it("moving a branch member into a group takes it OFF the branch", async () => {
+    // A row can be in a group or on one side of a branch and never both.
+    // `stepsFromRows` resolves the overlap by letting the branch claim the row,
+    // so a row left in BOTH maps would render under a group header and be saved
+    // onto the branch — the screen/disk divergence this view has produced twice.
+    routines = [routineRows({ a: {}, b: {} })];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(structure("Alpha")).toBeTruthy());
+
+    await pickStructure("Alpha", /new branch/i);
+    await pickStructure("Beta", "Branch: otherwise");
+    await waitFor(() => expect(branchOf().else).toHaveLength(1));
+
+    await pickStructure("Alpha", /new group/i);
+
+    await waitFor(() => {
+      const group = (routines ?? [])[0].steps.find((st) => st.kind === "group");
+      if (group?.kind !== "group") throw new Error("expected a group");
+      expect(group.steps.map((c) => c.testId)).toEqual(["a"]);
+    });
+    expect(branchOf().then).toHaveLength(0);
+    expect(branchOf().else.map((c) => c.testId)).toEqual(["b"]);
+    // …AND the screen agrees. `stepsFromRows` resolves the overlap on its own,
+    // so the store alone cannot tell you the row was left in both maps — the
+    // tell is that the view draws a group header AND a branch "then" header
+    // over the same row, showing a structure the saved job does not have.
+    expect(document.querySelectorAll(".gl-batch-group")).toHaveLength(1);
+    expect(document.querySelectorAll(".gl-batch-branch")).toHaveLength(1);
+  });
+
+  it("moving a group member onto a branch takes it out of the group", async () => {
+    // The mirror of the case above. Enforced in BOTH directions because a row
+    // left in both maps shows one structure and saves into the other whichever
+    // way it got there.
+    routines = [routineRows({ a: {}, b: {} })];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(structure("Alpha")).toBeTruthy());
+
+    await pickStructure("Alpha", /new group/i);
+    await waitFor(() =>
+      expect((routines ?? [])[0].steps.some((st) => st.kind === "group")).toBe(true),
+    );
+
+    await pickStructure("Alpha", /new branch/i);
+
+    await waitFor(() => expect(branchOf().then.map((c) => c.testId)).toEqual(["a"]));
+    expect((routines ?? [])[0].steps.some((st) => st.kind === "group")).toBe(false);
+    expect(document.querySelectorAll(".gl-batch-group")).toHaveLength(0);
+    expect(document.querySelectorAll(".gl-batch-branch")).toHaveLength(1);
+    // This direction needs no clearing in the handler — `stepsFromRows` gives
+    // the branch the row, and `persist` re-derives `groupOf` from the steps it
+    // emitted. It is asserted anyway because that is a property of the
+    // TRANSLATION, and the day it changes this is the screen that breaks.
+  });
+
+  it("drops skipGroup when the row moves onto a branch", async () => {
+    // Outside a group that policy has nothing to skip, and a branch side is not
+    // a group — the plan hands `skipGroup` a `groupId` a branch member does not
+    // have, so it would sit in the control doing nothing. Unlike the group
+    // membership, nothing reconciles `policies` on the persist round-trip, so
+    // this has to be done where the move happens.
+    routines = [
+      routineOf([
+        {
+          kind: "group",
+          id: "g-1",
+          label: "Seed",
+          steps: [
+            { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "skipGroup" },
+          ],
+        },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+    await waitFor(() =>
+      expect(screen.getByLabelText("What happens if Alpha fails").textContent).toContain(
+        "Skip group",
+      ),
+    );
+
+    await pickStructure("Alpha", /new branch/i);
+
+    await waitFor(() => expect(branchOf().then.map((c) => c.testId)).toEqual(["a"]));
+    expect(branchOf().then[0].onFailure).toBe("continue");
+    expect(screen.getByLabelText("What happens if Alpha fails").textContent).toContain("Carry on");
+  });
+
+  it("renders a header per side, and says only one of them runs", async () => {
+    routines = [
+      routineOf([
+        {
+          kind: "branch",
+          id: "b-1",
+          on: "anyFailed",
+          then: [
+            { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+          ],
+          else: [
+            { kind: "test", testId: "b", browsers: ["chromium"], headless: false, onFailure: "continue" },
+          ],
+        },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+
+    await waitFor(() => expect(document.querySelectorAll(".gl-batch-branch")).toHaveLength(2));
+    // Said out loud, because it is the one thing about a branch that surprises
+    // people: both sides are queued and one is always skipped, so the run count
+    // above the checklist is a maximum rather than a promise.
+    expect(document.body.textContent).toContain("only one side runs");
+    expect(document.body.textContent).toContain("Otherwise");
+    // …and both member rows are marked as nested, which is what the indent
+    // reads from. Without it the headers sit above rows that look like every
+    // other row — labels pointing at nothing, same as an un-indented group.
+    expect(document.querySelectorAll(".gl-batch-row[data-grouped]")).toHaveLength(2);
+  });
+
+  it("flips the condition from the header, and the header says which way", async () => {
+    routines = [
+      routineOf([
+        {
+          kind: "branch",
+          id: "b-1",
+          on: "anyFailed",
+          then: [
+            { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+          ],
+          else: [],
+        },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+    const cond = await screen.findByLabelText("Condition for the branch before Alpha");
+    expect(cond.textContent).toBe("If anything failed");
+
+    fireEvent.click(cond);
+
+    await waitFor(() => expect(branchOf().on).toBe("allPassed"));
+    expect(
+      screen.getByLabelText("Condition for the branch before Alpha").textContent,
+    ).toBe("If everything passed");
+  });
+
+  it("keeps the condition reachable on a branch with only an ELSE side", async () => {
+    // A branch survives with rows on one side — the store drops it only when
+    // both are empty. An "Otherwise" header alone names a side without naming
+    // what it is otherwise TO, and leaves NO control on screen that can flip
+    // the condition back. So the lone header carries it, read NEGATED, because
+    // negated is literally what runs.
+    routines = [
+      routineOf([
+        {
+          kind: "branch",
+          id: "b-1",
+          on: "anyFailed",
+          then: [],
+          else: [
+            { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+          ],
+        },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+
+    const cond = await screen.findByLabelText("Condition for the branch before Alpha");
+    expect(cond.textContent).toBe("If everything passed");
+    expect(document.body.textContent).toContain("otherwise nothing runs");
+    expect(document.body.textContent).not.toContain("only one side runs");
+  });
+
+  it("writes NOTHING when the view merely mounts", async () => {
+    routines = [
+      routineOf([
+        {
+          kind: "branch",
+          id: "b-1",
+          on: "allPassed",
+          then: [
+            { kind: "test", testId: "a", browsers: ["chromium"], headless: false, onFailure: "continue" },
+          ],
+          else: [
+            { kind: "test", testId: "b", browsers: ["chromium"], headless: false, onFailure: "continue" },
+          ],
+        },
+      ]),
+    ];
+    renderView();
+    await rowNames();
+    await waitFor(() => expect(document.querySelector(".gl-batch-branch")).toBeTruthy());
     expect(routineSave).not.toHaveBeenCalled();
   });
 });

@@ -133,6 +133,14 @@ export interface BatchBarrier {
   /** A message to send at this join, from a `notify` step. Plain text the user
    *  wrote — never interpolated from run data. */
   notify?: { channel: "desktop" | "webhook"; message: string };
+  /** A two-way choice. BOTH sides are already in the queue; the runner marks
+   *  whichever segment the condition did not choose as skipped. */
+  branch?: {
+    id: string;
+    on: "anyFailed" | "allPassed";
+    thenSegment: number;
+    elseSegment: number;
+  };
 }
 
 /**
@@ -365,6 +373,38 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
          * batch-history.json needs to carry.
          */
         /**
+         * Decide a `branch`, and skip the side it did not choose.
+         *
+         * EVALUATED AGAINST THE RUN SO FAR, not against the immediately
+         * preceding segment. "If anything has failed, run the teardown" is the
+         * thing people mean, and scoping it to the last segment would make the
+         * answer depend on where the user happened to put a pause.
+         *
+         * A SKIP counts as neither. A test that never ran did not fail — saying
+         * otherwise would send a Routine down its failure path because an
+         * unrelated test was deleted.
+         *
+         * The untaken side is marked rather than removed, and the note says the
+         * branch is why. Rows for a path that was never taken sitting at
+         * "queued" is the same defect a stop past a barrier had: `summarize`
+         * counts a pending row as nothing at all, so the record stops adding up.
+         */
+        const takeBranch = (branch: NonNullable<BatchBarrier["branch"]>): void => {
+          const anyFailed = s.results.some((r) => r.status === "failed");
+          const taken = branch.on === "anyFailed" ? anyFailed : !anyFailed;
+          const dead = taken ? branch.elseSegment : branch.thenSegment;
+          const why = branch.on === "anyFailed" ? "something failed" : "everything passed";
+          for (let j = 0; j < s.results.length; j++) {
+            if ((queue[j]?.segment ?? 0) !== dead) continue;
+            if (s.results[j].status !== "pending") continue;
+            s.results[j].status = "skipped";
+            s.results[j].note = taken
+              ? `Skipped — the routine branched because ${why}`
+              : `Skipped — the routine branched because ${why} did not happen`;
+          }
+        };
+
+        /**
          * Hold the run for `ms`, and SAY SO.
          *
          * `waitingUntil` is what stops a pause from looking like a hang: with
@@ -588,6 +628,7 @@ export function createBatchRunner(deps: BatchDeps = realDeps) {
           // The message goes out BEFORE the pause, when a barrier carries both.
           // "Seeding done" announcing a thing and then arriving a minute late
           // is worse than no message at all.
+          if (barrier.branch) takeBranch(barrier.branch);
           if (barrier.notify) {
             deps.notifyStep({ ...barrier.notify, routineName: params.routineName ?? "Routine" });
           }

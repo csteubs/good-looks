@@ -622,6 +622,183 @@ describe("notifies", () => {
   });
 });
 
+describe("branches", () => {
+  const branch = (
+    id: string,
+    then: RoutineTestStep[],
+    els: RoutineTestStep[],
+    on: "anyFailed" | "allPassed" = "anyFailed",
+  ) => ({ kind: "branch" as const, id, on, then, else: els });
+
+  it("flattens both sides into rows, tagged with which side they are on", () => {
+    const rows = rowsFromRoutine(
+      routine([
+        step({ testId: "t-a" }),
+        branch("b-1", [step({ testId: "t-b" })], [step({ testId: "t-c" })]) as unknown as RoutineStep,
+      ]),
+      tests("t-a", "t-b", "t-c"),
+      DEFAULTS,
+    );
+    expect(rows.order).toEqual(["t-a", "t-b", "t-c"]);
+    expect(rows.branches).toEqual([{ id: "b-1", on: "anyFailed", after: "t-a" }]);
+    expect(rows.branchOf).toEqual({
+      "t-b": { id: "b-1", side: "then" },
+      "t-c": { id: "b-1", side: "else" },
+    });
+  });
+
+  it("drops a branch whose members all disappeared from the library", () => {
+    // Same rule an empty group follows. A header with no rows under it cannot
+    // be rendered, and the store refuses to keep one — so a view that held on
+    // to it would show a structure the next read does not have.
+    const rows = rowsFromRoutine(
+      routine([
+        branch("b-1", [step({ testId: "t-gone" })], []) as unknown as RoutineStep,
+        step({ testId: "t-a" }),
+      ]),
+      tests("t-a"),
+      DEFAULTS,
+    );
+    expect(rows.branches).toEqual([]);
+  });
+
+  it("puts both sides back on the same branch, emitted at its FIRST member", () => {
+    const back = stepsFromRows(
+      ["t-a", "t-b", "t-c"],
+      {
+        "t-a": { selected: true, browsers: ["chromium"], headless: false },
+        "t-b": { selected: true, browsers: ["chromium"], headless: false },
+        "t-c": { selected: true, browsers: ["chromium"], headless: false },
+      },
+      tests("t-a", "t-b", "t-c"),
+      DEFAULTS,
+      {},
+      [],
+      {},
+      [],
+      [],
+      [{ id: "b-1", on: "allPassed", after: "t-a" }],
+      { "t-b": { id: "b-1", side: "then" }, "t-c": { id: "b-1", side: "else" } },
+    );
+    expect(back.map((st) => st.kind)).toEqual(["test", "branch"]);
+    const made = back[1];
+    expect(made.kind === "branch" && made.on).toBe("allPassed");
+    expect(made.kind === "branch" && made.then.map((s) => s.testId)).toEqual(["t-b"]);
+    expect(made.kind === "branch" && made.else.map((s) => s.testId)).toEqual(["t-c"]);
+  });
+
+  it("lets a branch claim a row a group also names", () => {
+    // The two are exclusive, and the editor keeps the maps apart — but the
+    // translation has to resolve the overlap the same way the editor renders
+    // it, or a row would show under one structure and be SAVED into the other.
+    const back = stepsFromRows(
+      ["t-a"],
+      { "t-a": { selected: true, browsers: ["chromium"], headless: false } },
+      tests("t-a"),
+      DEFAULTS,
+      {},
+      [{ id: "g-1", label: "Seed" }],
+      { "t-a": "g-1" },
+      [],
+      [],
+      [{ id: "b-1", on: "anyFailed", after: "" }],
+      { "t-a": { id: "b-1", side: "then" } },
+    );
+    expect(back.map((st) => st.kind)).toEqual(["branch"]);
+  });
+
+  it("treats a membership naming a branch that is not in `branches` as no membership", () => {
+    // Same rule the group side follows: inventing the missing container would
+    // put the row inside something nobody can see or take it out of.
+    const back = stepsFromRows(
+      ["t-a"],
+      { "t-a": { selected: true, browsers: ["chromium"], headless: false } },
+      tests("t-a"),
+      DEFAULTS,
+      {},
+      [],
+      {},
+      [],
+      [],
+      [],
+      { "t-a": { id: "b-gone", side: "then" } },
+    );
+    expect(back.map((st) => st.kind)).toEqual(["test"]);
+  });
+
+  it("round-trips a Routine with a branch unchanged", () => {
+    const original = routine([
+      step({ testId: "t-a" }),
+      branch(
+        "b-1",
+        [step({ testId: "t-b", browsers: ["webkit"], headless: true })],
+        [step({ testId: "t-c" })],
+        "allPassed",
+      ) as unknown as RoutineStep,
+    ]);
+    const library = tests("t-a", "t-b", "t-c");
+    const rows = rowsFromRoutine(original, library, DEFAULTS);
+    const back = stepsFromRows(
+      rows.order,
+      rows.rowOptions,
+      library,
+      DEFAULTS,
+      rows.policies,
+      rows.groups,
+      rows.groupOf,
+      rows.waits,
+      rows.notifies,
+      rows.branches,
+      rows.branchOf,
+    );
+    expect(back).toEqual(original.steps);
+    expect(sameSteps(back, original.steps)).toBe(true);
+  });
+
+  it("sameSteps notices the CONDITION flipping and a test moving sides", () => {
+    // Flipping the condition inverts which path runs, and moving a test
+    // between sides changes what happens on each. Either called "unchanged"
+    // would leave the edit on screen and never on disk.
+    const a = [branch("b-1", [step({ testId: "t-b" })], [step({ testId: "t-c" })])];
+    expect(sameSteps(a as unknown as RoutineStep[], a as unknown as RoutineStep[])).toBe(true);
+    expect(
+      sameSteps(
+        a as unknown as RoutineStep[],
+        [
+          branch("b-1", [step({ testId: "t-b" })], [step({ testId: "t-c" })], "allPassed"),
+        ] as unknown as RoutineStep[],
+      ),
+    ).toBe(false);
+    expect(
+      sameSteps(
+        a as unknown as RoutineStep[],
+        [
+          branch("b-1", [step({ testId: "t-c" })], [step({ testId: "t-b" })]),
+        ] as unknown as RoutineStep[],
+      ),
+    ).toBe(false);
+    expect(
+      sameSteps(
+        a as unknown as RoutineStep[],
+        [
+          branch("b-1", [step({ testId: "t-b", headless: true })], [step({ testId: "t-c" })]),
+        ] as unknown as RoutineStep[],
+      ),
+    ).toBe(false);
+  });
+
+  it("counts both sides as tests, and finds broken steps on either", () => {
+    const r = routine([
+      branch("b-1", [step({ testId: "t-b" })], [step({ testId: "t-c" })]) as unknown as RoutineStep,
+    ]);
+    expect(testCount(r)).toBe(2);
+    // A broken step on the path that does not run this time is still one the
+    // user has to be able to see and take out.
+    expect(brokenSteps(r, tests("t-b")).map((s) => s.testId)).toEqual(["t-c"]);
+    expect(brokenSteps(r, tests("t-c")).map((s) => s.testId)).toEqual(["t-b"]);
+  });
+});
+
 describe("nextPolicy", () => {
   it("offers skipGroup only inside a group", () => {
     // `skipGroup` outside a group has no rest-of-group to skip, so offering it

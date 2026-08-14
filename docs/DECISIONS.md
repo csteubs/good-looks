@@ -16,6 +16,81 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-14 — `branch`, and the queue that is decided at start
+
+`main/recorder/types.ts`, `shared/routine-plan.mjs`,
+`main/services/batch-runner.ts`, `main/services/routine-store.ts`,
+`renderer/lib/routine-rows.ts`, `renderer/main/batch-view.tsx`, `mcp/server.mjs`.
+The last step kind, and the one that looked most like it needed a second
+execution engine.
+
+**Both sides are queued up front; the losing one is marked skipped.** The
+obvious design is the other one — evaluate the condition, then append the
+chosen side — and it is wrong here for a structural reason rather than a
+stylistic one. `BatchState.results` is written through to disk as the run
+progresses, `currentIndex` indexes it, the summary counts it, and the Batch
+view looks a row up by its position in it. All four assume the list is decided
+when the batch starts. Growing it mid-run would mean four separate fixes to
+things that currently need none, to save queueing a handful of entries that get
+marked `skipped` instead. The visible cost is one number: `plannedRuns` becomes
+a maximum, so the plan carries `hasBranch` and the toolbar says so rather than
+promising runs that cannot all happen.
+
+**Each side gets its own segment, which is the whole implementation.** The
+barrier machinery `wait` brought already cuts the run into segments and drains
+them in order; a branch adds a barrier whose handler walks the entries in the
+losing segment and marks the pending ones skipped. That is a pass over a list
+inside a loop that already existed. A branch advances the segment counter by
+three — then-side, else-side, then whatever follows — and that arithmetic is
+the only new concept.
+
+**A trailing branch is NOT dropped, where a trailing pause is.** A pause at the
+end of a job gates nothing and holds the batch open, so the plan filters it out.
+A branch at the end gates nothing either, but it still has to run: without it,
+the rows on the path that was never taken stay at `queued` in the record
+forever, and a batch whose summary does not add up reads as the runner having
+lost them. The filter now spares `notify` and `branch` for two different
+reasons, both about what the record says afterwards.
+
+**Every skipped row says why.** `Skipped — the routine branched because
+something failed`. A row that reads `Skipped` with no reason is the single
+worst thing this view can show: it looks exactly like a run the app dropped.
+
+**A row is in a group or on one side of a branch, never both — and that is
+enforced in two places for two different reasons.** `stepsFromRows` resolves
+the overlap by letting the branch claim the row, because a branch decides
+whether a step runs at all where a group only decides what a failure takes out
+with it. But leaving it only there means a row left in both maps renders under
+a group header and is SAVED onto the branch, which is the screen/disk
+divergence this view has already produced twice. So `assignGroup` clears the
+row's branch. `assignBranch` does NOT clear its group, and the asymmetry is
+real rather than an oversight: the branch wins in the translation and `persist`
+re-derives `groupOf` from the steps it emitted, so that direction has a
+backstop and the other has none — clicking "New group…" on a branched row would
+otherwise do nothing at all.
+
+**A branch with rows on only one side is kept, and the lone header carries the
+condition READ NEGATED.** "If anything failed, run the teardown, otherwise carry
+on" is exactly that shape, so the store drops a branch only when both sides are
+empty. But the condition lives on the "then" header, so emptying that side used
+to leave an `Otherwise` naming a side with nothing to be otherwise TO — and no
+control anywhere on screen that could flip it back. The lone header now shows
+the condition inverted, because inverted is literally what runs.
+
+**Four cells became two.** Capability 3 added a structure control, a pause
+control, a message control and a branch control to a row that was already full,
+and the checklist overflowed three times. The fix both times was not narrower
+cells: it was noticing that "what structure is this row part of" is ONE question
+with one answer, and so is "what happens after this row". Two menus, four
+answers. When a row runs out of width the honest response is to stop asking two
+questions where there is one.
+
+**`setGroups` now derives from the emitted steps, like the other four lists.**
+It filtered the previous state, which is right for pruning an emptied group and
+cannot contain a group that was just created — so a new group's header only
+appeared once the Routine query happened to re-seed. Deriving states the rule
+once, in the shape all five lists take.
+
 ### 2026-08-13 — One meaning per step: `shared/step-semantics.mjs`, and the assertion that had never passed
 
 `shared/step-semantics.mjs` (new), `main/services/script-generator.ts`,
@@ -172,6 +247,7 @@ Rejected: emitting a `toHaveURL` assertion after every navigating click (the
 Chrome DevTools Recorder's `assertedEvents` idea). Playwright's own codegen
 deliberately relies on auto-waiting instead, and a recorded URL carrying an order
 ID would have turned a timing fix into a new and worse flake.
+
 
 ### 2026-08-13 — The click that navigates: capture gets a second exit
 
