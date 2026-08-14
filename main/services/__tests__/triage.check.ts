@@ -242,6 +242,69 @@ function triage(over: Run = {}, stepOver: Step = {}, siblings: Run[] = [], stepH
   assert(!fired(noisy, "clean-wait"), "a wait alongside a 5xx is not a clean wait");
 }
 
+// ── Ambiguity, which arrives dressed as a wait ────────────────────────
+//
+// A strict-mode violation's text carries "Timeout <ms> exceeded" and "waiting
+// for", so it satisfies the wait shape above and used to come out `clean-wait`
+// — whose next step is "re-pick the failing step's element", the one fix that
+// cannot work, because the picker hands back the same non-unique locator. So
+// the rule is not just "ambiguity fires": it is "ambiguity fires INSTEAD".
+// The suppression is the half a future edit would drop, so it is pinned in
+// both directions here, and the ordinary wait below proves nothing else got
+// narrowed on the way.
+
+{
+  const clean = { net_worst_status: 200, console_page_errors: 0 };
+
+  const strict = triage(
+    {
+      error_signature:
+        "TimeoutError: locator.click: Timeout <ms> exceeded.\nCall log:\n" +
+        '  - waiting for getByRole("button", { name: "Save" })\n' +
+        '  - strict mode violation: getByRole("button", { name: "Save" }) resolved to 3 elements',
+    },
+    clean,
+  );
+  assert(
+    direction(strict, "ambiguous-locator") === "runner",
+    "a locator that matched several elements is the test's fault, not the site's",
+  );
+  assert(
+    !fired(strict, "clean-wait"),
+    "and it does NOT also read as a clean wait — that verdict's fix returns the same locator",
+  );
+  assert(
+    strict.suggestedNext.includes("get_step_matches"),
+    "the next step points at what the locator matched, rather than at re-picking it",
+  );
+  assert(
+    !strict.suggestedNext.includes("Re-pick"),
+    "and it is not the clean-wait advice wearing a different verdict",
+  );
+
+  // The app's own trainer reports this in its words, not Playwright's, and the
+  // AI-debug prompt quotes that spelling — so triage has to know both.
+  const trainer = triage({ error_signature: "Locator matched 2 elements (strict mode violation)" }, clean);
+  assert(
+    fired(trainer, "ambiguous-locator"),
+    "the trainer's own wording for the same failure is recognised too",
+  );
+
+  // The negative half. An ordinary wait has none of those spellings in it.
+  const plainWait = triage(
+    { error_signature: "TimeoutError: locator.click: Timeout <ms> exceeded" },
+    clean,
+  );
+  assert(
+    !fired(plainWait, "ambiguous-locator"),
+    "a wait with no ambiguity in it is not reported as ambiguous",
+  );
+  assert(
+    fired(plainWait, "clean-wait"),
+    "and it still reaches clean-wait, so the new rule narrowed nothing but its own case",
+  );
+}
+
 // ── Cross-run signals, and their mutual exclusivity ───────────────────
 
 {

@@ -16,6 +16,88 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-14 — The AI features believed things about this app that stopped being true
+
+`renderer/lib/llm-prompts.ts`, `renderer/lib/parse-llm-response.ts`,
+`renderer/lib/ai-log-request.ts`, `renderer/lib/ai-log-payload.ts`,
+`renderer/lib/recorder-types.ts`, `renderer/main/ai-debug-panel.tsx`,
+`main/services/spec-parser.ts`, `shared/triage.mjs`,
+`shared/playwright-config-source.mjs`, `renderer/lib/llm-knowledge.test.ts` (new).
+
+Asked whether the step-semantics work suggested anything for the AI features, the
+honest answer turned out to be that the LLM stack was a **fourth copy** of the
+conventions that change had just collapsed into one — written in prose, in a
+hand-copied `Set`, and in nothing that compared them to the code.
+
+**A step the model wrote could vanish with no error.** The AI-steps prompt tells
+the model it may emit `urlEndsWith`; `parse-llm-response.ts` kept its own
+`ASSERT_KINDS` and omitted `urlEndsWith`, `urlIs` and `css`. `validateStep`
+drops an assert step with no recognised kind, so those steps were deleted
+silently — the user got fewer steps than the model produced and nothing said
+why. Measured: of four page-level asserts emitted exactly as the prompt asks,
+one survived. The kinds now derive from one list, and the prompt's schema is
+GENERATED from it, so a kind added to the app is reachable on the same commit.
+
+**`.nth(k)` did not survive a round trip, and lost the whole step.** The
+generator emits it; `spec-parser.ts` had no case for it, so
+`page.getByText("Save").nth(1).click()` matched no action shape and was dropped
+entirely on re-parse — on every hand edit of the Script tab and every applied AI
+fix, for exactly the steps that needed an index. Deliberately not treated like
+`.first()`/`.filter()`/`.or()`, which stay unclassified because the model has no
+field for them and storing the base locator would regenerate a selector matching
+the wrong element. `nth` HAS a field with the same meaning.
+
+**And the model was shown a locator that could not produce the failure.**
+`locatorToPrompt` dropped `.nth()` too, in both the step-debug prompt and the
+structure payload. That got worse this week rather than better: propagating
+`__glazeKey` through `nth()` means those steps now record `matches.json` for the
+first time, and `recordMatches` evaluates the REFINED locator — so a `.nth(3)`
+step on a page with three matches reports zero, and the payload said "the locator
+resolved to no elements at all". With the index hidden, "matched nothing" reads
+as "the element is gone" when it means "the index is one past the end".
+
+**The trainer grew two failure modes its prompt had never heard of.** Strict-mode
+ambiguity and occlusion are both new this week, and the step-debug prompt's four
+causes had no room for either — the only bullet that fits "matched 2 elements" is
+"the locator no longer matches the page", whose fix is the inversion of the
+truth. The run-level prompt's strict-mode paragraph could not simply be copied:
+it tells the model to read the disambiguated locators Playwright prints after
+`aka`, and the TRAINER's error has none, so the copy would send it looking for
+something absent. The new text says so explicitly.
+
+**`triage_run` recommended the one fix guaranteed not to work.** A strict-mode
+failure's text contains "Timeout … exceeded" and "waiting for locator", so it
+matched `WAIT_FAILURE`, came out as `clean-wait`, and advised "re-pick the
+failing step's element" — which hands back the same non-unique locator.
+Ambiguity is now its own verdict, checked first, pointing at `get_step_matches`.
+
+**The trace comment was mine and it was wrong.** `trace: "retain-on-failure"`
+landed with a comment claiming it answered the AI-debug session's request for
+page evidence. It does not: an app run writes the trace into `PW_OUTPUT_DIR`,
+which the runner deletes in its `finally`, as does the MCP server, and nothing
+reads it. Worse, Playwright prints the path into stdout and the prompt keeps the
+tail of that output — so the model received a pointer to a deleted file while
+being told the page no longer existed. The setting is kept, because the config is
+also what a HAND-RUN outside the app gets and a trace is the best failure
+artifact Playwright produces; the comment now says that and nothing more, and
+`NOTHING_AVAILABLE` tells the model the pointer is already dead. Retaining traces
+as a real app artifact is a feature with storage and retention consequences, not
+a config line.
+
+**The privacy strip understated what leaves the machine.** It named console and
+network and never page structure — ids, class names, aria-labels and text from
+the live page — even though the prompt offers it off a flag the panel had simply
+omitted when building the strip. Its own doc comment claims it is derived from
+the same context the prompt is built from; leaving a field out is how that
+stopped being true. An inaccurate privacy disclosure is worse than none, because
+it is trusted.
+
+Rejected: pinning the prompt's prose against the code with a text-matching
+check. That is what the existing drift guard does, and it is why this drifted —
+a marker-based assertion cannot notice a payload class nobody named. The list is
+generated instead, and `llm-knowledge.test.ts` asserts the property that
+matters: every kind the prompt offers survives the validator.
+
 ### 2026-08-14 — `branch`, and the queue that is decided at start
 
 `main/recorder/types.ts`, `shared/routine-plan.mjs`,
