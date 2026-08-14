@@ -57,6 +57,11 @@ renderer/theme/      the indie redesign's bespoke layer: --gl-* tokens, self-hos
 renderer/dev/        the browser preview's fake backend (`npm run dev:web`) — never shipped
 shared/              the ONE pure core both the app and the MCP import (.mjs + hand-written
                      .d.mts). Pure only: no fs, no @shell/backend, no IPC, no process.
+                     user-data-rules.mjs is the shape that rule forces: WHERE the data
+                     lives needs the disk, so the probing stays on each side and only the
+                     RULES are shared — the override name, the store markers, the legacy
+                     pattern, the order. Both processes write, so a drift is the app
+                     reading a library the MCP is not writing to.
                      step-semantics.mjs is the load-bearing one: the single
                      definition of what each assert/wait/condition MEANS (match
                      mode, case rule, whitespace rule), read by the generator,
@@ -64,11 +69,14 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      by the renderer's step list. Three copies of those rules is
                      what made a "URL contains" assertion that could never pass
 mcp/                 standalone MCP server exposing the test library to external MCP clients.
-                     NOTE: it cannot currently START — `glaze-data.mjs` resolves the data
-                     dir from `package.json`'s `id`, which the SDK port removed, so
-                     `node mcp/server.mjs` throws at load. Nothing catches it because
-                     nothing boots the server; check:mcp-* read the source and import the
-                     pure modules. See DECISIONS 2026-08-14
+                     `data-dir.mjs` finds the app's store; it reaches the SAME answer the
+                     app does because BOTH PROCESSES WRITE, and the rules they share live
+                     in shared/user-data-rules.mjs. It replaced `glaze-data.mjs`, which
+                     resolved from a `package.json` `id` the SDK port removed — so the
+                     server threw at load and EVERY tool was unreachable from
+                     2026-08-08 to 2026-08-14. `check:mcp-boot` exists because nothing
+                     else booted the server: the other check:mcp-* read the source and
+                     import the pure modules, and stayed green throughout
                      (list_tests, get_test, list_runs, get_run_log, run_test, run_batch, run_group,
                       list_routines, run_routine,
                       get_visual_report, get_a11y_report, get_run_logs, list_heals,
@@ -125,7 +133,7 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 3563 Vitest tests across 173 files and 66 checks in the chain as of 2026-08-14 (68 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 3563 Vitest tests across 173 files and 67 checks in the chain as of 2026-08-14 (69 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 

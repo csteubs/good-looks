@@ -25,31 +25,45 @@
 //
 // Adoption is deliberately CONSERVATIVE. It happens only when the current
 // userData has no recorder store of its own — so it can never redirect an
-// install that has started accumulating its own data, and it is idempotent:
-// once the port has written anything real, the branch stops firing.
+// install that has started accumulating its own data.
 //
-// Guarded by `check:userdata-migration` and `user-data.test.ts`.
+// It is also PERMANENT rather than one-shot, and that is worth naming because a
+// second process depends on it: since userData is redirected, the app never
+// writes to Electron's default, so `hasRecorderStore(default)` stays false and
+// adoption fires again on every launch. Each launch touches the adopted
+// directory, keeping its mtime newest — which is why "newest legacy store"
+// converges between this and the MCP server rather than racing. Whoever wrote
+// last is whoever gets picked next.
+//
+// ── The rules are SHARED, the probing is not ───────────────────────────────
+// `mcp/data-dir.mjs` has to reach the same answer from a process with no
+// Electron in it, and it WRITES — run history, batch history — so a
+// disagreement is this same bug one process over. The two cannot share a module
+// that touches the disk (`shared/` is pure by rule, and one side is compiled
+// TypeScript while the other is plain `.mjs`), so what is shared is the part
+// that would drift silently: `shared/user-data-rules.mjs` owns the override
+// name, the markers, the legacy pattern and the ORDER. The `fs` calls below
+// stay here, where they are mechanical.
+//
+// Guarded by `user-data.test.ts` and by `check:mcp-parity`, which drives this
+// resolver and the MCP's against ONE fixture tree and asserts they agree.
 
 import * as fs from "fs";
 import * as path from "path";
 
 import { app } from "@shell/backend";
 
-/** Set this to point the app at a specific data directory.
- *
- *  The escape hatch for anyone whose layout this module guesses wrong, and the
- *  seam the tests drive — they must never touch a real store. */
-const OVERRIDE_ENV = "GOOD_LOOKS_USERDATA";
-
-/** A directory counts as "a real store" if it has the recorder's own state in
- *  it. `metrics.db` deliberately does NOT count: it is a DERIVED shadow of the
- *  JSON stores (see CLAUDE.md) and the port builds an empty one on first launch
- *  before any of this could matter. Treating it as evidence would mean the
- *  second launch never adopts, which is precisely the bug. */
-const STORE_MARKERS = ["tests.json", "run-history.json", "scripts"];
+import type { DataDirChoice } from "../../shared/user-data-rules.d.mts";
+import {
+  chooseDataDir,
+  LEGACY_DIR_RE,
+  STORE_MARKERS,
+  STORE_SUBDIR,
+  USERDATA_OVERRIDE_ENV,
+} from "../../shared/user-data-rules.mjs";
 
 export function hasRecorderStore(userDataDir: string): boolean {
-  const recorder = path.join(userDataDir, "recorder");
+  const recorder = path.join(userDataDir, STORE_SUBDIR);
   return STORE_MARKERS.some((m) => fs.existsSync(path.join(recorder, m)));
 }
 
@@ -68,13 +82,13 @@ export function findLegacyStores(appSupportRoot: string): string[] {
     return [];
   }
   return entries
-    .filter((e) => e.isDirectory() && /^app\.glaze\.macos\..*-local$/.test(e.name))
+    .filter((e) => e.isDirectory() && LEGACY_DIR_RE.test(e.name))
     .map((e) => path.join(appSupportRoot, e.name))
     .filter(hasRecorderStore)
     .map((dir) => {
       let mtime = 0;
       try {
-        mtime = fs.statSync(path.join(dir, "recorder")).mtimeMs;
+        mtime = fs.statSync(path.join(dir, STORE_SUBDIR)).mtimeMs;
       } catch {
         mtime = 0;
       }
@@ -84,25 +98,24 @@ export function findLegacyStores(appSupportRoot: string): string[] {
     .map((x) => x.dir);
 }
 
-/** Decide the data directory. Pure: takes the world as arguments so it can be
+/** Decide the data directory.
+ *
+ *  Probes here, DECIDES in `shared/user-data-rules.mjs` — the MCP server runs
+ *  the same chooser over its own probing, so the order can only be changed in
+ *  one place. Takes `currentUserData` and `env` as arguments so it can be
  *  tested without an Electron app object or a real Application Support tree. */
 export function resolveUserData(
   currentUserData: string,
   env: Record<string, string | undefined>,
-): { dir: string; reason: "override" | "own-store" | "adopted-legacy" | "default"; legacy?: string } {
-  const override = env[OVERRIDE_ENV];
-  if (override) return { dir: override, reason: "override" };
-
-  // Already has its own data — never redirect. This is what makes adoption
-  // one-shot rather than a permanent indirection.
-  if (hasRecorderStore(currentUserData)) return { dir: currentUserData, reason: "own-store" };
-
-  const legacy = findLegacyStores(path.dirname(currentUserData));
-  if (legacy.length > 0) {
-    return { dir: legacy[0], reason: "adopted-legacy", legacy: legacy[0] };
-  }
-
-  return { dir: currentUserData, reason: "default" };
+): DataDirChoice {
+  return chooseDataDir({
+    override: env[USERDATA_OVERRIDE_ENV],
+    defaultDir: currentUserData,
+    defaultHasStore: hasRecorderStore(currentUserData),
+    // The Application Support root is the parent of wherever Electron put
+    // userData, which is the same root Glaze put its own directories in.
+    legacyDirs: findLegacyStores(path.dirname(currentUserData)),
+  });
 }
 
 /** Apply the decision to the running app.
@@ -134,6 +147,6 @@ function logAdoption(legacy: string, wouldHaveBeen: string): void {
   console.warn(
     `[user-data] Adopted the existing data directory at ${legacy}\n` +
       `[user-data]   (Electron's default, ${wouldHaveBeen}, has no recorder store.)\n` +
-      `[user-data]   Set ${OVERRIDE_ENV} to choose a different one.`,
+      `[user-data]   Set ${USERDATA_OVERRIDE_ENV} to choose a different one.`,
   );
 }
