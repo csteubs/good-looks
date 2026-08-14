@@ -82,6 +82,7 @@ describe("handler registration", () => {
       "tests:setBrowser",
       "tests:setHeadless",
       "tests:setTestTimeout",
+      "tests:setBaseUrl",
       "tests:duplicate",
       "runner:run",
       "runner:stop",
@@ -494,6 +495,108 @@ describe("tests:setTestTimeout — per-test override", () => {
     await expect(
       invokeHandler("tests:setTestTimeout", { id: "t-timeout-bad", testTimeoutMs: 50 }),
     ).rejects.toThrow(/invalid test timeout/i);
+  });
+});
+
+// ── tests:setBaseUrl — what an imported spec's relative navigations resolve
+//    against ──────────────────────────────────────────────────────────────
+//
+// The only field on a test record that the user types in and that ends up in
+// the ENVIRONMENT of the spawned Playwright process (`PW_BASE_URL`), where it
+// is prepended to every relative `page.goto("/")` in an imported suite. So it
+// is a boundary value twice over: unknown from the renderer on the way in, and
+// a URL something else navigates to on the way out.
+//
+// Params are passed as `unknown` deliberately. The handler's TypeScript
+// signature says `{ id: string; baseUrl: string | null }`, and a type is not a
+// runtime check — the renderer is the untrusted caller here, so these tests
+// call it the way a broken (or hostile) one would.
+describe("tests:setBaseUrl — validating the URL an imported test runs against", () => {
+  const setBaseUrl = (params: unknown) => invokeHandler<TestRecord>("tests:setBaseUrl", params);
+
+  it("stores the normalized href rather than the string it was handed", async () => {
+    // seedTest stamps updatedAt: 1, so "the clock moved" is unambiguous.
+    seedTest("t-baseurl");
+
+    const rec = await setBaseUrl({ id: "t-baseurl", baseUrl: "https://example.com" });
+
+    // Through `new URL(...).href` — the same gate the config parser hands its
+    // findings through, so a URL typed in and a URL read off someone's
+    // playwright.config are held to one standard and cannot disagree about
+    // what "https://example.com" means when "/cart" is resolved against it.
+    expect(rec.baseUrl).toBe("https://example.com/");
+    expect(testStore.get("t-baseurl")?.baseUrl).toBe("https://example.com/");
+    expect(rec.updatedAt).toBeGreaterThan(1);
+  });
+
+  it("keeps a path prefix and accepts plain http, which is what a dev server is", async () => {
+    // Both halves are load-bearing for the feature's actual job. The suite this
+    // was written against points at `http://localhost:3000` — refusing http
+    // would refuse the common case — and a base URL with a path is the reason
+    // `/cart` reaches `/app/cart`, so normalization must not eat the prefix.
+    seedTest("t-baseurl-shapes");
+
+    const local = await setBaseUrl({ id: "t-baseurl-shapes", baseUrl: "  http://localhost:3000  " });
+    expect(local.baseUrl).toBe("http://localhost:3000/");
+
+    const nested = await setBaseUrl({
+      id: "t-baseurl-shapes",
+      baseUrl: "https://staging.example.com/app",
+    });
+    expect(nested.baseUrl).toBe("https://staging.example.com/app");
+  });
+
+  it("clears the field for null and for anything an emptied input box sends", async () => {
+    // The Base URL input persists on blur, so "the user selected the text and
+    // deleted it" arrives here as "" or as whitespace — not as null. All three
+    // have to mean the same thing, or a cleared box comes back populated on the
+    // next render and the user cannot get rid of a wrong URL.
+    for (const empty of [null, "", "   ", "\t\n "]) {
+      seedTest("t-baseurl-clear", { baseUrl: "https://example.com/" });
+
+      const rec = await setBaseUrl({ id: "t-baseurl-clear", baseUrl: empty });
+
+      expect(rec.baseUrl, JSON.stringify(empty)).toBeUndefined();
+      expect(testStore.get("t-baseurl-clear")?.baseUrl, JSON.stringify(empty)).toBeUndefined();
+    }
+  });
+
+  it("refuses anything that is not a full http(s) address, and leaves the record alone", async () => {
+    // A rejected value must not half-land: the record keeps the URL it had, and
+    // its updatedAt does not move, which is what pins that the throw happens
+    // BEFORE the mutate-and-save rather than after it.
+    seedTest("t-baseurl-bad", { baseUrl: "https://kept.example.com/" });
+    const before = testStore.get("t-baseurl-bad")!;
+
+    for (const bad of [
+      "example.com", // a bare host: nothing to resolve "/cart" against
+      "localhost:3000", // reads as a URL with a `localhost:` scheme, which it is not
+      "javascript:alert(1)", // handed to a browser to navigate to
+      "file:///etc/passwd",
+      "data:text/html,<script>alert(1)</script>",
+      "https://${HOST}/app", // a template literal nobody interpolated
+      "/cart", // relative — this field is the thing relatives resolve against
+      42,
+      true,
+      { href: "https://example.com" },
+      ["https://example.com"], // stringifies to a valid URL; it is still not a string
+    ]) {
+      await expect(
+        setBaseUrl({ id: "t-baseurl-bad", baseUrl: bad }),
+        JSON.stringify(bad),
+      ).rejects.toThrow(/invalid base url/i);
+
+      const after = testStore.get("t-baseurl-bad")!;
+      expect(after.baseUrl, JSON.stringify(bad)).toBe("https://kept.example.com/");
+      expect(after.updatedAt, JSON.stringify(bad)).toBe(before.updatedAt);
+    }
+  });
+
+  it("rejects an unknown test id rather than inventing a record to hold the URL", async () => {
+    await expect(
+      setBaseUrl({ id: "t-baseurl-nope", baseUrl: "https://example.com" }),
+    ).rejects.toThrow(/not found/i);
+    expect(testStore.get("t-baseurl-nope")).toBeNull();
   });
 });
 

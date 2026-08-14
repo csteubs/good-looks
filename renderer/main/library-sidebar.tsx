@@ -27,6 +27,7 @@ import type { LlmProvider } from "../lib/llm-types";
 import type { TestRecord } from "../lib/recorder-types";
 import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/duplicate-warnings";
+import { importWarnings } from "../lib/import-warnings";
 import { nativeShell } from "../lib/native-shell";
 import { BranchesRailRow } from "./branches-rail-row";
 import { useAiDebug } from "./ai-debug-store";
@@ -387,6 +388,7 @@ export function LibrarySidebar() {
       toast.success(
         res.imported === 1 ? "Imported 1 test." : `Imported ${res.imported} tests.`,
       );
+      for (const w of importWarnings(res)) toast.warning(w);
       if (res.ids[0]) navigate({ to: "/test/$id", params: { id: res.ids[0] } });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to import tests.");

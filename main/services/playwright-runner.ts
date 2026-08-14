@@ -34,6 +34,8 @@ import { buildHealProbeScript } from "./auto-heal.js";
 import { healJournalStore } from "./heal-journal-store.js";
 import { describeStep } from "./script-generator.js";
 import { testSecretsStore } from "./test-secrets-store.js";
+import { backfillBaseUrl, importedSandboxDir } from "./import-service.js";
+import { shouldRefuseForMissingBaseUrl } from "./imported-config.js";
 import { refreshSecretSnapshot, redactWithSnapshot } from "./secret-redaction.js";
 import { stripAnsi } from "../../shared/strip-ansi.mjs";
 import {
@@ -1125,6 +1127,44 @@ export const playwrightRunner = {
               "crawl runs take far longer than the configured limit allows.\n",
           );
         }
+        // An imported spec navigates the way its own project did — relative to a
+        // `baseURL` that lived in that project's config file and did not come
+        // with the copied spec. Running anyway spends the full timeout and fails
+        // inside Playwright's protocol layer, naming neither the config nor the
+        // missing URL; reading that error took an entire AI-debug session. So
+        // refuse here, and say the one thing that fixes it.
+        //
+        // Recorded tests can't reach this: they navigate to absolute URLs, and
+        // `treeNeedsBaseUrl` only answers yes to a relative one.
+        if (shouldRefuseForMissingBaseUrl(rec, importedSandboxDir(rec.id))) {
+          // Every test imported before this field existed is in this state, and
+          // most of them came from a project still sitting on disk. Ask it
+          // once, out loud, rather than refusing a run we can complete.
+          const adopted = backfillBaseUrl(rec.id);
+          if (adopted) {
+            rec.baseUrl = adopted;
+            emitOutput(
+              runId,
+              "system",
+              `Base URL ${adopted} — read from the playwright.config of the project this test was ` +
+                "imported from, because this test's relative navigations had nothing to resolve " +
+                "against. Saved on the test; change it next to the Timeout box.\n",
+            );
+          } else {
+            emitOutput(
+              runId,
+              "system",
+              'This test navigates to relative URLs (like "/"), which need a base URL to resolve against.\n' +
+                "It had one in the project it was imported from — that lives in playwright.config, which " +
+                "doesn't travel with the spec.\n" +
+                "Set Base URL on this test (next to the Timeout box) and run it again.\n",
+            );
+            // Returns the same shape a real run does — the `finally` records
+            // it, and exitCode is still -1, so the run reads as failed. It did.
+            return exitCode;
+          }
+        }
+
         // Use our custom StepReporter (emits per-step progress markers) plus
         // the built-in `line` reporter for the human-readable Output panel.
         const args = [
@@ -1160,6 +1200,11 @@ export const playwrightRunner = {
             PW_SLOWMO_MS: String(slowMo),
             PW_TEST_TIMEOUT_MS: String(testTimeoutMs),
             PW_OUTPUT_DIR: outputDir,
+            // What an imported spec's relative navigations resolve against.
+            // Empty for a recorded test, which always goes to an absolute URL —
+            // and empty is falsy, so the config then declares no baseURL at all
+            // and behaves exactly as it did before this existed.
+            PW_BASE_URL: rec.baseUrl ?? "",
             GLAZE_CAPTURE_ARTIFACTS: capturing ? "1" : "0",
             GLAZE_RECORD_LOGS: recordLogs ? "1" : "0",
             GLAZE_RECORD_ALL_HEADERS: healSettings.recordAllHeaders ? "1" : "0",

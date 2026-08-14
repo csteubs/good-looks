@@ -35,6 +35,10 @@ export const DUPLICATED_FIELDS = [
   "speed",
   "sourceDir",
   "sourceRoot",
+  // Without it the copy's relative navigations resolve against nothing, so a
+  // duplicate of a working imported test fails on its first `goto` while the
+  // original passes.
+  "baseUrl",
   "stepsDiverged",
   "stepsDivergedReason",
   // Rides along with the divergence it acknowledges. Dropping it would warn the

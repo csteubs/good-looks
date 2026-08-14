@@ -136,6 +136,32 @@ export const TESTS: TestRecord[] = [
     ),
   },
   {
+    // An IMPORTED test, which is a materially different screen: no Steps tab,
+    // no Variables, no Heals — and a Base URL field none of the others have.
+    // Nothing in the preview showed that state, so the only way to look at the
+    // field was to build the app and import a real project.
+    //
+    // Base URL filled in, as it is for an import whose project wrote one down
+    // in its playwright.config. Clear it in the field to see the other half.
+    id: "t-imported",
+    name: "adds a product to cart and shows quantity of 1",
+    url: "https://shop.example.com/",
+    createdAt: NOW - 5 * DAY,
+    updatedAt: NOW - 5 * DAY,
+    scriptPath: "/preview/scripts/imported/t-imported/tests/add-to-cart.spec.js",
+    // The two fields that make a record an import: where it came from, and the
+    // base URL its relative navigations resolve against.
+    sourceDir: "/projects/shop-e2e/tests",
+    baseUrl: "https://shop.example.com/",
+    scriptEdited: true,
+    // Adopted from the source project's own config, like a real import.
+    testTimeoutMs: 120_000,
+    tags: ["imported"],
+    // An imported spec is never regenerated from steps, and the parser only
+    // recovers what it recognises — a helper-wrapped navigation is not one.
+    steps: steps(),
+  },
+  {
     id: "t-archived",
     name: "Legacy signup flow",
     url: "https://old.example.com/signup",

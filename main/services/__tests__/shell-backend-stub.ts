@@ -81,12 +81,29 @@ export function resetLaunchState(): void {
 const noop = (..._args: unknown[]): void => {};
 export const logger = { info: noop, warn: noop, error: noop, debug: noop };
 
+/** What the next directory picker answers with.
+ *
+ *  DEFAULTS TO A CANCEL, so a check that never thinks about the picker cannot
+ *  accidentally start an import — cancelling is the honest stand-in for "the
+ *  user was never asked". A check that wants the import pipeline itself, which
+ *  is reachable no other way (`importFound` is private and `importFromFiles` is
+ *  the only path that writes a record), says so by setting a folder here. */
+let openDialogResult: { canceled: boolean; filePaths: string[] } = {
+  canceled: true,
+  filePaths: [],
+};
+
+/** Answer the next `showOpenDialog` with `dir`, or `null` to go back to
+ *  cancelling. Remember to reset it. */
+export function setOpenDialogResult(dir: string | null): void {
+  openDialogResult = dir ? { canceled: false, filePaths: [dir] } : { canceled: true, filePaths: [] };
+}
+
 /** Inert file/message dialogs. A check drives the import pipeline with paths it
- *  supplies directly, so the picker must never actually open — cancelling is
- *  the honest stand-in for "the user was never asked". */
+ *  supplies directly, so the picker must never actually open. */
 export const dialog = {
   async showOpenDialog(_options?: unknown): Promise<{ canceled: boolean; filePaths: string[] }> {
-    return { canceled: true, filePaths: [] };
+    return openDialogResult;
   },
   async showSaveDialog(_options?: unknown): Promise<{ canceled: boolean; filePath?: string }> {
     return { canceled: true };
