@@ -143,6 +143,31 @@ a `RegExp`. It is supported, reads well, and avoids escaping entirely — but th
 back, so a second shape for one predicate would have re-created, in a single
 change, precisely the divergence this entry is about.
 
+**A comment turned out to be a code sink, and the review of this very change
+is the only reason it is a test rather than an incident.** The
+"UNGENERATABLE STEP" line concatenates `describeStep(step)` into generated
+source, and `describeStep` interpolates step fields raw — it was UI copy until
+this change made it a code sink. A `//` comment ends at the first LINE
+TERMINATOR, so anything after one lands in the spec as a statement inside the
+`test()` callback, which Playwright executes in Node. All four terminators
+matter, not just `\n`: U+2028 and U+2029 end a comment identically and, unlike
+a control character, survive places that reject one — a hostile page can put one
+in `document.cookie`, and the Cookies panel pre-fills a step from that live
+read. `commentSafe` now covers this line and the older `// disabled — skipped:`
+one, which had the same hole via a `${var}` template literal. It is the same
+lesson as the `count` field that was RCE for having the right TypeScript type:
+on this path, a field is untrusted no matter how harmless its destination looks.
+
+**And `roleOf` was fixed twice, because the first fix used the wrong source of
+truth.** The ARIA spec says an `input[type=password]` has no implicit role.
+Playwright falls back to `"textbox"` for every input type it does not name, so
+`getByRole("textbox")` finds one — and Playwright is what runs the generated
+test. Writing the spec-correct answer would have removed a role locator that
+works. The mapping is now transcribed from playwright-core's own table
+(`select` is a listbox on `multiple` OR `size > 1`; a file input is a `button`),
+and six rows in the parity harness make a real browser the judge rather than
+anyone's reading of any source.
+
 Rejected: emitting a `toHaveURL` assertion after every navigating click (the
 Chrome DevTools Recorder's `assertedEvents` idea). Playwright's own codegen
 deliberately relies on auto-waiting instead, and a recorded URL carrying an order
