@@ -209,6 +209,44 @@ export const testStore = {
     return changed;
   },
 
+  /** Rename a group across every record that carries it, in ONE write. Returns
+   *  how many records changed. Passing `""` as `to` ungroups them all, which is
+   *  how "delete this group" is expressed — there is no group record to delete.
+   *
+   *  CASE-SENSITIVE, unlike `removeTag`, and that is the same distinction the
+   *  field itself draws: a tag is MATCHED, so `Smoke` and `smoke` have to be
+   *  one chip or deleting it leaves a copy behind; a group is only ever
+   *  DISPLAYED, so two spellings are two folders and renaming one must not
+   *  silently swallow the other.
+   *
+   *  Reads through `readAll()` rather than `list()` for the reason `removeTag`
+   *  does: a hidden test carrying the old name would keep it invisibly and
+   *  bring a supposedly renamed group back the day it is unhidden.
+   *
+   *  One `writeAll` rather than N `save()` calls, so a rename cannot land on
+   *  half the library and leave the rail showing both names. */
+  renameGroup(from: string, to: string): number {
+    const before = from.trim();
+    if (!before) return 0;
+    const after = to.trim();
+    const all = readAll();
+    const now = Date.now();
+    let changed = 0;
+    for (const rec of all) {
+      if ((rec.group ?? "") !== before) continue;
+      // Deleted rather than set to "", so a record that leaves a group carries
+      // no key at all — the same shape a test that was never grouped has, which
+      // is what keeps "ungrouped" one condition instead of two.
+      if (after) rec.group = after;
+      else delete rec.group;
+      rec.updatedAt = now;
+      changed++;
+    }
+    if (changed > 0) writeAll(all);
+    logger.info("recorder", "Renamed test group", { from: before, to: after, changed });
+    return changed;
+  },
+
   /** Toggle a test's visibility in the sidebar without touching its files. */
   setHidden(id: string, hidden: boolean): void {
     const all = readAll();

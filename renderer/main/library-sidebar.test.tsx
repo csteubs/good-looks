@@ -13,15 +13,31 @@
 // as "nothing happened" and invite a second click — and a second copy.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { toastTexts, clearToastCalls } from "../__tests__/sonner-stub";
 
-import type { RunRecord, SecretStatus, Step, TestRecord } from "../lib/recorder-types";
+import type {
+  RecorderSettings,
+  RunRecord,
+  SecretStatus,
+  Step,
+  TestRecord,
+} from "../lib/recorder-types";
 import { LibrarySidebar } from "./library-sidebar";
 import { withAiDebug } from "../__tests__/ai-debug-harness";
 
 let tests: TestRecord[] = [];
+/** Only the two keys the rail reads. Cast at the call site rather than built
+ *  out in full: a complete `RecorderSettings` literal here would need updating
+ *  for every unrelated setting the app grows. */
+let settings: Partial<RecorderSettings> = {};
 let secretStatus: SecretStatus[] = [];
 let runRecords: RunRecord[] = [];
 
@@ -29,8 +45,23 @@ const navigate = vi.fn();
 /** The open test, as the router reports it. Mutable so a test can put one in
  *  the address bar — selection is derived from it. */
 let routeParams: { id?: string } = {};
+const setGroup = vi.fn(
+  async (_id: string, _group: string): Promise<TestRecord> => record(),
+);
+const renameGroup = vi.fn(async (from: string, to: string) => ({
+  from,
+  to,
+  changed: 1,
+}));
+const setSettings = vi.fn(
+  async (_patch: Partial<RecorderSettings>) => settings as RecorderSettings,
+);
 const duplicate = vi.fn(
-  async (id: string): Promise<TestRecord> => ({ ...record({ id: "copy" }), name: "Login [2]", id: `${id}-copy` }),
+  async (id: string): Promise<TestRecord> => ({
+    ...record({ id: "copy" }),
+    name: "Login [2]",
+    id: `${id}-copy`,
+  }),
 );
 
 vi.mock("@tanstack/react-router", () => ({
@@ -64,6 +95,14 @@ vi.mock("../lib/api", () => ({
       setHidden: async () => null,
       setSpeed: async () => ({}) as TestRecord,
       importFiles: async () => ({ imported: 0, names: [], ids: [] }),
+      setGroup: (id: string, group: string) => setGroup(id, group),
+      renameGroup: (from: string, to: string) => renameGroup(from, to),
+    },
+    // The rail reads settings for two things: the site-icon egress switch and
+    // which folders are collapsed. Both come back from this one query.
+    recorder: {
+      getSettings: async () => settings,
+      setSettings: (patch: Partial<RecorderSettings>) => setSettings(patch),
     },
     llm: {
       getConfig: async () => ({ provider: "ollama" }),
@@ -73,7 +112,13 @@ vi.mock("../lib/api", () => ({
     // The sidebar asks whether the branch switcher is available before it
     // offers the row. Unavailable is the right default here: these tests are
     // about the library, and a Branches row in them would only be noise.
-    branches: { status: async () => ({ available: false, switched: false, hasToken: false }) },
+    branches: {
+      status: async () => ({
+        available: false,
+        switched: false,
+        hasToken: false,
+      }),
+    },
     // The AI debug provider (now above the sidebar for the row sparkles)
     // hydrates persisted sessions on mount and subscribes to pushes.
     aiDebug: {
@@ -105,9 +150,13 @@ function record(over: Partial<TestRecord> = {}): TestRecord {
 }
 
 function renderSidebar() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <QueryClientProvider client={client}>{withAiDebug(<LibrarySidebar />)}</QueryClientProvider>,
+    <QueryClientProvider client={client}>
+      {withAiDebug(<LibrarySidebar />)}
+    </QueryClientProvider>,
   );
 }
 
@@ -121,11 +170,15 @@ async function chooseDuplicate() {
 
 beforeEach(() => {
   tests = [record()];
+  settings = {};
   routeParams = {};
   secretStatus = [];
   runRecords = [];
   navigate.mockClear();
   duplicate.mockClear();
+  setGroup.mockClear();
+  renameGroup.mockClear();
+  setSettings.mockClear();
   clearToastCalls();
 });
 
@@ -210,14 +263,19 @@ describe("LibrarySidebar — the rail", () => {
     renderSidebar();
     fireEvent.click(await screen.findByText("Login"));
     await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith({ to: "/test/$id", params: { id: "t1" } }),
+      expect(navigate).toHaveBeenCalledWith({
+        to: "/test/$id",
+        params: { id: "t1" },
+      }),
     );
   });
 
   it("navigates from a views row on a plain click", async () => {
     renderSidebar();
     fireEvent.click(await screen.findByText("Stats"));
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith({ to: "/stats" }));
+    await waitFor(() =>
+      expect(navigate).toHaveBeenCalledWith({ to: "/stats" }),
+    );
   });
 
   it("offers every view, by the name a person reads", async () => {
@@ -238,12 +296,17 @@ describe("LibrarySidebar — the rail", () => {
     // Neutral selection is invisible to jsdom (no cascade, `css: false`), so
     // the attribute the stylesheet selects on IS the assertion — and it is the
     // one `check:selection-neutral` reads too.
-    tests = [record({ id: "t1", name: "Login" }), record({ id: "t2", name: "Signup" })];
+    tests = [
+      record({ id: "t1", name: "Login" }),
+      record({ id: "t2", name: "Signup" }),
+    ];
     routeParams = { id: "t1" };
     renderSidebar();
     await screen.findByText("Login");
 
-    const rows = [...document.querySelectorAll(".gl-rail-row")] as HTMLElement[];
+    const rows = [
+      ...document.querySelectorAll(".gl-rail-row"),
+    ] as HTMLElement[];
     const selected = rows.filter((r) => r.hasAttribute("data-selected"));
     expect(selected).toHaveLength(1);
     expect(selected[0].textContent).toContain("Login");
@@ -271,9 +334,27 @@ describe("LibrarySidebar — run verdict dots", () => {
     // cascade to ask, so the class is the colour, and the label is the part a
     // screen reader gets.
     runRecords = [
-      run({ id: "r-c", batchId: "b1", runBrowser: "chromium", status: "passed", startedAt: 10 }),
-      run({ id: "r-f", batchId: "b1", runBrowser: "firefox", status: "passed", startedAt: 11 }),
-      run({ id: "r-w", batchId: "b1", runBrowser: "webkit", status: "failed", startedAt: 12 }),
+      run({
+        id: "r-c",
+        batchId: "b1",
+        runBrowser: "chromium",
+        status: "passed",
+        startedAt: 10,
+      }),
+      run({
+        id: "r-f",
+        batchId: "b1",
+        runBrowser: "firefox",
+        status: "passed",
+        startedAt: 11,
+      }),
+      run({
+        id: "r-w",
+        batchId: "b1",
+        runBrowser: "webkit",
+        status: "failed",
+        startedAt: 12,
+      }),
     ];
     renderSidebar();
     await screen.findByText("Login");
@@ -284,13 +365,33 @@ describe("LibrarySidebar — run verdict dots", () => {
 
   it("marks a passing batch that leaned on Auto-Heal", async () => {
     runRecords = [
-      run({ id: "r-c", batchId: "b1", status: "passed", startedAt: 10, healedSteps: 2 }),
-      run({ id: "r-f", batchId: "b1", status: "passed", startedAt: 11, healedSteps: 2 }),
-      run({ id: "r-w", batchId: "b1", status: "passed", startedAt: 12, healedSteps: 0 }),
+      run({
+        id: "r-c",
+        batchId: "b1",
+        status: "passed",
+        startedAt: 10,
+        healedSteps: 2,
+      }),
+      run({
+        id: "r-f",
+        batchId: "b1",
+        status: "passed",
+        startedAt: 11,
+        healedSteps: 2,
+      }),
+      run({
+        id: "r-w",
+        batchId: "b1",
+        status: "passed",
+        startedAt: 12,
+        healedSteps: 0,
+      }),
     ];
     renderSidebar();
     await screen.findByText("Login");
-    const dot = await screen.findByLabelText("All 3 runs passed — 4 steps auto-healed");
+    const dot = await screen.findByLabelText(
+      "All 3 runs passed — 4 steps auto-healed",
+    );
     expect(dot.className).toContain("bg-support-green-yellow");
   });
 
@@ -330,11 +431,16 @@ describe("LibrarySidebar — Duplicate Test", () => {
     await chooseDuplicate();
 
     await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith({ to: "/test/$id", params: { id: "t1-copy" } }),
+      expect(navigate).toHaveBeenCalledWith({
+        to: "/test/$id",
+        params: { id: "t1-copy" },
+      }),
     );
-    expect(toastTexts().some((t) => t.type === "success" && t.title.includes("Login [2]"))).toBe(
-      true,
-    );
+    expect(
+      toastTexts().some(
+        (t) => t.type === "success" && t.title.includes("Login [2]"),
+      ),
+    ).toBe(true);
   });
 
   it("reports a failure instead of leaving the click looking successful", async () => {
@@ -343,13 +449,19 @@ describe("LibrarySidebar — Duplicate Test", () => {
     await chooseDuplicate();
 
     await waitFor(() =>
-      expect(toastTexts().some((t) => t.type === "error" && t.title === "Disk is full")).toBe(true),
+      expect(
+        toastTexts().some(
+          (t) => t.type === "error" && t.title === "Disk is full",
+        ),
+      ).toBe(true),
     );
     expect(navigate).not.toHaveBeenCalled();
   });
 
   it("asks first when the test declares variables", async () => {
-    tests = [record({ variables: [{ name: "user", kind: "plain", value: "ada" }] })];
+    tests = [
+      record({ variables: [{ name: "user", kind: "plain", value: "ada" }] }),
+    ];
     renderSidebar();
     await chooseDuplicate();
 
@@ -379,20 +491,29 @@ describe("LibrarySidebar — Duplicate Test", () => {
   });
 
   it("duplicates once the dialog is confirmed", async () => {
-    tests = [record({ variables: [{ name: "user", kind: "plain", value: "ada" }] })];
+    tests = [
+      record({ variables: [{ name: "user", kind: "plain", value: "ada" }] }),
+    ];
     renderSidebar();
     await chooseDuplicate();
 
-    fireEvent.click(await screen.findByRole("button", { name: /^duplicate$/i }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: /^duplicate$/i }),
+    );
 
     await waitFor(() => expect(duplicate).toHaveBeenCalledWith("t1"));
     await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith({ to: "/test/$id", params: { id: "t1-copy" } }),
+      expect(navigate).toHaveBeenCalledWith({
+        to: "/test/$id",
+        params: { id: "t1-copy" },
+      }),
     );
   });
 
   it("does nothing when the dialog is dismissed", async () => {
-    tests = [record({ variables: [{ name: "user", kind: "plain", value: "ada" }] })];
+    tests = [
+      record({ variables: [{ name: "user", kind: "plain", value: "ada" }] }),
+    ];
     renderSidebar();
     await chooseDuplicate();
 
@@ -401,7 +522,9 @@ describe("LibrarySidebar — Duplicate Test", () => {
     // not change is that dismissing copies nothing.
     fireEvent.click(await screen.findByLabelText("Close"));
 
-    await waitFor(() => expect(screen.queryByText(/Duplicate “Login”\?/)).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByText(/Duplicate “Login”\?/)).toBeNull(),
+    );
     expect(duplicate).not.toHaveBeenCalled();
   });
 
@@ -418,5 +541,239 @@ describe("LibrarySidebar — Duplicate Test", () => {
 
     await waitFor(() => expect(duplicate).toHaveBeenCalledWith("t1"));
     spy.mockRestore();
+  });
+});
+
+describe("LibrarySidebar folders (REDESIGN §7.2)", () => {
+  /** Two tests in one folder plus one loose, which is the shape every question
+   *  below needs: a header, members under it, and a row that is not in it. */
+  function library() {
+    tests = [
+      record({ id: "t1", name: "Login", group: "Storefront" }),
+      record({ id: "t2", name: "Checkout", group: "Storefront" }),
+      record({ id: "t3", name: "Search" }),
+    ];
+  }
+
+  it("draws a folder above its members, with a count, and does not draw a folder for the loose test", async () => {
+    library();
+    renderSidebar();
+
+    const folder = await screen.findByRole("button", { name: /Storefront/ });
+    expect(folder).toBeTruthy();
+    expect(within(folder).getByText("2 tests")).toBeTruthy();
+    // The count is of THIS folder, not of the library: `Search` is loose and
+    // must not be in it.
+    expect(tests).toHaveLength(3);
+    // Every test is still reachable — a folder hides nothing while open.
+    expect(await screen.findByText("Login")).toBeTruthy();
+    expect(screen.getByText("Checkout")).toBeTruthy();
+    expect(screen.getByText("Search")).toBeTruthy();
+    // …and only ONE header, so the loose test did not grow one.
+    expect(document.querySelectorAll(".gl-rail-group-row")).toHaveLength(1);
+  });
+
+  it("counts what is actually in the folder, in the singular when there is one", async () => {
+    // A hardcoded plural passes against a two-member fixture forever, and the
+    // count is the one number a collapsed folder still gives you.
+    tests = [
+      record({ id: "t1", name: "Login", group: "Storefront" }),
+      record({ id: "t2", name: "Checkout", group: "Admin" }),
+      record({ id: "t3", name: "Search", group: "Admin" }),
+      record({ id: "t4", name: "Signup", group: "Admin" }),
+    ];
+    renderSidebar();
+
+    const admin = await screen.findByRole("button", { name: /Admin/ });
+    expect(within(admin).getByText("3 tests")).toBeTruthy();
+    const store = screen.getByRole("button", { name: /Storefront/ });
+    expect(within(store).getByText("1 test")).toBeTruthy();
+  });
+
+  it("indents the members and not the loose test, which is what says they are inside", async () => {
+    library();
+    renderSidebar();
+    await screen.findByText("Login");
+    expect(document.querySelectorAll(".gl-rail-row-nested")).toHaveLength(2);
+  });
+
+  it("is NOT selectable, even when one of its tests is open", async () => {
+    // A folder is not a destination — there is no group screen — and a second
+    // `data-selected` row would make the rail's selection mean two things.
+    library();
+    routeParams = { id: "t1" };
+    renderSidebar();
+    const folder = await screen.findByRole("button", { name: /Storefront/ });
+    expect(folder.hasAttribute("data-selected")).toBe(false);
+    expect(
+      document.querySelectorAll(".gl-rail-row[data-selected]"),
+    ).toHaveLength(1);
+  });
+
+  it("aggregates its members' verdicts into one dot, counting TESTS", async () => {
+    library();
+    runRecords = [
+      run({ id: "a", testId: "t1", status: "passed" }),
+      run({ id: "b", testId: "t2", status: "failed" }),
+    ];
+    renderSidebar();
+    // The label, not the colour: colour alone is not an accessible signal and
+    // jsdom would report a class either way.
+    expect(await screen.findByLabelText("1 of 2 tests passed")).toBeTruthy();
+  });
+
+  it("collapses, and its members LEAVE THE LIST rather than being hidden", async () => {
+    // Rows still in the DOM are still in the tab order and still in a screen
+    // reader's list, so the number of rows would stop matching the count on
+    // the header — the one number a folder exists to give.
+    library();
+    settings = { collapsedTestGroups: ["Storefront"] };
+    renderSidebar();
+
+    await screen.findByRole("button", { name: /Storefront/ });
+    await waitFor(() => expect(screen.queryByText("Login")).toBeNull());
+    expect(screen.queryByText("Checkout")).toBeNull();
+    // The loose test is untouched, and the header still counts what is inside.
+    expect(screen.getByText("Search")).toBeTruthy();
+    expect(screen.getByText("2 tests")).toBeTruthy();
+  });
+
+  it("persists the collapse, so a folder does not spring open on the next launch", async () => {
+    library();
+    renderSidebar();
+    const folder = await screen.findByRole("button", { name: /Storefront/ });
+    expect(folder.getAttribute("aria-expanded")).toBe("true");
+
+    fireEvent.click(folder);
+
+    await waitFor(() =>
+      expect(setSettings).toHaveBeenCalledWith({
+        collapsedTestGroups: ["Storefront"],
+      }),
+    );
+    // And the row reports its new state without waiting for the write — a
+    // disclosure that waits for a round trip reads as a dead control on the
+    // click that matters most.
+    expect(
+      screen
+        .getByRole("button", { name: /Storefront/ })
+        .getAttribute("aria-expanded"),
+    ).toBe("false");
+  });
+
+  it("expands again — the half that matters", async () => {
+    library();
+    settings = { collapsedTestGroups: ["Storefront"] };
+    renderSidebar();
+    const folder = await screen.findByRole("button", { name: /Storefront/ });
+
+    fireEvent.click(folder);
+
+    await waitFor(() =>
+      expect(setSettings).toHaveBeenCalledWith({ collapsedTestGroups: [] }),
+    );
+  });
+
+  it("moves a test into an existing folder from its own menu", async () => {
+    library();
+    renderSidebar();
+    const row = await screen.findByText("Search");
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByText("Move to Group"));
+    // `getByRole("menuitem")`, not `getByText`: the folder's own header row
+    // carries the same word, and an ambiguous query retries until timeout and
+    // then reports "never rendered" rather than "your query matched two".
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Storefront" }));
+
+    await waitFor(() =>
+      expect(setGroup).toHaveBeenCalledWith("t3", "Storefront"),
+    );
+  });
+
+  it("moves a test OUT of its folder with None", async () => {
+    library();
+    renderSidebar();
+    const row = await screen.findByText("Login");
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByText("Move to Group"));
+    fireEvent.click(await screen.findByText("None"));
+
+    await waitFor(() => expect(setGroup).toHaveBeenCalledWith("t1", ""));
+  });
+
+  it("deletes a folder by moving its members to the top level", async () => {
+    // There is no group record to remove, so this is the only deletion there
+    // is — and nothing is destroyed, which is why it needs no confirmation.
+    library();
+    renderSidebar();
+    const folder = await screen.findByRole("button", { name: /Storefront/ });
+    fireEvent.contextMenu(folder);
+    fireEvent.click(await screen.findByText("Ungroup Tests"));
+
+    await waitFor(() =>
+      expect(renameGroup).toHaveBeenCalledWith("Storefront", ""),
+    );
+  });
+
+  it("renames a folder, and the rename does not spring it open", async () => {
+    // The collapsed list is keyed by NAME, so a rename has to carry the state
+    // across or every folder the user had shut opens under them.
+    library();
+    settings = { collapsedTestGroups: ["Storefront"] };
+    renderSidebar();
+    const folder = await screen.findByRole("button", { name: /Storefront/ });
+    fireEvent.contextMenu(folder);
+    fireEvent.click(await screen.findByText("Rename Group…"));
+
+    const field = await screen.findByLabelText("Group name");
+    expect((field as HTMLInputElement).value).toBe("Storefront");
+    fireEvent.change(field, { target: { value: "Shop" } });
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+
+    await waitFor(() =>
+      expect(renameGroup).toHaveBeenCalledWith("Storefront", "Shop"),
+    );
+    await waitFor(() =>
+      expect(setSettings).toHaveBeenCalledWith({
+        collapsedTestGroups: ["Shop"],
+      }),
+    );
+  });
+
+  it("creating a folder and joining one are the SAME gesture", async () => {
+    // A group is its members, so an "add group" command would make a row that
+    // disappeared on the next read.
+    library();
+    renderSidebar();
+    const row = await screen.findByText("Search");
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByText("Move to Group"));
+    fireEvent.click(await screen.findByText("New Group…"));
+
+    const field = await screen.findByLabelText("Group name");
+    fireEvent.change(field, { target: { value: "Admin" } });
+    fireEvent.click(screen.getByRole("button", { name: "Move" }));
+
+    await waitFor(() => expect(setGroup).toHaveBeenCalledWith("t3", "Admin"));
+  });
+
+  it("refuses an empty name rather than treating it as ungroup", async () => {
+    // Deleting a folder has its own command with its own words. Getting there
+    // by clearing a text field would be destructive with no way to tell it
+    // apart from a slip.
+    library();
+    renderSidebar();
+    const row = await screen.findByText("Search");
+    fireEvent.contextMenu(row);
+    fireEvent.click(await screen.findByText("Move to Group"));
+    fireEvent.click(await screen.findByText("New Group…"));
+
+    const field = await screen.findByLabelText("Group name");
+    fireEvent.change(field, { target: { value: "   " } });
+    expect(
+      screen.getByRole("button", { name: "Move" }).hasAttribute("disabled"),
+    ).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Move" }));
+    expect(setGroup).not.toHaveBeenCalled();
   });
 });

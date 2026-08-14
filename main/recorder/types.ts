@@ -471,6 +471,26 @@ export interface TestRecord {
    *  of truth, so the renderer sends raw strings and renders what comes back.
    *  Absent/empty means untagged. */
   tags?: string[];
+  /** The one folder this test lives in, in the library rail (REDESIGN §7.2).
+   *
+   *  A GROUP IS NOT A TAG, and the difference is exactly one word: `one`. Tags
+   *  are many-to-many labels for SELECTION — the Batch checklist filters by
+   *  them, and a test being both `smoke` and `checkout` is the point. A group
+   *  is a PLACE in a navigation rail, so a test needs exactly one home: with
+   *  many, a test would be drawn under several folders and the counts would not
+   *  add up to the library. Hence a single string, not a list.
+   *
+   *  THE NAME IS THE IDENTITY — there is no groups store. A group is a tag you
+   *  can only have one of, so it needs no more machinery than a tag does, and a
+   *  second entity with its own file, its own ids and its own orphan cleanup
+   *  would be a parallel system to maintain for a folder. Two consequences,
+   *  both wanted: groups sort alphabetically for free and deterministically,
+   *  and a group with no members ceases to exist — which is the right rule for
+   *  a rail folder, since a row with nothing under it is a row you can only
+   *  collapse.
+   *
+   *  Normalized by `normalizeGroup` on write. Absent/empty means ungrouped. */
+  group?: string;
   /** Named values this test's steps can interpolate with `${name}`. Normalized
    *  by `normalizeVariables` on write. A "secret" variable's value is NOT here —
    *  it lives encrypted in test-secrets-store and is injected as an env
@@ -1309,6 +1329,11 @@ export function collectVarRefs(step: Step): string[] {
 export const MAX_TAG_LENGTH = 32;
 export const MAX_TAGS_PER_TEST = 20;
 
+/** Bound for `TestRecord.group`. Longer than a tag because a folder name is
+ *  read as a phrase ("Checkout — logged in") where a tag is scanned as a chip,
+ *  and the rail truncates with an ellipsis rather than wrapping. */
+export const MAX_GROUP_LENGTH = 48;
+
 /**
  * Canonicalize a set of tags: trim, drop empties, collapse inner whitespace,
  * truncate over-long tags, dedupe case-insensitively (first spelling wins, so
@@ -1334,6 +1359,28 @@ export function normalizeTags(input: unknown): string[] {
     if (out.length >= MAX_TAGS_PER_TEST) break;
   }
   return out.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+}
+
+/**
+ * Canonicalize a group name: trim, collapse inner whitespace, truncate.
+ *
+ * Returns `""` for anything unusable, which every caller reads as UNGROUPED —
+ * so a hostile or absent value moves a test to the top level rather than into a
+ * folder nobody can see. That direction matters: the rail draws groups from the
+ * names the tests carry, so an unrenderable name would be a test that vanished
+ * from the list entirely.
+ *
+ * Deliberately NOT case-folded, and deliberately not deduped against existing
+ * names. `Checkout` and `checkout` are two folders here where they would be one
+ * tag, because a tag is matched (the chip that says `smoke` must find every
+ * spelling) and a folder is only ever displayed. Case-folding would mean the
+ * name the user typed is not the name on the row.
+ *
+ * Accepts `unknown` because it sits directly behind an IPC boundary.
+ */
+export function normalizeGroup(input: unknown): string {
+  if (typeof input !== "string") return "";
+  return input.trim().replace(/\s+/g, " ").slice(0, MAX_GROUP_LENGTH);
 }
 
 /** Default visual-diff threshold (percent of pixels changed) when a test has
@@ -1624,6 +1671,17 @@ export interface RecorderSettings {
    *  this list (newly added) run after it, in library order; ids for deleted
    *  tests are ignored. Empty = plain library order. */
   batchOrder: string[];
+  /** Library-rail folders the user has COLLAPSED, by group name (REDESIGN
+   *  §7.2). Written straight from the rail, like `batchOrder`, so it has no row
+   *  in `settings-schema.ts`.
+   *
+   *  Collapsed rather than expanded is the list that is stored, because the
+   *  default has to be "everything visible": a new group appearing collapsed
+   *  would hide the tests that were just put in it, and a library restored on
+   *  a fresh install would open showing nothing at all. A name here that no
+   *  test carries is simply never read — groups have no records to clean up,
+   *  so neither does this. */
+  collapsedTestGroups: string[];
   /** Per-row Batch-view options, keyed by test id: ticked, engines, headed.
    *  Written straight from the Batch view (like `batchOrder`) rather than from
    *  the Settings window, so it has no row in `settings-schema.ts`. A test with

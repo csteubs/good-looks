@@ -371,6 +371,11 @@ export interface TestRecord {
   /** Free-form grouping labels (mirrors main TestRecord). Normalized backend-
    *  side on write, so the renderer never has to canonicalize them itself. */
   tags?: string[];
+  /** The ONE folder this test lives in, in the library rail (mirrors main
+   *  TestRecord, REDESIGN §7.2). A group is not a tag: tags are many-to-many
+   *  labels for selection, a group is a single place for navigation. Absent or
+   *  empty means ungrouped. Normalized backend-side on write. */
+  group?: string;
   /** Named values this test's steps interpolate with `${name}` (mirrors main
    *  TestRecord). A secret variable never carries its value here. */
   variables?: TestVariable[];
@@ -881,6 +886,9 @@ export interface RecorderSettings {
   alertWebhookEnabled: boolean;
   /** user-chosen Batch run order, as test ids (mirrors main types) */
   batchOrder: string[];
+  /** library-rail folders the user has collapsed, by group name (mirrors main
+   *  types). COLLAPSED, not expanded, so the default is everything visible. */
+  collapsedTestGroups: string[];
   /** per-row Batch-view options by test id (mirrors main types). An absent
    *  entry is the default — see BatchRowOptions. */
   batchTestOptions: Record<string, BatchRowOptions>;
@@ -1208,6 +1216,11 @@ export type RoutineStep =
 
 /** Longest a `notify` message may be — user text that can leave the machine. */
 export const MAX_ROUTINE_MESSAGE = 200;
+
+/** Longest a library folder's name may be (mirrors `MAX_GROUP_LENGTH` in main).
+ *  Mirrored so the field can be capped at the store's own limit, which is what
+ *  stops the user typing a name whose tail is silently truncated on write. */
+export const MAX_GROUP_LENGTH = 48;
 
 /** Longest a single `wait` may pause a Routine: one hour. A ceiling rather than
  *  a warning — the runner holds the batch open across a wait, so a longer one

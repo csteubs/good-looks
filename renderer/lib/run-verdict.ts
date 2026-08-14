@@ -58,7 +58,12 @@ export function tally(runs: RunRecord[]): RunTally {
     if (r.status === "passed") passed++;
     healedSteps += r.healedSteps ?? 0;
   }
-  return { passed, failed: runs.length - passed, total: runs.length, healedSteps };
+  return {
+    passed,
+    failed: runs.length - passed,
+    total: runs.length,
+    healedSteps,
+  };
 }
 
 /** Verdict for one cohort of runs, or null when there are none.
@@ -71,7 +76,8 @@ export function tally(runs: RunRecord[]): RunTally {
 export function verdictFor(runs: RunRecord[]): RunVerdict | null {
   if (runs.length === 0) return null;
   const t = tally(runs);
-  if (t.failed === 0) return t.healedSteps > HEAL_TOLERANCE ? "healed" : "passed";
+  if (t.failed === 0)
+    return t.healedSteps > HEAL_TOLERANCE ? "healed" : "passed";
   if (t.passed === 0) return "failed";
   return t.failed * 3 <= t.total ? "mostly-passed" : "mostly-failed";
 }
@@ -82,7 +88,10 @@ export function verdictFor(runs: RunRecord[]): RunVerdict | null {
  *  one-browser run is the overwhelmingly common case and had those words before
  *  this scale existed. The mixed labels COUNT, because "some passed" is not
  *  actionable and "2 of 3 browsers passed" is. */
-export function toneForVerdict(verdict: RunVerdict, t: RunTally): RunVerdictTone {
+export function toneForVerdict(
+  verdict: RunVerdict,
+  t: RunTally,
+): RunVerdictTone {
   const of = `${t.passed} of ${t.total} runs passed`;
   switch (verdict) {
     case "passed":
@@ -113,7 +122,13 @@ export function toneForVerdict(verdict: RunVerdict, t: RunTally): RunVerdictTone
   }
 }
 
-/** What a test's dot should say right now, from the whole run list.
+export interface TestVerdict {
+  verdict: RunVerdict;
+  tally: RunTally;
+  tone: RunVerdictTone;
+}
+
+/** What each test's dot should say right now, from the whole run list.
  *
  *  COHORT, not "the last run": when the newest run for a test belongs to a
  *  batch, its siblings from that same batch — the other browsers — are part of
@@ -125,21 +140,85 @@ export function toneForVerdict(verdict: RunVerdict, t: RunTally): RunVerdictTone
  *  moment its record lands, from wherever it was started — and a manual re-run
  *  that fails turns it red the same way. There is no remembered failure to
  *  clear, which is the only version of "resets on the next run" that cannot get
- *  stuck. */
-export function verdictsByTest(runs: RunRecord[]): Map<string, RunVerdictTone> {
+ *  stuck.
+ *
+ *  Returns the VERDICT as well as the tone, because a folder's dot aggregates
+ *  its members' verdicts and a tone is a colour plus a sentence about runs —
+ *  not a value anything can count. `verdictsByTest` below is the tone-only
+ *  projection, kept because every caller that predates folders wants exactly
+ *  that and nothing more. */
+export function testVerdicts(runs: RunRecord[]): Map<string, TestVerdict> {
   const newest = new Map<string, RunRecord>();
   for (const r of runs) {
     const prev = newest.get(r.testId);
     if (!prev || r.startedAt > prev.startedAt) newest.set(r.testId, r);
   }
-  const out = new Map<string, RunVerdictTone>();
+  const out = new Map<string, TestVerdict>();
   for (const [testId, last] of newest) {
     const cohort = last.batchId
       ? runs.filter((r) => r.testId === testId && r.batchId === last.batchId)
       : [last];
     const t = tally(cohort);
     const verdict = verdictFor(cohort);
-    if (verdict) out.set(testId, toneForVerdict(verdict, t));
+    if (verdict)
+      out.set(testId, { verdict, tally: t, tone: toneForVerdict(verdict, t) });
   }
   return out;
+}
+
+/**
+ * One dot for a whole folder (REDESIGN §7.2).
+ *
+ * COUNTS TESTS, NOT RUNS, and that is the only honest unit here: a folder of
+ * five tests where one failed on three browsers is "4 of 5 tests passed", not
+ * "6 of 8 runs passed" — the second number is arithmetic about a thing nobody
+ * grouped. So the same five-state scale is applied a level up, over the
+ * members' own verdicts.
+ *
+ * A member that PASSED WITH HEALS counts as passed, which it did. The heal
+ * warning is deliberately not propagated: it is a per-test early warning about
+ * that test's locators, and a folder tinted yellow because one member healed
+ * four steps would tell you to go and look at five tests to find one.
+ *
+ * Members with no runs are not counted at all — a folder half full of tests
+ * that have never run is not half failing. `null` when NONE of them has run,
+ * so the row simply carries no dot rather than a grey one claiming a result.
+ */
+export function groupVerdictTone(
+  verdicts: readonly RunVerdict[],
+): RunVerdictTone | null {
+  const total = verdicts.length;
+  if (total === 0) return null;
+  const passed = verdicts.filter(
+    (v) => v === "passed" || v === "healed",
+  ).length;
+  const failed = total - passed;
+  const of = `${passed} of ${total} tests passed`;
+  if (failed === 0) {
+    return {
+      className: "bg-support-green",
+      label: total > 1 ? `All ${total} tests passed` : "Its test passed",
+    };
+  }
+  if (passed === 0) {
+    return {
+      className: "bg-support-red",
+      label: total > 1 ? `All ${total} tests failed` : "Its test failed",
+    };
+  }
+  // Same ratio the run-level scale uses, so a folder and a test say the same
+  // thing with the same colour rather than inventing a second reading of
+  // "mostly".
+  return failed * 3 <= total
+    ? { className: "bg-support-yellow-orange", label: of }
+    : { className: "bg-support-orange-red", label: of };
+}
+
+/** Just the tones, keyed by test — see `testVerdicts` for how each is decided.
+ *  One traversal, not two: this is a projection of that map rather than a
+ *  second walk of the run list, so the two can never disagree about a dot. */
+export function verdictsByTest(runs: RunRecord[]): Map<string, RunVerdictTone> {
+  return new Map(
+    [...testVerdicts(runs)].map(([testId, v]) => [testId, v.tone]),
+  );
 }

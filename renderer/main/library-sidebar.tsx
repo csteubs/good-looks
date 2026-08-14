@@ -15,16 +15,22 @@ import {
   Text,
   toast,
 } from "@ui";
-import { Plus, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
+import { Plus, ChevronDown, ChevronRight, Folder, FolderOpen, Gauge, EyeOff, BarChart3, Images, ListChecks, Sparkles, Tag, Wand2, Copy } from "lucide-react";
 
 import { ChromeButton, Rail, RailEmpty, RailGroup, RailRow, SiteIcon } from "../theme";
 import { RoutinesRail, useCreateRoutine } from "./routines-rail";
 import { api } from "../lib/api";
 import { aggregateStatus, type SessionLike } from "../lib/ai-debug-sessions";
 import { toneFor } from "../lib/ai-debug-status";
-import { verdictsByTest, type RunVerdictTone } from "../lib/run-verdict";
+import { testVerdicts, verdictsByTest, type RunVerdictTone } from "../lib/run-verdict";
+import {
+  groupNames,
+  libraryRows,
+  toggleCollapsed,
+  type LibraryGroup,
+} from "../lib/library-groups";
 import type { LlmProvider } from "../lib/llm-types";
-import type { TestRecord } from "../lib/recorder-types";
+import type { RecorderSettings, TestRecord } from "../lib/recorder-types";
 import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/duplicate-warnings";
 import { nativeShell } from "../lib/native-shell";
@@ -34,6 +40,7 @@ import { NewRecordingDialog } from "./new-recording-dialog";
 import { GenerateTestDialog } from "./generate-test-dialog";
 import { ImportGitDialog } from "./import-git-dialog";
 import { TagsDialog } from "./tags-dialog";
+import { GroupNameDialog } from "./group-name-dialog";
 import { DuplicateTestDialog } from "./duplicate-test-dialog";
 
 
@@ -277,6 +284,95 @@ function RowIndicators({
   );
 }
 
+/**
+ * A folder in the library rail — REDESIGN §7.2.
+ *
+ * The same row the tests use, with three things added and one taken away: a
+ * disclosure caret in place of nothing, a SiteIcon monogram OF THE GROUP'S OWN
+ * NAME rather than of a host (which is what `site-icon.tsx` says it was built
+ * as its own component for), a count, and the aggregate verdict in the same
+ * accessory slot a test's dot uses — so folders and tests stack into one
+ * column with one edge instead of two.
+ *
+ * NOT SELECTABLE. A folder is not a destination: there is no group screen, and
+ * marking one selected would put a second `data-selected` row in a rail whose
+ * selection means "this is what the main pane is showing".
+ *
+ * The disclosure vocabulary is the batch history drawer's, deliberately —
+ * `▸`/`▾` and the same caret cell — because it is the same gesture and this app
+ * should not have two.
+ */
+function GroupRow({
+  group,
+  onToggle,
+  onRename,
+  onUngroup,
+}: {
+  group: LibraryGroup<TestRecord>;
+  onToggle: () => void;
+  onRename: () => void;
+  onUngroup: () => void;
+}) {
+  return (
+    <CustomContextMenu>
+      <CustomContextMenuTrigger asChild>
+        <button
+          type="button"
+          className="gl-rail-row gl-rail-group-row"
+          aria-expanded={!group.collapsed}
+          onClick={onToggle}
+        >
+          <span className="gl-rail-group-caret" aria-hidden="true">
+            {group.collapsed ? (
+              <ChevronRight className="size-3" />
+            ) : (
+              <ChevronDown className="size-3" />
+            )}
+          </span>
+          <span className="gl-rail-row-icon">
+            {/* `favicon` is never passed. A group has no host, so there is
+                nothing a third party could be asked about it — and the egress
+                switch must not become a thing that fires for rows it cannot
+                possibly answer. */}
+            <SiteIcon host={group.name} size={16} />
+          </span>
+          <span className="gl-rail-row-text">
+            <span className="gl-rail-row-title">{group.name}</span>
+            <span className="gl-rail-row-sub">
+              {group.tests.length === 1 ? "1 test" : `${group.tests.length} tests`}
+            </span>
+          </span>
+          <span className="gl-rail-row-accessory">
+            {group.tone ? (
+              <span
+                role="img"
+                aria-label={group.tone.label}
+                title={group.tone.label}
+                className={`size-2 rounded-full ${group.tone.className}`}
+              />
+            ) : null}
+          </span>
+        </button>
+      </CustomContextMenuTrigger>
+      <CustomContextMenuContent>
+        <CustomContextMenuItem onSelect={onRename}>
+          <Folder className="size-4" />
+          Rename Group…
+        </CustomContextMenuItem>
+        {/* THE ONLY WAY TO DELETE A GROUP, and the words say what it does
+            rather than what it is called: there is no group record to remove,
+            so deleting one is moving its members to the top level. No
+            confirmation, because nothing is destroyed — every test is still in
+            the library, one row higher. */}
+        <CustomContextMenuItem onSelect={onUngroup}>
+          <FolderOpen className="size-4" />
+          Ungroup Tests
+        </CustomContextMenuItem>
+      </CustomContextMenuContent>
+    </CustomContextMenu>
+  );
+}
+
 export function LibrarySidebar() {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -291,6 +387,12 @@ export function LibrarySidebar() {
   const [generateOpen, setGenerateOpen] = React.useState(false);
   const [gitDialogOpen, setGitDialogOpen] = React.useState(false);
   const [tagsFor, setTagsFor] = React.useState<TestRecord | null>(null);
+  /** The test whose "New Group…" was picked, or the folder being renamed. Two
+   *  states rather than one tagged union: they open the SAME dialog with
+   *  different words, and collapsing them would make "which one is this" a
+   *  question the render has to answer twice. */
+  const [groupingTest, setGroupingTest] = React.useState<TestRecord | null>(null);
+  const [renamingGroup, setRenamingGroup] = React.useState<string | null>(null);
   // A duplication waiting on the warning dialog. Holds the warnings themselves
   // rather than recomputing them for the dialog: they were already needed to
   // decide whether to open it, and deriving the same list twice is how the
@@ -393,6 +495,73 @@ export function LibrarySidebar() {
     }
   };
 
+  // ── Folders (REDESIGN §7.2) ──────────────────────────────────────────
+  //
+  // Derived, never stored as its own thing: a group is a name on each test, so
+  // the set of groups IS whatever the library says it is. See
+  // renderer/lib/library-groups.ts.
+  const collapsedGroups = settingsQuery.data?.collapsedTestGroups ?? [];
+  const rows = React.useMemo(
+    () =>
+      libraryRows(
+        tests,
+        collapsedGroups,
+        // Verdicts, not tones: a folder counts its members' outcomes, and a
+        // tone is a colour plus a sentence about runs.
+        new Map([...testVerdicts(runsQuery.data ?? [])].map(([id, v]) => [id, v.verdict])),
+      ),
+    [tests, collapsedGroups, runsQuery.data],
+  );
+  const names = React.useMemo(() => groupNames(tests), [tests]);
+
+  // OPTIMISTIC, and this is the one place in the rail that is. A disclosure
+  // that waits for a settings round-trip before it opens reads as a dead
+  // control on the click that matters most — the first one. The write is
+  // best-effort for the same reason the batch order's is: the state still
+  // applies to this session if it fails.
+  const toggleGroup = async (name: string) => {
+    const next = toggleCollapsed(collapsedGroups, name);
+    qc.setQueryData(["recorder-settings"], (prev: RecorderSettings | undefined) =>
+      prev ? { ...prev, collapsedTestGroups: next } : prev,
+    );
+    try {
+      await api.recorder.setSettings({ collapsedTestGroups: next });
+    } catch {
+      // Put the cache back rather than leaving the screen claiming a state
+      // the next refetch will contradict.
+      qc.invalidateQueries({ queryKey: ["recorder-settings"] });
+    }
+  };
+
+  const renameGroupTo = async (from: string, to: string) => {
+    if (to === from) return;
+    try {
+      const res = await api.tests.renameGroup(from, to);
+      qc.invalidateQueries({ queryKey: ["tests"] });
+      // The collapsed list is keyed by NAME, so a rename has to carry the
+      // state across or the folder springs open under the user. Only when the
+      // group still exists: renaming to nothing is how a folder is deleted.
+      if (collapsedGroups.includes(from)) {
+        const next = collapsedGroups.filter((n) => n !== from);
+        if (res.to) next.push(res.to);
+        void api.recorder.setSettings({ collapsedTestGroups: next }).catch(() => {});
+      }
+      if (!res.to) toast.success(`Removed group “${from}”.`);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to rename group.");
+    }
+  };
+
+  const moveToGroup = async (test: TestRecord, group: string) => {
+    try {
+      await api.tests.setGroup(test.id, group);
+      qc.invalidateQueries({ queryKey: ["tests"] });
+      qc.invalidateQueries({ queryKey: ["test", test.id] });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to move test.");
+    }
+  };
+
   const openAddMenu = async (e: React.MouseEvent<HTMLButtonElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const res = await nativeMenu().popup({
@@ -412,6 +581,95 @@ export function LibrarySidebar() {
     else if (res.commandId === 2) void importFromFiles();
     else if (res.commandId === 3) setGitDialogOpen(true);
   };
+
+  /** One test row, wherever it sits. `nested` only changes the indent — a row
+   *  inside a folder is the same row, with the same menu and the same
+   *  behaviour, because a folder is where a test lives and not what it is. */
+  const renderTest = (t: TestRecord, nested: boolean) => (
+    <CustomContextMenu key={t.id}>
+      <CustomContextMenuTrigger asChild>
+        <RailRow
+          icon={<Favicon url={t.url} fromWeb={siteIconsFromWeb} />}
+          title={t.name}
+          subtitle={hostOf(t.url)}
+          selected={t.id === selectedId}
+          className={nested ? "gl-rail-row-nested" : undefined}
+          accessory={
+            <RowIndicators
+              sessions={sessionsByTest.get(t.id) ?? []}
+              verdict={verdictByTest.get(t.id)}
+            />
+          }
+          onClick={() => navigate({ to: "/test/$id", params: { id: t.id } })}
+        />
+      </CustomContextMenuTrigger>
+      <CustomContextMenuContent>
+        <CustomContextMenuItem onSelect={() => nativeShell().showItemInFolder(t.scriptPath)}>
+          <FolderOpen className="size-4" />
+          Reveal in Finder
+        </CustomContextMenuItem>
+        <CustomContextMenuItem onSelect={() => void startDuplicate(t)}>
+          <Copy className="size-4" />
+          Duplicate Test
+        </CustomContextMenuItem>
+        <CustomContextMenuSeparator />
+        <CustomContextMenuItem
+          onSelect={async () => {
+            try {
+              await api.tests.setHidden(t.id, true);
+              qc.invalidateQueries({ queryKey: ["tests"] });
+              if (t.id === selectedId) navigate({ to: "/" });
+              toast.success("Removed from sidebar.");
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : "Failed to remove test.");
+            }
+          }}
+        >
+          <EyeOff className="size-4" />
+          Remove from Sidebar
+        </CustomContextMenuItem>
+        <CustomContextMenuItem onSelect={() => setTagsFor(t)}>
+          <Tag className="size-4" />
+          Edit Tags…
+        </CustomContextMenuItem>
+        {/* WHERE THE TEST LIVES, next to what it is labelled with, because the
+            two are the questions people confuse. Creating a folder and joining
+            one are the SAME gesture: a group is its members, so an "add group"
+            command would make a row that vanished on the next read — the same
+            rule the Routine editor's groups follow. */}
+        <CustomContextMenuSub>
+          <CustomContextMenuSubTrigger value={t.group ?? "None"}>
+            <Folder className="size-4" />
+            Move to Group
+          </CustomContextMenuSubTrigger>
+          <CustomContextMenuSubContent>
+            <CustomContextMenuItem onSelect={() => void moveToGroup(t, "")}>
+              None
+            </CustomContextMenuItem>
+            {names.map((name) => (
+              <CustomContextMenuItem key={name} onSelect={() => void moveToGroup(t, name)}>
+                {name}
+              </CustomContextMenuItem>
+            ))}
+            <CustomContextMenuSeparator />
+            <CustomContextMenuItem onSelect={() => setGroupingTest(t)}>
+              New Group…
+            </CustomContextMenuItem>
+          </CustomContextMenuSubContent>
+        </CustomContextMenuSub>
+        <CustomContextMenuSeparator />
+        <CustomContextMenuSub>
+          <CustomContextMenuSubTrigger value={TEST_SPEED_LABELS[t.speed ?? "fast"]}>
+            <Gauge className="size-4" />
+            Adjust Test Speed
+          </CustomContextMenuSubTrigger>
+          <CustomContextMenuSubContent>
+            <TestSpeedSlider test={t} />
+          </CustomContextMenuSubContent>
+        </CustomContextMenuSub>
+      </CustomContextMenuContent>
+    </CustomContextMenu>
+  );
 
   return (
     <Rail
@@ -490,65 +748,26 @@ export function LibrarySidebar() {
         </RailEmpty>
       ) : (
         <>
-          {tests.map((t) => (
-            <CustomContextMenu key={t.id}>
-              <CustomContextMenuTrigger asChild>
-                <RailRow
-                  icon={<Favicon url={t.url} fromWeb={siteIconsFromWeb} />}
-                  title={t.name}
-                  subtitle={hostOf(t.url)}
-                  selected={t.id === selectedId}
-                  accessory={
-                    <RowIndicators
-                      sessions={sessionsByTest.get(t.id) ?? []}
-                      verdict={verdictByTest.get(t.id)}
-                    />
-                  }
-                  onClick={() => navigate({ to: "/test/$id", params: { id: t.id } })}
+          {rows.map((row) =>
+            row.kind === "group" ? (
+              <React.Fragment key={`g:${row.name}`}>
+                <GroupRow
+                  group={row}
+                  onToggle={() => void toggleGroup(row.name)}
+                  onRename={() => setRenamingGroup(row.name)}
+                  onUngroup={() => void renameGroupTo(row.name, "")}
                 />
-              </CustomContextMenuTrigger>
-              <CustomContextMenuContent>
-                <CustomContextMenuItem onSelect={() => nativeShell().showItemInFolder(t.scriptPath)}>
-                  <FolderOpen className="size-4" />
-                  Reveal in Finder
-                </CustomContextMenuItem>
-                <CustomContextMenuItem onSelect={() => void startDuplicate(t)}>
-                  <Copy className="size-4" />
-                  Duplicate Test
-                </CustomContextMenuItem>
-                <CustomContextMenuSeparator />
-                <CustomContextMenuItem
-                  onSelect={async () => {
-                    try {
-                      await api.tests.setHidden(t.id, true);
-                      qc.invalidateQueries({ queryKey: ["tests"] });
-                      if (t.id === selectedId) navigate({ to: "/" });
-                      toast.success("Removed from sidebar.");
-                    } catch (err) {
-                      toast.error(err instanceof Error ? err.message : "Failed to remove test.");
-                    }
-                  }}
-                >
-                  <EyeOff className="size-4" />
-                  Remove from Sidebar
-                </CustomContextMenuItem>
-                <CustomContextMenuItem onSelect={() => setTagsFor(t)}>
-                  <Tag className="size-4" />
-                  Edit Tags…
-                </CustomContextMenuItem>
-                <CustomContextMenuSeparator />
-                <CustomContextMenuSub>
-                  <CustomContextMenuSubTrigger value={TEST_SPEED_LABELS[t.speed ?? "fast"]}>
-                    <Gauge className="size-4" />
-                    Adjust Test Speed
-                  </CustomContextMenuSubTrigger>
-                  <CustomContextMenuSubContent>
-                    <TestSpeedSlider test={t} />
-                  </CustomContextMenuSubContent>
-                </CustomContextMenuSub>
-              </CustomContextMenuContent>
-            </CustomContextMenu>
-          ))}
+                {/* MEMBERS ARE NOT RENDERED WHILE COLLAPSED, rather than hidden
+                    with CSS. Rows still in the DOM are still in the tab order
+                    and still in a screen reader's list, so the number of rows
+                    would not match the count on the header — which is the one
+                    number a folder exists to give. */}
+                {row.collapsed ? null : row.tests.map((t) => renderTest(t, true))}
+              </React.Fragment>
+            ) : (
+              renderTest(row.test, false)
+            ),
+          )}
         </>
       )}
       <NewRecordingDialog open={dialogOpen} onOpenChange={setDialogOpen} />
@@ -571,6 +790,36 @@ export function LibrarySidebar() {
         open={tagsFor !== null}
         onOpenChange={(o) => {
           if (!o) setTagsFor(null);
+        }}
+      />
+      {/* CREATING A FOLDER AND JOINING ONE ARE THE SAME GESTURE — a group is
+          its members, so an "add group" command would make a row that
+          disappeared on the next read. The dialog therefore names a folder for
+          a TEST, and the test moving in is what brings it into existence. */}
+      <GroupNameDialog
+        open={groupingTest !== null}
+        title={groupingTest ? `Group for “${groupingTest.name}”` : "New group"}
+        description="Folders organise the library rail. A test lives in exactly one."
+        initial=""
+        confirmLabel="Move"
+        onOpenChange={(o) => {
+          if (!o) setGroupingTest(null);
+        }}
+        onSubmit={(name) => {
+          if (groupingTest) void moveToGroup(groupingTest, name);
+        }}
+      />
+      <GroupNameDialog
+        open={renamingGroup !== null}
+        title={renamingGroup ? `Rename “${renamingGroup}”` : "Rename group"}
+        description="Every test in this folder moves to the new name."
+        initial={renamingGroup ?? ""}
+        confirmLabel="Rename"
+        onOpenChange={(o) => {
+          if (!o) setRenamingGroup(null);
+        }}
+        onSubmit={(name) => {
+          if (renamingGroup) void renameGroupTo(renamingGroup, name);
         }}
       />
     </Rail>

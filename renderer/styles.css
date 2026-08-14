@@ -102,6 +102,18 @@
   --color-support-red: var(--support-red);
   --color-support-orange: var(--support-orange);
   --color-support-yellow: var(--support-yellow);
+  /* THE THREE BLENDS, and they were missing for as long as the five-way
+     verdict scale has existed. `run-verdict.ts` maps `healed`,
+     `mostly-passed` and `mostly-failed` to these class names, and with no
+     `--color-*` entry Tailwind emits no rule for them — so three of the dot's
+     five states drew a transparent 8px circle. The app worked perfectly while
+     "2 of 3 runs passed" and "1 of 3 runs passed" were indistinguishable from
+     a test that had never run, which is the exact failure the top of
+     `run-verdict.ts` says the file exists to prevent. Found by the library
+     folders' aggregate dot (REDESIGN §7.2) landing on the same scale. */
+  --color-support-green-yellow: var(--support-green-yellow);
+  --color-support-yellow-orange: var(--support-yellow-orange);
+  --color-support-orange-red: var(--support-orange-red);
   --color-support-green-10: var(--support-green-10);
   --color-support-red-10: var(--support-red-10);
   --color-accent-10: var(--accent-10);

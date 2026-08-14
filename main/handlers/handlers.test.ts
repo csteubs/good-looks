@@ -21,6 +21,7 @@ import {
   registeredChannels,
   setEncryptionAvailable,
 } from "../services/__tests__/shell-backend-stub.js";
+import { MAX_GROUP_LENGTH } from "../recorder/types.js";
 import { registerHandlers } from "./index.js";
 import { testStore } from "../services/test-store.js";
 import { runHistoryStore } from "../services/run-history-store.js";
@@ -136,6 +137,110 @@ describe("tests:setTags — normalization at the boundary", () => {
     await expect(invokeHandler("tests:setTags", { id: "nope", tags: [] })).rejects.toThrow(
       /not found/i,
     );
+  });
+});
+
+describe("tests:setGroup / tests:renameGroup — the library rail's folders", () => {
+  // Group names here are unique to this block: the store is shared across the
+  // whole file, so a name another describe seeded would be counted too.
+  it("normalizes the name rather than storing it verbatim", async () => {
+    seedTest("g-norm");
+    const rec = await invokeHandler<TestRecord>("tests:setGroup", {
+      id: "g-norm",
+      group: "  Store   front  ",
+    });
+    expect(rec.group).toBe("Store front");
+  });
+
+  it("UNGROUPS on anything unusable rather than erroring or storing junk", async () => {
+    // The rail draws folders from the names its tests carry, so a name it
+    // cannot render would be a test that vanished from the list. Ungrouped is
+    // the direction that keeps every test visible.
+    seedTest("g-hostile");
+    for (const group of [null, undefined, "   ", 42, { a: 1 }, ["x"]]) {
+      const rec = await invokeHandler<TestRecord>("tests:setGroup", { id: "g-hostile", group });
+      expect(rec.group).toBeUndefined();
+    }
+  });
+
+  it("DELETES the key rather than storing an empty string", async () => {
+    // So "ungrouped" is one condition everywhere instead of two.
+    seedTest("g-del", { group: "Gone" });
+    const rec = await invokeHandler<TestRecord>("tests:setGroup", { id: "g-del", group: "" });
+    expect("group" in rec).toBe(false);
+  });
+
+  it("caps a name at the store's own limit", async () => {
+    seedTest("g-long");
+    const rec = await invokeHandler<TestRecord>("tests:setGroup", {
+      id: "g-long",
+      group: "x".repeat(200),
+    });
+    expect(rec.group).toHaveLength(MAX_GROUP_LENGTH);
+  });
+
+  it("rejects an unknown test id", async () => {
+    await expect(invokeHandler("tests:setGroup", { id: "nope", group: "X" })).rejects.toThrow(
+      /not found/i,
+    );
+  });
+
+  it("renames across every member in one call", async () => {
+    seedTest("g-r1", { group: "Rename Me" });
+    seedTest("g-r2", { group: "Rename Me" });
+    seedTest("g-r3", { group: "Leave Me" });
+
+    const res = await invokeHandler<{ changed: number }>("tests:renameGroup", {
+      from: "Rename Me",
+      to: "Renamed",
+    });
+
+    expect(res.changed).toBe(2);
+    expect(testStore.get("g-r1")?.group).toBe("Renamed");
+    expect(testStore.get("g-r2")?.group).toBe("Renamed");
+    expect(testStore.get("g-r3")?.group).toBe("Leave Me");
+  });
+
+  it("is CASE-SENSITIVE, unlike deleting a tag", async () => {
+    // A tag is matched, so its two spellings have to be one chip. A group is
+    // only ever displayed, so two spellings are two folders and renaming one
+    // must not silently swallow the other.
+    seedTest("g-case1", { group: "Casing" });
+    seedTest("g-case2", { group: "casing" });
+
+    await invokeHandler("tests:renameGroup", { from: "Casing", to: "Upper" });
+
+    expect(testStore.get("g-case1")?.group).toBe("Upper");
+    expect(testStore.get("g-case2")?.group).toBe("casing");
+  });
+
+  it("deletes a group by renaming it to nothing", async () => {
+    // There is no group record to remove, so this is the only deletion there
+    // is — and the tests survive it, one row higher.
+    seedTest("g-drop", { group: "Dropping" });
+    const res = await invokeHandler<{ changed: number }>("tests:renameGroup", {
+      from: "Dropping",
+      to: "",
+    });
+    expect(res.changed).toBe(1);
+    expect("group" in (testStore.get("g-drop") as TestRecord)).toBe(false);
+  });
+
+  it("refuses a rename with no source rather than touching every ungrouped test", async () => {
+    await expect(invokeHandler("tests:renameGroup", { from: "  ", to: "X" })).rejects.toThrow(
+      /required/i,
+    );
+    await expect(invokeHandler("tests:renameGroup", { from: 42, to: "X" })).rejects.toThrow(
+      /required/i,
+    );
+  });
+
+  it("reaches a HIDDEN test, which would otherwise bring the old name back", async () => {
+    // Same reasoning as `removeTag`: a name left on a hidden test is invisible
+    // right up until that test is unhidden.
+    seedTest("g-hidden", { group: "Hiding", hidden: true });
+    await invokeHandler("tests:renameGroup", { from: "Hiding", to: "Found" });
+    expect(testStore.get("g-hidden")?.group).toBe("Found");
   });
 });
 
