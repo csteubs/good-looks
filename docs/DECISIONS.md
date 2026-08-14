@@ -91,6 +91,70 @@ cannot contain a group that was just created — so a new group's header only
 appeared once the Routine query happened to re-seed. Deriving states the rule
 once, in the shape all five lists take.
 
+### 2026-08-13 — The step list scrolls, in both directions, and ends in empty space
+
+`renderer/theme/shared.css`, `renderer/main/edit-steps-view.tsx`,
+`renderer/main/test-detail-view.tsx`, `renderer/main/recording-view.tsx`,
+`renderer/trainer/trainer-panel-view.tsx`, `renderer/main/step-row.tsx`,
+`main/services/__tests__/scroll-layout.check.ts`.
+
+**The bug: Edit Steps had no scroll container at all.** Not a clipped one — the
+screen contained zero scrollable elements while the editor was open, so a test
+long enough to overflow the pane simply had no way to reach its later steps.
+The read-only Steps tab beside it has scrolled correctly since it was written,
+which is why this survived: the two look identical and only one of them is a
+`ScrollArea`. The warnings are what surfaced it rather than caused it. A
+diverged-steps callout and the editor's own scriptEdited callout eat about 90px
+between them, so the same test that fit yesterday overflows today, and the
+report arrives as "I can't scroll when there are warnings".
+
+**One class for all four lists, not a fix in the one that was broken.** The four
+step lists had drifted into four layouts — two `gap-1 p-3`, one `p-3`, one
+`padding: 6px`, one of them not scrolling. `.gl-step-list` is what stops the
+next divergence being invisible: `check:scroll-layout` can then ask one question
+of four views instead of describing four layouts.
+
+**Horizontal overflow is `width: max-content` on the ROW, and the row's
+description giving up `flex: 1`.** The second half is not optional and is the
+part that looks wrong: a flex item with a zero basis contributes nothing to its
+container's max-content width, so leaving `flex-1` on the description sizes the
+row to its chrome and the long text is clipped with *no* scroll to reach it —
+strictly worse than the ellipsis it replaced. The ellipsis stays for
+`.gl-mono-value` everywhere else; only a `.gl-step-list` descendant drops it, so
+a step description in some future panel with no scroller is not silently made
+worse.
+
+**It shipped on the COLUMN first, and that was wrong in a way only a real window
+could show.** `min-width: max-content` on `.gl-step-list` reads as equivalent —
+the column sizes to its widest row either way — and it is not, because
+percentage widths inside then resolve against the stretched column.
+`> * { min-width: 100% }`, which was there to keep short rows full-width, thereby
+handed the trainer's step composer the width of the longest step: a form that
+belongs to a 360px panel laid out at 594px with half its controls off the edge
+behind a horizontal scroll. `e2e/panel-overflow.spec.ts` caught it on the PR and
+nothing else could have — the local gate was green, because jsdom reports every
+rectangle as zeros and the browser preview has no docked panel to draw. Sizing
+the row instead leaves every non-row child (composer, insert cursors, the
+empty-state note) belonging to the viewport, which is what they are.
+
+**The long row takes its own controls off the right edge with it.** A horizontal
+scroll to reach the ✕ on the row you are already looking at is not a trade worth
+making, so `.gl-step-row-actions` is `position: sticky; right: 0` and the cluster
+rides the scrollport. No background under it: the buttons only render on hover,
+and a hovered row already has a fill.
+
+**The tail is 96px, and 40px in the trainers.** It is deliberate empty space,
+not a margin nobody noticed — steps are dragged to reorder and appended, and a
+list ending flush against the bottom edge gives the last position no target. The
+trainers get less of one for two reasons: their list already ends in a cursor
+gap plus the composer, which is that target; and they follow the bottom as steps
+arrive, so every pixel of tail is a pixel the newest step is pushed up by.
+
+Source-level guard, in `check:scroll-layout` beside the rest of the family, for
+the reason all of them are there: jsdom has no layout engine, so a rendered test
+cannot tell a list that scrolls from one that runs off the end of the window —
+it reports both as a list with rows in it.
+
 ### 2026-08-13 — One meaning per step: `shared/step-semantics.mjs`, and the assertion that had never passed
 
 `shared/step-semantics.mjs` (new), `main/services/script-generator.ts`,

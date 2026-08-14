@@ -468,7 +468,25 @@ The nine screens inside the shell are still the old chrome until Phase B.
   type size in the product.
 - `renderer/theme/shared.css` — the chrome for the five components every screen
   EMBEDS (A5, 2026-08-10): the pager, the log inspector's console, the tag
-  cluster's chips, the heal row, and the step row's furniture. A third file
+  cluster's chips, the heal row, and the step row's furniture. **`.gl-step-list`
+  (2026-08-13) is the column all four step lists are drawn in** — the detail
+  view's Steps tab, its Edit Steps editor, and both trainers. It owns the
+  padding and the tail below the last row; the width belongs to
+  `.gl-step-list-row`, which takes `width: max-content` (a step too long for the
+  pane becomes a horizontal scroll rather than an ellipsis) with
+  `min-width: 100%` so a short row still fills the column and hover, selection
+  and the status rail span the list. **`max-content` on the COLUMN is the
+  mistake that looks identical**: percentage widths inside resolve against the
+  stretched column, so the trainer's step composer — a form belonging to a 360px
+  panel — laid out at the width of the longest step with half its controls off
+  the edge. `e2e/panel-overflow.spec.ts` is what catches that; the local gate
+  cannot. `.gl-step-list--tight` is
+  both trainers (their rows are separated by their own insert cursors, so the
+  column's gap would double one, and their list ends in a cursor gap plus the
+  composer, which is the drop target the tail provides elsewhere).
+  `.gl-step-list .gl-step-row-actions` is sticky to the right edge — without it
+  every row's ✕ sits past the viewport as soon as one step is long. Guarded by
+  `check:scroll-layout`; see DECISIONS 2026-08-13. A third file
   rather than more of `primitives.css` because the split is by scope —
   primitives are what a screen is built out of, `shell.css` is what a screen
   sits inside, and these are composed in `renderer/main/` where they can be

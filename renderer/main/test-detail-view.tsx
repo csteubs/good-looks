@@ -876,8 +876,8 @@ export function TestDetailView() {
               </Tabs>
             </div>
             <TabsContent value="steps" className="min-h-0 flex-1">
-              <ScrollArea className="h-full">
-                <div className="flex flex-col gap-1 p-3">
+              <ScrollArea className="h-full" scrollbars="both">
+                <div className="gl-step-list">
                   {computeStepDepths(test.steps).map((depth, i) => (
                     <StepRow
                       key={test.steps[i].id}

@@ -556,8 +556,9 @@ export function TrainerPanelView() {
         className="min-h-0 flex-1"
         autoScrollToBottom={cursorAtEnd}
         autoScrollDeps={[liveSteps.length]}
+        scrollbars="both"
       >
-        <div className="gl-panelwin-list">
+        <div className="gl-step-list gl-step-list--tight gl-panelwin-list">
           {liveSteps.length === 0 ? (
             <>
               {/* No gaps to sit between yet, and the composer is the only way

@@ -119,6 +119,20 @@ export const TESTS: TestRecord[] = [
       { type: "goto", url: "https://docs.example.com" },
       { type: "fill", locator: { k: "role", role: "searchbox" }, value: "locator" },
       { type: "press", value: "Enter" },
+      // Long enough to overflow the pane in both directions, which is the
+      // state the step list's scrolling exists for and the one nothing in the
+      // preview showed: 43 steps outrun the viewport vertically, and the fill
+      // below outruns it sideways. See `.gl-step-list` in theme/shared.css.
+      {
+        type: "fill",
+        locator: { k: "label", v: "Search the documentation for a locator strategy" },
+        value:
+          "a query long enough that this row runs past the right edge of the panel it is drawn in, rather than ending in an ellipsis",
+      },
+      ...Array.from({ length: 40 }, (_, i) => ({
+        type: "click" as const,
+        locator: { k: "role" as const, role: "link", name: `Result ${i + 1}` },
+      })),
     ),
   },
   {

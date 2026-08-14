@@ -14,6 +14,7 @@ import {
   Dialog,
   Field,
   Input,
+  ScrollArea,
   SegmentedControl,
   SegmentedControlItem,
   Select,
@@ -173,6 +174,13 @@ export function EditStepsView({
           </Callout>
         </div>
       ) : null}
+      {/* The editor's own scroll container, and it is load-bearing rather than
+          tidy: this list used to be a bare flex column, so a test long enough
+          to overflow the pane — which the two warnings above make happen
+          sooner — put its later steps below the window with nothing on the
+          screen able to scroll to them. `scrollbars="both"` because a step
+          long enough to overflow sideways is reachable here and nowhere else;
+          the column sizes to it (`.gl-step-list`) instead of ellipsing it. */}
       <div className="flex min-h-0 flex-1 flex-col">
         {draft.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 p-4">
@@ -182,25 +190,27 @@ export function EditStepsView({
             </Text>
           </div>
         ) : (
-          <div className="flex flex-col gap-1 p-3">
-            {draft.map((step, i) => (
-              <StepRow
-                key={step.id}
-                index={i}
-                step={step}
-                indent={depths[i]}
-                onDelete={() => deleteStep(step.id)}
-                onEdit={(patch) => updateStep(step.id, patch)}
-                drag={{
-                  onDragStart: () => setDragId(step.id),
-                  onDragEnter: () => setOverIndex(i),
-                  onDragEnd: commitDrag,
-                  isDragging: dragId === step.id,
-                  isOver: overIndex === i && dragId !== null && dragId !== step.id,
-                }}
-              />
-            ))}
-          </div>
+          <ScrollArea className="min-h-0 flex-1" scrollbars="both">
+            <div className="gl-step-list">
+              {draft.map((step, i) => (
+                <StepRow
+                  key={step.id}
+                  index={i}
+                  step={step}
+                  indent={depths[i]}
+                  onDelete={() => deleteStep(step.id)}
+                  onEdit={(patch) => updateStep(step.id, patch)}
+                  drag={{
+                    onDragStart: () => setDragId(step.id),
+                    onDragEnter: () => setOverIndex(i),
+                    onDragEnd: commitDrag,
+                    isDragging: dragId === step.id,
+                    isOver: overIndex === i && dragId !== null && dragId !== step.id,
+                  }}
+                />
+              ))}
+            </div>
+          </ScrollArea>
         )}
       </div>
       <EditStepAddDialog
