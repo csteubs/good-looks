@@ -44,6 +44,7 @@
 
 import { CAPTURE_MESSAGE_PREFIX } from "./capture-channel.js";
 import { CSS_ASSERT_PROPS } from "./types.js";
+import type { Locator } from "./types.js";
 
 /**
  * Where capture state lives, in the recorder's isolated world.
@@ -168,6 +169,62 @@ export const UNCAPPED_SCAN = 1_000_000;
  * Returns [] on anything unexpected — a caller that cannot count treats the
  * locator as ambiguous, which is the safe direction.
  */
+/**
+ * `ctxFilter(list, ctx)` — narrow a match set by the user's pinned context.
+ *
+ * THE ONE IMPLEMENTATION. Included into `UNIQUENESS_HELPERS` below rather than
+ * offered as a separate include, so that every existing caller of `matchesFor`
+ * — the capture script's `pickLocator`, the replayer, the heal probe — honours
+ * context without being changed, and none of them can be the one that forgets.
+ * A context the recorder respects and the replayer ignores is the same class of
+ * divergence `shared/step-semantics.mjs` exists to end, one level down.
+ *
+ * Each clause mirrors the Playwright expression the generator emits for it, and
+ * that correspondence is the whole contract:
+ *
+ *   within        page.getByTestId("x").getByRole("button")
+ *                 → a STRICT descendant. Playwright searches inside the
+ *                   container, so the container is not a match for itself; the
+ *                   `!==` is what says so, since `Node.contains` counts self.
+ *   withinHasText .filter({ hasText })
+ *                 → the CONTAINER's own text, by Playwright's default string
+ *                   rule (case-insensitive substring, whitespace normalized) —
+ *                   `pwHas`, the same function the count uses everywhere else.
+ *   and           .and(page.locator(…))
+ *                 → set intersection: the element matches both.
+ *
+ * Applied BEFORE `nth`, which is what the emitted chain does too — `.nth()` is
+ * last and indexes the narrowed set. Getting that backwards would silently
+ * change which element an indexed step means.
+ */
+export const CONTEXT_HELPERS = `
+  function ctxFilter(list, ctx) {
+    if (!ctx) return list;
+    var out = list;
+    if (ctx.within) {
+      var containers = matchesForBase(ctx.within);
+      if (ctx.withinHasText) {
+        containers = containers.filter(function (c) {
+          return pwHas(c.textContent, ctx.withinHasText);
+        });
+      }
+      out = out.filter(function (el) {
+        for (var i = 0; i < containers.length; i++) {
+          if (containers[i] !== el && containers[i].contains(el)) return true;
+        }
+        return false;
+      });
+    }
+    if (ctx.and) {
+      for (var j = 0; j < ctx.and.length; j++) {
+        var preds = matchesForBase(ctx.and[j]);
+        out = out.filter(function (el) { return preds.indexOf(el) >= 0; });
+      }
+    }
+    return out;
+  }
+`;
+
 export const UNIQUENESS_HELPERS = `
   function pwNorm(s) {
     return String(s == null ? "" : s).replace(/\\s+/g, " ").trim().toLowerCase();
@@ -197,7 +254,12 @@ export const UNIQUENESS_HELPERS = `
     }
   }
 
-  function matchesFor(loc) {
+  /** What a locator resolves to IGNORING its context. Split out because
+   *  context resolution is expressed in terms of it — a container and an
+   *  \`and\` predicate are themselves locators, and they never carry a context
+   *  of their own (see \`normalizeLocator\`), so this is where that recursion
+   *  stops. Callers want \`matchesFor\`, below. */
+  function matchesForBase(loc) {
     if (!loc) return [];
     try {
       if (loc.k === "testid") {
@@ -258,6 +320,14 @@ export const UNIQUENESS_HELPERS = `
     return [];
   }
 
+  ${CONTEXT_HELPERS}
+
+  /** The elements a recorded locator resolves to, context included. */
+  function matchesFor(loc) {
+    if (!loc) return [];
+    return ctxFilter(matchesForBase(loc), loc.ctx);
+  }
+
   /**
    * Choose the first candidate that identifies EXACTLY this element, or index
    * into the best one that at least contains it.
@@ -278,7 +348,13 @@ export const UNIQUENESS_HELPERS = `
         // Only worth remembering if the target is actually in there AND the
         // index is reachable — an .nth() past the cap would be a guess.
         if (ix >= 0 && ix < ${MAX_UNIQUENESS_SCAN}) {
+          // \`ctx\` is carried, not rebuilt away. This object is assembled
+          // field-by-field, which is precisely how \`nth\` came to be dropped by
+          // the normalizer once — an index computed against the CONTEXT-
+          // narrowed set, attached to a locator that had lost its context,
+          // indexes a different set and points at a different element.
           fallback = { k: loc.k, v: loc.v, role: loc.role, name: loc.name, nth: ix };
+          if (loc.ctx) fallback.ctx = loc.ctx;
         }
       }
     }
@@ -289,6 +365,358 @@ export const UNIQUENESS_HELPERS = `
     // positional and therefore unique by construction. Returning the last
     // candidate rather than null is what guarantees a step is always recorded.
     return candidates.length > 0 ? candidates[candidates.length - 1] : null;
+  }
+`;
+
+/**
+ * Everything needed to describe a PICKED element: its candidate locators, its
+ * attributes, and the context signals the picker offers.
+ *
+ * Shared because there are TWO pick paths and they must agree. Refine mode
+ * builds a PickedElement from a click in the page; the right-click test-tools
+ * menu builds one from `elementFromPoint`. Both feed the same
+ * `normalizePickedElement` and the same picker UI, and until now each carried
+ * its own verbatim copy of `describeEl`, `xpathFor`, `candidatesFor` and
+ * `attrsOf` — four functions duplicated in full, with nothing comparing them.
+ * Adding context signals to one copy and not the other would mean the picker
+ * offered disambiguation after a left-click pick and silently offered none
+ * after a right-click one.
+ *
+ * Requires DOM_HELPERS and UNIQUENESS_HELPERS to be in scope: the counts come
+ * from `matchesFor`, and the base locator from `pickLocator`.
+ */
+export const PICKED_HELPERS = `
+  /** Nearby text that labels this element — the nearest preceding heading or
+   *  label within a few ancestors. Survives the element's own text changing,
+   *  which is exactly the case a text locator can't heal on its own. */
+  function neighborTextOf(el) {
+    var node = el;
+    for (var up = 0; up < 3 && node; up++) {
+      var sib = node.previousElementSibling;
+      for (var n = 0; n < 4 && sib; n++) {
+        var t = (sib.tagName || "").toLowerCase();
+        if (t === "h1" || t === "h2" || t === "h3" || t === "h4" || t === "h5" ||
+            t === "h6" || t === "label" || t === "legend") {
+          var s = txt(sib);
+          if (s) return s.slice(0, 60);
+        }
+        sib = sib.previousElementSibling;
+      }
+      node = node.parentElement;
+    }
+    return "";
+  }
+
+  // ----- Refine Selector: hover bounding box + rich element capture -----
+
+  // Human-readable element tag, e.g. "button#submit.btn-primary".
+  function describeEl(el) {
+    var tag = el.tagName ? el.tagName.toLowerCase() : "?";
+    var s = tag;
+    if (el.id) {
+      s += "#" + el.id;
+    } else if (el.className && typeof el.className === "string") {
+      var cls = el.className.trim().split(/\\s+/).slice(0, 2).filter(Boolean);
+      if (cls.length) s += "." + cls.join(".");
+    }
+    return s;
+  }
+
+  // Absolute XPath for an element (id shortcut when unique, else positional).
+  function xpathFor(el) {
+    if (el.id && isUniqueId(el.id)) return "//*[@id=" + JSON.stringify(el.id) + "]";
+    var parts = [];
+    var node = el;
+    while (node && node.nodeType === 1) {
+      var tag = node.tagName.toLowerCase();
+      var ix = 1;
+      var sib = node.previousElementSibling;
+      while (sib) {
+        if (sib.tagName === node.tagName) ix++;
+        sib = sib.previousElementSibling;
+      }
+      parts.unshift(tag + "[" + ix + "]");
+      if (tag === "html") break;
+      node = node.parentElement;
+    }
+    return "/" + parts.join("/");
+  }
+
+  // Every locator strategy that applies to this element, best-first.
+  function candidatesFor(el) {
+    var out = [];
+    var tid =
+      (el.getAttribute && (el.getAttribute("data-testid") ||
+        el.getAttribute("data-test-id") ||
+        el.getAttribute("data-test"))) || "";
+    if (tid) out.push({ k: "testid", v: tid });
+    var role = roleOf(el);
+    var nm = accName(el);
+    if (role && nm) out.push({ k: "role", role: role, name: nm });
+    var lab = labelFor(el);
+    if (lab) out.push({ k: "label", v: lab });
+    var ph = el.getAttribute ? el.getAttribute("placeholder") : null;
+    if (ph) out.push({ k: "placeholder", v: ph });
+    var t = txt(el);
+    if (t && t.length <= 40) out.push({ k: "text", v: t });
+    if (role && !nm) out.push({ k: "role", role: role });
+    out.push({ k: "css", v: cssPath(el) });
+    out.push({ k: "xpath", v: xpathFor(el) });
+    return out;
+  }
+
+  // A curated slice of computed styles, for the review dialog's context and to
+  // prefill CSS assertions. See CSS_PROPS_HELPER.
+  ${CSS_PROPS_HELPER}
+
+  function attrsOf(el) {
+    var out = {};
+    var names = ["id", "class", "type", "name", "role", "href", "placeholder", "aria-label"];
+    for (var i = 0; i < names.length; i++) {
+      var v = el.getAttribute ? el.getAttribute(names[i]) : null;
+      if (v) out[names[i]] = v;
+    }
+    return out;
+  }
+
+  // ----- Element context: the disambiguation the USER gets to pin -----
+  //
+  // \`attrsOf\` above is eight hard-coded names and no ancestors, which is right
+  // for a fingerprint (it is stored on every step of every test) and far too
+  // thin to choose from. This is the picker's raw material: every property of
+  // this element that could tell it apart from the others like it, each one
+  // already priced.
+  //
+  // "Priced" is the point. A property list with no numbers asks the user to
+  // guess whether "inside .card" narrows nine matches to one or to four, and a
+  // guess is exactly what this feature exists to replace. Every signal carries
+  // the count of elements that survive it, computed with \`matchesFor\` — the
+  // same oracle \`pickLocator\` already trusts to decide what gets recorded.
+
+  /** Roles worth scoping BY. Landmarks and the repeating-container roles, which
+   *  between them cover "the Billing section" and "that row". A scope is only
+   *  useful if it is stable and it groups — \`div\` is neither. */
+  var GL_SCOPE_ROLES = [
+    "main", "navigation", "banner", "contentinfo", "complementary", "form",
+    "search", "region", "article", "row", "listitem", "table", "grid",
+    "dialog", "group", "tabpanel", "list", "figure"
+  ];
+
+  /** How far up to look for a container, and how many to offer. Beyond a few
+   *  levels a "container" is the page. */
+  var GL_MAX_SCOPE_DEPTH = 12;
+  var GL_MAX_SCOPES = 6;
+
+  /** A locator for an element being used as a CONTAINER, or null.
+   *
+   *  Deliberately narrower than \`candidatesFor\`: a container identified by its
+   *  own text or its class is not a container worth scoping by, because both
+   *  change for reasons that have nothing to do with structure. Testid, a
+   *  unique id, and a grouping role are the three that survive a redesign. */
+  function scopeLocatorFor(el) {
+    if (!el || el.nodeType !== 1 || !el.getAttribute) return null;
+    var tid = el.getAttribute("data-testid") || el.getAttribute("data-test-id") ||
+      el.getAttribute("data-test") || "";
+    if (tid) return { k: "testid", v: tid };
+    if (el.id && isUniqueId(el.id)) return { k: "css", v: "#" + cssEscape(el.id) };
+    var role = roleOf(el);
+    if (role && GL_SCOPE_ROLES.indexOf(role) >= 0) {
+      var nm = accName(el);
+      // An accessible name makes the scope legible ("the Billing form"); a bare
+      // role is still offered, because "the row" is often the whole answer.
+      if (nm && nm.length <= 60) return { k: "role", role: role, name: nm };
+      return { k: "role", role: role };
+    }
+    return null;
+  }
+
+  /** Containers this element sits inside, nearest first. */
+  function scopingAncestorsOf(el) {
+    var out = [];
+    var node = el.parentElement;
+    for (var up = 0; up < GL_MAX_SCOPE_DEPTH && node && out.length < GL_MAX_SCOPES; up++) {
+      var loc = scopeLocatorFor(node);
+      if (loc) out.push({ el: node, loc: loc });
+      node = node.parentElement;
+    }
+    return out;
+  }
+
+  /** Every attribute this element carries, as a css predicate the target must
+   *  also satisfy. Unlike \`attrsOf\`'s fixed eight, this sweeps what is
+   *  actually there — \`data-qa\`, \`data-cy\`, \`aria-*\` and whatever else the
+   *  site names its elements with, which on a real app is usually the one
+   *  property that means something. */
+  function attrSignalsOf(el) {
+    var out = [];
+    var attrs = el.attributes;
+    if (!attrs) return out;
+    for (var i = 0; i < attrs.length && out.length < 24; i++) {
+      var n = attrs[i].name;
+      var v = attrs[i].value;
+      if (!n || !v) continue;
+      // \`style\` is a serialized blob, and \`class\` is offered separately below
+      // as its own (brittle) row rather than as one opaque exact-match string:
+      // matching every class at once breaks on the first utility class added.
+      if (n === "style" || n === "class") continue;
+      if (v.length > 200) continue;
+      out.push({
+        kind: "attr",
+        name: n,
+        value: v,
+        loc: { k: "css", v: "[" + n + '="' + cssEscape(v) + '"]' }
+      });
+    }
+    return out;
+  }
+
+  /** Individual classes, each as its own predicate. Brittle and marked as such
+   *  — a class churns constantly in CSS-in-JS and utility-class codebases, the
+   *  same reason Auto-Heal's identity scoring skips it — but offered, because
+   *  the user may know their own app is stable here and a semantic class name
+   *  is sometimes the only thing that distinguishes two rows. */
+  function classSignalsOf(el) {
+    var out = [];
+    var cn = el.className;
+    if (!cn || typeof cn !== "string") return out;
+    var parts = cn.trim().split(/\\s+/);
+    for (var i = 0; i < parts.length && out.length < 12; i++) {
+      if (!parts[i]) continue;
+      out.push({
+        kind: "class",
+        name: "class",
+        value: parts[i],
+        loc: { k: "css", v: "." + cssEscape(parts[i]) }
+      });
+    }
+    return out;
+  }
+
+  /**
+   * What the picker offers for this element, each priced against the page.
+   *
+   * \`base\` is the locator the counts are relative to — the candidate the step
+   * would use with no context at all. \`baseCount\` is how many elements that
+   * matches, so the UI can say "9 → 1" rather than a bare number that means
+   * nothing without its denominator.
+   */
+  function contextSignalsFor(el, base) {
+    var signals = [];
+    function priced(sig, ctx) {
+      var probe = { k: base.k, v: base.v, role: base.role, name: base.name, ctx: ctx };
+      sig.ctx = ctx;
+      sig.count = matchesFor(probe).length;
+      // Whether this signal ALONE is the whole answer. The UI leads with these:
+      // one tick that ends the ambiguity is the best outcome available, and it
+      // is also the one that keeps the emitted locator shortest.
+      sig.resolves = sig.count === 1 && matchesFor(probe)[0] === el;
+      signals.push(sig);
+    }
+
+    var ancestors = scopingAncestorsOf(el);
+    for (var a = 0; a < ancestors.length; a++) {
+      var anc = ancestors[a];
+      priced(
+        { kind: "within", name: "within", value: describeEl(anc.el), locator: anc.loc },
+        { within: anc.loc }
+      );
+      // "…and the one that says Billing". Only offered when the container has
+      // its own short, distinguishing text — on a row that is exactly the
+      // question the user is answering, and on a <main> it is the whole page.
+      var t = txt(anc.el);
+      if (t && t.length <= 80) {
+        priced(
+          { kind: "withinHasText", name: "within + text", value: t, locator: anc.loc },
+          { within: anc.loc, withinHasText: t }
+        );
+      }
+    }
+
+    var attrs = attrSignalsOf(el).concat(classSignalsOf(el));
+    for (var i = 0; i < attrs.length; i++) {
+      priced(
+        { kind: attrs[i].kind, name: attrs[i].name, value: attrs[i].value, locator: attrs[i].loc },
+        { and: [attrs[i].loc] }
+      );
+    }
+
+    return {
+      base: base,
+      baseCount: matchesFor({ k: base.k, v: base.v, role: base.role, name: base.name }).length,
+      signals: signals
+    };
+  }
+
+  /** Locator kinds that NAME an element rather than locating it by position.
+   *
+   *  The distinction the picker is built on. \`css\` and \`xpath\` are always
+   *  present as candidates and are unique by construction — \`cssPath\` walks up
+   *  emitting \`:nth-of-type\` — so \`pickLocator\` almost always finds one of
+   *  them unique and never has to write \`nth\`. Judging ambiguity by "did the
+   *  recorder fall back to an index" is therefore judging it by something that
+   *  essentially never happens. */
+  var GL_SEMANTIC_KINDS = ["testid", "role", "label", "placeholder", "text"];
+
+  /** The best candidate that NAMES this element, or null.
+   *
+   *  This, not \`pickLocator\`'s answer, is what the counts are relative to —
+   *  and the difference is the whole feature. Two identical "Edit" buttons in
+   *  two cards have no unique semantic locator, so today the recorder silently
+   *  settles for \`body > section:nth-of-type(1) > button\`: unique, runnable,
+   *  and broken by the first layout change. Pricing against THAT would report
+   *  every signal as narrowing 1 → 1, the picker would never open, and the user
+   *  would never be offered the thing they actually know — that it is the Edit
+   *  button in the Billing card.
+   *
+   *  So the base is the semantic locator the user would want, ambiguity is
+   *  measured against it, and context is what earns it back. */
+  function semanticBaseFor(cands, el) {
+    var best = null;
+    for (var i = 0; i < cands.length; i++) {
+      if (GL_SEMANTIC_KINDS.indexOf(cands[i].k) < 0) continue;
+      var found = matchesFor(cands[i]);
+      // A candidate that already identifies the element is the end of the
+      // search: nothing later in the preference order can beat it.
+      if (found.length === 1 && found[0] === el) return { loc: cands[i], count: 1 };
+      // Otherwise remember the first that at least CONTAINS the element. One
+      // that matches other elements and not this one is not a base for
+      // anything — narrowing it can only ever reach zero.
+      if (best === null && found.indexOf(el) >= 0) best = { loc: cands[i], count: found.length };
+    }
+    return best;
+  }
+
+  function buildPicked(el) {
+    var cands = candidatesFor(el);
+    var semantic = semanticBaseFor(cands, el);
+    // With no semantic candidate at all — a bare <div> with no role, text or
+    // attributes — there is nothing to disambiguate and nothing to offer a
+    // base for. Fall back to what the step would really use, which prices
+    // every signal against a unique locator and correctly reports "no context
+    // needed" rather than inventing an ambiguity.
+    var chosen =
+      (semantic && semantic.loc) ||
+      pickLocator(cands, el) ||
+      cands[cands.length - 1] ||
+      { k: "css", v: cssPath(el) };
+    var ctx = contextSignalsFor(el, chosen);
+    return {
+      tag: el.tagName ? el.tagName.toLowerCase() : "",
+      description: describeEl(el),
+      candidates: cands,
+      css: cssPropsOf(el),
+      attributes: attrsOf(el),
+      // No locator that NAMES this element identifies it on its own. The picker
+      // opens expanded on true: this is precisely "one of many similar
+      // selectors", and it is the app admitting that what it would otherwise
+      // record is a generated path rather than a description.
+      ambiguous: ctx.baseCount !== 1,
+      contextBase: ctx.base,
+      contextBaseCount: ctx.baseCount,
+      contextSignals: ctx.signals,
+      text: txt(el).slice(0, 200),
+      neighborText: neighborTextOf(el)
+    };
   }
 `;
 
@@ -641,90 +1069,11 @@ export function buildCaptureScript(nonce: string): string {
     if (chosen.role != null) loc.role = chosen.role;
     if (chosen.name != null) loc.name = chosen.name;
     if (typeof chosen.nth === "number") loc.nth = chosen.nth;
+    if (chosen.ctx) loc.ctx = chosen.ctx;
     return loc;
   }
 
-  // ----- Refine Selector: hover bounding box + rich element capture -----
-
-  // Human-readable element tag, e.g. "button#submit.btn-primary".
-  function describeEl(el) {
-    var tag = el.tagName ? el.tagName.toLowerCase() : "?";
-    var s = tag;
-    if (el.id) {
-      s += "#" + el.id;
-    } else if (el.className && typeof el.className === "string") {
-      var cls = el.className.trim().split(/\\s+/).slice(0, 2).filter(Boolean);
-      if (cls.length) s += "." + cls.join(".");
-    }
-    return s;
-  }
-
-  // Absolute XPath for an element (id shortcut when unique, else positional).
-  function xpathFor(el) {
-    if (el.id && isUniqueId(el.id)) return "//*[@id=" + JSON.stringify(el.id) + "]";
-    var parts = [];
-    var node = el;
-    while (node && node.nodeType === 1) {
-      var tag = node.tagName.toLowerCase();
-      var ix = 1;
-      var sib = node.previousElementSibling;
-      while (sib) {
-        if (sib.tagName === node.tagName) ix++;
-        sib = sib.previousElementSibling;
-      }
-      parts.unshift(tag + "[" + ix + "]");
-      if (tag === "html") break;
-      node = node.parentElement;
-    }
-    return "/" + parts.join("/");
-  }
-
-  // Every locator strategy that applies to this element, best-first.
-  function candidatesFor(el) {
-    var out = [];
-    var tid =
-      (el.getAttribute && (el.getAttribute("data-testid") ||
-        el.getAttribute("data-test-id") ||
-        el.getAttribute("data-test"))) || "";
-    if (tid) out.push({ k: "testid", v: tid });
-    var role = roleOf(el);
-    var nm = accName(el);
-    if (role && nm) out.push({ k: "role", role: role, name: nm });
-    var lab = labelFor(el);
-    if (lab) out.push({ k: "label", v: lab });
-    var ph = el.getAttribute ? el.getAttribute("placeholder") : null;
-    if (ph) out.push({ k: "placeholder", v: ph });
-    var t = txt(el);
-    if (t && t.length <= 40) out.push({ k: "text", v: t });
-    if (role && !nm) out.push({ k: "role", role: role });
-    out.push({ k: "css", v: cssPath(el) });
-    out.push({ k: "xpath", v: xpathFor(el) });
-    return out;
-  }
-
-  // A curated slice of computed styles, for the review dialog's context and to
-  // prefill CSS assertions. See CSS_PROPS_HELPER.
-  ${CSS_PROPS_HELPER}
-
-  function attrsOf(el) {
-    var out = {};
-    var names = ["id", "class", "type", "name", "role", "href", "placeholder", "aria-label"];
-    for (var i = 0; i < names.length; i++) {
-      var v = el.getAttribute ? el.getAttribute(names[i]) : null;
-      if (v) out[names[i]] = v;
-    }
-    return out;
-  }
-
-  function buildPicked(el) {
-    return {
-      tag: el.tagName ? el.tagName.toLowerCase() : "",
-      description: describeEl(el),
-      candidates: candidatesFor(el),
-      css: cssPropsOf(el),
-      attributes: attrsOf(el),
-    };
-  }
+  ${PICKED_HELPERS}
 
   // ----- Element fingerprint: what the target looked like at record time -----
   //
@@ -739,26 +1088,6 @@ export function buildCaptureScript(nonce: string): string {
   // context, useless for identifying an element, and by far the biggest part of
   // the payload — this is stored on every step of every test.
 
-  /** Nearby text that labels this element — the nearest preceding heading or
-   *  label within a few ancestors. Survives the element's own text changing,
-   *  which is exactly the case a text locator can't heal on its own. */
-  function neighborTextOf(el) {
-    var node = el;
-    for (var up = 0; up < 3 && node; up++) {
-      var sib = node.previousElementSibling;
-      for (var n = 0; n < 4 && sib; n++) {
-        var t = (sib.tagName || "").toLowerCase();
-        if (t === "h1" || t === "h2" || t === "h3" || t === "h4" || t === "h5" ||
-            t === "h6" || t === "label" || t === "legend") {
-          var s = txt(sib);
-          if (s) return s.slice(0, 60);
-        }
-        sib = sib.previousElementSibling;
-      }
-      node = node.parentElement;
-    }
-    return "";
-  }
 
   /** How deep the element sits in the document. A weak signal on its own, but
    *  it separates two otherwise identical candidates — a page usually doesn't
@@ -1143,79 +1472,67 @@ export const DRAIN_PICKED_SCRIPT = `
 `;
 
 // Resolve the element under a given (x, y) in CSS client coordinates and return
-// its PickedElement (candidates + css + attributes) plus the element's current
-// text and value, so the right-click test-tools menu can pre-target assertions
-// and waits at that element and prefill text/value asserts. Runs in its own
-// ephemeral content world, so it inlines the DOM helpers it needs (kept in sync
-// with the capture script's versions). Returns "" when nothing is hit.
+// its PickedElement — candidates, css, attributes AND the context signals the
+// picker offers — plus the element's current text and value, so the right-click
+// test-tools menu can pre-target assertions and waits at that element and
+// prefill text/value asserts. Returns "" when nothing is hit.
+//
+// Runs in its own ephemeral content world, so it carries its own copy of the
+// helpers. That copy used to be a hand-maintained TRANSCRIPTION of four
+// functions from the capture script; it is now the same strings, which is what
+// makes "a right-click pick offers the same disambiguation as a left-click one"
+// true by construction rather than by review.
+//
+// UNIQUENESS_HELPERS is included here for the first time: the context signals
+// are priced with `matchesFor`, and the base locator the counts are relative to
+// comes from `pickLocator`. GL_SCAN_LIMIT keeps its capture default rather than
+// UNCAPPED_SCAN — this is not the click path, but it is a menu the user is
+// waiting on, so the same "assume ambiguous rather than stall" trade applies.
 export const PICK_AT_POINT_SCRIPT = `
 (function (x, y) {
   ${DOM_HELPERS}
-  function describeEl(el) {
-    var tag = el.tagName ? el.tagName.toLowerCase() : "?";
-    var s = tag;
-    if (el.id) { s += "#" + el.id; }
-    else if (el.className && typeof el.className === "string") {
-      var cls = el.className.trim().split(/\\s+/).slice(0, 2).filter(Boolean);
-      if (cls.length) s += "." + cls.join(".");
-    }
-    return s;
-  }
-  function xpathFor(el) {
-    if (el.id && isUniqueId(el.id)) return "//*[@id=" + JSON.stringify(el.id) + "]";
-    var parts = [];
-    var node = el;
-    while (node && node.nodeType === 1) {
-      var tag = node.tagName.toLowerCase();
-      var ix = 1;
-      var sib = node.previousElementSibling;
-      while (sib) { if (sib.tagName === node.tagName) ix++; sib = sib.previousElementSibling; }
-      parts.unshift(tag + "[" + ix + "]");
-      if (tag === "html") break;
-      node = node.parentElement;
-    }
-    return "/" + parts.join("/");
-  }
-  function candidatesFor(el) {
-    var out = [];
-    var tid = (el.getAttribute && (el.getAttribute("data-testid") ||
-      el.getAttribute("data-test-id") || el.getAttribute("data-test"))) || "";
-    if (tid) out.push({ k: "testid", v: tid });
-    var role = roleOf(el);
-    var nm = accName(el);
-    if (role && nm) out.push({ k: "role", role: role, name: nm });
-    var lab = labelFor(el);
-    if (lab) out.push({ k: "label", v: lab });
-    var ph = el.getAttribute ? el.getAttribute("placeholder") : null;
-    if (ph) out.push({ k: "placeholder", v: ph });
-    var t = txt(el);
-    if (t && t.length <= 40) out.push({ k: "text", v: t });
-    if (role && !nm) out.push({ k: "role", role: role });
-    out.push({ k: "css", v: cssPath(el) });
-    out.push({ k: "xpath", v: xpathFor(el) });
-    return out;
-  }
-  ${CSS_PROPS_HELPER}
-  function attrsOf(el) {
-    var out = {};
-    var names = ["id", "class", "type", "name", "role", "href", "placeholder", "aria-label"];
-    for (var i = 0; i < names.length; i++) {
-      var v = el.getAttribute ? el.getAttribute(names[i]) : null;
-      if (v) out[names[i]] = v;
-    }
-    return out;
-  }
+  ${UNIQUENESS_HELPERS}
+  ${PICKED_HELPERS}
   var el = document.elementFromPoint(x, y);
   if (!el || el.nodeType !== 1) return "";
   // Skip our own overlay elements.
   if (el.getAttribute && el.getAttribute("data-pw-refine-box")) return "";
-  var picked = {
-    tag: el.tagName ? el.tagName.toLowerCase() : "",
-    description: describeEl(el),
-    candidates: candidatesFor(el),
-    css: cssPropsOf(el),
-    attributes: attrsOf(el),
-  };
-  return JSON.stringify({ picked: picked, text: txt(el).slice(0, 200), value: (el.value != null ? String(el.value).slice(0, 200) : "") });
+  return JSON.stringify({
+    picked: buildPicked(el),
+    text: txt(el).slice(0, 200),
+    value: (el.value != null ? String(el.value).slice(0, 200) : "")
+  });
 })
 `;
+
+/**
+ * Count the elements a locator resolves to, right now, context included.
+ *
+ * The picker's numbers are what make it usable — "9 → 1" rather than a list of
+ * properties the user has to guess between — and a combined selection cannot be
+ * priced from the individual counts. Two signals that each leave 3 matches might
+ * leave 3 between them or 0; only the page knows.
+ *
+ * So the page is asked. The counts baked into `PickedElement` are a snapshot
+ * from the moment of the pick, which is right for ordering the rows; this is the
+ * live answer for the selection the user has actually made, and it stays
+ * correct if the page moved underneath them.
+ *
+ * Returns -1 when the count could not be taken, NEVER 0. Those are different
+ * claims: 0 means "nothing on this page matches", which would send the user
+ * looking for a mistake that is not there.
+ */
+export function buildCountScript(loc: Locator): string {
+  return `(function () {
+  ${DOM_HELPERS}
+  ${UNIQUENESS_HELPERS}
+  // Not the click path — a user is waiting on this readout, and a wrong count
+  // is worse than a slow one. See UNCAPPED_SCAN.
+  GL_SCAN_LIMIT = ${UNCAPPED_SCAN};
+  try {
+    return matchesFor(${JSON.stringify(loc)}).length;
+  } catch (e) {
+    return -1;
+  }
+})()`;
+}

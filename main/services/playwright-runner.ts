@@ -10,6 +10,8 @@ import { fileURLToPath } from "url";
 
 import { app, logger } from "@shell/backend";
 
+import { healKeyAnd, healKeyHasText, healKeyWithin } from "../../shared/heal-key.mjs";
+
 import { sendToMain } from "./app-window.js";
 import { getScriptsDir, testStore } from "./test-store.js";
 import { runHistoryStore } from "./run-history-store.js";
@@ -271,10 +273,10 @@ function ensureSettleFixture(scriptsDir: string): void {
   writeIfChanged(path.join(scriptsDir, SETTLE_FIXTURE_FILE), settleFixtureSource);
 }
 
-/** The canonical key the heal fixture tags a locator with. MUST match the
- *  `FACTORIES` table in heal-fixture-source.ts — if the two spellings drift,
- *  every lookup misses and healing silently stops happening with no error. */
-export function healKeyFor(loc: Locator): string {
+/** One factory call's key. MUST match the `FACTORIES` table in
+ *  heal-fixture-source.ts — if the two spellings drift, every lookup misses and
+ *  healing silently stops happening with no error. */
+function healKeyBase(loc: Locator): string {
   switch (loc.k) {
     case "testid":
       return `testid|${loc.v ?? ""}`;
@@ -292,6 +294,36 @@ export function healKeyFor(loc: Locator): string {
     default:
       return `css|${loc.v ?? ""}`;
   }
+}
+
+/**
+ * The canonical key the heal fixture tags a locator with.
+ *
+ * A context-carrying locator is a CHAIN, so its key is composed — in the same
+ * order the generator emits the chain and therefore the order the fixture
+ * observes it: the container, then its `hasText` filter, then the target, then
+ * each `and` predicate. The three operators come from `shared/heal-key.mjs`
+ * rather than being spelled here, because the fixture builds the identical key
+ * from factory ARGUMENTS at run time and the two must agree exactly. See that
+ * file for why a transcribed copy is not good enough.
+ *
+ * `nth` is deliberately absent, here and in the fixture: `.nth()` is a REFINER
+ * that propagates the tag it was given (see `REFINERS`), so an indexed step
+ * shares its key with the unindexed one it narrows — which is what makes a
+ * `.nth()` step healable at all.
+ */
+export function healKeyFor(loc: Locator): string {
+  let key = healKeyBase(loc);
+  const ctx = loc.ctx;
+  if (ctx?.within) {
+    let container = healKeyBase(ctx.within);
+    if (ctx.withinHasText !== undefined) container = healKeyHasText(container, ctx.withinHasText);
+    key = healKeyWithin(container, key);
+  }
+  if (ctx?.and) {
+    for (const pred of ctx.and) key = healKeyAnd(key, healKeyBase(pred));
+  }
+  return key;
 }
 
 /**

@@ -119,18 +119,59 @@ function locatorBase(loc: Locator): string {
  * Playwright refuses a locator matching two elements rather than taking the
  * first, so an ambiguous locator does not degrade, it fails.
  *
- * `num`, not interpolation, and that is the same rule the rest of this file
- * follows for every numeric field — this lands in the source as a bare numeral,
- * which is precisely the hole a `count` of `"0); …; ("` went through once. The
- * value is already bounded by `normalizeLocator`; this is the second of the two
- * independent guards `check:step-ingest` pins, and it is the one that covers
- * steps recorded before the boundary existed.
+ * The `nth` value is already bounded by `normalizeLocator`; `num` here is the
+ * second of the two independent guards `check:step-ingest` pins, and it is the
+ * one that covers steps recorded before the boundary existed.
+ *
+ * Also where a locator's user-pinned CONTEXT becomes source — see the chain
+ * built below, and `check:locator-roundtrip`, which holds the property that
+ * makes emitting one safe: everything written here can be read back.
  */
 function locatorExpr(loc: Locator): string {
-  const base = locatorBase(loc);
+  let base = locatorBase(loc);
+
+  // ── The user's pinned context ────────────────────────────────────────────
+  //
+  // Emitted as a chain, in the order Playwright evaluates it, which is also the
+  // order `ctxFilter` narrows in. Each clause is the exact counterpart of one
+  // there — that correspondence is what `e2e/context-parity.spec.ts` exists to
+  // hold, because the trainer resolves context with `ctxFilter` and the RUN
+  // resolves it with this source, and the two disagreeing is a step that is
+  // green live and wrong in CI.
+  //
+  //   within        page.getByTestId("billing").getByRole("button", …)
+  //   withinHasText …filter({ hasText: "Billing" })… on the CONTAINER
+  //   and           …and(page.locator("[data-qa='x']")) on the TARGET
+  //
+  // `locatorBase` returns an unprefixed builder call and every call site
+  // supplies `page.`, so a container chains by simple concatenation — but an
+  // `and` predicate is a locator ARGUMENT rather than a continuation, so it
+  // needs the `page.` prefix of its own.
+  const ctx = loc.ctx;
+  if (ctx?.within) {
+    let scope = locatorBase(ctx.within);
+    if (ctx.withinHasText !== undefined) {
+      scope += ".filter({ hasText: " + q(ctx.withinHasText) + " })";
+    }
+    base = scope + "." + base;
+  }
+  if (ctx?.and) {
+    for (const pred of ctx.and) base += ".and(page." + locatorBase(pred) + ")";
+  }
+
+  // `.nth(k)` LAST, and that is a correctness requirement rather than a style
+  // one: it indexes whatever set precedes it. Emitted before the context
+  // clauses it would index the unnarrowed set, so an indexed step with a
+  // container would silently mean a different element than the trainer showed.
+  //
   // 0 is a real index and must survive: `.nth(0)` on a two-match locator is the
   // whole fix for that step, so a falsy test here would put the strict-mode
   // violation straight back for exactly the first element.
+  //
+  // `num`, not interpolation, and that is the same rule the rest of this file
+  // follows for every numeric field — this lands in the source as a bare
+  // numeral, which is precisely the hole a `count` of `"0); …; ("` went through
+  // once.
   return typeof loc.nth === "number" ? base + ".nth(" + num(loc.nth, 0) + ")" : base;
 }
 

@@ -60,6 +60,7 @@ import type {
 import { api } from "../lib/api";
 import { buildStateSteps, type StatePick } from "../lib/element-states";
 import { clampViewportAxis, RESIZE_PRESETS } from "../lib/viewport-presets";
+import { ElementContextPicker } from "./element-context-picker";
 import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 
 export type AddStepKind =
@@ -442,6 +443,22 @@ function TargetElementPicker({
             );
           })}
         </div>
+        {/* The context picker sits UNDER the candidate list, because it answers
+            the next question rather than the same one: the list is "how should
+            this element be addressed", this is "which of the several it matches
+            did you mean". It re-applies the current candidate with the new
+            context so the caller only ever sees one locator. */}
+        <ElementContextPicker
+          picked={picked}
+          onChange={(ctx) => {
+            const base = candidates[selected];
+            if (!base) return;
+            const next: Locator = { ...base };
+            if (ctx) next.ctx = ctx;
+            else delete next.ctx;
+            onChange(next);
+          }}
+        />
         <Button variant="ghost" size="small" onClick={onStartPick} className="w-fit">
           <Crosshair className="size-3.5" />
           Pick a different element

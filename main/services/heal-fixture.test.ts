@@ -65,12 +65,33 @@ interface FakePage {
   /** what a failing locator resolves to, for `evaluateAll` */
   matchElements: FakeElement[];
   evaluate(source: string): Promise<unknown>;
-  getByTestId(v: string): { click(): Promise<string>; fill(v: string): Promise<string> };
-  getByLabel(v: string): { click(): Promise<string>; fill(v: string): Promise<string> };
-  getByPlaceholder(v: string): { click(): Promise<string> };
-  getByText(v: string): { click(): Promise<string> };
-  getByRole(role: string, opts?: { name?: string }): { click(): Promise<string> };
-  locator(v: string): { click(): Promise<string> };
+  getByTestId(v: string): FakeLoc;
+  getByLabel(v: string): FakeLoc;
+  getByPlaceholder(v: string): FakeLoc;
+  getByText(v: string): FakeLoc;
+  getByRole(role: string, opts?: { name?: string }): FakeLoc;
+  locator(v: string): FakeLoc;
+}
+
+/** What the fake page's factories return.
+ *
+ *  Carries the locator-level BUILDERS and refiners as well as the actions,
+ *  because an element-context step reaches its action through a chain
+ *  (`page.getByTestId(…).filter(…).getByRole(…).and(…)`) and the fixture has to
+ *  patch every link in it. A stub typed to actions alone could not express the
+ *  case at all. */
+interface FakeLoc {
+  click(): Promise<string>;
+  fill(v: string): Promise<string>;
+  getByTestId(v: string): FakeLoc;
+  getByLabel(v: string): FakeLoc;
+  getByPlaceholder(v: string): FakeLoc;
+  getByText(v: string): FakeLoc;
+  getByRole(role: string, opts?: { name?: string }): FakeLoc;
+  locator(v: string): FakeLoc;
+  filter(opts: { hasText?: string }): FakeLoc;
+  and(other: FakeLoc): FakeLoc;
+  nth(i: number): FakeLoc;
 }
 
 function makePage(): FakePage {
@@ -104,6 +125,38 @@ function makePage(): FakePage {
     }
     async evaluateAll<T>(fn: (els: FakeElement[]) => T): Promise<T> {
       return fn(page.matchElements);
+    }
+    // Locator-level BUILDERS and the two refiners the app models. Real
+    // Playwright has these on `Locator`, and the fixture has to patch them
+    // there as well as on `Page` — an element-context step reaches its action
+    // through `page.getByTestId(…).getByRole(…)`, so a stub with only the
+    // page-level factories cannot tell whether that chain gets tagged.
+    getByTestId(v: string): FakeLocator {
+      return new FakeLocator(`${this.desc}>testid=${v}`);
+    }
+    getByLabel(v: string): FakeLocator {
+      return new FakeLocator(`${this.desc}>label=${v}`);
+    }
+    getByPlaceholder(v: string): FakeLocator {
+      return new FakeLocator(`${this.desc}>placeholder=${v}`);
+    }
+    getByText(v: string): FakeLocator {
+      return new FakeLocator(`${this.desc}>text=${v}`);
+    }
+    getByRole(role: string, opts?: { name?: string }): FakeLocator {
+      return new FakeLocator(`${this.desc}>role=${role}/${opts?.name ?? ""}`);
+    }
+    locator(v: string): FakeLocator {
+      return new FakeLocator(`${this.desc}>css=${v}`);
+    }
+    filter(opts: { hasText?: string }): FakeLocator {
+      return new FakeLocator(`${this.desc}[hasText=${opts?.hasText ?? ""}]`);
+    }
+    and(other: FakeLocator): FakeLocator {
+      return new FakeLocator(`${this.desc}&${other.desc}`);
+    }
+    nth(i: number): FakeLocator {
+      return new FakeLocator(`${this.desc}#${i}`);
     }
   }
 
@@ -208,6 +261,131 @@ describe("heal key agreement", () => {
       expect(factories[factory], `${factory} is not patched by the fixture`).toBeTypeOf("function");
       expect(factories[factory](args), `key mismatch for ${loc.k}`).toBe(healKeyFor(loc));
     }
+  });
+
+  // ── Element context: the key is now COMPOSED, and both sides compose it ───
+  //
+  // Before context a key came from one factory call, so the two halves were a
+  // flat switch and drift meant a misspelling. A context-carrying locator is a
+  // CHAIN — container, optional text filter, target, then any `and` predicates
+  // — so the key has an ORDER and a set of separators, which is a grammar. The
+  // operators live in shared/heal-key.mjs and the fixture gets them as source;
+  // these drive the REAL patched methods rather than re-deriving anything, so
+  // they fail if either side stops agreeing.
+  it("the fixture tags a chained locator with the composed key", async () => {
+    const mod = await loadFixture({});
+    const page = makePage();
+    mod.installHealing(page);
+
+    const loc = page
+      .getByTestId("billing-card")
+      .filter({ hasText: "Billing" })
+      .getByRole("button", { name: "Edit" })
+      .and(page.locator("[data-qa='edit']"));
+
+    expect((loc as unknown as { __glazeKey?: string }).__glazeKey).toBe(
+      healKeyFor({
+        k: "role",
+        role: "button",
+        name: "Edit",
+        ctx: {
+          within: { k: "testid", v: "billing-card" },
+          withinHasText: "Billing",
+          and: [{ k: "css", v: "[data-qa='edit']" }],
+        },
+      }),
+    );
+  });
+
+  it("a container alone composes the same key both ways", async () => {
+    const mod = await loadFixture({});
+    const page = makePage();
+    mod.installHealing(page);
+
+    const loc = page.getByTestId("card").getByRole("button", { name: "Edit" });
+    expect((loc as unknown as { __glazeKey?: string }).__glazeKey).toBe(
+      healKeyFor({
+        k: "role",
+        role: "button",
+        name: "Edit",
+        ctx: { within: { k: "testid", v: "card" } },
+      }),
+    );
+  });
+
+  it("an index still shares the key of the locator it narrows", async () => {
+    // `.nth()` is a REFINER, not part of the identity: the key it propagates is
+    // what makes an indexed step healable at all. Pinned here because the same
+    // patch loop now CHANGES the key for two other refiners.
+    const mod = await loadFixture({});
+    const page = makePage();
+    mod.installHealing(page);
+
+    const plain = page.getByTestId("card").getByRole("button", { name: "Edit" });
+    const indexed = plain.nth(2);
+    expect((indexed as unknown as { __glazeKey?: string }).__glazeKey).toBe(
+      (plain as unknown as { __glazeKey?: string }).__glazeKey,
+    );
+  });
+
+  it("heals a step whose locator carries element context", async () => {
+    // The regression this whole patch exists for. Only `page.*` factories were
+    // wrapped, so a chained `.getByRole()` — a different function, on the
+    // Locator prototype — returned an UNTAGGED locator and the action bailed on
+    // its first line. Healing was silently off for every context step, which is
+    // to say for exactly the steps a user had gone out of their way to
+    // disambiguate.
+    const key = healKeyFor({
+      k: "role",
+      role: "button",
+      name: "Edit",
+      ctx: { within: { k: "testid", v: "billing-card" } },
+    });
+    const mod = await loadFixture({ [key]: entry() });
+    const page = makePage();
+    page.failures.set(
+      "testid=billing-card>role=button/Edit",
+      "Timeout 30000ms exceeded waiting for locator",
+    );
+    page.probeResult = [{ locator: { k: "testid", v: "edit-v2" } }];
+    mod.installHealing(page);
+
+    const result = await page.getByTestId("billing-card").getByRole("button", { name: "Edit" }).click();
+    expect(result).toBe("testid=edit-v2:click");
+  });
+
+  it("re-runs an applied heal through the context it was judged against", async () => {
+    // Auto-Heal's candidates inherit the failing step's context, so the
+    // substitute has to be REBUILT with it. Resolving the bare locator against
+    // the whole page instead would raise the very strict-mode violation the
+    // uniqueness gate exists to prevent — and it would do so having already
+    // reported the step healed.
+    const key = healKeyFor({
+      k: "role",
+      role: "button",
+      name: "Edit",
+      ctx: { within: { k: "testid", v: "billing-card" } },
+    });
+    const mod = await loadFixture({ [key]: entry() });
+    const page = makePage();
+    page.failures.set(
+      "testid=billing-card>role=button/Edit",
+      "Timeout 30000ms exceeded waiting for locator",
+    );
+    page.probeResult = [
+      {
+        locator: {
+          k: "text",
+          v: "Edit",
+          ctx: { within: { k: "testid", v: "billing-card" } },
+        },
+      },
+    ];
+    mod.installHealing(page);
+
+    const result = await page.getByTestId("billing-card").getByRole("button", { name: "Edit" }).click();
+    // The chain, not the bare `text=Edit` — `fromModel` rebuilt the container.
+    expect(result).toBe("testid=billing-card>text=Edit:click");
   });
 });
 

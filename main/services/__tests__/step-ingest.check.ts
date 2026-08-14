@@ -23,6 +23,7 @@
 
 import {
   buildStepStructures,
+  MAX_CONTEXT_PREDICATES,
   MAX_STRUCTURE_CANDIDATES,
   MAX_STRUCTURE_MATCHES,
   MAX_STRUCTURE_STEPS,
@@ -203,6 +204,97 @@ function main(): void {
       undefined,
       "an unknown css match mode is dropped",
     );
+  }
+
+  // ── 4b. Locator context is rebuilt, bounded, and cannot nest ─────────────
+  //
+  // `Locator.ctx` is the first SELF-REFERENTIAL field on the boundary: it holds
+  // locators, which hold a ctx, which holds locators. A page can nest that as
+  // deep as it likes, and every level lands in generated source. One level is
+  // all the picker produces and all the generator emits, so the recursion is
+  // cut explicitly rather than bounded by a depth counter — there is no depth
+  // at which a container-of-a-container becomes meaningful.
+  {
+    const ctx = normalizeRawStep({
+      type: "click",
+      locator: {
+        k: "role",
+        role: "button",
+        name: "Edit",
+        ctx: {
+          within: { k: "testid", v: "billing-card" },
+          withinHasText: "Billing",
+          and: [{ k: "css", v: "[data-qa='edit']" }],
+          somethingNew: NODE_CODE,
+        },
+      },
+    })?.locator?.ctx as Record<string, unknown> | undefined;
+    assert(ctx !== undefined, "a well-formed locator context survives");
+    assertEqual(
+      Object.keys(ctx ?? {}).sort(),
+      ["and", "within", "withinHasText"],
+      "only known keys are rebuilt onto the context",
+    );
+
+    assertEqual(
+      normalizeRawStep({
+        type: "click",
+        locator: {
+          k: "css",
+          v: "#a",
+          ctx: { within: { k: "testid", v: "outer", ctx: { within: { k: "testid", v: "inner" } } } },
+        },
+      })?.locator?.ctx?.within?.ctx,
+      undefined,
+      "a context locator cannot itself carry a context",
+    );
+
+    assertEqual(
+      normalizeRawStep({
+        type: "click",
+        locator: { k: "css", v: "#a", ctx: { within: { k: "evil", v: "x" } } },
+      })?.locator?.ctx,
+      undefined,
+      "a context whose container has an unknown kind is dropped whole",
+    );
+
+    // Absent and empty must be the SAME value. An empty context constrains
+    // nothing but is not inert: it changes the heal-map key and it survives a
+    // generate→parse round trip as a difference that emits identical source,
+    // so a step would compare unequal to its own regenerated self.
+    assertEqual(
+      normalizeRawStep({ type: "click", locator: { k: "css", v: "#a", ctx: {} } })?.locator?.ctx,
+      undefined,
+      "an empty context is dropped rather than kept as {}",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "click", locator: { k: "css", v: "#a", ctx: { and: [] } } })?.locator
+        ?.ctx,
+      undefined,
+      "…as is one whose only key is an empty predicate list",
+    );
+
+    // `withinHasText` filters the CONTAINER. With no container there is nothing
+    // to filter, and reinterpreting it as a filter on the target would silently
+    // change what the context constrains.
+    assertEqual(
+      normalizeRawStep({
+        type: "click",
+        locator: { k: "css", v: "#a", ctx: { withinHasText: "Billing" } },
+      })?.locator?.ctx,
+      undefined,
+      "withinHasText without a container is dropped, not reinterpreted",
+    );
+
+    const capped = normalizeRawStep({
+      type: "click",
+      locator: {
+        k: "css",
+        v: "#a",
+        ctx: { and: Array.from({ length: MAX_CONTEXT_PREDICATES + 20 }, () => ({ k: "css", v: "#p" })) },
+      },
+    })?.locator?.ctx?.and;
+    assertEqual(capped?.length, MAX_CONTEXT_PREDICATES, "the predicate list is capped");
   }
 
   // ── 4c. cssProp is checked for SHAPE, not just length ────────────────────

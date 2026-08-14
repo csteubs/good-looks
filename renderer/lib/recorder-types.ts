@@ -71,6 +71,19 @@ export const DEFAULT_WAIT_TIMEOUT_MS = 10_000;
 
 export type LocatorKind = "testid" | "role" | "label" | "placeholder" | "text" | "css" | "xpath";
 
+/** User-pinned disambiguation for a locator (mirror of main types).
+ *
+ *  See `LocatorContext` in main/recorder/types.ts for what each field means and
+ *  why there are only three. Nothing in this mirror may grow a field the
+ *  backend does not have: the renderer sends locators back through
+ *  `updateStep`/`insertStep`, and a field the normalizer does not rebuild is a
+ *  field that silently disappears on the way. */
+export interface LocatorContext {
+  within?: Locator;
+  withinHasText?: string;
+  and?: Locator[];
+}
+
 export interface Locator {
   k: LocatorKind;
   v?: string;
@@ -84,6 +97,8 @@ export interface Locator {
    *  spec line is `getByText("Save").nth(3)` — a locator that cannot produce
    *  the failure being diagnosed. */
   nth?: number;
+  /** User-pinned disambiguation (mirror of main types). */
+  ctx?: LocatorContext;
 }
 
 export type AssertKind =
@@ -862,12 +877,39 @@ export interface LogSearchResult {
   snippet: string;
 }
 
+/** How a context signal is expressed, and how durable it is (mirror of main
+ *  types). The ORDER is the durability ranking the picker sorts by, most
+ *  durable first — a container survives a redesign that renames every class. */
+export type ContextSignalKind = "within" | "withinHasText" | "attr" | "class";
+
+/** One disambiguating property on offer, already priced against the page
+ *  (mirror of main types). `count` is how many elements still match once this
+ *  signal is applied to the base locator; `resolves` is true when this signal
+ *  alone identifies the picked element. */
+export interface ContextSignal {
+  kind: ContextSignalKind;
+  name: string;
+  value: string;
+  locator?: Locator;
+  ctx: LocatorContext;
+  count: number;
+  resolves: boolean;
+}
+
 export interface PickedElement {
   tag: string;
   description: string;
   candidates: Locator[];
   css: Record<string, string>;
   attributes: Record<string, string>;
+  /** no locator that NAMES this element identifies it on its own — the picker
+   *  opens expanded on this */
+  ambiguous: boolean;
+  contextBase?: Locator;
+  contextBaseCount: number;
+  contextSignals: ContextSignal[];
+  text?: string;
+  neighborText?: string;
 }
 
 /** One test's row in the Batch view (mirrors main types). An ABSENT entry is

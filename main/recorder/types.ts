@@ -78,6 +78,47 @@ export type WaitUntilKind =
 
 export type LocatorKind = "testid" | "role" | "label" | "placeholder" | "text" | "css" | "xpath";
 
+/**
+ * What the USER said about which element they meant — the disambiguation the
+ * recorder cannot infer.
+ *
+ * The recorder resolves ambiguity alone today: `pickLocator` asks the page how
+ * many elements each candidate matches and, when none is unique, writes
+ * `nth`. That is an index into DOM order — it works now and breaks the day the
+ * page reorders, and it is the app admitting it had to guess. The user watching
+ * that happen knows the answer ("the Edit button in the Billing card") and has
+ * nowhere to put it. This is that place.
+ *
+ * THREE SHAPES ONLY, and the restriction is what makes the feature total: each
+ * one is something Playwright expresses natively, so every context the picker
+ * can offer is a context the generator can emit and the parser can read back.
+ *
+ *   within        → a chained builder,  page.getByTestId("billing").getByRole(…)
+ *   withinHasText → .filter({ hasText }) on the container
+ *   and           → .and(page.locator(…)) on the target
+ *
+ * A pinned attribute is an `and` entry of kind `css` rather than a field of its
+ * own, for the same reason: one emission path, not one per property kind.
+ *
+ * Context hangs off the LOCATOR rather than the Step because every resolver in
+ * the app already takes a `Locator` — the capture script's `matchesFor`, the
+ * replayer, the heal probe, the generator, the parser — as do heal candidates
+ * and fingerprint candidates. A field on Step would have to be threaded through
+ * each of them by hand, and the one that got missed would fail silently.
+ */
+export interface LocatorContext {
+  /** An ancestor the target must live inside. Never itself carries a `ctx` —
+   *  see `normalizeLocator`. */
+  within?: Locator;
+  /** Text the CONTAINER must contain — the "which row?" question. Meaningless
+   *  without `within` (there is nothing to filter), and dropped in that case
+   *  rather than reinterpreted as a filter on the target: a context that
+   *  silently changes what it constrains is worse than one that is absent. */
+  withinHasText?: string;
+  /** Extra predicates the TARGET itself must satisfy. */
+  and?: Locator[];
+}
+
 export interface Locator {
   k: LocatorKind;
   /** value for testid/label/placeholder/text/css/xpath */
@@ -106,6 +147,9 @@ export interface Locator {
    * already failed.
    */
   nth?: number;
+  /** User-pinned disambiguation. Absent on the overwhelming majority of
+   *  locators, and absent on every locator recorded before this existed. */
+  ctx?: LocatorContext;
 }
 
 export type AssertKind =
@@ -776,6 +820,15 @@ export const MAX_FLOW_ARGS = 50;
  *  (`MAX_UNIQUENESS_SCAN` in capture-script.ts) — so a value near this one did
  *  not come from a person clicking an element. */
 export const MAX_MATCH_INDEX = 1000;
+/** Predicates a single locator's context may AND together. A person pinning
+ *  disambiguation ticks one or two boxes; anything near this came from a page
+ *  rather than a person, and every entry is a locator the generator emits into
+ *  source Playwright executes. */
+export const MAX_CONTEXT_PREDICATES = 8;
+/** Disambiguating properties offered for one picked element. The page chooses
+ *  how many attributes and ancestors an element has, so this is a bound on a
+ *  page-controlled list; the capture script caps its own scan well below it. */
+export const MAX_CONTEXT_SIGNALS = 60;
 /** Steps accepted from a single drain of the capture queue. A real recording
  *  produces a handful per poll; anything near this is not a person clicking. */
 export const MAX_STEPS_PER_DRAIN = 500;
@@ -808,7 +861,18 @@ function bool(v: unknown): boolean | undefined {
   return v === true ? true : undefined;
 }
 
-function normalizeLocator(input: unknown): Locator | undefined {
+/**
+ * Rebuild a locator out of checked values.
+ *
+ * `allowContext` is the recursion guard, not a feature flag. `Locator.ctx`
+ * holds locators of its own, so the type is self-referential and a hostile page
+ * can nest it as deep as it likes; each level costs a parse and lands in
+ * generated source. One level is all the picker can produce and all the
+ * generator emits — a container is a container, not a chain of them — so the
+ * inner call passes `false` and any `ctx` on a context locator is dropped
+ * rather than recursed into.
+ */
+export function normalizeLocator(input: unknown, allowContext = true): Locator | undefined {
   if (!input || typeof input !== "object") return undefined;
   const l = input as Partial<Locator>;
   const k = oneOf(l.k, LOCATOR_KINDS);
@@ -829,7 +893,44 @@ function normalizeLocator(input: unknown): Locator | undefined {
   // into on purpose.
   const nth = int(l.nth, 0, MAX_MATCH_INDEX);
   if (nth !== undefined) out.nth = nth;
+  if (allowContext) {
+    const ctx = normalizeLocatorContext(l.ctx);
+    if (ctx) out.ctx = ctx;
+  }
   return out;
+}
+
+/**
+ * Rebuild a locator's user-pinned context.
+ *
+ * Returns undefined for an EMPTY result rather than `{}`. An empty context
+ * constrains nothing, but it is not inert: it would change the heal-map key
+ * (`healKeyFor`), and it would round-trip through the generator and parser as a
+ * difference that produces identical source — so a step would compare unequal
+ * to its own regenerated self. Absent and empty must be the same value here.
+ */
+function normalizeLocatorContext(input: unknown): LocatorContext | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return undefined;
+  const c = input as Partial<LocatorContext>;
+  const out: LocatorContext = {};
+  const within = normalizeLocator(c.within, false);
+  if (within) out.within = within;
+  // Only meaningful as a filter ON the container — see LocatorContext. Read
+  // after `within` so this reads as the dependency it is.
+  if (within) {
+    const hasText = str(c.withinHasText);
+    if (hasText !== undefined) out.withinHasText = hasText;
+  }
+  if (Array.isArray(c.and)) {
+    const and: Locator[] = [];
+    for (const p of c.and) {
+      const loc = normalizeLocator(p, false);
+      if (loc) and.push(loc);
+      if (and.length >= MAX_CONTEXT_PREDICATES) break;
+    }
+    if (and.length > 0) out.and = and;
+  }
+  return out.within || out.and ? out : undefined;
 }
 
 function normalizeFingerprint(input: unknown): ElementFingerprint | undefined {
@@ -1026,13 +1127,54 @@ export function normalizePickedElement(input: unknown): PickedElement | null {
     }
     return out;
   };
-  return {
+  const signals: ContextSignal[] = [];
+  if (Array.isArray(p.contextSignals)) {
+    for (const raw of p.contextSignals) {
+      if (!raw || typeof raw !== "object") continue;
+      const s = raw as Record<string, unknown>;
+      const kind = oneOf(s.kind, CONTEXT_SIGNAL_KINDS);
+      if (!kind) continue;
+      // The context fragment is the load-bearing part — it is what gets pinned
+      // onto the step and emitted into generated source — so it goes through
+      // the same normalizer as any other context, not a lighter one because it
+      // arrived alongside display text.
+      const ctx = normalizeLocatorContext(s.ctx);
+      if (!ctx) continue;
+      const sig: ContextSignal = {
+        kind,
+        name: str(s.name) ?? "",
+        value: str(s.value) ?? "",
+        ctx,
+        // A count is a claim about the page. An unreadable one reads as zero
+        // ("nothing matches"), which is a different and more alarming claim
+        // than "we could not count", so it is bounded rather than defaulted to
+        // a number that would be believed.
+        count: int(s.count, 0, MAX_MATCH_INDEX) ?? 0,
+        resolves: s.resolves === true,
+      };
+      const loc = normalizeLocator(s.locator, false);
+      if (loc) sig.locator = loc;
+      signals.push(sig);
+      if (signals.length >= MAX_CONTEXT_SIGNALS) break;
+    }
+  }
+  const out: PickedElement = {
     tag: str(p.tag) ?? "",
     description: str(p.description) ?? "",
     candidates,
     css: strMap(p.css),
     attributes: strMap(p.attributes),
+    ambiguous: p.ambiguous === true,
+    contextBaseCount: int(p.contextBaseCount, 0, MAX_MATCH_INDEX) ?? 0,
+    contextSignals: signals,
   };
+  const base = normalizeLocator(p.contextBase);
+  if (base) out.contextBase = base;
+  const text = str(p.text);
+  const neighborText = str(p.neighborText);
+  if (text !== undefined) out.text = text;
+  if (neighborText !== undefined) out.neighborText = neighborText;
+  return out;
 }
 
 /** One element the failing locator actually resolved to. Every field is
@@ -1561,6 +1703,51 @@ export interface LogSearchResult {
   snippet: string;
 }
 
+/** How a context signal is expressed, and how durable it is.
+ *
+ *  The order of this list IS the durability ranking the picker sorts by, most
+ *  durable first. It is a ranking rather than a filter because durability is a
+ *  property of the SITE, not of the property kind: a class name is brittle in a
+ *  utility-class codebase and perfectly stable in a hand-written one, and the
+ *  user knows which they have. So the brittle kinds are offered, ranked last,
+ *  and labelled — not hidden. */
+export type ContextSignalKind = "within" | "withinHasText" | "attr" | "class";
+
+export const CONTEXT_SIGNAL_KINDS: ContextSignalKind[] = [
+  "within",
+  "withinHasText",
+  "attr",
+  "class",
+];
+
+/**
+ * One disambiguating property the picker offers, already priced.
+ *
+ * `count` is what makes the list usable: it is how many elements still match
+ * once this signal is applied to the base locator, computed in the page with
+ * `matchesFor` — the same oracle `pickLocator` uses to decide what gets
+ * recorded. Without it the user is asked to guess whether "inside .card"
+ * narrows nine matches to one or to four, and guessing is the thing this
+ * feature exists to replace.
+ */
+export interface ContextSignal {
+  kind: ContextSignalKind;
+  /** attribute name, or "within" / "within + text" for a container */
+  name: string;
+  /** the value shown to the user */
+  value: string;
+  /** the container's locator, for the two `within` kinds */
+  locator?: Locator;
+  /** the context fragment this row contributes when ticked */
+  ctx: LocatorContext;
+  /** elements still matching once this signal alone is applied */
+  count: number;
+  /** true when this signal ALONE identifies the picked element. The picker
+   *  leads with these: one tick that ends the ambiguity is both the best
+   *  outcome and the shortest emitted locator. */
+  resolves: boolean;
+}
+
 /** An element captured via the "Refine Selector" picker in the training window. */
 export interface PickedElement {
   /** lowercase tag name, e.g. "button" */
@@ -1573,6 +1760,22 @@ export interface PickedElement {
   css: Record<string, string>;
   /** curated element attributes */
   attributes: Record<string, string>;
+  /** The recorder could not find a locator identifying this element on its own
+   *  — `pickLocator` fell back to an index. The picker opens EXPANDED on this,
+   *  because it is the app's own admission that it had to guess, and it is
+   *  exactly the "one of many similar selectors" case. */
+  ambiguous: boolean;
+  /** the locator the counts below are relative to (what the step would use) */
+  contextBase?: Locator;
+  /** how many elements `contextBase` matches with no context at all — the
+   *  denominator, without which a count means nothing */
+  contextBaseCount: number;
+  /** disambiguating properties on offer, each priced */
+  contextSignals: ContextSignal[];
+  /** the element's own trimmed text */
+  text?: string;
+  /** nearest preceding heading/label text */
+  neighborText?: string;
 }
 
 /**

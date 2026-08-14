@@ -21,6 +21,7 @@ import {
   ATTR_PAUSED,
   ATTR_REFINE,
   buildCaptureScript,
+  buildCountScript,
   DRAIN_PICKED_SCRIPT,
   DRAIN_SCRIPT,
   PICK_AT_POINT_SCRIPT,
@@ -55,6 +56,7 @@ import {
   initialCursor,
   MAX_DRAIN_BYTES,
   MAX_STEP_STRING_LENGTH,
+  normalizeLocator,
   normalizePickedElement,
   normalizeRawStep,
   normalizeRawSteps,
@@ -137,6 +139,11 @@ const REPLAY_FOCUS_SETTLE_MS = 300;
 // pending forever and wedge the whole run with controls disabled; the timeout
 // turns that into a clean per-step failure instead.
 const REPLAY_STEP_TIMEOUT_MS = 8000;
+// Budget for one element-context match count. Far shorter than a replay step's:
+// this is a number under a checkbox the user just ticked, so a slow answer is
+// worse than an honest "couldn't count" — and the readout says so rather than
+// showing a stale figure as if it were current.
+const COUNT_TIMEOUT_MS = 2000;
 // How long after creating the recorder window to force it visible if the
 // WebView's own readiness events (`ready-to-show`/`dom-ready`) haven't fired
 // yet. On a cold start (the first recorder window in the app's lifetime) those
@@ -1932,6 +1939,37 @@ export const recorderService = {
       broadcastState();
     }
     return currentState();
+  },
+
+  /**
+   * How many elements a locator matches on the live page right now.
+   *
+   * The element-context picker's readout. Each offered signal carries a count
+   * taken when the element was picked, which is what orders the rows — but a
+   * COMBINED selection cannot be derived from those: two signals that each
+   * leave three matches might leave three between them or none, and only the
+   * page knows which. So the page is asked, for the selection the user has
+   * actually made.
+   *
+   * Normalized on the way IN like every other IPC-borne locator: this reaches
+   * `buildCountScript`, which serializes it into a script the page evaluates.
+   * Returns -1 for "could not count" — never 0, which is a different and more
+   * alarming claim, and one the user would act on.
+   */
+  async countMatches(raw: unknown): Promise<number> {
+    const loc = normalizeLocator(raw);
+    const page = pageWc();
+    if (!loc || !page) return -1;
+    try {
+      const n = await execWithTimeout(
+        pageExecutor(page),
+        buildCountScript(loc),
+        COUNT_TIMEOUT_MS,
+      );
+      return typeof n === "number" && Number.isFinite(n) ? Math.trunc(n) : -1;
+    } catch {
+      return -1;
+    }
   },
 
   /** Leave refine mode and resume the recording session (after the review

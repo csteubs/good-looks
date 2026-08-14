@@ -10,6 +10,153 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-14 — The user gets to say which element they meant
+
+`main/recorder/types.ts`, `main/recorder/capture-script.ts`,
+`main/services/script-generator.ts`, `main/services/spec-parser.ts`,
+`main/services/auto-heal.ts`, `main/services/heal-fixture-source.ts`,
+`main/services/playwright-runner.ts`, `shared/heal-key.mjs` (new),
+`renderer/main/element-context-picker.tsx` (new),
+`e2e/context-parity.spec.ts` (new), `check:locator-roundtrip` (new).
+
+**The report:** the element a user wants to assert on is often one of many
+similar ones, and there is no way to tell the recorder which.
+
+**What the recorder did instead, and why it looks fine.** `pickLocator` asks the
+page how many elements each candidate matches and takes the first that
+identifies this one. The candidate list ends in `cssPath` and `xpathFor`, which
+are positional and therefore unique *by construction* — so on a page of nine
+identical rows the recorder does not fail, and does not write `nth`. It records
+`body > section:nth-of-type(1) > button`, silently, and that runs today and
+breaks on the first layout change. The feature is not "handle ambiguity"; it is
+"stop settling for a generated path when the user knows the answer".
+
+**That is also why the first cut of this was inert, and only a test found it.**
+Ambiguity was defined as `pickLocator` falling back to `nth`. Since a css path is
+essentially always unique, that is a condition which essentially never holds: the
+picker would never have opened, and every offered signal would have been priced
+against an already-unique base, reporting 1 → 1 for all of them. The base is now
+the best SEMANTIC candidate (`semanticBaseFor` — testid/role/label/placeholder/
+text), ambiguity is measured against that, and context is what earns uniqueness
+back. The emitted locator becomes
+`getByTestId("billing-card").getByRole("button", { name: "Edit" })` instead of a
+path — which is the actual value, and it is the opposite of what the first
+version would have shipped.
+
+**Context hangs off `Locator`, not off `Step`.** Every resolver in the app
+already takes a `Locator` — `matchesFor`, the replayer, the heal probe, the
+generator, the parser — as do heal candidates and fingerprint candidates. A
+field on `Step` would have to be threaded through each by hand, and the one that
+got missed would fail silently.
+
+**Three shapes only** (`within`, `withinHasText`, `and`), and the restriction is
+what makes the feature total: each is something Playwright expresses natively,
+so every context the picker can offer is one the generator can emit and the
+parser can read back. A pinned attribute is an `and` entry of kind `css` rather
+than a field of its own — one emission path, not one per property kind.
+
+**Teaching the parser was a PRECONDITION, not a follow-up.** `parseLocator`
+already documented what happens when the generator emits something it cannot
+read: the action shape does not match and the whole STEP is dropped on re-parse,
+silently, on every hand edit of the Script tab and every applied AI fix. Steps
+carrying context are by construction the ones a user went out of their way to
+disambiguate, so shipping the generator alone would have deleted this feature's
+own output. `check:locator-roundtrip` pins the property that makes emission
+safe, and the load-bearing half is the FIXED POINT — `generate(parse(generate(x)))
+=== generate(x)`, compared on source — because a parser that reads a chain into a
+subtly different model still returns a step and would fail only there.
+
+It found three bugs that predate this change. The action branch sliced source at
+the first builder's close paren and allowed exactly one continuation, so
+assertions round-tripped context and actions did not. `firstStringLiteral`
+stopped at the first quote of any kind, so a value containing one regenerated as
+a *different* literal — worse than being dropped, because the step still runs and
+points at nothing. And `locator("xpath=…")` read back as a css locator whose
+selector began with `xpath=`, which round-tripped by luck while every consumer
+branching on `k` saw the wrong kind.
+
+**Auto-Heal hard-filters rather than penalizing.** An element outside the pinned
+container is not a worse candidate, it is not a candidate. Scoring it down would
+let it win whenever nothing else scored — the run where a heal is most likely to
+be wrong and least likely to be noticed, because a mis-heal usually SUCCEEDS:
+clicking the wrong button rarely throws, so the step is marked passed and the
+test quietly stops testing what it was written to test. Candidates also INHERIT
+the context, which is the half that actually enforces this; without it a heal
+would replace "the Edit button in the Billing card" with "an Edit button", which
+is that same failure performed by the feature itself.
+
+**And run-time healing was about to be silently off for exactly these steps.**
+The fixture patches `page.*` factories to tag locators with a canonical key. A
+chained `.getByRole()` is a different function on the Locator prototype, was
+never patched, and returned an untagged locator — so the action bailed on its
+first line. This is the `.nth()` bug of 2026-08-13 in a new place, with the same
+shape: the steps it excluded are the ones most likely to need healing. Nothing
+throws; the feature is just off.
+
+Fixing it made the key COMPOSED rather than flat, which turns a spelling into a
+grammar — an order and a set of separators that two implementations in two
+worlds must agree on exactly. Hence `shared/heal-key.mjs`, admitted on the same
+terms as `step-semantics.mjs`, with the operators embedded in the fixture as
+source text rather than transcribed.
+
+**The picker is gated on ambiguity, not shown always.** Because context is load-
+bearing at run time, every pinned property is a new way for the test to break —
+so prompting where the locator is already unique costs stability and buys
+nothing, and a checklist shown after every pick invites exactly that. Collapsing
+it entirely would hide it from the users who need it most. Ambiguity is the app's
+own objective signal for which case this is, and the affordance stays reachable
+either way because a locator can be unique by accident today.
+
+**Every row is priced, and the combined count is asked of the page.** A property
+list with no numbers asks the user to guess whether "inside .card" narrows nine
+matches to one or to four. The per-row counts come from the pick and are what
+order the rows; a combined selection cannot be derived from them, since two
+signals that each leave three matches might leave three between them or none. A
+failed count reports -1 and renders as "could not count", never as 0 — that is a
+claim about the page, and one the user would act on.
+
+**Brittle signals are ranked last and labelled, not hidden.** Durability is a
+property of the site rather than of the property kind: a class name is brittle in
+a utility-class codebase and stable in a hand-written one, and the user knows
+which they have. On some pages a semantic class is the only thing telling two
+rows apart, so hiding it would mean silently withholding the only available
+answer.
+
+**Two duplications collapsed on the way, both because context would otherwise
+need teaching twice.** `auto-heal.ts`'s `resolveAllFor` was a fourth near-copy of
+`matchesFor`; `PICK_AT_POINT_SCRIPT` carried a hand-maintained transcription of
+four capture-script functions, so a right-click pick would have offered different
+disambiguation from a left-click one.
+
+**One claim in a comment turned out to be false, and the revert is what said
+so.** The `ctxFilter` call in `collectElements` was described as the mechanism
+making context a hard filter. Removing it breaks no test — `withCtx` plus
+`identifiesOnly` already excludes those elements, since an outside element's
+candidates match nothing once scoped. It is kept for cost (everything downstream
+is per-element and scans the document at UNCAPPED_SCAN) and the comment now says
+which half is load-bearing.
+
+**`e2e/context-parity.spec.ts` is the authority**, on the same argument as
+`assert-parity`: context is resolved by a DOM walk in the trainer and by real
+Playwright in a run, and a model of Playwright's chaining rules cannot settle
+whether our model of them is right. Each row asserts both engines against the
+fixture's own answer BEFORE asserting they agree — two engines agreeing is not
+evidence that either is correct.
+
+Its `.nth()` row had to be rewritten to be worth anything. Reverting the emission
+order left every row green: a container is PREPENDED, so an index written
+straight after the target still lands last in the chain and both orders produce
+the same string. `and` is APPENDED, so it is the clause an index can be emitted
+on the wrong side of — and the wrong order does not select a different element,
+it selects NOTHING, failing with "element not found" on a locator that reads
+correctly.
+
+Rejected: putting the durability ranking in `shared/`. The plan called for it,
+but it has exactly one consumer (the picker), and `shared/` is for logic two
+worlds genuinely need. `heal-key.mjs` earned its place there; a ranking read in
+one file would not have.
+
+
 **Add an entry when a change involved a real decision** — a trade-off, a
 rejected alternative, a non-obvious constraint. Routine work does not need one;
 the commit message carries it. Entries up to 2026-08-06 were written by the

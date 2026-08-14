@@ -158,6 +158,11 @@ export const api = {
       ipc().invoke<DebugEntry[]>("recorder:clearDebugLog", { stepId }),
     startRefine: () => ipc().invoke<RecorderState>("recorder:startRefine"),
     endRefine: () => ipc().invoke<RecorderState>("recorder:endRefine"),
+    /** How many elements a locator matches on the live page right now. -1 when
+     *  the count could not be taken — never 0, which would read as "nothing
+     *  matches" and send the user hunting for a mistake that is not there. */
+    countMatches: (locator: Locator) =>
+      ipc().invoke<number>("recorder:countMatches", { locator }),
     stop: () => ipc().invoke<void>("recorder:stop"),
     discardExit: () => ipc().invoke<void>("recorder:discardExit"),
     getState: () => ipc().invoke<RecorderState>("recorder:getState"),
