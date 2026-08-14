@@ -126,7 +126,17 @@ function formatStructure(entry: StepStructure): string {
       // matchCount 0 with nothing to list is not a gap in the record — it is
       // the record. "Matched nothing" and "matched ten" are opposite
       // diagnoses, and only one of them is fixed by a narrower locator.
-      lines.push("    (none — the locator resolved to no elements at all)");
+      // A REFINED locator is the exception, and it reads as the opposite of
+      // what it is: `getByText("Row").nth(3)` on a page that now has three
+      // matches resolves to nothing, because the index is one past the end —
+      // the base locator matched fine. Saying so here is the difference
+      // between "narrow the index" and "the element is gone, write a new
+      // locator", and the model cannot tell them apart from a zero.
+      lines.push(
+        entry.originalLocator && typeof entry.originalLocator.nth === "number"
+          ? `    (none — but this locator is pinned to index ${entry.originalLocator.nth}, so the page may simply have fewer matches than that now; the base locator without .nth() may still match)`
+          : "    (none — the locator resolved to no elements at all)",
+      );
     } else {
       matches.forEach((m) => lines.push(formatMatch(m)));
       if (total > matches.length) {

@@ -63,12 +63,18 @@ export const playwrightConfigSource =
   `    timeout: Number(process.env.PW_EXPECT_TIMEOUT_MS || ${DEFAULT_EXPECT_TIMEOUT_MS}),\n` +
   "  },\n" +
   "  use: {\n" +
-  // A failure the user cannot see is a support request. The runner already
-  // keeps per-run artifacts and prunes them on the configured retention, so a
-  // trace on the failing run costs nothing on the passing path and is the one
-  // artifact that answers "what did the page actually look like" — the exact
-  // question the AI-debug session dead-ended on when it asked for page HTML
-  // the app could not supply (DECISIONS 2026-08-12).
+  // For a HAND-RUN, which is the same reason `timeout` is read from the env
+  // here rather than left to Playwright's 30s default: this file is also what
+  // somebody gets when they run the spec themselves outside the app, and a
+  // trace is the best failure artifact Playwright produces.
+  //
+  // It is NOT an app artifact, and the first version of this comment wrongly
+  // claimed it answered the AI-debug session's request for page evidence. An
+  // app-driven run writes the trace into `PW_OUTPUT_DIR`, which the runner
+  // deletes in its `finally` (playwright-runner.ts) — as does the MCP server.
+  // Nothing reads it, no IPC exposes it, and no prompt mentions it. Retaining
+  // it is a feature with real storage and retention consequences, not a config
+  // line; see DECISIONS 2026-08-14.
   '    trace: "retain-on-failure",\n' +
   "    launchOptions: {\n" +
   "      slowMo: Number(process.env.PW_SLOWMO_MS || 0),\n" +

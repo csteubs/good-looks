@@ -771,6 +771,11 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
             speed: runCtx.speed,
             failedStepIndex: runCtx.failedStepIndex,
             logsAvailable: runCtx.logsAvailable,
+            // Was omitted, so the strip never named page structure even though
+            // the prompt offers it off this exact flag. The comment above says
+            // this object is derived from the same context the prompt is built
+            // from; leaving a field out is how that stopped being true.
+            structureAvailable: runCtx.structureAvailable,
           })
         : [],
     [runCtx],
