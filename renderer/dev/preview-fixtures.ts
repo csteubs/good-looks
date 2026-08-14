@@ -196,6 +196,13 @@ export const RUNS: RunRecord[] = [
     captureOverheadMs: 840,
     a11yMs: 210,
     a11yChecks: 6,
+    // ONE STEP WITH UNACCEPTED VIOLATIONS, matching REPLAY's own `s3` below.
+    // Absent, this said zero while the replay carried a serious finding — which
+    // the Stats a11y tile read from here and its dashboard read from there, so
+    // the preview showed a headline of 0 over a breakdown listing a rule. The
+    // real app derives both from the same run; a fixture that disagrees with
+    // itself teaches the preview to lie about exactly what the screen reports.
+    a11yNewSteps: 1,
   },
   {
     id: "r-2",

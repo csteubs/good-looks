@@ -79,6 +79,7 @@ vi.mock("../lib/api", () => ({
       clearAllSettled: async () => ({ removed: 0 }),
     },
     artifacts: { list: counted("replays", () => []) },
+    a11y: { rollup: counted("a11y-rollup", () => null) },
     metrics: {
       stepHealth: counted("metrics", () => ({ available: true, rows: [] })),
       slowness: async () => null,
@@ -106,6 +107,10 @@ function Consumers() {
     queryFn: counted("metrics", () => ({ available: true, rows: [] })),
   });
   useQuery({ queryKey: ["captureOverhead"], queryFn: counted("captureOverhead", () => null) });
+  // The Stats a11y dashboard's rollup. It is read from a ROUTE — mounted only
+  // while you stand on that category — which is precisely the shape that made
+  // three tiles never refresh, so it belongs in the list and therefore here.
+  useQuery({ queryKey: ["a11y-rollup"], queryFn: counted("a11y-rollup", () => null) });
   return null;
 }
 
@@ -125,7 +130,7 @@ beforeEach(() => {
 });
 
 describe("run-derived caches", () => {
-  it("refetches all six when a run finishes", async () => {
+  it("refetches all seven when a run finishes", async () => {
     renderWith(<Consumers />);
     await waitFor(() => expect(calls.metrics).toBe(1));
     const before = { ...calls };
@@ -141,6 +146,7 @@ describe("run-derived caches", () => {
     await waitFor(() => expect(calls.replays).toBe(before.replays + 1));
     await waitFor(() => expect(calls.metrics).toBe(before.metrics + 1));
     await waitFor(() => expect(calls.captureOverhead).toBe(before.captureOverhead + 1));
+    await waitFor(() => expect(calls["a11y-rollup"]).toBe(before["a11y-rollup"] + 1));
   });
 
   it("refetches them when a batch finishes, not only a single run", async () => {
@@ -171,10 +177,10 @@ describe("run-derived caches", () => {
   });
 
   it("keeps the list and the exported keys in step", () => {
-    // Guards the loop above from rotting: if a seventh key is added to
+    // Guards the loop above from rotting: if an eighth key is added to
     // RUN_DERIVED_KEYS, this fails until it has a consumer in this file.
     expect(RUN_DERIVED_KEYS.map((k) => k[0]).sort()).toEqual(
-      ["captureOverhead", "flake", "heals", "metrics", "replays", "runs"].sort(),
+      ["a11y-rollup", "captureOverhead", "flake", "heals", "metrics", "replays", "runs"].sort(),
     );
   });
 });

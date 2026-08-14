@@ -107,6 +107,53 @@ assert(CATEGORIES.length > 0, `the registry declares ${CATEGORIES.length} catego
 }
 
 {
+  // EVERY CATEGORY IN `BUILT` HAS A BODY, AND EVERY FACET HAS A LABEL.
+  //
+  // `BUILT` is what makes a tile clickable. Adding an id to it without writing
+  // the dashboard ships a tile that opens the "isn't built yet" panel — which
+  // is worse than the disabled tile it replaced, because the user has to click
+  // to find out. Nothing else would object: the id is a valid category, the
+  // route resolves, and the fallback renders perfectly.
+  //
+  // Read from source rather than imported, because importing the view means
+  // importing React. The regex is proved against the file first: a pattern that
+  // stops matching harvests nothing and this assertion would pass vacuously.
+  const view = readFileSync(join(STATS_DIR, "stats-category-view.tsx"), "utf-8");
+  const builtBlock = /export const BUILT = \[([\s\S]*?)\] as const;/.exec(view);
+  assert(builtBlock !== null, "BUILT is declared in stats-category-view.tsx");
+  const built = [...(builtBlock?.[1] ?? "").matchAll(/"([a-z0-9]+)"/g)].map((m) => m[1]);
+  assert(built.length > 0, `the BUILT parser still works (found ${built.length} ids)`);
+
+  const unknown = built.filter((id) => !CATEGORIES.some((c) => c.id === id));
+  assert(unknown.length === 0, `every id in BUILT is a registry category${
+    unknown.length ? `: ${unknown.join(", ")} are not` : ""
+  }`);
+
+  // A body branch, spelled the one way the file spells them.
+  const bodyless = built.filter((id) => !new RegExp(`meta\\.id === "${id}"`).test(view));
+  assert(
+    bodyless.length === 0,
+    bodyless.length === 0
+      ? `all ${built.length} openable categories render a dashboard`
+      : `these tiles are clickable and open the "isn't built yet" panel:\n     ${bodyless.join(
+          "\n     ",
+        )}`,
+  );
+
+  // A facet id reaches the URL and therefore the breadcrumb. One with no entry
+  // in FACET_LABELS renders there as raw vocabulary — "Stats / Step health /
+  // THROWING" — which reads as a bug in the trail rather than a missing label.
+  const labelled = Object.keys(FACET_LABELS);
+  const missing = built.filter((id) => !labelled.includes(id));
+  assert(
+    missing.length === 0,
+    missing.length === 0
+      ? `every openable category has facet labels for its breadcrumb`
+      : `these drill into facets with no label:\n     ${missing.join("\n     ")}`,
+  );
+}
+
+{
   // The breadcrumb resolves a category through the registry rather than
   // title-casing the param. A URL can say /stats/nonsense, and a trail that
   // confidently rendered "Nonsense" would be naming a screen that does not

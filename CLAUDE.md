@@ -65,6 +65,16 @@ shared/              the ONE pure core both the app and the MCP import (.mjs + h
                      heal-key.mjs is the same shape again: how a chained locator's
                      heal-map key is SPELLED, built from a Locator model on one side
                      and from factory ARGUMENTS on the other.
+                     a11y-rollup.mjs is that shape a third time, and it retired two
+                     hand-copies rather than adding a third: violationKey/keysOf lived
+                     in main/services/a11y-diff.ts AND renderer/lib/a11y-format.ts,
+                     each asking the next person to keep them in sync. Two spellings
+                     of a key mean an accepted violation stops matching its baseline,
+                     so the app reports a finding the user already dismissed.
+                     selectLatestA11yRuns is here for the process boundary: the Stats
+                     tile counts from a query cache, the a11y:rollup handler from
+                     replay files on disk, and only a shared rule keeps them
+                     describing the same runs.
                      step-semantics.mjs is the load-bearing one: the single
                      definition of what each assert/wait/condition MEANS (match
                      mode, case rule, whitespace rule), read by the generator,

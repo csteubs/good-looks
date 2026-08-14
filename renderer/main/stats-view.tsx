@@ -45,7 +45,7 @@ import { DigestPanel } from "./digest-panel";
 import { DivergencePanel } from "./divergence-panel";
 import { LogInspector } from "./log-inspector";
 import { Pager } from "./pager";
-import type { CaptureOverheadSummary, LogSearchResult, RunRecord } from "../lib/recorder-types";
+import type { LogSearchResult } from "../lib/recorder-types";
 import { RUN_BROWSERS, RUN_BROWSER_LABELS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { DENSE_PAGE_SIZE, pageSlice } from "../lib/paginate";
 import { nativeShell } from "../lib/native-shell";
@@ -111,179 +111,6 @@ function dayEndMs(v: string): number {
   return new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
 }
 
-// ── Daily pass/fail buckets for the chart ──────────────────────────────
-interface DayBucket {
-  key: string;
-  label: string;
-  passed: number;
-  failed: number;
-}
-function buildDailyBuckets(runs: RunRecord[]): DayBucket[] {
-  const map = new Map<string, DayBucket>();
-  for (const r of runs) {
-    if (r.kind === "baseline-update") continue; // exclude from pass/fail chart
-    const d = new Date(r.startedAt);
-    const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-    let b = map.get(key);
-    if (!b) {
-      b = { key, label: `${d.getMonth() + 1}/${d.getDate()}`, passed: 0, failed: 0 };
-      map.set(key, b);
-    }
-    if (r.status === "passed") b.passed++;
-    else b.failed++;
-  }
-  // Always show the last 7 calendar days (inclusive of today), even days with
-  // no runs, so gaps are visible instead of the chart skipping straight to
-  // the next day that has data.
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const buckets: DayBucket[] = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
-    buckets.push(map.get(key) ?? { key, label: `${d.getMonth() + 1}/${d.getDate()}`, passed: 0, failed: 0 });
-  }
-  return buckets;
-}
-
-function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div className="gl-kpi">
-      <span className="gl-kpi-label">{label}</span>
-      <span className="gl-kpi-value">{value}</span>
-      {hint ? <span className="gl-kpi-hint">{hint}</span> : null}
-    </div>
-  );
-}
-
-/** ms → a compact human duration ("380 ms", "1.4 s"). */
-function fmtMs(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-  return `${(ms / 1000).toFixed(1)} s`;
-}
-
-/** What the "Capture screenshots" toggle actually costs, measured rather than
- *  assumed (the roadmap's cross-cutting performance risk). Hidden entirely
- *  until at least one instrumented capture run exists. */
-function CaptureOverheadPanel({ summary }: { summary: CaptureOverheadSummary }) {
-  // Hidden until there is something measured to show — same rule as before, but
-  // now either instrumented capture runs OR accessibility runs qualify, since
-  // a11y can be on with screenshots off.
-  if (summary.capturedRuns === 0 && summary.a11yRuns === 0) return null;
-  const sharePct = Math.round(summary.captureShareOfRun * 100);
-  const delta =
-    summary.meanUncapturedDurationMs !== null
-      ? summary.meanCapturedDurationMs - summary.meanUncapturedDurationMs
-      : null;
-  return (
-    <Panel
-      title="Capture overhead"
-      id={
-        summary.capturedRuns > 0
-          ? `${summary.capturedRuns} captured ${summary.capturedRuns === 1 ? "run" : "runs"} · ${summary.totalShots} screenshots`
-          : `${summary.a11yRuns} accessibility ${summary.a11yRuns === 1 ? "run" : "runs"}`
-      }
-      pad={10}
-    >
-      <div className="gl-kpis">
-        {summary.capturedRuns > 0 ? (
-          <StatCard
-            label="Screenshot time per run"
-            value={fmtMs(summary.meanCaptureMs)}
-            hint={`${sharePct}% of a captured run`}
-          />
-        ) : null}
-        {/* Reported on its own axis. Folding axe's cost into the screenshot
-            number would make "capture is expensive" the wrong conclusion — the
-            a11y check is usually the larger of the two by some way. */}
-        {summary.a11yRuns > 0 ? (
-          <StatCard
-            label="Accessibility time per run"
-            value={fmtMs(summary.meanA11yMs)}
-            hint={`${Math.round(summary.a11yShareOfRun * 100)}% of such a run · ${fmtMs(
-              summary.meanMsPerA11yCheck,
-            )} per check`}
-          />
-        ) : null}
-        {summary.capturedRuns > 0 ? (
-          <StatCard label="Per screenshot" value={fmtMs(summary.meanMsPerShot)} />
-        ) : null}
-        {summary.capturedRuns > 0 ? (
-        <StatCard
-          label="Captured vs normal run"
-          value={
-            delta === null
-              ? fmtMs(summary.meanCapturedDurationMs)
-              : `${delta >= 0 ? "+" : "−"}${fmtMs(Math.abs(delta))}`
-          }
-          hint={
-            summary.meanUncapturedDurationMs === null
-              ? "no uncaptured runs to compare"
-              : `${fmtMs(summary.meanCapturedDurationMs)} vs ${fmtMs(summary.meanUncapturedDurationMs)}`
-          }
-        />
-        ) : null}
-      </div>
-    </Panel>
-  );
-}
-
-function PassFailChart({ buckets }: { buckets: DayBucket[] }) {
-  const maxTotal = Math.max(1, ...buckets.map((b) => b.passed + b.failed));
-  return (
-    <Panel
-      title="Pass / fail over time"
-      pad={10}
-      right={
-        <div className="gl-legend">
-          <span className="gl-legend-item">
-            <span className="gl-legend-dot" style={{ background: TONE.phos }} />
-            Passed
-          </span>
-          <span className="gl-legend-item">
-            <span className="gl-legend-dot" style={{ background: TONE.red }} />
-            Failed
-          </span>
-        </div>
-      }
-    >
-      <div className="gl-chart">
-        {buckets.map((b) => {
-          const total = b.passed + b.failed;
-          const totalPct = (total / maxTotal) * 100;
-          const passPct = total > 0 ? (b.passed / total) * 100 : 0;
-          return (
-            <div key={b.key} className="gl-chart-col">
-              <div className="gl-chart-plot">
-                {total > 0 ? (
-                  <div
-                    className="gl-chart-stack"
-                    style={{ height: `${totalPct}%` }}
-                    title={`${b.label}: ${b.passed} passed, ${b.failed} failed`}
-                  >
-                    <div style={{ height: `${100 - passPct}%`, background: TONE.red }} />
-                    <div style={{ height: `${passPct}%`, background: TONE.phos }} />
-                  </div>
-                ) : (
-                  // A day with no runs draws its floor rather than nothing, so
-                  // the gap reads as "nothing happened" and not as a chart that
-                  // failed to render.
-                  <div className="gl-chart-floor" title={`${b.label}: no runs`} />
-                )}
-              </div>
-              <span className="gl-chart-tick">{b.label}</span>
-            </div>
-          );
-        })}
-      </div>
-    </Panel>
-  );
-}
-
-/** Prev / range / Next control shared by both Stats lists. Renders nothing for
- *  a single page, so short lists aren't cluttered with dead controls. */
-
 export function StatsView() {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -324,15 +151,9 @@ export function StatsView() {
     enabled: debounced.length > 0,
   });
 
-  // Capture overhead is computed backend-side from the same run history, so
-  // the summarizer has one implementation (and one regression check).
   const flakeQuery = useQuery({
     queryKey: ["flake"],
     queryFn: () => api.runs.flake(),
-  });
-  const overheadQuery = useQuery({
-    queryKey: ["captureOverhead"],
-    queryFn: () => api.runs.captureOverhead(),
   });
 
   // The metrics views. Three queries rather than one, because each is a
@@ -428,13 +249,11 @@ export function StatsView() {
     }
   }, [testOptions, filters.test]);
 
-  const buckets = React.useMemo(() => buildDailyBuckets(runs), [runs]);
-  // Only real test runs count toward pass/fail stats; baseline-update events
-  // are shown in the history table but excluded from charts and summary cards.
+  // Only real test runs are runs; baseline-update events are shown in the
+  // history table but excluded from every count. The pass/fail arithmetic that
+  // used to live here moved with the chart and the KPI cards, into
+  // `stats/outcomes-dashboard.tsx`.
   const realRuns = runs.filter((r) => r.kind !== "baseline-update");
-  const passed = realRuns.filter((r) => r.status === "passed").length;
-  const failed = realRuns.length - passed;
-  const passRate = realRuns.length > 0 ? Math.round((passed / realRuns.length) * 100) : 0;
 
   // After Reset stats / Delete stats & logs / Delete by date. This rewrites run
   // history wholesale, so it invalidates the same six caches a run does — the
@@ -574,22 +393,14 @@ export function StatsView() {
                 onOpen={(id) => navigate({ to: "/stats/$category", params: { category: id } })}
               />
 
-              {/* Chart FIRST. The shape of the last week is the thing you can
-                  read without reading — a rising red band answers "is something
-                  wrong?" before any number does, and it was previously below
-                  three panels of text. The numbers it summarises follow it. */}
-              {buckets.length > 0 ? <PassFailChart buckets={buckets} /> : null}
-
-              {/* Summary cards */}
-              <div className="gl-kpis">
-                <StatCard label="Total runs" value={String(realRuns.length)} />
-                <StatCard label="Pass rate" value={`${passRate}%`} />
-                <StatCard label="Passed" value={String(passed)} />
-                <StatCard label="Failed" value={String(failed)} />
-              </div>
-
-              {/* Capture overhead — only once a capture run has been measured */}
-              {overheadQuery.data ? <CaptureOverheadPanel summary={overheadQuery.data} /> : null}
+              {/* THE CHART, THE KPI CARDS AND CAPTURE OVERHEAD MOVED OUT on
+                  2026-08-14, into the Outcomes category dashboard the tile above
+                  now opens. They were this page's answer to "what happened",
+                  which is that category's whole question — and the same number
+                  on two screens is two places to fix it. What stays here is the
+                  run EXPLORER below: the table, its filters and log search
+                  answer "find me that run", and they pair with the Manage-data
+                  menu in this header. */}
 
               {/* Stability — "is this test trustworthy", which neither the chart
                   nor the pass rate above can answer: both count outcomes, and

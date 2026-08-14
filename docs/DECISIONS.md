@@ -6078,3 +6078,75 @@ own primary actions fell out of. Batch additionally rendered two test names at
   and pins both the 16px horizontal padding and the max-height; both assertions
   were verified to fail against the pre-fix rule (12px padding, no
   `max-height`).
+
+## 2026-08-14 — The other five Stats categories, and where their numbers come from
+
+The board has opened two of seven tiles since 2026-08-10. Outcomes,
+Accessibility, Visual diff, Speed & cost and Step health now open too, which
+retires the `docs/QA-KNOWN-GAPS.md` §2 entry that described the gap.
+
+- **Two of the five needed no new data and one needed a new channel.** Speed &
+  cost and Step health wrap `SuiteCostPanel` and `StepHealthPanel`, the panels
+  the Stats landing already rendered, and Visual reads the `["replays"]` query
+  the board already fetched. Accessibility could not: a run record carries
+  counts (`a11yChecks`, `a11yNewSteps`) while WHICH RULES fired lives inside
+  each run's `replay.json`, so a renderer-side rollup meant one
+  `artifacts:getReplay` round trip per test to draw one screen. `a11y:rollup`
+  reads them in the process that already has them.
+
+- **The rule for picking runs is shared; the disk access is not.** The a11y tile
+  counts from the run list in a query cache and the dashboard counts from replay
+  files in the main process — two processes answering one question. So
+  `selectLatestA11yRuns` lives in `shared/a11y-rollup.mjs` and both sides call
+  it. Same shape as `user-data-rules.mjs`: where the data lives needs the disk,
+  so only the RULE is shared.
+
+- **Two hand-copies collapsed on the way.** `violationKey` and `keysOf` existed
+  in `main/services/a11y-diff.ts` and `renderer/lib/a11y-format.ts`, each with a
+  "keep in sync" comment. Both re-export from `shared/` now. The drift they
+  invited fails silently and in the worst direction: two spellings of a key mean
+  an accepted violation no longer matches its baseline entry, so the app reports
+  a finding the user has already dismissed, with nothing in a log to say why.
+
+- **Overlapping counts, stated rather than removed.** Step health's three
+  findings and Accessibility's four severities both count a step under every
+  category it belongs to, so they add up to more than the headline. Filing each
+  step under one "primary" finding makes the arithmetic tidy and hides the
+  moderate rule that happens to share a step with a critical one — which is the
+  rule you were looking for when you opened Moderate. Both screens say "a step
+  can be in more than one" instead. Nothing sums them; `check:stats-categories`
+  independently forbids it.
+
+- **The Outcomes content MOVED off the landing rather than being copied.** The
+  chart, the four KPI cards and capture overhead were the landing's answer to
+  "what happened", which is Outcomes' whole question. What stayed is the run
+  table with its filters, pagination and log search: that is a run EXPLORER
+  answering "find me that run", and it pairs with the Manage-data menu in the
+  same header. This retires a real contradiction rather than only a duplication
+  — `stats-view.test.tsx` used to assert that filtering the table did not move
+  the cards, because the cards described the whole history while the table
+  described a slice. The two populations can no longer be on one screen; that
+  test now asserts the cards have not come back.
+
+- **Looking at it on screen caught two things the suite could not.** The
+  Outcomes head states the pass rate at 32px and a KPI card two inches lower
+  repeated it, so the card is gone. And the category head assembled its own
+  sentence from the headline and the registry's `unit`, which is a fixed plural
+  — a category with exactly one finding read "1 steps carry violations you
+  haven't accepted". Every summariser already pluralises its own `say` around
+  the same number, so the head prints that instead. The tile keeps `unit`, where
+  it is a column label with no number beside it.
+
+- **`check:stats-categories` grew the assertion that would have caught the next
+  one.** `BUILT` is what makes a tile clickable, and adding an id to it without
+  writing a body ships a tile that opens the "isn't built yet" panel — worse
+  than the disabled tile it replaced, because now you have to click to find out.
+  The check parses `BUILT` out of the view and proves each id has both a body
+  branch and facet labels for its breadcrumb. Verified to fail against a fake
+  id before being trusted.
+
+- **The preview fixture disagreed with itself, and that is a bug in a fixture
+  that exists to be looked at.** Run `r-1` carried `a11yChecks: 6` and no
+  `a11yNewSteps` while the replay beside it carried a serious violation, so the
+  preview rendered a headline of 0 over a breakdown listing a rule. The Visual
+  view had never put those two numbers on one screen, so nothing had noticed.

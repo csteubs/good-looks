@@ -195,17 +195,24 @@ describe("filtering", () => {
     await expectRows(2);
   });
 
-  it("does NOT change the summary cards when filtering", async () => {
-    // Deliberate: the cards describe the whole history, so narrowing the table
-    // must never silently redefine "pass rate".
+  it("carries no summary cards for a filter to contradict", async () => {
+    // THIS TEST CHANGED SHAPE ON 2026-08-14 AND THE OLD SHAPE IS THE REASON.
+    // It used to assert that narrowing the table did NOT move the KPI cards,
+    // because the cards described the whole history while the table described
+    // the filtered slice — two numbers about different populations, one screen.
+    // The cards now live in the Outcomes category, which has no filter, so the
+    // contradiction is structurally impossible rather than merely tested for.
+    // What is asserted here is that they have not quietly come back: a copy on
+    // both screens is two places to fix a number, and a filtered "Pass rate"
+    // beside an unfiltered one is the exact confusion that motivated the move.
     renderView();
     await bodyRows();
-    const totalBefore = screen.getByText("Total runs").parentElement?.textContent;
-
     fireEvent.click(statusFilter("Failed"));
     await expectRows(2);
 
-    expect(screen.getByText("Total runs").parentElement?.textContent).toBe(totalBefore);
+    expect(screen.queryByText("Pass rate")).toBeNull();
+    expect(screen.queryByText("Total runs")).toBeNull();
+    expect(screen.queryByText(/pass \/ fail over time/i)).toBeNull();
   });
 
   it("shows a Clear control only while a filter is active", async () => {
@@ -337,21 +344,9 @@ describe("layout keeps the page's last controls reachable", () => {
     expect(content.lastElementChild?.contains(pagerBlock)).toBe(true);
   });
 
-  it("puts the chart above the summary cards", async () => {
-    // The shape of the last week is the thing you can read without reading — a
-    // rising red band answers "is something wrong?" before any number does. It
-    // used to sit below three panels of text. Asserted by DOM order, since
-    // jsdom can't see which is higher on screen.
-    renderView();
-    await bodyRows(1);
-    const content = scrollContent();
-    const chart = screen.getByText(/pass \/ fail/i).closest('[data-gl="panel"]')!;
-    const cards = screen.getByText("Pass rate").closest("div")!;
-    const kids = Array.from(content.children);
-    const idx = (el: Element) => kids.findIndex((k) => k.contains(el));
-    expect(idx(chart)).toBeGreaterThanOrEqual(0);
-    expect(idx(chart)).toBeLessThan(idx(cards));
-  });
+  // "puts the chart above the summary cards" moved with them, into
+  // outcomes-dashboard.test.tsx. Reading order is a property of the screen that
+  // renders them, and that is no longer this one.
 
   it("shows the filters, the table and the pager at the same time", async () => {
     // All three must coexist: a layout that hides any one of them is the bug.

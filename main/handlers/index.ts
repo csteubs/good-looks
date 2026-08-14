@@ -32,6 +32,7 @@ import { artifactStore } from "../services/artifact-store.js";
 import { baselineStore } from "../services/baseline-store.js";
 import { acceptRunBaseline, acceptStepBaseline } from "../services/visual-baseline-ops.js";
 import { acceptRunA11y, acceptStepA11y, resetA11yBaseline } from "../services/a11y-baseline-ops.js";
+import { rollupA11y, selectLatestA11yRuns } from "../../shared/a11y-rollup.mjs";
 import {
   dismissRunNotice,
   isRunNoticeKind,
@@ -1877,6 +1878,34 @@ export function registerHandlers(): void {
       return result;
     },
   );
+  /** The suite-wide accessibility picture, for the Stats category dashboard.
+   *
+   *  WHY THIS IS A HANDLER AND NOT A RENDERER COMPUTATION. A run record carries
+   *  only counts (`a11yChecks`, `a11yNewSteps`); which RULES fired lives inside
+   *  each run's `replay.json`. Rolling that up in the renderer would mean one
+   *  `artifacts:getReplay` round trip per test to draw one screen. This reads
+   *  the same files in the process that already has them open.
+   *
+   *  It reads the LATEST CHECKED RUN PER TEST, and it picks them with the same
+   *  function the tile does — `selectLatestA11yRuns` in `shared/`. A run whose
+   *  replay has been pruned simply drops out, which is the retention behaviour
+   *  every other artifact reader here has. */
+  ipcMain.handle("a11y:rollup", async () => {
+    const chosen = selectLatestA11yRuns(runHistoryStore.list());
+    const runs = [];
+    for (const run of chosen) {
+      const replay = artifactStore.readReplay(run.testId, run.id);
+      if (!replay) continue;
+      runs.push({
+        testId: replay.testId,
+        testName: replay.testName,
+        runId: replay.runId,
+        startedAt: replay.startedAt,
+        steps: replay.steps,
+      });
+    }
+    return rollupA11y(runs);
+  });
   /** Forget everything accepted for a test — the way back from an over-eager
    *  "accept run", which is otherwise irreversible. */
   ipcMain.handle("a11y:resetBaseline", async (_e, params: { testId: string }) =>

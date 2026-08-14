@@ -9,6 +9,8 @@
 //
 // Pure, so `check:visual-pipeline` can drive it without a browser.
 
+import { violationKey, keysOf } from "../../shared/a11y-rollup.mjs";
+
 /** One violation, compacted by the capture fixture. */
 export interface A11yViolation {
   /** axe rule id, e.g. "color-contrast" */
@@ -38,22 +40,17 @@ export const IMPACT_ORDER: A11yViolation["impact"][] = [
 ];
 
 /**
- * The identity of a violation, for baseline comparison.
+ * The identity of a violation, for baseline comparison — rule id AND node
+ * target, not rule id alone.
  *
- * Rule id AND node target, not rule id alone. Keying on the rule would mean
- * accepting one low-contrast label silently accepts every future contrast
- * failure anywhere on the page — the baseline would swallow exactly the
- * regressions it exists to let through.
+ * DEFINED IN `shared/a11y-rollup.mjs` AND RE-EXPORTED HERE. This file, the
+ * renderer's `a11y-format.ts` and the Stats rollup all need the same spelling,
+ * and the two that had their own copies carried "keep in sync" comments saying
+ * so. The direction drift fails is silent: two spellings mean an accepted
+ * violation stops matching its baseline entry, and the app reports a finding
+ * the user already dismissed.
  */
-export function violationKey(id: string, target: string): string {
-  return `${id}|${target}`;
-}
-
-/** Every key a violation covers — one per offending node. */
-export function keysOf(v: A11yViolation): string[] {
-  if (!v.nodes || v.nodes.length === 0) return [violationKey(v.id, "")];
-  return v.nodes.map((t) => violationKey(v.id, t));
-}
+export { violationKey, keysOf };
 
 /**
  * Compare a step's violations against its accepted baseline.

@@ -4,6 +4,7 @@
 // decision of what counts as NEW (it has the baseline); the renderer only needs
 // to know how to rank and phrase what it was handed.
 
+import { violationKey, keysOf } from "../../shared/a11y-rollup.mjs";
 import type { A11yResult, A11yViolation } from "./recorder-types";
 
 /** axe's own severity order, worst first. */
@@ -14,18 +15,13 @@ export const IMPACT_ORDER: A11yViolation["impact"][] = [
   "minor",
 ];
 
-/** Mirror of `violationKey` in main/services/a11y-diff.ts — keep in sync.
- *  Rule id AND node target: keying on the rule alone would make accepting one
- *  low-contrast label accept every future contrast failure on the page. */
-export function violationKey(id: string, target: string): string {
-  return `${id}|${target}`;
-}
-
-/** Every key a violation covers — one per offending node. */
-export function keysOf(v: A11yViolation): string[] {
-  if (!v.nodes || v.nodes.length === 0) return [violationKey(v.id, "")];
-  return v.nodes.map((t) => violationKey(v.id, t));
-}
+/** NO LONGER A MIRROR. Both of these used to be a hand-copy of the pair in
+ *  `main/services/a11y-diff.ts`, with a comment asking the next person to keep
+ *  them in sync. They are one definition in `shared/a11y-rollup.mjs` now and
+ *  re-exported here, because two spellings of a key mean an accepted violation
+ *  stops matching its baseline and the app reports a finding the user has
+ *  already dismissed — with nothing on screen or in a log to say why. */
+export { violationKey, keysOf };
 
 /**
  * The worst impact among a result's NEW violations, for badge colouring.

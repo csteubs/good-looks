@@ -29,6 +29,7 @@
 // you most want to look at it.
 
 import { missedRoutines } from "../../shared/routine-schedule.mjs";
+import { rollupA11y } from "../../shared/a11y-rollup.mjs";
 import {
   BATCHES,
   ROUTINES,
@@ -704,6 +705,27 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       }
       return REPLAY;
     },
+    /** The Stats a11y dashboard's rollup.
+     *
+     *  Computed from the fixture replay with the REAL `rollupA11y`, not
+     *  hand-written. A hand-written answer here would let the preview show a
+     *  severity breakdown the shipped code could never produce — which is the
+     *  one thing a preview must not do, since it is where the screen gets
+     *  looked at. It also means accepting a violation in the Visual view
+     *  changes this screen, exactly as it does in the app. */
+    "a11y:rollup": () =>
+      // ONE run, because the fixture has one replay. Mapping over the summaries
+      // would hand the same replay in once per summary and double every count,
+      // which is how this first rendered "2 serious" over a single finding.
+      rollupA11y([
+        {
+          testId: REPLAY.testId,
+          testName: REPLAY.testName,
+          runId: REPLAY.runId,
+          startedAt: REPLAY.startedAt,
+          steps: REPLAY.steps,
+        },
+      ]),
     "a11y:acceptRun": (): RunReplay => {
       for (const step of REPLAY.steps) {
         if (!step.a11y) continue;

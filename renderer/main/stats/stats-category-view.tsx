@@ -22,7 +22,6 @@
 import * as React from "react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight } from "lucide-react";
 
 import { Panel, TONE, Verdict } from "../../theme";
 import { api } from "../../lib/api";
@@ -30,17 +29,35 @@ import {
   categoryMeta,
   facetLabel,
   isMeasured,
-  summariseHeals,
-  summariseStability,
+  summariseAll,
+  type CategoryId,
   type CategorySummary,
 } from "../../lib/stats-categories";
 import { VERDICT_COPY } from "../flake-panel";
 import type { HealListEntry, StabilityVerdict, TestFlake } from "../../lib/recorder-types";
+import { DrillRow, ExitRow } from "./rows";
+import { OutcomesDashboard, OutcomesLeaf } from "./outcomes-dashboard";
+import { A11yDashboard, A11yLeaf } from "./a11y-dashboard";
+import { VisualDashboard, VisualLeaf } from "./visual-dashboard";
+import { SpeedDashboard, SpeedLeaf } from "./speed-dashboard";
+import { StepsDashboard, StepsLeaf } from "./steps-dashboard";
 
-/** The categories with a dashboard built. The board renders the rest as tiles
- *  that state why they do not open — a map that omits where you cannot go yet
- *  is a map you stop trusting. */
-export const BUILT = ["stability", "heals"] as const;
+/** The categories with a dashboard built.
+ *
+ *  ALL SEVEN as of 2026-08-14. It stays a list rather than becoming
+ *  `CATEGORIES.map(c => c.id)`, because the next category added to the registry
+ *  will not have a dashboard on the day it is added, and a tile that opens a
+ *  screen saying "not built yet" is worse than one that says so up front.
+ *  `check:stats-categories` proves every id in here actually has a body. */
+export const BUILT = [
+  "outcomes",
+  "stability",
+  "heals",
+  "a11y",
+  "visual",
+  "speed",
+  "steps",
+] as const;
 
 // ── The header block ──────────────────────────────────────────────────
 
@@ -53,7 +70,6 @@ export const BUILT = ["stability", "heals"] as const;
  *  structure and starts reading as a mistake. The panel keeps its box, which is
  *  what separates the headline from the breakdown below it. */
 function CategoryHead({ summary }: { summary: CategorySummary }) {
-  const meta = categoryMeta(summary.id)!;
   const measured = isMeasured(summary.state);
   return (
     <Panel>
@@ -70,54 +86,17 @@ function CategoryHead({ summary }: { summary: CategorySummary }) {
             {summary.state === "unavailable" ? "No data" : "Not checked"}
           </span>
         )}
-        <p className="gl-cat-say">{measured ? `${summary.display} ${meta.unit}` : summary.say}</p>
+        {/* THE SUMMARISER'S OWN SENTENCE, in every state.
+            It used to be `display + unit` when measured, and a registry `unit`
+            is a fixed plural — so a category with exactly one finding read "1
+            steps carry violations you haven’t accepted". Every summariser
+            already pluralises its `say` around the same number, so this is one
+            sentence written once rather than a second phrasing assembled here.
+            The tile keeps `unit`, where it is a column label with no number
+            beside it and reads correctly. */}
+        <p className="gl-cat-say">{summary.say}</p>
       </div>
     </Panel>
-  );
-}
-
-/** A drillable row: a label, a count, and a chevron. The whole row is the
- *  button — a chevron you have to hit is a target the width of a character. */
-function DrillRow({
-  label,
-  count,
-  detail,
-  tone,
-  onClick,
-}: {
-  label: string;
-  count: number;
-  detail: string;
-  tone?: keyof typeof TONE | null;
-  onClick: () => void;
-}) {
-  return (
-    <button type="button" className="gl-drill" onClick={onClick}>
-      <span className="gl-drill-label">{label}</span>
-      <span className="gl-drill-count" style={tone ? { color: TONE[tone] } : undefined}>
-        {count}
-      </span>
-      <span className="gl-drill-detail">{detail}</span>
-      <ChevronRight aria-hidden="true" className="gl-drill-arrow" />
-    </button>
-  );
-}
-
-/** A row that leaves Stats for the thing it names. Every leaf has these. */
-function ExitRow({ name, detail, onOpen }: { name: string; detail: string; onOpen: () => void }) {
-  return (
-    <div className="gl-exit">
-      <div className="gl-rowline">
-        <div className="gl-rowline-main">{name}</div>
-        <div className="gl-rowline-sub">{detail}</div>
-      </div>
-      {/* Cyan, which the palette declares "running / live / focus" and which
-          `check:selection-neutral` allows on a focus affordance. It is not
-          reporting an outcome — it is the way out. */}
-      <button type="button" className="gl-exit-go" onClick={onOpen}>
-        Open test ›
-      </button>
-    </div>
   );
 }
 
@@ -326,13 +305,36 @@ export function StatsCategoryView(): React.ReactElement {
   const category = params.category ?? "";
   const facet = params.facet;
 
-  // Same query keys the board and the panels use, so arriving here costs no
-  // round trip and going back costs none either.
+  const meta = categoryMeta(category);
+
+  // THE SAME QUERY KEYS THE BOARD AND THE LANDING'S PANELS USE, so arriving
+  // here costs no round trip and going back costs none either (plan §8.9).
   const flakeQuery = useQuery({ queryKey: ["flake"], queryFn: () => api.runs.flake() });
   const healsQuery = useQuery({ queryKey: ["heals", "all"], queryFn: () => api.heals.listAll() });
   const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
-
-  const meta = categoryMeta(category);
+  const replaysQuery = useQuery({ queryKey: ["replays"], queryFn: api.artifacts.list });
+  const stepHealthQuery = useQuery({
+    queryKey: ["metrics", "stepHealth"],
+    queryFn: () => api.metrics.stepHealth(),
+  });
+  const slownessQuery = useQuery({
+    queryKey: ["metrics", "slowness"],
+    queryFn: () => api.metrics.slowness(),
+  });
+  const overheadQuery = useQuery({
+    queryKey: ["captureOverhead"],
+    queryFn: () => api.runs.captureOverhead(),
+  });
+  // THE ONE QUERY NOTHING ELSE MAKES. Every other key above is already warm
+  // from the board; this one opens each test's replay file on disk, so it is
+  // fetched only while you are actually standing on the a11y category rather
+  // than on every visit to any of the seven. It is in RUN_DERIVED_KEYS, so a
+  // finished run still marks it stale.
+  const a11yQuery = useQuery({
+    queryKey: ["a11y-rollup"],
+    queryFn: () => api.a11y.rollup(),
+    enabled: meta?.id === "a11y",
+  });
 
   const openTest = (id: string) => navigate({ to: "/test/$id", params: { id } });
 
@@ -358,29 +360,41 @@ export function StatsCategoryView(): React.ReactElement {
   const flake = flakeQuery.data;
   const heals = healsQuery.data;
   const runs = runsQuery.data;
+  const replays = replaysQuery.data;
+  const stepHealth = stepHealthQuery.data;
+  const slowness = slownessQuery.data;
 
+  // THE HEADLINE COMES FROM THE SAME SUMMARISER THE TILE USED. Recomputing it
+  // here — even "the same way" — is how a category comes to state one number on
+  // the board and a different one on its own screen. A category whose query has
+  // not resolved is absent from this list rather than given a state, which is
+  // why the lookup can legitimately find nothing and render no head at all.
   const summary: CategorySummary | null =
-    meta.id === "stability" && flake
-      ? summariseStability(flake)
-      : meta.id === "heals" && heals && runs
-        ? summariseHeals(heals, runs)
-        : null;
+    summariseAll({ runs, flake, heals, replays, stepHealth, slowness }).find(
+      (s) => s.id === (meta.id as CategoryId),
+    ) ?? null;
 
+  const drill = (f: string) =>
+    navigate({ to: "/stats/$category/$facet", params: { category: meta.id, facet: f } });
+
+  // EVERY BRANCH WAITS FOR ITS OWN DATA, and "loading" is never rendered as an
+  // empty result. A dashboard drawn from an unresolved query says "no findings"
+  // in the most confident possible voice.
   const body = (() => {
+    if (meta.id === "outcomes") {
+      if (!runs) return <p className="gl-panel-note">Loading…</p>;
+      return facet ? (
+        <OutcomesLeaf facet={facet} runs={runs} onOpenTest={openTest} />
+      ) : (
+        <OutcomesDashboard runs={runs} overhead={overheadQuery.data} onDrill={drill} />
+      );
+    }
     if (meta.id === "stability") {
       if (!flake) return <p className="gl-panel-note">Loading…</p>;
       return facet ? (
         <StabilityLeaf verdict={facet} tests={flake.tests} onOpenTest={openTest} />
       ) : (
-        <StabilityDashboard
-          tests={flake.tests}
-          onDrill={(v) =>
-            navigate({
-              to: "/stats/$category/$facet",
-              params: { category: meta.id, facet: v },
-            })
-          }
-        />
+        <StabilityDashboard tests={flake.tests} onDrill={drill} />
       );
     }
     if (meta.id === "heals") {
@@ -390,18 +404,50 @@ export function StatsCategoryView(): React.ReactElement {
       ) : (
         <HealsDashboard
           heals={heals}
-          onDrill={(f) =>
-            navigate({
-              to: "/stats/$category/$facet",
-              params: { category: meta.id, facet: f },
-            })
-          }
+          onDrill={drill}
           onOpenHeals={() => navigate({ to: "/heals" })}
         />
       );
     }
-    // A category the board should not have opened. Reachable by typing a route,
-    // so it says what it will show rather than rendering an empty screen.
+    if (meta.id === "a11y") {
+      if (!a11yQuery.data) return <p className="gl-panel-note">Loading…</p>;
+      return facet ? (
+        <A11yLeaf facet={facet} rollup={a11yQuery.data} onOpenTest={openTest} />
+      ) : (
+        <A11yDashboard rollup={a11yQuery.data} onDrill={drill} />
+      );
+    }
+    if (meta.id === "visual") {
+      if (!replays) return <p className="gl-panel-note">Loading…</p>;
+      return facet ? (
+        <VisualLeaf facet={facet} replays={replays} onOpenTest={openTest} />
+      ) : (
+        <VisualDashboard
+          replays={replays}
+          onDrill={drill}
+          onOpenVisual={() => navigate({ to: "/visual" })}
+        />
+      );
+    }
+    if (meta.id === "speed") {
+      if (!slowness) return <p className="gl-panel-note">Loading…</p>;
+      return facet ? (
+        <SpeedLeaf facet={facet} slowness={slowness} onOpenTest={openTest} />
+      ) : (
+        <SpeedDashboard slowness={slowness} onDrill={drill} />
+      );
+    }
+    if (meta.id === "steps") {
+      if (!stepHealth) return <p className="gl-panel-note">Loading…</p>;
+      return facet ? (
+        <StepsLeaf facet={facet} stepHealth={stepHealth} onOpenTest={openTest} />
+      ) : (
+        <StepsDashboard stepHealth={stepHealth} onDrill={drill} />
+      );
+    }
+    // Unreachable while `BUILT` and this switch agree, which
+    // `check:stats-categories` proves. Kept as the honest fallback rather than
+    // a throw: a blank screen in a packaged build is worse than a sentence.
     return (
       <Panel title={meta.label}>
         <p className="gl-panel-note">

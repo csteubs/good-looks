@@ -2,11 +2,29 @@
 
 Written 2026-08-10, against `claude/stats-category-components-5k95rt`.
 
-> **Status: PRs 1 and 2 are built.** The B7 reskin landed first, then the
-> registry, the board, the routes, the breadcrumb trail, `check:stats-categories`
-> and the Stability and Auto-Heal dashboards. What is left is §10's PRs 3–5:
-> Outcomes and the landing rearrange, the a11y summariser and its severity drill,
-> and the remaining three dashboards.
+> **Status: built, 2026-08-14.** PRs 1 and 2 landed on 2026-08-10 (the B7
+> reskin, then the registry, board, routes, breadcrumb trail,
+> `check:stats-categories` and the Stability and Auto-Heal dashboards). PRs 3–5
+> landed together on 2026-08-14: all seven categories now open. Three
+> corrections to what §10 assumed, recorded because the plan was written before
+> the landing grew its Digest, Cost and Report panels:
+>
+> - **PR 5 was smaller than planned.** Speed & cost and Step health wrap
+>   `SuiteCostPanel` and `StepHealthPanel`, which the landing already rendered,
+>   rather than building new tables.
+> - **PR 4 needed no new summariser file beyond the rollup.** `shared/a11y-rollup.mjs`
+>   carries `rollupA11y` AND `selectLatestA11yRuns` AND the violation identity
+>   pair, which collapsed two existing hand-copies.
+> - **PR 3's landing rearrange was done in part, deliberately.** The chart, KPI
+>   cards and capture overhead moved into Outcomes. The run table, its filters,
+>   pagination and log search STAYED: that is a run explorer answering "find me
+>   that run", it pairs with the Manage-data menu in the same header, and moving
+>   it would have relocated ~200 lines of filter and pagination logic for no
+>   gain in what the category answers.
+>
+> §11's open question 1 is answered: the trail stops at THREE levels. A severity
+> opens its rules and a rule row exits to the test; a fourth level is more route
+> surface for a screen the user opens to decide which test to go fix.
 >
 > Options were settled in two rounds with the maintainer on 2026-08-10. The
 > choices are in §0; the alternatives are kept beside each one, because a
