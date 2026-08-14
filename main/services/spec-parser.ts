@@ -317,7 +317,27 @@ function parseLocator(expr: string): { locator: Locator; rest: string } | null {
     const v = firstStringLiteral(argsStr);
     locator = { k, v: v ? unescapeLit(v) : "" };
   }
-  return { locator, rest: expr.slice(end + 1) };
+  let rest = expr.slice(end + 1);
+  // `.nth(k)` is part of the LOCATOR, not a refinement to be refused.
+  //
+  // The generator emits it (`locatorExpr`), and this parser could not read it
+  // back — so `page.getByText("Save").nth(1).click()` matched no action shape
+  // and the WHOLE STEP was dropped on re-parse. Not the index: the step. Every
+  // hand edit of the Script tab and every applied AI fix silently deleted the
+  // recorder's own output for exactly the steps that needed an index, which are
+  // the ones where no unique locator existed.
+  //
+  // Deliberately narrow, and deliberately not the same decision as `.first()`
+  // / `.filter()` / `.or()`. Those are refinements the app has no field for, so
+  // storing the base locator would regenerate a selector matching the wrong
+  // element and they stay counted-as-unclassified (see the note on the refined
+  // chain below). `nth` has a field, `Locator.nth`, with the same meaning.
+  const nthM = rest.match(/^\s*\.nth\(\s*(\d+)\s*\)/);
+  if (nthM) {
+    locator = { ...locator, nth: parseInt(nthM[1], 10) };
+    rest = rest.slice(nthM[0].length);
+  }
+  return { locator, rest };
 }
 
 function makeStep(type: StepType, partial: Partial<Step>): Step {
@@ -1087,13 +1107,19 @@ function parseBody(
       // includes the `await page.getByRole(...)` text) — parseLocator's regex
       // anchors on the builder name, so it needs the name, not just the args
       // slice that starts at the open paren.
-      const parsed = parseLocator(src.slice(i, locClose + 1));
+      // `.nth(k)` sits BETWEEN the builder and the action, so the action match
+      // below has to start past it — otherwise the statement matches no action
+      // shape and the whole step is dropped rather than losing just its index.
+      // `parseLocator` reads the index itself; this only moves the cursor.
+      const nthAfter = src.slice(locClose + 1).match(/^\s*\.nth\(\s*\d+\s*\)/);
+      const locEnd = locClose + (nthAfter ? nthAfter[0].length : 0);
+      const parsed = parseLocator(src.slice(i, locEnd + 1));
       if (parsed) {
-        const after = src.slice(locClose + 1);
+        const after = src.slice(locEnd + 1);
         const actionM = after.match(new RegExp(`^\\s*\\.(${LOCATOR_ACTION_RE})\\s*\\(`));
         if (actionM) {
           const action = actionM[1];
-          const aOpen = locClose + 1 + after.indexOf("(", actionM[0].length - 1);
+          const aOpen = locEnd + 1 + after.indexOf("(", actionM[0].length - 1);
           const aClose = matchParen(src, aOpen);
           if (aClose >= 0) {
             const step = locatorActionStep(parsed.locator, action, src.slice(aOpen + 1, aClose));

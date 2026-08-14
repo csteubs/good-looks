@@ -3,7 +3,15 @@
 // it so the same rules apply if test-step generation is ever added.
 
 import type { LlmMessage } from "./llm-types";
+import { ASSERT_KINDS } from "./recorder-types";
 import type { Locator, TestSpeed } from "./recorder-types";
+// The SAME table the generator and the trainer's replayer read. The prompt used
+// to transcribe this — and it drifted: it listed 15 of the 17 kinds, and said
+// nothing about `title` being an EXACT whole-title match, so a model asked for
+// "the title mentions Checkout" had exactly one expressible answer and it was
+// the wrong one. Deriving it means a kind added to the app is a kind the model
+// can reach on the same commit.
+import { ASSERT_SEMANTICS } from "../../shared/step-semantics.mjs";
 import { logRequestProtocol, type LogRequestNeed } from "./ai-log-request";
 // The runner's own table, not a copy of it. The model is told what the run
 // ACTUALLY did, so a stale number here is the app confidently stating a wrong
@@ -31,6 +39,7 @@ This app's generated specs always follow these conventions — treat a violation
   Bad:  await page.click('.btn-submit');
   Good: await page.getByRole('button', { name: 'Submit' }).click();
 - No page.waitForTimeout(). Waits should be web-first assertions instead, e.g. expect(locator).toBeVisible() or expect(locator).toContainText().
+- A page-level URL or title assertion says which match it means through the ARGUMENT SHAPE, and a bare string is the strictest one: expect(page).toHaveURL("/cart") is an EXACT whole-URL match, not "contains", and it cannot pass against a real page when given a path. "Contains" is an unanchored RegExp — expect(page).toHaveURL(new RegExp("/cart", "i")) — "ends with" anchors with $, and exact anchors with ^…$. The same holds for toHaveTitle. Reading a bare string as "contains" is the commonest mistake made against this app's specs.
 
 Playwright runs in STRICT MODE, and "strict mode violation: <locator> resolved to N elements" is a locator that is ambiguous, NOT one that is wrong or missing. Read the rest of that error before asking for anything: Playwright lists the elements it matched and prints a disambiguated locator for each one after the word "aka". Those are generated from the live page at the moment of failure, so prefer one of them over a locator you invent. Narrow by scoping to an ancestor (page.getByTestId("nav").getByRole("link", { name: "Browser" })) rather than by adding .first() or .nth(), which pick by DOM order and break the next time the page reorders.
 
@@ -40,7 +49,9 @@ Output format:
 - Start with a 1-2 sentence diagnosis of the most likely root cause, in plain prose. Do not use markdown headings (#) or bold (**).
 - Put ALL code inside fenced code blocks using triple backticks with a "ts" language tag, so it is clearly separated from your explanation. Never write code inline in a prose sentence.
 - When you can suggest a concrete fix, output the COMPLETE corrected spec as a single fenced code block: the entire file from the imports down, ready to save and run — not just the changed lines. Keep everything that was already correct exactly as-is; only change what is needed for the fix. The app shows this block to the user as a one-click "Apply to script", so it must be the whole, self-contained, valid file (it must still contain the imports and the test(...) call).
-- If the run output lacks enough detail to diagnose, say what additional information would help instead of guessing, and do NOT output a code block.`;
+- If the run output lacks enough detail to diagnose, say what additional information would help instead of guessing, and do NOT output a code block.
+
+Applying your spec REPLACES the user's step list, which is rebuilt by re-reading the file — so keep the shapes the reader understands. Write each action as one self-contained statement (await page.<builder>(...).<action>(...);). A .nth(k) between the builder and the action is fine and is how this app pins one of several matches; .first(), .filter() and .or() are not, and a step written that way is lost on the way back in. Do not bind locators to variables or wrap anything in test.step(...). Leave any "// UNGENERATABLE STEP" comment exactly where it is: it marks a step the user has that this app could not turn into code, and deleting it deletes their step.`;
 
 export interface DebugContext {
   testName: string;
@@ -107,6 +118,17 @@ export function describeSending(ctx: DebugContext): SendingItem[] {
   // the machine, which is the same failure as understating it.
   if (ctx.logsAvailable) {
     items.push({ label: "Console & network, if the model asks for them", chars: null });
+  }
+  // Page structure is a SEPARATE offer with a separate flag, and it was missing
+  // here — so the strip understated what could leave the machine. Its payload is
+  // page-authored DOM: ids, class names, aria-labels and up to 120 characters of
+  // text per element, for up to 20 elements per failing step. An inaccurate
+  // privacy disclosure is worse than none, because it is trusted.
+  if (ctx.structureAvailable) {
+    items.push({
+      label: "Page structure — the elements the failing locator matched, if the model asks",
+      chars: null,
+    });
   }
   return items;
 }
@@ -179,11 +201,19 @@ const STEP_DEBUG_SYSTEM_PROMPT = `You are an expert QA automation engineer embed
 
 The recorder's steps use Playwright-style locators. Locator kinds: getByRole (with aria role + accessible name), getByLabel, getByPlaceholder, getByText, getByTestId, and raw CSS/XPath locator(). Prefer the semantic kinds over CSS/XPath; a raw CSS locator often means the recorder couldn't find a better handle and is a common source of flaky selectors.
 
-Common causes of a single-step replay failure:
+The trainer replays the step against the live page using the SAME matching rules a real run uses — including Playwright's strict mode — so its verdict is about the step, not about the preview.
+
+Common causes of a single-step replay failure. Match the error text before choosing one; several of these look alike and have opposite fixes:
+- "Locator matched N elements (strict mode violation)" — the locator is AMBIGUOUS, not wrong and not missing. It matches too much, so do not propose a different locator for the same element: narrow the one there is, by scoping to an ancestor (page.getByTestId("nav").getByRole("link", { name: "Save" })). An index is the last resort, because it picks by DOM order and breaks when the page reorders. Note this error comes from the trainer, not from Playwright, so it does NOT list the elements it matched or print "aka" alternatives — ask for the page structure if you need to see them.
+- "Element is covered by <something>" / "another element is on top of this one" — the element is present and visible; something is drawn over its click point, so a real run fails with "element intercepts pointer events". The named element is usually a cookie banner, a modal or a sticky header. The fix is a step that dismisses or scrolls past it, NOT a wait and NOT a new locator — expect(locator).toBeVisible() will PASS here and change nothing.
+- "No option matching ..." — a select step whose option is gone or renamed. The log lists the options the element actually offers; pick from those.
+- "Attribute X is not present" — a missing attribute is not an attribute equal to "". Either the attribute went away or the assertion wants a different one.
 - The element isn't on the page yet (race condition) — the step ran before the page settled. Suggest a web-first wait (expect(locator).toBeVisible()) or reordering the step.
-- The locator no longer matches the page (the element's role/label/text changed, or it's behind a shadow root). Suggest a more robust locator for the same element.
+- The locator no longer matches the page — it resolved to NOTHING (the element's role/label/text changed, or it's behind a shadow root). Suggest a more robust locator for the same element.
 - The action itself is wrong for the element (e.g. fill on a non-input, click on a disabled control). Suggest the correct action.
 - A navigation the previous step triggered hasn't completed.
+
+If the step's locator ends in .nth(k), it is pinned to the k-th match (0-based). "Matched nothing" for such a locator usually means the page now has FEWER than k+1 matches — the element is not necessarily gone.
 
 Output format:
 - Start with a 1-2 sentence diagnosis of the most likely root cause, in plain prose. Do not use markdown headings (#) or bold (**).
@@ -237,6 +267,7 @@ This app's generated specs always follow these conventions — follow them exact
   Bad:  await page.click('.btn-submit');
   Good: await page.getByRole('button', { name: 'Submit' }).click();
 - No page.waitForTimeout(). Waits must be web-first assertions, e.g. expect(locator).toBeVisible() or expect(locator).toContainText().
+- A page-level URL or title assertion says which match it means through the ARGUMENT SHAPE, and a bare string is the strictest one: expect(page).toHaveURL("/cart") is an EXACT whole-URL match, not "contains", and it cannot pass against a real page when given a path. "Contains" is an unanchored RegExp — expect(page).toHaveURL(new RegExp("/cart", "i")) — "ends with" anchors with $, and exact anchors with ^…$. The same holds for toHaveTitle. Reading a bare string as "contains" is the commonest mistake made against this app's specs.
 - Start every test by navigating to the requested URL with await page.goto(...).
 - If a browser viewport is specified in the user message, the very first line inside the test(...) body (before goto) must be await page.setViewportSize({ width: <w>, height: <h> }) using the exact dimensions given. Never substitute your own default viewport size.
 - Add assertions that verify the user's intent, not just that actions ran.
@@ -309,6 +340,32 @@ export function buildGenerateMessages(ctx: GenerateContext): LlmMessage[] {
 // editable list — the user can then reorder, edit, and replay them before
 // generating the spec. Mirrors mabl's AI Test Creation Agent building steps.
 
+
+/** The page-level assert kinds, each with the rule it actually matches by.
+ *
+ *  Built from `ASSERT_SEMANTICS` rather than written out, so the prompt cannot
+ *  describe a match rule the generator does not implement. */
+function assertKindRules(): string {
+  const verb = (kind: string): string => {
+    const s = ASSERT_SEMANTICS[kind];
+    if (!s) return "";
+    const base =
+      s.match === "exact"
+        ? "must equal the whole value exactly"
+        : s.match === "endsWith"
+          ? "must be the END of the value"
+          : "must appear ANYWHERE in the value";
+    return `${base}, ${s.caseSensitive ? "case-sensitive" : "ignoring case"}`;
+  };
+  return [
+    `      - "url": ${verb("url")}. Use a path or host fragment, not the whole URL — the origin differs between environments.`,
+    `      - "urlEndsWith": ${verb("urlEndsWith")}.`,
+    `      - "urlIs": ${verb("urlIs")}. Needs the absolute URL; anything shorter can never pass.`,
+    `      - "title": ${verb("title")}. A page titled "Cart | Acme" does NOT satisfy a "title" of "Cart".`,
+    `      - "titleContains": ${verb("titleContains")}. This is the one to use when you mean the title merely mentions something.`,
+  ].join("\n");
+}
+
 const GENERATE_STEPS_SYSTEM_PROMPT = `You are an expert QA automation engineer embedded in a Playwright test recorder. Turn a natural-language description into an ordered list of test STEPS as JSON, matching the recorder's own step model exactly.
 
 Output format:
@@ -320,7 +377,11 @@ Output format:
   - fill/select: { "type": "fill", "locator": {...}, "value": "..." }
   - press: { "type": "press", "value": "Enter", "locator": {...} }  (locator optional)
   - assert: { "type": "assert", "assert": <kind>, "locator": {...}, "text": "...", "value": "...", "attr": "...", "count": 1, "soft": false }
-    assert kinds: "visible", "hidden", "text", "exactText", "enabled", "disabled", "checked", "unchecked", "value", "attribute", "count", "url", "urlEndsWith", "urlIs", "title". "url"/"urlEndsWith"/"urlIs"/"title" are page-level and need no locator; use "value" for the expected string ("url" = contains, "urlEndsWith" = ends with, "urlIs" = exact match). "text"/"exactText" use "text". "value" uses "value". "attribute" uses "attr"+"value". "count" uses "count".
+    assert kinds: ${ASSERT_KINDS.map((k) => JSON.stringify(k)).join(", ")}.
+    "url"/"urlEndsWith"/"urlIs"/"title"/"titleContains" are page-level and need no locator; use "value" for the expected string. Their match rules are exact and differ — pick by what you actually mean:
+${assertKindRules()}
+    "text"/"exactText" use "text". "value" uses "value". "attribute" uses "attr"+"value". "count" uses "count". "css" uses "cssProp" (kebab-case) + "value", and "cssMatch": "is" | "contains".
+    An assert with an EMPTY expected value is refused outright rather than generated — an empty "contains" matches every page, so it would be a green assertion that tests nothing. Always give a value.
   - wait: { "type": "wait", "waitMs": 1000 }  (or omit waitMs and give a "locator" to wait for it)
     A wait can also block on a condition instead: { "type": "wait", "waitUntil": <kind>, "locator": {...}, "timeoutMs": 10000 }. waitUntil kinds: "visible", "hidden", "exists", "enabled", "disabled", "checked", "unchecked", "text", "value", "count", "urlContains", "titleContains". "text" uses "text"; "value"/"urlContains"/"titleContains" use "value"; "count" uses "count". "urlContains"/"titleContains" are page-level and need no locator. Prefer a conditional wait over a fixed waitMs — a duration that is too short is flaky and one that is too long is slow.
   - viewport: { "type": "viewport", "width": <width>, "height": <height> } — ALWAYS emit a viewport step FIRST (before any action), using the exact width and height from the "Browser viewport" line in the user message. If no viewport is specified, use 1280x800.
@@ -355,7 +416,27 @@ export interface GenerateStepsContext {
 
 // Render a Locator back into the Playwright-style expression the model recognizes,
 // so the prompt's selector context matches the recorder's own locator vocabulary.
+/**
+ * A recorded locator as the Playwright expression the spec actually contains.
+ *
+ * `.nth(k)` is part of that expression and was silently dropped here, so the
+ * model was shown `getByText("Save")` for a step whose line is
+ * `getByText("Save").nth(3)`. Two ways that misleads, both of which produce
+ * confident wrong advice on the most fragile steps in a suite (an index is only
+ * ever written when nothing unique existed):
+ *
+ *  • The step-debug prompt names a locator that cannot produce the failure.
+ *  • The structure payload reports what the REFINED locator matched, so a
+ *    `.nth(3)` step on a page that now has three matches reports zero — and
+ *    with the index hidden, "matched nothing" reads as "the element is gone"
+ *    rather than "the index is one past the end".
+ */
 export function locatorToPrompt(l: Locator): string {
+  const base = locatorBase(l);
+  return typeof l.nth === "number" ? `${base}.nth(${l.nth})` : base;
+}
+
+function locatorBase(l: Locator): string {
   switch (l.k) {
     case "testid":
       return `getByTestId(${JSON.stringify(l.v ?? "")})`;

@@ -2,6 +2,11 @@
 // panel can render suggested code changes as distinct, copyable blocks and offer
 // to apply a corrected spec. Written to tolerate a still-streaming response.
 
+import {
+  ASSERT_KINDS as ALL_ASSERT_KINDS,
+  LOCATOR_KINDS as ALL_LOCATOR_KINDS,
+  WAIT_UNTIL_KINDS as ALL_WAIT_UNTIL_KINDS,
+} from "./recorder-types";
 import type { AssertKind, LocatorKind, RawStep, StepType, WaitUntilKind } from "./recorder-types";
 
 export type ResponseSegment =
@@ -72,6 +77,11 @@ export function extractCorrectedScript(text: string): string | null {
 
 // ── Structured step extraction (AI "generate steps") ───────────────────
 
+// Deliberately a SUBSET of the real `STEP_TYPES`, unlike the three lists below.
+// The AI-steps flow generates a flat sequence of actions and assertions; `if`,
+// `endif`, `cookie`, `capture`, `runFlow` and `state` are composed in the
+// trainer and are not the model's to emit. Narrow on purpose, so a check that
+// pins the others must not pin this one.
 const STEP_TYPES = new Set<StepType>([
   "goto",
   "click",
@@ -84,44 +94,16 @@ const STEP_TYPES = new Set<StepType>([
   "wait",
   "viewport",
 ]);
-const ASSERT_KINDS = new Set<AssertKind>([
-  "visible",
-  "hidden",
-  "text",
-  "exactText",
-  "enabled",
-  "disabled",
-  "checked",
-  "unchecked",
-  "value",
-  "attribute",
-  "count",
-  "url",
-  "title",
-]);
-const WAIT_UNTIL_KINDS = new Set<WaitUntilKind>([
-  "visible",
-  "hidden",
-  "exists",
-  "enabled",
-  "disabled",
-  "checked",
-  "unchecked",
-  "text",
-  "value",
-  "count",
-  "urlContains",
-  "titleContains",
-]);
-const LOCATOR_KINDS = new Set<LocatorKind>([
-  "testid",
-  "role",
-  "label",
-  "placeholder",
-  "text",
-  "css",
-  "xpath",
-]);
+// Derived from the mirror lists, NOT hand-written.
+//
+// These were three transcribed copies, and the assert one had drifted: it
+// omitted `urlEndsWith`, `urlIs` and `css` while the prompt actively told the
+// model to emit `urlEndsWith`. `validateStep` drops an assert step with no
+// recognised kind, so those steps vanished with no error and no count — the
+// user got fewer steps than the model wrote and nothing said why.
+const ASSERT_KINDS = new Set<AssertKind>(ALL_ASSERT_KINDS);
+const WAIT_UNTIL_KINDS = new Set<WaitUntilKind>(ALL_WAIT_UNTIL_KINDS);
+const LOCATOR_KINDS = new Set<LocatorKind>(ALL_LOCATOR_KINDS);
 
 function str(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
@@ -139,11 +121,16 @@ function validateStep(raw: unknown): RawStep | null {
   const step: RawStep = { type };
   const loc = o.locator as Record<string, unknown> | undefined;
   if (loc && typeof loc === "object" && LOCATOR_KINDS.has(loc.k as LocatorKind)) {
+    // `nth` carried through, because the model is now told it may pin down
+    // which of several matches it means. Without it a step against a page with
+    // two "Save" buttons is a strict-mode failure the model had no way to avoid.
+    const nth = num(loc.nth);
     step.locator = {
       k: loc.k as LocatorKind,
       v: str(loc.v),
       role: str(loc.role),
       name: str(loc.name),
+      ...(nth !== undefined && nth >= 0 ? { nth: Math.trunc(nth) } : {}),
     };
   }
   const value = str(o.value);
@@ -152,6 +139,9 @@ function validateStep(raw: unknown): RawStep | null {
   if (url !== undefined) step.url = url;
   const text = str(o.text);
   if (text !== undefined) step.text = text;
+  const cssProp = str(o.cssProp);
+  if (cssProp !== undefined) step.cssProp = cssProp;
+  if (o.cssMatch === "is" || o.cssMatch === "contains") step.cssMatch = o.cssMatch;
   const label = str(o.label);
   if (label !== undefined) step.label = label;
   if (ASSERT_KINDS.has(o.assert as AssertKind)) step.assert = o.assert as AssertKind;

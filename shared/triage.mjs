@@ -96,6 +96,16 @@ export const TRIAGE_COHORT = 30;
  *  `<ms>` and there is no point matching digits. */
 const WAIT_FAILURE = /timeout|timed out|waiting for|not visible|to be visible|exceeded/i;
 
+/** An AMBIGUOUS locator — one that matched several elements.
+ *
+ *  Checked BEFORE `WAIT_FAILURE`, because a strict-mode violation's text also
+ *  contains "Timeout … exceeded" and "waiting for locator", so it matched the
+ *  wait shape and came out as `clean-wait` — whose advice is "re-pick the
+ *  failing step's element". That is the one fix guaranteed not to work: the
+ *  picker hands back the same non-unique locator. Two spellings, because the
+ *  app's own trainer reports this in its own words rather than Playwright's. */
+const AMBIGUOUS_FAILURE = /strict mode violation|resolved to \d+ elements|matched \d+ elements/i;
+
 function num(v) {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
@@ -275,7 +285,18 @@ export function triageRun({ run, steps = [], siblings = [], stepHistory = null }
     // gated on the dropped counts. "We waited for something that never came,
     // while the network and console stayed clean" is the classic wrong-locator
     // shape — but only if we can believe the clean part.
-    const looksLikeWait = WAIT_FAILURE.test(run.error_signature ?? "");
+    const sig = run.error_signature ?? "";
+    // Ambiguity first: it is a WAIT-shaped error with an opposite fix, so
+    // letting it fall through to `clean-wait` produces confident wrong advice.
+    if (AMBIGUOUS_FAILURE.test(sig)) {
+      add(
+        "ambiguous-locator",
+        "runner",
+        MODERATE,
+        "The step's locator matched several elements, so Playwright refused it rather than picking one — the page is fine and the locator is too broad.",
+      );
+    }
+    const looksLikeWait = !AMBIGUOUS_FAILURE.test(sig) && WAIT_FAILURE.test(sig);
     const netClean = (worst === null || worst < 400) && (worstApi === null || worstApi < 400);
     const consoleClean = !num(failing.console_page_errors);
     if (looksLikeWait && netClean && consoleClean && networkTrustworthy && consoleTrustworthy) {
@@ -439,6 +460,8 @@ function suggest(verdict, evidence, limits, reasons) {
       return "Re-run on the other engines to confirm, then look for an engine-specific selector or a race on this one.";
     case "all-engines":
       return "Check the site itself before touching the test — every engine sees this.";
+    case "ambiguous-locator":
+      return "Narrow the failing step's locator — scope it to an ancestor rather than adding an index, which picks by DOM order. `get_step_matches` lists exactly what it matched.";
     case "clean-wait":
       return "Re-pick the failing step's element; the page was healthy for the whole wait, so the locator is looking for the wrong thing.";
     case "chronic-healing":
