@@ -114,22 +114,34 @@ step lists had drifted into four layouts — two `gap-1 p-3`, one `p-3`, one
 next divergence being invisible: `check:scroll-layout` can then ask one question
 of four views instead of describing four layouts.
 
-**Horizontal overflow is `min-width: max-content` on the column, and the row's
+**Horizontal overflow is `width: max-content` on the ROW, and the row's
 description giving up `flex: 1`.** The second half is not optional and is the
 part that looks wrong: a flex item with a zero basis contributes nothing to its
 container's max-content width, so leaving `flex-1` on the description sizes the
-column to the row's chrome and the long text is clipped with *no* scroll to
-reach it — strictly worse than the ellipsis it replaced. The ellipsis stays for
+row to its chrome and the long text is clipped with *no* scroll to reach it —
+strictly worse than the ellipsis it replaced. The ellipsis stays for
 `.gl-mono-value` everywhere else; only a `.gl-step-list` descendant drops it, so
 a step description in some future panel with no scroller is not silently made
 worse.
 
-**The rows then all stretch to the widest one, which parks every row's controls
-off-screen.** That is the real cost of the max-content column, and it lands on
-rows whose own text fits fine — a horizontal scroll to reach the ✕ on a short
-row is not a trade worth making. `.gl-step-row-actions` is `position: sticky;
-right: 0`, so the cluster rides the scrollport. No background under it: the
-buttons only render on hover, and a hovered row already has a fill.
+**It shipped on the COLUMN first, and that was wrong in a way only a real window
+could show.** `min-width: max-content` on `.gl-step-list` reads as equivalent —
+the column sizes to its widest row either way — and it is not, because
+percentage widths inside then resolve against the stretched column.
+`> * { min-width: 100% }`, which was there to keep short rows full-width, thereby
+handed the trainer's step composer the width of the longest step: a form that
+belongs to a 360px panel laid out at 594px with half its controls off the edge
+behind a horizontal scroll. `e2e/panel-overflow.spec.ts` caught it on the PR and
+nothing else could have — the local gate was green, because jsdom reports every
+rectangle as zeros and the browser preview has no docked panel to draw. Sizing
+the row instead leaves every non-row child (composer, insert cursors, the
+empty-state note) belonging to the viewport, which is what they are.
+
+**The long row takes its own controls off the right edge with it.** A horizontal
+scroll to reach the ✕ on the row you are already looking at is not a trade worth
+making, so `.gl-step-row-actions` is `position: sticky; right: 0` and the cluster
+rides the scrollport. No background under it: the buttons only render on hover,
+and a hovered row already has a fill.
 
 **The tail is 96px, and 40px in the trainers.** It is deliberate empty space,
 not a margin nobody noticed — steps are dragged to reorder and appended, and a

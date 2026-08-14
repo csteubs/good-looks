@@ -133,15 +133,25 @@
    the same list truncated a long step with an ellipsis while its neighbours
    sat inside a viewport that could have scrolled to it.
 
-   `min-width: max-content` is what turns a too-long step into a HORIZONTAL
-   scroll rather than an ellipsis: the column sizes to its widest row, the
-   viewport scrolls to it, and `> * { min-width: 100% }` keeps every shorter
-   row full-width so hover, selection and the status rail still span the list
-   instead of stopping at the end of their own text. The row's description
-   drops `flex: 1` here for the same reason — a flex item with a zero basis
-   contributes nothing to the column's max-content width, so the rows would
-   size to their chrome and the long text would be clipped with no way to
-   scroll to it, which is strictly worse than the ellipsis it replaced.
+   THE WIDTH SITS ON THE ROW, NOT THE COLUMN, and that is a correction rather
+   than a preference: `min-width: max-content` on the column looks equivalent
+   and is not. Percentage widths inside it resolve against the STRETCHED
+   column, so `> * { min-width: 100% }` — there to keep short rows full-width —
+   handed the same 594px to the trainer's step composer, a form that belongs to
+   the 360px panel, and pushed half of its controls off the edge behind a
+   horizontal scroll. `e2e/panel-overflow.spec.ts` is what caught it; nothing
+   short of a real window could.
+
+   So the row sizes itself: `width: max-content` extends it past the viewport
+   when its step is long, `min-width: 100%` keeps a short one filling the
+   column so hover, selection and the status rail still span the list rather
+   than stopping at the end of their own text. Everything else in the list —
+   the composer, the insert cursors, the empty-state note — belongs to the
+   viewport and is left alone. The row's description drops `flex: 1` for the
+   same reason the row takes `max-content`: a flex item with a zero basis
+   contributes nothing to its row's max-content width, so the row would size to
+   its chrome and the long text would be clipped with no way to scroll to it,
+   which is strictly worse than the ellipsis it replaced.
 
    The tail is deliberate empty space, not a margin nobody noticed. Steps are
    dragged to reorder and appended from "+ Add step", and both need somewhere
@@ -153,10 +163,10 @@
   gap: 4px;
   padding: 12px;
   padding-bottom: 96px;
-  min-width: max-content;
 }
 
-.gl-step-list > * {
+.gl-step-list-row {
+  width: max-content;
   min-width: 100%;
 }
 
@@ -177,12 +187,12 @@
   text-overflow: clip;
 }
 
-/* Every row is as wide as the widest step, so a row's controls would otherwise
-   be parked past the right edge of the viewport — a horizontal scroll to reach
-   the ✕ on a row whose own text fits is a worse trade than the ellipsis this
-   replaced. Sticky pins them to the scrollport instead. `right: 0` and no
-   background: the buttons only appear on hover, and a hovered row has a fill
-   for them to sit on. */
+/* A long step's row runs past the right edge of the viewport, taking its own
+   controls with it — a horizontal scroll to reach the ✕ on the row you are
+   already looking at is a worse trade than the ellipsis this replaced. Sticky
+   pins them to the scrollport instead. `right: 0` and no background: the
+   buttons only appear on hover, and a hovered row has a fill for them to sit
+   on. */
 .gl-step-list .gl-step-row-actions {
   position: sticky;
   right: 0;

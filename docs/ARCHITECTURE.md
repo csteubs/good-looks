@@ -471,10 +471,16 @@ The nine screens inside the shell are still the old chrome until Phase B.
   cluster's chips, the heal row, and the step row's furniture. **`.gl-step-list`
   (2026-08-13) is the column all four step lists are drawn in** — the detail
   view's Steps tab, its Edit Steps editor, and both trainers. It owns the
-  padding, the tail below the last row, and `min-width: max-content`, which is
-  what turns a step too long for the pane into a horizontal scroll rather than
-  an ellipsis; `> * { min-width: 100% }` keeps shorter rows full-width so hover,
-  selection and the status rail still span the list. `.gl-step-list--tight` is
+  padding and the tail below the last row; the width belongs to
+  `.gl-step-list-row`, which takes `width: max-content` (a step too long for the
+  pane becomes a horizontal scroll rather than an ellipsis) with
+  `min-width: 100%` so a short row still fills the column and hover, selection
+  and the status rail span the list. **`max-content` on the COLUMN is the
+  mistake that looks identical**: percentage widths inside resolve against the
+  stretched column, so the trainer's step composer — a form belonging to a 360px
+  panel — laid out at the width of the longest step with half its controls off
+  the edge. `e2e/panel-overflow.spec.ts` is what catches that; the local gate
+  cannot. `.gl-step-list--tight` is
   both trainers (their rows are separated by their own insert cursors, so the
   column's gap would double one, and their list ends in a cursor gap plus the
   composer, which is the drop target the tail provides elsewhere).

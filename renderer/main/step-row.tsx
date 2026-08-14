@@ -364,7 +364,12 @@ export function StepRow({
       data-new-step={isNew ? "true" : undefined}
       data-just-added={justAdded ? "true" : undefined}
       data-replay-flash={replayFlash}
-      className={`group flex items-center gap-2 rounded-md px-2 py-1 ${flash} ${outlineClass} ${
+      // `gl-step-list-row` is what makes the row — and only the row — size to
+      // its own step: it extends past the viewport when the step is long, and
+      // fills the column when it is short. It sits on the row rather than on
+      // the list because a `max-content` COLUMN stretches everything else in
+      // the list with it (see `.gl-step-list` in theme/shared.css).
+      className={`gl-step-list-row group flex items-center gap-2 rounded-md px-2 py-1 ${flash} ${outlineClass} ${
         drag?.isOver ? "border-t-2 border-accent" : ""
       } ${drag?.isDragging ? "opacity-50" : ""} ${onSelect ? "cursor-pointer" : ""}`}
       // SELECTION IS NEUTRAL, and that is the palette's load-bearing rule rather

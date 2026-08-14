@@ -200,6 +200,8 @@ for (const rel of VIEWS) {
 // layout engine, so a rendered test cannot tell a list that scrolls from one
 // that runs off the end of the window.
 {
+  const stepRowSrc = readFileSync(resolve(here, "../../../renderer/main/step-row.tsx"), "utf8");
+
   /** Every view that draws the app's step rows. */
   const STEP_LISTS = [
     "../../../renderer/main/test-detail-view.tsx",
@@ -236,28 +238,41 @@ for (const rel of VIEWS) {
     );
   }
 
-  // What the class itself has to do. `min-width: max-content` is the half that
-  // turns a too-long step into a horizontal scroll instead of an ellipsis, and
-  // the padding-bottom is deliberate empty space below the last row: steps are
+  // What the classes have to do, and the split between them is the load-bearing
+  // part. `max-content` sizing belongs to the ROW: on the column it looks
+  // equivalent and is not, because percentage widths inside then resolve
+  // against the stretched column — which handed the trainer's step composer,
+  // a form belonging to a 360px panel, the width of the longest step and put
+  // half its controls off the edge (`e2e/panel-overflow.spec.ts`). The
+  // padding-bottom is deliberate empty space below the last row: steps are
   // dragged to reorder and appended, and a list ending flush against the
   // bottom edge gives the final position no target.
   const shared = readFileSync(resolve(here, "../../../renderer/theme/shared.css"), "utf8");
   const noComments = shared.replace(/\/\*[\s\S]*?\*\//g, "");
   const listRule = /\.gl-step-list\s*\{([^}]*)\}/.exec(noComments)?.[1] ?? "";
-  const stretchRule = /\.gl-step-list\s*>\s*\*\s*\{([^}]*)\}/.exec(noComments)?.[1] ?? "";
+  const rowRule = /\.gl-step-list-row\s*\{([^}]*)\}/.exec(noComments)?.[1] ?? "";
 
   assert(listRule !== "", "shared.css: found the .gl-step-list rule");
   assert(
-    /min-width\s*:\s*max-content/.test(listRule),
-    ".gl-step-list: `min-width: max-content` — without it a long step is ellipsed and there is nothing to scroll to",
+    !/min-width\s*:\s*max-content/.test(listRule),
+    ".gl-step-list: the column is NOT max-content — it stretches every non-row child with it, the composer included",
   );
   assert(
     /padding-bottom\s*:/.test(listRule),
     ".gl-step-list: carries an explicit tail, so the last row is never flush against the bottom edge",
   );
+  assert(rowRule !== "", "shared.css: found the .gl-step-list-row rule");
   assert(
-    /min-width\s*:\s*100%/.test(stretchRule),
-    ".gl-step-list > *: rows stretch to the column — otherwise hover, selection and the status rail stop at the end of each row's own text",
+    /width\s*:\s*max-content/.test(rowRule),
+    ".gl-step-list-row: `width: max-content` — without it a long step is ellipsed and there is nothing to scroll to",
+  );
+  assert(
+    /min-width\s*:\s*100%/.test(rowRule),
+    ".gl-step-list-row: short rows still fill the column — otherwise hover, selection and the status rail stop at the end of each row's own text",
+  );
+  assert(
+    stepRowSrc.includes("gl-step-list-row"),
+    "step-row.tsx: still carries gl-step-list-row — a rule nothing uses guards nothing",
   );
 
   // The rows all stretch to the widest step, so a row's own controls end up
@@ -269,9 +284,8 @@ for (const rel of VIEWS) {
     /position\s*:\s*sticky/.test(actionsRule) && /right\s*:\s*0/.test(actionsRule),
     ".gl-step-list .gl-step-row-actions: sticky to the right edge, or every row's controls sit off-screen once one step is long",
   );
-  const stepRow = readFileSync(resolve(here, "../../../renderer/main/step-row.tsx"), "utf8");
   assert(
-    stepRow.includes("gl-step-row-actions"),
+    stepRowSrc.includes("gl-step-row-actions"),
     "step-row.tsx: still carries gl-step-row-actions — a rule nothing uses guards nothing",
   );
 }
