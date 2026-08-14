@@ -193,6 +193,32 @@ jobs:
 
       - run: npm run build
 
+      # Cached separately from the Electron binary above: different store,
+      # different cadence. The key is the lockfile, because the browser build
+      # a Playwright version wants is pinned by that version.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: playwright-${{ runner.os }}-
+
+      # NEW, and easy to mistake for redundant: until `assert-parity.spec.ts`
+      # this suite needed no Playwright browser at all. Every other spec drives
+      # the app through `_electron`, which launches the BUNDLED Electron binary
+      # — so the runner never had a Chromium and never missed one.
+      #
+      # The parity spec's whole point is to run generated assertions through
+      # REAL Playwright against a real page, which is the one thing a model of
+      # Playwright's matcher rules cannot do for itself. Skipping it in CI would
+      # leave only the model, which is exactly the situation that let "URL
+      # contains" ship an assertion that could not pass.
+      #
+      # `record-then-run.spec.ts` uses it too, via the app's own runner, and
+      # skips with an explanation rather than failing if it is ever absent.
+      - name: Install Chromium for the parity suite
+        run: npx playwright install --with-deps chromium
+
       # The only tests that boot the app: custom scheme, preload bridge, real
       # windows. jsdom cannot reach any of it, so a break here is invisible to
       # the gate job however green it is.
