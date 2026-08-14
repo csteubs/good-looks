@@ -88,7 +88,16 @@ export function consoleNetworkWithheldReason(tests) {
  * redaction question rather than quietly creating a plaintext-credentials path
  * in a file `get_run_log` serves back.
  */
-export function runEnv({ base, browsersPath, nodeModules, speed, testTimeoutMs, outputDir, vars }) {
+export function runEnv({
+  base,
+  browsersPath,
+  nodeModules,
+  speed,
+  testTimeoutMs,
+  outputDir,
+  vars,
+  baseUrl,
+}) {
   return {
     ...base,
     PLAYWRIGHT_BROWSERS_PATH: browsersPath,
@@ -100,6 +109,14 @@ export function runEnv({ base, browsersPath, nodeModules, speed, testTimeoutMs, 
     // folder mid-flight. run_batch runs several tests at once, so each run
     // names its own.
     ...(outputDir ? { PW_OUTPUT_DIR: outputDir } : {}),
+    // What an IMPORTED spec's relative navigations resolve against, carried on
+    // its own record. Recorded tests navigate absolutely and have none.
+    //
+    // Set here as well as in the app because the two write the SAME config file
+    // and it reads `PW_BASE_URL` — an MCP-driven run of an imported test would
+    // otherwise fail on its first `goto` while the identical run from the app
+    // passed, which is exactly the app/MCP drift check:mcp-parity exists for.
+    ...(baseUrl ? { PW_BASE_URL: baseUrl } : {}),
     ...(vars && Object.keys(vars).length > 0 ? { GLAZE_VARS: JSON.stringify(vars) } : {}),
   };
 }

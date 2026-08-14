@@ -407,6 +407,20 @@ export interface TestRecord {
    *  test's spec is allowed to pull in. Absent on tests imported before the
    *  import sandbox existed — see `repairImports` for what that costs them. */
   sourceRoot?: string;
+  /** Base URL a spec's relative navigations resolve against, carried over from
+   *  the imported project's own `playwright.config` (or typed in afterwards).
+   *
+   *  Only imported tests have one. A recorded test navigates to an absolute URL
+   *  because the recorder watched it happen, but a hand-written suite is
+   *  idiomatically relative — `page.goto("/")` — and that is meaningless
+   *  without this. Travels to a run as `PW_BASE_URL`, which the generated
+   *  config reads into `use.baseURL`; absent means the config declares none,
+   *  exactly as before this field existed.
+   *
+   *  Always an http(s) URL: `normalizeBaseUrl` in `imported-config.ts` is the
+   *  only way a value gets in, whether it came from a config file we parsed or
+   *  from an IPC caller. */
+  baseUrl?: string;
   /** true when the user removed the test from the sidebar view — the record
    *  and its script file are kept on disk; the sidebar just hides it. */
   hidden?: boolean;

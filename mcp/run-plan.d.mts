@@ -34,6 +34,9 @@ export declare function runEnv(params: {
    *  otherwise share (and clean) one folder derived from the spec's path */
   outputDir?: string;
   vars?: Record<string, string>;
+  /** an imported test's base URL, which its relative navigations resolve
+   *  against; absent for recorded tests, which navigate absolutely */
+  baseUrl?: string;
 }): NodeJS.ProcessEnv;
 
 export declare function runArgs(params: {

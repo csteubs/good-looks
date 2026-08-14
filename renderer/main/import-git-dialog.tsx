@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, Field, Input, Text, toast } from "@ui";
 
 import { api } from "../lib/api";
+import { importWarnings } from "../lib/import-warnings";
 
 export function ImportGitDialog({
   open,
@@ -43,6 +44,9 @@ export function ImportGitDialog({
               ? `Imported 1 test from the repository.`
               : `Imported ${res.imported} tests from the repository.`,
           );
+          // Same warnings as the folder import, from the same place: a cloned
+          // repository is missing a base URL for exactly the same reasons.
+          for (const w of importWarnings(res)) toast.warning(w);
           if (res.ids[0]) navigate({ to: "/test/$id", params: { id: res.ids[0] } });
           reset();
         } catch (err) {

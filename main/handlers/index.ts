@@ -43,6 +43,7 @@ import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
 import { duplicateTest } from "../services/duplicate-test.js";
 import { importService } from "../services/import-service.js";
+import { normalizeBaseUrl } from "../services/imported-config.js";
 import { testSecretsStore } from "../services/test-secrets-store.js";
 import { healJournalStore } from "../services/heal-journal-store.js";
 import {
@@ -492,6 +493,34 @@ export function registerHandlers(): void {
       return rec;
     },
   );
+
+  // The base URL an imported spec's relative navigations resolve against. null
+  // clears it, which is also what a record without one means.
+  //
+  // Validated here rather than trusted: this arrives as `unknown` from the
+  // renderer like everything else, and it ends up in the environment of a
+  // Playwright process. `normalizeBaseUrl` is the same gate the config parser
+  // hands its findings through, so a value typed in and a value read off disk
+  // are held to one standard.
+  ipcMain.handle("tests:setBaseUrl", async (_e, params: { id: string; baseUrl: string | null }) => {
+    const rec = testStore.get(params.id);
+    if (!rec) throw new Error("Test not found: " + params.id);
+    const raw = params.baseUrl;
+    if (raw === null || raw === undefined || (typeof raw === "string" && raw.trim() === "")) {
+      delete rec.baseUrl;
+    } else {
+      const normalized = normalizeBaseUrl(raw);
+      if (!normalized) {
+        throw new Error(
+          "Invalid base URL: " + String(raw) + " (expected a full http:// or https:// address)",
+        );
+      }
+      rec.baseUrl = normalized;
+    }
+    rec.updatedAt = Date.now();
+    testStore.save(rec);
+    return rec;
+  });
 
   // Per-test grouping labels. The backend normalizes (trim/dedupe/cap/sort) so
   // there's one source of truth — the renderer posts raw strings and renders

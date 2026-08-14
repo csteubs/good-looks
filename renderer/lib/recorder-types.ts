@@ -383,6 +383,10 @@ export interface TestRecord {
   scriptEdited?: boolean;
   speed?: TestSpeed;
   sourceDir?: string;
+  /** Base URL an imported spec's relative navigations resolve against (mirrors
+   *  main TestRecord). Only imported tests have one — it comes from the source
+   *  project's `playwright.config`, or from the field on the detail toolbar. */
+  baseUrl?: string;
   hidden?: boolean;
   stepsDiverged?: boolean;
   /** Why the steps and the script disagree (mirrors main TestRecord).

@@ -63,6 +63,17 @@ export const playwrightConfigSource =
   `    timeout: Number(process.env.PW_EXPECT_TIMEOUT_MS || ${DEFAULT_EXPECT_TIMEOUT_MS}),\n` +
   "  },\n" +
   "  use: {\n" +
+  // An IMPORTED spec navigates the way its own project did — `page.goto("/")`,
+  // relative to a `baseURL` that lived in that project's config and does not
+  // survive being copied here. Without it Playwright fails in the protocol
+  // layer, naming neither the config nor the missing field.
+  //
+  // Per-RUN via the environment rather than baked in, for the same reason as
+  // every other value in this file: one config serves every test, and each test
+  // carries its own base URL (or none). Empty is falsy, so a recorded test —
+  // which always navigates to an absolute URL — is unaffected, and a hand-run
+  // outside the app behaves exactly as it does today.
+  "    baseURL: process.env.PW_BASE_URL || undefined,\n" +
   // For a HAND-RUN, which is the same reason `timeout` is read from the env
   // here rather than left to Playwright's 30s default: this file is also what
   // somebody gets when they run the spec themselves outside the app, and a

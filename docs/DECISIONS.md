@@ -16,6 +16,91 @@ the commit message carries it. Entries up to 2026-08-06 were written by the
 Glaze app's agent, which no longer works on this codebase.
 
 
+### 2026-08-14 — An imported suite arrived without the one line that made it runnable
+
+`main/services/imported-config.ts` (new), `main/services/import-service.ts`,
+`main/services/playwright-runner.ts`, `main/handlers/index.ts`,
+`main/recorder/types.ts`, `main/services/duplicate-test.ts`,
+`shared/playwright-config-source.mjs`, `mcp/run-plan.mjs`, `mcp/server.mjs`,
+`renderer/lib/import-warnings.ts` (new), `renderer/main/test-detail-view.tsx`.
+
+Importing a real Playwright suite succeeded and every test in it failed. The
+report was a Playwright protocol error about a `page.goto` that could not resolve
+`"/"`, and it took a whole AI-debug session to read — the model correctly
+identified a missing base URL and then, reasonably, concluded the spec was fine
+and the environment was broken.
+
+It was right. The suite navigated relatively — `gotoWithRetry(page, "/")` — the
+way a suite written WITH a `baseURL` is supposed to. That `baseURL` lived in the
+project's `playwright.config`, and import copies the spec and its relative-import
+siblings and nothing else. Every imported spec then ran under this app's own
+generated config, which declares no `baseURL` at all.
+
+**What the import was missing was not a file, it was the config's meaning.**
+Copying the config wholesale is not an option: this app runs one shared config
+for every test in the library, and the source config also carries `projects`,
+`webServer` and reporters that would be wrong or dangerous here. So the import
+now reads that file and carries the two fields that decide whether the test can
+run: `baseURL`, and the top-level `timeout` (a suite written against 120s failed
+at this app's 30s default for reasons that had nothing to do with the test, which
+would have been the very next bug reported).
+
+**The config is read as text and never evaluated.** `import()`ing a
+`playwright.config.ts` from a cloned repository executes it at IMPORT time —
+before any test is run, before the user has done anything but look, and with none
+of the isolation a run gets. That is the same boundary the import sandbox and the
+branch-name validator already defend, so the parser is deliberately dumb: string
+literals, plus the `process.env.X || "…"` shape most checked-in configs use.
+A config that COMPUTES its base URL yields nothing, and the answer to that is the
+user typing one into a field, not a cleverer parser. Both paths — parsed and
+typed — go through one `normalizeBaseUrl`, because the value ends up in the
+environment of a Playwright process.
+
+**The search deliberately looks above the folder the user picked.** The suite
+this was found on was imported twice, once from the repository root and once from
+`tests/` — and in the second case the config sits one level above the scan root.
+Refusing to look up would have made the common layout the broken one. The walk is
+bounded (3 levels past the root, stopping after a `package.json`) because "walk
+up until something matches" ends at a stray config in a home directory. It reads
+a fixed filename we chose and copies nothing, which is a strictly weaker act than
+the sibling copy the import already bounds.
+
+**One definition of "navigates relatively", used three times.** Looking for
+`page.goto(` alone finds nothing in a suite that wraps navigation in a helper —
+which is most real suites, and was this one. So `navigationTargets` matches any
+`goto`-ish call and requires the literal to LOOK like a location, so that
+`page.goto(url, { waitUntil: "domcontentloaded" })` doesn't confidently report a
+navigation to `"domcontentloaded"`. The import warning, the record's URL, and the
+runner's refusal all read that one answer; two of them disagreeing would flag a
+test at import that then ran fine, or the reverse.
+
+**A run that cannot work is refused before it is spawned.** With no base URL and
+relative navigation, the run now stops with three sentences naming the field to
+fill in, instead of spending the full timeout to produce the protocol error this
+started with. It is recorded as a failed run, because it is one.
+
+**But it asks the source project first.** Every test imported before this
+existed is in exactly the broken state — `sourceDir` and nothing else — and a
+library imported in one action would have needed the same URL typed into it once
+per test. `tests:repairImports`, the obvious place to hang a fix, turns out to
+have no UI at all. So a refusal first re-reads the config of the project the test
+came from, and if it is still on disk and still says, adopts the value and runs.
+Deferred, not magic: it happens only where the alternative is refusing, it is
+announced in the output with the URL and where it came from, it is saved so it
+happens once, and it never overwrites a base URL the user set by hand.
+
+`PW_BASE_URL` is set by the app runner AND `mcp/run-plan.mjs`, and
+`check:runner-config` pins both. One writer would mean the same imported test
+passing from the app and failing from the MCP depending on nothing the user can
+see — the exact drift that check already existed for.
+
+**The refusal is app-side only, deliberately.** Answering "does this test need a
+base URL?" means reading the test's files, and `shared/` is pure by rule — no
+`fs` — so a copy of that scan would have to live in `mcp/` and drift. The MCP now
+passes the base URL, which is the bug; what it does not do is explain the failure
+when there isn't one. That is the right side to leave thin: the app is where
+somebody is looking at a screen with a field on it.
+
 ### 2026-08-14 — The AI features believed things about this app that stopped being true
 
 `renderer/lib/llm-prompts.ts`, `renderer/lib/parse-llm-response.ts`,

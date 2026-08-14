@@ -16,6 +16,12 @@ import { dialog, logger } from "@shell/backend";
 import type { TestRecord } from "../recorder/types.js";
 import { getScriptsDir, testStore } from "./test-store.js";
 import { parseSpec } from "./spec-parser.js";
+import {
+  firstNavigationUrl,
+  readProjectConfig,
+  treeNeedsBaseUrl,
+  type ImportedProjectConfig,
+} from "./imported-config.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -40,6 +46,21 @@ export interface ImportResult {
   imported: number;
   names: string[];
   ids: string[];
+  /** Tests that navigate relatively and have no base URL to resolve against —
+   *  every one of them fails on its first `goto` until somebody supplies one.
+   *  Named at import time because the alternative is finding out from a
+   *  Playwright protocol error that mentions neither the config nor the URL. */
+  needsBaseUrl: string[];
+  /** Features found in the source project's config that this app does not
+   *  reproduce (a `webServer`, a `globalSetup`, a saved `storageState`). Said
+   *  once, at the moment the user is looking, rather than discovered later as
+   *  an inexplicable failure. */
+  unsupported: string[];
+}
+
+/** Empty result, so callers that return early agree on the shape. */
+function emptyResult(): ImportResult {
+  return { imported: 0, names: [], ids: [], needsBaseUrl: [], unsupported: [] };
 }
 
 interface FoundTest {
@@ -245,10 +266,15 @@ export function scanDir(root: string): FoundTest[] {
   return found;
 }
 
-/** Best-effort test URL from the first `page.goto("…")` in the file. */
-export function extractUrl(content: string): string {
-  const m = content.match(/\.goto\(\s*['"`]([^'"`]+)['"`]/);
-  return m ? m[1] : "";
+/** Best-effort test URL: where the spec first navigates, made absolute against
+ *  the project's base URL when the spec's own navigations are relative.
+ *
+ *  Delegated to `imported-config.ts` so that "what counts as a navigation" has
+ *  one definition — the same one that decides whether a base URL is required at
+ *  all. Two answers here would mean a test flagged as needing a base URL while
+ *  its own URL column claimed otherwise. */
+export function extractUrl(content: string, baseUrl?: string): string {
+  return firstNavigationUrl(content, baseUrl);
 }
 
 /** Prefer the first `test("title", …)` name, else the file's base name. */
@@ -260,6 +286,19 @@ export function extractName(content: string, filePath: string): string {
 
 function importFound(found: FoundTest[]): ImportResult {
   const created: TestRecord[] = [];
+  const needsBaseUrl: string[] = [];
+  const unsupported = new Set<string>();
+  // A project has one config and an import usually brings in every spec under
+  // it, so read it once per directory rather than once per file. `null` is a
+  // cached answer too — "there is no config here" is the common case and is
+  // just as expensive to determine twice.
+  const configCache = new Map<string, ImportedProjectConfig | null>();
+  const configFor = (specDir: string, root: string): ImportedProjectConfig | null => {
+    const key = specDir + " " + root;
+    if (!configCache.has(key)) configCache.set(key, readProjectConfig(specDir, root));
+    return configCache.get(key) ?? null;
+  };
+
   for (const f of found) {
     const id = randomUUID();
     const now = Date.now();
@@ -290,10 +329,23 @@ function importFound(found: FoundTest[]): ImportResult {
     // verbatim imported file is the runnable artifact and must not be
     // regenerated from the (lossy) parsed steps on a rename.
     const steps = parseSpec(f.content);
+    // What the spec inherited from its own project and cannot run without. A
+    // hand-written suite navigates relatively — `page.goto("/")` — against a
+    // `baseURL` that lives in a config file, and copying the spec alone leaves
+    // every one of those navigations pointing at nothing.
+    const config = configFor(specDir, f.root);
+    const name = extractName(f.content, f.filePath);
+    if (config) for (const u of config.unsupported) unsupported.add(u);
+    // Asked of the sandbox, which by now holds the spec AND the siblings just
+    // copied beside it — the same question the runner asks before it spawns, of
+    // the same files. A spec-only answer would differ from the runner's for
+    // every suite that keeps its navigation in a helper, and the two disagreeing
+    // is how a test gets imported without a warning and then refuses to run.
+    if (!config?.baseUrl && treeNeedsBaseUrl(scriptPath, sandbox)) needsBaseUrl.push(name);
     const record: TestRecord = {
       id,
-      name: extractName(f.content, f.filePath),
-      url: extractUrl(f.content),
+      name,
+      url: extractUrl(f.content, config?.baseUrl),
       createdAt: now,
       updatedAt: now,
       steps,
@@ -301,6 +353,12 @@ function importFound(found: FoundTest[]): ImportResult {
       scriptEdited: true,
       sourceDir: specDir,
       sourceRoot: f.root,
+      ...(config?.baseUrl ? { baseUrl: config.baseUrl } : {}),
+      // The source project's per-test timeout, adopted rather than noted: a
+      // suite written against a 120s limit fails at this app's 30s default for
+      // reasons that have nothing to do with the test. It lands in the Timeout
+      // box on the toolbar, so it is visible and can be changed like any other.
+      ...(config?.timeoutMs ? { testTimeoutMs: config.timeoutMs } : {}),
     };
     testStore.save(record);
     created.push(record);
@@ -314,8 +372,16 @@ function importFound(found: FoundTest[]): ImportResult {
   logger.info("import", "Imported Playwright tests", {
     count: created.length,
     withSteps: created.filter((c) => c.steps.length > 0).length,
+    withBaseUrl: created.filter((c) => c.baseUrl).length,
+    needsBaseUrl: needsBaseUrl.length,
   });
-  return { imported: created.length, names: created.map((c) => c.name), ids: created.map((c) => c.id) };
+  return {
+    imported: created.length,
+    names: created.map((c) => c.name),
+    ids: created.map((c) => c.id),
+    needsBaseUrl,
+    unsupported: [...unsupported],
+  };
 }
 
 /** Re-copy an imported spec's relative-import siblings from its stored
@@ -347,6 +413,34 @@ export function repairImports(id: string): string[] {
   return copyRelativeImports(source, rec.sourceDir, destRoot, projectRoot);
 }
 
+/**
+ * Fill in an imported test's base URL from the project it came from, if that
+ * project is still on disk. Returns the URL adopted, or null.
+ *
+ * For the tests imported BEFORE any of this existed. Their records carry
+ * `sourceDir`/`sourceRoot` and nothing else, so the alternative is the user
+ * typing the same URL into every test in a library they imported in one action
+ * — and `tests:repairImports`, the obvious place to hang a fix, has no UI to
+ * reach it from.
+ *
+ * Called only when a run is about to be REFUSED, which is what makes reading
+ * the source folder again defensible: the choice is between this and telling
+ * the user we can't run their test. The caller announces what it adopted and
+ * from where — a base URL that appears in a test's settings without explanation
+ * is worse than one the user typed.
+ */
+export function backfillBaseUrl(id: string): string | null {
+  const rec = testStore.get(id);
+  if (!rec || rec.baseUrl || !rec.sourceDir) return null;
+  const config = readProjectConfig(rec.sourceDir, rec.sourceRoot ?? rec.sourceDir);
+  if (!config?.baseUrl) return null;
+  rec.baseUrl = config.baseUrl;
+  rec.updatedAt = Date.now();
+  testStore.save(rec);
+  logger.info("import", "Adopted a base URL from the imported project", { id });
+  return config.baseUrl;
+}
+
 export const importService = {
   /** Open a native directory picker, scan it, and import any test files found. */
   async importFromFiles(): Promise<ImportResult> {
@@ -355,7 +449,7 @@ export const importService = {
       properties: ["openDirectory"],
     });
     if (res.canceled || res.filePaths.length === 0) {
-      return { imported: 0, names: [], ids: [] };
+      return emptyResult();
     }
     const found = scanDir(res.filePaths[0]);
     if (found.length === 0) {
