@@ -35,10 +35,25 @@ margin so a long list scrolls inside itself.
 
 **jsdom cannot see this, which is why it survived.** `getBoundingClientRect`
 returns zeros there, so every placement number is 0 and the tests pass against
-both the fixed and the broken version. The added test pins the *contract* —
-that placement is expressed as `bottom`, never `top` — rather than a measured
-pixel, because the pixel is unobservable in the only environment that runs it.
-Anything checking the real geometry belongs in `e2e/`.
+both the fixed and the broken version. The unit test therefore pins the
+*contract* — that placement is expressed as `bottom`, never `top` — rather than
+a measured pixel, because the pixel is unobservable in the only environment that
+runs it.
+
+**The geometry itself is now pinned in `e2e/rail-flyout-placement.spec.ts`**,
+where the window has a height. Reverting the fix there measures the panel's
+bottom edge at **821px against a 668px window** — 153px of menu below the
+bottom of the app. That number is the whole argument for the file existing: it
+is the same bug, in the same code, that the unit suite reports as green.
+
+Two things that test does deliberately. It **forces** the growth by appending a
+filler element rather than waiting for the branch list, because on a repo whose
+branches resolve quickly the panel is already at full height by the first
+measurement and "it got taller" then passes with nothing having moved — measured
+here, both readings were identical, which is exactly the vacuous assertion this
+was meant to replace. And it asserts the contract AND the geometry, because with
+the contract assertion alone a future reader cannot tell the test would still
+catch a placement that is wrong for some other reason.
 
 **And the notes.** `claude/transcribe-notes-plan-work-e36d77` held five design
 and research documents written 2026-08-08 from working notes, plus a "groups"
