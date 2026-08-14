@@ -108,6 +108,21 @@ All five are hand-maintained. `ARCHITECTURE.md` and `DECISIONS.md` were kept
 current automatically until 2026-08-06; they stay accurate now only if changes
 carry them, so update the relevant entry in the same commit.
 
+### Design and research notes
+
+Written 2026-08-08 from working notes, carried onto `main` 2026-08-14 from a
+branch that never merged. Each one opens with a banner saying what has shipped
+since, re-verified on the day it landed — read that first, because three of the
+five have been overtaken to some degree.
+
+| Doc | What it is for | State |
+| --- | --- | --- |
+| [`docs/IFRAMES.md`](docs/IFRAMES.md) | Interacting with iframes in the engine, ignoring them in the trainer | Unbuilt, accurate |
+| [`docs/JAM-IMPORT.md`](docs/JAM-IMPORT.md) | Turning a jam.dev recording into a runnable test | Unbuilt, accurate |
+| [`docs/LINEAR.md`](docs/LINEAR.md) | "Send to Linear" on an a11y violation, and what leaves the Mac | **Shipped** — see `main/services/issue-tracker/` |
+| [`docs/TRAINING-CONTEXT.md`](docs/TRAINING-CONTEXT.md) | Explaining a failure to the model: user prose, screenshots, HTML state | Half shipped |
+| [`docs/VISUAL-TUNING.md`](docs/VISUAL-TUNING.md) | Why visual diffs feel flaky, and why tuning is not the fix | **Open** — its main recommendation is still unbuilt |
+
 ## Branch workflow
 
 `main` is the integration branch. Feature work happens on a branch and lands
