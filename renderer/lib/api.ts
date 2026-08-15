@@ -66,6 +66,7 @@ import type {
   StepHealthRow,
   TestDurationTrend,
 } from "../../shared/metrics-query.mjs";
+import type { A11yRollup } from "../../shared/a11y-rollup.mjs";
 import type { CostBreakdown, DivergentStep } from "../../shared/step-insights.mjs";
 import type {
   LlmChatParams,
@@ -298,6 +299,11 @@ export const api = {
       ipc().invoke<RunReplay | null>("a11y:acceptRun", { testId, runId }),
     resetBaseline: (testId: string) =>
       ipc().invoke<{ cleared: number }>("a11y:resetBaseline", { testId }),
+    /** The suite-wide picture: which rules are failing, how badly, and where.
+     *  Rolled up backend-side because the rules live inside each run's replay
+     *  file — see the handler. Cached under `["a11y-rollup"]`, which is in
+     *  RUN_DERIVED_KEYS because a run changes it. */
+    rollup: () => ipc().invoke<A11yRollup>("a11y:rollup"),
   },
   heals: {
     list: (testId: string) => ipc().invoke<HealEntry[]>("heals:list", { testId }),

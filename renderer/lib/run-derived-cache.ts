@@ -58,6 +58,11 @@ export const RUN_DERIVED_KEYS: readonly (readonly string[])[] = [
   ["metrics"],
   // What screenshot capture cost, summarised backend-side from run history.
   ["captureOverhead"],
+  // The suite-wide accessibility rollup behind the Stats a11y dashboard. Read
+  // out of the replay files a run writes, so a run changes it — and it is read
+  // from a route that is only mounted while you are standing on it, which is
+  // the exact shape this module exists to keep out of the views.
+  ["a11y-rollup"],
 ] as const;
 
 /**

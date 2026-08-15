@@ -39,19 +39,18 @@ type-check, 141 test files / 2764 Vitest tests, 56 `check:*` scripts.
 
 ## 2. Built, deliberately partial
 
-**Stats — the category board opens two of seven.** The board renders all seven
-categories so the map is complete, but only **Stability** and **Auto-Heal** have
-dashboards ([stats-category-view.tsx:43](renderer/main/stats/stats-category-view.tsx:43)).
-The other five — Outcomes, Accessibility, Visual diff, Speed & cost, Step health
-— render as tiles that state why they do not open, and their tile still carries
-a real headline number. This is intended: a tile that navigates to an empty
-screen is worse than one that says "not yet".
+~~**Stats — the category board opens two of seven.**~~ **All seven open as of
+2026-08-14.** Outcomes, Accessibility, Visual diff, Speed & cost and Step health
+each have a dashboard and a leaf below it; no tile is disabled and no route
+lands on "isn't built yet". Two notes for testing it:
 
-- Reaching one of those five by **typing the route** lands on a panel explaining
-  the dashboard isn't built. Also intended — not a broken route.
-- **Outcomes is on the board but its content is still the Stats landing page**
-  (chart, KPIs, run table, log search). It moves into the category in a later
-  PR. Both surfaces existing at once is expected right now.
+- **Outcomes' content MOVED off the Stats landing.** The chart, the four KPI
+  cards and capture overhead are in the category now, not on both screens. The
+  run-history table, its filters and log search deliberately STAYED on the
+  landing — that is a run explorer, not a category breakdown.
+- **Step health's three findings and Accessibility's four severities overlap.**
+  A step counted under two of them is intended, and both screens say so. Facet
+  counts adding up to more than the headline is not a bug.
 
 **Stats has no page-level scope or range control.** The header does not carry
 `All tests ▾` / `30 days ▾`. Deferred deliberately: the flake and metrics

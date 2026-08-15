@@ -33,6 +33,7 @@ import type {
   RunRecord,
   RunReplaySummary,
 } from "./recorder-types";
+import { selectLatestA11yRuns } from "../../shared/a11y-rollup.mjs";
 import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
 import type { CostBreakdown } from "../../shared/step-insights.mjs";
 
@@ -144,6 +145,10 @@ export const CATEGORIES: readonly CategoryMeta[] = [
  * answer `check:flake-analysis` gives for the renderer's mirror of the analysis.
  */
 export const FACET_LABELS: Partial<Record<CategoryId, Record<string, string>>> = {
+  outcomes: {
+    failed: "Failed runs",
+    passed: "Passed runs",
+  },
   stability: {
     "still-failing": "Consistently failing",
     "changed-since": "Broke recently",
@@ -157,6 +162,28 @@ export const FACET_LABELS: Partial<Record<CategoryId, Record<string, string>>> =
     pending: "Waiting on you",
     accepted: "Accepted",
     reverted: "Reverted",
+  },
+  // axe's own severity words, and deliberately not softened. "Critical" is what
+  // the rule that produced it is called everywhere else — in the Visual view's
+  // badges, in `IMPACT_ORDER`, and in axe's own documentation the user will
+  // reach for next.
+  a11y: {
+    critical: "Critical",
+    serious: "Serious",
+    moderate: "Moderate",
+    minor: "Minor",
+  },
+  visual: {
+    changed: "Changed against baseline",
+    clean: "Matching baseline",
+  },
+  speed: {
+    slower: "Steps that got slower",
+  },
+  steps: {
+    failing: "Failing",
+    healing: "Healing",
+    throwing: "Throwing page errors",
   },
 };
 
@@ -237,7 +264,9 @@ function unavailable(id: CategoryId, why: string): CategorySummary {
   return { id, state: "unavailable", display: null, say: why, window: null, tone: null };
 }
 
-const METRICS_UNAVAILABLE =
+/** Exported so a dashboard says exactly what its tile said. Two phrasings of
+ *  "this machine cannot report that" read as two different problems. */
+export const METRICS_UNAVAILABLE =
   "Metrics aren’t available on this runtime, so nothing can be reported here. " +
   "Everything else on this page still works.";
 
@@ -295,6 +324,29 @@ function latestPerTest<T extends { testId: string; startedAt: number }>(
     if (!prev || row.startedAt > prev.startedAt) best.set(row.testId, row);
   }
   return [...best.values()];
+}
+
+/**
+ * THE RUN SELECTIONS THE TILES AND THEIR DASHBOARDS SHARE.
+ *
+ * Exported rather than left private because a dashboard that picks its own runs
+ * will eventually pick different ones, and the symptom is a tile reading "14
+ * steps" over a screen that lists nine — the same suite, two answers, no error
+ * anywhere. The tile and the dashboard call the same function instead.
+ */
+export function latestA11yRuns(runs: RunRecord[]): RunRecord[] {
+  // Delegated to `shared/`, because the a11y DASHBOARD is rolled up in the main
+  // process from replay files on disk while this tile counts from the run list
+  // in a query cache. Two processes, one question — and a divergence would show
+  // up as a tile and the screen under it disagreeing about the same suite.
+  return selectLatestA11yRuns(realRuns(runs));
+}
+
+/** Every test's most recent captured run. A capture is a capture — there is no
+ *  "did it actually do the thing" question here, unlike a11y above, because a
+ *  replay only exists when screenshots were taken. */
+export function latestCaptures(replays: RunReplaySummary[]): RunReplaySummary[] {
+  return latestPerTest(replays, () => true);
 }
 
 // ── One summary per category ──────────────────────────────────────────
@@ -368,7 +420,7 @@ export function summariseA11y(runs: RunRecord[]): CategorySummary {
   // Measured means a run actually COMPLETED checks. A run with the toggle on
   // that completed none is a fault, not a clean result — `a11y-panel.tsx`
   // reports it as one — so it must not count as having measured anything.
-  const checked = latestPerTest(realRuns(runs), (r) => (r.a11yChecks ?? 0) > 0);
+  const checked = latestA11yRuns(runs);
   if (checked.length === 0) return unmeasured("a11y");
   const steps = checked.reduce((n, r) => n + (r.a11yNewSteps ?? 0), 0);
   return measured(
@@ -387,7 +439,7 @@ export function summariseA11y(runs: RunRecord[]): CategorySummary {
 }
 
 export function summariseVisual(replays: RunReplaySummary[]): CategorySummary {
-  const captured = latestPerTest(replays, () => true);
+  const captured = latestCaptures(replays);
   if (captured.length === 0) return unmeasured("visual");
   const changed = captured.reduce((n, r) => n + r.changedSteps, 0);
   return measured(

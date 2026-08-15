@@ -29,7 +29,19 @@ vi.mock("../../lib/api", () => ({
   api: {
     runs: {
       list: async () => [
-        { id: "r1", testId: "t1", status: "passed", kind: "run", startedAt: 1 },
+        // `a11yChecks` is what makes this run COUNT as measured for the a11y
+        // category — a run with the toggle on that completed no checks is a
+        // fault, not a clean result — and `a11yNewSteps` is what its headline
+        // counts. Both are needed for the category head to say anything.
+        {
+          id: "r1",
+          testId: "t1",
+          status: "passed",
+          kind: "run",
+          startedAt: 1,
+          a11yChecks: 4,
+          a11yNewSteps: 1,
+        },
       ],
       flake: async () => ({
         tests: [
@@ -65,6 +77,7 @@ vi.mock("../../lib/api", () => ({
         windowRuns: 18,
         windowCap: 200,
       }),
+      captureOverhead: async () => null,
     },
     heals: {
       listAll: async () => [
@@ -83,6 +96,113 @@ vi.mock("../../lib/api", () => ({
           at: 1,
         },
       ],
+    },
+    // The five categories that gained a dashboard on 2026-08-14. Each answers
+    // with the smallest fixture that lights its screen up — the arithmetic is
+    // covered per dashboard, and a rich fixture here would make the routing
+    // assertions harder to read for no gain.
+    artifacts: {
+      list: async () => [
+        {
+          testId: "t1",
+          runId: "rep1",
+          testName: "Checkout",
+          status: "passed",
+          startedAt: 5,
+          finishedAt: 6,
+          stepCount: 4,
+          failedIndex: null,
+          changedSteps: 2,
+        },
+      ],
+    },
+    metrics: {
+      stepHealth: async () => ({
+        available: true,
+        rows: [
+          {
+            stepId: "s1",
+            label: "click Submit",
+            type: "click",
+            testId: "t1",
+            testName: "Checkout",
+            runs: 10,
+            failed: 2,
+            failRate: 0.2,
+            heals: 0,
+            healFailures: 0,
+            visualChanges: 0,
+            a11yNew: 0,
+            pageErrors: 0,
+            timedRuns: 10,
+            minMs: 10,
+            maxMs: 20,
+            lastSeenAt: 5,
+          },
+        ],
+      }),
+      slowness: async () => ({
+        available: true,
+        rows: [],
+        slowed: [
+          {
+            stepId: "s1",
+            label: "click Submit",
+            type: "click",
+            testId: "t1",
+            testName: "Checkout",
+            recentRuns: 5,
+            previousRuns: 5,
+            recentP50Ms: 4000,
+            recentP95Ms: 5000,
+            previousP50Ms: 2000,
+            changeRatio: 2,
+          },
+        ],
+        cost: {
+          runs: 4,
+          totalMs: 1000,
+          captureMs: 100,
+          a11yMs: 100,
+          instrumentedMs: 200,
+          instrumentedShare: 0.2,
+          shots: 3,
+          bySpeed: [],
+        },
+      }),
+    },
+    a11y: {
+      rollup: async () => ({
+        checkedRuns: 1,
+        stepsWithNew: 1,
+        byImpact: [
+          { impact: "critical", steps: 0, rules: 0 },
+          { impact: "serious", steps: 1, rules: 1 },
+          { impact: "moderate", steps: 0, rules: 0 },
+          { impact: "minor", steps: 0, rules: 0 },
+        ],
+        rules: [
+          {
+            id: "color-contrast",
+            impact: "serious",
+            help: "Elements must have sufficient colour contrast",
+            steps: 1,
+            nodes: 1,
+            where: [
+              {
+                testId: "t1",
+                testName: "Checkout",
+                runId: "r1",
+                startedAt: 1,
+                stepId: "s1",
+                stepLabel: "click Submit",
+                index: 0,
+                nodes: 1,
+              },
+            ],
+          },
+        ],
+      }),
     },
   },
 }));
@@ -130,12 +250,97 @@ describe("the dashboard", () => {
     expect(screen.queryByText("Consistently failing")).toBeNull();
   });
 
-  it("states what a category shows when its dashboard is not built yet", async () => {
+});
+
+// ── Every category the board can open, opens ──────────────────────────
+//
+// THIS IS THE ROUTING TEST, and it is deliberately about ROUTING rather than
+// about any dashboard's content: each `BUILT` id must reach its own screen and
+// none of them may land on the "isn't built yet" fallback. That fallback is
+// still in the file as an honest last resort, and the failure this guards
+// against is silent — a tile becomes clickable, the route resolves, the
+// category is real, and the user clicks through to a sentence saying come back
+// later. `check:stats-categories` pins the same property at source level; this
+// pins it as rendered.
+describe("every built category opens its own dashboard", () => {
+  const OPENS: [string, RegExp][] = [
+    ["outcomes", /pass \/ fail over time/i],
+    ["stability", /by verdict/i],
+    ["heals", /by state/i],
+    ["a11y", /by severity/i],
+    ["visual", /by state/i],
+    ["speed", /where the time goes/i],
+    ["steps", /by finding/i],
+  ];
+
+  for (const [category, marker] of OPENS) {
+    it(`opens ${category}`, async () => {
+      h.params = { category };
+      renderView();
+      expect(await screen.findByText(marker)).toBeTruthy();
+      expect(screen.queryByText(/isn’t built yet/i)).toBeNull();
+    });
+  }
+});
+
+describe("the new dashboards, through the route", () => {
+  it("drills a11y into a severity and lists its rules", async () => {
+    h.params = { category: "a11y" };
+    renderView();
+    fireEvent.click((await screen.findByText("Serious")).closest("button")!);
+    expect(h.navigate).toHaveBeenCalledWith({
+      to: "/stats/$category/$facet",
+      params: { category: "a11y", facet: "serious" },
+    });
+
+    h.params = { category: "a11y", facet: "serious" };
+    renderView();
+    expect(await screen.findByText(/colour contrast \(color-contrast\)/i)).toBeTruthy();
+  });
+
+  it("sends Visual to the view that can accept a baseline", async () => {
     h.params = { category: "visual" };
     renderView();
-    // Reachable by typing the route, so it explains rather than rendering an
-    // empty screen.
-    expect(await screen.findByText(/isn’t built yet/i)).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: /open visual/i }));
+    expect(h.navigate).toHaveBeenCalledWith({ to: "/visual" });
+  });
+
+  it("exits a slow step to its test", async () => {
+    h.params = { category: "speed", facet: "slower" };
+    renderView();
+    const row = (await screen.findByText("click Submit")).closest(".gl-exit")!;
+    fireEvent.click(within(row as HTMLElement).getByRole("button", { name: /open test/i }));
+    expect(h.navigate).toHaveBeenCalledWith({ to: "/test/$id", params: { id: "t1" } });
+  });
+
+  it("exits a failing step to its test", async () => {
+    h.params = { category: "steps", facet: "failing" };
+    renderView();
+    const row = (await screen.findByText("click Submit")).closest(".gl-exit")!;
+    fireEvent.click(within(row as HTMLElement).getByRole("button", { name: /open test/i }));
+    expect(h.navigate).toHaveBeenCalledWith({ to: "/test/$id", params: { id: "t1" } });
+  });
+
+  it("says 'carries', not 'carry', when exactly one step does", async () => {
+    // THE HEAD USED TO ASSEMBLE ITS OWN SENTENCE from the headline and the
+    // registry's `unit`, which is a fixed plural — so a category with exactly
+    // one finding read "1 steps carry violations you haven’t accepted". Found
+    // by looking at the screen, which is the only place it was visible.
+    h.params = { category: "a11y" };
+    renderView();
+    expect(await screen.findByText(/1 step carries violations/i)).toBeTruthy();
+    expect(screen.queryByText(/1 steps carry/i)).toBeNull();
+  });
+
+  it("carries the headline its own tile computed", async () => {
+    // One summariser, two surfaces. The Visual tile says "2 steps changed
+    // against their baseline"; the category head must say the same thing, or
+    // the board and the screen under it describe different suites.
+    h.params = { category: "visual" };
+    renderView();
+    await screen.findByText(/by state/i);
+    expect(screen.getByText("2")).toBeTruthy();
+    expect(screen.getByText(/1 test captured/i)).toBeTruthy();
   });
 });
 
