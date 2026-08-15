@@ -10,6 +10,100 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-15 — A run reports every step, including the one that failed
+
+`main/services/step-marker.ts` (new), `main/services/step-reporter.ts`,
+`main/services/step-reporter-source.ts`, `main/services/capture-fixture-source.ts`,
+`main/services/playwright-runner.ts`, `main/services/replay-builder.ts`,
+`main/services/__tests__/step-progress.check.ts` (new),
+`e2e/step-progress.spec.ts` (new).
+
+**The report:** a run that fails highlights nothing in the step list, and the
+progress bar in the console drawer never leaves "Step 1 of N" — even when the
+test passes.
+
+**Both halves were the same feature failing for two unrelated reasons, and
+neither made a sound.**
+
+*Assertions were never reported.* The step reporter filtered on
+`step.category === "pw:api"`, with a comment saying expect-category steps were
+skipped "to avoid noise". They are not noise: Playwright files every
+`expect(...)` under the `expect` category, and an assertion is the commonest way
+a recorded test fails. So the failing step was reported by NOTHING — the step
+list had no failed row to colour, and `buildReplay` had no reported failure to
+attribute, which is why `failedIndex: null` appears on 28 of the 110 failed runs
+sitting on the author's machine. Every one of those is a run that told the user
+it failed and refused to say where.
+
+*And on most runs, nothing was reported at all.* The reporter maps a step to a
+spec line through `step.location`, and Playwright takes that location from the
+first stack frame outside its own library. Once the capture fixture (or the heal
+fixture, or the settle fixture) has wrapped an action method, that frame is the
+WRAPPER — so every action's location is `glaze-capture.mjs` and the reporter's
+file guard drops it. The guard is right: line 366 of the fixture must never be
+read as line 366 of the spec. But combined with the assertion gap it means a run
+with capture, Auto-Heal or crawl on emits **zero** markers, which is exactly
+"the bar never leaves the first step, however well the test does". Screenshot
+capture is the app's default-on path, so this was most runs.
+
+**Why the fixture announces its own steps rather than the reporter learning to
+see them.** The reporter cannot: a `TestStep` exposes a location and no stack,
+so the spec frame is genuinely not available to it. Playwright does have a hook
+for this — `setBoxedStackPrefixes`, which is how `test.step({box:true})` hides a
+helper — but it is reached through `playwright-core/lib/server/utils/…`, and
+pinning a run-critical behaviour to an internal path is a worse bet than the
+alternative. The wrapper, by contrast, has the spec's own frame one or two
+levels up its stack, and `testInfo.file` tells it exactly which file to look
+for, so no heuristic is involved.
+
+**Two emitters cannot double-count, by construction.** Installing the wrapper is
+precisely what moves a step's location off the spec and out of the reporter's
+reach — so for any given step exactly one of the two can see it. That is also
+why the wrapper is now installed for *every* run that loads the fixture rather
+than only capturing ones: a heal-only or crawl-only run wraps the same methods,
+and gating the announcement on screenshots would leave those runs dark for a
+reason having nothing to do with screenshots. It reads the spec line by
+searching the whole stack rather than taking one frame, so a future patch
+nesting on either side of it does not silently stop progress.
+
+**The marker is not always at the start of its line.** Playwright's `line`
+reporter writes its cursor-control prefix with no trailing newline, and a marker
+written from the WORKER — which is where the fixture runs — lands directly after
+it. The old `startsWith` parser would have dropped every fixture marker AND
+printed it to the user as junk. `splitStepMarkers` finds the marker anywhere in
+the line, keeps what preceded it as output, and strips markers even on a run
+whose line map is null, which a spec edited past what the scanner recognizes
+would otherwise have leaked.
+
+**A consequence worth stating, because it is a visible change.** A soft assertion
+or a continue-on-failure step that fails now shows as failed — in the step list
+and in the persisted replay — on a run that passes overall. That is the truth
+about those steps, and it is what the app was already written for: the running
+panel has carried the line "N steps has already failed — soft assertions keep the
+run going" since it was built, and that copy could never once have appeared,
+because `failedSoFar` counts reported failures and no assertion had ever
+reported one.
+
+**A third bug found on the way, same feature.** `runCli` deleted the run's line
+map when its child process closed — and `runCli` is also how a missing browser
+is downloaded, under the same runId. The first run on any new engine therefore
+threw the map away before the test started and highlighted nothing. It is
+dropped in the run's own `finally` now.
+
+**Why the new test is an e2e one.** Both writers are unreachable from a unit
+test: the reporter only exists as a string written next to the specs and loaded
+by the Playwright CLI, and the wrapper only exists inside a worker. Nothing in
+this repo had ever asked real Playwright which category it files an assertion
+under, and the answer is the whole bug. `e2e/step-progress.spec.ts` runs the
+real generated spec through the real CLI in both modes and reads the stream back
+through the runner's own splitter; all five rows fail against the previous
+implementation, one of them reporting "step 0 of a passing run reports", which
+is the user's second symptom stated as an assertion. `check:step-progress` is
+the laptop-speed half that pins the same properties at source — including the
+category guard as a whole expression, because both files *explain* in a comment
+why assertions are reported, and a check for the word alone passes against a
+reporter that has stopped reporting them.
+
 ### 2026-08-14 — The issue tracker is a setting, not a constant
 
 `renderer/lib/issue-types.ts`, `main/services/issue-tracker/types.ts`,

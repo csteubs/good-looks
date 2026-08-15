@@ -146,12 +146,13 @@ renderer/__tests__/sonner-stub.tsx  the toast stub, aliased over `sonner` in
 
 ## Testing
 
-**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 3605 Vitest tests across 175 files and 68 checks in the chain as of 2026-08-14 (70 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
+**Two systems, one command.** `npm run test:all` = the standalone `check:*` scripts, then Vitest. Both must pass. 3754 Vitest tests across 184 files and 69 checks in the chain as of 2026-08-15 (71 defined — `check:repo-hygiene` and `check:shell-drift` are deliberately outside it).
 
 **A third system the local gate does not run: `e2e/`** — Playwright driving the real app through `_electron` (`npm run test:e2e`, and CI's `gate.yml`). It is where anything about REAL WINDOWS — or a real navigation — gets checked: `click-navigation.spec.ts` (a click that changes route is recorded, including one a client-side router intercepts; the failure it was written against loses six clicks out of six and jsdom cannot host it, because nothing there has a navigation that destroys the document mid-read), `windows.spec.ts` (a second window actually opens), `chrome-clickable.spec.ts` (occlusion and computed cursor), `trainer-dock.spec.ts` (where the trainer panel physically lands next to the training browser), `dialog-footer.spec.ts` (whether a dialog's buttons are laid out inside it), `window-title.spec.ts` (that the main window has no title and no page can give it one), `ui-scale.spec.ts` (that real `webContents` end up at the chosen zoom, that window floors are scaled with it, and — the one that would be a product bug — that the TRAINING BROWSER is never scaled with the app). jsdom has no second window and no layout engine, so these are not slow duplicates of unit tests — they are the only place their subject exists. Reach for it when a change moves, sizes or stacks a window.
 
-**Two specs there are not about windows at all.** `assert-parity.spec.ts` and
-`context-parity.spec.ts` — the second answers the neighbouring question, not
+**Three specs there are not about windows at all.** `assert-parity.spec.ts`,
+`context-parity.spec.ts` and `step-progress.spec.ts` — the second answers the
+neighbouring question, not
 "what does this step MEAN" but "which element does it POINT AT". Element context
 is resolved twice, by a DOM walk in the trainer (`ctxFilter` inside `matchesFor`)
 and by real Playwright resolving the chain the generator emits; if those
@@ -161,6 +162,19 @@ settle it, because the question is whether our model of them is right. **Changin
 what a context clause emits or resolves to? Add a row.**
 
 **`assert-parity.spec.ts`.** It is the authority on what a step MEANS, running every row through the real injected replayer AND the real generated source executed by real Playwright, and asserting the two verdicts agree — the property whose absence let "URL contains" generate an assertion that could not pass while the trainer showed it green. It uses a plain browser page rather than `_electron` because its subject is matcher semantics, not a window; it lives here because nothing short of real Playwright can answer the question. **Changing what any assertion, wait or condition emits? Add a row.** The fast counterpart is `main/services/assert-emission.test.ts`, which models the same rules in Node — but a model is only worth what validates it.
+
+**`step-progress.spec.ts`** is the third, and the same argument a third time:
+which steps a run REPORTS is what decides which step the app can highlight, and
+both writers are unreachable from a unit test — the reporter only exists as a
+string the Playwright CLI loads, and the capture fixture's action wrapper only
+exists inside a Playwright worker. Nothing here had ever asked real Playwright
+which category it files an assertion under. It files them under `expect`, the
+reporter only read `pw:api`, and so a failing assertion — the commonest failure
+a recorded test has — was reported by nothing at all; on a capture, heal or
+crawl run, where the fixtures take every action's location off the spec, NO step
+was reported and the progress bar never left the first one. The laptop-speed
+half is `check:step-progress`. **Changing what reports a step — the reporter's
+categories, the fixture's wrapper, the marker format? Add a row.**
 
 **`check:shell-drift` has retired itself.** It guarded the Glaze tree and the Electron tree against drifting apart, and on 2026-08-09 they became one: `main` carries no `@glaze/*` dependency, and the stale `shell/electron` branch was deleted (preserved as the tag `archive/shell-electron`). The script was written to expect exactly this — with no counterpart ref it prints `nothing to compare` and exits 0, deliberately rather than failing, because a guard that goes red because its problem was *solved* trains people to ignore it. Leave it wired up: it costs nothing and it is what would notice a second shell reappearing.
 

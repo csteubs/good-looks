@@ -16,6 +16,7 @@ import { sendToMain } from "./app-window.js";
 import { getScriptsDir, testStore } from "./test-store.js";
 import { runHistoryStore } from "./run-history-store.js";
 import { stepReporterSource } from "./step-reporter-source.js";
+import { splitStepMarkers } from "./step-marker.js";
 import { captureFixtureSource } from "./capture-fixture-source.js";
 import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 import type { HealFailure } from "./artifact-store.js";
@@ -760,32 +761,26 @@ function emitStep(runId: string, index: number, status: "begin" | "end", ok: boo
   sendToMain("runner:step", { runId, index, status, ok });
 }
 
-// Parse a stdout chunk: extract complete `__GLAZE_STEP__:` lines, map their
-// line number to a step index, emit `runner:step` events, and return the
-// remaining visible text (markers stripped).
+// Parse a stdout chunk: extract the step markers, map their line number to a
+// step index, emit `runner:step` events, and return the remaining visible text.
+//
+// The splitting itself lives in `step-marker.ts` — it is the half with the two
+// non-obvious rules (a marker can straddle chunks, and a marker written by the
+// WORKER lands after the `line` reporter's cursor-control prefix rather than at
+// the start of its line), and it is testable without a child process.
 function processStdout(runId: string, chunk: string): string {
+  const { visible, markers, rest } = splitStepMarkers(stdoutBuffers.get(runId) ?? "", chunk);
+  stdoutBuffers.set(runId, rest);
+  // Markers are stripped whether or not this run can map them: a spec with no
+  // line map (hand-edited past what the scanner recognizes) would otherwise
+  // print raw `__GLAZE_STEP__:` lines into the user's Output panel.
   const map = stepLineMaps.get(runId);
-  if (!map) return chunk; // no step mapping for this run — pass through
-
-  const buf = (stdoutBuffers.get(runId) ?? "") + chunk;
-  const lines = buf.split("\n");
-  // Last element is the partial trailing line (no trailing newline) — hold it.
-  stdoutBuffers.set(runId, lines.pop() ?? "");
-
-  let visible = "";
-  for (const line of lines) {
-    if (line.startsWith("__GLAZE_STEP__:")) {
-      try {
-        const payload = JSON.parse(line.slice("__GLAZE_STEP__:".length));
-        const stepIndex = map.get(payload.line);
-        if (typeof stepIndex === "number") {
-          emitStep(runId, stepIndex, payload.event, payload.ok ?? true);
-        }
-      } catch {
-        // ignore malformed marker
+  if (map) {
+    for (const marker of markers) {
+      const stepIndex = map.get(marker.line);
+      if (typeof stepIndex === "number") {
+        emitStep(runId, stepIndex, marker.event, marker.ok);
       }
-    } else {
-      visible += line + "\n";
     }
   }
   return visible;
@@ -834,7 +829,11 @@ function runCli(
         if (visible) emitOutput(runId, "stdout", visible);
       }
       stdoutBuffers.delete(runId);
-      stepLineMaps.delete(runId);
+      // NOT the step line map. `runCli` is also how a missing browser gets
+      // installed, and that call runs under the SAME runId — so deleting the map
+      // here threw away the mapping the test run was about to need, and the
+      // first run on any new engine silently highlighted nothing. It is dropped
+      // where it is set instead: the run's own `finally`.
       clearTimeout(timer);
       resolve(code ?? -1);
     });
@@ -1290,6 +1289,10 @@ export const playwrightRunner = {
         // same runId so the Phase 2 timeline can retrieve it.
         const statuses = stepStatusMaps.get(runId) ?? {};
         stepStatusMaps.delete(runId);
+        // Dropped here rather than when the Playwright process closes, because
+        // a browser install runs through the same `runCli` under the same runId
+        // and would otherwise take the map with it.
+        stepLineMaps.delete(runId);
         // Read once, up here, because both the replay summary below and the
         // overhead numbers further down need it — and the summary has to be
         // emitted before the log buffer is drained a few lines later.
