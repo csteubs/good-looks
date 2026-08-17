@@ -318,15 +318,24 @@ app computes whether an occurrence was missed and offers to run it.
 
 > **As built (2026-08-13), two departures from the sketch above.**
 >
-> The schedule is an **enumeration** — `everyHours` / `dailyAt` / `weekdaysAt` —
-> not a cron string. A cron text field's failure mode is a schedule that never
-> fires, and on screen that is indistinguishable from one that is not due yet:
-> no error, no red, and the user finds out days later. An enumerated schedule
-> cannot reach that state, because every value it holds came from a picker. The
-> cost is expressiveness, which is the right thing to give up for a scheduler
-> that only runs while the app is open. `everyHours` is anchored to local
-> midnight rather than to the last run, so the cadence cannot drift, and its
-> step must divide 24.
+> The schedule is an **enumeration** — `everyMinutes` / `dailyAt` /
+> `weekdaysAt` / `onceAt` — not a cron string. A cron text field's failure mode
+> is a schedule that never fires, and on screen that is indistinguishable from
+> one that is not due yet: no error, no red, and the user finds out days later.
+> An enumerated schedule cannot reach that state, because every value it holds
+> came from a picker. The cost is expressiveness, which is the right thing to
+> give up for a scheduler that only runs while the app is open. `everyMinutes`
+> is anchored to local midnight rather than to the last run, so the cadence
+> cannot drift, and its step must divide a day.
+>
+> **Extended 2026-08-17.** The interval was `everyHours` and floored at one
+> hour; it is now `everyMinutes` with steps from 5 minutes to 24 hours, and the
+> old shape migrates on read (`hours × 60`) rather than living alongside the
+> new one. `onceAt` is new: a single named instant, up to three years ahead,
+> which never comes round again. It is the one place the rule "a schedule that
+> has never fired owes nothing" had to bend — that rule stops setting a cadence
+> from running the suite on the spot, but a one-off names a DAY, so if the app
+> was shut on that day the run is owed and the launch catch-up has to claim it.
 >
 > `lastRunAt` lives on the Routine as **`lastScheduledRunAt`**, not inside the
 > schedule, so editing a schedule cannot clobber the record of what it has

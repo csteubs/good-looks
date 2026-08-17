@@ -188,6 +188,18 @@ assert(
   badSchedule !== null && badSchedule.schedule === undefined,
   "an hour step that does not divide the day is DROPPED, not rounded — a rounded cadence is one nobody chose",
 );
+// The store is where a file written before sub-hour cadences existed actually
+// lands, so this is where the migration has to hold: an `everyHours` routine
+// on disk comes back as `everyMinutes` with the same cadence, not as an
+// unscheduled one. Getting this wrong silently unschedules every existing job.
+const migrated = routineStore.save(
+  routine({ id: "r-legacy-sched", schedule: { kind: "everyHours", hours: 4 } }),
+  4_000,
+);
+assert(
+  JSON.stringify(migrated?.schedule) === JSON.stringify({ kind: "everyMinutes", minutes: 240 }),
+  "a stored everyHours schedule migrates to everyMinutes on read, exactly",
+);
 assert(
   routineStore.save(routine({ id: "r-no-sched" }), 4_000)?.schedule === undefined,
   "a routine with no schedule stays unscheduled",
