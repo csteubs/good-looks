@@ -312,6 +312,10 @@ export function StatsCategoryView(): React.ReactElement {
   const flakeQuery = useQuery({ queryKey: ["flake"], queryFn: () => api.runs.flake() });
   const healsQuery = useQuery({ queryKey: ["heals", "all"], queryFn: () => api.heals.listAll() });
   const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
+  // Lifetime counts. A second round trip rather than `runs.length`, because the
+  // run index is capped and its length is therefore a different number from the
+  // one the Outcomes cards and the pass-rate headline claim to state.
+  const totalsQuery = useQuery({ queryKey: ["run-totals"], queryFn: api.runs.totals });
   const replaysQuery = useQuery({ queryKey: ["replays"], queryFn: api.artifacts.list });
   const stepHealthQuery = useQuery({
     queryKey: ["metrics", "stepHealth"],
@@ -370,7 +374,15 @@ export function StatsCategoryView(): React.ReactElement {
   // not resolved is absent from this list rather than given a state, which is
   // why the lookup can legitimately find nothing and render no head at all.
   const summary: CategorySummary | null =
-    summariseAll({ runs, flake, heals, replays, stepHealth, slowness }).find(
+    summariseAll({
+      runs,
+      runTotals: totalsQuery.data,
+      flake,
+      heals,
+      replays,
+      stepHealth,
+      slowness,
+    }).find(
       (s) => s.id === (meta.id as CategoryId),
     ) ?? null;
 
@@ -386,7 +398,12 @@ export function StatsCategoryView(): React.ReactElement {
       return facet ? (
         <OutcomesLeaf facet={facet} runs={runs} onOpenTest={openTest} />
       ) : (
-        <OutcomesDashboard runs={runs} overhead={overheadQuery.data} onDrill={drill} />
+        <OutcomesDashboard
+          runs={runs}
+          totals={totalsQuery.data}
+          overhead={overheadQuery.data}
+          onDrill={drill}
+        />
       );
     }
     if (meta.id === "stability") {

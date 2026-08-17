@@ -11,16 +11,21 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import type { RunRecord } from "../lib/recorder-types";
+import type { RunRecord, RunTotals } from "../lib/recorder-types";
 import { DENSE_PAGE_SIZE } from "../lib/paginate";
 import { StatsView } from "./stats-view";
 
 let runs: RunRecord[] = [];
+/** Lifetime counts. Null by default — the Outcomes cards and the page header
+ *  then fall back to counting the fixture runs, which is what every assertion
+ *  in this file below was written against. */
+let totals: RunTotals | null = null;
 
 vi.mock("../lib/api", () => ({
   api: {
     runs: {
       list: async () => runs,
+      totals: async () => totals,
       searchLogs: async () => [],
       captureOverhead: async () => null,
       getLog: async () => "",
@@ -114,6 +119,41 @@ async function expectRows(n: number): Promise<HTMLElement[]> {
 
 beforeEach(() => {
   runs = [];
+  totals = null;
+});
+
+describe("the page header's run count", () => {
+  // THE INDEX IS CAPPED, so its length is the size of a cache and not the size
+  // of a history. This line sits directly above the Outcomes tile, which states
+  // the same quantity — counting the run list here made the two disagree the
+  // moment the cap was reached.
+
+  it("counts every run ever, and says how many are still stored", async () => {
+    runs = [run({ id: "r1" }), run({ id: "r2", status: "failed" })];
+    totals = { runs: 1240, passed: 1100, failed: 140, retained: 2, pruned: 1238, prunedDays: [] };
+    renderView();
+    // WAIT FOR THE CONTENT, NOT THE ELEMENT. This line renders before either
+    // query resolves, so `findByText(/runs recorded/)` matches the loading
+    // state instantly and every assertion below runs against "0 runs recorded".
+    const head = await screen.findByText(/1240 runs recorded/);
+    expect(head.textContent).toContain("2 kept in history");
+  });
+
+  it("says nothing about storage when nothing has been pruned", async () => {
+    runs = [run({ id: "r1" })];
+    totals = { runs: 1, passed: 1, failed: 0, retained: 1, pruned: 0, prunedDays: [] };
+    renderView();
+    const head = await screen.findByText(/1 run recorded/);
+    expect(head.textContent).not.toMatch(/kept in history/);
+  });
+
+  it("falls back to the retained count before the totals resolve", async () => {
+    // `null` here stands for an unresolved query. Rendering 0 while waiting
+    // would report a suite that has never been run.
+    runs = [run({ id: "r1" }), run({ id: "r2" })];
+    renderView();
+    expect(await screen.findByText(/2 runs recorded/)).toBeTruthy();
+  });
 });
 
 describe("run history table", () => {

@@ -55,6 +55,64 @@ export function counts(db) {
 }
 
 /**
+ * Every run the database still knows about, and the same counts per local day.
+ *
+ * THIS IS A RECOVERY QUERY, and the only one in this file that exists for a
+ * number rather than for a view. The run index is capped, so runs pruned out of
+ * it are gone — and the pruned-run COUNTER that replaces them could only start
+ * counting on the day it shipped. Everything pruned before that was deleted
+ * with nothing recording it.
+ *
+ * This file is the one place that still remembers: `ingest` writes a row per
+ * run, `ingestBeforePrune` writes one for any run about to lose its artifacts,
+ * and NOTHING deletes rows from `runs` — the table is only ever dropped whole
+ * and replayed. So a database that has been open across those prunes holds runs
+ * the index no longer does, and the counter can be seeded from it once.
+ *
+ * Baseline updates are excluded here, as they are everywhere else: an event
+ * with an incidental status is not a run.
+ *
+ * The day grouping is done in SQL with SQLite's `localtime` modifier so the
+ * buckets are LOCAL days — the same bucketing the renderer's chart and the
+ * store's own tally use. Returned as `YYYY-MM-DD`; the caller converts to
+ * local midnight, because only it knows whether it wants a timestamp.
+ */
+export function lifetimeRunCounts(db, { sinceMs = 0 } = {}) {
+  const totals = one(
+    db,
+    `SELECT COUNT(*) AS runs,
+            SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) AS passed,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
+       FROM runs
+      WHERE kind IS NULL OR kind != 'baseline-update'`,
+  );
+  const days = all(
+    db,
+    `SELECT date(started_at / 1000, 'unixepoch', 'localtime') AS day,
+            COUNT(*) AS runs,
+            SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END) AS passed,
+            SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed
+       FROM runs
+      WHERE (kind IS NULL OR kind != 'baseline-update')
+        AND started_at >= ?
+      GROUP BY day
+      ORDER BY day`,
+    [Number(sinceMs) || 0],
+  );
+  return {
+    runs: Number(totals?.runs ?? 0),
+    passed: Number(totals?.passed ?? 0),
+    failed: Number(totals?.failed ?? 0),
+    days: days.map((d) => ({
+      day: String(d.day),
+      runs: Number(d.runs ?? 0),
+      passed: Number(d.passed ?? 0),
+      failed: Number(d.failed ?? 0),
+    })),
+  };
+}
+
+/**
  * Step Health — one row per step across all retained history.
  *
  * The join the whole phase exists for. Each of these five columns lives in a

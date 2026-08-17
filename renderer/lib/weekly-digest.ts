@@ -20,7 +20,7 @@
 // the same rule §6.1 and §6.6 follow: a week boundary computed from a hidden
 // clock is one no test can sit either side of.
 
-import type { RunRecord } from "./recorder-types";
+import type { RunDayCount, RunRecord } from "./recorder-types";
 import { flakeRuns } from "./cost-model";
 
 const DAY_MS = 86_400_000;
@@ -54,8 +54,21 @@ export interface WeeklyDigest {
  * or "100% passed", which are true statements about an empty set and read as
  * good news. This is the one reading the digest most has to get right, because
  * a suite nobody is running is the failure mode the whole app exists against.
+ *
+ * @param prunedDays Runs the run index no longer holds, by local day. The index
+ *  is CAPPED, and pruning takes the OLDEST records — so a suite busy enough to
+ *  fit a thousand runs inside a week loses this week's own runs to the cap, and
+ *  a digest counting only records reports "1000 runs" on a week that had 1019.
+ *  These counts are the missing runs; they carry no test identity, so they
+ *  raise the run and failure COUNTS and cannot contribute an offender or a
+ *  flake — which is the honest degradation, since neither can be recovered from
+ *  a run whose record is gone.
  */
-export function weeklyDigest(runs: readonly RunRecord[], now: number): WeeklyDigest {
+export function weeklyDigest(
+  runs: readonly RunRecord[],
+  now: number,
+  prunedDays: readonly RunDayCount[] = [],
+): WeeklyDigest {
   const weekStart = now - WEEK_MS;
   const prevStart = weekStart - WEEK_MS;
 
@@ -66,23 +79,30 @@ export function weeklyDigest(runs: readonly RunRecord[], now: number): WeeklyDig
   const thisWeek = real.filter((r) => r.startedAt >= weekStart && r.startedAt <= now);
   const lastWeek = real.filter((r) => r.startedAt >= prevStart && r.startedAt < weekStart);
 
-  const failed = thisWeek.filter((r) => r.status === "failed").length;
+  // A pruned DAY joins the window its midnight falls in. The window is rolling
+  // and the buckets are calendar days, so the day straddling `weekStart` lands
+  // wholly on one side — an error bounded by one day's pruned runs, against an
+  // alternative of dropping them entirely. Nothing finer is available: the
+  // records that carried the timestamps are what pruning deleted.
+  const prunedIn = (from: number, to: number) =>
+    prunedDays.filter((d) => d.dayStart >= from && d.dayStart <= to);
+  const sum = (days: readonly RunDayCount[], key: "runs" | "failed") =>
+    days.reduce((n, d) => n + d[key], 0);
+
+  const prunedThisWeek = prunedIn(weekStart, now);
+  const weekRuns = thisWeek.length + sum(prunedThisWeek, "runs");
+  const failed = thisWeek.filter((r) => r.status === "failed").length + sum(prunedThisWeek, "failed");
+  const previousRuns = lastWeek.length + sum(prunedIn(prevStart, weekStart - 1), "runs");
   const offenders = rankOffenders(thisWeek);
   const flaky = countFlaky(thisWeek);
 
   return {
-    runs: thisWeek.length,
+    runs: weekRuns,
     failed,
-    previousRuns: lastWeek.length,
+    previousRuns,
     offenders,
     flaky,
-    lines: buildLines({
-      runs: thisWeek.length,
-      failed,
-      previousRuns: lastWeek.length,
-      offenders,
-      flaky,
-    }),
+    lines: buildLines({ runs: weekRuns, failed, previousRuns, offenders, flaky }),
   };
 }
 

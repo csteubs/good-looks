@@ -1692,6 +1692,55 @@ export interface RunRecord {
   testDeleted?: boolean;
 }
 
+/**
+ * How many test runs there have EVER been — the answer the run index alone
+ * cannot give.
+ *
+ * The index is capped (run-history-store.ts, MAX_RECORDS), so counting its
+ * records answers "how many runs are still on disk", which is a different
+ * question from the one the Stats board's "Total runs" card asks. `runs` is the
+ * real figure, carried across pruning by a counter written at the moment of
+ * pruning; `retained` is what the chart, the run table and the drill-down lists
+ * are able to show. When they differ, the screen says so — two numbers
+ * disagreeing with no explanation reads as a bug in whichever one the reader
+ * trusts less.
+ *
+ * Executions only: a baseline update is an event with an incidental `status`,
+ * and counting it here would move the pass rate when nothing was executed.
+ */
+export interface RunTotals {
+  /** executions ever recorded, pruned ones included */
+  runs: number;
+  passed: number;
+  failed: number;
+  /** executions still in the index — the window every list on the screen shows */
+  retained: number;
+  /** executions the cap has dropped: `runs - retained` */
+  pruned: number;
+  /**
+   * Pruned runs by the local calendar day they started, oldest first, most
+   * recent 60 days.
+   *
+   * For the figures that are windowed by TIME rather than being lifetime
+   * counts — the weekly digest, the pass/fail chart. Pruned runs are always
+   * older than every surviving record, so as soon as a thousand runs fit inside
+   * a week those windows start losing runs to the cap: "1000 runs this week" on
+   * a week that had 1019. The flat totals cannot repair that, because they
+   * cannot say WHEN. Empty when nothing has been pruned, or when the breakdown
+   * on disk did not survive validation — in which case the windowed figures
+   * degrade to counting retained records, which is what they did before.
+   */
+  prunedDays: RunDayCount[];
+}
+
+export interface RunDayCount {
+  /** local midnight of the day, epoch ms */
+  dayStart: number;
+  runs: number;
+  passed: number;
+  failed: number;
+}
+
 /** A hit from searching the raw run logs. */
 export interface LogSearchResult {
   runId: string;
@@ -1945,6 +1994,17 @@ export interface RecorderSettings {
    *  the model was thinking always wins, and the suggestion falls back to a
    *  review toast instead. */
   autoAcceptAiDebugFixes: boolean;
+  /** How many of the most recent runs keep their RAW .log file (default 1000,
+   *  clamped 0–50000; 0 keeps none).
+   *
+   *  Separate from how many run RECORDS the history keeps, and that separation
+   *  is the point. A record is ~700 bytes; the log beside it is tens of KB, so
+   *  one number governing both made the cheap thing as scarce as the expensive
+   *  one — the history stopped at 1000 runs to bound a DISK cost, and every
+   *  count on the Stats screen inherited that ceiling. Records now run to
+   *  MAX_RECORDS; this is the log budget, on its own dial. A run past it keeps
+   *  its record (and its counts) and loses only its console output. */
+  runLogRetainedRuns: number;
   /** additionally delete captured runs older than this many days (0 = off,
    *  max 365). Applies ON TOP of artifactRetainedRuns — a run is kept only if
    *  it satisfies both rules. The pinned baseline is never pruned. */
