@@ -7,8 +7,10 @@ first slice)** and **B9 (AI debug — the status contract and the Sending strip)
 — see the ✅ marks in §4, §5 and §8.3. The app's frame is the redesign, so are
 the five components every screen embeds, and every screen has been reached.
 
-**Phase B is complete.** B8 was the last one open and closed on 2026-08-11 with
-its frame rail, threshold-against-frames and the masks/baselines reskin.
+**Phase B is complete.** B8 was the last one open. It closed on 2026-08-11 with
+its frame rail, threshold-against-frames and the masks/baselines reskin — and
+then re-opened, because that slice left the rest of the screen on the SDK and
+the view still read as the old app. The full reskin landed 2026-08-17.
 **Phase C is complete. §6.1 through §6.9 all landed 2026-08-12** — the five
 non-failure run-state summaries (which were B5b), the inline step composer,
 change temp against real medians, Stats → Cost, Stats → Report (the emitters,
@@ -729,7 +731,27 @@ answering with bare step ids under a `: string[]` annotation. That type-checked,
 because the annotation was the thing being checked rather than `api.ts`'s actual
 `BaselineEntry[]` — so the manager rendered four rows with no label and "Invalid
 Date", which is exactly the "looks like a broken feature" failure the bridge's
-own header warns about. **With this, §B8 is complete and so is Phase B.**
+own header warns about.
+
+✅ **The rest of the screen, 2026-08-17.** The five bullets above were called
+"§B8 complete" and were not: the screen still imported `Badge`, `Button`,
+`Callout`, `EmptyState`, `Input`, `SegmentedControl`, `Slider`, `Switch`,
+`Text`, `Textarea` and `Toolbar` from `@ui`, and Phase C then built Wipe, Blink,
+provenance, drift and the region breakdown on top of that mix. The largest file
+in the renderer was two designs interleaved, and it read as the old app.
+
+It is now two `Panel`s — RUNS at a fixed 268px and REPLAY — with the toolbar
+retired the way Heals' was, the test name in the panel header's `id` slot, the
+run's verdict as a `StatusChip`, the three callouts as `.gl-notice` blocks with
+inset rails, the threshold as a styled native range input, and one `go` button
+on the screen: `Accept New Baseline`. `visual-view.tsx` and
+`a11y-violations.tsx` are both on `check:sdk-retired`'s list, which is what
+stops a third pass being needed. Two layout bugs went with it — a tool group
+that clipped `Masks & baselines` off the panel edge, and a frame rail 20px
+shorter than its own contents — and `check:narrow-layout` §3 was rewritten onto
+the new structure rather than dropped, since its subject was already this
+header. See DECISIONS 2026-08-17. **With this, §B8 is complete and so is
+Phase B.**
 
 **One implementation note carried over from the mockup and worth keeping:** the
 diff region boxes are *measured after layout*, never authored as percentages,

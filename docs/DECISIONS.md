@@ -10,6 +10,91 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-17 — The Visual view finishes its reskin, eighteen months after starting it
+
+`renderer/main/visual-view.tsx`, `renderer/main/a11y-violations.tsx`,
+`renderer/theme/screens.css`, `renderer/theme/shared.css`,
+`main/services/__tests__/sdk-retired.check.ts`,
+`main/services/__tests__/narrow-layout.check.ts`.
+
+**The report:** the Visual view still looks like the Glaze app. It did.
+
+**B8 shipped as a "first slice" and nothing came back for the rest.** REDESIGN
+§B8 says so in the file — the bezel, the compare-mode switch, the frame rail,
+the threshold readout and the masks manager landed on the theme layer, and the
+sentence "with this, §B8 is complete and so is Phase B" was written about a
+screen that still imported `Badge`, `Button`, `Callout`, `EmptyState`, `Input`,
+`SegmentedControl`, `Slider`, `Switch`, `Text`, `Textarea` and `Toolbar` from
+`@ui`. Phase C then added Wipe, Blink, provenance, drift and the region
+breakdown ON TOP of that, each correctly in the redesign's vocabulary, which is
+what made the result so hard to see for so long: the largest file in the
+renderer was two designs interleaved, and every new piece made the half that was
+already right a little more convincing.
+
+**The tell was a blue slider.** Blue is not in this palette — colour means
+outcome (tokens.css) — and the threshold control was `Slider variant="filled"`,
+whose fill is the SDK's accent. It sat two inches from a frame the user is being
+asked to judge for colour. Everything else followed from looking properly once:
+rounded pill badges in a column of square chips, three filled `Callout` boxes
+stacked over the screenshot, a run list whose selected row was drawn in
+`bg-accent-10 ring-accent`, and a mask overlay in `bg-support-orange/25`.
+
+**What the reskin decided, beyond swapping components:**
+
+- **The toolbar is gone, like Heals'.** It held the word "Visual" under a top
+  strip whose breadcrumb already says VISUAL — the screen's name twice, in a
+  52px band taken off the frame. What replaces it is two `Panel`s: RUNS (fixed
+  268px) and REPLAY. The run list narrows for the OPPOSITE reason the Heals
+  journal does: that pane protects a detail column full of long single lines,
+  this one protects a picture, and a full-page screenshot is the one thing on
+  this screen that cannot be read at half size.
+- **The test name moved into the panel header's `id` slot**, which is where this
+  design puts what a panel is ABOUT and is documented to truncate. That is what
+  makes the tool band below it honest: the name is the cell allowed to give, and
+  the verdict — a `StatusChip`, unshrinkable by `check:status-width` — is not.
+- **One `go` button on the whole screen: "Accept New Baseline".** Phosphor means
+  "this is the right answer", and re-pinning one step is the affirmative action
+  every notice on the screen points at by name. The two bulk "Accept all for
+  this run" buttons stay `ghost` deliberately, and it is the same argument that
+  put a dismiss beside them in the first place: signing off on a run blind must
+  never be the brightest thing on screen.
+- **Two of four diff verdicts take no hue, and two of four axe impacts don't
+  either.** `match` is phos and `changed` is amber; `new-baseline` ("Baseline
+  set") is a fact about what the app did and `unable` ("Can't compare") is the
+  ABSENCE of a comparison — the same thing "Not reported" is for a step. Axe's
+  four impacts collapse the same way: critical is red, serious is amber,
+  moderate and minor report nothing urgent and are told apart by the word in the
+  chip. Same trade `StatusChip` makes for `Accepted` and `Reverted` on Heals.
+- **The threshold is a native `<input type="range">`, styled.** Not a row of six
+  preset buttons, and the reason is B8's own feature rather than the hue: the
+  readout beside it answers WHILE you drag, and six buttons turn one drag into
+  six commits.
+- **`a11y-violations.tsx` came too, and is listed in `check:sdk-retired`
+  alongside the screen.** It renders inside the Visual step detail, so its SDK
+  imports were invisible from the screen's own line in that list — and the test
+  detail's Accessibility tab renders the same two components, which is the whole
+  reason that file exists.
+
+**Two layout bugs, both found by looking at it, neither visible to any test.**
+The tool group was one rigid flex item wider than the panel on any window under
+~1500px, so "Masks & baselines" was clipped off the edge: in the DOM, nothing to
+scroll, impossible to click. And the frame rail was ~20px shorter than its own
+contents, because the SDK's `ScrollArea` carries `h-full` and a percentage
+height cannot resolve inside a parent that is sizing to its content — the
+overflow leaked to the panel body, which scrolled, and the first thing to scroll
+out of sight was the run's verdict. Fixes: the tool group wraps, and the strip
+is a band of stated height. **`check:narrow-layout` §3 was rewritten rather than
+deleted** — its subject was already this exact class of bug on this exact
+header, found the same way at 1440×900 in 2026-08-11, so it now pins the wrap on
+both `.gl-visual-head` and `.gl-visual-head-tools` and records both failures.
+
+**Two rules had been carrying their type from the SDK without saying so.**
+`.gl-regions-line` and `.gl-drift-line` were `min-width: 0` and nothing else,
+with `<Text variant="small">` supplying the font, size and colour. Removing
+`Text` would have left both rendering in the browser default. This is the same
+shape as the class-that-does-not-exist bug in CLAUDE.md, one level up: a rule
+that exists, is applied, and does not do what its name implies.
+
 ### 2026-08-15 — A run reports every step, including the one that failed
 
 `main/services/step-marker.ts` (new), `main/services/step-reporter.ts`,

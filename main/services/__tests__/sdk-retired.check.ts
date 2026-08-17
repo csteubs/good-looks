@@ -73,6 +73,17 @@ const RETIRED = [
   "renderer/main/suite-cost-panel.tsx",
   "renderer/main/step-health-panel.tsx",
   "renderer/main/divergence-panel.tsx",
+  // B8 shipped as a "first slice" — the bezel, the compare switch, the frame
+  // rail, the threshold readout and the masks manager — and left the rest of
+  // the screen on the SDK, which is how the largest file in the renderer ended
+  // up half redesigned and reading as the old app. It is fully on the theme
+  // layer now, and this is what stops the same thing happening twice.
+  "renderer/main/visual-view.tsx",
+  // Not a screen, but the two components the Visual step detail embeds — and
+  // the test detail's Accessibility tab embeds the same two. A file rendered by
+  // a retired surface is one whose SDK imports are invisible from that
+  // surface's own line in this list.
+  "renderer/main/a11y-violations.tsx",
 ];
 
 /**

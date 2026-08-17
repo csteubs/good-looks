@@ -1,30 +1,19 @@
 import * as React from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertDialog,
-  Badge,
-  Button,
-  Callout,
-  Dialog,
-  EmptyState,
-  Input,
-  ScrollArea,
-  SegmentedControl,
-  SegmentedControlItem,
-  Slider,
-  Switch,
-  Text,
-  Textarea,
-  Toolbar,
-  ToolbarContent,
-  ToolbarTitle,
-  toast,
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@ui";
+import { AlertDialog, Dialog, ScrollArea, toast, Tooltip, TooltipContent, TooltipTrigger } from "@ui";
 
-import { Btn, CRT, Segmented, TONE, usePrefersReducedMotion, withAlpha } from "../theme";
+import {
+  Btn,
+  CRT,
+  Panel,
+  Segmented,
+  StatusChip,
+  TONE,
+  insetRail,
+  toneSurface,
+  usePrefersReducedMotion,
+  withAlpha,
+} from "../theme";
 import {
   Accessibility,
   Check,
@@ -106,11 +95,21 @@ function statusBarColor(status: ReplayStepStatus): string {
   }
 }
 
-function StatusIcon({ status, className }: { status: ReplayStepStatus; className?: string }) {
-  const cls = className ?? "size-3.5";
-  if (status === "passed") return <Check className={`${cls} text-support-green`} />;
-  if (status === "failed") return <X className={`${cls} text-support-red`} />;
-  return <CircleSlash className={`${cls} text-tertiary`} />;
+/** The step's outcome as a glyph. The hue comes from the stylesheet, keyed on
+ *  `data-status`, for the same reason the bar's does: only the two real outcomes
+ *  take one, and "not reported" stays neutral. */
+function StatusIcon({ status }: { status: ReplayStepStatus }) {
+  return (
+    <span className="gl-visual-step-icon" data-status={status}>
+      {status === "passed" ? (
+        <Check aria-hidden="true" />
+      ) : status === "failed" ? (
+        <X aria-hidden="true" />
+      ) : (
+        <CircleSlash aria-hidden="true" />
+      )}
+    </span>
+  );
 }
 
 function statusLabel(status: ReplayStepStatus): string {
@@ -120,18 +119,25 @@ function statusLabel(status: ReplayStepStatus): string {
   return "Not reported";
 }
 
-// ── Visual-diff → badge ─────────────────────────────────────────────────
-function diffBadgeColor(state: VisualDiffState): "green" | "orange" | "yellow" | "secondary" {
-  switch (state) {
-    case "match":
-      return "green";
-    case "changed":
-      return "orange";
-    case "unable":
-      return "yellow";
-    default:
-      return "secondary";
-  }
+// ── Visual-diff → chip ──────────────────────────────────────────────────
+/**
+ * The tone a comparison's verdict takes, and only two of the four get one.
+ *
+ * `match` is an outcome — the frame is what it was — so it takes phos.
+ * `changed` takes amber, which is caution and not a result: the frame moved and
+ * the run still passed, and it is the same claim the frame rail's amber inset
+ * makes about the same frame at a smaller size.
+ *
+ * THE OTHER TWO ARE NEUTRAL ON PURPOSE. `new-baseline` ("Baseline set") is a
+ * fact about what the app did, and `unable` ("Can't compare") is the ABSENCE of
+ * a comparison rather than a bad one — the same thing "Not reported" is for a
+ * step's status. Spending a third hue on either would put a verdict on a frame
+ * that was never judged, and the word in the chip already says which is which.
+ */
+function diffTone(state: VisualDiffState): "phos" | "amber" | undefined {
+  if (state === "match") return "phos";
+  if (state === "changed") return "amber";
+  return undefined;
 }
 
 /** The violations themselves, listed under the step detail row: the shared list
@@ -152,20 +158,20 @@ function A11yDetail({
   if (result.violations.length === 0) return null;
 
   return (
-    <div className="border-t border-separator px-4 py-2">
-      <div className="flex items-center gap-2">
-        <Button size="small" variant="ghost" onClick={() => setOpen((v) => !v)}>
-          <Accessibility className="size-3.5" />
+    <>
+      <div className="gl-visual-a11y">
+        <Btn tone="ghost" onClick={() => setOpen((v) => !v)}>
+          <Accessibility aria-hidden="true" />
           {open ? "Hide" : "Show"} accessibility ({result.violations.length})
-        </Button>
+        </Btn>
         <div className="flex-1" />
         {result.newKeys.length > 0 && !accepted ? (
           <AlertDialog
             trigger={
-              <Button size="small" variant="glass" disabled={accepting}>
-                <Stamp className="size-3.5" />
+              <Btn tone="ghost" disabled={accepting}>
+                <Stamp aria-hidden="true" />
                 Accept these issues
-              </Button>
+              </Btn>
             }
             title="Accept this step's accessibility issues?"
             description="They stop being flagged for this step on future runs. Existing acceptances are kept — this only adds. Use Reset on the test to undo."
@@ -176,11 +182,11 @@ function A11yDetail({
         ) : null}
       </div>
       {open ? (
-        <div className="pt-2">
+        <div className="gl-visual-a11y-body">
           <A11yViolationList result={result} />
         </div>
       ) : null}
-    </div>
+    </>
   );
 }
 
@@ -210,11 +216,16 @@ export function DiffBadge({ diff }: { diff: VisualDiff }) {
     ? `${diff.maskedCount} ignored region${diff.maskedCount === 1 ? "" : "s"}`
     : null;
   const title = [diff.reason, masked].filter(Boolean).join(" · ") || undefined;
+  const tone = diffTone(diff.state);
   return (
-    <Badge color={diffBadgeColor(diff.state)} className="shrink-0" title={title}>
+    <span
+      className={tone ? "gl-chip-tone" : "gl-chip"}
+      style={tone ? toneSurface(TONE[tone]) : undefined}
+      title={title}
+    >
       {label}
-      {masked ? <SquareDashed className="ml-1 size-3" /> : null}
-    </Badge>
+      {masked ? <SquareDashed className="gl-mini-icon" aria-hidden="true" /> : null}
+    </span>
   );
 }
 
@@ -383,16 +394,15 @@ function RegionBreakdown({
   return (
     <div className="gl-regions">
       <div className="gl-regions-head">
-        <Text variant="small" color="secondary" className="gl-regions-line">
-          {regionsLine(regions, omitted)}
-        </Text>
+        <span className="gl-regions-line">{regionsLine(regions, omitted)}</span>
         {/* Only when one area really is the answer. A change that is spread
             evenly has no lead to name, and naming one anyway sends the reader
-            to look at the wrong thing. */}
+            to look at the wrong thing. Amber, matching the change it is
+            pointing at rather than claiming an outcome of its own. */}
         {lead ? (
-          <Badge color="orange" className="shrink-0">
+          <span className="gl-chip-tone" style={toneSurface(TONE.amber)}>
             mostly {regionPlace(lead)}
-          </Badge>
+          </span>
         ) : null}
       </div>
       <div className="gl-regions-list">
@@ -489,9 +499,7 @@ function StepDrift({ testId, stepId }: { testId: string; stepId: string }) {
           );
         })}
       </div>
-      <Text variant="small" color="tertiary" className="gl-drift-line">
-        {driftLine(drift)}
-      </Text>
+      <span className="gl-drift-line">{driftLine(drift)}</span>
     </div>
   );
 }
@@ -557,20 +565,20 @@ function CompareShot({
   const baseline = baselineQuery.data;
 
   if (currentQuery.isLoading || baselineQuery.isLoading) {
-    return <div className="h-full w-full animate-pulse rounded-md bg-control-subtle" />;
+    return <div className="gl-visual-loading" />;
   }
   if (!current || !baseline) {
     // Both modes need both frames by definition, so this says which is missing
     // rather than rendering half a comparison the user would read as a result.
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-        <ImageOff className="size-8 text-tertiary" />
-        <Text color="secondary">
+      <div className="gl-visual-missing">
+        <ImageOff aria-hidden="true" />
+        <span className="gl-empty-title">
           {current ? "No baseline for this step" : "No screenshot for this step"}
-        </Text>
-        <Text variant="small" color="tertiary">
+        </span>
+        <span className="gl-empty-note">
           Wipe and Blink compare two frames — both have to exist.
-        </Text>
+        </span>
       </div>
     );
   }
@@ -715,35 +723,35 @@ function StepScreenshot({
 
   if (mode === "current" && !file) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-        <ImageOff className="size-8 text-tertiary" />
-        <Text color="secondary">No screenshot for this step</Text>
-        <Text variant="small" color="tertiary" className="max-w-sm">
+      <div className="gl-visual-missing">
+        <ImageOff aria-hidden="true" />
+        <span className="gl-empty-title">No screenshot for this step</span>
+        <span className="gl-empty-note">
           {step.status === "skipped" || step.status === "unknown"
             ? "This step didn’t run, so nothing was captured."
             : "Assertions and waits aren’t captured, and a capture can be skipped if it failed."}
-        </Text>
+        </span>
       </div>
     );
   }
 
   if (query.isLoading) {
-    return <div className="h-full w-full animate-pulse rounded-md bg-control-subtle" />;
+    return <div className="gl-visual-loading" />;
   }
 
   const src = query.data;
   if (!src) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
-        <ImageOff className="size-8 text-tertiary" />
-        <Text color="secondary">
+      <div className="gl-visual-missing">
+        <ImageOff aria-hidden="true" />
+        <span className="gl-empty-title">
           {mode === "baseline" ? "No baseline for this step" : "Image not available"}
-        </Text>
-        <Text variant="small" color="tertiary">
+        </span>
+        <span className="gl-empty-note">
           {mode === "baseline"
             ? "This step has no pinned baseline yet."
             : "The artifact may have been pruned by retention."}
-        </Text>
+        </span>
       </div>
     );
   }
@@ -860,7 +868,7 @@ function MaskLayer({
       {masks.map((m) => (
         <div
           key={m.id}
-          className="absolute border-2 border-dashed border-support-orange bg-support-orange/25"
+          className="gl-mask-box"
           style={{ left: pctStr(m.x), top: pctStr(m.y), width: pctStr(m.w), height: pctStr(m.h) }}
           title={m.label ?? (m.stepId === null ? "Ignored on every step" : "Ignored on this step")}
         >
@@ -868,18 +876,18 @@ function MaskLayer({
             <button
               type="button"
               aria-label="Remove ignore region"
-              className="pointer-events-auto absolute -right-2 -top-2 rounded-full bg-support-orange p-0.5 text-white shadow-sm"
+              className="gl-mask-box-del"
               onPointerDown={(e) => e.stopPropagation()}
               onClick={() => onRemove(m.id)}
             >
-              <X className="size-3" />
+              <X aria-hidden="true" />
             </button>
           ) : null}
         </div>
       ))}
       {live && live.w > 0 && live.h > 0 ? (
         <div
-          className="absolute border-2 border-support-orange bg-support-orange/20"
+          className="gl-mask-box gl-mask-box-live"
           style={{
             left: pctStr(live.x),
             top: pctStr(live.y),
@@ -953,7 +961,7 @@ function ThresholdControl({ testId, steps }: { testId: string; steps: ReplayStep
     lastCommitted.current = nearest;
   }, [current]);
 
-  const handleChange = ([v]: number[]) => {
+  const handleChange = (v: number) => {
     setIndex(v);
     if (lastCommitted.current === v) return;
     lastCommitted.current = v;
@@ -974,24 +982,28 @@ function ThresholdControl({ testId, steps }: { testId: string; steps: ReplayStep
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className="flex items-center gap-2">
-          <Text variant="small" color="tertiary" className="shrink-0">
-            Threshold
-          </Text>
-          <Slider
-            variant="filled"
-            size="small"
+        <div className="gl-threshold">
+          <span className="gl-threshold-label">Threshold</span>
+          {/* A NATIVE RANGE INPUT, styled. The SDK's slider was the last blue
+              thing on this screen and blue is not in this palette, but the
+              swap is not only about the hue: the readout beside it is the whole
+              point of B8's threshold work — it answers WHILE you drag — and a
+              row of six preset buttons would turn a drag into six commits. */}
+          <input
+            type="range"
+            className="gl-threshold-range"
             min={0}
             max={THRESHOLD_PRESETS.length - 1}
             step={1}
-            ticks={THRESHOLD_PRESETS.length}
-            value={[index]}
-            startContent={label}
-            endContent={`${pct}%`}
-            onValueChange={handleChange}
+            value={index}
             disabled={thresholdQuery.isLoading}
-            className="w-44"
+            aria-label="Visual comparison threshold"
+            aria-valuetext={`${label}, ${pct}%`}
+            onChange={(e) => handleChange(Number(e.target.value))}
           />
+          <span className="gl-threshold-value">
+            {label} · {pct}%
+          </span>
           {/* Only once something has been measured. On a run with no captured
               comparison this would read "0 of 0", which looks like a broken
               readout rather than an empty one. */}
@@ -1026,21 +1038,20 @@ function StepAnnotation({
 
   if (editing) {
     return (
-      <div className="flex flex-col gap-2 border-t border-separator px-4 py-2">
-        <Textarea
+      <div className="gl-visual-note-edit">
+        <textarea
           autoFocus
-          size="small"
+          className="gl-textarea"
           value={draft}
           placeholder="Add a note for this step…"
           onChange={(e) => setDraft(e.target.value)}
         />
-        <div className="flex justify-end gap-1.5">
-          <Button size="small" variant="transparent" onClick={() => setEditing(false)}>
+        <div className="gl-visual-note-actions">
+          <Btn tone="ghost" onClick={() => setEditing(false)}>
             Cancel
-          </Button>
-          <Button
-            size="small"
-            variant="glass"
+          </Btn>
+          <Btn
+            tone="ghost"
             disabled={saving || draft.trim() === (annotation?.text ?? "")}
             onClick={() => {
               onSave(draft);
@@ -1048,7 +1059,7 @@ function StepAnnotation({
             }}
           >
             Save
-          </Button>
+          </Btn>
         </div>
       </div>
     );
@@ -1056,58 +1067,49 @@ function StepAnnotation({
 
   if (!annotation) {
     return (
-      <div className="border-t border-separator px-4 py-2">
-        <Button
-          size="small"
-          variant="transparent"
+      <div className="gl-visual-note">
+        <Btn
+          tone="ghost"
           onClick={() => {
             setDraft("");
             setEditing(true);
           }}
         >
-          <MessageSquare className="size-3.5" />
+          <MessageSquare aria-hidden="true" />
           Add note
-        </Button>
+        </Btn>
       </div>
     );
   }
 
   return (
-    <div className="flex items-center gap-2 border-t border-separator px-4 py-2">
-      <MessageSquare className="size-3.5 shrink-0 text-tertiary" />
-      <Text variant="small" color="secondary" className="min-w-0 flex-1 whitespace-pre-wrap">
-        {annotation.text}
-      </Text>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            size="small"
-            variant="transparent"
-            className="shrink-0"
-            onClick={() => {
-              setDraft(annotation.text);
-              setEditing(true);
-            }}
-          >
-            <Pencil className="size-3.5" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>Edit annotation</TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            size="small"
-            variant="transparent"
-            className="shrink-0"
-            disabled={saving}
-            onClick={() => onSave("")}
-          >
-            <X className="size-3.5" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>Clear annotation</TooltipContent>
-      </Tooltip>
+    <div className="gl-visual-note">
+      <span className="gl-visual-note-icon">
+        <MessageSquare aria-hidden="true" />
+      </span>
+      <span className="gl-visual-note-text">{annotation.text}</span>
+      <button
+        type="button"
+        className="gl-icon-btn"
+        aria-label="Edit annotation"
+        title="Edit annotation"
+        onClick={() => {
+          setDraft(annotation.text);
+          setEditing(true);
+        }}
+      >
+        <Pencil aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        className="gl-icon-btn"
+        aria-label="Clear annotation"
+        title="Clear annotation"
+        disabled={saving}
+        onClick={() => onSave("")}
+      >
+        <X aria-hidden="true" />
+      </button>
     </div>
   );
 }
@@ -1191,9 +1193,9 @@ function MasksBaselinesDialog({
                 >
                   {/* Amber: a mask is a CAUTION about the comparison — pixels
                       deliberately not judged — rather than an outcome. */}
-                  <SquareDashed className="size-3.5 shrink-0" style={{ color: TONE.amber }} />
+                  <SquareDashed className="gl-mini-icon" style={{ color: TONE.amber }} />
                   {labelDraft?.id === m.id ? (
-                    <Input
+                    <input
                       autoFocus
                       className="gl-input flex-1"
                       value={labelDraft.text}
@@ -1208,13 +1210,12 @@ function MasksBaselinesDialog({
                   ) : (
                     <button
                       type="button"
-                      className="min-w-0 flex-1 truncate text-left"
+                      className="gl-mono-value flex-1 text-left"
+                      style={m.label ? undefined : { color: "var(--gl-tx-3)" }}
                       onClick={() => setLabelDraft({ id: m.id, text: m.label ?? "" })}
                       title="Rename"
                     >
-                      <Text variant="small" color={m.label ? undefined : "tertiary"}>
-                        {m.label ?? "Unnamed region"}
-                      </Text>
+                      {m.label ?? "Unnamed region"}
                     </button>
                   )}
                   <span className="gl-chip">
@@ -1231,7 +1232,7 @@ function MasksBaselinesDialog({
                     aria-label="Delete ignore region"
                     onClick={() => saveMasks.mutate(masks.filter((x) => x.id !== m.id))}
                   >
-                    <X className="size-3.5" />
+                    <X aria-hidden="true" />
                   </button>
                 </div>
               ))}
@@ -1253,10 +1254,10 @@ function MasksBaselinesDialog({
                   key={b.stepId}
                   className="gl-mask-row"
                 >
-                  <Stamp className="size-3.5 shrink-0" style={{ color: "var(--gl-tx-3)" }} />
-                  <Text variant="small-mono" className="min-w-0 flex-1 truncate" title={b.label}>
+                  <Stamp className="gl-mini-icon" style={{ color: "var(--gl-tx-3)" }} />
+                  <code className="gl-mono-value flex-1" title={b.label}>
                     {b.label}
-                  </Text>
+                  </code>
                   {b.rect ? (
                     <span className="gl-chip">has geometry</span>
                   ) : null}
@@ -1287,18 +1288,21 @@ function MasksBaselinesDialog({
 // (site changed, auth expired, data gone) — we show the evidence and don't
 // claim to know which.
 
-function deltaBadge(delta: StepDelta): { color: "green" | "orange" | "red" | "secondary"; label: string } {
+/** The five deltas, and the three that report an outcome. `No result` is the
+ *  absence of one — the two runs did not cover the same step — so it stays
+ *  neutral rather than borrowing a hue to say nothing. */
+function deltaChip(delta: StepDelta): { tone?: "phos" | "amber" | "red"; label: string } {
   switch (delta) {
     case "stable":
-      return { color: "green", label: "Same" };
+      return { tone: "phos", label: "Same" };
     case "fixed":
-      return { color: "green", label: "Now passing" };
+      return { tone: "phos", label: "Now passing" };
     case "changed-since":
-      return { color: "orange", label: "Changed since" };
+      return { tone: "amber", label: "Changed since" };
     case "still-failing":
-      return { color: "red", label: "Still failing" };
+      return { tone: "red", label: "Still failing" };
     default:
-      return { color: "secondary", label: "No result" };
+      return { label: "No result" };
   }
 }
 
@@ -1314,58 +1318,77 @@ function RunComparisonDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange} size="large" title="Re-run comparison">
       {!comparison ? (
-        <Text color="secondary">
+        <p className="gl-note">
           The comparison isn’t available — one of the two runs’ artifacts may have been pruned by
           retention.
-        </Text>
+        </p>
       ) : (
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
             {comparison.changedSinceCount > 0 ? (
-              <Badge color="orange">
+              <span className="gl-chip-tone" style={toneSurface(TONE.amber)}>
                 {comparison.changedSinceCount} changed since
-              </Badge>
+              </span>
             ) : (
-              <Badge color="green">Nothing broke</Badge>
+              <span className="gl-chip-tone" style={toneSurface(TONE.phos)}>
+                Nothing broke
+              </span>
             )}
             {comparison.fixedCount > 0 ? (
-              <Badge color="green">{comparison.fixedCount} now passing</Badge>
+              <span className="gl-chip-tone" style={toneSurface(TONE.phos)}>
+                {comparison.fixedCount} now passing
+              </span>
             ) : null}
           </div>
           {comparison.changedSinceCount > 0 ? (
-            <Callout color="orange" icon={<TriangleAlert className="size-4" />}>
-              These steps worked in the original run and don’t now. That can be a real regression or
-              environment drift — the site changed, a login expired, test data is gone. Compare the
-              screenshots before deciding.
-            </Callout>
+            <p className="gl-notice" style={{ boxShadow: insetRail(TONE.amber) }}>
+              <span className="gl-visual-notice-icon">
+                <TriangleAlert aria-hidden="true" />
+              </span>
+              <span>
+                These steps worked in the original run and don’t now. That can be a real regression
+                or environment drift — the site changed, a login expired, test data is gone. Compare
+                the screenshots before deciding.
+              </span>
+            </p>
           ) : null}
           {comparison.stepsDiverged ? (
-            <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
-              The two runs don’t cover the same steps, so some rows have nothing to compare against.
-            </Callout>
+            <p className="gl-notice" style={{ boxShadow: insetRail(TONE.amber) }}>
+              <span className="gl-visual-notice-icon">
+                <TriangleAlert aria-hidden="true" />
+              </span>
+              <span>
+                The two runs don’t cover the same steps, so some rows have nothing to compare
+                against.
+              </span>
+            </p>
           ) : null}
           <div className="flex flex-col gap-1">
             {comparison.steps.map((s) => {
-              const badge = deltaBadge(s.delta);
+              const chip = deltaChip(s.delta);
               return (
-                <div
-                  key={s.stepId}
-                  className="flex items-center gap-2 rounded-md border border-separator px-2 py-1.5"
-                >
-                  <Text variant="small-mono" className="min-w-0 flex-1 truncate" title={s.label}>
+                <div key={s.stepId} className="gl-compare-row">
+                  <code className="gl-mono-value flex-1" title={s.label}>
                     {s.label}
-                  </Text>
-                  <Text variant="small" color="tertiary" className="shrink-0">
+                  </code>
+                  <span className="gl-compare-move">
                     {statusLabel(s.before)} → {statusLabel(s.after)}
-                  </Text>
+                  </span>
                   {s.visual === "changed" ? (
-                    <Badge color="orange" className="shrink-0">
-                      <Eye className="size-3" />
-                    </Badge>
+                    <span
+                      className="gl-chip-tone"
+                      style={toneSurface(TONE.amber)}
+                      title="This step's screenshot changed too"
+                    >
+                      <Eye className="gl-mini-icon" aria-label="Screenshot changed too" />
+                    </span>
                   ) : null}
-                  <Badge color={badge.color} className="shrink-0">
-                    {badge.label}
-                  </Badge>
+                  <span
+                    className={chip.tone ? "gl-chip-tone" : "gl-chip"}
+                    style={chip.tone ? toneSurface(TONE[chip.tone]) : undefined}
+                  >
+                    {chip.label}
+                  </span>
                 </div>
               );
             })}
@@ -1609,19 +1632,21 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
 
   if (replayQuery.isLoading) {
     return (
-      <div className="min-w-0 flex-1 p-4">
-        <div className="h-full animate-pulse rounded-lg bg-control-subtle" />
-      </div>
+      <Panel title="Replay" className="gl-visual-viewer">
+        <div className="gl-visual-loading" />
+      </Panel>
     );
   }
   if (!replay || steps.length === 0) {
     return (
-      <div className="relative min-w-0 flex-1">
-        <EmptyState
-          title="Replay unavailable"
-          description="This run’s artifacts couldn’t be loaded. They may have been removed."
-        />
-      </div>
+      <Panel title="Replay" className="gl-visual-viewer">
+        <div className="gl-empty">
+          <span className="gl-empty-title">Replay unavailable</span>
+          <span className="gl-empty-note">
+            This run’s artifacts couldn’t be loaded. They may have been removed.
+          </span>
+        </div>
+      </Panel>
     );
   }
 
@@ -1661,82 +1686,78 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   const effectiveMode: ShotMode =
     (mode === "diff" && !canDiff) || (mode === "baseline" && !hasBaselineView) ? "current" : mode;
 
+  // The stepper lives in the PANEL's header rather than in the tool band below
+  // it, because it is the one control that is about the panel itself — which of
+  // this run's frames the panel is showing — and the `right` slot is where this
+  // design puts that. It also keeps a fixed-width readout out of a wrapping row.
+  const stepper = (
+    <div className="gl-visual-stepper">
+      <button
+        type="button"
+        className="gl-icon-btn"
+        aria-label="Previous step"
+        disabled={idx <= 0}
+        onClick={() => setCurrent((c) => clamp(c - 1))}
+      >
+        <ChevronLeft aria-hidden="true" />
+      </button>
+      <span className="gl-visual-stepper-count">
+        {idx + 1} / {steps.length}
+      </span>
+      <button
+        type="button"
+        className="gl-icon-btn"
+        aria-label="Next step"
+        disabled={idx >= steps.length - 1}
+        onClick={() => setCurrent((c) => clamp(c + 1))}
+      >
+        <ChevronRight aria-hidden="true" />
+      </button>
+    </div>
+  );
+
   return (
-    <div
-      className="flex h-full min-w-0 flex-1 flex-col outline-none"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "ArrowLeft") {
-          e.preventDefault();
-          setCurrent((c) => clamp(c - 1));
-        } else if (e.key === "ArrowRight") {
-          e.preventDefault();
-          setCurrent((c) => clamp(c + 1));
-        }
-      }}
-    >
-      {/* Header */}
-      <div className="flex items-center gap-3 border-b border-separator px-4 py-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <Text className="min-w-0 truncate font-medium">{replay.testName}</Text>
-            <Badge color={replay.status === "passed" ? "green" : "red"} className="shrink-0">
-              {replay.status}
-            </Badge>
-            {changedCount > 0 ? (
-              <Badge color="orange" className="shrink-0">
-                {changedCount} visual {changedCount === 1 ? "change" : "changes"}
-              </Badge>
-            ) : null}
-          </div>
-          <Text variant="small" color="tertiary">
-            {fmtDateTime(replay.startedAt)}
-          </Text>
-        </div>
-        <Button
-          size="small"
-          variant="glass"
-          className="shrink-0"
-          disabled={rerunning}
-          onClick={startRerun}
-          title="Re-execute this run's recorded steps against the live site"
-        >
-          <RefreshCw className={`size-3.5 ${rerunning ? "animate-spin" : ""}`} />
-          {rerunning ? "Re-running…" : "Re-run"}
-        </Button>
-        <Button
-          size="small"
-          variant="glass"
-          className="shrink-0"
-          onClick={() => setManagerOpen(true)}
-        >
-          Masks & baselines
-        </Button>
-        <ThresholdControl testId={summary.testId} steps={steps} />
-        <div className="flex shrink-0 items-center gap-1">
-          <Button
-            iconOnly
-            variant="glass"
-            size="small"
-            aria-label="Previous step"
-            disabled={idx <= 0}
-            onClick={() => setCurrent((c) => clamp(c - 1))}
+    <Panel title="Replay" id={replay.testName} right={stepper} className="gl-visual-viewer">
+      <div
+        className="gl-visual-body"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            setCurrent((c) => clamp(c - 1));
+          } else if (e.key === "ArrowRight") {
+            e.preventDefault();
+            setCurrent((c) => clamp(c + 1));
+          }
+        }}
+      >
+      {/* The tool band. The run's verdict and when it happened on the left, what
+          you can do to it on the right — the test's NAME is not repeated here,
+          because the panel header above already carries it in its `id` slot. */}
+      <div className="gl-visual-head">
+        <StatusChip tone={replay.status === "passed" ? "phos" : "red"}>{replay.status}</StatusChip>
+        {/* Amber, not red: frames moved and the run still passed. It is the same
+            claim the frame rail makes about each one individually. */}
+        {changedCount > 0 ? (
+          <span className="gl-chip-tone" style={toneSurface(TONE.amber)}>
+            {changedCount} visual {changedCount === 1 ? "change" : "changes"}
+          </span>
+        ) : null}
+        <span className="gl-visual-head-when">{fmtDateTime(replay.startedAt)}</span>
+        <div className="gl-visual-head-tools">
+          <ThresholdControl testId={summary.testId} steps={steps} />
+          <Btn
+            tone="ghost"
+            disabled={rerunning}
+            onClick={startRerun}
+            title="Re-execute this run's recorded steps against the live site"
           >
-            <ChevronLeft className="size-4" />
-          </Button>
-          <Text variant="small-mono" color="secondary" className="w-16 text-center tabular-nums">
-            {idx + 1} / {steps.length}
-          </Text>
-          <Button
-            iconOnly
-            variant="glass"
-            size="small"
-            aria-label="Next step"
-            disabled={idx >= steps.length - 1}
-            onClick={() => setCurrent((c) => clamp(c + 1))}
-          >
-            <ChevronRight className="size-4" />
-          </Button>
+            <RefreshCw className={rerunning ? "animate-spin" : undefined} aria-hidden="true" />
+            {rerunning ? "Re-running…" : "Re-run"}
+          </Btn>
+          <Btn tone="ghost" onClick={() => setManagerOpen(true)}>
+            Masks &amp; baselines
+          </Btn>
         </div>
       </div>
 
@@ -1752,128 +1773,141 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
         stepLabelById={new Map(steps.map((st) => [st.stepId, st.label]))}
       />
 
-      {/* Failure banner */}
-      {replay.failedIndex !== null ? (
-        <div className="px-4 pt-3">
-          <Callout
-            color="red"
-            icon={<TriangleAlert className="size-4" />}
-            actions={
-              idx !== replay.failedIndex ? (
-                <Button
-                  size="small"
-                  variant="glass"
-                  onClick={() => setCurrent(replay.failedIndex as number)}
-                >
-                  Jump to failure
-                </Button>
-              ) : undefined
-            }
-          >
-            Run failed at step {replay.failedIndex + 1}:{" "}
-            <span className="font-mono">{steps[replay.failedIndex]?.label}</span>
-          </Callout>
-        </div>
-      ) : null}
-
-      {/* Visual-change banner.
-          Two exits, and they mean different things — which is the reason both
-          are here. "Accept all" REPINS every baseline and changes what every
-          later run compares against; dismissing changes nothing but the banner.
-          Offering only the first would have made signing off blind the cheapest
-          way to clear the screen. */}
-      {changedCount > 0 && !dismissed.has("visual") ? (
-        <div className="px-4 pt-3">
-          <Callout
-            color="orange"
-            icon={<Eye className="size-4" />}
-            onDismiss={() => dismissNotice.mutate("visual")}
-            dismissLabel="Dismiss visual changes for this run"
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <span>
-                Visual change detected in {changedCount} {changedCount === 1 ? "step" : "steps"}{" "}
-                (over {fmtPct((replay.visualThreshold ?? 0) / 100)} threshold). Use the per-step
-                "Accept New Baseline" button to re-pin a step.
+      {/* THE THREE NOTICES, in one band. A run can carry all three at once — it
+          failed, frames changed, and axe found something — and each is a
+          `.gl-notice` with an inset rail in the tone the finding takes, rather
+          than the SDK callout's filled rounded box. Three of those stacked over
+          a screenshot is a wall of colour above the one thing this screen
+          exists to show. */}
+      {replay.failedIndex !== null || (changedCount > 0 && !dismissed.has("visual")) ||
+      (a11yCount > 0 && !dismissed.has("a11y")) ? (
+        <div className="gl-visual-notices">
+          {replay.failedIndex !== null ? (
+            <div className="gl-notice gl-visual-notice" style={{ boxShadow: insetRail(TONE.red) }}>
+              <span className="gl-visual-notice-icon">
+                <TriangleAlert aria-hidden="true" />
               </span>
-              <AlertDialog
-                trigger={
-                  <Button size="small" variant="glass" disabled={acceptVisualRun.isPending}>
-                    <Stamp className="size-3.5" />
-                    Accept all for this run
-                  </Button>
-                }
-                title="Pin every screenshot in this run as the new baseline?"
-                description="Every step's current screenshot replaces its baseline, including steps that matched. Later runs are compared against these frames, so anything wrong in them becomes the expected result."
-                confirmLabel="Accept all"
-                confirmVariant="accent"
-                onConfirm={() => acceptVisualRun.mutate()}
-              />
+              <div className="gl-visual-notice-body">
+                <span>
+                  Run failed at step {replay.failedIndex + 1}:{" "}
+                  <code className="gl-mono-value">{steps[replay.failedIndex]?.label}</code>
+                </span>
+                {idx !== replay.failedIndex ? (
+                  <Btn tone="ghost" onClick={() => setCurrent(replay.failedIndex as number)}>
+                    Jump to failure
+                  </Btn>
+                ) : null}
+              </div>
             </div>
-          </Callout>
-        </div>
-      ) : null}
+          ) : null}
 
-      {/* Accessibility, as its own callout rather than folded into the visual
-          one: they are different kinds of finding, and a run can easily have
-          one without the other. Never affects the run's pass/fail. */}
-      {a11yCount > 0 && !dismissed.has("a11y") ? (
-        <div className="px-4 pt-3">
-          <Callout
-            color="orange"
-            icon={<Accessibility className="size-4" />}
-            onDismiss={() => dismissNotice.mutate("a11y")}
-            dismissLabel="Dismiss accessibility issues for this run"
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <span>
-                {a11yCount} {a11yCount === 1 ? "step has" : "steps have"} accessibility issues that
-                aren't accepted yet. This doesn't affect whether the run passed.
+          {/* Two exits, and they mean different things — which is the reason
+              both are here. "Accept all" REPINS every baseline and changes what
+              every later run compares against; dismissing changes nothing but
+              the notice. Offering only the first would have made signing off
+              blind the cheapest way to clear the screen — so the accept stays
+              `ghost`, and the affirmative tone is spent on the per-step button
+              this very sentence points at. */}
+          {changedCount > 0 && !dismissed.has("visual") ? (
+            <div className="gl-notice gl-visual-notice" style={{ boxShadow: insetRail(TONE.amber) }}>
+              <span className="gl-visual-notice-icon">
+                <Eye aria-hidden="true" />
               </span>
-              <AlertDialog
-                trigger={
-                  <Button size="small" variant="glass" disabled={acceptA11yRun.isPending}>
-                    <Stamp className="size-3.5" />
-                    Accept all for this run
-                  </Button>
-                }
-                title="Accept every accessibility issue in this run?"
-                description="They stop being flagged on future runs. Use this to establish a starting point on a site with pre-existing issues — new problems introduced later will still show up."
-                confirmLabel="Accept all"
-                confirmVariant="accent"
-                onConfirm={() => acceptA11yRun.mutate()}
-              />
+              <div className="gl-visual-notice-body">
+                <span>
+                  Visual change detected in {changedCount} {changedCount === 1 ? "step" : "steps"}{" "}
+                  (over {fmtPct((replay.visualThreshold ?? 0) / 100)} threshold). Use the per-step
+                  "Accept New Baseline" button to re-pin a step.
+                </span>
+                <AlertDialog
+                  trigger={
+                    <Btn tone="ghost" disabled={acceptVisualRun.isPending}>
+                      <Stamp aria-hidden="true" />
+                      Accept all for this run
+                    </Btn>
+                  }
+                  title="Pin every screenshot in this run as the new baseline?"
+                  description="Every step's current screenshot replaces its baseline, including steps that matched. Later runs are compared against these frames, so anything wrong in them becomes the expected result."
+                  confirmLabel="Accept all"
+                  confirmVariant="accent"
+                  onConfirm={() => acceptVisualRun.mutate()}
+                />
+              </div>
+              <button
+                type="button"
+                className="gl-icon-btn gl-visual-notice-dismiss"
+                aria-label="Dismiss visual changes for this run"
+                onClick={() => dismissNotice.mutate("visual")}
+              >
+                <X aria-hidden="true" />
+              </button>
             </div>
-          </Callout>
+          ) : null}
+
+          {/* Accessibility, as its own notice rather than folded into the visual
+              one: they are different kinds of finding, and a run can easily have
+              one without the other. Never affects the run's pass/fail, which is
+              why it is amber and not red. */}
+          {a11yCount > 0 && !dismissed.has("a11y") ? (
+            <div className="gl-notice gl-visual-notice" style={{ boxShadow: insetRail(TONE.amber) }}>
+              <span className="gl-visual-notice-icon">
+                <Accessibility aria-hidden="true" />
+              </span>
+              <div className="gl-visual-notice-body">
+                <span>
+                  {a11yCount} {a11yCount === 1 ? "step has" : "steps have"} accessibility issues that
+                  aren't accepted yet. This doesn't affect whether the run passed.
+                </span>
+                <AlertDialog
+                  trigger={
+                    <Btn tone="ghost" disabled={acceptA11yRun.isPending}>
+                      <Stamp aria-hidden="true" />
+                      Accept all for this run
+                    </Btn>
+                  }
+                  title="Accept every accessibility issue in this run?"
+                  description="They stop being flagged on future runs. Use this to establish a starting point on a site with pre-existing issues — new problems introduced later will still show up."
+                  confirmLabel="Accept all"
+                  confirmVariant="accent"
+                  onConfirm={() => acceptA11yRun.mutate()}
+                />
+              </div>
+              <button
+                type="button"
+                className="gl-icon-btn gl-visual-notice-dismiss"
+                aria-label="Dismiss accessibility issues for this run"
+                onClick={() => dismissNotice.mutate("a11y")}
+              >
+                <X aria-hidden="true" />
+              </button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
-      {/* Screenshot */}
-      <div className="min-h-0 flex-1 p-4">
-        <div className="relative flex h-full items-center justify-center overflow-hidden rounded-lg border border-separator bg-well p-3">
+      {/* The stage */}
+      <div className="gl-visual-stage">
           {/* Ignore-region editor toggle */}
           {step.screenshot ? (
-            <div className="absolute left-3 top-3 z-10 flex items-center gap-2">
-              <Button
-                size="small"
-                variant={masking ? "accent" : "glass"}
+            <div className="gl-visual-stage-tools">
+              <Btn
+                tone="ghost"
+                aria-pressed={masking}
                 onClick={() => setMasking((v) => !v)}
                 title="Exclude regions of the page from visual diffing"
               >
-                <SquareDashed className="size-3.5" />
+                <SquareDashed aria-hidden="true" />
                 {masking ? "Done" : "Ignore regions"}
-              </Button>
+              </Btn>
               {masking ? (
-                <div className="flex items-center gap-1.5 rounded-md bg-popover px-2 py-1 shadow-sm">
-                  <Switch
-                    id="mask-all-steps"
+                <label className="gl-visual-mask-all">
+                  <input
+                    type="checkbox"
                     checked={maskAllSteps}
-                    onCheckedChange={setMaskAllSteps}
+                    onChange={(e) => setMaskAllSteps(e.target.checked)}
                   />
-                  <label htmlFor="mask-all-steps" className="cursor-pointer">
-                    <Text variant="small">Apply to all steps</Text>
-                  </label>
-                </div>
+                  Apply to all steps
+                </label>
               ) : null}
             </div>
           ) : null}
@@ -1922,7 +1956,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
               <>
                   {step.rect && elementSteps.has(step.stepId) ? (
                     <div
-                      className="pointer-events-none absolute border-2 border-accent"
+                      className="gl-element-box"
                       style={{
                         left: pctStr(step.rect.x),
                         top: pctStr(step.rect.y),
@@ -1980,43 +2014,37 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
               </StepScreenshot>
             );
           })()}
-        </div>
-        {masking ? (
-          <Text variant="small" color="tertiary" className="mt-2 block text-center">
-            Drag on the screenshot to exclude a region from visual diffing. Regions are ignored from
-            the next capture run onward — this run's results don't change.
-          </Text>
-        ) : null}
       </div>
+      {masking ? (
+        <span className="gl-note gl-visual-hint">
+          Drag on the screenshot to exclude a region from visual diffing. Regions are ignored from
+          the next capture run onward — this run's results don't change.
+        </span>
+      ) : null}
 
       {/* Current step detail */}
-      <div className="flex items-center gap-2 border-t border-separator px-4 py-2">
+      <div className="gl-visual-step">
         <StatusIcon status={step.status} />
-        <Badge color="secondary" className="shrink-0">
-          {step.type}
-        </Badge>
-        <Text variant="small-mono" className="min-w-0 flex-1 truncate" title={step.label}>
+        <span className="gl-chip">{step.type}</span>
+        <code className="gl-mono-value flex-1" title={step.label}>
           {step.label}
-        </Text>
+        </code>
         {/* Comparison scope — only meaningful for a step with a captured
             element rectangle to crop to. */}
         {step.screenshot && step.rect ? (
           <Tooltip>
             <TooltipTrigger asChild>
-              <SegmentedControl
-                type="single"
-                size="small"
-                variant="filled"
-                className="shrink-0"
+              <Segmented
+                label="Comparison scope"
                 value={elementSteps.has(step.stepId) ? "element" : "page"}
-                onValueChange={(v) =>
-                  v &&
+                onChange={(v) =>
                   setElementStep.mutate({ stepId: step.stepId, element: v === "element" })
                 }
-              >
-                <SegmentedControlItem value="page">Page</SegmentedControlItem>
-                <SegmentedControlItem value="element">Element</SegmentedControlItem>
-              </SegmentedControl>
+                options={[
+                  { value: "page", label: "Page" },
+                  { value: "element", label: "Element" },
+                ]}
+              />
             </TooltipTrigger>
             <TooltipContent>
               Compare the whole page, or only the element this step acted on. Applies from the next
@@ -2031,37 +2059,40 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
             yes; filing says no, and hands someone the three pictures that
             show it. Only offered for a CHANGED step — there is nothing to
             report about a step that matched. */}
-        {step.diff?.state === "changed" && onSendToTracker ? (
-          <Button
-            size="small"
-            variant="glass"
-            className="shrink-0"
-            aria-label={`Send step ${step.index + 1}'s visual change to the issue tracker`}
-            onClick={() => onSendToTracker(step.stepId)}
-          >
-            <Send className="size-3.5" />
-            Send
-          </Button>
-        ) : null}
-        {step.screenshot && step.diff?.state === "changed" && !acceptedSteps.has(step.stepId) ? (
-          <AlertDialog
-            trigger={
-              <Button size="small" variant="glass" className="shrink-0" disabled={acceptStep.isPending}>
-                <Stamp className="size-3.5" />
-                Accept New Baseline
-              </Button>
-            }
-            title="Accept this screenshot as the new baseline?"
-            description="This pins this step's screenshot as the new comparison standard for future runs. The button will be hidden afterward. This is logged in Stats."
-            confirmLabel="Accept"
-            confirmVariant="accent"
-            onConfirm={() => acceptStep.mutate(step.stepId)}
-          />
-        ) : (
-          <Text variant="small" color="tertiary" className="shrink-0">
-            {statusLabel(step.status)}
-          </Text>
-        )}
+        <div className="gl-visual-step-tools">
+          {step.diff?.state === "changed" && onSendToTracker ? (
+            <Btn
+              tone="ghost"
+              aria-label={`Send step ${step.index + 1}'s visual change to the issue tracker`}
+              onClick={() => onSendToTracker(step.stepId)}
+            >
+              <Send aria-hidden="true" />
+              Send
+            </Btn>
+          ) : null}
+          {step.screenshot && step.diff?.state === "changed" && !acceptedSteps.has(step.stepId) ? (
+            // THE ONE `go` ON THIS SCREEN. Phosphor means "this is the right
+            // answer", and re-pinning a baseline is the affirmative action the
+            // whole view is built to reach — every notice above points at this
+            // button by name. The bulk accepts stay `ghost` so that signing off
+            // on a run blind is never the brightest thing on screen.
+            <AlertDialog
+              trigger={
+                <Btn tone="go" disabled={acceptStep.isPending}>
+                  <Stamp aria-hidden="true" />
+                  Accept New Baseline
+                </Btn>
+              }
+              title="Accept this screenshot as the new baseline?"
+              description="This pins this step's screenshot as the new comparison standard for future runs. The button will be hidden afterward. This is logged in Stats."
+              confirmLabel="Accept"
+              confirmVariant="accent"
+              onConfirm={() => acceptStep.mutate(step.stepId)}
+            />
+          ) : (
+            <span className="gl-visual-step-state">{statusLabel(step.status)}</span>
+          )}
+        </div>
       </div>
 
       {/* Drift, under the step row and above everything the step row leads to:
@@ -2152,6 +2183,15 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
             />
           ) : null}
         </div>
+        {/* THE STRIP'S HEIGHT IS SET, and the wrapper is what sets it. The SDK's
+            ScrollArea carries `h-full` in its own class list, so inside an
+            auto-height parent its percentage resolves circularly: the rail is
+            measured with the viewport at content height, the viewport then
+            grows into the rail, and the rail ends up ~20px shorter than what is
+            inside it. The overflow leaks to the panel body, which scrolls — and
+            the first thing that scrolls out of sight is the run's verdict. A
+            filmstrip is a band of known height anyway. */}
+        <div className="gl-frame-strip">
         <ScrollArea className="w-full">
           <div className="flex items-end gap-1 pb-1">
             {visibleSteps.map((s) => {
@@ -2175,15 +2215,15 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
                   className="gl-frame-btn"
                   data-selected={active ? "" : undefined}
                 >
-                  <span className="flex h-4 items-center justify-center">
+                  <span className="gl-frame-mark">
                     {failed ? (
-                      <TriangleAlert className="size-3.5" style={{ color: TONE.red }} />
+                      <TriangleAlert style={{ color: TONE.red }} />
                     ) : changed ? (
-                      <Eye className="size-3.5" style={{ color: TONE.amber }} />
+                      <Eye style={{ color: TONE.amber }} />
                     ) : a11yNew ? (
-                      <Accessibility className="size-3.5" style={{ color: TONE.amber }} />
+                      <Accessibility style={{ color: TONE.amber }} />
                     ) : noted ? (
-                      <MessageSquare className="size-3.5 text-tertiary" />
+                      <MessageSquare style={{ color: "var(--gl-tx-3)" }} />
                     ) : null}
                   </span>
                   <span
@@ -2213,8 +2253,10 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
             })}
           </div>
         </ScrollArea>
+        </div>
       </div>
-    </div>
+      </div>
+    </Panel>
   );
 }
 
@@ -2229,8 +2271,8 @@ function RunList({
   onSelect: (r: RunReplaySummary) => void;
 }) {
   return (
-    <ScrollArea className="h-full w-64 shrink-0 border-r border-separator">
-      <div className="flex flex-col gap-0.5 p-2">
+    <ScrollArea className="min-h-0 flex-1">
+      <div className="flex flex-col">
         {runs.map((r) => {
           const selected = r.runId === selectedRunId;
           return (
@@ -2238,37 +2280,35 @@ function RunList({
               key={r.runId}
               type="button"
               onClick={() => onSelect(r)}
-              className={`flex flex-col gap-1 rounded-md px-2.5 py-2 text-left ${
-                selected ? "bg-accent-10 ring-1 ring-inset ring-accent" : "hover:bg-control-subtle"
-              }`}
+              className="gl-visual-run"
               aria-current={selected ? "true" : undefined}
+              // What the stylesheet selects on, and what
+              // `check:selection-neutral` reads to prove this row's chosen
+              // state carries no status hue — which matters here because the
+              // row already reports one.
+              data-selected={selected ? "" : undefined}
             >
-              <div className="flex items-center gap-2">
-                <Badge color={r.status === "passed" ? "green" : "red"} className="shrink-0">
-                  {r.status}
-                </Badge>
-                <Text variant="small" className="min-w-0 flex-1 truncate font-medium">
-                  {r.testName}
-                </Text>
-                {r.changedSteps > 0 ? (
-                  <Eye className="size-3.5 shrink-0 text-support-orange" aria-label="visual change" />
-                ) : null}
-                {/* The summary has carried this count since the feature landed
-                    and nothing read it, so a run whose only finding was an
-                    accessibility one looked identical to a clean one — you had
-                    to open every run to find out. Its own icon, not a shared
-                    one: "something changed visually" and "something is
-                    inaccessible" send you to different places. */}
-                {(r.a11yNewSteps ?? 0) > 0 ? (
-                  <Accessibility
-                    className="size-3.5 shrink-0 text-support-orange"
-                    aria-label="accessibility issues"
-                  />
-                ) : null}
-              </div>
-              <Text variant="small" color="tertiary">
-                {fmtDateTime(r.startedAt)} · {r.stepCount} steps
-              </Text>
+              <span className="gl-visual-run-text">
+                <span className="gl-visual-run-name">{r.testName}</span>
+                <span className="gl-visual-run-when">
+                  {fmtDateTime(r.startedAt)} · {r.stepCount} steps
+                </span>
+              </span>
+              <span className="gl-visual-run-meta">
+                <StatusChip tone={r.status === "passed" ? "phos" : "red"}>{r.status}</StatusChip>
+                <span className="gl-visual-run-marks">
+                  {r.changedSteps > 0 ? <Eye aria-label="visual change" /> : null}
+                  {/* The summary has carried this count since the feature landed
+                      and nothing read it, so a run whose only finding was an
+                      accessibility one looked identical to a clean one — you had
+                      to open every run to find out. Its own icon, not a shared
+                      one: "something changed visually" and "something is
+                      inaccessible" send you to different places. */}
+                  {(r.a11yNewSteps ?? 0) > 0 ? (
+                    <Accessibility aria-label="accessibility issues" />
+                  ) : null}
+                </span>
+              </span>
             </button>
           );
         })}
@@ -2293,32 +2333,58 @@ export function VisualView() {
   const selected =
     runs.find((r) => r.runId === selectedRunId) ?? (runs.length > 0 ? runs[0] : null);
 
-  return (
-    <div className="relative flex h-full flex-col">
-      <Toolbar>
-        <ToolbarContent>
-          <ToolbarTitle>Visual</ToolbarTitle>
-        </ToolbarContent>
-      </Toolbar>
+  // How many of these have something to look at. It goes in the panel's `id`
+  // slot, which is where this design puts what a panel is ABOUT — and it is the
+  // count the retired toolbar never showed, so the list answers "is there
+  // anything here?" before you scroll it.
+  const withFindings = runs.filter(
+    (r) => r.changedSteps > 0 || (r.a11yNewSteps ?? 0) > 0,
+  ).length;
 
-      {runs.length === 0 ? (
-        <EmptyState
-          title="No captured runs yet"
-          description="Turn on “Capture screenshots” when you run a test, then come back here to replay it step by step, compare against a baseline, and see where it failed."
-        />
-      ) : (
-        <div className="flex min-h-0 flex-1">
+  // THE TOOLBAR IS GONE, like Heals'. The top strip's breadcrumb already says
+  // VISUAL, so a title bar under it was the screen's name twice — in a band
+  // taken off the frame, which is the one thing on this screen that cannot be
+  // read at half size.
+  return (
+    <div className="gl-visual">
+      <Panel
+        title="Runs"
+        id={
+          runs.length === 0
+            ? undefined
+            : `${runs.length} captured${withFindings > 0 ? ` · ${withFindings} with findings` : ""}`
+        }
+        className="gl-visual-runs"
+      >
+        {runs.length === 0 ? (
+          <p className="gl-panel-note">
+            Nothing captured yet. Turn on “Capture screenshots” when you run a test.
+          </p>
+        ) : (
           <RunList
             runs={runs}
             selectedRunId={selected?.runId ?? null}
             onSelect={(r) => setSelectedRunId(r.runId)}
           />
-          {selected ? (
-            <ReplayViewer key={selected.runId} summary={selected} />
-          ) : (
-            <div className="flex-1" />
-          )}
-        </div>
+        )}
+      </Panel>
+
+      {runs.length === 0 ? (
+        <Panel title="Replay" className="gl-visual-viewer">
+          <div className="gl-empty">
+            <span className="gl-empty-title">No captured runs yet</span>
+            <span className="gl-empty-note">
+              Turn on “Capture screenshots” when you run a test, then come back here to replay it
+              step by step, compare against a baseline, and see where it failed.
+            </span>
+          </div>
+        </Panel>
+      ) : selected ? (
+        <ReplayViewer key={selected.runId} summary={selected} />
+      ) : (
+        <Panel title="Replay" className="gl-visual-viewer">
+          <p className="gl-panel-note">Select a run to replay it.</p>
+        </Panel>
       )}
     </div>
   );

@@ -37,6 +37,11 @@
 .gl-chip-tone {
   display: inline-flex;
   align-items: center;
+  /* Inert on the overwhelming majority of these, which hold one text node. It
+     is here for the few that lead with a glyph — the accessibility count, the
+     masked-comparison mark — so a chip with an icon does not need a second
+     class or a padding utility at the call site to keep the two apart. */
+  gap: 4px;
   height: 16px;
   padding: 0 5px;
   border: 1px solid var(--gl-line);
@@ -237,6 +242,30 @@
 }
 
 .gl-input:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+/* The multi-line sibling, for the one place in the app that takes a paragraph
+   from the user: the Visual view's per-step note. Sans rather than `.gl-input`'s
+   mono, because this is PROSE — the design's rule is that anything scanned is
+   mono and anything read is sans, and a note is written to be read. Resizable
+   vertically only: a field that can be dragged wider than its pane is a field
+   that can be dragged off it. */
+.gl-textarea {
+  width: 100%;
+  min-height: 54px;
+  padding: 5px 7px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-ink);
+  color: var(--gl-tx-1);
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.gl-textarea:focus-visible {
   outline: 1px solid var(--gl-cyan);
   outline-offset: -1px;
 }
@@ -731,6 +760,87 @@
   font-family: var(--gl-sans);
   font-size: 11px;
   color: var(--gl-tx-3);
+}
+
+/* ── Accessibility violations ──────────────────────────────────────────
+   HERE RATHER THAN IN THE VISUAL SECTION BECAUSE A SECOND SCREEN WANTS IT: the
+   list renders in the Visual view's step detail AND in a test's own
+   Accessibility tab, and `a11y-violations.tsx` exists so those two cannot
+   drift. A rule only one of them could reach would reopen exactly that.
+
+   THREE RANKS, NOT FOUR, and that is the palette's rule rather than a shortcut.
+   Colour means outcome, and axe's four impacts are one ranking — critical is the
+   thing to read first (red), serious is the prompt to look (amber), and
+   moderate and minor are findings with nothing urgent to report, so they take no
+   hue at all. The chip's TEXT is the impact word, so the two neutral ones are
+   still told apart by reading them, the same trade `StatusChip` makes for
+   `Accepted` and `Reverted` on the Heals list. */
+.gl-a11y-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gl-a11y-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--gl-line);
+  background: var(--gl-panel);
+  padding: 7px 9px;
+}
+
+/* Already signed off. Dimmed rather than hidden — "6 issues, 6 accepted" is
+   honest, and a step that looks empty claims the page is clean. */
+.gl-a11y-item[data-accepted] {
+  opacity: 0.6;
+}
+
+.gl-a11y-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.gl-a11y-rule {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-2);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gl-a11y-send {
+  margin-inline-start: auto;
+  flex: 0 0 auto;
+}
+
+.gl-a11y-help {
+  font-family: var(--gl-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--gl-tx-2);
+}
+
+.gl-a11y-nodes {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* The offending selectors. Mono and truncated: these are scanned for a name you
+   recognise, never read end to end, and one long CSS path wrapping to four
+   lines buries the five under it. */
+.gl-a11y-node {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  color: var(--gl-tx-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── `echo`, the glitch treatment ──────────────────────────────────────── */

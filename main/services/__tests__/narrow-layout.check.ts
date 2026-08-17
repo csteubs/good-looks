@@ -178,55 +178,77 @@ const MEASURED_REQUIREMENT = 928;
 // ── 3. Visual's run header ────────────────────────────────────────────────
 {
   const visual = read("../../../renderer/main/visual-view.tsx");
+  const screens = read("../../../renderer/theme/screens.css").replace(/\/\*[\s\S]*?\*\//g, "");
 
-  // The bug, measured in `npm run dev:web` at 1440x900 — NOT a narrow window,
-  // which is why the floor in §1 never protected it. Visual's header is one
-  // flex row: a `min-w-0 flex-1` title column, then Re-run, Masks & baselines,
-  // the threshold slider and the pager, all `shrink-0`. Those four take ~1000px
-  // of a 1140px pane, so the title column is squeezed to 141px while its own
-  // content needs 168px.
+  // TWO BUGS OF ONE KIND, both measured in `npm run dev:web` at ordinary window
+  // sizes — NOT narrow ones, which is why the floor in §1 protected neither.
   //
-  // Inside it the test name truncates away to nothing and the two `shrink-0`
-  // badges — "passed" and "1 visual change" — spill past the column's right
-  // edge. `elementFromPoint` at the end of the word returned the Re-run BUTTON:
-  // the outcome was being painted underneath a control, unreadable.
+  // The first, 2026-08-11: the header was one flex row with a `min-w-0 flex-1`
+  // title column followed by Re-run, Masks & baselines, the threshold and the
+  // pager, all `shrink-0`. Those four took ~1000px of a 1140px pane, the title
+  // column was squeezed to 141px against 168px of content, and the two badges —
+  // "passed" and "1 visual change" — spilled past its right edge.
+  // `elementFromPoint` at the end of the word returned the Re-run BUTTON: the
+  // outcome was being painted underneath a control, unreadable.
   //
-  // WRAPPING IS THE FIX, not a floor and not `overflow: hidden`.
-  //  • A floor big enough for both badges (~240px) overflows the header at this
-  //    app's own minimum window size, which is the §1 bug reintroduced above
-  //    the floor — exactly what that section warns about.
-  //  • `overflow: hidden` stops the overlap and still eats the word, and a
+  // The second, in this screen's full reskin: with the name moved into the
+  // panel header, the tool group was a single rigid item wider than the panel
+  // on any window under about 1500px, and the LAST control — "Masks &
+  // baselines" — was simply clipped off the edge. Present in the DOM, nothing
+  // to scroll, impossible to click.
+  //
+  // WRAPPING IS THE FIX BOTH TIMES, not a floor and not `overflow: hidden`.
+  //  • A floor big enough for the controls overflows the header at this app's
+  //    own minimum window size, which is the §1 bug reintroduced above the
+  //    floor — exactly what that section warns about.
+  //  • `overflow: hidden` stops the overlap and still eats the content, and a
   //    status chip that silently drops its last word is the failure DECISIONS
-  //    records for `.gl-status-chip` on 2026-08-09. The name is the cell that
-  //    may give; the result never is.
+  //    records for `.gl-status-chip` on 2026-08-09. The test NAME is the cell
+  //    that may give — it lives in the panel header's `id` slot, which is
+  //    documented to truncate. The result and the controls never are.
   //
   // Source-level for this file's usual reason: jsdom has no layout engine, so
-  // nothing rendered in a test can observe a badge painted under a button.
-  const headerRow = visual.match(/\{\s*\/\* Header \*\/\s*\}\s*([\s\S]{0,900})/);
-  assert(headerRow !== null, "visual-view.tsx: found the run header block");
-  if (headerRow) {
-    // Anchored on the row's CONTENT — the div wrapping the test name — rather
-    // than on a class substring. Keying the match off `flex items-center` made
-    // this assertion vanish the moment the fix reordered the class list, which
-    // is a guard that reports "ok" by no longer looking at anything.
-    const identity = headerRow[1].match(
-      /<div className="([^"]*)">\s*<Text className="[^"]*">\{replay\.testName\}/,
-    );
-    assert(identity !== null, "visual-view.tsx: found the header's identity row (name + badges)");
-    if (identity) {
-      const cls = identity[1];
-      assert(
-        /\bflex-wrap\b/.test(cls),
-        `visual-view.tsx: the header's identity row wraps (got "${cls}") — without it the status badges are pushed out of the title column and painted under the Re-run button`,
-      );
-      assert(
-        /\bmin-w-0\b/.test(cls),
-        `visual-view.tsx: the header's identity row carries \`min-w-0\` (got "${cls}") so the name can truncate inside it rather than forcing the row wider than its column`,
-      );
-    }
+  // nothing rendered in a test can observe a chip painted under a button or a
+  // control clipped off a panel.
+  assert(
+    /className="gl-visual-head"/.test(visual),
+    "visual-view.tsx: found the run's tool band (.gl-visual-head)",
+  );
+  // The name is in the slot that is allowed to truncate, and nowhere else.
+  assert(
+    /<Panel\b[^>]*\bid=\{replay\.testName\}/s.test(visual),
+    "visual-view.tsx: the test name sits in the panel header's `id` slot, which is the one cell in this design that may give",
+  );
+  // And the outcome is a StatusChip, which `check:status-width` already pins as
+  // unshrinkable — so the row cannot take the verdict's width back.
+  assert(
+    /<StatusChip tone=\{replay\.status === "passed"/.test(visual),
+    "visual-view.tsx: the run's verdict is a StatusChip, whose width a flex row may not reclaim",
+  );
+
+  const headRule = screens.match(/\.gl-visual-head\s*\{([^}]*)\}/);
+  assert(headRule !== null, "screens.css: found the .gl-visual-head rule");
+  if (headRule) {
     assert(
-      !/\boverflow-hidden\b/.test(headerRow[1]),
-      "visual-view.tsx: the header does not clip its identity row — hiding the overlap would still swallow the badge's last word",
+      /flex-wrap:\s*wrap/.test(headRule[1]),
+      "`.gl-visual-head` wraps — without it the verdict chips are pushed out of the band and painted under the controls",
+    );
+    assert(
+      !/overflow:\s*hidden/.test(headRule[1]),
+      "`.gl-visual-head` does not clip — hiding the overlap would still swallow the chip's last word",
+    );
+  }
+
+  const toolsRule = screens.match(/\.gl-visual-head-tools\s*\{([^}]*)\}/);
+  assert(toolsRule !== null, "screens.css: found the .gl-visual-head-tools rule");
+  if (toolsRule) {
+    assert(
+      /flex-wrap:\s*wrap/.test(toolsRule[1]),
+      "`.gl-visual-head-tools` wraps — as one rigid item it is wider than the panel under ~1500px and its last control is clipped off the edge",
+    );
+    assert(
+      !/flex:\s*0\s+0/.test(toolsRule[1]),
+      "`.gl-visual-head-tools` is not a rigid item — `flex: 0 0 auto` is the shape that clipped `Masks & baselines` off the panel",
     );
   }
 }
