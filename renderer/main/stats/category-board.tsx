@@ -1,7 +1,17 @@
 // The category board — the Stats landing's answer to "is anything wrong?".
 //
-// docs/plans/stats-categories.md §3. A full-width verdict over a row of compact
-// tiles, each a category, each clickable through to that category's dashboard.
+// docs/plans/stats-categories.md §3. A row of compact tiles, each a category,
+// each clickable through to that category's dashboard, under a verdict that
+// reports whether any of them needs attention.
+//
+// THE VERDICT LIVES IN THE PANEL'S HEADER, not in a band of its own above the
+// tiles. It is one line about the BOARD — the same kind of thing as the
+// "7 of 7 reporting" subtitle beside it — and a full-width row for one
+// sentence cost 30-odd pixels above the fold on the app's landing screen while
+// separating the title from the tiles it titles. It shrinks and ellipsizes
+// there rather than pushing the header past its fixed 32px (see
+// `.gl-categories` in screens.css), and carries the full sentence as a `title`
+// for the width where it cannot all be shown.
 //
 // THE BAND COUNTS CATEGORIES. IT NEVER MERGES THEIR NUMBERS. That is the
 // condition this treatment ships under and it is not a style preference:
@@ -59,13 +69,18 @@ export function CategoryBoard({
   const byId = new Map(summaries.map((s) => [s.id, s]));
 
   return (
-    <Panel title="Categories" id={`${summaries.length} of ${CATEGORIES.length} reporting`}>
-      {/* The band's own tone reports whether anything needs attention — a fact
-          about the BOARD, not a score across it. */}
-      <div className="gl-band">
-        <Verdict tone={band.tone ?? "cyan"}>{band.sentence}</Verdict>
-      </div>
-
+    <Panel
+      className="gl-categories"
+      title="Categories"
+      id={`${summaries.length} of ${CATEGORIES.length} reporting`}
+      /* The band's own tone reports whether anything needs attention — a fact
+         about the BOARD, not a score across it. */
+      right={
+        <div className="gl-band" title={band.sentence}>
+          <Verdict tone={band.tone ?? "cyan"}>{band.sentence}</Verdict>
+        </div>
+      }
+    >
       <div className="gl-tiles">
         {CATEGORIES.map((meta) => {
           const s = byId.get(meta.id);

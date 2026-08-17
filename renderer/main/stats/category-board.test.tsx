@@ -164,6 +164,35 @@ describe("the band", () => {
     expect(band.textContent).not.toContain("9999");
   });
 
+  it("reads in the panel's own header, not in a row above the tiles", () => {
+    // Where it sits is the contract: a full-width band for one sentence pushed
+    // the tiles down the landing screen and split the title from what it
+    // titles. A rendered test is the only thing that notices it drifting back
+    // out — nothing else in the toolchain cares which parent a div has.
+    render(<CategoryBoard summaries={allClean()} onOpen={() => {}} />);
+    const band = screen.getByText(/clean/).closest(".gl-band")!;
+    expect(band.closest(".gl-panel-head")).not.toBeNull();
+    // And it is not ALSO left behind above the tiles.
+    expect(document.querySelector(".gl-panel-body .gl-band")).toBeNull();
+  });
+
+  it("carries the whole sentence for the width that cannot show it", () => {
+    // The header is a fixed 32px, so the sentence truncates. `title` is what
+    // makes the truncated half reachable — the same contract the panel's own
+    // id subtitle ships under.
+    render(
+      <CategoryBoard
+        summaries={[
+          summary({ id: "a11y", state: "findings" }),
+          summary({ id: "stability", state: "clean" }),
+        ]}
+        onOpen={() => {}}
+      />,
+    );
+    const band = screen.getByText(/needs attention/).closest(".gl-band")!;
+    expect(band.getAttribute("title")).toBe(band.textContent);
+  });
+
   it("shows a skeleton, not an unmeasured tile, for a query still in flight", () => {
     // "Loading" and "you have never switched this on" are different sentences,
     // and flashing the second at someone who switched it on last week is the
