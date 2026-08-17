@@ -24,6 +24,7 @@ import type {
   RecorderSettings,
   RecorderState,
   RunRecord,
+  RunTotals,
   ArtifactUsage,
   BaselineEntry,
   CaptureOverheadSummary,
@@ -499,6 +500,9 @@ export const api = {
   },
   runs: {
     list: () => ipc().invoke<RunRecord[]>("runs:list"),
+    /** Lifetime counts, pruned runs included. NOT derivable from `list()` —
+     *  that is capped, and counting it is what made "Total runs" stop at 1000. */
+    totals: () => ipc().invoke<RunTotals>("runs:totals"),
     getLog: (id: string) => ipc().invoke<string>("runs:getLog", { id }),
     flake: () => ipc().invoke<FlakeReport>("runs:flake"),
     searchLogs: (query: string) =>

@@ -198,3 +198,72 @@ describe("flake", () => {
     expect(weeklyDigest(runs, NOW).flaky).toBe(0);
   });
 });
+
+describe("runs the run index no longer holds", () => {
+  // THE BUG. The run index is CAPPED, and pruning takes the OLDEST records —
+  // so a suite busy enough to fit a thousand runs inside a week loses THIS
+  // WEEK's own early days to the cap. The digest counted records, so it read
+  // "1000 runs, 74 failed" on a week that had 1019 and 76: exactly the cap,
+  // stated as a fact about the week.
+
+  /** Local midnight, N days ago. Pruned days are bucketed by local calendar
+   *  day, so the fixture has to be built the same way the store builds them. */
+  function dayAgo(n: number): number {
+    const d = new Date(NOW - n * DAY);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+
+  it("counts pruned runs into the week's total and its failures", () => {
+    const digest = weeklyDigest(thisWeek(4), NOW, [
+      { dayStart: dayAgo(2), runs: 10, passed: 8, failed: 2 },
+      { dayStart: dayAgo(3), runs: 5, passed: 5, failed: 0 },
+    ]);
+    expect(digest.runs).toBe(19);
+    expect(digest.failed).toBe(2);
+    expect(digest.lines[0]).toBe("19 runs, 2 failed.");
+  });
+
+  it("counts them into the week BEFORE, for the comparison", () => {
+    // The comparison is what makes this weekly, so a previous week short by the
+    // cap turns "down a little" into "down by half".
+    const digest = weeklyDigest(thisWeek(10), NOW, [
+      { dayStart: dayAgo(9), runs: 40, passed: 40, failed: 0 },
+    ]);
+    expect(digest.previousRuns).toBe(40);
+  });
+
+  it("ignores pruned days outside both windows", () => {
+    const digest = weeklyDigest(thisWeek(3), NOW, [
+      { dayStart: dayAgo(40), runs: 500, passed: 500, failed: 0 },
+    ]);
+    expect(digest.runs).toBe(3);
+    expect(digest.previousRuns).toBe(0);
+  });
+
+  it("reports a week whose every record was pruned", () => {
+    // The end state of the bug: 1000 runs this week, all of them pruned by the
+    // ones after them. Counting records alone renders "Nothing ran this week."
+    const digest = weeklyDigest([], NOW, [
+      { dayStart: dayAgo(1), runs: 600, passed: 590, failed: 10 },
+      { dayStart: dayAgo(2), runs: 400, passed: 400, failed: 0 },
+    ]);
+    expect(digest.lines[0]).toBe("1000 runs, 10 failed.");
+    expect(digest.lines.join(" ")).not.toContain("Nothing ran");
+  });
+
+  it("names no offender and no flake from a run whose record is gone", () => {
+    // Both need per-run identity and ordering, and a pruned run has neither.
+    // Inventing one would be worse than the count being the only thing repaired.
+    const digest = weeklyDigest(thisWeek(2), NOW, [
+      { dayStart: dayAgo(1), runs: 50, passed: 0, failed: 50 },
+    ]);
+    expect(digest.failed).toBe(50);
+    expect(digest.offenders).toEqual([]);
+    expect(digest.flaky).toBe(0);
+  });
+
+  it("reads exactly as before when nothing has been pruned", () => {
+    expect(weeklyDigest(thisWeek(4), NOW, []).lines).toEqual(weeklyDigest(thisWeek(4), NOW).lines);
+  });
+});

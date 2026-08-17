@@ -32,6 +32,7 @@ import type {
   HealListEntry,
   RunRecord,
   RunReplaySummary,
+  RunTotals,
 } from "./recorder-types";
 import { selectLatestA11yRuns } from "../../shared/a11y-rollup.mjs";
 import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
@@ -282,6 +283,10 @@ export const METRICS_UNAVAILABLE =
  */
 export interface CategoryInputs {
   runs?: RunRecord[];
+  /** Lifetime run counts. Its own query, and its own field, because it answers
+   *  what `runs` cannot: that list is capped, so its length stops growing while
+   *  the suite keeps running. */
+  runTotals?: RunTotals;
   flake?: FlakeReport;
   heals?: HealListEntry[];
   replays?: RunReplaySummary[];
@@ -351,21 +356,28 @@ export function latestCaptures(replays: RunReplaySummary[]): RunReplaySummary[] 
 
 // ── One summary per category ──────────────────────────────────────────
 
-export function summariseOutcomes(runs: RunRecord[]): CategorySummary {
+/**
+ * @param totals Lifetime counts, when they have loaded. The run list is CAPPED,
+ *  so counting it answers "how are the runs we still have on disk doing" — a
+ *  narrower question than the one this tile asks, and one that quietly stops
+ *  moving once the cap is reached. Optional rather than required because it
+ *  arrives on its own query: until it does, the retained window is the best
+ *  available answer and a tile that waited for it would render as "never run".
+ */
+export function summariseOutcomes(runs: RunRecord[], totals?: RunTotals): CategorySummary {
   const real = realRuns(runs);
-  if (real.length === 0) return unmeasured("outcomes");
-  const passed = real.filter((r) => r.status === "passed").length;
-  const failed = real.length - passed;
-  const rate = Math.round((passed / real.length) * 100);
+  if (real.length === 0 && (totals?.runs ?? 0) === 0) return unmeasured("outcomes");
+  const count = totals?.runs ?? real.length;
+  const passed = totals?.passed ?? real.filter((r) => r.status === "passed").length;
+  const failed = count - passed;
+  const rate = count > 0 ? Math.round((passed / count) * 100) : 0;
   return {
     id: "outcomes",
     state: failed > 0 ? "findings" : "clean",
     display: `${rate}%`,
     say:
-      failed > 0
-        ? `${failed} ${plural(failed, "run")} failed of ${real.length}`
-        : `every run passed`,
-    window: `${real.length} ${plural(real.length, "run")}`,
+      failed > 0 ? `${failed} ${plural(failed, "run")} failed of ${count}` : `every run passed`,
+    window: `${count} ${plural(count, "run")}`,
     // The rate is the number, so the tone reads the RATE rather than the count
     // of failures: one failure in four hundred is not the same news as one in
     // four, and a tone driven by the count cannot tell them apart.
@@ -502,7 +514,7 @@ export function summariseAll(inputs: CategoryInputs): CategorySummary[] {
   for (const meta of CATEGORIES) {
     switch (meta.id) {
       case "outcomes":
-        if (inputs.runs) out.push(summariseOutcomes(inputs.runs));
+        if (inputs.runs) out.push(summariseOutcomes(inputs.runs, inputs.runTotals));
         break;
       case "stability":
         if (inputs.flake) out.push(summariseStability(inputs.flake));

@@ -54,6 +54,7 @@ import {
   testDurationTrend,
   stepHealth,
   suiteCost,
+  lifetimeRunCounts,
 } from "../../../shared/metrics-query.mjs";
 import { errorSignature, firstErrorLine } from "../../../shared/error-signature.mjs";
 import { stripAnsi } from "../../../shared/strip-ansi.mjs";
@@ -516,6 +517,63 @@ try {
       testDurationTrend(db, "no-such-test").recentP50Ms === null,
       "query: a test with no history reports no median rather than zero",
     );
+
+  // ── 5b. The recovery query ──────────────────────────────────────────
+  //
+  // The one query here that exists for a NUMBER rather than a view. The run
+  // index is capped and the counter that records what the cap prunes could only
+  // start counting on the day it shipped — so on an app already past the cap,
+  // everything pruned before then was deleted with nothing recording it. This
+  // table is the only surviving trace: a row per run, and nothing deletes rows.
+  {
+    const day = (iso: string, hour: number) => new Date(`${iso}T0${hour}:00:00`).getTime();
+    const write = (row: Record<string, unknown>) =>
+      db.prepare(INSERT_RUN).run(...bind(RUN_COLUMNS, row));
+
+    for (const sql of DROP_STATEMENTS) db.exec(sql);
+    for (const sql of CREATE_STATEMENTS) db.exec(sql);
+
+    write({ id: "a", test_id: "t", test_name: "T", status: "passed", kind: "run",
+      started_at: day("2026-08-10", 9), duration_ms: 1 });
+    write({ id: "b", test_id: "t", test_name: "T", status: "failed", kind: "run",
+      started_at: day("2026-08-10", 5), duration_ms: 1 });
+    write({ id: "c", test_id: "t", test_name: "T", status: "passed", kind: "run",
+      started_at: day("2026-08-11", 3), duration_ms: 1 });
+    // An event with an incidental status, excluded here exactly as it is
+    // everywhere else — counting it would move a total nothing executed changed.
+    write({ id: "d", test_id: "t", test_name: "T", status: "passed", kind: "baseline-update",
+      started_at: day("2026-08-11", 4), duration_ms: 0 });
+
+    const lifetime = lifetimeRunCounts(db);
+    assert(lifetime.runs === 3, "recovery: counts every run the database still holds");
+    assert(
+      lifetime.passed === 2 && lifetime.failed === 1,
+      "recovery: splits them by outcome",
+    );
+    assert(
+      JSON.stringify(lifetime.days) ===
+        JSON.stringify([
+          { day: "2026-08-10", runs: 2, passed: 1, failed: 1 },
+          { day: "2026-08-11", runs: 1, passed: 1, failed: 0 },
+        ]),
+      "recovery: groups by LOCAL calendar day, ascending — the bucketing the chart and the digest use",
+    );
+
+    // Two runs hours apart on ONE local day must not become two days. Grouping
+    // on UTC would split them for anyone west of Greenwich, and the digest
+    // would report a week that never happened.
+    assert(lifetime.days.length === 2, "recovery: hours apart on one local day is one bucket");
+
+    assert(
+      lifetimeRunCounts(db, { sinceMs: day("2026-08-11", 0) }).days.length === 1,
+      "recovery: `sinceMs` bounds the day breakdown without touching the totals",
+    );
+    assert(
+      lifetimeRunCounts(db, { sinceMs: day("2026-08-11", 0) }).runs === 3,
+      "recovery: …the lifetime total is a lifetime total",
+    );
+    assert(lifetimeRunCounts(null).runs === 0, "recovery: unavailable answers zero, not a throw");
+  }
 
   // ── 6. Never fatal ──────────────────────────────────────────────────
   //

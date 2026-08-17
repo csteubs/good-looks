@@ -1600,6 +1600,10 @@ export function registerHandlers(): void {
       emitReport(params.emitter, params.stamp, { testId: params.testId }),
   );
   ipcMain.handle("runs:list", async () => runHistoryStore.list());
+  /** Lifetime run counts. Separate from `runs:list` because the list is capped
+   *  and these are not — counting the rows this returns is exactly the mistake
+   *  that made the Stats board's "Total runs" stop at 1000. */
+  ipcMain.handle("runs:totals", async () => runHistoryStore.totals());
   /** Flake and failure analytics over the recent run history.
    *
    *  Computed on demand rather than maintained incrementally: it's a read over

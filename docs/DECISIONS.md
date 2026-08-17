@@ -145,6 +145,175 @@ with `<Text variant="small">` supplying the font, size and colour. Removing
 shape as the class-that-does-not-exist bug in CLAUDE.md, one level up: a rule
 that exists, is applied, and does not do what its name implies.
 
+### 2026-08-17 — The run cap was a log budget, and a counter cannot recover what it never saw
+
+`main/services/run-history-store.ts`, `main/services/recorder-settings-store.ts`,
+`main/services/metrics-store.ts`, `shared/metrics-query.mjs`,
+`main/recorder/types.ts`, `renderer/lib/settings-schema.ts`,
+`renderer/settings/panes/stats-pane.tsx` (new), `renderer/settings/settings-nav.tsx`,
+`renderer/settings/settings-controller.tsx`,
+`main/services/__tests__/run-totals.check.ts`,
+`main/services/__tests__/metrics-db.check.ts`.
+
+**The report:** the total still says 1000, and there are more than 1000 runs.
+
+Two separate causes, and the counter added earlier the same day addressed
+neither of them.
+
+**One number was governing two resources.** Pruning deleted a run's record and
+its raw .log together. A record is ~700 bytes; the log beside it is tens of KB.
+So the cheap artifact was rationed at the expensive one's rate: the history
+stopped at 1000 runs to bound a DISK cost, and every count on the Stats screen
+inherited a ceiling that had nothing to do with counting. They are separate
+dials now. `MAX_RECORDS` is 50,000, bounded by what the index costs to rewrite —
+`writeAll` rewrites the file whole on every save, measured here at 1k = 0.7 MB
+and 7 ms, 10k = 7 MB and 55 ms, 50k = 35 MB and 360 ms, 100k = 69 MB and 700 ms.
+Fifty thousand puts about a third of a second of bookkeeping on every run, which
+is a real cost accepted deliberately for depth of history. Logs get their own
+budget, `runLogRetainedRuns`, defaulting to the old 1000 — a run past it keeps
+its record, its result and its counts, and loses only the console output.
+
+**And a counter cannot count what happened before it existed.** This is the part
+that made the number still read 1000 on a machine with far more runs than that:
+the tally could only start counting on the day it shipped, so an app already
+past the cap begins understating its history by every run pruned before then.
+Nothing about that fix was wrong; it simply had no evidence about the past.
+
+The metrics DB is the only thing that still holds that evidence — a row per run,
+written at teardown and again before any retention prune, and **nothing deletes
+rows** from it. So the counter is seeded from it ONCE, at startup, via
+`lifetimeRunCounts` and `adoptLifetimeFloor`.
+
+Seeded, not sourced, and the distinction is the same one that kept the total out
+of that database in the first place. Reading the figure from there on every
+launch would make a derived cache the store of record for a number that cannot
+be re-derived, and this table is dropped and replayed FROM THE CAPPED INDEX
+whenever `SCHEMA_VERSION` moves — so the total would silently fall back to the
+cap at the next schema change. The seed raises a FLOOR (a database smaller than
+the counter changes nothing, which is exactly that rebuilt-from-the-index case)
+and marks itself spent, because a seed that ran on every launch would resurrect
+a history the user had deliberately cleared.
+
+**Settings → Stats.** The controls that clear run history lived only in a native
+menu inside the Stats view, which cannot be searched — so Settings, the window
+that question gets asked in, could not answer "how do I clear my run history" at
+all. The new pane holds the log dial, both destructive controls (the menu keeps
+its copies; both call the same handlers), and a readout stating the lifetime
+total against how many records are still stored. That difference is named
+nowhere else in the app, and it is the whole subject of the day's work.
+
+It is a pane beside Storage rather than a section inside it. Storage is about
+screenshots; this is about records; and the failures are not alike — screenshots
+going early costs you pictures, records going early costs you the history every
+number on the Stats screen is computed from. How many RECORDS are kept is
+deliberately NOT a setting: it is bounded by what rewriting the index costs per
+run, which is a fact about the machine, not a preference.
+
+**Two things the checks caught rather than review.** `check:run-totals` mirrors
+the cap by hand instead of importing it, on the argument that a check reading
+the constant it tests agrees with a typo — when the cap moved, its seeded index
+no longer reached it and six assertions went red, which is that decision working
+as intended. And seeding 50,000 full records is 35 MB per write, so the fixture
+was cut to the fields the store actually reads (~200 bytes); the check runs in
+two seconds.
+
+### 2026-08-17 — "Total runs" counts every run, not the ones still on disk
+
+`main/services/run-history-store.ts`, `main/recorder/types.ts`,
+`main/handlers/index.ts`, `renderer/lib/api.ts`,
+`renderer/lib/recorder-types.ts`, `renderer/lib/run-derived-cache.ts`,
+`renderer/lib/stats-categories.ts`, `renderer/main/stats/outcomes-dashboard.tsx`,
+`renderer/main/stats/stats-category-view.tsx`, `renderer/main/stats-view.tsx`,
+`renderer/lib/weekly-digest.ts`, `renderer/main/digest-panel.tsx`,
+`renderer/dev/preview-bridge.ts`,
+`main/services/__tests__/run-totals.check.ts` (new).
+
+**The report:** the Stats board says 1000 total runs. It said 1000 yesterday and
+it will say 1000 next month.
+
+`run-history.json` is capped at `MAX_RECORDS` (1000) and prunes the oldest
+record — and its `.log` — on every save past that. Every counter on the Stats
+screen was `runs.length` over that list, so at the cap the total, the passed and
+failed cards and the Outcomes pass rate all quietly stopped being counts of the
+history and became counts of the cache. Nothing threw; the number was simply
+plausible and wrong, and it got wronger the more the suite was used.
+
+**Why a counter and not a derivation.** The obvious source is the metrics DB —
+it already has one row per run and nothing deletes those rows. It is the wrong
+source, and CLAUDE.md already says why: that file is a *derived shadow*, never a
+store of record. It is dropped and replayed **from this very index** whenever
+`SCHEMA_VERSION` moves, so a lifetime total read out of it would be correct
+until the next schema change and would then silently fall back to ≤1000. Raising
+the cap is not an answer either — it is a bound on log files on disk, and
+whatever it is raised to is where the number would stop next.
+
+So the count is taken at the only moment the information still exists: as the
+records are pruned. `run-history-pruned.json` holds `{runs, passed, failed}` for
+dropped **executions**, and `totals()` adds it to the retained counts.
+
+**Three things that had to be got right, each of which was a real failure mode
+during the change.**
+
+*One prune path, not two.* `append` and `logBaselineUpdate` each carried their
+own copy of the prune loop. A tally kept on one and not the other is wrong in a
+way nothing on screen can show, so both now go through `pruneToCap`, and the
+check drives the baseline-update path specifically — at the cap, adding an event
+pushes a real run out of the index, so the counter has to grow for something
+that is not itself a run.
+
+*A corrupt tally is discarded whole.* The first version sanitised each field
+independently, and the check immediately produced a file whose `runs` was
+rejected while its `failed` was accepted — a total smaller than the outcome
+counts printed beside it. Understating the history is self-correcting from the
+next prune; three numbers on one row that cannot all be true is not. All three
+fields or none, and a file whose parts do not add up is discarded too.
+
+*Deleting history has to reach it.* `resetStats` and `deleteAll` zero the tally:
+a user who has just emptied every list on the screen and is then told 1240 runs
+happened has the same complaint, pointing the other way. `deleteRange` does not,
+and that is not an oversight — everything the tally counts was pruned for being
+older than every surviving record, so a range that reaches those runs has
+nothing left to delete and subtracting would double-count.
+
+**What did NOT move to lifetime counts.** The run-history table and the "By
+outcome" drill rows still count retained runs, because they are LISTS — a row
+promising 140 failures that opens a list of 84 is worse than one promising what
+it can deliver. Where the two figures sit on the same screen, the screen says so:
+the Total runs card carries "1,000 kept in history · 240 older runs counted but
+no longer stored". That is the same remedy the run-history table already used for
+runs belonging to deleted tests, and for the same reason — two numbers
+disagreeing with no explanation reads as a bug in whichever one the reader trusts
+less.
+
+**A second figure was wrong the same way, and the flat counter could not fix
+it.** The weekly digest counts a seven-day window out of the run list, and so
+does the pass/fail chart. Pruning takes the OLDEST records, so a suite busy
+enough to fit a thousand runs inside a week loses *that week's* own early days:
+the digest reported "1000 runs, 74 failed" — the cap, stated as a fact about the
+week — and the chart drew a suite that ramped up when it had done nothing of the
+kind. Knowing 1019 runs happened says nothing about WHEN, so the tally also keeps
+a per-day breakdown (most recent 60 local days) and both figures add it to what
+the records say.
+
+Offenders and flake stay record-only. Both need per-run identity and ordering,
+which is exactly what a pruned run no longer has, and inventing either would be
+worse than repairing only the counts. A pruned day joins the window its local
+midnight falls in: the window is rolling and the buckets are calendar days, so
+the day straddling the boundary lands wholly on one side — an error bounded by
+one day's pruned runs, against an alternative of dropping them entirely.
+
+**The day validator is signed, and the check is why.** `dayStart` is a timestamp,
+not a count. Validating it with the counter's non-negative rule threw away the
+whole breakdown for any pre-1970 timestamp — which no real run has, but a machine
+with a wrong clock does, and that is precisely the case where keeping the other
+days beats discarding them.
+
+**The check is standalone rather than a Vitest case** because the mechanism *is*
+a second file written at the moment of pruning; with a mocked `fs`, a version
+that never writes it passes. It seeds the index at the cap directly rather than
+appending 1000 times — each append rewrites the whole file, so the honest setup
+is quadratic and takes minutes.
+
 ### 2026-08-15 — A run reports every step, including the one that failed
 
 `main/services/step-marker.ts` (new), `main/services/step-reporter.ts`,

@@ -33,6 +33,7 @@
 import { Input } from "@ui";
 import {
   Bandage,
+  BarChart3,
   BookOpen,
   Bell,
   Coins,
@@ -59,6 +60,7 @@ const PANE_ICONS: Record<PaneId, ComponentType<{ className?: string }>> = {
   "test-defaults": Settings2,
   "auto-heal": Bandage,
   storage: HardDrive,
+  stats: BarChart3,
   cost: Coins,
   ai: Sparkles,
   alerts: Bell,

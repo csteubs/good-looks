@@ -867,6 +867,35 @@ export interface Annotation {
   updatedAt: number;
 }
 
+/**
+ * How many test runs there have ever been (mirror of main types).
+ *
+ * `runs` is the lifetime figure and does NOT equal the length of the run list
+ * this app fetches — that list is capped, and everything on the Stats screen
+ * that draws a chart, a table or a drill-down list can only ever show
+ * `retained` of them. Where the two differ, say so on screen.
+ */
+export interface RunTotals {
+  runs: number;
+  passed: number;
+  failed: number;
+  retained: number;
+  pruned: number;
+  /** Pruned runs by local calendar day, oldest first — what the digest and the
+   *  pass/fail chart need, since those count a WINDOW rather than a lifetime
+   *  and pruned runs are always the oldest ones. Empty when nothing has been
+   *  pruned, or when the breakdown on disk was rejected. */
+  prunedDays: RunDayCount[];
+}
+
+export interface RunDayCount {
+  /** local midnight of the day, epoch ms */
+  dayStart: number;
+  runs: number;
+  passed: number;
+  failed: number;
+}
+
 /** A hit from searching the raw run logs. */
 export interface LogSearchResult {
   runId: string;
@@ -983,6 +1012,11 @@ export interface RecorderSettings {
   /** how many runs' screenshot artifacts to keep per test (default 10, 1–50). */
   artifactRetainedRuns: number;
   /** also delete captured runs older than N days (0 = off, max 365). */
+  /** How many recent runs keep their raw .log file (default 1000, 0–50000).
+   *  Separate dial from how many run RECORDS are kept: a record is ~700 bytes,
+   *  its log is tens of KB. */
+  runLogRetainedRuns: number;
+
   artifactRetentionDays: number;
   /** notify on macOS when a run fails or shows a visual change (default false). */
   notifyOnRunIssues: boolean;

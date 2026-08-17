@@ -42,6 +42,18 @@ const MAX_RETAINED_RUNS = 50;
  *  (the run-count cap still applies); 365 is a sane ceiling for a local app. */
 const MAX_RETENTION_DAYS = 365;
 
+/** Bounds for `runLogRetainedRuns` — how many recent runs keep their raw .log.
+ *
+ *  0 is meaningful and allowed: keep the records and their counts, keep no
+ *  console output at all. The ceiling is the record cap, because a log without
+ *  a record is unreachable — nothing can open it. */
+const MAX_RUN_LOGS = 50_000;
+export const DEFAULT_RUN_LOG_RETAINED_RUNS = 1000;
+
+function clampRunLogs(n: number): number {
+  return Math.max(0, Math.min(MAX_RUN_LOGS, Math.round(n)));
+}
+
 /** Ceiling on the persisted batch order. Far above any real library; exists so
  *  a corrupt file can't grow without bound across saves. */
 const MAX_BATCH_ORDER = 1000;
@@ -161,6 +173,7 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   // someone who never asked for it.
   defaultBatchConcurrency: 1,
   artifactRetainedRuns: DEFAULT_RETAINED_RUNS,
+  runLogRetainedRuns: DEFAULT_RUN_LOG_RETAINED_RUNS,
   artifactRetentionDays: 0,
   notifyOnRunIssues: false,
   // ON by default, unlike the per-run notification. A batch is a job you walk
@@ -280,6 +293,13 @@ function read(): RecorderSettings {
         typeof parsed.artifactRetainedRuns === "number" && parsed.artifactRetainedRuns > 0
           ? clampRetained(parsed.artifactRetainedRuns)
           : DEFAULT_SETTINGS.artifactRetainedRuns,
+      // `>= 0` rather than `> 0`: zero is a choice here (keep no logs), not a
+      // missing value, so the truthiness idiom the other numbers use would
+      // silently rewrite it to the default on every read.
+      runLogRetainedRuns:
+        typeof parsed.runLogRetainedRuns === "number" && parsed.runLogRetainedRuns >= 0
+          ? clampRunLogs(parsed.runLogRetainedRuns)
+          : DEFAULT_SETTINGS.runLogRetainedRuns,
       artifactRetentionDays:
         typeof parsed.artifactRetentionDays === "number" && parsed.artifactRetentionDays >= 0
           ? clampDays(parsed.artifactRetentionDays)
@@ -433,6 +453,12 @@ export const recorderSettingsStore = {
         update.artifactRetainedRuns > 0
           ? clampRetained(update.artifactRetainedRuns)
           : current.artifactRetainedRuns,
+      runLogRetainedRuns:
+        update.runLogRetainedRuns !== undefined &&
+        typeof update.runLogRetainedRuns === "number" &&
+        update.runLogRetainedRuns >= 0
+          ? clampRunLogs(update.runLogRetainedRuns)
+          : current.runLogRetainedRuns,
       artifactRetentionDays:
         update.artifactRetentionDays !== undefined &&
         typeof update.artifactRetentionDays === "number" &&
