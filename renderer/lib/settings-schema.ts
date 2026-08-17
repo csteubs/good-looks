@@ -28,6 +28,7 @@ export type PaneId =
   | "test-defaults"
   | "auto-heal"
   | "storage"
+  | "stats"
   | "cost"
   | "ai"
   | "alerts"
@@ -81,6 +82,21 @@ export const PANES: readonly PaneDef[] = [
     id: "storage",
     title: "Storage",
     subtitle: "How long captured screenshots stay on disk.",
+    group: "Testing",
+  },
+  {
+    // RUN HISTORY, not screenshots — Storage above is the screenshot pane, and
+    // the two were effectively one thing for as long as a single number
+    // governed both. It did: pruning a run record deleted its raw log with it,
+    // so the cheap artifact (a ~700-byte record) was rationed at the expensive
+    // one's rate, and every count on the Stats screen inherited a ceiling that
+    // existed to bound DISK. Records and logs are separate dials now, and this
+    // is where the log dial lives alongside the controls that clear the
+    // history — which were previously reachable only from a native menu inside
+    // the Stats view, where nothing about them was searchable.
+    id: "stats",
+    title: "Stats",
+    subtitle: "The run history behind the Stats screen: what is kept, and how to clear it.",
     group: "Testing",
   },
   {
@@ -429,6 +445,32 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "prune delete retention disk space free",
   },
 
+  // Stats
+  //
+  // Keywords name what someone would actually type at the moment they want
+  // this: "1000" and "limit" for the ceiling they just hit, and the VERBS — a
+  // person looking to wipe their history searches "clear" or "delete", not
+  // "run history".
+  {
+    id: "run-log-retained-runs",
+    pane: "stats",
+    label: "Keep console logs for",
+    keywords: "log console retention runs history disk space limit 1000",
+    key: "runLogRetainedRuns",
+  },
+  {
+    id: "reset-stats",
+    pane: "stats",
+    label: "Reset stats",
+    keywords: "clear delete run history reset counts totals start over",
+  },
+  {
+    id: "delete-stats-and-logs",
+    pane: "stats",
+    label: "Delete stats and logs",
+    keywords: "clear delete run history logs everything wipe disk space",
+  },
+
   // Cost
   // Keywords name the INVOICE, not the panel: someone who has just seen a CI
   // bill searches "spend", "price", "dollar" or "github actions", and none of
@@ -661,6 +703,7 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   defaultBatchConcurrency: 1,
   defaultTestTimeoutMs: 60_000,
   artifactRetainedRuns: 10,
+  runLogRetainedRuns: 1000,
   artifactRetentionDays: 0,
   notifyOnRunIssues: false,
   notifyOnBatchDone: true,
@@ -767,6 +810,14 @@ export function clampRetainedRuns(raw: string | number): number {
 
 export function clampRetentionDays(raw: string | number): number {
   return Math.max(0, Math.min(365, Math.round(Number(raw) || 0)));
+}
+
+/** How many recent runs keep their raw .log file. Zero is a real choice — keep
+ *  the records and their counts, keep no console output — so the `|| default`
+ *  idiom the other clamps use lands on 0 here deliberately, exactly as
+ *  `clampRetentionDays` does. */
+export function clampRunLogRetainedRuns(raw: string | number): number {
+  return Math.max(0, Math.min(50_000, Math.round(Number(raw) || 0)));
 }
 
 export function clampHealRetries(raw: string | number): number {

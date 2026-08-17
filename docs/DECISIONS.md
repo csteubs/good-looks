@@ -10,6 +10,78 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-17 — The run cap was a log budget, and a counter cannot recover what it never saw
+
+`main/services/run-history-store.ts`, `main/services/recorder-settings-store.ts`,
+`main/services/metrics-store.ts`, `shared/metrics-query.mjs`,
+`main/recorder/types.ts`, `renderer/lib/settings-schema.ts`,
+`renderer/settings/panes/stats-pane.tsx` (new), `renderer/settings/settings-nav.tsx`,
+`renderer/settings/settings-controller.tsx`,
+`main/services/__tests__/run-totals.check.ts`,
+`main/services/__tests__/metrics-db.check.ts`.
+
+**The report:** the total still says 1000, and there are more than 1000 runs.
+
+Two separate causes, and the counter added earlier the same day addressed
+neither of them.
+
+**One number was governing two resources.** Pruning deleted a run's record and
+its raw .log together. A record is ~700 bytes; the log beside it is tens of KB.
+So the cheap artifact was rationed at the expensive one's rate: the history
+stopped at 1000 runs to bound a DISK cost, and every count on the Stats screen
+inherited a ceiling that had nothing to do with counting. They are separate
+dials now. `MAX_RECORDS` is 50,000, bounded by what the index costs to rewrite —
+`writeAll` rewrites the file whole on every save, measured here at 1k = 0.7 MB
+and 7 ms, 10k = 7 MB and 55 ms, 50k = 35 MB and 360 ms, 100k = 69 MB and 700 ms.
+Fifty thousand puts about a third of a second of bookkeeping on every run, which
+is a real cost accepted deliberately for depth of history. Logs get their own
+budget, `runLogRetainedRuns`, defaulting to the old 1000 — a run past it keeps
+its record, its result and its counts, and loses only the console output.
+
+**And a counter cannot count what happened before it existed.** This is the part
+that made the number still read 1000 on a machine with far more runs than that:
+the tally could only start counting on the day it shipped, so an app already
+past the cap begins understating its history by every run pruned before then.
+Nothing about that fix was wrong; it simply had no evidence about the past.
+
+The metrics DB is the only thing that still holds that evidence — a row per run,
+written at teardown and again before any retention prune, and **nothing deletes
+rows** from it. So the counter is seeded from it ONCE, at startup, via
+`lifetimeRunCounts` and `adoptLifetimeFloor`.
+
+Seeded, not sourced, and the distinction is the same one that kept the total out
+of that database in the first place. Reading the figure from there on every
+launch would make a derived cache the store of record for a number that cannot
+be re-derived, and this table is dropped and replayed FROM THE CAPPED INDEX
+whenever `SCHEMA_VERSION` moves — so the total would silently fall back to the
+cap at the next schema change. The seed raises a FLOOR (a database smaller than
+the counter changes nothing, which is exactly that rebuilt-from-the-index case)
+and marks itself spent, because a seed that ran on every launch would resurrect
+a history the user had deliberately cleared.
+
+**Settings → Stats.** The controls that clear run history lived only in a native
+menu inside the Stats view, which cannot be searched — so Settings, the window
+that question gets asked in, could not answer "how do I clear my run history" at
+all. The new pane holds the log dial, both destructive controls (the menu keeps
+its copies; both call the same handlers), and a readout stating the lifetime
+total against how many records are still stored. That difference is named
+nowhere else in the app, and it is the whole subject of the day's work.
+
+It is a pane beside Storage rather than a section inside it. Storage is about
+screenshots; this is about records; and the failures are not alike — screenshots
+going early costs you pictures, records going early costs you the history every
+number on the Stats screen is computed from. How many RECORDS are kept is
+deliberately NOT a setting: it is bounded by what rewriting the index costs per
+run, which is a fact about the machine, not a preference.
+
+**Two things the checks caught rather than review.** `check:run-totals` mirrors
+the cap by hand instead of importing it, on the argument that a check reading
+the constant it tests agrees with a typo — when the cap moved, its seeded index
+no longer reached it and six assertions went red, which is that decision working
+as intended. And seeding 50,000 full records is 35 MB per write, so the fixture
+was cut to the fields the store actually reads (~200 bytes); the check runs in
+two seconds.
+
 ### 2026-08-17 — "Total runs" counts every run, not the ones still on disk
 
 `main/services/run-history-store.ts`, `main/recorder/types.ts`,

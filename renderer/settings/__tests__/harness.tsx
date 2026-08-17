@@ -125,6 +125,11 @@ export function makeController(overrides: Partial<SettingsController> = {}): Set
     pruning: false,
     pruneNow: vi.fn(async () => {}),
 
+    runTotals: null,
+    clearingRuns: false,
+    resetRunStats: vi.fn(async () => {}),
+    deleteRunStatsAndLogs: vi.fn(async () => {}),
+
     debugShortcut: "⌘⌥⇧S",
     capturing: false,
     captureNow: vi.fn(async () => {}),

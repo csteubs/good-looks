@@ -30,7 +30,7 @@ import type {
   ProviderId,
   ProviderVocabulary,
 } from "../lib/issue-types";
-import type { ArtifactUsage, RecorderSettings } from "../lib/recorder-types";
+import type { ArtifactUsage, RecorderSettings, RunTotals } from "../lib/recorder-types";
 import { formatBytes } from "../lib/settings-schema";
 
 /** Before the status load resolves, and if it never does. Disconnected is the
@@ -124,6 +124,16 @@ export interface SettingsController {
   pruning: boolean;
   pruneNow: () => Promise<void>;
 
+  /** Lifetime run counts, for the Stats pane's readout. `null` until loaded.
+   *  The lifetime total is NOT derivable from the run list — that list is
+   *  capped — which is the whole reason this pane states it. */
+  runTotals: RunTotals | null;
+  clearingRuns: boolean;
+  /** Clear the run index, KEEPING the raw .log files on disk. */
+  resetRunStats: () => Promise<void>;
+  /** Clear the run index AND every raw .log file. */
+  deleteRunStatsAndLogs: () => Promise<void>;
+
   debugShortcut: string;
   capturing: boolean;
   captureNow: () => Promise<void>;
@@ -182,6 +192,8 @@ export function useSettingsControllerState(): SettingsController {
 
   const [artifactUsage, setArtifactUsage] = useState<ArtifactUsage | null>(null);
   const [pruning, setPruning] = useState(false);
+  const [runTotals, setRunTotals] = useState<RunTotals | null>(null);
+  const [clearingRuns, setClearingRuns] = useState(false);
 
   const [debugShortcut, setDebugShortcut] = useState("");
   const [capturing, setCapturing] = useState(false);
@@ -268,6 +280,10 @@ export function useSettingsControllerState(): SettingsController {
     load(
       () => api.artifacts.usage(),
       setArtifactUsage,
+    );
+    load(
+      () => api.runs.totals(),
+      setRunTotals,
     );
     load(
       () => api.debug.shortcut(),
@@ -757,6 +773,52 @@ export function useSettingsControllerState(): SettingsController {
     }
   }, []);
 
+  // ── Run history ───────────────────────────────────────────────────────────
+  //
+  // The same two operations the Stats view's Manage-data menu performs, and
+  // they report the same way. They are HERE as well because a native menu
+  // inside one view is unsearchable and undiscoverable: nothing in Settings
+  // could answer "how do I clear my run history", which is exactly the kind of
+  // question a settings window is opened with.
+
+  const refreshRunTotals = useCallback(async () => {
+    try {
+      setRunTotals(await api.runs.totals());
+    } catch {
+      // A stale readout is better than an error toast about a number.
+    }
+  }, []);
+
+  const resetRunStats = useCallback(async () => {
+    setClearingRuns(true);
+    try {
+      const { removed } = await api.runs.resetStats();
+      await refreshRunTotals();
+      toast.success(
+        `Cleared ${removed} run ${removed === 1 ? "record" : "records"}. The raw logs are still on disk.`,
+      );
+    } catch (error) {
+      toast.error(`Could not reset stats: ${error}`);
+    } finally {
+      setClearingRuns(false);
+    }
+  }, [refreshRunTotals]);
+
+  const deleteRunStatsAndLogs = useCallback(async () => {
+    setClearingRuns(true);
+    try {
+      const { removed } = await api.runs.deleteAll();
+      await refreshRunTotals();
+      toast.success(
+        `Deleted ${removed} run ${removed === 1 ? "record" : "records"} and every raw log.`,
+      );
+    } catch (error) {
+      toast.error(`Could not delete run history: ${error}`);
+    } finally {
+      setClearingRuns(false);
+    }
+  }, [refreshRunTotals]);
+
   // ── Debug capture ─────────────────────────────────────────────────────────
 
   const captureNow = useCallback(async () => {
@@ -825,6 +887,10 @@ export function useSettingsControllerState(): SettingsController {
     artifactUsage,
     pruning,
     pruneNow,
+    runTotals,
+    clearingRuns,
+    resetRunStats,
+    deleteRunStatsAndLogs,
     debugShortcut,
     capturing,
     captureNow,

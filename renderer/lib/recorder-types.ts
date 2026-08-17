@@ -1012,6 +1012,11 @@ export interface RecorderSettings {
   /** how many runs' screenshot artifacts to keep per test (default 10, 1–50). */
   artifactRetainedRuns: number;
   /** also delete captured runs older than N days (0 = off, max 365). */
+  /** How many recent runs keep their raw .log file (default 1000, 0–50000).
+   *  Separate dial from how many run RECORDS are kept: a record is ~700 bytes,
+   *  its log is tens of KB. */
+  runLogRetainedRuns: number;
+
   artifactRetentionDays: number;
   /** notify on macOS when a run fails or shows a visual change (default false). */
   notifyOnRunIssues: boolean;

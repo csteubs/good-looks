@@ -41,6 +41,7 @@ import {
   SCHEMA_VERSION,
   STEP_COLUMNS,
 } from "../../shared/metrics-schema.mjs";
+import { lifetimeRunCounts } from "../../shared/metrics-query.mjs";
 import { rollupRun } from "../../shared/rollup.mjs";
 import type { RunRecord } from "../recorder/types.js";
 
@@ -201,6 +202,21 @@ export const metricsStore = {
         const { runs, steps } = this.backfill();
         logger.info("metrics", "Built the metrics database from history", { runs, steps });
       }
+      // THE ONE PLACE THIS DATABASE IS READ FOR SOMETHING OTHER THAN A VIEW.
+      //
+      // The run index is capped, and the counter that records what the cap
+      // prunes could only start counting on the day it shipped: an app already
+      // past the cap begins understating its own history by every run pruned
+      // before then. Those runs left a row here and nothing deletes rows, so
+      // this file is the only surviving evidence of them.
+      //
+      // It stays a SEED rather than a source. Reading the total from here on
+      // every launch would make a derived cache the store of record for a
+      // number that cannot be re-derived — and this table is dropped and
+      // replayed FROM THE CAPPED INDEX whenever SCHEMA_VERSION moves, so that
+      // total would silently fall back to the cap at the next schema change.
+      // Seeded once, into a counter that is authoritative afterwards.
+      this.seedRunHistoryFloor();
     } catch (err) {
       // A missing node:sqlite, an unwritable directory, a corrupt file. All the
       // same answer: no metrics, everything else works.
@@ -213,6 +229,39 @@ export const metricsStore = {
    *  with `false` — it is the normal state on a runtime without node:sqlite. */
   get available(): boolean {
     return db !== null;
+  },
+
+  /**
+   * Hand the run history whatever this database remembers of runs the cap has
+   * already pruned. One-time; the store records that it ran.
+   *
+   * Non-throwing like everything else here (rule 1): a failed recovery leaves
+   * the counter exactly where it was, which is the state the app shipped with.
+   * Day buckets are converted from the query's local `YYYY-MM-DD` to local
+   * midnight here, because the timestamp is the store's vocabulary and the date
+   * string is SQLite's.
+   */
+  seedRunHistoryFloor(): void {
+    if (!db) return;
+    try {
+      const lifetime = lifetimeRunCounts(db);
+      runHistoryStore.adoptLifetimeFloor({
+        runs: lifetime.runs,
+        passed: lifetime.passed,
+        failed: lifetime.failed,
+        days: lifetime.days.map((d) => {
+          const [y, m, day] = d.day.split("-").map(Number);
+          return {
+            dayStart: new Date(y, (m ?? 1) - 1, day ?? 1).getTime(),
+            runs: d.runs,
+            passed: d.passed,
+            failed: d.failed,
+          };
+        }),
+      });
+    } catch (err) {
+      logger.warn("metrics", "Could not recover pruned-run history", { err: String(err) });
+    }
   },
 
   /**

@@ -1994,6 +1994,17 @@ export interface RecorderSettings {
    *  the model was thinking always wins, and the suggestion falls back to a
    *  review toast instead. */
   autoAcceptAiDebugFixes: boolean;
+  /** How many of the most recent runs keep their RAW .log file (default 1000,
+   *  clamped 0–50000; 0 keeps none).
+   *
+   *  Separate from how many run RECORDS the history keeps, and that separation
+   *  is the point. A record is ~700 bytes; the log beside it is tens of KB, so
+   *  one number governing both made the cheap thing as scarce as the expensive
+   *  one — the history stopped at 1000 runs to bound a DISK cost, and every
+   *  count on the Stats screen inherited that ceiling. Records now run to
+   *  MAX_RECORDS; this is the log budget, on its own dial. A run past it keeps
+   *  its record (and its counts) and loses only its console output. */
+  runLogRetainedRuns: number;
   /** additionally delete captured runs older than this many days (0 = off,
    *  max 365). Applies ON TOP of artifactRetainedRuns — a run is kept only if
    *  it satisfies both rules. The pinned baseline is never pruned. */

@@ -615,6 +615,7 @@ export const SETTINGS: RecorderSettings = {
   batchTestOptions: {},
   defaultBatchConcurrency: 2,
   artifactRetainedRuns: 10,
+  runLogRetainedRuns: 1000,
   artifactRetentionDays: 30,
   notifyOnRunIssues: false,
   notifyOnBatchDone: true,

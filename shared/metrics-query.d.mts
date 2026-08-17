@@ -18,6 +18,22 @@ export type Db = MetricsDb | null | undefined;
 
 export declare function isPopulated(db: Db): boolean;
 
+export interface LifetimeRunCounts {
+  runs: number;
+  passed: number;
+  failed: number;
+  /** Per LOCAL day, `YYYY-MM-DD`, ascending. */
+  days: { day: string; runs: number; passed: number; failed: number }[];
+}
+
+/** Every run the metrics DB still holds — including ones the capped run index
+ *  has pruned. The seed for the lifetime counter on an app that ran for months
+ *  before that counter existed. */
+export declare function lifetimeRunCounts(
+  db: Db,
+  opts?: { sinceMs?: number },
+): LifetimeRunCounts;
+
 export declare function counts(db: Db): {
   runs: number;
   steps: number;

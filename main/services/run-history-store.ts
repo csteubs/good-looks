@@ -34,6 +34,10 @@ import * as path from "path";
 
 import { app, logger } from "@shell/backend";
 
+import {
+  DEFAULT_RUN_LOG_RETAINED_RUNS,
+  recorderSettingsStore,
+} from "./recorder-settings-store.js";
 import { redactWithSnapshot } from "./secret-redaction.js";
 import { DELETED_TEST_NAME } from "../recorder/types.js";
 import type {
@@ -44,7 +48,27 @@ import type {
   TestSpeed,
 } from "../recorder/types.js";
 
-const MAX_RECORDS = 1000; // cap the index; oldest runs (+ their logs) are pruned
+/**
+ * How many run RECORDS the index keeps.
+ *
+ * It was 1000, and that number was really a LOG budget wearing a record
+ * budget's clothes: pruning deleted the record and its .log together, so the
+ * cheap thing (a ~700-byte record) was made as scarce as the expensive one (its
+ * console output, tens of KB). Everything counted off this list inherited the
+ * ceiling — the Stats board read 1000 total runs, 1000 runs ago, and would have
+ * read 1000 forever.
+ *
+ * The two are separate dials now. This one is bounded by what the file costs to
+ * REWRITE, because `writeAll` rewrites it whole on every save (measured on this
+ * machine, representative records): 1k ≈ 0.7 MB and 7 ms, 10k ≈ 7 MB and 55 ms,
+ * 50k ≈ 35 MB and 360 ms, 100k ≈ 69 MB and 700 ms. At 50k that is a third of a
+ * second of bookkeeping per run — chosen deliberately for depth of history, and
+ * the reason `ingest` no longer re-reads the file to find the run it was just
+ * handed.
+ *
+ * The log budget is `runLogRetainedRuns`, a user setting.
+ */
+const MAX_RECORDS = 50_000;
 const SEARCH_RESULT_CAP = 200;
 const SNIPPET_RADIUS = 80; // chars of context on each side of the first match
 
@@ -113,6 +137,14 @@ interface PrunedTally {
   passed: number;
   failed: number;
   days: PrunedDay[];
+  /** Whether the one-time seed from the metrics DB has run.
+   *
+   *  It has to be recorded, because the seed would otherwise repeat on every
+   *  launch — and it must not: `resetStats` and `deleteAll` zero this tally, and
+   *  a seed that ran again on the next launch would resurrect the history the
+   *  user just asked the app to forget, out of a database that is not the store
+   *  of record for it. Seed once, then the counter is authoritative. */
+  adopted: boolean;
 }
 
 interface PrunedDay {
@@ -195,7 +227,7 @@ function readDays(raw: unknown, total: number): PrunedDay[] {
  * incoherent. The same reasoning rejects a file whose parts don't add up.
  */
 function readTally(): PrunedTally {
-  const zero = { runs: 0, passed: 0, failed: 0, days: [] };
+  const zero = { runs: 0, passed: 0, failed: 0, days: [], adopted: false };
   try {
     const parsed = JSON.parse(fs.readFileSync(prunedTallyFile(), "utf-8")) as Partial<PrunedTally>;
     const runs = count(parsed.runs);
@@ -203,7 +235,14 @@ function readTally(): PrunedTally {
     const failed = count(parsed.failed);
     if (runs === null || passed === null || failed === null) return zero;
     if (passed + failed !== runs) return zero;
-    return { runs, passed, failed, days: readDays(parsed.days, runs) };
+    return {
+      runs,
+      passed,
+      failed,
+      days: readDays(parsed.days, runs),
+      // Absent means "not yet" — an upgrade from before the seed existed.
+      adopted: parsed.adopted === true,
+    };
   } catch {
     // Absent (nothing has been pruned yet) or unreadable. Same answer.
     return zero;
@@ -236,6 +275,40 @@ function writeTally(tally: PrunedTally): void {
     fs.writeFileSync(prunedTallyFile(), JSON.stringify(tally, null, 2), "utf-8");
   } catch (err) {
     logger.warn("recorder", "Could not record pruned-run totals", { err: String(err) });
+  }
+}
+
+/**
+ * Delete the raw .log of every run past the log budget, keeping the RECORD.
+ *
+ * The record survives with `logFile` cleared, which is exactly the shape
+ * `markTestDeleted` already produces: the run still counts, its outcome and
+ * timing are still readable, and `readLog` answers "no longer available" rather
+ * than pointing at a path that isn't there. `logBytes` is left alone on the
+ * same reasoning as that function — it records what the run once cost.
+ *
+ * `all` is oldest-first, so this walks BACKWARDS and keeps the newest N. Runs
+ * with no log (baseline updates, already-pruned records) do not consume budget:
+ * counting them would let a week of baseline pins silently evict real logs.
+ */
+function pruneLogsToBudget(all: RunRecord[]): void {
+  let budget: number;
+  try {
+    budget = recorderSettingsStore.get().runLogRetainedRuns;
+  } catch {
+    // A settings file that will not read must not stop a run being saved.
+    budget = DEFAULT_RUN_LOG_RETAINED_RUNS;
+  }
+  let kept = 0;
+  for (let i = all.length - 1; i >= 0; i--) {
+    const rec = all[i];
+    if (!rec.logFile) continue;
+    if (kept < budget) {
+      kept++;
+      continue;
+    }
+    safeUnlink(rec.logFile);
+    rec.logFile = "";
   }
 }
 
@@ -299,6 +372,86 @@ export const runHistoryStore = {
       pruned: pruned.runs,
       prunedDays: pruned.days,
     };
+  },
+
+  /**
+   * Seed the pruned counter, ONCE, from evidence that outlived the records.
+   *
+   * The counter can only count prunes that happened while it existed, so on any
+   * app that was already past the cap it starts life understating the history
+   * by however many runs were pruned before it shipped — which is exactly the
+   * "there are more than 1000 test runs" case it was built for. The metrics DB
+   * is the only thing that still remembers those runs: it holds a row each and
+   * nothing deletes them.
+   *
+   * @param lifetime Every run the metrics DB knows about, day buckets included.
+   *   Counts, not records: this raises the FLOOR under the counter and cannot
+   *   lower it, so a database that is smaller than the counter (one rebuilt from
+   *   the capped index after a schema bump, say) changes nothing.
+   *
+   * Returns what it did, for the log — a silent one-time migration is one
+   * nobody can tell ran.
+   */
+  adoptLifetimeFloor(lifetime: {
+    runs: number;
+    passed: number;
+    failed: number;
+    days: { dayStart: number; runs: number; passed: number; failed: number }[];
+  }): { adopted: boolean; pruned: number } {
+    const tally = readTally();
+    if (tally.adopted) return { adopted: false, pruned: tally.runs };
+
+    // What the DB knows MINUS what the index still holds is what was pruned.
+    // Per day as well as overall, because the digest and the chart count
+    // windows and a flat total cannot say when.
+    const retainedByDay = new Map<number, { runs: number; passed: number; failed: number }>();
+    let retained = 0;
+    let retainedPassed = 0;
+    for (const rec of readAll()) {
+      if (rec.kind === "baseline-update") continue;
+      retained++;
+      if (rec.status === "passed") retainedPassed++;
+      const key = dayStartOf(rec.startedAt);
+      const bucket = retainedByDay.get(key) ?? { runs: 0, passed: 0, failed: 0 };
+      bucket.runs++;
+      if (rec.status === "passed") bucket.passed++;
+      else bucket.failed++;
+      retainedByDay.set(key, bucket);
+    }
+
+    const prunedRuns = Math.max(0, lifetime.runs - retained);
+    if (prunedRuns <= tally.runs) {
+      // Nothing to recover — but the attempt is still spent, so a database
+      // that never had the history cannot make this run on every launch.
+      writeTally({ ...tally, adopted: true });
+      return { adopted: false, pruned: tally.runs };
+    }
+
+    const prunedPassed = Math.max(0, lifetime.passed - retainedPassed);
+    const days: PrunedDay[] = [];
+    for (const day of lifetime.days) {
+      const held = retainedByDay.get(day.dayStart);
+      const runs = Math.max(0, day.runs - (held?.runs ?? 0));
+      if (runs === 0) continue;
+      const passed = Math.min(runs, Math.max(0, day.passed - (held?.passed ?? 0)));
+      days.push({ dayStart: day.dayStart, runs, passed, failed: runs - passed });
+    }
+
+    writeTally({
+      runs: prunedRuns,
+      // Forced to add up rather than each derived on its own: the two counts
+      // are subtractions from different sources, and `readTally` rejects a file
+      // whose parts disagree — which would throw away the recovery it just did.
+      passed: Math.min(prunedRuns, prunedPassed),
+      failed: prunedRuns - Math.min(prunedRuns, prunedPassed),
+      days: days.slice(-PRUNED_DAYS_KEPT),
+      adopted: true,
+    });
+    logger.info("recorder", "Recovered pruned-run history from the metrics database", {
+      pruned: prunedRuns,
+      days: days.length,
+    });
+    return { adopted: true, pruned: prunedRuns };
   },
 
   /** Runs whose test still exists — everything the UI may NAME. Every caller
@@ -444,6 +597,7 @@ export const runHistoryStore = {
     // them into the lifetime tally on the way out.
     all.sort((a, b) => a.startedAt - b.startedAt);
     pruneToCap(all);
+    pruneLogsToBudget(all);
     writeAll(all);
     logger.info("recorder", "Saved run record", {
       id,
@@ -489,6 +643,7 @@ export const runHistoryStore = {
     all.push(record);
     all.sort((a, b) => a.startedAt - b.startedAt);
     pruneToCap(all);
+    pruneLogsToBudget(all);
     writeAll(all);
     logger.info("recorder", "Logged baseline update", { id, testId, scope, stepCount });
     return record;
@@ -561,7 +716,7 @@ export const runHistoryStore = {
    *  the tally was added to answer, pointing the other way. */
   resetStats(): { removed: number } {
     const removed = readAll().length;
-    writeTally({ runs: 0, passed: 0, failed: 0, days: [] });
+    writeTally({ runs: 0, passed: 0, failed: 0, days: [], adopted: true });
     writeAll([]);
     logger.info("recorder", "Reset run stats (kept logs)", { removed });
     return { removed };
@@ -579,7 +734,7 @@ export const runHistoryStore = {
     } catch {
       /* logs dir may not exist yet */
     }
-    writeTally({ runs: 0, passed: 0, failed: 0, days: [] });
+    writeTally({ runs: 0, passed: 0, failed: 0, days: [], adopted: true });
     writeAll([]);
     logger.info("recorder", "Deleted all run stats and logs", { removed: all.length });
     return { removed: all.length };

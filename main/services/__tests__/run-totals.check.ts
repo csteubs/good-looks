@@ -41,24 +41,41 @@ function eq(actual: unknown, expected: unknown, label: string): void {
 /** The cap, mirrored. Deliberately NOT imported: the store does not export it,
  *  and a check that reads the constant it is testing against agrees with a
  *  typo. If this is ever wrong the seeded index simply won't reach the cap and
- *  the prune assertions below fail loudly, which is the correct outcome. */
-const MAX_RECORDS = 1000;
+ *  the prune assertions below fail loudly — which is exactly what happened when
+ *  the cap moved from 1000 to 50000, and is the correct outcome. */
+const MAX_RECORDS = 50_000;
 
+/** The log budget's default, mirrored for the same reason. */
+const DEFAULT_LOG_BUDGET = 1000;
+
+/** A seeded record carries only the fields the store READS — id, status,
+ *  startedAt, kind, logFile. Fifty thousand full records is 35 MB of JSON per
+ *  write and turns this check into a minute of disk; these are ~200 bytes and
+ *  exercise the same code. Appended records, which are what the store itself
+ *  writes, are built in full by `append`. */
 function seeded(i: number, over: Partial<RunRecord> = {}): RunRecord {
   return {
     id: `seed-${i}`,
     testId: "t1",
-    testName: "Alpha",
-    url: "https://example.com",
+    testName: "A",
+    url: "",
     status: "passed",
     exitCode: 0,
     startedAt: 1_000_000 + i,
-    finishedAt: 1_000_000 + i + 5,
-    durationMs: 5,
+    finishedAt: 1_000_000 + i,
+    durationMs: 0,
     logFile: path.join(recorderDir, "logs", `seed-${i}.log`),
     logBytes: 0,
     ...over,
   } as RunRecord;
+}
+
+/** Write an index straight to disk. The prune is what is under test, and the
+ *  prune reads this file — building it through 50000 appends would rewrite the
+ *  whole thing 50000 times. */
+function seedIndex(records: RunRecord[]): void {
+  fs.mkdirSync(path.join(recorderDir, "logs"), { recursive: true });
+  fs.writeFileSync(indexFile, JSON.stringify(records), "utf-8");
 }
 
 function appendRun(id: string, status: "passed" | "failed", startedAt: number): void {
@@ -111,16 +128,7 @@ eq(
 // rewrites the whole file, so the honest version of this setup is quadratic and
 // takes minutes. What is under test is the prune, and the prune reads the file.
 
-fs.mkdirSync(path.join(recorderDir, "logs"), { recursive: true });
-fs.writeFileSync(
-  indexFile,
-  JSON.stringify(
-    Array.from({ length: MAX_RECORDS }, (_, i) => seeded(i)),
-    null,
-    2,
-  ),
-  "utf-8",
-);
+seedIndex(Array.from({ length: MAX_RECORDS }, (_, i) => seeded(i)));
 fs.rmSync(tallyFile, { force: true });
 
 eq(runHistoryStore.list().length, MAX_RECORDS, "the seeded index is exactly at the cap");
@@ -181,27 +189,19 @@ const DAY_MS = 86_400_000;
 const today = dayStartOf(Date.now());
 
 runHistoryStore.deleteAll();
-fs.writeFileSync(
-  indexFile,
-  JSON.stringify(
-    // Two days' worth, all older than the runs appended below, so the cap
-    // reaches them: 3 on the day before yesterday, 2 yesterday.
-    [
-      ...Array.from({ length: 3 }, (_, i) =>
-        seeded(i, { id: `d2-${i}`, startedAt: today - 2 * DAY_MS + i * 1000, status: "failed" }),
-      ),
-      ...Array.from({ length: 2 }, (_, i) =>
-        seeded(100 + i, { id: `d1-${i}`, startedAt: today - DAY_MS + i * 1000 }),
-      ),
-      ...Array.from({ length: MAX_RECORDS - 5 }, (_, i) =>
-        seeded(1000 + i, { id: `now-${i}`, startedAt: today + i * 1000 }),
-      ),
-    ],
-    null,
-    2,
+// Two days' worth, all older than the runs appended below, so the cap reaches
+// them: 3 on the day before yesterday, 2 yesterday.
+seedIndex([
+  ...Array.from({ length: 3 }, (_, i) =>
+    seeded(i, { id: `d2-${i}`, startedAt: today - 2 * DAY_MS + i * 1000, status: "failed" }),
   ),
-  "utf-8",
-);
+  ...Array.from({ length: 2 }, (_, i) =>
+    seeded(100 + i, { id: `d1-${i}`, startedAt: today - DAY_MS + i * 1000 }),
+  ),
+  ...Array.from({ length: MAX_RECORDS - 5 }, (_, i) =>
+    seeded(1_000_000 + i, { id: `now-${i}`, startedAt: today + i * 1000 }),
+  ),
+]);
 
 appendRun("push-1", "passed", today + 900_000);
 appendRun("push-2", "passed", today + 900_001);
@@ -293,6 +293,126 @@ eq(
   { runs: 5, passed: 4, failed: 1, retained: 1, pruned: 4, prunedDays: [] },
   "deleting a date range removes records without rewriting history",
 );
+
+// ── 7. Logs are pruned on their OWN dial ──────────────────────────────
+//
+// The record and its raw log used to go together, which made a ~700-byte
+// record as scarce as the tens of KB of console output beside it — the history
+// stopped at 1000 runs to bound a DISK cost, and every count on the Stats
+// screen inherited that ceiling. Past the log budget a run now keeps its
+// record, its result and its counts, and loses only the console output.
+
+runHistoryStore.deleteAll();
+
+const withLogs = Array.from({ length: DEFAULT_LOG_BUDGET + 5 }, (_, i) => {
+  const file = path.join(recorderDir, "logs", `keep-${i}.log`);
+  fs.writeFileSync(file, "console output", "utf-8");
+  return seeded(i, { id: `keep-${i}`, startedAt: 7_000_000 + i, logFile: file, logBytes: 14 });
+});
+seedIndex(withLogs);
+
+// One append is what triggers the sweep — the same thing a finished run does.
+appendRun("trigger", "passed", 8_000_000);
+
+const after = runHistoryStore.list().sort((a, b) => a.startedAt - b.startedAt);
+eq(
+  after.length,
+  DEFAULT_LOG_BUDGET + 6,
+  "every record survives — the log budget is not a record budget",
+);
+eq(
+  after.filter((r) => r.logFile).length,
+  DEFAULT_LOG_BUDGET,
+  "exactly the newest N runs keep a log file",
+);
+eq(
+  after.slice(0, 6).every((r) => r.logFile === ""),
+  true,
+  "the oldest records lost their log path, not their record",
+);
+eq(
+  after.slice(0, 6).every((r) => r.status === "passed" && r.startedAt > 0),
+  true,
+  "…and kept the fields every count on the Stats screen is drawn from",
+);
+eq(
+  fs.existsSync(path.join(recorderDir, "logs", "keep-0.log")),
+  false,
+  "the log file itself is deleted, not just dereferenced",
+);
+eq(
+  runHistoryStore.totals().runs,
+  DEFAULT_LOG_BUDGET + 6,
+  "a run past the log budget still counts as a run",
+);
+eq(
+  runHistoryStore.readLog(after[0].id),
+  "(The raw log for this run is no longer available.)",
+  "reading a pruned log says so rather than throwing",
+);
+
+// ── 8. The one-time recovery from the metrics database ────────────────
+//
+// The counter can only count prunes that happened while it existed, so on an
+// app already past the cap it starts life understating the history by every run
+// pruned before it shipped — which is the "there are more than 1000 test runs"
+// case it was built for. The metrics DB holds a row per run and nothing deletes
+// them, so it is seeded from there ONCE.
+
+runHistoryStore.deleteAll();
+appendRun("live-1", "passed", today + 100);
+appendRun("live-2", "failed", today + 200);
+// No tally file at all — an app upgrading into this feature, which is the only
+// state the seed is for. `deleteAll` above leaves the seed SPENT (see the
+// assertions further down), so leaving its file in place here would test the
+// refusal rather than the recovery.
+fs.rmSync(tallyFile, { force: true });
+
+const adopted = runHistoryStore.adoptLifetimeFloor({
+  runs: 5000,
+  passed: 4200,
+  failed: 800,
+  days: [{ dayStart: today, runs: 900, passed: 880, failed: 20 }],
+});
+eq(adopted, { adopted: true, pruned: 4998 }, "the floor is the DB total minus what is retained");
+eq(
+  runHistoryStore.totals().runs,
+  5000,
+  "the lifetime total becomes what the database remembers",
+);
+eq(
+  runHistoryStore.totals().prunedDays,
+  [{ dayStart: today, runs: 898, passed: 879, failed: 19 }],
+  "day buckets are the DB's days minus the records still held for that day",
+);
+
+// ONCE. A second seed on the next launch would resurrect a history the user may
+// have deliberately cleared, out of a database that is not the store of record.
+eq(
+  runHistoryStore.adoptLifetimeFloor({ runs: 99_999, passed: 99_999, failed: 0, days: [] }),
+  { adopted: false, pruned: 4998 },
+  "a second seed does nothing, however much the database claims",
+);
+
+// And a user clearing their history keeps it spent.
+runHistoryStore.resetStats();
+eq(
+  runHistoryStore.adoptLifetimeFloor({ runs: 5000, passed: 5000, failed: 0, days: [] }),
+  { adopted: false, pruned: 0 },
+  "clearing the history does not re-arm the seed",
+);
+eq(runHistoryStore.totals().runs, 0, "…so a cleared history stays cleared");
+
+// A database SMALLER than what the counter already knows cannot lower it: one
+// rebuilt from the capped index after a schema bump holds ≤ MAX_RECORDS runs.
+runHistoryStore.deleteAll();
+fs.writeFileSync(
+  tallyFile,
+  JSON.stringify({ runs: 4000, passed: 4000, failed: 0, days: [], adopted: false }),
+  "utf-8",
+);
+runHistoryStore.adoptLifetimeFloor({ runs: 10, passed: 10, failed: 0, days: [] });
+eq(runHistoryStore.totals().runs, 4000, "a smaller database is a floor that does not apply");
 
 console.log(failures === 0 ? "\nAll run-totals checks passed." : `\n${failures} check(s) FAILED.`);
 try {
