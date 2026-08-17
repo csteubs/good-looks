@@ -9,42 +9,72 @@
 // The pure half — ranking, keying, counting — lives in renderer/lib/a11y-format.
 // This file is only the pixels.
 
-import { Badge, Button, Text } from "@ui";
 import { Accessibility, Send } from "lucide-react";
 
+import { Btn, TONE, toneSurface } from "../theme";
 import { worstNewImpact } from "../lib/a11y-format";
 import type { A11yResult, A11yViolation } from "../lib/recorder-types";
 
-/** Colour for an impact level, ranked the way axe ranks it. A "minor" and a
- *  "critical" violation must not look the same — the whole point of triage is
- *  knowing which to read first. */
-export const IMPACT_COLOR: Record<A11yViolation["impact"], "red" | "orange" | "yellow" | "secondary"> =
-  {
-    critical: "red",
-    serious: "orange",
-    moderate: "yellow",
-    minor: "secondary",
-  };
+/**
+ * The tone an impact level takes, ranked the way axe ranks it.
+ *
+ * THREE RANKS FOR FOUR LEVELS, and that is the palette's rule rather than a
+ * shortcut. Colour means outcome here (tokens.css), so a level only takes a hue
+ * when the hue says something true about it: `critical` is the one to read first
+ * (red), `serious` is the prompt to look (amber), and `moderate` and `minor` are
+ * findings with nothing urgent to report — they take no hue and are told apart
+ * by the word in the chip, exactly as `Accepted` and `Reverted` are on the Heals
+ * list. What must never happen is a "minor" that looks like a "critical", and
+ * this maps those to the two ends.
+ *
+ * `undefined` means the neutral chip. Exported because the panel and the Visual
+ * view must agree about what an impact looks like, which is this file's whole
+ * reason to exist.
+ */
+export const IMPACT_TONE: Record<A11yViolation["impact"], "red" | "amber" | undefined> = {
+  critical: "red",
+  serious: "amber",
+  moderate: undefined,
+  minor: undefined,
+};
 
-/** Compact "N accessibility issues" badge for a step row. */
+/** One impact chip, tinted or not. `.gl-chip-tone` takes its colours inline
+ *  from `toneSurface` — the one place that derivation happens. */
+function ImpactChip({ impact }: { impact: A11yViolation["impact"] }) {
+  const tone = IMPACT_TONE[impact];
+  return tone ? (
+    <span className="gl-chip-tone" style={toneSurface(TONE[tone])}>
+      {impact}
+    </span>
+  ) : (
+    <span className="gl-chip">{impact}</span>
+  );
+}
+
+/** Compact "N accessibility issues" chip for a step row. */
 export function A11yBadge({ result }: { result: A11yResult }) {
   const isNew = result.newKeys.length;
   if (isNew === 0) {
     // Checked and found nothing unaccepted. Worth saying explicitly — silence
     // reads as "the check didn't run", which is a different thing entirely.
+    // Neutral: "nothing outstanding" is not an outcome the run turned on.
     return (
-      <Badge color="secondary" className="shrink-0">
-        <Accessibility className="size-3.5" />
+      <span className="gl-chip">
+        <Accessibility className="gl-mini-icon" aria-hidden="true" />
         {result.acceptedCount > 0 ? `${result.acceptedCount} accepted` : "No a11y issues"}
-      </Badge>
+      </span>
     );
   }
   const worst = worstNewImpact(result);
+  // Amber when the worst new issue is not itself critical: an accessibility
+  // finding never decides whether the run passed, so caution is the strongest
+  // claim it can make on its own.
+  const tone = (worst ? IMPACT_TONE[worst] : undefined) ?? "amber";
   return (
-    <Badge color={worst ? IMPACT_COLOR[worst] : "orange"} className="shrink-0">
-      <Accessibility className="size-3.5" />
+    <span className="gl-chip-tone" style={toneSurface(TONE[tone])}>
+      <Accessibility className="gl-mini-icon" aria-hidden="true" />
       {isNew} new a11y issue{isNew === 1 ? "" : "s"}
-    </Badge>
+    </span>
   );
 }
 
@@ -75,47 +105,40 @@ export function A11yViolationList({
 }) {
   const newSet = new Set(result.newKeys);
   return (
-    <div className="flex flex-col gap-2">
+    <div className="gl-a11y-list">
       {result.violations.map((v, i) => {
         const isNew = v.nodes.length
           ? v.nodes.some((t) => newSet.has(`${v.id}|${t}`))
           : newSet.has(`${v.id}|`);
         const already = filing?.filed?.[v.id];
         return (
-          <div
-            key={i}
-            className={`rounded-md border p-2 ${
-              isNew ? "border-separator" : "border-separator opacity-60"
-            }`}
-          >
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge color={IMPACT_COLOR[v.impact]}>{v.impact}</Badge>
-              <code className="font-mono text-xs text-secondary">{v.id}</code>
-              {!isNew ? <Badge color="secondary">accepted</Badge> : null}
+          <div key={i} className="gl-a11y-item" data-accepted={isNew ? undefined : ""}>
+            <div className="gl-a11y-head">
+              <ImpactChip impact={v.impact} />
+              <code className="gl-a11y-rule">{v.id}</code>
+              {!isNew ? <span className="gl-chip">accepted</span> : null}
               {filing && isNew ? (
-                <div className="ml-auto">
+                <span className="gl-a11y-send">
                   {already ? (
-                    <Badge color="secondary">Filed as {already}</Badge>
+                    <span className="gl-chip">Filed as {already}</span>
                   ) : (
-                    <Button
-                      variant="muted"
+                    <Btn
+                      tone="ghost"
                       aria-label={`Send ${v.id} to the issue tracker`}
                       onClick={() => filing.onSend(v.id)}
                     >
-                      <Send className="size-3.5" />
+                      <Send aria-hidden="true" />
                       Send
-                    </Button>
+                    </Btn>
                   )}
-                </div>
+                </span>
               ) : null}
             </div>
-            <Text variant="small" className="pt-1">
-              {v.help}
-            </Text>
+            <p className="gl-a11y-help">{v.help}</p>
             {v.nodes.length > 0 ? (
-              <div className="flex flex-col gap-0.5 pt-1">
+              <div className="gl-a11y-nodes">
                 {v.nodes.map((t, j) => (
-                  <code key={j} className="truncate font-mono text-[11px] text-tertiary">
+                  <code key={j} className="gl-a11y-node">
                     {t}
                   </code>
                 ))}
