@@ -95,6 +95,92 @@ describe("OutcomesDashboard", () => {
     expect(onDrill).toHaveBeenCalledWith("failed");
   });
 
+  // ── The cards count every run; the lists count what survived the cap ──
+  //
+  // The run index is capped, so `runs.length` is the size of a cache, not the
+  // size of a history. Counting it is what made this card climb to 1000 and
+  // stop: the suite kept running and the headline number did not move.
+
+  const TOTALS = { runs: 1240, passed: 1100, failed: 140, retained: 1000, pruned: 240 };
+
+  it("states the lifetime total, not the length of the run list", () => {
+    render(
+      <OutcomesDashboard
+        runs={[run({ id: "r1", status: "passed" }), run({ id: "r2", status: "failed" })]}
+        totals={TOTALS}
+        onDrill={vi.fn()}
+      />,
+    );
+    expect(card("Total runs")).toContain("1,240");
+    expect(card("Passed")).toContain("1,100");
+    expect(card("Failed")).toContain("140");
+    // The two retained runs are the whole run list. If the cards were counting
+    // it, this is the number they would show.
+    expect(card("Total runs")).not.toContain("2 ");
+  });
+
+  it("says out loud why the total is bigger than the lists below it", () => {
+    // Two numbers disagreeing with no explanation reads as a bug in whichever
+    // one the reader trusts less.
+    render(
+      <OutcomesDashboard runs={[run({ id: "r1" })]} totals={TOTALS} onDrill={vi.fn()} />,
+    );
+    expect(card("Total runs")).toContain("1,000 kept in history");
+    expect(card("Total runs")).toContain("240 older runs");
+  });
+
+  it("says nothing about pruning when nothing has been pruned", () => {
+    render(
+      <OutcomesDashboard
+        runs={[run({ id: "r1" })]}
+        totals={{ runs: 1, passed: 1, failed: 0, retained: 1, pruned: 0 }}
+        onDrill={vi.fn()}
+      />,
+    );
+    expect(card("Total runs")).not.toMatch(/kept in history/);
+  });
+
+  it("counts the drill rows over the runs they can actually list", () => {
+    // A row promising 140 failures and then opening a list of one is worse than
+    // a row promising what it can deliver.
+    render(
+      <OutcomesDashboard
+        runs={[run({ id: "r1", status: "failed" }), run({ id: "r2", status: "passed" })]}
+        totals={TOTALS}
+        onDrill={vi.fn()}
+      />,
+    );
+    const row = screen.getByRole("button", { name: /failed runs/i });
+    expect(row.textContent).toContain("1");
+    expect(row.textContent).not.toContain("140");
+  });
+
+  it("falls back to the retained counts before the totals query resolves", () => {
+    // `undefined` is "not loaded yet", and a card that renders 0 while waiting
+    // reports a suite that has never run.
+    render(
+      <OutcomesDashboard
+        runs={[run({ id: "r1", status: "passed" }), run({ id: "r2", status: "failed" })]}
+        onDrill={vi.fn()}
+      />,
+    );
+    expect(card("Total runs")).toContain("2");
+  });
+
+  it("still reports a history whose records have all been pruned", () => {
+    // Every record gone to the cap, the counter intact. Counting the list here
+    // renders "No runs yet" over a suite that has run a thousand times.
+    render(
+      <OutcomesDashboard
+        runs={[]}
+        totals={{ runs: 1000, passed: 900, failed: 100, retained: 0, pruned: 1000 }}
+        onDrill={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/no runs yet/i)).toBeNull();
+    expect(card("Total runs")).toContain("1,000");
+  });
+
   it("hides capture overhead until something has been measured", () => {
     render(<OutcomesDashboard runs={[run({ id: "r1" })]} onDrill={vi.fn()} />);
     expect(screen.queryByText(/capture overhead/i)).toBeNull();

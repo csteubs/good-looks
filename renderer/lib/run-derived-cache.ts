@@ -33,7 +33,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 
 /**
- * The six caches a finished run makes stale.
+ * Every cache a finished run makes stale.
  *
  * Prefixes, not exact keys: `["metrics"]` covers `["metrics","stepHealth"]`,
  * `["metrics","slowness"]` and `["metrics","divergence"]`, and `["heals"]`
@@ -45,6 +45,11 @@ export const RUN_DERIVED_KEYS: readonly (readonly string[])[] = [
   // The run list itself. Read by Stats, the sidebar's verdict dots, Home's
   // green rate and the detail view's run panel.
   ["runs"],
+  // The lifetime run counts behind Stats' KPI cards. A separate key from
+  // ["runs"] because it is a separate question — that list is capped, this
+  // count is not — and it moves on every finished run, so it goes stale
+  // exactly when the list does.
+  ["run-totals"],
   // Flake verdicts, recomputed backend-side over the recent run window.
   ["flake"],
   // The heal journal. A run journals into it whenever Auto-Heal substitutes a

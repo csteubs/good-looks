@@ -867,6 +867,22 @@ export interface Annotation {
   updatedAt: number;
 }
 
+/**
+ * How many test runs there have ever been (mirror of main types).
+ *
+ * `runs` is the lifetime figure and does NOT equal the length of the run list
+ * this app fetches — that list is capped, and everything on the Stats screen
+ * that draws a chart, a table or a drill-down list can only ever show
+ * `retained` of them. Where the two differ, say so on screen.
+ */
+export interface RunTotals {
+  runs: number;
+  passed: number;
+  failed: number;
+  retained: number;
+  pruned: number;
+}
+
 /** A hit from searching the raw run logs. */
 export interface LogSearchResult {
   runId: string;

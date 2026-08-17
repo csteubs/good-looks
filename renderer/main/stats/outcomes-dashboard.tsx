@@ -14,7 +14,7 @@
 
 import { Panel, TONE } from "../../theme";
 import { facetLabel } from "../../lib/stats-categories";
-import type { CaptureOverheadSummary, RunRecord } from "../../lib/recorder-types";
+import type { CaptureOverheadSummary, RunRecord, RunTotals } from "../../lib/recorder-types";
 import { DrillRow, ExitRow } from "./rows";
 
 // ── Daily pass/fail buckets for the chart ──────────────────────────────
@@ -210,17 +210,28 @@ export function runsIn(runs: RunRecord[], facet: string): RunRecord[] {
   return [];
 }
 
+/** en-GB-agnostic thousands grouping. Four figures is where an ungrouped count
+ *  starts being read as a different number at a glance. */
+function fmtCount(n: number): string {
+  return n.toLocaleString();
+}
+
 export function OutcomesDashboard({
   runs,
+  totals,
   overhead,
   onDrill,
 }: {
   runs: RunRecord[];
+  /** Lifetime counts. The three cards below are the only place on this screen
+   *  that can state them: everything else here — the chart, the drill lists —
+   *  is drawn from run RECORDS, and the pruned ones no longer exist to draw. */
+  totals?: RunTotals;
   overhead?: CaptureOverheadSummary;
   onDrill: (facet: string) => void;
 }) {
   const real = executions(runs);
-  if (real.length === 0) {
+  if (real.length === 0 && (totals?.runs ?? 0) === 0) {
     return (
       <Panel title="Outcomes">
         <p className="gl-panel-note">
@@ -230,8 +241,15 @@ export function OutcomesDashboard({
     );
   }
 
-  const passed = runsIn(runs, "passed").length;
-  const failed = runsIn(runs, "failed").length;
+  const retainedPassed = runsIn(runs, "passed").length;
+  const retainedFailed = runsIn(runs, "failed").length;
+  // THE CARDS COUNT EVERY RUN; THE LISTS BELOW COUNT WHAT IS STILL ON DISK.
+  // Falling back to the retained counts is what the cards showed before totals
+  // existed, and is what they show for the moment before the query resolves.
+  const total = totals?.runs ?? real.length;
+  const passed = totals?.passed ?? retainedPassed;
+  const failed = totals?.failed ?? retainedFailed;
+  const pruned = totals?.pruned ?? 0;
   const buckets = buildDailyBuckets(runs);
 
   return (
@@ -248,22 +266,44 @@ export function OutcomesDashboard({
           difference between them. On the landing the cards had no such head
           above them, so the card was the only place the rate appeared. */}
       <div className="gl-kpis">
-        <StatCard label="Total runs" value={String(real.length)} />
-        <StatCard label="Passed" value={String(passed)} />
-        <StatCard label="Failed" value={String(failed)} />
+        {/* EVERY RUN EVER, not the run list's length. The list is capped, so
+            counting it made this card climb to 1000 and stop — the suite kept
+            running and the headline number did not move. The hint is not
+            decoration: without it the card and the lists below simply disagree,
+            and a disagreement with no explanation reads as a bug. */}
+        <StatCard
+          label="Total runs"
+          value={fmtCount(total)}
+          hint={
+            pruned > 0
+              ? `${fmtCount(totals?.retained ?? real.length)} kept in history · ${fmtCount(pruned)} older ${pruned === 1 ? "run" : "runs"} counted but no longer stored`
+              : undefined
+          }
+        />
+        <StatCard label="Passed" value={fmtCount(passed)} />
+        <StatCard label="Failed" value={fmtCount(failed)} />
       </div>
 
-      <Panel title="By outcome">
+      <Panel
+        title="By outcome"
+        // Says out loud that the rows below count a narrower thing than the
+        // cards above: they open lists, and a list cannot show a run whose
+        // record was pruned.
+        id={pruned > 0 ? `most recent ${fmtCount(totals?.retained ?? real.length)} runs` : undefined}
+      >
+        {/* RETAINED COUNTS, deliberately — each row opens the list of exactly
+            these runs, and a row that promises 240 and then shows 84 is worse
+            than one that promises what it can deliver. */}
         <DrillRow
           label={facetLabel("outcomes", "failed")}
-          count={failed}
+          count={retainedFailed}
           detail="Runs whose assertions did not all pass"
-          tone={failed > 0 ? "red" : "phos"}
+          tone={retainedFailed > 0 ? "red" : "phos"}
           onClick={() => onDrill("failed")}
         />
         <DrillRow
           label={facetLabel("outcomes", "passed")}
-          count={passed}
+          count={retainedPassed}
           detail="Runs that completed with every assertion passing"
           tone="phos"
           onClick={() => onDrill("passed")}

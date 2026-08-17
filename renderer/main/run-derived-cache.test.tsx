@@ -56,6 +56,13 @@ vi.mock("../lib/api", () => ({
     },
     runs: {
       list: counted("runs", () => []),
+      totals: counted("run-totals", () => ({
+        runs: 0,
+        passed: 0,
+        failed: 0,
+        retained: 0,
+        pruned: 0,
+      })),
       flake: counted("flake", () => ({
         tests: [],
         analysedTests: 0,
@@ -99,6 +106,19 @@ vi.mock("../lib/api", () => ({
  *  refresh has to reach a reader that is nowhere near the event. */
 function Consumers() {
   useQuery({ queryKey: ["runs"], queryFn: counted("runs", () => []) });
+  // The lifetime run counts behind Stats' KPI cards. A separate key from
+  // ["runs"] because it answers a question that list cannot — the list is
+  // capped — and it moves on exactly the same event.
+  useQuery({
+    queryKey: ["run-totals"],
+    queryFn: counted("run-totals", () => ({
+      runs: 0,
+      passed: 0,
+      failed: 0,
+      retained: 0,
+      pruned: 0,
+    })),
+  });
   useQuery({ queryKey: ["flake"], queryFn: counted("flake", () => null) });
   useQuery({ queryKey: ["heals", "all"], queryFn: counted("heals", () => journal) });
   useQuery({ queryKey: ["replays"], queryFn: counted("replays", () => []) });
@@ -130,7 +150,7 @@ beforeEach(() => {
 });
 
 describe("run-derived caches", () => {
-  it("refetches all seven when a run finishes", async () => {
+  it("refetches every one of them when a run finishes", async () => {
     renderWith(<Consumers />);
     await waitFor(() => expect(calls.metrics).toBe(1));
     const before = { ...calls };
@@ -141,6 +161,7 @@ describe("run-derived caches", () => {
     // stale — "expected 1 to be 2" over an anonymous key is a bug report that
     // costs an hour.
     await waitFor(() => expect(calls.runs).toBe(before.runs + 1));
+    await waitFor(() => expect(calls["run-totals"]).toBe(before["run-totals"] + 1));
     await waitFor(() => expect(calls.flake).toBe(before.flake + 1));
     await waitFor(() => expect(calls.heals).toBe(before.heals + 1));
     await waitFor(() => expect(calls.replays).toBe(before.replays + 1));
@@ -177,10 +198,19 @@ describe("run-derived caches", () => {
   });
 
   it("keeps the list and the exported keys in step", () => {
-    // Guards the loop above from rotting: if an eighth key is added to
-    // RUN_DERIVED_KEYS, this fails until it has a consumer in this file.
+    // Guards the loop above from rotting: a key added to RUN_DERIVED_KEYS
+    // fails this until it has a consumer in this file.
     expect(RUN_DERIVED_KEYS.map((k) => k[0]).sort()).toEqual(
-      ["a11y-rollup", "captureOverhead", "flake", "heals", "metrics", "replays", "runs"].sort(),
+      [
+        "a11y-rollup",
+        "captureOverhead",
+        "flake",
+        "heals",
+        "metrics",
+        "replays",
+        "run-totals",
+        "runs",
+      ].sort(),
     );
   });
 });

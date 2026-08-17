@@ -78,6 +78,10 @@ vi.mock("../../lib/api", () => ({
         windowCap: 200,
       }),
       captureOverhead: async () => null,
+      // Lifetime run counts. Null, so the Outcomes dashboard falls back to the
+      // fixture runs — the counting itself is covered in
+      // outcomes-dashboard.test.tsx, and this file is about routing.
+      totals: async () => null,
     },
     heals: {
       listAll: async () => [

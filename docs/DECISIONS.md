@@ -10,6 +10,79 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-17 — "Total runs" counts every run, not the ones still on disk
+
+`main/services/run-history-store.ts`, `main/recorder/types.ts`,
+`main/handlers/index.ts`, `renderer/lib/api.ts`,
+`renderer/lib/recorder-types.ts`, `renderer/lib/run-derived-cache.ts`,
+`renderer/lib/stats-categories.ts`, `renderer/main/stats/outcomes-dashboard.tsx`,
+`renderer/main/stats/stats-category-view.tsx`, `renderer/main/stats-view.tsx`,
+`renderer/dev/preview-bridge.ts`,
+`main/services/__tests__/run-totals.check.ts` (new).
+
+**The report:** the Stats board says 1000 total runs. It said 1000 yesterday and
+it will say 1000 next month.
+
+`run-history.json` is capped at `MAX_RECORDS` (1000) and prunes the oldest
+record — and its `.log` — on every save past that. Every counter on the Stats
+screen was `runs.length` over that list, so at the cap the total, the passed and
+failed cards and the Outcomes pass rate all quietly stopped being counts of the
+history and became counts of the cache. Nothing threw; the number was simply
+plausible and wrong, and it got wronger the more the suite was used.
+
+**Why a counter and not a derivation.** The obvious source is the metrics DB —
+it already has one row per run and nothing deletes those rows. It is the wrong
+source, and CLAUDE.md already says why: that file is a *derived shadow*, never a
+store of record. It is dropped and replayed **from this very index** whenever
+`SCHEMA_VERSION` moves, so a lifetime total read out of it would be correct
+until the next schema change and would then silently fall back to ≤1000. Raising
+the cap is not an answer either — it is a bound on log files on disk, and
+whatever it is raised to is where the number would stop next.
+
+So the count is taken at the only moment the information still exists: as the
+records are pruned. `run-history-pruned.json` holds `{runs, passed, failed}` for
+dropped **executions**, and `totals()` adds it to the retained counts.
+
+**Three things that had to be got right, each of which was a real failure mode
+during the change.**
+
+*One prune path, not two.* `append` and `logBaselineUpdate` each carried their
+own copy of the prune loop. A tally kept on one and not the other is wrong in a
+way nothing on screen can show, so both now go through `pruneToCap`, and the
+check drives the baseline-update path specifically — at the cap, adding an event
+pushes a real run out of the index, so the counter has to grow for something
+that is not itself a run.
+
+*A corrupt tally is discarded whole.* The first version sanitised each field
+independently, and the check immediately produced a file whose `runs` was
+rejected while its `failed` was accepted — a total smaller than the outcome
+counts printed beside it. Understating the history is self-correcting from the
+next prune; three numbers on one row that cannot all be true is not. All three
+fields or none, and a file whose parts do not add up is discarded too.
+
+*Deleting history has to reach it.* `resetStats` and `deleteAll` zero the tally:
+a user who has just emptied every list on the screen and is then told 1240 runs
+happened has the same complaint, pointing the other way. `deleteRange` does not,
+and that is not an oversight — everything the tally counts was pruned for being
+older than every surviving record, so a range that reaches those runs has
+nothing left to delete and subtracting would double-count.
+
+**What did NOT move to lifetime counts.** The chart, the run-history table and
+the "By outcome" drill rows still count retained runs, because they are lists —
+a row promising 140 failures that opens a list of 84 is worse than one promising
+what it can deliver. Where the two figures sit on the same screen, the screen
+says so: the Total runs card carries "1,000 kept in history · 240 older runs
+counted but no longer stored". That is the same remedy the run-history table
+already used for runs belonging to deleted tests, and for the same reason — two
+numbers disagreeing with no explanation reads as a bug in whichever one the
+reader trusts less.
+
+**The check is standalone rather than a Vitest case** because the mechanism *is*
+a second file written at the moment of pruning; with a mocked `fs`, a version
+that never writes it passes. It seeds the index at the cap directly rather than
+appending 1000 times — each append rewrites the whole file, so the honest setup
+is quadratic and takes minutes.
+
 ### 2026-08-15 — A run reports every step, including the one that failed
 
 `main/services/step-marker.ts` (new), `main/services/step-reporter.ts`,

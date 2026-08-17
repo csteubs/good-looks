@@ -116,6 +116,11 @@ export function StatsView() {
   const navigate = useNavigate();
   const runsQuery = useQuery({ queryKey: ["runs"], queryFn: api.runs.list });
   const runs = React.useMemo(() => runsQuery.data ?? [], [runsQuery.data]);
+  // How many runs there have EVER been. Its own query because the list above is
+  // capped: past the cap its length stops growing while the suite keeps
+  // running, so the Outcomes tile's rate would quietly become "the rate over
+  // the last thousand" while still reading as the rate.
+  const totalsQuery = useQuery({ queryKey: ["run-totals"], queryFn: api.runs.totals });
 
   const [search, setSearch] = React.useState("");
   const [debounced, setDebounced] = React.useState("");
@@ -197,6 +202,7 @@ export function StatsView() {
     () =>
       summariseAll({
         runs: runsQuery.data,
+        runTotals: totalsQuery.data,
         flake: flakeQuery.data,
         heals: healsQuery.data,
         replays: replaysQuery.data,
@@ -205,6 +211,7 @@ export function StatsView() {
       }),
     [
       runsQuery.data,
+      totalsQuery.data,
       flakeQuery.data,
       healsQuery.data,
       replaysQuery.data,
@@ -254,6 +261,11 @@ export function StatsView() {
   // used to live here moved with the chart and the KPI cards, into
   // `stats/outcomes-dashboard.tsx`.
   const realRuns = runs.filter((r) => r.kind !== "baseline-update");
+  // How many runs there have EVER been, and how many of those the index no
+  // longer holds. Falls back to the retained count until the query resolves,
+  // which is what this line showed before lifetime totals existed.
+  const recordedRuns = totalsQuery.data?.runs ?? realRuns.length;
+  const prunedRuns = totalsQuery.data?.pruned ?? 0;
 
   // After Reset stats / Delete stats & logs / Delete by date. This rewrites run
   // history wholesale, so it invalidates the same six caches a run does — the
@@ -341,8 +353,16 @@ export function StatsView() {
     <div className="flex h-full flex-col">
       <header className="gl-stats-head">
         <span className="gl-stats-title">Stats</span>
+        {/* EVERY RUN EVER, matching the Outcomes tile directly below it. This
+            line said `realRuns.length` — the size of the capped index — so once
+            the cap was reached the page's own summary and the tile under it
+            stated different counts of the same thing. The "kept in history"
+            clause is what makes the difference readable rather than a
+            contradiction; the run table further down counts the same
+            retained runs. */}
         <span className="gl-stats-meta">
-          {realRuns.length} run{realRuns.length === 1 ? "" : "s"} recorded
+          {recordedRuns} run{recordedRuns === 1 ? "" : "s"} recorded
+          {prunedRuns > 0 ? ` · ${realRuns.length} kept in history` : ""}
           {runs.length !== realRuns.length
             ? ` · ${runs.length - realRuns.length} baseline update${
                 runs.length - realRuns.length === 1 ? "" : "s"

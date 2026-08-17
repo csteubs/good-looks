@@ -8,6 +8,25 @@
 //   • "logs"   → the raw <id>.log files in the logs/ folder
 // resetStats() clears the index but keeps the .log files on disk; deleteAll()
 // removes both; deleteRange() removes records + their logs within a date range.
+//
+// A THIRD ARTIFACT, AND THE ONE THING HERE THAT IS NOT A CACHE OF THE OTHERS:
+// run-history-pruned.json, the tally of executions the CAP has dropped. The
+// index is capped at MAX_RECORDS, so before it existed "Total runs" on the
+// Stats board stopped at 1000 and stayed there — the app had run a test 1240
+// times and said 1000, with nothing on screen admitting the difference.
+//
+// It is a counter rather than a derivation because there is nothing left to
+// derive it from: pruning deletes the records AND their logs, and the metrics
+// DB cannot answer it either — that file is a derived shadow that gets dropped
+// and replayed FROM THIS INDEX on any schema change, so a lifetime total read
+// out of it would silently fall back to ≤1000 the next time SCHEMA_VERSION
+// moves (see main/services/metrics-store.ts, rule 3). Counting at the moment of
+// pruning is the only place the information still exists.
+//
+// It counts EXECUTIONS only — a baseline update is an event with an incidental
+// `status`, exactly as every rate on the Stats screen already treats it — and
+// it is zeroed by resetStats/deleteAll, which are the user saying "forget this
+// history" rather than the cap saying "this got old".
 
 import { randomUUID } from "crypto";
 import * as fs from "fs";
@@ -17,7 +36,13 @@ import { app, logger } from "@shell/backend";
 
 import { redactWithSnapshot } from "./secret-redaction.js";
 import { DELETED_TEST_NAME } from "../recorder/types.js";
-import type { LogSearchResult, RunBrowser, RunRecord, TestSpeed } from "../recorder/types.js";
+import type {
+  LogSearchResult,
+  RunBrowser,
+  RunRecord,
+  RunTotals,
+  TestSpeed,
+} from "../recorder/types.js";
 
 const MAX_RECORDS = 1000; // cap the index; oldest runs (+ their logs) are pruned
 const SEARCH_RESULT_CAP = 200;
@@ -33,6 +58,10 @@ function logsDir(): string {
 
 function indexFile(): string {
   return path.join(dataDir(), "run-history.json");
+}
+
+function prunedTallyFile(): string {
+  return path.join(dataDir(), "run-history-pruned.json");
 }
 
 function ensureDirs(): void {
@@ -70,10 +99,116 @@ function logByteSize(file: string): number {
   }
 }
 
+/** Executions the cap has pruned out of the index, by outcome. */
+interface PrunedTally {
+  runs: number;
+  passed: number;
+  failed: number;
+}
+
+/** A count read back off disk: a non-negative whole number, or nothing. */
+function count(v: unknown): number | null {
+  return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null;
+}
+
+/**
+ * The tally, or zeroes.
+ *
+ * ALL THREE FIELDS OR NONE, and the check that pinned this is the reason. The
+ * first version sanitised each field on its own, so a file with a plausible
+ * `failed` and a nonsense `runs` produced a total SMALLER than the outcome
+ * counts sitting beside it on the same row — three numbers on one screen that
+ * cannot all be true. A corrupt counter should understate the history, which is
+ * self-correcting from the next prune onwards; it should never make the screen
+ * incoherent. The same reasoning rejects a file whose parts don't add up.
+ */
+function readTally(): PrunedTally {
+  const zero = { runs: 0, passed: 0, failed: 0 };
+  try {
+    const parsed = JSON.parse(fs.readFileSync(prunedTallyFile(), "utf-8")) as Partial<PrunedTally>;
+    const runs = count(parsed.runs);
+    const passed = count(parsed.passed);
+    const failed = count(parsed.failed);
+    if (runs === null || passed === null || failed === null) return zero;
+    if (passed + failed !== runs) return zero;
+    return { runs, passed, failed };
+  } catch {
+    // Absent (nothing has been pruned yet) or unreadable. Same answer.
+    return zero;
+  }
+}
+
+/** Best-effort, and deliberately so. This is called from inside `append`, on the
+ *  path that saves a finished run — an exception here would turn a bookkeeping
+ *  problem into a lost run record. Under-counting the lifetime total by one is
+ *  the cheaper failure by some distance. */
+function writeTally(tally: PrunedTally): void {
+  try {
+    ensureDirs();
+    fs.writeFileSync(prunedTallyFile(), JSON.stringify(tally, null, 2), "utf-8");
+  } catch (err) {
+    logger.warn("recorder", "Could not record pruned-run totals", { err: String(err) });
+  }
+}
+
+/**
+ * Drop the oldest records beyond the cap — and remember that they existed.
+ *
+ * `all` must be sorted OLDEST FIRST; `shift()` takes the oldest. The two callers
+ * used to inline this loop twice, which is how the tally would come to be kept
+ * on one path and not the other — and a total that counts only the runs pruned
+ * by `append` is wrong in a way nothing on screen can show.
+ */
+function pruneToCap(all: RunRecord[]): void {
+  if (all.length <= MAX_RECORDS) return;
+  const tally = readTally();
+  let dropped = 0;
+  while (all.length > MAX_RECORDS) {
+    const rec = all.shift();
+    if (!rec) break;
+    safeUnlink(rec.logFile);
+    if (rec.kind === "baseline-update") continue; // an event, not a run
+    tally.runs++;
+    if (rec.status === "passed") tally.passed++;
+    else tally.failed++;
+    dropped++;
+  }
+  if (dropped > 0) writeTally(tally);
+}
+
 export const runHistoryStore = {
   /** All run records, newest first. */
   list(): RunRecord[] {
     return readAll().sort((a, b) => b.startedAt - a.startedAt);
+  },
+
+  /**
+   * How many runs there have ever been — including the ones the cap pruned.
+   *
+   * `list().length` is not this number and never was: it counts what survived
+   * the cap. Runs belonging to a DELETED test are still counted, on the same
+   * reasoning the Stats view already applies to its cards — those runs really
+   * happened, and rewriting the totals to pretend otherwise is what makes the
+   * numbers stop being worth reading.
+   */
+  totals(): RunTotals {
+    const pruned = readTally();
+    let retained = 0;
+    let passed = 0;
+    let failed = 0;
+    for (const rec of readAll()) {
+      if (rec.kind === "baseline-update") continue;
+      retained++;
+      if (rec.status === "passed") passed++;
+      else failed++;
+    }
+    return {
+      runs: pruned.runs + retained,
+      passed: pruned.passed + passed,
+      failed: pruned.failed + failed,
+      retained,
+      pruned: pruned.runs,
+    };
   },
 
   /** Runs whose test still exists — everything the UI may NAME. Every caller
@@ -215,12 +350,10 @@ export const runHistoryStore = {
 
     const all = readAll();
     all.push(record);
-    // Prune oldest beyond the cap, removing their log files too.
+    // Prune oldest beyond the cap, removing their log files too — and counting
+    // them into the lifetime tally on the way out.
     all.sort((a, b) => a.startedAt - b.startedAt);
-    while (all.length > MAX_RECORDS) {
-      const dropped = all.shift();
-      if (dropped) safeUnlink(dropped.logFile);
-    }
+    pruneToCap(all);
     writeAll(all);
     logger.info("recorder", "Saved run record", {
       id,
@@ -265,10 +398,7 @@ export const runHistoryStore = {
     const all = readAll();
     all.push(record);
     all.sort((a, b) => a.startedAt - b.startedAt);
-    while (all.length > MAX_RECORDS) {
-      const dropped = all.shift();
-      if (dropped) safeUnlink(dropped.logFile);
-    }
+    pruneToCap(all);
     writeAll(all);
     logger.info("recorder", "Logged baseline update", { id, testId, scope, stepCount });
     return record;
@@ -333,9 +463,15 @@ export const runHistoryStore = {
   },
 
   /** Clear the run history index (charts/table) but KEEP the raw .log files on
-   *  disk. Returns how many records were removed. */
+   *  disk. Returns how many records were removed.
+   *
+   *  Zeroes the pruned tally too: this is the user asking to forget the
+   *  history, and a "Total runs" card that still counted 1240 runs after a
+   *  reset that emptied every list on the screen would be the same complaint
+   *  the tally was added to answer, pointing the other way. */
   resetStats(): { removed: number } {
     const removed = readAll().length;
+    writeTally({ runs: 0, passed: 0, failed: 0 });
     writeAll([]);
     logger.info("recorder", "Reset run stats (kept logs)", { removed });
     return { removed };
@@ -353,13 +489,19 @@ export const runHistoryStore = {
     } catch {
       /* logs dir may not exist yet */
     }
+    writeTally({ runs: 0, passed: 0, failed: 0 });
     writeAll([]);
     logger.info("recorder", "Deleted all run stats and logs", { removed: all.length });
     return { removed: all.length };
   },
 
   /** Delete records (and their raw logs) whose run started within [fromMs, toMs]
-   *  inclusive. */
+   *  inclusive.
+   *
+   *  Leaves the pruned tally alone, and it is not an oversight: everything the
+   *  tally counts was pruned for being older than every record still in the
+   *  index, so a range that reaches those runs has nothing left to delete.
+   *  Subtracting anything here would double-count the removal. */
   deleteRange(fromMs: number, toMs: number): { removed: number } {
     const all = readAll();
     const keep: RunRecord[] = [];

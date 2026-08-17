@@ -296,6 +296,43 @@ describe("the numbers themselves", () => {
     expect(often.tone).toBe("red");
   });
 
+  it("rates the outcomes tile over every run, not the ones still on disk", () => {
+    // The run index is CAPPED. Rating only what it holds turns "your pass rate"
+    // into "your pass rate over the last thousand runs" with nothing saying so —
+    // and past the cap the window stops growing however much you run.
+    const retained = [run({ id: "p1" }), run({ id: "f1", status: "failed" })];
+    const s = summariseOutcomes(retained, {
+      runs: 1000,
+      passed: 900,
+      failed: 100,
+      retained: 2,
+      pruned: 998,
+    });
+    expect(s.display).toBe("90%");
+    expect(s.window).toBe("1000 runs");
+    expect(s.say).toBe("100 runs failed of 1000");
+  });
+
+  it("rates over the retained runs until the totals arrive", () => {
+    // Absent totals mean "the query has not resolved", and a tile that waited
+    // for them would render as a suite that has never been run.
+    const s = summariseOutcomes([run({ id: "p1" }), run({ id: "f1", status: "failed" })]);
+    expect(s.display).toBe("50%");
+    expect(s.window).toBe("2 runs");
+  });
+
+  it("still reports a history whose every record has been pruned", () => {
+    const s = summariseOutcomes([], {
+      runs: 400,
+      passed: 400,
+      failed: 0,
+      retained: 0,
+      pruned: 400,
+    });
+    expect(isMeasured(s.state)).toBe(true);
+    expect(s.display).toBe("100%");
+  });
+
   it("keeps baseline updates out of the outcome rate", () => {
     // Their `status` is incidental — they are events, not executions, and
     // counting them would inflate the pass rate on any test with a pinned

@@ -1692,6 +1692,33 @@ export interface RunRecord {
   testDeleted?: boolean;
 }
 
+/**
+ * How many test runs there have EVER been — the answer the run index alone
+ * cannot give.
+ *
+ * The index is capped (run-history-store.ts, MAX_RECORDS), so counting its
+ * records answers "how many runs are still on disk", which is a different
+ * question from the one the Stats board's "Total runs" card asks. `runs` is the
+ * real figure, carried across pruning by a counter written at the moment of
+ * pruning; `retained` is what the chart, the run table and the drill-down lists
+ * are able to show. When they differ, the screen says so — two numbers
+ * disagreeing with no explanation reads as a bug in whichever one the reader
+ * trusts less.
+ *
+ * Executions only: a baseline update is an event with an incidental `status`,
+ * and counting it here would move the pass rate when nothing was executed.
+ */
+export interface RunTotals {
+  /** executions ever recorded, pruned ones included */
+  runs: number;
+  passed: number;
+  failed: number;
+  /** executions still in the index — the window every list on the screen shows */
+  retained: number;
+  /** executions the cap has dropped: `runs - retained` */
+  pruned: number;
+}
+
 /** A hit from searching the raw run logs. */
 export interface LogSearchResult {
   runId: string;

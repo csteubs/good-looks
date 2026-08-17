@@ -66,6 +66,7 @@ import type {
   RunLogs,
   StepStructure,
   RunRecord,
+  RunTotals,
   RunNoticeKind,
   RunReplay,
   RunReplaySummary,
@@ -527,6 +528,24 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
 
     // ── Runs and artifacts ───────────────────────────────────────────────
     "runs:list": (): RunRecord[] => state.runs,
+    /** PRUNED RUNS ON PURPOSE. The lifetime total is the one figure on the
+     *  Stats board that cannot be derived from the run list — the real index is
+     *  capped and this is not — so a preview answering `state.runs.length`
+     *  would render precisely the state this counter exists to fix, and look
+     *  right doing it. These numbers make the "older runs" note visible. */
+    "runs:totals": (): RunTotals => {
+      const real = state.runs.filter((r) => r.kind !== "baseline-update");
+      const retained = real.length;
+      const passed = real.filter((r) => r.status === "passed").length;
+      const PRUNED = { runs: 240, passed: 220, failed: 20 };
+      return {
+        runs: PRUNED.runs + retained,
+        passed: PRUNED.passed + passed,
+        failed: PRUNED.failed + (retained - passed),
+        retained,
+        pruned: PRUNED.runs,
+      };
+    },
     "runs:getLog": (): string => RUN_LOG,
     "runs:logsDir": (): string => "/preview/runs",
     "runs:searchLogs": () => [],
