@@ -24,6 +24,7 @@ import {
   Atmosphere,
   Btn,
   CRT,
+  Calendar,
   InsertGap,
   KeyValue,
   MenuItem,
@@ -262,6 +263,11 @@ export function Specimen(): React.ReactElement {
   const [mode, setMode] = React.useState<"tint" | "rule" | "bar" | "delta" | "halo" | "off">("tint");
   const [seg, setSeg] = React.useState<"current" | "baseline" | "diff">("diff");
   const [cursor, setCursor] = React.useState(2);
+  // A FIXED clock, not `Date.now()`. The specimen is the only place a
+  // primitive can be looked at rendered, and a calendar that shows a different
+  // month every day is one nobody can compare against yesterday's screenshot.
+  const CAL_TODAY = new Date(2026, 7, 17, 14, 30).getTime();
+  const [calDay, setCalDay] = React.useState(new Date(2026, 7, 18).getTime());
   const [crt, setCrt] = React.useState(false);
   const [exitOpen, setExitOpen] = React.useState(false);
 
@@ -492,6 +498,30 @@ export function Specimen(): React.ReactElement {
               { label: "Accepted by", value: "chris", title: "chris@example.com" },
             ]}
           />
+        </Panel>
+
+        <Panel title="Calendar" id="the horizon is a disabled edge, not an absence" pad={12}>
+          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "flex-start" }}>
+            <Calendar
+              label="Choose a date"
+              value={calDay}
+              today={CAL_TODAY}
+              min={CAL_TODAY}
+              max={new Date(2029, 7, 17, 23, 59, 59, 999).getTime()}
+              onChange={setCalDay}
+            />
+            {/* A one-week window, so the disabled edge and both dead month
+                buttons are on screen at once — the states the bounded case is
+                actually built for, and the ones a default month never shows. */}
+            <Calendar
+              label="Choose a date, tightly bounded"
+              value={new Date(2026, 7, 19).getTime()}
+              today={CAL_TODAY}
+              min={CAL_TODAY}
+              max={new Date(2026, 7, 21).getTime()}
+              onChange={() => {}}
+            />
+          </div>
         </Panel>
 
         <Panel title="MenuItem" id="each option states its trade-off" pad={0}>
