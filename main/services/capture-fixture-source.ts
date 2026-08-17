@@ -25,6 +25,7 @@ import {
 } from "./log-capture-source.js";
 import { actionsLiteral, LOCATOR_ACTIONS, PAGE_ACTIONS } from "./page-actions.js";
 import { SETTLE_FIXTURE_FILE } from "./settle-fixture-source.js";
+import { STEP_MARKER } from "./step-marker.js";
 
 export const captureFixtureSource = `import { test as base, expect } from "@playwright/test";
 import * as fs from "fs";
@@ -83,6 +84,68 @@ const LOCATOR_ACTIONS = ${actionsLiteral(LOCATOR_ACTIONS)};
 // global) reads the current run's context safely.
 let ctx = null; // { dir, index, manifest, startedAt, captureMs, a11yMs, a11yChecks }
 let patched = false;
+
+// ── Per-step progress ────────────────────────────────────────────────────────
+//
+// The step markers the runner strips out of stdout and forwards to the renderer
+// as \`runner:step\`, so the step list can highlight the step that is running and
+// the step that failed.
+//
+// The Playwright reporter cannot emit these for the actions patched below, and
+// this is not a limitation that can be worked around on its side. Playwright
+// takes a step's location from the first stack frame outside its own library —
+// which, once THIS file (or the heal fixture, or the settle fixture) has wrapped
+// the method, is the wrapper. The reporter's file guard then drops the step,
+// correctly: line 366 of this file must never be read as line 366 of the spec.
+//
+// So the wrapper announces the step itself. It is the only place that can: the
+// spec's own frame is still on ITS stack, a level or two up. The two emitters
+// cannot collide, because installing this wrapper is exactly what takes the
+// step's location off the spec and out of the reporter's reach.
+const STEP_MARKER = ${JSON.stringify(STEP_MARKER)};
+// The spec file for the test currently running, set per test by the page fixture
+// from \`testInfo.file\` — the path PLAYWRIGHT resolved, so a capture run's
+// redirected temp copy is matched without any guessing about where it lives.
+let specFile = "";
+
+function emitStepMarker(payload) {
+  try {
+    process.stdout.write(STEP_MARKER + JSON.stringify(payload) + "\\n");
+  } catch (err) {
+    // Progress reporting must never fail a run. A step that goes unhighlighted
+    // is a worse run to watch; a step that throws here is a broken test.
+  }
+}
+
+/**
+ * The line in the SPEC that called us, or null when no frame in this call chain
+ * came from it.
+ *
+ * Null is a real answer, not a degraded one: an action this fixture drives for
+ * its own purposes is not a step the user recorded, and reporting one would move
+ * the highlight to a line nobody executed.
+ */
+function specCallerLine() {
+  if (!specFile) return null;
+  const limit = Error.stackTraceLimit;
+  try {
+    // Deep enough to see past every wrapper that can nest here (capture over
+    // settle over heal), and short enough that building it costs nothing next
+    // to the action it precedes.
+    Error.stackTraceLimit = 30;
+    const stack = new Error().stack || "";
+    for (const frame of stack.split("\\n")) {
+      if (frame.indexOf(specFile) === -1) continue;
+      const m = /:(\\d+):\\d+\\)?\\s*$/.exec(frame);
+      if (m) return Number(m[1]);
+    }
+  } catch (err) {
+    /* a stack we cannot read is the same as no step */
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
+  return null;
+}
 
 ${LOG_CAPTURE_HELPERS}
 
@@ -300,6 +363,10 @@ function wrap(obj, method, getPage) {
   const orig = obj[method];
   if (typeof orig !== "function") return;
   obj[method] = async function (...args) {
+    // Announced before the call and closed after it, so the step list shows
+    // "running" for exactly as long as the action takes.
+    const line = specCallerLine();
+    if (line !== null) emitStepMarker({ event: "begin", line: line, title: method });
     // How long the STEP took — the action itself, from call to resolve.
     //
     // Distinct from \`entry.ms\`, which times the screenshot and is summed into
@@ -314,8 +381,21 @@ function wrap(obj, method, getPage) {
     // waits, which is correct: those are time the step really took, and a
     // number that hid them would make crawl runs look as fast as fast ones.
     const tStep = Date.now();
-    const result = await orig.apply(this, args);
+    let result;
+    try {
+      result = await orig.apply(this, args);
+    } catch (err) {
+      // The step that threw IS the step that failed, and it is the one the user
+      // needs highlighted. Reported before rethrowing — after the rethrow this
+      // frame is gone and nothing downstream knows which line it was.
+      if (line !== null) emitStepMarker({ event: "end", line: line, title: method, ok: false, duration: Date.now() - tStep });
+      throw err;
+    }
     const stepMs = Date.now() - tStep;
+    // Closed BEFORE the screenshot: the step is over when the action resolves,
+    // and folding capture's cost into it would make every step look slower than
+    // the same step on a run that captured nothing.
+    if (line !== null) emitStepMarker({ event: "end", line: line, title: method, ok: true, duration: stepMs });
     // Screenshot AFTER the action resolves, so the frame reflects its effect.
     try { await capture(getPage(this), method, this, args, stepMs); } catch (e) { /* never throw into the test */ }
     return result;
@@ -354,6 +434,18 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
         process.stderr.write("[glaze-settle] install failed: " + String(e) + "\\n");
       }
     }
+    // Per-step progress, and the hook screenshots and a11y hang off. Installed
+    // for EVERY run that loads this fixture, not just capturing ones: heal and
+    // settle wrap the same methods, so any of them being on is already enough to
+    // move the step's location off the spec and out of the reporter's reach. The
+    // wrapper no-ops on the capture side when there is nothing to capture, and
+    // announcing the step is the part every run needs.
+    //
+    // Installed AFTER heal and settle so it is the outermost of the three — but
+    // \`specCallerLine\` searches the whole stack rather than one frame, so a
+    // future patch landing on either side of it does not silently stop progress.
+    specFile = testInfo.file || "";
+    patchOnce(page);
     // Inject axe into every document, once, rather than evaluating its ~570KB
     // source per check. addInitScript survives navigation, which a per-check
     // injection would not.
@@ -374,9 +466,9 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
     ctx = { dir: DIR, index: 0, manifest: [], startedAt: Date.now(), captureMs: 0, a11yMs: 0, a11yChecks: 0 };
     const logs = LOGS_ON ? { console: glazeMakeStore(), network: glazeMakeStore() } : null;
     if (logs) installLogCapture(page, logs);
-    // Screenshots and a11y both hang off the action patch; logs do not, so a
-    // logs-only run must not pay for prototype patching it will never use.
-    if (ON || A11Y_ON) patchOnce(page);
+    // The action patch itself is already installed above — every run that loads
+    // this fixture needs it for per-step progress, so it is no longer gated on
+    // screenshots or a11y being on.
     try {
       await use(page);
     } finally {

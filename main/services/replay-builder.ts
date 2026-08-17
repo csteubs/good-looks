@@ -61,17 +61,25 @@ export function captureMethod(step: Step): string | null {
 // (reporter step index, action-order screenshot index, Step[] index) happens
 // here, once, so the replay UI is a dumb reader.
 //
-// Status uses two independent, complementary signals — neither alone is
-// sufficient for a capture run:
-//   • Reporter statuses are authoritative for steps the StepReporter sees —
-//     asserts, waits, page-level calls. But the capture fixture WRAPS action
-//     methods, so Playwright attributes those wrapped actions' step location to
-//     the fixture file and the reporter's file guard drops them. So the wrapped
-//     actions (goto/click/fill/…) get NO reporter status on a capture run.
+// Status uses two independent, complementary signals:
+//   • Reported statuses, which now cover every step of a generated spec.
+//     Assertions come from the StepReporter; wrapped actions announce
+//     themselves from inside the capture fixture's wrapper, because Playwright
+//     attributes a wrapped call's location to the fixture file and the
+//     reporter's file guard drops it. Both arrive on the same channel and are
+//     keyed by the same step index.
 //   • A wrapped action's screenshot is taken only AFTER it resolves, so a
 //     screenshot present ⇒ that action ran and passed; the run halts at the
 //     first failure, so the failing step is the first uncaptured step after the
 //     last screenshot (or a reported failure, whichever comes first).
+//
+// The second used to be load-bearing and is now the fallback: until the fixture
+// announced its own steps, a capture run produced NO status for any action and
+// none at all for an assertion, so a run whose failing step was an assertion
+// wrote `failedIndex: null` and highlighted nothing (28 of 110 failed runs on
+// the author's machine). It is kept because it costs nothing and answers for a
+// run where the marker stream is lost — but a reported failure wins over it,
+// which is why `reportedFail` is consulted first.
 export function buildReplay(params: {
   testId: string;
   runId: string;
