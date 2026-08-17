@@ -10,6 +10,113 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-17 — The schedule dialog, rebuilt; sub-hour cadences and a one-off date
+
+`renderer/main/schedule-picker.tsx`, `renderer/theme/primitives/calendar.tsx`
+(new), `shared/routine-schedule.mjs`, `renderer/theme/screens.css`,
+`renderer/theme/primitives.css`, both `RoutineSchedule` declarations.
+
+**The report was that the dialog was hard to use and looked bad. One of its
+faults was not cosmetic at all.** The two cadence controls were `Menu`s, and
+they lived inside `AlertDialogBody` — which is `overflow-y-auto`. `.gl-menu` is
+`position: absolute`, so the popover was **clipped by its own container**: a
+268px menu rendering about 40px of itself, two half-cut rows visible out of ten.
+Eight of the cadences could not be seen, let alone chosen, and nothing catches
+that — the menu mounts, its items are in the a11y tree, every test passes and
+the user simply cannot reach the option they came for.
+
+**Why the fix is flat controls rather than a bigger overflow.** Setting the body
+to `overflow: visible` would let the popover out of the clipping box — and
+straight out of the dialog panel, over the screen behind it. Laying the eleven
+interval steps out as chips and the five modes as radio rows removes the
+popover, which is what makes the bug *structurally* impossible rather than
+currently absent. It also fixes the second fault for free: both old controls
+carried an `aria-label` and no visible one, so a screen reader was told what
+they were and a sighted user got "EVERY FEW HOURS" and "4H" side by side with
+nothing between them. The third was the component — `AlertDialogContent` is
+`text-center` at `max-w-sm`, because an alert is a destructive confirmation.
+This is a form, and `Dialog` left-aligns.
+
+**The readout is the change that matters most, and it is not decoration.** The
+old dialog never said when the run would happen. An interval is anchored to
+local midnight — a rule the user has no way of knowing — so whether "every 4
+hours" meant 16:00 today or 04:00 tomorrow was arithmetic left to them. The
+readout answers it by calling `nextOccurrence`, the same function the scheduler
+calls, so the sentence on screen and the moment the timer picks cannot disagree.
+That is the other half of the argument for an enumeration over a cron string: a
+schedule that never fires looks exactly like one that is not due yet, and this
+is the first place the app says which it is.
+
+**`everyHours` → `everyMinutes`, migrated on read rather than kept alongside.**
+Sub-hour cadences are what retired it. The conversion is exact (`hours × 60`)
+and every old value has a new spelling, because the old step table times sixty
+is a subset of the new one. Keeping both kinds would have left two spellings of
+"on an interval" forever, and the second one is always the one somebody forgets.
+The steps stay divisors of a day for the reason they always were — a schedule
+with a short gap at the end of the day is one people stop trusting.
+
+**A one-off is stored as an INSTANT, not a wall-clock description**, which is
+what makes `nextOccurrence` answer it in a line (`at > after ? at : null`) and
+"has it already fired" a comparison rather than bookkeeping. Null afterwards is
+not a special case: it already means "never again" to every caller, which is
+exactly what a spent one-off is. It stays on the Routine after it fires rather
+than clearing itself — the scheduler mutating a schedule would be a new side
+effect, and clearing it would leave a run in the history with nothing on screen
+explaining why it happened.
+
+**The one behavioural bend: `isDue` needed a one-off branch.** "Never fired
+means nothing is owed" is right for a cadence — it is what stops saving a
+schedule from running the suite on the spot — and wrong for a named moment. The
+user picked a day; if the app was shut on that day the run *is* owed. The
+recurring search says the opposite, because a spent one-off has no next
+occurrence at all, so without the branch the occurrence would be silently
+dropped — the single thing the launch catch-up exists to prevent. `firesNow`
+needed nothing, and that is worth stating rather than leaving to be
+rediscovered: the session bound already sorts a one-off exactly, because its
+moment either falls inside the session or before it and never both.
+
+**The three-year horizon takes `now`; `normalizeSchedule` still does not.** A
+horizon is a question about the future and this module's whole discipline is
+that clock questions take their clock as an argument. A stored one-off whose
+moment has passed is not invalid — it is spent — so a normalizer that dropped it
+would erase the record of a run that happened. `withinOnceHorizon` is the
+picker's rule, `normalizeSchedule` only asks whether the instant is a real one.
+
+**A bug found on the way: the interval branch drifted across a clock change.**
+It computed `midnight + slots × step × 60_000`. A spring-forward day is 23 hours
+long, so "midnight + 1440 minutes" lands at 01:00 the next morning — an hour
+late, on the one schedule whose entire description is "at midnight" — and a
+fall-back day lands it an hour early. Every other kind already built its answer
+from local date components, which normalises a DST gap the way a person would;
+this one now does too. It was never reachable in the test suite because CI and
+this container both run in UTC, where every day is 24 hours and the right and
+wrong arithmetic agree — so the three tests for it set `TZ` for real, and a
+fourth asserts the timezone took effect, or they would pass by testing nothing.
+Sub-hour steps are what made it worth fixing: more slots a day is more chances
+to be visibly wrong.
+
+**Why `Calendar` is ours and the time inputs are not.** `<input type="date">`
+is a real calendar in Chromium and needs no code, and it lost on three counts.
+Its popup cannot be bounded *visibly* — `min`/`max` make out-of-range dates
+unselectable, but a user who scrolls to 2032 and finds nothing clickable has
+been told nothing, where a drawn-and-disabled day makes the edge of the window
+something you can see. It cannot be styled; it is browser chrome opening out of
+a dialog that is hairlines on near-black. And it is not in the document, so the
+horizon, the month rollover and the disabled edge could be asserted nowhere but
+an e2e run. The time inputs stay native because they have none of those
+problems: a time input's value *is* its DOM value and there is no popup to
+style. The primitive implements the keyboard pattern `role="grid"` promises
+rather than only claiming it — the same lesson `Menu` learnt after shipping
+`role="menu"` with no key handler at all.
+
+**Not done, deliberately.** `TICK_MS` stays at 60s. A five-minute cadence is
+then up to a minute late, which is inside what a schedule expressed in whole
+minutes can promise, and a faster timer would only find the same answer sooner.
+An occurrence arriving while the previous one still runs is skipped, as it
+always was — the batch runner refuses a second batch and the scheduler records
+`alreadyRunning` — but that is a new way to be surprised at five minutes, so the
+5m and 15m steps say so in the dialog.
+
 ### 2026-08-17 — A toolbar that reflows when a run starts failing
 
 `renderer/main/visual-view.tsx`, `renderer/theme/screens.css`,

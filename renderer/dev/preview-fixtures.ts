@@ -731,7 +731,9 @@ export const ROUTINES: Routine[] = [
         onFailure: "continue",
       },
     ],
-    schedule: { kind: "everyHours", hours: 4 },
+    // A SUB-HOUR cadence, so the preview's schedule chip shows the shape the
+    // hour-floored version could not express at all.
+    schedule: { kind: "everyMinutes", minutes: 15 },
     defaults: { captureArtifacts: false, concurrency: 2 },
   },
   {

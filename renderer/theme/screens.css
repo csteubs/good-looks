@@ -417,33 +417,232 @@
   height: 12px;
 }
 
-.gl-schedule-form {
+/* ── The schedule dialog ──────────────────────────────────────────────────
+
+   Two columns: the five modes on the left, the selected mode's controls on
+   the right. FLAT — there is no popover anywhere in here, and that is the
+   whole point rather than a style. The version this replaced put two `Menu`s
+   inside `AlertDialogBody`, which is `overflow-y-auto`, so an absolutely
+   positioned 268px popover was clipped to about 40px of itself and eight of
+   the ten cadences could not be seen. Loosening the body's overflow would
+   have let the menu escape the panel instead. Laying the options out flat is
+   what makes the bug structurally impossible. */
+.gl-schedule-body {
+  display: grid;
+  grid-template-columns: 156px minmax(0, 1fr);
+  gap: 0;
+  border: 1px solid var(--gl-line-2);
+  background: var(--gl-ink);
+}
+
+.gl-schedule-modes {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0;
+  border-inline-end: 1px solid var(--gl-line-2);
+}
+
+.gl-schedule-mode {
+  appearance: none;
+  border: 0;
+  /* The selected row is marked on its LEADING edge, which is the only edge a
+     column of rows shares — a full border would redraw the divider between
+     this column and the pane. */
+  border-inline-start: 2px solid transparent;
+  background: transparent;
+  text-align: start;
+  padding: 7px 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.gl-schedule-mode:hover {
+  background: rgba(255, 255, 255, 0.028);
+}
+
+.gl-schedule-mode:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -2px;
+}
+
+/* Neutral, never a status hue — colour means outcome, and a schedule has not
+   passed or failed anything. Pinned by `check:selection-neutral`. */
+.gl-schedule-mode[aria-checked="true"] {
+  background: var(--gl-sel-bg);
+  border-inline-start-color: var(--gl-sel-ring);
+}
+
+.gl-schedule-mode-label {
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-schedule-mode[aria-checked="true"] .gl-schedule-mode-label {
+  color: var(--gl-tx-1);
+}
+
+.gl-schedule-mode-hint {
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--gl-tx-3);
+}
+
+.gl-schedule-pane {
+  padding: 14px 16px;
+  min-width: 0;
+}
+
+.gl-schedule-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  align-items: flex-start;
+}
+
+/* A VISIBLE label, which is the second thing the old dialog was missing: both
+   its controls carried an `aria-label` and nothing on screen, so a screen
+   reader knew what they were and a sighted user did not. */
+.gl-schedule-field-label {
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-schedule-chips {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
+  gap: 5px;
+}
+
+.gl-schedule-step {
+  appearance: none;
+  min-width: 42px;
+  height: 27px;
+  padding: 0 8px;
+  border: 1px solid var(--gl-line-2);
+  background: var(--gl-panel);
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--gl-tx-2);
+  cursor: pointer;
+}
+
+.gl-schedule-step:hover {
+  border-color: var(--gl-line);
+  color: var(--gl-tx-1);
+}
+
+.gl-schedule-step:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+.gl-schedule-step[aria-pressed="true"] {
+  background: var(--gl-sel-bg);
+  border-color: var(--gl-sel-ring);
+  color: var(--gl-tx-1);
+}
+
+.gl-schedule-once {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-start;
 }
 
 .gl-schedule-time {
-  height: 30px;
+  height: 28px;
   border: 1px solid var(--gl-line-2);
   padding: 4px 8px;
-  background: var(--gl-ink);
+  background: var(--gl-panel);
   font-family: var(--gl-mono);
   font-size: 11px;
   color: var(--gl-tx-1);
   outline: none;
+  /* Without this the native clock icon is painted for a light host and reads
+     as a smudge on near-black. */
+  color-scheme: dark;
 }
 
 .gl-schedule-time:focus-visible {
   border-color: var(--gl-cyan);
 }
 
-/* The headless note takes the whole row: it is a sentence about what a
-   scheduled run DOES, not a label for the control beside it. */
-.gl-schedule-note {
-  flex-basis: 100%;
+.gl-schedule-hint,
+.gl-schedule-blank {
   margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--gl-tx-3);
+  max-width: 34ch;
+}
+
+/* The readout. The old dialog never said when the run would happen, which on a
+   cadence anchored to local midnight left the user doing arithmetic against a
+   rule they had no way of knowing. */
+.gl-schedule-readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid var(--gl-line-2);
+  background: var(--gl-ink);
+}
+
+.gl-schedule-readout-label {
+  flex: 0 0 auto;
+  font-family: var(--gl-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-schedule-next {
+  font-family: var(--gl-mono);
+  font-size: 11.5px;
+  color: var(--gl-tx-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.gl-schedule-next-none {
+  color: var(--gl-tx-3);
+}
+
+/* Amber, not red. The draft is not WRONG — it is a date the user has not
+   finished choosing, and Save is already refusing it. Red here would report a
+   failure beside a run history where red means a test failed. */
+.gl-schedule-next-bad {
+  color: var(--gl-amber);
+}
+
+.gl-schedule-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Left-aligned, in a fixed place, together. The caveat used to be the alert's
+   centred description and the headless note a paragraph inside the form, so
+   the two sentences that qualify the promise sat at opposite ends of a box
+   that centred everything. */
+.gl-schedule-note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--gl-tx-3);
 }
 
 /* The open Routine's name. An ordinary field, styled DOWN to the weight of the

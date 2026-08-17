@@ -89,3 +89,5 @@ export { TagStack } from "./primitives/tag-stack";
 export type { TagStackProps } from "./primitives/tag-stack";
 export { InsertGap } from "./primitives/insert-gap";
 export type { InsertGapProps } from "./primitives/insert-gap";
+export { Calendar } from "./primitives/calendar";
+export type { CalendarProps } from "./primitives/calendar";

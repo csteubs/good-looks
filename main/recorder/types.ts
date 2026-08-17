@@ -2476,14 +2476,24 @@ export const MAX_ROUTINE_WAIT_MS = 60 * 60 * 1000;
  * exactly like a schedule that is not due yet. An enumerated schedule cannot
  * hold a value the picker could not produce.
  *
- * `everyHours` is anchored to LOCAL MIDNIGHT, not to the last run, so the
- * cadence cannot drift; `hours` is constrained to divisors of 24 so the day has
- * no short gap at the end. `minute` is minutes since local midnight.
+ * `everyMinutes` is anchored to LOCAL MIDNIGHT, not to the last run, so the
+ * cadence cannot drift; `minutes` is constrained to divisors of a day so there
+ * is no short gap at the end of it. `minute` is minutes since local midnight.
+ *
+ * `onceAt` holds an absolute epoch-ms INSTANT rather than a wall-clock
+ * description — a one-off is a moment, not a rule, and storing it as one is
+ * what makes "has it fired yet" a comparison instead of bookkeeping. Its
+ * three-year horizon is a question about the future, so it lives in
+ * `withinOnceHorizon` rather than in the type or the normalizer.
+ *
+ * There is no `everyHours` any more. It migrates to `everyMinutes` on read —
+ * see `shared/routine-schedule.mjs`.
  */
 export type RoutineSchedule =
-  | { kind: "everyHours"; hours: number }
+  | { kind: "everyMinutes"; minutes: number }
   | { kind: "dailyAt"; minute: number }
-  | { kind: "weekdaysAt"; minute: number };
+  | { kind: "weekdaysAt"; minute: number }
+  | { kind: "onceAt"; at: number };
 
 export interface RoutineDefaults {
   captureArtifacts: boolean;
