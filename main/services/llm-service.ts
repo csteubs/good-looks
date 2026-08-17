@@ -490,14 +490,22 @@ export const llmService = {
    * Start a streaming chat completion. Returns immediately with a requestId;
    * deltas arrive via the `llm:chunk` push event, ending in `llm:done` or
    * `llm:error`. Consumed by later-phase UI (debug run output, step generation).
+   *
+   * IT REPORTS WHICH PROVIDER AND MODEL IT RESOLVED TO, and that is not
+   * cosmetic. The caller passes neither most of the time — both fall back to
+   * the configured values, which are read HERE — so the renderer asking the
+   * settings afterwards would be asking a different question ("what is selected
+   * now") and would answer it wrongly for any session that outlived a settings
+   * change. The AI debug history's local-versus-hosted split is exactly the
+   * figure that would be corrupted by that guess.
    */
-  chat(params: LlmChatParams): string {
+  chat(params: LlmChatParams): { requestId: string; provider: LlmProvider; model: string } {
     const requestId = randomUUID();
     const config = llmConfigStore.get();
     const provider = params.provider ?? config.provider;
     const model = params.model ?? config.model ?? "";
     void runChat(requestId, provider, model, params);
-    return requestId;
+    return { requestId, provider, model };
   },
 
   cancel(requestId: string): void {

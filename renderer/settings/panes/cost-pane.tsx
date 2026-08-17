@@ -24,8 +24,12 @@ import { NumberInput, Select, SelectContent, SelectItem, SelectTrigger, SelectVa
 import {
   CI_RUNNER_PRESETS,
   clampCostPerCiMinute,
+  clampHourlyRate,
+  clampMinutesPerManualDebug,
   clampMinutesPerManualRun,
   COST_CURRENCIES,
+  COST_DEFAULT_HOURLY_RATE,
+  COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG,
   COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
   COST_DEFAULT_PER_CI_MINUTE,
   currencySymbol,
@@ -51,6 +55,12 @@ export function CostPane() {
   const perCiMinute = settings.costPerCiMinute ?? COST_DEFAULT_PER_CI_MINUTE;
   const minutesPerManualRun =
     settings.costMinutesPerManualRun ?? COST_DEFAULT_MINUTES_PER_MANUAL_RUN;
+  const minutesPerManualDebug =
+    settings.costMinutesPerManualDebug ?? COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG;
+  // `?? default` and not `|| default` — 0 is the whole point of this setting
+  // ("no rate stated"), and `||` would replace it with the default on every
+  // read, which is the one value it must be able to hold.
+  const hourlyRate = settings.costHourlyRate ?? COST_DEFAULT_HOURLY_RATE;
   const symbol = currencySymbol(currency);
 
   return (
@@ -137,7 +147,7 @@ export function CostPane() {
 
       <PaneSection
         title="Time"
-        description="The other half of the sum: what the suite saved by running instead of someone clicking through it."
+        description="The other half of the sum: what the suite saved by running instead of someone clicking through it, and what the model saved by diagnosing instead of you."
       >
         <SettingRow
           id="cost-minutes-per-manual-run"
@@ -156,6 +166,52 @@ export function CostPane() {
             onValueChange={(v) =>
               void save({ costMinutesPerManualRun: clampMinutesPerManualRun(v) })
             }
+          />
+        </SettingRow>
+
+        <SettingRow
+          id="cost-minutes-per-manual-debug"
+          label="Minutes to debug one failure by hand"
+          summary="How long you would spend working out why a test failed, without the model. Behind the savings figure in Stats → AI Debug."
+          details="Only diagnoses you KEPT count — a fix you reverted saved nothing — and the time spent waiting on the model is subtracted, so the figure is a net saving. Fifteen minutes is deliberately unflattering: a failure you already understand costs two minutes, and one you don't can cost an afternoon."
+        >
+          <NumberInput
+            id="cost-minutes-per-manual-debug"
+            min={1}
+            max={480}
+            step={1}
+            unit="min"
+            className={COST_CONTROL_WIDTH}
+            value={minutesPerManualDebug}
+            onValueChange={(v) =>
+              void save({ costMinutesPerManualDebug: clampMinutesPerManualDebug(v) })
+            }
+          />
+        </SettingRow>
+
+        {/* THE ONE NUMBER THIS APP REFUSED TO GUESS, now askable.
+            `cost-model.ts` states the rule and it has not changed: an hourly
+            rate varies by an order of magnitude between users, nobody would
+            notice a bad default, and a currency figure carries far more
+            authority than the guess behind it deserves. So the default is 0,
+            0 means "not stated", and every money figure derived from saved
+            time stays hidden until a user puts their own number here. What
+            they then read is a multiplication they can check. */}
+        <SettingRow
+          id="cost-hourly-rate"
+          label="Value of an hour of your time"
+          summary="Optional. Leave at 0 and saved time is reported only as time — which is what the app does on its own."
+          details="The app ships no default for this on purpose: the right figure varies by an order of magnitude between users, and a dollar amount reads as more authoritative than the guess behind it. Set it and Stats also states saved time in money; leave it and nothing is hidden from you, it is just reported in hours."
+        >
+          <NumberInput
+            id="cost-hourly-rate"
+            min={0}
+            max={10000}
+            step={1}
+            unit={symbol || undefined}
+            className={COST_CONTROL_WIDTH}
+            value={hourlyRate}
+            onValueChange={(v) => void save({ costHourlyRate: clampHourlyRate(v) })}
           />
         </SettingRow>
       </PaneSection>

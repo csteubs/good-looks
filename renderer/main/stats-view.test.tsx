@@ -48,6 +48,14 @@ vi.mock("../lib/api", () => ({
       slowness: async () => null,
       divergence: async () => null,
     },
+    // The AI Debug tile's three sources, answered emptily for the same reason
+    // as the two above. They are LISTED rather than left off: a queryFn reading
+    // through an undefined namespace throws inside the query, which reads in
+    // the output as an unrelated failure of whichever assertion times out
+    // first — and that is exactly how this mock's missing entries surfaced.
+    aiDebug: { history: async () => [] },
+    scriptChanges: { listAll: async () => [] },
+    recorder: { getSettings: async () => ({}) },
     on: () => () => {},
   },
 }));

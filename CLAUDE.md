@@ -27,7 +27,12 @@ main/shell/         the Electron seam: backend adapter, logger, host IPC handler
                     the app:// protocol. THE ONLY PLACE THAT IMPORTS `electron`.
 main/handlers/      IPC handler registration
 main/services/      business logic (recorder, playwright-runner, llm, spec-parser, visual-pipeline,
-                    metrics-store — the derived metrics DB, rolled up before retention prunes)
+                    metrics-store — the derived metrics DB, rolled up before retention prunes).
+                    ai-debug-store and ai-debug-history-store are a deliberate SPLIT: the first
+                    holds the model's answer (quotes the script and run output, so twenty newest
+                    and hard-deleted with its test), the second holds facts about each attempt
+                    and no content at all — which is what lets it outlive both the cap and the
+                    test, and tombstone rather than erase when a test is deleted
 main/services/llm/  local + hosted LLM chat integration (Ollama, LM Studio, Claude)
 main/recorder/       recording-session logic (script injection, step capture)
 main/windows/        BrowserWindow creation/config

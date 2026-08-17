@@ -44,6 +44,9 @@ const h = vi.hoisted(() => ({
   /** What the run panel's triage line resolves to. Null — no verdict — for
    *  every test but the ones that put a verdict on screen deliberately. */
   triage: null as unknown,
+  /** Makes `aiDebug:record` reject, standing in for a history store that
+   *  cannot be written to. */
+  recordFails: false,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -76,6 +79,21 @@ vi.mock("../lib/api", () => ({
       remove: async () => ({ removed: 1 }),
       clear: async () => ({ removed: 0 }),
       notifyDone: async () => ({ ok: true }),
+      history: async () => [],
+      // Controllable, because the Stats history is now written from the same
+      // transitions that drive these icons — see the "history" describe below.
+      //
+      // NOT `async`, deliberately. An async function that throws produces a
+      // REJECTED PROMISE, which the store's `.catch` swallows whether or not
+      // the guard around it exists — so a mock written that way passes against
+      // the broken code and proves nothing. The failure being modelled is
+      // synchronous: an api surface where this method is missing or blows up on
+      // call, which is exactly what a stale mock elsewhere in this repo
+      // produced while this feature was being built.
+      record: (r: unknown) => {
+        if (h.recordFails) throw new Error("history store is unavailable");
+        return Promise.resolve(r);
+      },
     },
     recorder: { getSettings: async () => ({}) },
     llm: {
@@ -219,6 +237,7 @@ beforeEach(() => {
   for (const k of Object.keys(h.handlers)) delete h.handlers[k];
   h.listResult = [];
   h.triage = null;
+  h.recordFails = false;
 });
 
 // ── The run panel's icon ─────────────────────────────────────────────
@@ -835,5 +854,119 @@ describe("the run panel icon, alongside a triage verdict", () => {
     expect(iconClassOf(toneFor("error").label)).toContain(toneFor("error").className);
     expect(screen.queryByText(/metrics unavailable/)).toBeNull();
     expect(screen.queryByText(/Likely the/)).toBeNull();
+  });
+});
+
+// ── The icons, while the Stats history is being written ──────────────
+//
+// WHY THIS BLOCK EXISTS. Every AI debug status transition now ALSO writes a row
+// to the history the Stats board counts (`aiDebug:record`, twice per attempt).
+// That put a second, entirely unrelated failure — a store that cannot be
+// written — onto the exact code path the icon colour depends on, and one of
+// those writes happens in the `llm:chunk` handler AHEAD of the chunk being
+// appended. A throw there is silent in the worst way this file exists to
+// prevent: the panel keeps working, and the icon stops telling the truth.
+//
+// So the contract is: recording history can fail in any way it likes, and the
+// colour is unaffected on every surface.
+
+describe("the icons when the history store is unavailable", () => {
+  it("still follows the run panel's session from streaming to done", async () => {
+    h.recordFails = true;
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <TestPanel testId="t1" />
+      </AiDebugProvider>,
+    );
+    await waitFor(() => expect(store.hydrated).toBe(true));
+    openSessionFor("t1");
+
+    await act(async () => {
+      await store.startStream(runSessionKey("t1"), [{ role: "user", content: "hi" }]);
+    });
+    await waitFor(() => expect(screen.getByLabelText(toneFor("streaming").label)).toBeTruthy());
+    expect(iconClassOf(toneFor("streaming").label)).toContain(toneFor("streaming").className);
+
+    // A chunk arrives — the write that happens BEFORE the text is appended.
+    emit("llm:chunk", { requestId: "req-1", delta: "an answer" });
+    expect(screen.getByLabelText(toneFor("streaming").label)).toBeTruthy();
+
+    emit("llm:done", { requestId: "req-1" });
+    await waitFor(() => expect(screen.getByLabelText(toneFor("done").label)).toBeTruthy());
+    expect(iconClassOf(toneFor("done").label)).toContain(toneFor("done").className);
+  });
+
+  it("still turns the run panel red when the request fails", async () => {
+    h.recordFails = true;
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <TestPanel testId="t1" />
+      </AiDebugProvider>,
+    );
+    await waitFor(() => expect(store.hydrated).toBe(true));
+    openSessionFor("t1");
+    await act(async () => {
+      await store.startStream(runSessionKey("t1"), [{ role: "user", content: "hi" }]);
+    });
+
+    emit("llm:error", { requestId: "req-1", message: "no model", kind: "no-model" });
+
+    await waitFor(() => expect(screen.getByLabelText(toneFor("error").label)).toBeTruthy());
+    expect(iconClassOf(toneFor("error").label)).toContain(toneFor("error").className);
+  });
+
+  it("still re-colours the global chip", async () => {
+    h.recordFails = true;
+    render(
+      <AiDebugProvider>
+        <Capture />
+        <AiDebugChip />
+      </AiDebugProvider>,
+    );
+    await waitFor(() => expect(store.hydrated).toBe(true));
+    openSessionFor("t1");
+    await act(async () => {
+      await store.startStream(runSessionKey("t1"), [{ role: "user", content: "hi" }]);
+    });
+    // The chip prefixes its accessible name, as the suite above does.
+    const chip = (status: AiDebugStatus) =>
+      screen.getByRole("button", { name: `AI debug — ${toneFor(status).label}` });
+    await waitFor(() => expect(chip("streaming")).toBeTruthy());
+
+    emit("llm:done", { requestId: "req-1" });
+
+    await waitFor(() => expect(chip("done")).toBeTruthy());
+    expect(chip("done").querySelector("svg")?.getAttribute("class") ?? "").toContain(
+      toneFor("done").className,
+    );
+  });
+
+  it("still sparkles the sidebar row", async () => {
+    h.recordFails = true;
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <AiDebugProvider>
+          <Capture />
+          <LibrarySidebar />
+        </AiDebugProvider>
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(store.hydrated).toBe(true));
+    await screen.findByText("Checkout");
+    openSessionFor("t1");
+    await act(async () => {
+      await store.startStream(runSessionKey("t1"), [{ role: "user", content: "hi" }]);
+    });
+    const sparkle = (status: AiDebugStatus) =>
+      screen.getByLabelText(`AI debug — ${toneFor(status).label}`);
+    await waitFor(() => expect(sparkle("streaming")).toBeTruthy());
+
+    emit("llm:done", { requestId: "req-1" });
+
+    await waitFor(() => expect(sparkle("done")).toBeTruthy());
+    expect(sparkle("done").getAttribute("class") ?? "").toContain(toneFor("done").className);
   });
 });

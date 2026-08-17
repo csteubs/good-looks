@@ -1051,6 +1051,13 @@ export interface RecorderSettings {
   /** How long one run of one test would take a person, by hand, in minutes
    *  (default 12). */
   costMinutesPerManualRun: number;
+  /** How long working out why a test failed would take a person, in minutes
+   *  (default 15). Behind the Stats → AI Debug savings figure. */
+  costMinutesPerManualDebug: number;
+  /** What an hour of that person's time is worth (default 0). Zero means "not
+   *  stated", and suppresses every money figure derived from saved time — the
+   *  app does not guess this. */
+  costHourlyRate: number;
 }
 
 /** A single alternative locator the Auto-Heal engine found for a failed step.
@@ -1508,4 +1515,44 @@ export interface AiDebugSession {
   startedAt: number;
   updatedAt: number;
   readOnly?: boolean;
+}
+
+/** Whether a person asked for a diagnosis or the app started it itself. Every
+ *  session is `manual` today; the field is recorded anyway because it cannot be
+ *  backfilled once sessions start being raised automatically. Mirror of
+ *  main/recorder/types.ts. */
+export type AiDebugTrigger = "manual" | "auto";
+
+/**
+ * One ATTEMPT at one diagnosis — what the Stats board's AI Debug category counts.
+ *
+ * Mirror of main/recorder/types.ts, where the reasoning lives. The short
+ * version: `AiDebugSession` holds the model's ANSWER and is therefore kept in
+ * small numbers and deleted with its test; this holds only facts about the
+ * attempt — no answer, no error text, no script — which is exactly what lets it
+ * outlive both.
+ */
+export interface AiDebugHistoryRecord {
+  id: string;
+  key: string;
+  kind: AiDebugKind;
+  testId: string;
+  /** The name as it was, copied rather than joined — a tombstoned row still has
+   *  to be able to name its test. */
+  testName: string;
+  testDeleted?: boolean;
+  trigger: AiDebugTrigger;
+  /** Null means UNKNOWN and is never reported as local or hosted. */
+  provider: string | null;
+  model: string | null;
+  status: AiDebugStatus;
+  errorKind?: LlmErrorKind | null;
+  startedAt: number;
+  /** Null while still live. */
+  endedAt: number | null;
+  /** Null when no token ever arrived — a different fact from a long wait. */
+  firstTokenMs: number | null;
+  promptChars: number;
+  answerChars: number;
+  runKey: string | null;
 }

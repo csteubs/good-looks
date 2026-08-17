@@ -14,6 +14,7 @@ import type {
   ScriptChangeSource,
   SecretStatus,
   TestVariable,
+  AiDebugHistoryRecord,
   AiDebugSession,
   DebugEntry,
   RunLogs,
@@ -609,7 +610,12 @@ export const api = {
     detect: () => ipc().invoke<LlmProviderStatus[]>("llm:detect"),
     listModels: (provider: LlmProvider) =>
       ipc().invoke<LlmModel[]>("llm:listModels", { provider }),
-    chat: (params: LlmChatParams) => ipc().invoke<{ requestId: string }>("llm:chat", params),
+    /** Starts a stream and reports WHICH provider and model answered. Both
+     *  default to the configured values, which only the backend knows — asking
+     *  settings afterwards would answer "what is selected now" instead, and
+     *  that is the wrong question for a session that outlived a change. */
+    chat: (params: LlmChatParams) =>
+      ipc().invoke<{ requestId: string; provider: LlmProvider; model: string }>("llm:chat", params),
     cancel: (requestId: string) => ipc().invoke<void>("llm:cancel", { requestId }),
     /** Whether a request is still streaming — used to re-adopt a session after
      *  a renderer reload without stranding it as permanently "thinking". */
@@ -632,7 +638,19 @@ export const api = {
     save: (session: AiDebugSession) =>
       ipc().invoke<AiDebugSession | null>("aiDebug:save", { session }),
     remove: (key: string) => ipc().invoke<{ removed: number }>("aiDebug:remove", { key }),
-    clear: () => ipc().invoke<{ removed: number }>("aiDebug:clear"),
+    /** Clears the saved answers AND the history the Stats board counts. A user
+     *  deleting AI debug data does not expect a shadow index of it to survive,
+     *  even one holding no content. */
+    clear: () =>
+      ipc().invoke<{ removed: number; historyRemoved: number }>("aiDebug:clear"),
+    /** Every retained attempt, newest first — facts only, no model output.
+     *  See main/services/ai-debug-history-store.ts. */
+    history: () => ipc().invoke<AiDebugHistoryRecord[]>("aiDebug:history"),
+    /** Upsert one attempt. Called twice per attempt (sent, then settled) rather
+     *  than on every chunk: the open row is what makes a session the app died
+     *  during visible at all. */
+    record: (record: AiDebugHistoryRecord) =>
+      ipc().invoke<AiDebugHistoryRecord | null>("aiDebug:record", { record }),
     /** Fire-and-forget: the backend gates on notifyOnAiDebugDone itself. */
     notifyDone: (p: { testName: string; status: "done" | "error" }) =>
       ipc().invoke<{ ok: boolean }>("aiDebug:notifyDone", p),

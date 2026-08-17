@@ -87,6 +87,8 @@ vi.mock("../lib/api", () => ({
       remove: async () => ({ removed: 1 }),
       clear: async () => ({ removed: 0 }),
       notifyDone: async () => ({ ok: true }),
+      history: async () => [],
+      record: async (r: unknown) => r,
     },
     llm: {
       chat: async (params: unknown) => {

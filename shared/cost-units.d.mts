@@ -42,10 +42,15 @@ export declare const CI_RUNNER_PRESETS: readonly CiRunnerPreset[];
 export declare const COST_LIMITS: {
   costPerCiMinute: { min: number; max: number };
   minutesPerManualRun: { min: number; max: number };
+  minutesPerManualDebug: { min: number; max: number };
+  hourlyRate: { min: number; max: number };
 };
 
 export declare const COST_DEFAULT_PER_CI_MINUTE: number;
 export declare const COST_DEFAULT_MINUTES_PER_MANUAL_RUN: number;
+export declare const COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG: number;
+/** 0, which means "no rate stated" rather than "free" — see the .mjs. */
+export declare const COST_DEFAULT_HOURLY_RATE: number;
 
 export declare function isCostCurrency(x: unknown): x is CostCurrency;
 export declare function currencySymbol(id: CostCurrency | string | undefined): string;
@@ -53,3 +58,5 @@ export declare function runnerForRate(rate: unknown): CiRunnerId;
 export declare function rateForRunner(id: CiRunnerId | string): number | null;
 export declare function clampCostPerCiMinute(n: unknown): number;
 export declare function clampMinutesPerManualRun(n: unknown): number;
+export declare function clampMinutesPerManualDebug(n: unknown): number;
+export declare function clampHourlyRate(n: unknown): number;
