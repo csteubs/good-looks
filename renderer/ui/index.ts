@@ -148,6 +148,7 @@ export {
   DialogDescription,
   DialogFooter,
   DialogHeader,
+  dialogHeaderActionClass,
   DialogOverlay,
   DialogPortal,
   DialogTitle,

@@ -10,6 +10,46 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-17 — Minimize is a window control, so it sits with the close button
+
+`renderer/ui/overlays.tsx`, `renderer/main/ai-debug-panel.tsx`.
+
+The AI debug dialog's minimize button lived in the description row, at the end
+of a strip of icons that act on the RESPONSE — stop, regenerate, copy,
+auto-scroll follow — with discard after it. Read in that company it looks like
+one more thing done to the answer, when what it actually does is put the whole
+panel away, which is precisely what the close "X" in the opposite corner does.
+The two controls that dismiss the dialog were at opposite ends of the header,
+and Esc and the "X" both route to minimize anyway.
+
+So minimize moved into the panel's top-right corner, immediately left of the
+close button. `DialogContent` gained a **`headerActions`** slot rather than the
+panel reaching into the corner itself: the corner is `absolute right-3 top-3`
+and there is now more than one thing in it, so a single flex group owns the
+position and the ordering, and the close button stays outermost the way it is
+in every other dialog in the app. The composed `Dialog` also widens the
+header's right padding when the slot is filled, because the title's line is
+what the extra icon eats into.
+
+Discard stayed in the description row. It is not a window control — it stops
+the job and forgets it — and the whole reason minimize is the default dismissal
+is that losing a running job to a stray click is the expensive mistake. Putting
+a destructive button in the corner next to close would reintroduce exactly
+that risk.
+
+The slot is for window-level controls only. Anything acting on the content
+belongs in the description row or the footer; a corner that accumulates
+per-content actions is the strip this change was undoing.
+
+Coverage is placement, not appearance: `renderer/ui/dialog-header-actions.test.tsx`
+pins that the node lands inside the close button's group and before it, that it
+is NOT inside the description, and that the padding widens;
+`ai-debug-integration.test.tsx` pins the same split for the real panel
+(minimize in the corner, discard out of it). A `headerActions` node rendered
+anywhere else still renders, still clicks and still answers every by-role
+query — it just sits in the wrong place, which jsdom cannot see and a
+by-role assertion would never notice.
+
 ### 2026-08-17 — A toolbar that reflows when a run starts failing
 
 `renderer/main/visual-view.tsx`, `renderer/theme/screens.css`,

@@ -4,7 +4,17 @@
 // the model returns a complete corrected spec — offers to apply it to the script.
 
 import * as React from "react";
-import { Button, Callout, Dialog, Field, ScrollArea, Text, Textarea, toast } from "@ui";
+import {
+  Button,
+  Callout,
+  Dialog,
+  Field,
+  ScrollArea,
+  Text,
+  Textarea,
+  dialogHeaderActionClass,
+  toast,
+} from "@ui";
 import {
   ArrowDownToLine,
   Check,
@@ -482,26 +492,36 @@ function AutoScrollToggle({ on, onChange }: { on: boolean; onChange: (next: bool
   );
 }
 
-/** Minimize / discard, shown on both dialogs. Minimize is the DEFAULT dismissal
- *  (Esc and the close button route here too) — discarding a running job by
- *  accident is the expensive mistake, so it takes its own explicit click. */
-function SessionControls({ sessionKey }: { sessionKey: string }) {
-  const { minimize, discard } = useAiDebug();
+/** Minimize, shown on both dialogs. It sits in the panel's top-right corner
+ *  beside the close "X" rather than in the description row: it is a WINDOW
+ *  control — the same "put this away, it keeps running" gesture the close
+ *  button performs — and reading it next to the other icon actions invited it
+ *  to be read as something that acts on the response. Minimize is also the
+ *  DEFAULT dismissal (Esc and the close button route here too); discarding a
+ *  running job by accident is the expensive mistake, so that keeps its own
+ *  explicit click down in the description row. */
+function MinimizeButton() {
+  const { minimize } = useAiDebug();
   return (
-    <>
-      <button type="button" className="gl-icon-btn" onClick={minimize}
-        aria-label="Minimize"
-        title="Minimize — the job keeps running"
-      >
-        <Minimize2 className="size-3.5" />
-      </button>
-      <button type="button" className="gl-icon-btn" onClick={() => discard(sessionKey)}
-        aria-label="Discard session"
-        title="Discard — stops the job and forgets it"
-      >
-        <Trash2 className="size-3.5" />
-      </button>
-    </>
+    <button type="button" className={dialogHeaderActionClass} onClick={minimize}
+      aria-label="Minimize"
+      title="Minimize — the job keeps running"
+    >
+      <Minimize2 className="size-4" />
+    </button>
+  );
+}
+
+/** Discard, shown on both dialogs, alongside the response's own controls. */
+function SessionControls({ sessionKey }: { sessionKey: string }) {
+  const { discard } = useAiDebug();
+  return (
+    <button type="button" className="gl-icon-btn" onClick={() => discard(sessionKey)}
+      aria-label="Discard session"
+      title="Discard — stops the job and forgets it"
+    >
+      <Trash2 className="size-3.5" />
+    </button>
   );
 }
 
@@ -988,6 +1008,7 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
       onOpenChange={(next) => {
         if (!next) store.minimize();
       }}
+      headerActions={<MinimizeButton />}
       title={dialogTitle("Debugging with", modelName, models, confirmModel)}
       description={
         <span className="inline-flex items-center gap-2">
@@ -1369,6 +1390,7 @@ export function StepAiDebugDialog({ sessionKey }: { sessionKey: string }) {
       onOpenChange={(next) => {
         if (!next) store.minimize();
       }}
+      headerActions={<MinimizeButton />}
       title={dialogTitle("Debugging step with", modelName, models, confirmModel)}
       description={
         <span className="inline-flex items-center gap-2">

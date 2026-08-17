@@ -67,15 +67,23 @@ export function DialogOverlay({
   );
 }
 
+/** Shared by the close "X" and anything `headerActions` puts beside it, so a
+ *  window control added there reads as a window control and not as a second
+ *  toolbar. */
+export const dialogHeaderActionClass =
+  "rounded p-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50";
+
 export function DialogContent({
   className,
   children,
   showCloseButton = true,
+  headerActions,
   overlayClassName,
   size = "medium",
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
+  headerActions?: React.ReactNode;
   overlayClassName?: string;
   size?: DialogSize;
 }) {
@@ -87,13 +95,15 @@ export function DialogContent({
         {...props}
       >
         {children}
-        {showCloseButton && (
-          <DialogPrimitive.Close
-            aria-label="Close"
-            className="absolute right-3 top-3 rounded p-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
-          >
-            <X className="size-4" />
-          </DialogPrimitive.Close>
+        {(showCloseButton || headerActions) && (
+          <div className="absolute right-3 top-3 flex items-center gap-1">
+            {headerActions}
+            {showCloseButton && (
+              <DialogPrimitive.Close aria-label="Close" className={dialogHeaderActionClass}>
+                <X className="size-4" />
+              </DialogPrimitive.Close>
+            )}
+          </div>
         )}
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
@@ -168,6 +178,10 @@ type DialogOwnProps = {
   secondaryAction?: SideAction;
   size?: DialogSize;
   showCloseButton?: boolean;
+  /** Controls rendered in the panel's top-right corner, left of the close "X".
+   *  For window-level controls (minimize, expand) — not per-content actions,
+   *  which belong in the description row or the footer. */
+  headerActions?: React.ReactNode;
   showOverlay?: boolean;
 };
 
@@ -242,6 +256,7 @@ export function Dialog({
   secondaryAction,
   size,
   showCloseButton,
+  headerActions,
   open,
   defaultOpen,
   onOpenChange,
@@ -264,8 +279,11 @@ export function Dialog({
   return (
     <DialogPrimitive.Root open={open} defaultOpen={defaultOpen} onOpenChange={onOpenChange} {...props}>
       {trigger && <DialogPrimitive.Trigger asChild>{trigger}</DialogPrimitive.Trigger>}
-      <DialogContent size={size} showCloseButton={showCloseButton}>
-        <DialogHeader>
+      <DialogContent size={size} showCloseButton={showCloseButton} headerActions={headerActions}>
+        {/* Each extra corner control eats into the title's line, so the header's
+            right padding grows with them rather than letting a long title run
+            underneath. */}
+        <DialogHeader className={headerActions ? "pr-14" : undefined}>
           <DialogTitle className={hideTitle ? srOnly : undefined}>{title ?? ""}</DialogTitle>
           {description !== undefined && (
             <DialogDescription className={hideDescription ? srOnly : undefined}>

@@ -230,6 +230,21 @@ describe("opening a session from the run output", () => {
     expect(await screen.findByText(/still working/)).toBeTruthy();
   });
 
+  it("puts minimize in the panel's corner beside close, and discard in the icon row", async () => {
+    renderApp();
+    fireEvent.click(await findDebugIcon());
+    await screen.findByRole("button", { name: /Send to AI/i });
+
+    // Minimize is a WINDOW control — it does to the panel what the close "X"
+    // does, so it lives in the same corner group and not in the description
+    // row, where it read as another action on the response. Discard stays in
+    // that row: it destroys the job, which is not what a corner control does.
+    const close = screen.getByRole("button", { name: "Close" });
+    const corner = close.parentElement!;
+    expect(corner.contains(screen.getByRole("button", { name: /^Minimize$/i }))).toBe(true);
+    expect(corner.contains(screen.getByRole("button", { name: /Discard session/i }))).toBe(false);
+  });
+
   it("stops the request when the session is discarded", async () => {
     renderApp();
     fireEvent.click(await findDebugIcon());
