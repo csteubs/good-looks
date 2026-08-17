@@ -1686,38 +1686,66 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
   const effectiveMode: ShotMode =
     (mode === "diff" && !canDiff) || (mode === "baseline" && !hasBaselineView) ? "current" : mode;
 
-  // The stepper lives in the PANEL's header rather than in the tool band below
-  // it, because it is the one control that is about the panel itself — which of
-  // this run's frames the panel is showing — and the `right` slot is where this
-  // design puts that. It also keeps a fixed-width readout out of a wrapping row.
-  const stepper = (
-    <div className="gl-visual-stepper">
-      <button
-        type="button"
-        className="gl-icon-btn"
-        aria-label="Previous step"
-        disabled={idx <= 0}
-        onClick={() => setCurrent((c) => clamp(c - 1))}
-      >
-        <ChevronLeft aria-hidden="true" />
-      </button>
-      <span className="gl-visual-stepper-count">
-        {idx + 1} / {steps.length}
-      </span>
-      <button
-        type="button"
-        className="gl-icon-btn"
-        aria-label="Next step"
-        disabled={idx >= steps.length - 1}
-        onClick={() => setCurrent((c) => clamp(c + 1))}
-      >
-        <ChevronRight aria-hidden="true" />
-      </button>
-    </div>
+  // WHAT THE RUN IS, IN THE PANEL HEADER — the verdict, the findings and the
+  // stepper, all in the `right` slot.
+  //
+  // They were in the tool band below, and the band's width then depended on the
+  // run's OUTCOME: a run with findings added a chip, which was enough to push
+  // "Masks & baselines" onto a second line. A toolbar that reflows when a test
+  // starts failing is a toolbar whose controls move exactly when someone is
+  // reaching for them. Up here the two chips displace the test NAME instead,
+  // which is the one cell in this design allowed to give — `.gl-panel-id`
+  // truncates by definition — while `.gl-panel-right` cannot shrink, so the
+  // verdict is never the thing that goes.
+  const headline = (
+    <>
+      <StatusChip tone={replay.status === "passed" ? "phos" : "red"}>{replay.status}</StatusChip>
+      {/* Amber, not red: frames moved and the run still passed. It is the same
+          claim the frame rail makes about each one individually. */}
+      {changedCount > 0 ? (
+        <span className="gl-chip-tone" style={toneSurface(TONE.amber)}>
+          {changedCount} visual {changedCount === 1 ? "change" : "changes"}
+        </span>
+      ) : null}
+      <div className="gl-visual-stepper">
+        <button
+          type="button"
+          className="gl-icon-btn"
+          aria-label="Previous step"
+          disabled={idx <= 0}
+          onClick={() => setCurrent((c) => clamp(c - 1))}
+        >
+          <ChevronLeft aria-hidden="true" />
+        </button>
+        <span className="gl-visual-stepper-count">
+          {idx + 1} / {steps.length}
+        </span>
+        <button
+          type="button"
+          className="gl-icon-btn"
+          aria-label="Next step"
+          disabled={idx >= steps.length - 1}
+          onClick={() => setCurrent((c) => clamp(c + 1))}
+        >
+          <ChevronRight aria-hidden="true" />
+        </button>
+      </div>
+    </>
   );
 
   return (
-    <Panel title="Replay" id={replay.testName} right={stepper} className="gl-visual-viewer">
+    <Panel
+      title="Replay"
+      // The time joins the name rather than standing beside the chips: together
+      // they are what this panel is ABOUT — that test, on that run — which is
+      // exactly what the `id` slot is for, and it means the timestamp truncates
+      // with the name instead of competing with the verdict for the space. The
+      // run list on the left carries the same time per row, so nothing is lost
+      // when a narrow window eats it.
+      id={`${replay.testName} · ${fmtDateTime(replay.startedAt)}`}
+      right={headline}
+      className="gl-visual-viewer"
+    >
       <div
         className="gl-visual-body"
         tabIndex={0}
@@ -1731,21 +1759,13 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
           }
         }}
       >
-      {/* The tool band. The run's verdict and when it happened on the left, what
-          you can do to it on the right — the test's NAME is not repeated here,
-          because the panel header above already carries it in its `id` slot. */}
+      {/* The tool band — WHAT YOU CAN DO to this run, and nothing about what it
+          found. Its width is now the same on every run, which is the point: the
+          threshold reads from the left, the two buttons sit at the right, and
+          neither moves because a frame changed. */}
       <div className="gl-visual-head">
-        <StatusChip tone={replay.status === "passed" ? "phos" : "red"}>{replay.status}</StatusChip>
-        {/* Amber, not red: frames moved and the run still passed. It is the same
-            claim the frame rail makes about each one individually. */}
-        {changedCount > 0 ? (
-          <span className="gl-chip-tone" style={toneSurface(TONE.amber)}>
-            {changedCount} visual {changedCount === 1 ? "change" : "changes"}
-          </span>
-        ) : null}
-        <span className="gl-visual-head-when">{fmtDateTime(replay.startedAt)}</span>
+        <ThresholdControl testId={summary.testId} steps={steps} />
         <div className="gl-visual-head-tools">
-          <ThresholdControl testId={summary.testId} steps={steps} />
           <Btn
             tone="ghost"
             disabled={rerunning}
@@ -1887,6 +1907,19 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
 
       {/* The stage */}
       <div className="gl-visual-stage">
+        {/* ONE ROW HOLDS BOTH CONTROLS, and that is what stops them colliding.
+            They used to be two absolutely-positioned corners — the mask toggle
+            pinned left, the compare switch pinned right — which is fine until
+            the stage is narrower than the two together. At this app's own
+            minimum window they overlapped by 12px, and since both sit at the
+            same z-index the later one won: the right-hand edge of "Ignore
+            regions" was painted over by "Current" and stopped taking clicks.
+            A flex row that wraps cannot do that at any width.
+
+            The ROW takes no pointer events and its children take them back:
+            a full-width transparent bar over the frame would otherwise swallow
+            the start of every ignore-region drag along the top of the image. */}
+        <div className="gl-visual-stage-chrome">
           {/* Ignore-region editor toggle */}
           {step.screenshot ? (
             <div className="gl-visual-stage-tools">
@@ -1918,8 +1951,10 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
             // this control is chrome laid ON that frame, so it has to clear the
             // same bar. At `z-10` it rendered behind the bezel and vanished —
             // which is not a styling nit, it is the compare-mode switch on the
-            // compare screen.
-            <div className="gl-visual-modes absolute right-3 top-3">
+            // compare screen. The bar is on the row above now; the class stays
+            // because it is what pins the switch to the trailing edge, and what
+            // `visual-view.test.tsx` reads to prove it still opts in.
+            <div className="gl-visual-modes">
               {/* The theme's `Segmented`: its active item is NEUTRAL, which
                   matters more here than anywhere else in the app. This control
                   sits on top of a frame the user is being asked to judge, and an
@@ -1947,6 +1982,7 @@ function ReplayViewer({ summary }: { summary: RunReplaySummary }) {
               />
             </div>
           ) : null}
+        </div>
           {/* The overlays that ride ON the frame — the element-scope box and
               the mask layer — are the same in every mode, so they are built
               once and handed to whichever frame component the mode selects.

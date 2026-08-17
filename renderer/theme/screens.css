@@ -3243,12 +3243,23 @@
   color: var(--gl-amber);
 }
 
-/* ── The viewer's own header ──────────────────────────────────────────── */
+/* ── The viewer's tool band ───────────────────────────────────────────── */
 
-/* Not the panel header — that one is fixed at 32px so two panels start their
-   bodies on the same line, and this band carries a re-run button, a threshold
-   control and a stepper. It is the screen's tool bar, drawn inside the panel
-   under its title. */
+/*
+ * WHAT YOU CAN DO to this run — and deliberately nothing about what it found.
+ *
+ * The verdict, the change count and the stepper live in the PANEL header above
+ * (see the note at the call site). They were here, and while they were, this
+ * band's width depended on the run's outcome: a run with findings grew a chip,
+ * which was enough to push "Masks & baselines" onto a second line. A toolbar
+ * that reflows when a test starts failing moves its controls exactly when
+ * somebody is reaching for them.
+ *
+ * What is left is the same width on every run: the threshold reads from the
+ * left, the two buttons sit at the right. It still wraps, because the two
+ * groups together outgrow the panel at this app's own minimum window — but now
+ * it wraps at one width rather than at two.
+ */
 .gl-visual-head {
   display: flex;
   align-items: center;
@@ -3258,15 +3269,6 @@
   flex-wrap: wrap;
   padding: 7px 10px;
   border-bottom: 1px solid var(--gl-line);
-}
-
-.gl-visual-head-when {
-  font-family: var(--gl-mono);
-  font-size: 9px;
-  letter-spacing: 0.04em;
-  font-variant-numeric: tabular-nums;
-  color: var(--gl-tx-3);
-  white-space: nowrap;
 }
 
 /* IT WRAPS, AND `flex: 1 1 auto` IS WHAT MAKES IT. As a rigid item this group
@@ -3287,8 +3289,9 @@
   min-width: 0;
 }
 
-/* The step stepper. Tabular and fixed-width so the frame under it does not
-   shift sideways by a pixel every time the step number gains a digit. */
+/* The step stepper, in the panel header beside the verdict. Tabular and
+   fixed-width so the chips to its left do not shuffle sideways by a pixel every
+   time the step number gains a digit. */
 .gl-visual-stepper {
   display: inline-flex;
   align-items: center;
@@ -3372,14 +3375,44 @@
   overflow: hidden;
 }
 
-/* Chrome laid ON the frame, so it clears the bezel's 610 for the same reason
-   `.gl-visual-modes` does. At a lower z-index the ignore-region toggle renders
-   BEHIND the screenshot and is simply invisible. */
-.gl-visual-stage-tools {
+/*
+ * The chrome laid ON the frame: the ignore-region toggle at the leading edge,
+ * the compare-mode switch at the trailing one.
+ *
+ * ONE ROW, NOT TWO PINNED CORNERS. Absolute left and absolute right cannot
+ * collide until the box between them runs out, and then they do it silently —
+ * at this app's own minimum window the two overlapped by 12px, both sit at the
+ * same z-index so the later one won, and the right-hand edge of "Ignore
+ * regions" was painted over by "Current" and stopped taking clicks. A flex row
+ * that wraps has no width at which that can happen.
+ *
+ * z-620 because `CRT` sits at 610 to escape the global atmosphere overlays at
+ * 600 (tokens.css); anything drawn over the frame has to clear the same bar or
+ * it is simply invisible.
+ *
+ * IT TAKES NO POINTER EVENTS AND ITS CHILDREN TAKE THEM BACK. This is a
+ * full-width bar over the top of the frame, and the frame underneath is the
+ * drag surface for drawing an ignore region — without this, every drag that
+ * started along the top of the image would land on the bar instead.
+ */
+.gl-visual-stage-chrome {
   position: absolute;
   left: 10px;
+  right: 10px;
   top: 10px;
   z-index: 620;
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.gl-visual-stage-chrome > * {
+  pointer-events: auto;
+}
+
+.gl-visual-stage-tools {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -3737,13 +3770,18 @@
   min-height: 0;
 }
 
-/* Chrome laid ON the frame, so it clears the bezel. `CRT` sits at 610 to escape
-   the global atmosphere overlays at 600 (tokens.css); anything drawn over the
-   frame has to clear the same bar or it is simply invisible. This is chrome, not
-   content — the rule the CRT enforces is that nothing may be drawn INSIDE the
-   screen, and a control sitting above the bezel's border is outside it. */
+/* The compare-mode switch, at the trailing edge of the stage's chrome row.
+   `margin-inline-start: auto` rather than `justify-content: space-between` on
+   the row: the mask toggle beside it is conditional, and space-between would
+   swing this control to the LEFT edge on a step with no screenshot.
+
+   It clears the bezel via the row's own z-620 — `CRT` sits at 610 to escape the
+   global atmosphere overlays at 600 (tokens.css), and anything drawn over the
+   frame has to clear the same bar or it is simply invisible. This is chrome,
+   not content: the rule the CRT enforces is that nothing may be drawn INSIDE
+   the screen, and a control above the bezel's border is outside it. */
 .gl-visual-modes {
-  z-index: 620;
+  margin-inline-start: auto;
 }
 
 /* The frame rail (B8). Every captured frame, its outcome, and its diff
@@ -3849,8 +3887,15 @@
 /* What the threshold would do to THIS run's frames. Mono and tabular so the
    number does not shimmy as it changes under a drag — the whole point is that
    it updates live, and a figure that jumps sideways while you move a slider is
-   harder to read than one that does not move at all. */
+   harder to read than one that does not move at all.
+
+   THE MIN-WIDTH IS THE SAME ARGUMENT ONE LEVEL UP. This readout swaps between
+   "flags 1 of 2" and "silences all 2" as you drag, and those are different
+   lengths; without a floor wide enough for the longer one, a drag can change
+   the tool band's total width and wrap the buttons onto a second row
+   mid-gesture. Sized for the longest form this can take. */
 .gl-threshold-readout {
+  min-width: 98px;
   font-family: var(--gl-mono);
   font-size: 9px;
   font-variant-numeric: tabular-nums;

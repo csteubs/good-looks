@@ -180,62 +180,108 @@ const MEASURED_REQUIREMENT = 928;
   const visual = read("../../../renderer/main/visual-view.tsx");
   const screens = read("../../../renderer/theme/screens.css").replace(/\/\*[\s\S]*?\*\//g, "");
 
-  // TWO BUGS OF ONE KIND, both measured in `npm run dev:web` at ordinary window
-  // sizes — NOT narrow ones, which is why the floor in §1 protected neither.
+  // THREE BUGS OF ONE KIND, all measured in `npm run dev:web` at ordinary window
+  // sizes — NOT narrow ones, which is why the floor in §1 protected none of them.
   //
-  // The first, 2026-08-11: the header was one flex row with a `min-w-0 flex-1`
-  // title column followed by Re-run, Masks & baselines, the threshold and the
-  // pager, all `shrink-0`. Those four took ~1000px of a 1140px pane, the title
-  // column was squeezed to 141px against 168px of content, and the two badges —
-  // "passed" and "1 visual change" — spilled past its right edge.
-  // `elementFromPoint` at the end of the word returned the Re-run BUTTON: the
-  // outcome was being painted underneath a control, unreadable.
+  // 2026-08-11: the header was one flex row with a `min-w-0 flex-1` title column
+  // followed by Re-run, Masks & baselines, the threshold and the pager, all
+  // `shrink-0`. Those four took ~1000px of a 1140px pane, the title column was
+  // squeezed to 141px against 168px of content, and the two badges — "passed"
+  // and "1 visual change" — spilled past its right edge. `elementFromPoint` at
+  // the end of the word returned the Re-run BUTTON: the outcome was being
+  // painted underneath a control, unreadable.
   //
-  // The second, in this screen's full reskin: with the name moved into the
-  // panel header, the tool group was a single rigid item wider than the panel
-  // on any window under about 1500px, and the LAST control — "Masks &
-  // baselines" — was simply clipped off the edge. Present in the DOM, nothing
-  // to scroll, impossible to click.
+  // 2026-08-17, in the screen's full reskin: the tool group was a single rigid
+  // item wider than the panel on any window under about 1500px, and the LAST
+  // control — "Masks & baselines" — was simply clipped off the edge. Present in
+  // the DOM, nothing to scroll, impossible to click.
   //
-  // WRAPPING IS THE FIX BOTH TIMES, not a floor and not `overflow: hidden`.
-  //  • A floor big enough for the controls overflows the header at this app's
-  //    own minimum window size, which is the §1 bug reintroduced above the
-  //    floor — exactly what that section warns about.
-  //  • `overflow: hidden` stops the overlap and still eats the content, and a
-  //    status chip that silently drops its last word is the failure DECISIONS
-  //    records for `.gl-status-chip` on 2026-08-09. The test NAME is the cell
-  //    that may give — it lives in the panel header's `id` slot, which is
-  //    documented to truncate. The result and the controls never are.
+  // 2026-08-17, reported off the shipped reskin: the band held the verdict chip,
+  // the change chip and the timestamp as well as the controls, so ITS WIDTH
+  // DEPENDED ON THE RUN'S OUTCOME. A run with findings grew a chip and pushed
+  // "Masks & baselines" onto a second line — a toolbar that reflows when a test
+  // starts failing moves its controls exactly when somebody is reaching for
+  // them. The chips moved up into the panel header, where what they displace is
+  // the test NAME.
+  //
+  // THE ORDER OF WHAT GIVES IS THE WHOLE CONTRACT, and it is the same in all
+  // three. The name may truncate — it lives in `.gl-panel-id`, which the Panel
+  // primitive documents as ellipsing by definition, and the run list repeats it
+  // per row. The verdict may not: it is a `StatusChip`, pinned unshrinkable by
+  // `check:status-width`, inside `.gl-panel-right`, which is `flex: 0 0 auto`.
+  // And the controls may not either — which is what the wrapping below buys.
+  //
+  // NOT A FLOOR AND NOT `overflow: hidden`. A floor big enough for the controls
+  // overflows the header at this app's own minimum window size, which is the §1
+  // bug reintroduced above the floor. And `overflow: hidden` stops the overlap
+  // while still eating the content — a status chip that silently drops its last
+  // word is the failure DECISIONS records for `.gl-status-chip` on 2026-08-09.
   //
   // Source-level for this file's usual reason: jsdom has no layout engine, so
-  // nothing rendered in a test can observe a chip painted under a button or a
-  // control clipped off a panel.
+  // nothing rendered in a test can observe a chip painted under a button, a
+  // control clipped off a panel, or a band that reflows on one run and not
+  // another.
   assert(
     /className="gl-visual-head"/.test(visual),
     "visual-view.tsx: found the run's tool band (.gl-visual-head)",
   );
-  // The name is in the slot that is allowed to truncate, and nowhere else.
+
+  // ── What is ABOUT the run sits in the panel header ──────────────────────
+  //
+  // Matched on the `right={headline}` prop and the block that builds it, rather
+  // than on "a StatusChip appears somewhere in the file": the whole point is
+  // WHERE it appears, and a check that only asks whether it exists would go
+  // green the moment it slid back down into the band.
+  const headline = visual.match(/const headline = \(\s*<>([\s\S]*?)<\/>\s*\);/);
+  assert(headline !== null, "visual-view.tsx: found the panel header's headline block");
   assert(
-    /<Panel\b[^>]*\bid=\{replay\.testName\}/s.test(visual),
-    "visual-view.tsx: the test name sits in the panel header's `id` slot, which is the one cell in this design that may give",
+    /<Panel\b[\s\S]{0,600}?\bright=\{headline\}/.test(visual),
+    "visual-view.tsx: the headline is in the panel header's `right` slot, which `.gl-panel-right` pins at `flex: 0 0 auto` — the verdict is never the thing that gives",
   );
-  // And the outcome is a StatusChip, which `check:status-width` already pins as
-  // unshrinkable — so the row cannot take the verdict's width back.
+  if (headline) {
+    assert(
+      /<StatusChip tone=\{replay\.status === "passed"/.test(headline[1]),
+      "visual-view.tsx: the run's verdict is a StatusChip in the panel header, whose width neither a flex row nor a wrap may reclaim",
+    );
+    assert(
+      /changedCount > 0/.test(headline[1]),
+      "visual-view.tsx: the change count is in the panel header too — leaving it in the band is what made the band's width depend on the run's outcome",
+    );
+  }
+  // The name AND the time are the reference, in the one cell allowed to give.
   assert(
-    /<StatusChip tone=\{replay\.status === "passed"/.test(visual),
-    "visual-view.tsx: the run's verdict is a StatusChip, whose width a flex row may not reclaim",
+    /<Panel\b[\s\S]{0,600}?\bid=\{`\$\{replay\.testName\} · \$\{fmtDateTime\(replay\.startedAt\)\}`\}/.test(
+      visual,
+    ),
+    "visual-view.tsx: the test name and the run's time sit in the panel header's `id` slot, which truncates by definition — they are the cell that may give",
   );
+
+  // ── And the band carries no run STATE, so its width is one width ────────
+  const band = visual.match(/\{\/\* The tool band[\s\S]*?\n {6}<\/div>/);
+  assert(band !== null, "visual-view.tsx: found the tool band's markup");
+  if (band) {
+    for (const [what, re] of [
+      ["the verdict chip", /<StatusChip/],
+      ["the change count", /changedCount/],
+      ["the run's timestamp", /fmtDateTime/],
+    ] as const) {
+      assert(
+        !re.test(band[0]),
+        `visual-view.tsx: the tool band does not carry ${what} — anything that appears on some runs and not others makes the toolbar reflow when a run starts failing`,
+      );
+    }
+  }
 
   const headRule = screens.match(/\.gl-visual-head\s*\{([^}]*)\}/);
   assert(headRule !== null, "screens.css: found the .gl-visual-head rule");
   if (headRule) {
     assert(
       /flex-wrap:\s*wrap/.test(headRule[1]),
-      "`.gl-visual-head` wraps — without it the verdict chips are pushed out of the band and painted under the controls",
+      "`.gl-visual-head` wraps — at this app's own minimum window the threshold and the two buttons still outgrow the panel together",
     );
     assert(
       !/overflow:\s*hidden/.test(headRule[1]),
-      "`.gl-visual-head` does not clip — hiding the overlap would still swallow the chip's last word",
+      "`.gl-visual-head` does not clip — hiding the overflow would swallow a control rather than move it",
     );
   }
 

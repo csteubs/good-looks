@@ -741,17 +741,24 @@ provenance, drift and the region breakdown on top of that mix. The largest file
 in the renderer was two designs interleaved, and it read as the old app.
 
 It is now two `Panel`s — RUNS at a fixed 268px and REPLAY — with the toolbar
-retired the way Heals' was, the test name in the panel header's `id` slot, the
-run's verdict as a `StatusChip`, the three callouts as `.gl-notice` blocks with
-inset rails, the threshold as a styled native range input, and one `go` button
-on the screen: `Accept New Baseline`. `visual-view.tsx` and
+retired the way Heals' was, the test name and the run's time in the panel
+header's `id` slot, the verdict and change count as chips in its `right` slot,
+the three callouts as `.gl-notice` blocks with inset rails, the threshold as a
+styled native range input, and one `go` button on the screen:
+`Accept New Baseline`. **The chips are in the header rather than the tool band
+for a layout reason**: in the band they made its width depend on the run's
+outcome, and a run with findings wrapped "Masks & baselines" onto a second row.
+Up there what they displace is the test NAME, which is the one cell in this
+design allowed to give. `visual-view.tsx` and
 `a11y-violations.tsx` are both on `check:sdk-retired`'s list, which is what
-stops a third pass being needed. Two layout bugs went with it — a tool group
-that clipped `Masks & baselines` off the panel edge, and a frame rail 20px
-shorter than its own contents — and `check:narrow-layout` §3 was rewritten onto
-the new structure rather than dropped, since its subject was already this
-header. See DECISIONS 2026-08-17. **With this, §B8 is complete and so is
-Phase B.**
+stops a third pass being needed. Four layout bugs went with it — a tool group
+that clipped `Masks & baselines` off the panel edge, a frame rail 20px shorter
+than its own contents, a tool band whose width depended on whether the run had
+findings, and two frame controls pinned to opposite corners that overlapped by
+12px at the minimum window and stole each other's clicks. `check:narrow-layout`
+§3 was rewritten onto the new structure rather than dropped, since its subject
+was already this header. See DECISIONS 2026-08-17 (both entries). **With this,
+§B8 is complete and so is Phase B.**
 
 **One implementation note carried over from the mockup and worth keeping:** the
 diff region boxes are *measured after layout*, never authored as percentages,

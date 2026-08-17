@@ -10,6 +10,56 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-17 — A toolbar that reflows when a run starts failing
+
+`renderer/main/visual-view.tsx`, `renderer/theme/screens.css`,
+`main/services/__tests__/narrow-layout.check.ts`. Reported off the reskin
+below, the same day.
+
+**The report:** on a run with findings, the Visual viewer's tool band wrapped
+and pushed "Masks & baselines" onto a second line.
+
+**The band's width depended on the run's OUTCOME, which is the actual defect.**
+It carried the verdict chip, the change-count chip and the timestamp as well as
+the threshold and the two buttons — so a run that flagged five changes was
+~110px wider than a clean one, and that was enough to wrap. A toolbar that
+reflows when a test starts failing moves its controls exactly when somebody is
+reaching for them, and it does it on the runs that matter most.
+
+**The fix is about WHAT GIVES, not about finding more width.** The verdict, the
+change count and the stepper moved up into the panel header's `right` slot; the
+timestamp joined the test name in the `id` slot. Now the chips displace the
+NAME, which is the one cell in this design allowed to give — `.gl-panel-id`
+ellipses by definition, and the run list on the left repeats both the name and
+the time per row, so nothing is unrecoverable. `.gl-panel-right` is
+`flex: 0 0 auto` and the chip inside it is a `StatusChip`, pinned unshrinkable
+by `check:status-width`, so the verdict is structurally never the thing that
+goes. Measured at 960px — this app's own `minWindowWidth` — the header does not
+overflow, the verdict and stepper stay fully inside, and the name truncates from
+164px to 47px to absorb it.
+
+**What is left in the band is the same width on every run**, which is the
+property worth having rather than "it currently fits". Verified across all eight
+preview runs (one change, two changes, none): 872px of content, one row, no
+variation. `check:narrow-layout` §3 now asserts the band carries no
+`StatusChip`, no `changedCount` and no `fmtDateTime` — anything that appears on
+some runs and not others is the bug returning in a new shape.
+
+**One more reflow on the same band: the threshold readout.** It swaps between
+"flags 1 of 2" and "silences all 2" as you drag, and those are different
+lengths, so a drag could wrap the buttons mid-gesture. It has a `min-width`
+sized for the longer form now. Confirmed constant across all six presets.
+
+**And the two controls ON the frame were overlapping.** The mask toggle was
+pinned absolute-left and the compare-mode switch absolute-right, which cannot
+collide until the box between them runs out — and at 960px they overlapped by
+12px. Both sit at the same z-index, so the later one won: the right-hand edge of
+"Ignore regions" was painted over by "Current" and stopped taking clicks. They
+are one wrapping flex row now, which has no width at which that can happen. The
+row takes no pointer events and its children take them back, because a
+full-width bar over the top of the frame would otherwise swallow the start of
+every ignore-region drag along the top of the image.
+
 ### 2026-08-17 — The Visual view finishes its reskin, eighteen months after starting it
 
 `renderer/main/visual-view.tsx`, `renderer/main/a11y-violations.tsx`,
