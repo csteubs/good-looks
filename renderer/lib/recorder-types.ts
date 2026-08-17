@@ -881,6 +881,19 @@ export interface RunTotals {
   failed: number;
   retained: number;
   pruned: number;
+  /** Pruned runs by local calendar day, oldest first — what the digest and the
+   *  pass/fail chart need, since those count a WINDOW rather than a lifetime
+   *  and pruned runs are always the oldest ones. Empty when nothing has been
+   *  pruned, or when the breakdown on disk was rejected. */
+  prunedDays: RunDayCount[];
+}
+
+export interface RunDayCount {
+  /** local midnight of the day, epoch ms */
+  dayStart: number;
+  runs: number;
+  passed: number;
+  failed: number;
 }
 
 /** A hit from searching the raw run logs. */

@@ -1717,6 +1717,28 @@ export interface RunTotals {
   retained: number;
   /** executions the cap has dropped: `runs - retained` */
   pruned: number;
+  /**
+   * Pruned runs by the local calendar day they started, oldest first, most
+   * recent 60 days.
+   *
+   * For the figures that are windowed by TIME rather than being lifetime
+   * counts — the weekly digest, the pass/fail chart. Pruned runs are always
+   * older than every surviving record, so as soon as a thousand runs fit inside
+   * a week those windows start losing runs to the cap: "1000 runs this week" on
+   * a week that had 1019. The flat totals cannot repair that, because they
+   * cannot say WHEN. Empty when nothing has been pruned, or when the breakdown
+   * on disk did not survive validation — in which case the windowed figures
+   * degrade to counting retained records, which is what they did before.
+   */
+  prunedDays: RunDayCount[];
+}
+
+export interface RunDayCount {
+  /** local midnight of the day, epoch ms */
+  dayStart: number;
+  runs: number;
+  passed: number;
+  failed: number;
 }
 
 /** A hit from searching the raw run logs. */

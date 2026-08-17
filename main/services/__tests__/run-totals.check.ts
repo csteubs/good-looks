@@ -81,7 +81,7 @@ function appendRun(id: string, status: "passed" | "failed", startedAt: number): 
 
 eq(
   runHistoryStore.totals(),
-  { runs: 0, passed: 0, failed: 0, retained: 0, pruned: 0 },
+  { runs: 0, passed: 0, failed: 0, retained: 0, pruned: 0, prunedDays: [] },
   "an empty history totals zero",
 );
 
@@ -91,7 +91,7 @@ appendRun("a", "passed", 2_000_000);
 appendRun("b", "failed", 2_000_001);
 eq(
   runHistoryStore.totals(),
-  { runs: 2, passed: 1, failed: 1, retained: 2, pruned: 0 },
+  { runs: 2, passed: 1, failed: 1, retained: 2, pruned: 0, prunedDays: [] },
   "under the cap, every run is retained",
 );
 
@@ -101,7 +101,7 @@ eq(
 runHistoryStore.logBaselineUpdate("t1", "Alpha", 2, "run");
 eq(
   runHistoryStore.totals(),
-  { runs: 2, passed: 1, failed: 1, retained: 2, pruned: 0 },
+  { runs: 2, passed: 1, failed: 1, retained: 2, pruned: 0, prunedDays: [] },
   "a baseline update is not counted as a run",
 );
 
@@ -139,6 +139,9 @@ eq(
     failed: 1,
     retained: MAX_RECORDS,
     pruned: 3,
+    // All three pruned records were seeded on one day; the day breakdown gets
+    // its own assertions below.
+    prunedDays: [{ dayStart: dayStartOf(1_000_000), runs: 3, passed: 3, failed: 0 }],
   },
   "the total counts pruned runs; the retained count does not",
 );
@@ -158,6 +161,67 @@ eq(
   runHistoryStore.totals().retained,
   MAX_RECORDS - 1,
   "…while the retained count drops, because a run left the index",
+);
+
+// ── 3b. Pruned runs keep their DAY ─────────────────────────────────────
+//
+// A lifetime total cannot repair a figure that counts a WINDOW. The weekly
+// digest and the pass/fail chart both count the last seven days out of the run
+// list, and pruning takes the OLDEST records — so a suite that fits a thousand
+// runs inside a week starts losing that week's own runs, and the digest reports
+// "1000 runs this week" on a week that had more.
+
+function dayStartOf(ms: number): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+const DAY_MS = 86_400_000;
+const today = dayStartOf(Date.now());
+
+runHistoryStore.deleteAll();
+fs.writeFileSync(
+  indexFile,
+  JSON.stringify(
+    // Two days' worth, all older than the runs appended below, so the cap
+    // reaches them: 3 on the day before yesterday, 2 yesterday.
+    [
+      ...Array.from({ length: 3 }, (_, i) =>
+        seeded(i, { id: `d2-${i}`, startedAt: today - 2 * DAY_MS + i * 1000, status: "failed" }),
+      ),
+      ...Array.from({ length: 2 }, (_, i) =>
+        seeded(100 + i, { id: `d1-${i}`, startedAt: today - DAY_MS + i * 1000 }),
+      ),
+      ...Array.from({ length: MAX_RECORDS - 5 }, (_, i) =>
+        seeded(1000 + i, { id: `now-${i}`, startedAt: today + i * 1000 }),
+      ),
+    ],
+    null,
+    2,
+  ),
+  "utf-8",
+);
+
+appendRun("push-1", "passed", today + 900_000);
+appendRun("push-2", "passed", today + 900_001);
+appendRun("push-3", "passed", today + 900_002);
+appendRun("push-4", "passed", today + 900_003);
+
+const days = runHistoryStore.totals().prunedDays;
+eq(days.length, 2, "pruned runs are bucketed by the day they started");
+eq(
+  days.map((d) => [d.dayStart - today, d.runs, d.passed, d.failed]),
+  [
+    [-2 * DAY_MS, 3, 0, 3],
+    [-DAY_MS, 1, 1, 0],
+  ],
+  "each day carries its own outcome split, oldest first",
+);
+eq(
+  days.reduce((n, d) => n + d.runs, 0),
+  runHistoryStore.totals().pruned,
+  "the day buckets account for every pruned run",
 );
 
 // ── 4. A corrupt tally understates; it never poisons ───────────────────
@@ -200,7 +264,7 @@ eq(runHistoryStore.totals().pruned, 0, "a tally whose parts don't add up is disc
 runHistoryStore.resetStats();
 eq(
   runHistoryStore.totals(),
-  { runs: 0, passed: 0, failed: 0, retained: 0, pruned: 0 },
+  { runs: 0, passed: 0, failed: 0, retained: 0, pruned: 0, prunedDays: [] },
   "resetStats clears the pruned tally as well as the index",
 );
 
@@ -210,7 +274,7 @@ eq(runHistoryStore.totals().runs, 8, "a fresh tally is counted again");
 runHistoryStore.deleteAll();
 eq(
   runHistoryStore.totals(),
-  { runs: 0, passed: 0, failed: 0, retained: 0, pruned: 0 },
+  { runs: 0, passed: 0, failed: 0, retained: 0, pruned: 0, prunedDays: [] },
   "deleteAll clears the pruned tally as well as the index",
 );
 
@@ -226,7 +290,7 @@ fs.writeFileSync(tallyFile, JSON.stringify({ runs: 4, passed: 3, failed: 1 }), "
 runHistoryStore.deleteRange(5_000_050, 5_000_200);
 eq(
   runHistoryStore.totals(),
-  { runs: 5, passed: 4, failed: 1, retained: 1, pruned: 4 },
+  { runs: 5, passed: 4, failed: 1, retained: 1, pruned: 4, prunedDays: [] },
   "deleting a date range removes records without rewriting history",
 );
 

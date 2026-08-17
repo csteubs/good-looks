@@ -538,12 +538,26 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       const retained = real.length;
       const passed = real.filter((r) => r.status === "passed").length;
       const PRUNED = { runs: 240, passed: 220, failed: 20 };
+      // DATED INTO THIS WEEK, because pruning takes the OLDEST records and a
+      // busy suite therefore loses THIS WEEK's early days to the cap. Pruned
+      // days sitting outside the digest's window would exercise the plumbing
+      // and none of the arithmetic that made "1000 runs this week" wrong.
+      const midnight = new Date();
+      midnight.setHours(0, 0, 0, 0);
+      const DAY_MS = 86_400_000;
+      const prunedDays = [5, 4, 3].map((back, i) => ({
+        dayStart: midnight.getTime() - back * DAY_MS,
+        runs: [100, 80, 60][i],
+        passed: [92, 73, 55][i],
+        failed: [8, 7, 5][i],
+      }));
       return {
         runs: PRUNED.runs + retained,
         passed: PRUNED.passed + passed,
         failed: PRUNED.failed + (retained - passed),
         retained,
         pruned: PRUNED.runs,
+        prunedDays,
       };
     },
     "runs:getLog": (): string => RUN_LOG,

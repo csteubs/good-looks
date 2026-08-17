@@ -14,7 +14,12 @@
 
 import { Panel, TONE } from "../../theme";
 import { facetLabel } from "../../lib/stats-categories";
-import type { CaptureOverheadSummary, RunRecord, RunTotals } from "../../lib/recorder-types";
+import type {
+  CaptureOverheadSummary,
+  RunDayCount,
+  RunRecord,
+  RunTotals,
+} from "../../lib/recorder-types";
 import { DrillRow, ExitRow } from "./rows";
 
 // ── Daily pass/fail buckets for the chart ──────────────────────────────
@@ -26,19 +31,44 @@ export interface DayBucket {
   failed: number;
 }
 
-export function buildDailyBuckets(runs: RunRecord[]): DayBucket[] {
+function dayKey(d: Date): string {
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+}
+
+/**
+ * @param prunedDays Days whose runs the capped index no longer holds. Pruning
+ *  takes the OLDEST records, so on a suite that fits a thousand runs inside a
+ *  week these are this week's own early days — and without them the chart draws
+ *  a suite that ramped up over the week when it did nothing of the kind. They
+ *  contribute counts and no identity, which is all a stacked bar needs.
+ */
+export function buildDailyBuckets(
+  runs: RunRecord[],
+  prunedDays: readonly RunDayCount[] = [],
+): DayBucket[] {
   const map = new Map<string, DayBucket>();
-  for (const r of runs) {
-    if (r.kind === "baseline-update") continue; // exclude from pass/fail chart
-    const d = new Date(r.startedAt);
-    const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+  const bucketFor = (at: number): DayBucket => {
+    const d = new Date(at);
+    const key = dayKey(d);
     let b = map.get(key);
     if (!b) {
       b = { key, label: `${d.getMonth() + 1}/${d.getDate()}`, passed: 0, failed: 0 };
       map.set(key, b);
     }
+    return b;
+  };
+  for (const r of runs) {
+    if (r.kind === "baseline-update") continue; // exclude from pass/fail chart
+    const b = bucketFor(r.startedAt);
     if (r.status === "passed") b.passed++;
     else b.failed++;
+  }
+  // Pruned days land in the same buckets by the same rule — `dayStart` is local
+  // midnight, so it keys to its own day.
+  for (const day of prunedDays) {
+    const b = bucketFor(day.dayStart);
+    b.passed += day.passed;
+    b.failed += day.failed;
   }
   // Always show the last 7 calendar days (inclusive of today), even days with
   // no runs, so gaps are visible instead of the chart skipping straight to
@@ -49,7 +79,7 @@ export function buildDailyBuckets(runs: RunRecord[]): DayBucket[] {
   for (let i = 6; i >= 0; i--) {
     const d = new Date(today);
     d.setDate(d.getDate() - i);
-    const key = `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
+    const key = dayKey(d);
     buckets.push(
       map.get(key) ?? { key, label: `${d.getMonth() + 1}/${d.getDate()}`, passed: 0, failed: 0 },
     );
@@ -250,7 +280,7 @@ export function OutcomesDashboard({
   const passed = totals?.passed ?? retainedPassed;
   const failed = totals?.failed ?? retainedFailed;
   const pruned = totals?.pruned ?? 0;
-  const buckets = buildDailyBuckets(runs);
+  const buckets = buildDailyBuckets(runs, totals?.prunedDays);
 
   return (
     <>

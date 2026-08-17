@@ -307,6 +307,7 @@ describe("the numbers themselves", () => {
       failed: 100,
       retained: 2,
       pruned: 998,
+      prunedDays: [],
     });
     expect(s.display).toBe("90%");
     expect(s.window).toBe("1000 runs");
@@ -328,6 +329,7 @@ describe("the numbers themselves", () => {
       failed: 0,
       retained: 0,
       pruned: 400,
+      prunedDays: [],
     });
     expect(isMeasured(s.state)).toBe(true);
     expect(s.display).toBe("100%");

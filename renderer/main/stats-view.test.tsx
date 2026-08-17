@@ -130,7 +130,7 @@ describe("the page header's run count", () => {
 
   it("counts every run ever, and says how many are still stored", async () => {
     runs = [run({ id: "r1" }), run({ id: "r2", status: "failed" })];
-    totals = { runs: 1240, passed: 1100, failed: 140, retained: 2, pruned: 1238 };
+    totals = { runs: 1240, passed: 1100, failed: 140, retained: 2, pruned: 1238, prunedDays: [] };
     renderView();
     // WAIT FOR THE CONTENT, NOT THE ELEMENT. This line renders before either
     // query resolves, so `findByText(/runs recorded/)` matches the loading
@@ -141,7 +141,7 @@ describe("the page header's run count", () => {
 
   it("says nothing about storage when nothing has been pruned", async () => {
     runs = [run({ id: "r1" })];
-    totals = { runs: 1, passed: 1, failed: 0, retained: 1, pruned: 0 };
+    totals = { runs: 1, passed: 1, failed: 0, retained: 1, pruned: 0, prunedDays: [] };
     renderView();
     const head = await screen.findByText(/1 run recorded/);
     expect(head.textContent).not.toMatch(/kept in history/);

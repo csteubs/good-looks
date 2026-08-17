@@ -101,7 +101,7 @@ describe("OutcomesDashboard", () => {
   // size of a history. Counting it is what made this card climb to 1000 and
   // stop: the suite kept running and the headline number did not move.
 
-  const TOTALS = { runs: 1240, passed: 1100, failed: 140, retained: 1000, pruned: 240 };
+  const TOTALS = { runs: 1240, passed: 1100, failed: 140, retained: 1000, pruned: 240, prunedDays: [] };
 
   it("states the lifetime total, not the length of the run list", () => {
     render(
@@ -133,7 +133,7 @@ describe("OutcomesDashboard", () => {
     render(
       <OutcomesDashboard
         runs={[run({ id: "r1" })]}
-        totals={{ runs: 1, passed: 1, failed: 0, retained: 1, pruned: 0 }}
+        totals={{ runs: 1, passed: 1, failed: 0, retained: 1, pruned: 0, prunedDays: [] }}
         onDrill={vi.fn()}
       />,
     );
@@ -173,7 +173,7 @@ describe("OutcomesDashboard", () => {
     render(
       <OutcomesDashboard
         runs={[]}
-        totals={{ runs: 1000, passed: 900, failed: 100, retained: 0, pruned: 1000 }}
+        totals={{ runs: 1000, passed: 900, failed: 100, retained: 0, pruned: 1000, prunedDays: [] }}
         onDrill={vi.fn()}
       />,
     );
@@ -238,6 +238,43 @@ describe("buildDailyBuckets", () => {
     const buckets = buildDailyBuckets([
       run({ id: "r1", startedAt: Date.now(), kind: "baseline-update" }),
     ]);
+    expect(buckets.every((b) => b.passed === 0 && b.failed === 0)).toBe(true);
+  });
+
+  // A DAY WHOSE RECORDS WERE PRUNED IS NOT AN EMPTY DAY. Pruning takes the
+  // OLDEST records, so on a suite that hits the cap inside a week these are the
+  // early days of the week now on screen — and drawing them at zero shows a
+  // suite that ramped up when it did nothing of the kind.
+
+  /** Local midnight N days ago — the same bucketing the store writes. */
+  function dayAgo(n: number): number {
+    const d = new Date(Date.now() - n * 86_400_000);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+
+  it("draws days whose runs were pruned", () => {
+    const buckets = buildDailyBuckets(
+      [run({ id: "r1", startedAt: Date.now() })],
+      [{ dayStart: dayAgo(2), runs: 30, passed: 25, failed: 5 }],
+    );
+    expect(buckets).toHaveLength(7);
+    expect(buckets[4]).toMatchObject({ passed: 25, failed: 5 });
+    expect(buckets[6].passed).toBe(1);
+  });
+
+  it("adds pruned runs to a day that also has records", () => {
+    // The boundary day: pruning stopped partway through it, so the bar is part
+    // record and part counter and has to be their sum.
+    const buckets = buildDailyBuckets(
+      [run({ id: "r1", startedAt: dayAgo(1) + 3_600_000, status: "failed" })],
+      [{ dayStart: dayAgo(1), runs: 9, passed: 7, failed: 2 }],
+    );
+    expect(buckets[5]).toMatchObject({ passed: 7, failed: 3 });
+  });
+
+  it("ignores pruned days older than the chart's window", () => {
+    const buckets = buildDailyBuckets([], [{ dayStart: dayAgo(30), runs: 99, passed: 99, failed: 0 }]);
     expect(buckets.every((b) => b.passed === 0 && b.failed === 0)).toBe(true);
   });
 });

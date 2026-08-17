@@ -17,6 +17,7 @@ map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 `renderer/lib/recorder-types.ts`, `renderer/lib/run-derived-cache.ts`,
 `renderer/lib/stats-categories.ts`, `renderer/main/stats/outcomes-dashboard.tsx`,
 `renderer/main/stats/stats-category-view.tsx`, `renderer/main/stats-view.tsx`,
+`renderer/lib/weekly-digest.ts`, `renderer/main/digest-panel.tsx`,
 `renderer/dev/preview-bridge.ts`,
 `main/services/__tests__/run-totals.check.ts` (new).
 
@@ -67,15 +68,38 @@ and that is not an oversight — everything the tally counts was pruned for bein
 older than every surviving record, so a range that reaches those runs has
 nothing left to delete and subtracting would double-count.
 
-**What did NOT move to lifetime counts.** The chart, the run-history table and
-the "By outcome" drill rows still count retained runs, because they are lists —
-a row promising 140 failures that opens a list of 84 is worse than one promising
-what it can deliver. Where the two figures sit on the same screen, the screen
-says so: the Total runs card carries "1,000 kept in history · 240 older runs
-counted but no longer stored". That is the same remedy the run-history table
-already used for runs belonging to deleted tests, and for the same reason — two
-numbers disagreeing with no explanation reads as a bug in whichever one the
-reader trusts less.
+**What did NOT move to lifetime counts.** The run-history table and the "By
+outcome" drill rows still count retained runs, because they are LISTS — a row
+promising 140 failures that opens a list of 84 is worse than one promising what
+it can deliver. Where the two figures sit on the same screen, the screen says so:
+the Total runs card carries "1,000 kept in history · 240 older runs counted but
+no longer stored". That is the same remedy the run-history table already used for
+runs belonging to deleted tests, and for the same reason — two numbers
+disagreeing with no explanation reads as a bug in whichever one the reader trusts
+less.
+
+**A second figure was wrong the same way, and the flat counter could not fix
+it.** The weekly digest counts a seven-day window out of the run list, and so
+does the pass/fail chart. Pruning takes the OLDEST records, so a suite busy
+enough to fit a thousand runs inside a week loses *that week's* own early days:
+the digest reported "1000 runs, 74 failed" — the cap, stated as a fact about the
+week — and the chart drew a suite that ramped up when it had done nothing of the
+kind. Knowing 1019 runs happened says nothing about WHEN, so the tally also keeps
+a per-day breakdown (most recent 60 local days) and both figures add it to what
+the records say.
+
+Offenders and flake stay record-only. Both need per-run identity and ordering,
+which is exactly what a pruned run no longer has, and inventing either would be
+worse than repairing only the counts. A pruned day joins the window its local
+midnight falls in: the window is rolling and the buckets are calendar days, so
+the day straddling the boundary lands wholly on one side — an error bounded by
+one day's pruned runs, against an alternative of dropping them entirely.
+
+**The day validator is signed, and the check is why.** `dayStart` is a timestamp,
+not a count. Validating it with the counter's non-negative rule threw away the
+whole breakdown for any pre-1970 timestamp — which no real run has, but a machine
+with a wrong clock does, and that is precisely the case where keeping the other
+days beats discarding them.
 
 **The check is standalone rather than a Vitest case** because the mechanism *is*
 a second file written at the moment of pruning; with a mocked `fs`, a version

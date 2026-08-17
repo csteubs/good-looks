@@ -18,16 +18,28 @@ import * as React from "react";
 import { Text } from "@ui";
 
 import { weeklyDigest } from "../lib/weekly-digest";
-import type { RunRecord } from "../lib/recorder-types";
+import type { RunDayCount, RunRecord } from "../lib/recorder-types";
 
-export function DigestPanel({ runs }: { runs: readonly RunRecord[] }): React.ReactElement | null {
+export function DigestPanel({
+  runs,
+  prunedDays,
+}: {
+  runs: readonly RunRecord[];
+  /** Runs the capped index no longer holds, by day. Without them this panel
+   *  counts a week out of a list that stops at MAX_RECORDS, and a suite busy
+   *  enough to hit the cap inside a week reads its own week short. */
+  prunedDays?: readonly RunDayCount[];
+}): React.ReactElement | null {
   // Read once per mount rather than per render. The week boundary only matters
   // to the day, and a clock read in the render body makes the component's
   // output depend on when React happened to re-run it.
   const [now] = React.useState(() => Date.now());
-  const digest = React.useMemo(() => weeklyDigest(runs, now), [runs, now]);
+  const digest = React.useMemo(
+    () => weeklyDigest(runs, now, prunedDays),
+    [runs, now, prunedDays],
+  );
 
-  if (runs.length === 0) return null;
+  if (runs.length === 0 && digest.runs === 0) return null;
 
   return (
     <section className="gl-digest" aria-label="This week">

@@ -99,16 +99,88 @@ function logByteSize(file: string): number {
   }
 }
 
-/** Executions the cap has pruned out of the index, by outcome. */
+/** Executions the cap has pruned out of the index, by outcome.
+ *
+ *  `days` is the same count broken down by the LOCAL calendar day the run
+ *  started, and it exists because a lifetime total is not enough for the two
+ *  figures on the Stats screen that are windowed by time: the weekly digest and
+ *  the pass/fail chart. Pruned runs are always OLDER than every surviving
+ *  record, so once a thousand runs fit inside a week those windows lose runs to
+ *  the cap exactly as the total did — "1000 runs this week" on a week that had
+ *  1019. A flat counter cannot repair that; only a per-day one can. */
 interface PrunedTally {
+  runs: number;
+  passed: number;
+  failed: number;
+  days: PrunedDay[];
+}
+
+interface PrunedDay {
+  /** local midnight of the day the runs started, epoch ms */
+  dayStart: number;
   runs: number;
   passed: number;
   failed: number;
 }
 
+/** How many days of breakdown to keep. The digest reads fourteen (this week and
+ *  the one before) and the chart seven; sixty is room for a view that wants a
+ *  month without the file growing without limit. Older days are already in the
+ *  flat totals, which is what the cards and the pass rate read. */
+const PRUNED_DAYS_KEPT = 60;
+
+/** Local midnight for a timestamp — the same bucketing `buildDailyBuckets` does
+ *  in the renderer, kept as a NUMBER rather than a formatted key so the two
+ *  cannot disagree about zero padding or separator. Both run on one machine in
+ *  one timezone, which is what makes a local day the right bucket. */
+function dayStartOf(ms: number): number {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
 /** A count read back off disk: a non-negative whole number, or nothing. */
 function count(v: unknown): number | null {
   return typeof v === "number" && Number.isInteger(v) && v >= 0 ? v : null;
+}
+
+/** A TIMESTAMP read back off disk. Signed, unlike `count` — epoch ms before
+ *  1970 are negative, and validating a day bucket with the counter's rule threw
+ *  the whole breakdown away for a clock the app does not control. No real run
+ *  starts in 1969; a machine whose clock says so is exactly the case where
+ *  keeping the other days beats discarding them. */
+function whole(v: unknown): number | null {
+  return typeof v === "number" && Number.isInteger(v) ? v : null;
+}
+
+/**
+ * The per-day breakdown, or nothing at all.
+ *
+ * Same all-or-none rule as the totals, one level down: a bucket that survived
+ * validation while its neighbour did not would make the digest state a week
+ * that never happened. Dropping the breakdown degrades the two windowed figures
+ * to what they showed before it existed — an undercount that is at least a
+ * count — while the lifetime totals beside them stay exact.
+ */
+function readDays(raw: unknown, total: number): PrunedDay[] {
+  if (!Array.isArray(raw)) return [];
+  const out: PrunedDay[] = [];
+  let sum = 0;
+  for (const entry of raw as Partial<PrunedDay>[]) {
+    const dayStart = whole(entry?.dayStart);
+    const runs = count(entry?.runs);
+    const passed = count(entry?.passed);
+    const failed = count(entry?.failed);
+    if (dayStart === null || runs === null || passed === null || failed === null) return [];
+    if (passed + failed !== runs) return [];
+    out.push({ dayStart, runs, passed, failed });
+    sum += runs;
+  }
+  // The days are a SUBSET of the total by construction (only the most recent
+  // are kept). More days than runs is a file describing something that cannot
+  // have happened.
+  if (sum > total) return [];
+  return out.sort((a, b) => a.dayStart - b.dayStart);
 }
 
 /**
@@ -123,7 +195,7 @@ function count(v: unknown): number | null {
  * incoherent. The same reasoning rejects a file whose parts don't add up.
  */
 function readTally(): PrunedTally {
-  const zero = { runs: 0, passed: 0, failed: 0 };
+  const zero = { runs: 0, passed: 0, failed: 0, days: [] };
   try {
     const parsed = JSON.parse(fs.readFileSync(prunedTallyFile(), "utf-8")) as Partial<PrunedTally>;
     const runs = count(parsed.runs);
@@ -131,11 +203,27 @@ function readTally(): PrunedTally {
     const failed = count(parsed.failed);
     if (runs === null || passed === null || failed === null) return zero;
     if (passed + failed !== runs) return zero;
-    return { runs, passed, failed };
+    return { runs, passed, failed, days: readDays(parsed.days, runs) };
   } catch {
     // Absent (nothing has been pruned yet) or unreadable. Same answer.
     return zero;
   }
+}
+
+/** Add one pruned run to its day's bucket, keeping the most recent
+ *  PRUNED_DAYS_KEPT days. Buckets stay sorted oldest-first. */
+function tallyDay(days: PrunedDay[], startedAt: number, passed: boolean): PrunedDay[] {
+  const dayStart = dayStartOf(startedAt);
+  const bucket = days.find((d) => d.dayStart === dayStart);
+  if (bucket) {
+    bucket.runs++;
+    if (passed) bucket.passed++;
+    else bucket.failed++;
+    return days;
+  }
+  const next = [...days, { dayStart, runs: 1, passed: passed ? 1 : 0, failed: passed ? 0 : 1 }];
+  next.sort((a, b) => a.dayStart - b.dayStart);
+  return next.slice(-PRUNED_DAYS_KEPT);
 }
 
 /** Best-effort, and deliberately so. This is called from inside `append`, on the
@@ -171,6 +259,7 @@ function pruneToCap(all: RunRecord[]): void {
     tally.runs++;
     if (rec.status === "passed") tally.passed++;
     else tally.failed++;
+    tally.days = tallyDay(tally.days, rec.startedAt, rec.status === "passed");
     dropped++;
   }
   if (dropped > 0) writeTally(tally);
@@ -208,6 +297,7 @@ export const runHistoryStore = {
       failed: pruned.failed + failed,
       retained,
       pruned: pruned.runs,
+      prunedDays: pruned.days,
     };
   },
 
@@ -471,7 +561,7 @@ export const runHistoryStore = {
    *  the tally was added to answer, pointing the other way. */
   resetStats(): { removed: number } {
     const removed = readAll().length;
-    writeTally({ runs: 0, passed: 0, failed: 0 });
+    writeTally({ runs: 0, passed: 0, failed: 0, days: [] });
     writeAll([]);
     logger.info("recorder", "Reset run stats (kept logs)", { removed });
     return { removed };
@@ -489,7 +579,7 @@ export const runHistoryStore = {
     } catch {
       /* logs dir may not exist yet */
     }
-    writeTally({ runs: 0, passed: 0, failed: 0 });
+    writeTally({ runs: 0, passed: 0, failed: 0, days: [] });
     writeAll([]);
     logger.info("recorder", "Deleted all run stats and logs", { removed: all.length });
     return { removed: all.length };

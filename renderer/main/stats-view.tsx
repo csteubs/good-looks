@@ -381,7 +381,7 @@ export function StatsView() {
           and breakdowns, each answering a question you already knew you had;
           this answers the one you arrive with, and a summary printed underneath
           the detail it summarises is a summary nobody reads. */}
-      <DigestPanel runs={realRuns} />
+      <DigestPanel runs={realRuns} prunedDays={totalsQuery.data?.prunedDays} />
 
       {/* min-h-0 flex-1, NOT h-full. In a flex column h-full resolves to 100% of
           the PARENT, but the header above has already consumed part of that —
