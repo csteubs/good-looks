@@ -492,14 +492,19 @@ function AutoScrollToggle({ on, onChange }: { on: boolean; onChange: (next: bool
   );
 }
 
-/** Minimize, shown on both dialogs. It sits in the panel's top-right corner
- *  beside the close "X" rather than in the description row: it is a WINDOW
- *  control — the same "put this away, it keeps running" gesture the close
- *  button performs — and reading it next to the other icon actions invited it
- *  to be read as something that acts on the response. Minimize is also the
- *  DEFAULT dismissal (Esc and the close button route here too); discarding a
- *  running job by accident is the expensive mistake, so that keeps its own
- *  explicit click down in the description row. */
+/** Minimize, and the ONLY control in these dialogs' top-right corner — both
+ *  dialogs pass `showCloseButton={false}`.
+ *
+ *  It is a WINDOW control, so it belongs in the corner rather than in the
+ *  description row, where reading it beside stop/regenerate/copy invited it to
+ *  be taken as something done to the response. And it is the only one needed:
+ *  every dismissal here (Esc, the overlay, what used to be the "X") routes to
+ *  `minimize`, so a close button next to it was a second button doing the
+ *  identical thing under a name that says "throw this away" — the one thing
+ *  this feature must never look like it is doing to a running job.
+ *
+ *  Discarding IS available; it keeps its own explicit click down in the
+ *  description row, where an accidental hit is unlikely. */
 function MinimizeButton() {
   const { minimize } = useAiDebug();
   return (
@@ -1009,6 +1014,7 @@ export function AiDebugDialog({ sessionKey }: { sessionKey: string }) {
         if (!next) store.minimize();
       }}
       headerActions={<MinimizeButton />}
+      showCloseButton={false}
       title={dialogTitle("Debugging with", modelName, models, confirmModel)}
       description={
         <span className="inline-flex items-center gap-2">
@@ -1391,6 +1397,7 @@ export function StepAiDebugDialog({ sessionKey }: { sessionKey: string }) {
         if (!next) store.minimize();
       }}
       headerActions={<MinimizeButton />}
+      showCloseButton={false}
       title={dialogTitle("Debugging step with", modelName, models, confirmModel)}
       description={
         <span className="inline-flex items-center gap-2">

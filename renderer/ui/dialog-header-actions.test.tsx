@@ -88,7 +88,11 @@ describe("Dialog headerActions", () => {
     expect(headerOf().className).not.toContain("pr-6");
   });
 
-  it("still renders the corner group when the close button is suppressed", () => {
+  // The AI debug dialog's shape: minimize IS its close control, so it suppresses
+  // the "X" and the slot holds the only corner button. The group must still be
+  // what positions it — dropping the close button used to drop the corner
+  // entirely, which would leave the action inline at the top of the panel.
+  it("still positions the action when the close button is suppressed", () => {
     render(
       <Dialog open title="Debugging with AI" showCloseButton={false}
         headerActions={<button type="button" aria-label="Minimize">m</button>}
@@ -98,6 +102,9 @@ describe("Dialog headerActions", () => {
     );
 
     expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Minimize" })).toBeTruthy();
+    const corner = screen.getByRole("button", { name: "Minimize" }).parentElement!;
+    expect(corner.className).toContain("absolute");
+    expect(corner.className).toContain("right-3");
+    expect(corner.className).toContain("top-3");
   });
 });

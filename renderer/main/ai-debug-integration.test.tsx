@@ -230,18 +230,23 @@ describe("opening a session from the run output", () => {
     expect(await screen.findByText(/still working/)).toBeTruthy();
   });
 
-  it("puts minimize in the panel's corner beside close, and discard in the icon row", async () => {
+  it("puts minimize alone in the panel's corner, with discard in the icon row", async () => {
     renderApp();
     fireEvent.click(await findDebugIcon());
     await screen.findByRole("button", { name: /Send to AI/i });
 
-    // Minimize is a WINDOW control — it does to the panel what the close "X"
-    // does, so it lives in the same corner group and not in the description
-    // row, where it read as another action on the response. Discard stays in
-    // that row: it destroys the job, which is not what a corner control does.
-    const close = screen.getByRole("button", { name: "Close" });
-    const corner = close.parentElement!;
-    expect(corner.contains(screen.getByRole("button", { name: /^Minimize$/i }))).toBe(true);
+    // Minimize IS this dialog's close control — dismissing minimizes, so a
+    // close "X" beside it was a second button doing the same thing under a
+    // name that reads as "throw this away". There is exactly one corner
+    // control, and it is minimize.
+    expect(screen.queryByRole("button", { name: "Close" })).toBeNull();
+
+    const minimize = screen.getByRole("button", { name: /^Minimize$/i });
+    const corner = minimize.parentElement!;
+    expect(corner.className).toContain("right-3");
+    // Discard stays in the description row: it destroys the job, which is not
+    // what a corner control does, and it is the one gesture here that must
+    // stay hard to hit by accident.
     expect(corner.contains(screen.getByRole("button", { name: /Discard session/i }))).toBe(false);
   });
 

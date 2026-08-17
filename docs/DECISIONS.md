@@ -10,7 +10,7 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
-### 2026-08-17 — Minimize is a window control, so it sits with the close button
+### 2026-08-17 — Minimize replaces the AI debug dialog's close button
 
 `renderer/ui/overlays.tsx`, `renderer/main/ai-debug-panel.tsx`.
 
@@ -18,24 +18,29 @@ The AI debug dialog's minimize button lived in the description row, at the end
 of a strip of icons that act on the RESPONSE — stop, regenerate, copy,
 auto-scroll follow — with discard after it. Read in that company it looks like
 one more thing done to the answer, when what it actually does is put the whole
-panel away, which is precisely what the close "X" in the opposite corner does.
-The two controls that dismiss the dialog were at opposite ends of the header,
-and Esc and the "X" both route to minimize anyway.
+panel away. That is precisely what the close "X" in the opposite corner did:
+dismissal here has always routed to `minimize`, because losing a running job to
+a stray Escape is the failure this feature exists to prevent.
 
-So minimize moved into the panel's top-right corner, immediately left of the
-close button. `DialogContent` gained a **`headerActions`** slot rather than the
-panel reaching into the corner itself: the corner is `absolute right-3 top-3`
-and there is now more than one thing in it, so a single flex group owns the
-position and the ordering, and the close button stays outermost the way it is
-in every other dialog in the app. The composed `Dialog` also widens the
-header's right padding when the slot is filled, because the title's line is
-what the extra icon eats into.
+So the dialog had two buttons performing one action, at opposite ends of its
+header, and the more prominent of them was labelled with the gesture that
+usually means "throw this away". Minimize moved into the corner and the "X"
+went: both dialogs now pass `showCloseButton={false}`, and minimize is the only
+corner control. It is the gentler word for what both did, and the one that says
+out loud that the job keeps running.
+
+`DialogContent` gained a **`headerActions`** slot rather than the panel
+reaching into the corner itself. The corner is `absolute right-3 top-3`, so a
+single flex group owns the position and the ordering; where a dialog keeps its
+close button, the slot's contents sit to its left and close stays outermost the
+way it is everywhere else in the app. The composed `Dialog` widens the header's
+right padding when the slot is filled, because the title's line is what an
+extra icon eats into.
 
 Discard stayed in the description row. It is not a window control — it stops
-the job and forgets it — and the whole reason minimize is the default dismissal
-is that losing a running job to a stray click is the expensive mistake. Putting
-a destructive button in the corner next to close would reintroduce exactly
-that risk.
+the job and forgets it — and putting a destructive button in the corner, where
+the dismissal used to be, would hand back exactly the accident the minimize
+default was protecting against.
 
 The slot is for window-level controls only. Anything acting on the content
 belongs in the description row or the footer; a corner that accumulates
@@ -43,12 +48,14 @@ per-content actions is the strip this change was undoing.
 
 Coverage is placement, not appearance: `renderer/ui/dialog-header-actions.test.tsx`
 pins that the node lands inside the close button's group and before it, that it
-is NOT inside the description, and that the padding widens;
-`ai-debug-integration.test.tsx` pins the same split for the real panel
-(minimize in the corner, discard out of it). A `headerActions` node rendered
-anywhere else still renders, still clicks and still answers every by-role
-query — it just sits in the wrong place, which jsdom cannot see and a
-by-role assertion would never notice.
+is NOT inside the description, that the padding widens, and that the group
+still POSITIONS the action when the close button is suppressed — which is the
+AI debug dialog's shape, and would otherwise be the way a corner control
+silently becomes an inline one. `ai-debug-integration.test.tsx` pins the real
+panel: no close button, minimize in the positioned corner, discard out of it. A
+`headerActions` node rendered anywhere else still renders, still clicks and
+still answers every by-role query — it just sits in the wrong place, which
+jsdom cannot see and a by-role assertion would never notice.
 
 ### 2026-08-17 — The schedule dialog, rebuilt; sub-hour cadences and a one-off date
 
