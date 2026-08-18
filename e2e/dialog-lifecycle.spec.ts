@@ -48,11 +48,19 @@ async function serveSite(): Promise<{ url: string; close: () => Promise<void> }>
 test("the New recording dialog is gone once the recording has started", async ({ app, window }) => {
   const site = await serveSite();
   try {
-    // ⌘K, then the "Record a test" row. The row is picked with `mouseDown`
-    // rather than a click on purpose (the palette closes on blur, so a click
-    // would dismiss the row out from under the pointer) — `click()` here
-    // dispatches the full sequence, mousedown included.
-    await window.keyboard.press("Meta+k");
+    // The palette chord, then the "Record a test" row. The row is picked with
+    // `mouseDown` rather than a click on purpose (the palette closes on blur,
+    // so a click would dismiss the row out from under the pointer) — `click()`
+    // here dispatches the full sequence, mousedown included.
+    //
+    // `ControlOrMeta`, NOT `Meta`. On Linux "Meta" is the Super key and sets
+    // neither `metaKey` nor `ctrlKey` the app looks at, so a `Meta+k` here
+    // opens nothing and the failure reads as a missing palette row rather than
+    // a chord that was never pressed — which is exactly how it read on CI,
+    // where every job runs on Linux while this suite is usually run on macOS.
+    // `isPaletteChord` accepts either modifier, so this matches the app on
+    // both platforms rather than asserting one developer's keyboard.
+    await window.keyboard.press("ControlOrMeta+k");
     const record = window.getByRole("option", { name: /Record a test/i });
     await expect(record).toBeVisible();
     await record.click();

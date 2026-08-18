@@ -5023,6 +5023,21 @@
   color: var(--gl-red);
 }
 
+/* A SEGMENTED ROW IS AS WIDE AS ITS CHOICES, never as wide as the dialog.
+   `.gl-create-field` is a flex column and `.gl-create-pair` a grid, so both
+   stretch their children by default — which drew the control's hairline box
+   across the full width with the four labels huddled at the left end and a
+   third of the border enclosing nothing. The box is the control; a box wider
+   than the thing inside it reads as a container waiting to be filled.
+
+   Stated here rather than on the primitive: `Segmented` is used ~12 times
+   across the app, and elsewhere (the visual compare row, the stats ranges) a
+   full-width row is the right answer. This is the creation dialogs' rule. */
+.gl-create-field > .gl-segmented,
+.gl-create-pair .gl-segmented {
+  align-self: flex-start;
+}
+
 /* The generate dialog's leading sentence. Bold on the first clause only — it is
    a tip, not a warning, so it takes no colour. */
 .gl-create-tip-lead {
