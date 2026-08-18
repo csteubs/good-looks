@@ -56,6 +56,11 @@ export function useSettingsFreshness(): void {
   React.useEffect(() => {
     return api.on("settings:changed", () => {
       void qc.invalidateQueries({ queryKey: ["recorder-settings"] });
+      // Shopify signatures ride this channel too. They are edited in the same
+      // window and read in this one, and the "Signature expired" chip on a test
+      // is worse than useless once it is stale — it would keep naming a problem
+      // the user has just fixed.
+      void qc.invalidateQueries({ queryKey: ["shopify-signatures"] });
     });
   }, [qc]);
 }

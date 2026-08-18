@@ -383,6 +383,20 @@ export function RecorderProvider({
         );
       },
     );
+    // A Shopify crawler signature that is registered for the host being
+    // recorded but was NOT sent. Surfaced now rather than left to the run,
+    // because this recording will be throttled or blocked for its whole life —
+    // and knowing that at step one is what makes it worth abandoning.
+    const offSignature = api.on<{ host: string; reason: "expired" | "unreadable" }>(
+      "recorder:signatureNotSent",
+      ({ host, reason }) => {
+        toast.warning(
+          reason === "expired"
+            ? `The Shopify crawler signature for ${host} has expired, so it wasn't sent. Create a new one in your Shopify admin — signatures last three months and can't be renewed.`
+            : `A Shopify crawler signature is registered for ${host} but couldn't be read on this Mac, so it wasn't sent.`,
+        );
+      },
+    );
     const offFinished = api.on<{ testId: string }>("recorder:finished", ({ testId }) => {
       setLiveSteps([]);
       setStepsLoaded(false);
@@ -590,6 +604,7 @@ export function RecorderProvider({
       offCaptured();
       offCtx();
       offBlocked();
+      offSignature();
       offFinished();
       offOut();
       offStep();

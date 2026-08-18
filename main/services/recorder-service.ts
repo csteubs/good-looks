@@ -14,6 +14,7 @@ import { BrowserWindow, logger, Menu, WebContentsView } from "@shell/backend";
 import type { MenuItemConstructorOptions, WebContentsNavigationEvent } from "@shell/backend";
 
 import { urlAssertPrefill } from "../../shared/url-assert.mjs";
+import { normalizeSignatureHost, signatureForUrl } from "../../shared/shopify-signature.mjs";
 
 import {
   ATTR_ASSERT,
@@ -43,6 +44,7 @@ import {
 import { applyViewportStep, type ResizeHost } from "./resize-service.js";
 import { healStep } from "./auto-heal.js";
 import { healJournalStore } from "./heal-journal-store.js";
+import { shopifySignatureStore } from "./shopify-signature-store.js";
 import { createTrainerWindowGate } from "./trainer-window-gate.js";
 import {
   GUARDED_NAVIGATION_EVENTS,
@@ -1537,6 +1539,34 @@ export const recorderService = {
         });
     };
 
+    // ── What this recording may present a Shopify signature with ─────
+    //
+    // Read ONCE, here, rather than per request: a recording is short, the
+    // decryption is not free, and a signature that changes mid-session is not a
+    // case worth serving. Expiry is still re-checked per request from these
+    // values, which is the part that can lapse while a recording is open.
+    //
+    // Read BEFORE the containment block below because the listener is installed
+    // inside it, and because the start host's status decides what the trainer
+    // is told.
+    const signatureEntries = await shopifySignatureStore.entries();
+    {
+      const startHost = normalizeSignatureHost(url);
+      const status = (await shopifySignatureStore.list()).find(
+        (entry) => entry.host === startHost,
+      );
+      if (status && (status.state === "expired" || status.state === "unreadable")) {
+        // Surfaced rather than logged. This recording will be throttled or
+        // blocked, and knowing that now is the difference between abandoning it
+        // and recording forty steps against a store that is rate-limiting them.
+        sendToMain("recorder:signatureNotSent", { host: status.host, reason: status.state });
+        logger.warn("recorder", "A Shopify signature for this host was not sent", {
+          host: status.host,
+          reason: status.state,
+        });
+      }
+    }
+
     // ── Kill the escape at its source, not just at the events ────────
     //
     // Intercepting navigation events assumes the escape travels through an
@@ -1566,9 +1596,62 @@ export const recorderService = {
         callback(true);
       });
       recSession.setPermissionCheckHandler((_target, permission) => permissionAllowed(permission));
+
+      // ── The Shopify crawler signature ────────────────────────────────
+      //
+      // Attached at the SESSION layer rather than at the navigation events,
+      // because the thing that has to be right is per-REQUEST: every hop of a
+      // redirect chain and every subresource is its own callback, so a
+      // cross-host redirect drops the header on its own and a storefront's
+      // CDN, analytics and chat widgets are never offered it. Nothing about
+      // that falls out of hooking a navigation.
+      //
+      // NO TEARDOWN, deliberately. This session is the in-memory
+      // `recorder-incognito-<uuid>` partition created with `pageView` above and
+      // destroyed with it, so the listener's lifetime is already exactly the
+      // recording's. A removal path would be a second thing to get wrong.
+      //
+      // ONE LISTENER SLOT. Electron keeps a single `onBeforeSendHeaders`
+      // listener per session and a second registration silently REPLACES the
+      // first, so there must never be another one on this session —
+      // check:shopify-signature pins that there is exactly one in this file.
+      if (signatureEntries.length > 0) {
+        recSession.webRequest.onBeforeSendHeaders({ urls: ["*://*/*"] }, (details, callback) => {
+          // The callback must be invoked on EVERY path, including a throw:
+          // Electron holds the request until it is called, so a missed call
+          // hangs that request forever and presents as a page that never
+          // finishes loading, with a clean log.
+          try {
+            // The filter above is a cheap pre-screen, not the boundary — its
+            // glob semantics are Chromium's, not ours. The host is re-checked
+            // here, exactly, and `signatureForUrl` also re-reads expiry so a
+            // signature that lapses mid-recording stops being sent.
+            const entry = signatureForUrl(signatureEntries, details.url, Date.now());
+            if (!entry) {
+              callback({ requestHeaders: details.requestHeaders });
+              return;
+            }
+            callback({
+              requestHeaders: {
+                ...details.requestHeaders,
+                "Signature-Input": entry.signatureInput,
+                Signature: entry.signature,
+                "Signature-Agent": entry.signatureAgent,
+              },
+            });
+          } catch {
+            callback({ requestHeaders: details.requestHeaders });
+          }
+        });
+      }
+
       logger.info("recorder", "Training window containment armed", {
         deniedPermissions: [...DENIED_RECORDER_PERMISSIONS],
         guardedEvents: [...GUARDED_NAVIGATION_EVENTS],
+        // Positive confirmation. "The signature is being sent" and "it silently
+        // is not" look identical from inside the app, and the difference only
+        // shows up as a store that throttles the recording an hour later.
+        signedHosts: signatureEntries.map((entry) => entry.host),
       });
     } catch (err) {
       // If the SDK ever drops these, the event guards below are still in place

@@ -18,8 +18,7 @@ import { logger } from "@shell/backend";
 
 import { webhookUrlStore } from "./webhook-url-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
-import { redact } from "./secret-redaction.js";
-import { testSecretsStore } from "./test-secrets-store.js";
+import { allRedactableValues, redact } from "./secret-redaction.js";
 import type { BatchSummary } from "../recorder/types.js";
 
 /** A webhook that hangs must not hold a batch open. */
@@ -238,7 +237,12 @@ export async function sendAlert(alert: Alert): Promise<void> {
     // This is the only path that sends anything off the machine automatically,
     // so redaction happens here, immediately before the send, rather than
     // anywhere a later refactor could route around.
-    const payload = redactPayload(built, await testSecretsStore.allValues());
+    //
+    // `allRedactableValues()`, not `testSecretsStore.allValues()`. This call
+    // site is async and so does NOT go through the snapshot every other
+    // redactor reads, which means widening the snapshot silently leaves this
+    // one behind — as it did when Shopify signatures were added to it.
+    const payload = redactPayload(built, await allRedactableValues());
     await postWebhook(url, payload);
     logger.info("alerts", "Sent webhook alert", { event: payload.event, status: payload.status });
   } catch (err) {

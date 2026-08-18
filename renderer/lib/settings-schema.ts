@@ -614,6 +614,17 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     label: "GitHub token",
     keywords: "branch switcher pull request private repository rate limit credential",
   },
+  {
+    // No `key`, deliberately: this row is backed by an encrypted credential
+    // store rather than a settings field, so "reset section" must leave it
+    // alone. Resetting a pane should not silently delete a signature that takes
+    // a trip to the Shopify admin to replace.
+    id: "shopify-signatures",
+    pane: "integrations",
+    label: "Shopify crawler signatures",
+    keywords:
+      "shopify crawler signature bot protection blocked throttled storefront credential domain expires web-bot-auth",
+  },
 
   // Diagnostics
   {

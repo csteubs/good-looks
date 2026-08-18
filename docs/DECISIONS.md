@@ -10,6 +10,145 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-18 — Shopify crawler signatures
+
+A Shopify storefront with crawler protection on refuses automated traffic, which
+made the app unusable against one: the training browser is blocked while
+recording, and the run is blocked again afterwards. Shopify's answer is a
+**crawler signature** — the merchant generates one in the admin and copies out
+three static header values (`Signature-Input`, `Signature`, `Signature-Agent`,
+the last always the literal `"https://shopify.com"`). There is no per-request
+crypto on this side; this is a paste-and-store credential, RFC 9421 in the
+web-bot-auth profile. Each is bound to one domain, expires within three months,
+and cannot be renewed.
+
+- **Exact host matching, no subdomain wildcard, and this is correctness rather
+  than caution.** The signature covers `@authority`, so presenting it at a host
+  it was not issued for does not merely fail to help — it presents an INVALID
+  signature to a verifier whose entire job is spotting bot spoofing. `example.com`
+  and `www.example.com` are different authorities and need separate entries, as
+  do a custom domain and its `*.myshopify.com` counterpart. The same fact
+  explains why the host is a fourth field the user types: `@authority` is a
+  *derived* component and is never serialised into the header, so it cannot be
+  read back out of a pasted value.
+
+- **The headers are attached per request by a run fixture, not by
+  `use.extraHTTPHeaders`.** That option is context-wide, so it would hand the
+  credential to `cdn.shopify.com`, `monorail-edge.shopifysvc.com`, Google
+  Analytics, Klaviyo, the Meta pixel and whatever apps the merchant installed —
+  for a repo whose stated egress posture is one opt-in summary-only webhook, and
+  which added `check:renderer-egress` over a favicon, not a trade to make. It was
+  also a drift hazard: `mcp/server.mjs` writes the same shared config and can
+  never set an env var it cannot decrypt, so an env-driven header there would
+  work in the app and silently not in the MCP — and **no existing check would
+  have caught it**, because `check:mcp-parity` scans the generated SPEC's
+  `process.env` references and the config is not a spec. `check:runner-config`
+  now asserts `extraHTTPHeaders` never appears there, so the obvious fix cannot
+  return without someone confronting this.
+
+  Two alternatives rejected. A **local proxy** via `launchOptions.proxy` would
+  have covered imported specs, but an HTTPS request through a proxy is a CONNECT
+  tunnel — the proxy cannot see or modify headers without a MITM CA, and
+  installing a root certificate is a far larger decision than this feature.
+  **`NODE_OPTIONS=--require`** to shim module resolution would also have covered
+  them, by putting app-authored code into an untrusted imported project's module
+  graph.
+
+- **The cost of that choice is imported specs, and it is stated rather than
+  discovered.** The fixture reaches a spec by rewriting its `@playwright/test`
+  import, which an imported project's spec may not even have — the same reason
+  screenshots, a11y, Auto-Heal and crawl-settling are all app-generated-only.
+  `announceSignatureState` emits a line for each of the six outcomes, including
+  the two that are "nothing happened": an unsigned run against a store with bot
+  protection does not fail at a login form where the cause is obvious, it fails
+  further down as a timeout and reads as a flaky test.
+
+  The fixture also **counts what it signed** and writes the per-host total to
+  stderr. A run that arms a signature and signs zero requests is this feature's
+  likeliest silent failure and is otherwise indistinguishable from success —
+  the same argument as `captureMs`/`shotCount`.
+
+- **Expired means do not send, but do not refuse the run.** Refusing would turn a
+  degraded run into no run, and the test may still pass at low volume. Sending
+  an expired signature is the only option that is affirmatively worse than both.
+  `signatureForUrl` therefore refuses an expired entry itself rather than
+  leaving that to the trainer, the runner and the fixture separately. An expired
+  row is never auto-deleted either: the row saying "expired" is how the user
+  learns why the crawl started failing, and a row that vanished is not.
+
+- **Two files on disk, which contradicts `test-secrets-store.ts` on purpose.**
+  That store keeps one encrypted blob because `hasKey()`/`getKey()` disagreeing
+  is what let llm-service claim a provider was connected that could not
+  authenticate. That argument is about a store answering ONE question two ways.
+  This one answers two questions, and the second is asked from a process that
+  cannot decrypt anything: the standalone MCP has no Electron and therefore no
+  safeStorage, so with only a blob it cannot distinguish "no signature
+  configured" from "one is, and I can't read it" — leaving it to warn on every
+  run or never. The plaintext register (host, expiry, id; **never a value**) is
+  what lets it warn exactly when there was something it failed to send. The
+  llm-service failure is answered head-on by reporting THREE states, with
+  `unreadable` never collapsing into `none`.
+
+  Write order is asymmetric so a partial failure always leaves the VISIBLE
+  state: register first when adding, blob first when removing, and
+  `signatureFor` requires both halves so a value stranded in the blob is never
+  sent.
+
+- **A pasted value is untrusted input.** It is persisted and then concatenated
+  into an HTTP header — and on the run side it travels as CDP JSON rather than
+  through Chromium's own header parser, which is a much weaker guarantee. So it
+  is checked on the way in: printable ASCII only, which rejects CR, LF and NUL
+  and therefore header injection, plus a length bound. Same spirit as
+  `normalizeRawStep`.
+
+  The `Signature-Input` parser is a **scanner, not a regex**, and this is not
+  theoretical: `keyid` is a quoted base64 blob that can contain the literal
+  `expires=999`, so a `/expires=(\d+)/` scan reads an expiry date out of
+  attacker-adjacent base64 — and which one it returns depends on where it
+  happens to sit in the string. A missing `expires` is reported as `unknown`
+  rather than invented, because it is optional in RFC 9421 and a guessed expiry
+  is one the app would act on.
+
+- **The value is kept out of artifacts structurally, not only by redaction.**
+  `GLAZE_RECORD_ALL_HEADERS` makes the capture fixture record every request
+  header into `network.json`, which the Visual tab reads back and Debug with AI
+  can feed to a hosted LLM. `HEADER_NEVER_RECORD` is checked **before** the
+  `allowAll` branch — moving it to the far side of that `||` is a one-token
+  change that is completely silent, so `check:log-capture` drives it with
+  `allowAll` both ways. The line stops at these three: `recordAllHeaders` is
+  documented as the user's opt-out for headers *the page* sends, and these are a
+  credential *the app* injected. `authorization` and `cookie` are what the
+  escape hatch is for.
+
+- **Finding this closed a leak that was already live.** Extending
+  `refreshSecretSnapshot` covers the run log, the streamed output, every
+  artifact read and the report emitters — but **`alert-service.sendAlert` read
+  `testSecretsStore.allValues()` directly**, bypassing the snapshot entirely, so
+  widening the snapshot would have left the one path that sends data off this
+  machine still carrying signatures. Every existing redaction assertion in
+  `check:alerts` called `redactPayload` with a list the check itself supplied,
+  which proves the function works and nothing about the list the real send uses.
+  The check now drives the real `sendAlert` with a real registered signature and
+  a stubbed `fetch`, and looks at the bytes.
+
+- **The test detail chip only ever reports the cases where nothing happens.**
+  A chip announcing a working signature would be on screen for every run of
+  every test against a registered store and would stop being read; the three it
+  does show — expired, unreadable, and imported-test — are the ones where the
+  user believes they are covered and are not. It rides `settings:changed` to
+  stay fresh, because signatures are edited in the SETTINGS window and read in
+  the main one, and a background BrowserWindow's `visibilityState` stays
+  "visible" so refetch-on-focus never fires. A stale "Signature expired" naming
+  a problem the user has just fixed is worse than no chip at all.
+
+- **No e2e spec, deliberately.** Nothing here is about windows, layout or a real
+  navigation — the three things `e2e/` exists for. The trainer hook's real
+  subject (Chromium actually attaching the header) would need a live HTTP server
+  under `e2e/`; the source-level assertions in `check:shopify-signature`, which
+  pin the two properties Electron's API makes silent — one `onBeforeSendHeaders`
+  slot per session, and a callback that must fire on every path or the request
+  hangs forever — plus a manual pass, are the proportionate answer.
+
 ### 2026-08-17 — The test detail head becomes one row
 
 The band above the Steps tabs was two lines, because that is what `Toolbar`

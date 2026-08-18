@@ -54,6 +54,7 @@ import {
   type ScriptChangeJournal,
 } from "../services/script-change-store.js";
 import { refreshSecretSnapshot } from "../services/secret-redaction.js";
+import { shopifySignatureStore } from "../services/shopify-signature-store.js";
 import { parseSpecDetailed } from "../services/spec-parser.js";
 import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
@@ -1253,6 +1254,44 @@ export function registerHandlers(): void {
   // ── Alert (outgoing webhook) handlers ───────────────────────────────
   // The URL is a bearer credential, so it only ever travels renderer→backend.
   // The renderer can read back whether one exists and its host, never the URL.
+  // ── Shopify crawler signatures ──────────────────────────────────────
+  //
+  // `list` returns STATUS ONLY — host, expiry, state. The header values never
+  // cross IPC in either direction after being saved, the same contract the
+  // webhook URL has: the renderer can learn that a signature exists and whether
+  // it still works, and nothing more.
+  ipcMain.handle("shopify:list", async () => shopifySignatureStore.list());
+  ipcMain.handle(
+    "shopify:add",
+    async (
+      _e,
+      params: { host: string; signatureInput: string; signature: string; signatureAgent?: string },
+    ) => {
+      const status = await shopifySignatureStore.upsert({
+        host: params.host ?? "",
+        signatureInput: params.signatureInput ?? "",
+        signature: params.signature ?? "",
+        signatureAgent: params.signatureAgent,
+      });
+      // The values become redactable the moment they exist, not at the next run
+      // start — a webhook or a log written in between would otherwise carry them.
+      await refreshSecretSnapshot();
+      // Signatures are edited in the SETTINGS window and read in the main one,
+      // and a background BrowserWindow's `visibilityState` stays "visible" — so
+      // React Query's refetch-on-focus never fires and the main window would
+      // keep showing the state from before the fix. Same push the recorder
+      // settings use, for the same reason (see `useSettingsFreshness`).
+      sendToMain("settings:changed", null);
+      return status;
+    },
+  );
+  ipcMain.handle("shopify:remove", async (_e, params: { id: string }) => {
+    await shopifySignatureStore.remove(params.id ?? "");
+    await refreshSecretSnapshot();
+    sendToMain("settings:changed", null);
+    return shopifySignatureStore.list();
+  });
+
   ipcMain.handle("alerts:setWebhookUrl", async (_e, params: { url: string }) => {
     await webhookUrlStore.setUrl(params.url ?? "");
     return webhookUrlStore.status();

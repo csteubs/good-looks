@@ -57,6 +57,16 @@ describe("useSettingsFreshness", () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["recorder-settings"] });
   });
 
+  it("also refreshes the Shopify signatures the test detail chip reads", () => {
+    // Signatures are edited in the Settings window and read in this one. A
+    // background BrowserWindow's `visibilityState` stays "visible", so nothing
+    // else refreshes them — and the chip they drive says "Signature expired",
+    // which is actively misleading once it is stale.
+    const { invalidate } = setup();
+    push("settings:changed");
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["shopify-signatures"] });
+  });
+
   it("does nothing until the push arrives", () => {
     // A hook that invalidated on mount would refetch on every navigation, which
     // is the cost this deliberately avoids.

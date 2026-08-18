@@ -175,6 +175,16 @@ such a test and says so; `run_batch` and `run_routine` skip it with a note rathe
 than failing the whole suite. Everything else about those tests — steps, script,
 past runs, logs — stays readable. Run them from the app.
 
+**A test against a store with a Shopify crawler signature runs unsigned from
+here.** The signature's three header values are encrypted to the app in the same
+way secret variables are, so this server cannot present them. It can see which
+domains have one registered, so a run against one of those says so in its
+`fixtures` field — and that note matters more than it looks. An unsigned run
+against a store with crawler protection does not fail somewhere obvious; the
+store throttles or blocks it and the test fails further down as a timeout or a
+missing element, which reads as flakiness. A failure here can be a pass from the
+app. Run it from the app.
+
 **Console and network logs are withheld library-wide if *any* test declares a
 secret.** The app redacts secrets when it reads those files; this server can't,
 and any run's log can contain any test's secret.

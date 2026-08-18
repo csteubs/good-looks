@@ -132,6 +132,18 @@ function readSettings() {
   return readJsonFile(dataDir, "recorder/recorder-settings.json", {});
 }
 
+/** The app's plaintext Shopify signature register — hosts and expiries, never a
+ *  header value (those live in the .bin beside it, encrypted to the app).
+ *
+ *  Read so a run can SAY it went unsigned. Without this file the two states
+ *  "nothing is configured" and "something is, and I can't read it" are the same
+ *  silence from here, and a store that throttles the run turns into a test
+ *  failure with nothing pointing at the cause. */
+function readSignatures() {
+  const register = readJsonFile(dataDir, "recorder/shopify-signatures.json", {});
+  return Array.isArray(register?.entries) ? register.entries : [];
+}
+
 
 /** Persist a batch in the SAME file and shape the app's batch-history-store
  *  uses, so a batch run from an MCP client shows up in the app's Batch view. */
@@ -656,6 +668,7 @@ server.registerTool(
                 speed: test.speed ?? "fast",
                 timeoutMs: result.timeoutMs,
                 timeoutRaised: result.timeoutRaised,
+                signatures: readSignatures(),
               }),
               outputTail,
             },
@@ -1199,6 +1212,7 @@ async function runBatchTool({ testIds, tag, group, browser, datasetIds, allDatas
   // bury the results. Reported against the tests actually queued, so a suite
   // that wanted none of it is told nothing.
   const settings = readSettings();
+  const signatures = readSignatures();
   const suiteSkips = [
     ...new Set(
       [...byId.values()].flatMap(
@@ -1207,6 +1221,7 @@ async function runBatchTool({ testIds, tag, group, browser, datasetIds, allDatas
             speed: t.speed ?? "fast",
             timeoutMs: 0,
             timeoutRaised: false,
+            signatures,
           }).skipped ?? [],
       ),
     ),

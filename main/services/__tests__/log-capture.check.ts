@@ -91,6 +91,40 @@ const { glazeFilterHeaders, glazeScrubUrl, glazeTruncate, glazeMakeStore, glazeP
 }
 
 {
+  // …with exactly one exception, and this is the assertion that pins it. The
+  // Shopify crawler signature is a credential THIS APP injected, and the
+  // artifact it would land in is read back into the Visual tab and fed to a
+  // hosted LLM by Debug with AI. `recordAllHeaders` is the user's opt-out for
+  // headers the PAGE sends; it does not reach these.
+  //
+  // The bug this is written against is a one-token ordering change — moving the
+  // never-list test to the far side of the `allowAll ||` — which is completely
+  // silent, so it is driven with allowAll BOTH ways.
+  for (const allowAll of [true, false]) {
+    const filtered = glazeFilterHeaders(
+      {
+        "Signature-Input": 'sig1=("@authority");expires=1;keyid="k"',
+        Signature: "sig1=:c2VjcmV0:",
+        "Signature-Agent": '"https://shopify.com"',
+        "content-type": "text/html",
+      },
+      allowAll,
+    );
+    for (const name of ["signature-input", "signature", "signature-agent"]) {
+      assert(filtered[name] === ELIDED, `${name} is elided with allowAll=${allowAll}`);
+    }
+    assert(
+      Object.keys(filtered).indexOf("signature") >= 0,
+      `…while still being reported by name (allowAll=${allowAll})`,
+    );
+    assert(
+      JSON.stringify(filtered).indexOf("c2VjcmV0") < 0,
+      `no part of the signature value survives (allowAll=${allowAll})`,
+    );
+  }
+}
+
+{
   assert(glazeFilterHeaders({} as Record<string, string>, false) !== null, "empty headers are fine");
   assert(
     Object.keys(glazeFilterHeaders(null as unknown as Record<string, string>, false)).length === 0,

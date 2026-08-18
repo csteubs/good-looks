@@ -63,7 +63,7 @@ import type {
 } from "./issue-types";
 import type { TriageResult } from "../../shared/triage.mjs";
 import type { EmitterId } from "../../shared/emitters.mjs";
-import type { EmitResult } from "./recorder-types";
+import type { EmitResult, ShopifySignatureStatus } from "./recorder-types";
 import type {
   StepDurationRow,
   StepHealthRow,
@@ -419,6 +419,19 @@ export const api = {
         skipped: string[];
         plannedRuns: number;
       }>("routines:run", { id }),
+  },
+  /** Shopify crawler signatures. Note what is NOT here: no way to read a
+   *  signature back. The renderer learns a host, an expiry and a state, which is
+   *  everything the UI needs and nothing an exfiltration path could use. */
+  shopify: {
+    list: () => ipc().invoke<ShopifySignatureStatus[]>("shopify:list"),
+    add: (params: {
+      host: string;
+      signatureInput: string;
+      signature: string;
+      signatureAgent?: string;
+    }) => ipc().invoke<ShopifySignatureStatus>("shopify:add", params),
+    remove: (id: string) => ipc().invoke<ShopifySignatureStatus[]>("shopify:remove", { id }),
   },
   alerts: {
     setWebhookUrl: (url: string) =>

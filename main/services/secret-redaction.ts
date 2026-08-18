@@ -16,6 +16,7 @@
 
 import { logger } from "@shell/backend";
 
+import { shopifySignatureStore } from "./shopify-signature-store.js";
 import { testSecretsStore } from "./test-secrets-store.js";
 
 export const REDACTED = "[redacted]";
@@ -68,12 +69,32 @@ export function redact(
 // every writer refreshes before it writes; see `refreshSecretSnapshot`.
 let snapshot: string[] = [];
 
-/** Reload the snapshot from the encrypted store. Called before a run starts and
+/**
+ * Every value that must not appear in anything persisted or sent.
+ *
+ * TWO stores, because there are two ways a credential reaches a run's output. A
+ * secret variable is typed INTO the page and comes back in an assertion diff or
+ * a content dump. A Shopify crawler signature is attached to the request BY
+ * THIS APP, and comes back in a recorded request header or a Playwright error.
+ * Different paths in, one way out.
+ *
+ * Exported for the one redaction site that is async and therefore does not read
+ * the snapshot — see `alert-service.sendAlert`.
+ */
+export async function allRedactableValues(): Promise<string[]> {
+  const [secrets, signatures] = await Promise.all([
+    testSecretsStore.allValues(),
+    shopifySignatureStore.headerValuesForRedaction(),
+  ]);
+  return [...new Set([...secrets, ...signatures])];
+}
+
+/** Reload the snapshot from the encrypted stores. Called before a run starts and
  *  after any secret is saved or cleared, so the synchronous redactors always
  *  see the values that the run they're about to record could have exposed. */
 export async function refreshSecretSnapshot(): Promise<void> {
   try {
-    snapshot = await testSecretsStore.allValues();
+    snapshot = await allRedactableValues();
   } catch (err) {
     logger.warn("secrets", "Could not refresh the redaction snapshot", {
       message: err instanceof Error ? err.message : String(err),

@@ -30,7 +30,12 @@ import type {
   ProviderId,
   ProviderVocabulary,
 } from "../lib/issue-types";
-import type { ArtifactUsage, RecorderSettings, RunTotals } from "../lib/recorder-types";
+import type {
+  ArtifactUsage,
+  RecorderSettings,
+  RunTotals,
+  ShopifySignatureStatus,
+} from "../lib/recorder-types";
 import { formatBytes } from "../lib/settings-schema";
 
 /** Before the status load resolves, and if it never does. Disconnected is the
@@ -87,6 +92,21 @@ export interface SettingsController {
   saveWebhookUrl: (url: string) => Promise<boolean>;
   clearWebhookUrl: () => Promise<void>;
   testWebhook: () => Promise<void>;
+
+  /** Registered Shopify crawler signatures — host, expiry and state only. There
+   *  is deliberately no way to read one back; see `api.shopify`. */
+  signatures: ShopifySignatureStatus[];
+  signaturesBusy: boolean;
+  /** Resolves true when the signature was accepted, so the pane knows whether
+   *  to clear its inputs — same contract as `saveWebhookUrl`. Clearing on
+   *  failure would lose a paste the user cannot easily repeat. */
+  addSignature: (params: {
+    host: string;
+    signatureInput: string;
+    signature: string;
+    signatureAgent?: string;
+  }) => Promise<boolean>;
+  removeSignature: (id: string) => Promise<void>;
 
   /** Issue tracker. `issuesStatus.hasKey` and `issuesStatus.account` answer
    *  different questions — a key is saved, and the key works — so the pane can
@@ -175,6 +195,8 @@ export function useSettingsControllerState(): SettingsController {
   // The URL itself is a bearer credential and is never read back from the
   // backend — only whether one exists, and its host.
   const [webhookStatus, setWebhookStatus] = useState<WebhookStatus>({ hasUrl: false, host: null });
+  const [signatures, setSignatures] = useState<ShopifySignatureStatus[]>([]);
+  const [signaturesBusy, setSignaturesBusy] = useState(false);
   const [webhookBusy, setWebhookBusy] = useState(false);
 
   // Same contract as the webhook above: the key travels renderer→backend only,
@@ -256,6 +278,10 @@ export function useSettingsControllerState(): SettingsController {
     load(
       () => api.alerts.status(),
       setWebhookStatus,
+    );
+    load(
+      () => api.shopify.list(),
+      (next) => setSignatures(next ?? []),
     );
     load(
       () => api.issues.status(),
@@ -504,6 +530,45 @@ export function useSettingsControllerState(): SettingsController {
       return false;
     } finally {
       setWebhookBusy(false);
+    }
+  }, []);
+
+  // ── Shopify crawler signatures ────────────────────────────────────────────
+
+  const addSignature = useCallback(
+    async (params: {
+      host: string;
+      signatureInput: string;
+      signature: string;
+      signatureAgent?: string;
+    }) => {
+      setSignaturesBusy(true);
+      try {
+        const saved = await api.shopify.add(params);
+        setSignatures(await api.shopify.list());
+        toast.success(`Signature saved for ${saved.host}.`);
+        return true;
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : `Failed to save the signature: ${error}`,
+        );
+        return false;
+      } finally {
+        setSignaturesBusy(false);
+      }
+    },
+    [],
+  );
+
+  const removeSignature = useCallback(async (id: string) => {
+    setSignaturesBusy(true);
+    try {
+      setSignatures(await api.shopify.remove(id));
+      toast.success("Signature removed.");
+    } catch (error) {
+      toast.error(`Failed to remove the signature: ${error}`);
+    } finally {
+      setSignaturesBusy(false);
     }
   }, []);
 
@@ -863,6 +928,10 @@ export function useSettingsControllerState(): SettingsController {
     clearLmStudioToken,
     testConnection,
     changeModel,
+    signatures,
+    signaturesBusy,
+    addSignature,
+    removeSignature,
     webhookStatus,
     webhookBusy,
     saveWebhookUrl,
