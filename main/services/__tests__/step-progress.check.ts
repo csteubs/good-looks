@@ -188,5 +188,43 @@ for (const method of [...PAGE_ACTIONS, ...LOCATOR_ACTIONS]) {
   assert(!visible.includes("__GLAZE_STEP__"), "and never reaches the user's output");
 }
 
+// ── 7. Every sibling the fixture imports is actually written ───────────────
+//
+// THE BUG THIS EXISTS FOR, found by CI rather than by anything on a laptop. The
+// capture fixture imports its siblings at the TOP of the module, unconditionally
+// — `glaze-heal.mjs`, `glaze-settle.mjs`, `glaze-signature.mjs`. A writer that
+// forgets one does not produce a missing feature; it produces a module that
+// cannot be resolved, so `test` never loads, so NO step reports at all and the
+// progress bar never leaves the first one. That is this file's whole subject,
+// and every source-level assertion above passes while it happens, because the
+// fixture's TEXT is perfectly correct.
+//
+// There are exactly two writers and they have to agree: `playwright-runner.ts`
+// for a real run, and `e2e/step-progress.spec.ts`, which reproduces the scripts
+// dir to test this. (The MCP writes no fixtures at all — see check:mcp-parity.)
+// Adding a third import to the fixture is the moment this drifts.
+{
+  const siblings = [...new Set([...captureFixtureSource.matchAll(/from "\.\/([^"]+\.mjs)"/g)].map((m) => m[1]))];
+  assert(
+    siblings.length >= 3,
+    `the sibling scan still finds the fixture's imports (found ${siblings.length})`,
+  );
+  for (const [label, file] of [
+    ["playwright-runner.ts", "main/services/playwright-runner.ts"],
+    ["e2e/step-progress.spec.ts", "e2e/step-progress.spec.ts"],
+  ] as const) {
+    const src = fs.readFileSync(path.join(process.cwd(), file), "utf-8");
+    for (const sibling of siblings) {
+      // Matched by the CONSTANT that names the file as well as by the literal,
+      // since both writers address most of these through an exported name.
+      const constant = sibling.replace(/^glaze-/, "").replace(/\.mjs$/, "").toUpperCase();
+      assert(
+        src.includes(sibling) || src.includes(`${constant}_FIXTURE_FILE`),
+        `${label} writes ${sibling}, which the capture fixture imports at module load`,
+      );
+    }
+  }
+}
+
 console.log(failures === 0 ? "\nAll step-progress checks passed" : `\n${failures} check(s) FAILED`);
 process.exit(failures === 0 ? 0 : 1);
