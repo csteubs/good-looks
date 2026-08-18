@@ -175,7 +175,118 @@ const MEASURED_REQUIREMENT = 928;
   );
 }
 
-// ── 3. Visual's run header ────────────────────────────────────────────────
+// ── 3. Test detail's head, now that it is one row ─────────────────────────
+{
+  const detail = read("../../../renderer/main/test-detail-view.tsx");
+  const screens = read("../../../renderer/theme/screens.css").replace(/\/\*[\s\S]*?\*\//g, "");
+
+  // The head used to be two stacked lines — `Toolbar` puts its content over its
+  // actions — so the controls always had the pane's full width to themselves
+  // and §1's floor was the only thing they could outgrow. On one row they share
+  // that width with the test's name, and the controls alone want about 840px
+  // against the 688px this app's smallest window leaves the pane. So the row has
+  // to be able to break, and something has to decide WHICH SIDE GIVES.
+  //
+  // Source-level for this file's usual reason: jsdom has no layout engine, so a
+  // rendered test cannot observe a row that fails to wrap or a field squeezed
+  // under its own value. `test-detail-view.test.tsx` owns the half that IS
+  // observable there — that the identity and the controls are siblings on one
+  // row, and that every control is inside the group.
+  assert(
+    /className="gl-detail-head-row"/.test(detail),
+    "test-detail-view.tsx: the head's single row still carries `gl-detail-head-row`",
+  );
+  assert(
+    /className="gl-detail-ident"/.test(detail),
+    "test-detail-view.tsx: the name/URL column still carries `gl-detail-ident`",
+  );
+  assert(
+    /className="gl-detail-tools"/.test(detail),
+    "test-detail-view.tsx: the control group still carries `gl-detail-tools`",
+  );
+
+  const rowRule = screens.match(/\.gl-detail-head-row\s*\{([^}]*)\}/);
+  assert(rowRule !== null, "screens.css: found the .gl-detail-head-row rule");
+  if (rowRule) {
+    assert(
+      /flex-wrap:\s*wrap/.test(rowRule[1]),
+      "`.gl-detail-head-row` wraps — the controls want ~840px and this app's smallest window leaves the pane 688px, so without a wrap `Run test` goes back off the viewport with no horizontal scroll to reach it",
+    );
+  }
+
+  // The floor is what makes the wrap happen at all. A `flex-1 min-w-0` identity
+  // column shrinks to nothing rather than pushing the controls onto their own
+  // line, so the name would vanish and the controls would still be crushed —
+  // the same "min-width: 0 is the bug, not the fix" as `.gl-batch-name` above.
+  const identRule = screens.match(/\.gl-detail-ident\s*\{([^}]*)\}/);
+  assert(identRule !== null, "screens.css: found the .gl-detail-ident rule");
+  if (identRule) {
+    const floor = identRule[1].match(/min-width:\s*(\d+)px/);
+    assert(
+      floor !== null && Number(floor[1]) > 0,
+      ".gl-detail-ident: carries a non-zero min-width — it is the floor that decides when the controls wrap to their own line instead of squeezing the name to nothing",
+    );
+  }
+
+  // And the controls may not grow into the slack. `flex-grow` here would stretch
+  // the group across a wide window and open gaps between its own buttons, which
+  // is the shape that made the band look assembled rather than designed.
+  const toolsRule = screens.match(/\.gl-detail-tools\s*\{([^}]*)\}/);
+  assert(toolsRule !== null, "screens.css: found the .gl-detail-tools rule");
+  if (toolsRule) {
+    assert(
+      /flex:\s*0\s+1\s+auto/.test(toolsRule[1]),
+      ".gl-detail-tools: is `flex: 0 1 auto` — it may shrink onto a narrow line but never grow into a wide one",
+    );
+    assert(
+      /margin-inline-start:\s*auto/.test(toolsRule[1]),
+      ".gl-detail-tools: keeps the auto start margin — on a line of its own there is no identity column to push it right, and without it the controls ragged-left under the name",
+    );
+  }
+
+  // `Run test` and `Stop` are the same box. They are not the same word — `Stop`
+  // is 31px narrower — and with the group right-aligned that difference pulled
+  // every control on the band sideways the moment a run started. Both branches
+  // have to carry the class: one of them alone still resizes, and it resizes in
+  // the state nobody is looking at the stylesheet in.
+  assert(
+    (detail.match(/className="gl-detail-run"/g) ?? []).length === 2,
+    "test-detail-view.tsx: BOTH the run and the stop button carry `gl-detail-run` — the band shifts sideways when a run starts if only one does",
+  );
+  const runRule = screens.match(/\.gl-detail-run\s*\{([^}]*)\}/);
+  assert(runRule !== null, "screens.css: found the .gl-detail-run rule");
+  if (runRule) {
+    assert(
+      /min-width:\s*\d+px/.test(runRule[1]),
+      ".gl-detail-run: pins a width, so swapping `Run test` for `Stop` does not move the controls beside it",
+    );
+  }
+
+  // The two fields inherit `min-width: 0` from `.gl-input`, which is right for a
+  // step row and wrong here: proportional shrink takes it out of the small items
+  // first in relative terms, and the engine trigger reached 61px — "Chromium"
+  // rendered as "Chro…", a control that cannot show the value it reports. The
+  // floors move that shrink onto `.gl-run-options`, which absorbs it by wrapping
+  // its labels and losing nothing.
+  for (const [cls, what] of [
+    ["gl-detail-engine", "the engine trigger"],
+    ["gl-detail-secs", "the timeout field"],
+  ] as const) {
+    assert(
+      new RegExp(`className="[^"]*\\b${cls}\\b`).test(detail),
+      `test-detail-view.tsx: ${what} still carries \`${cls}\``,
+    );
+    const rule = screens.match(new RegExp(`\\.${cls}\\s*\\{([^}]*)\\}`));
+    assert(rule !== null, `screens.css: found the .${cls} rule`);
+    const floor = rule ? rule[1].match(/min-width:\s*(\d+)px/) : null;
+    assert(
+      floor !== null && Number(floor[1]) > 0,
+      `.${cls}: carries a non-zero min-width floor — ${what} shares a line with ~840px of controls and \`.gl-input\` would otherwise let it shrink under its own value`,
+    );
+  }
+}
+
+// ── 4. Visual's run header ────────────────────────────────────────────────
 {
   const visual = read("../../../renderer/main/visual-view.tsx");
   const screens = read("../../../renderer/theme/screens.css").replace(/\/\*[\s\S]*?\*\//g, "");

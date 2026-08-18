@@ -10,6 +10,77 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-17 — The test detail head becomes one row
+
+The band above the Steps tabs was two lines, because that is what `Toolbar`
+gives you: a content block stacked over an actions block. Both half-filled their
+own line. The test's name ran out about a third of the way across and the rest
+of that line was empty; the controls sat underneath it, packed left, under the
+same empty gutter. 94px of window to say what fits in 54.
+
+- **One `ToolbarRow`, and the identity column is what makes it work.**
+  `ToolbarContent` already carries `flex-1 min-w-0`, which on a row means it
+  shrinks to nothing before anything beside it gives — the name would vanish
+  and the controls would still be crushed. `.gl-detail-ident` replaces that
+  floor with a real one (`flex: 1 1 180px`), so the name absorbs the slack on a
+  wide window and the CONTROLS are what moves on a narrow one. Same argument as
+  `.gl-batch-name`: a cell allowed to reach zero does not truncate, it vanishes.
+
+- **The row wraps, and the wrap is the narrow-window contract.** The controls
+  want about 840px; this app's own minimum window leaves the detail pane 688px.
+  They cannot share a line with the name there, so the row breaks and they take
+  one of their own — which is the layout this replaced, at the width where that
+  layout was the right answer. Above roughly a 1260px window everything is on
+  one line. Neither state is a special case in the markup.
+
+- **`.gl-detail-tools` does NOT wrap internally, and that is the opposite choice
+  from `.gl-visual-head-tools` one screen over.** That band's items are rigid,
+  so wrapping is the only way to keep its last control on screen. These are not:
+  the run-options grid wraps its own labels and the fields carry `min-width: 0`,
+  so the group answers a narrow line by getting shorter rather than taller, and
+  `Run test` stays on the same line as the toggles it applies to. Wrapping it
+  would put the primary action on a line by itself at the default window size,
+  which is worse than either state it was meant to fix.
+
+- **Three width floors, all of them the same bug in different clothes.**
+  `min-width: 0` on `.gl-input` is right for a field inside a step row and wrong
+  for one sharing a line with 840px of controls: flex takes its shrink out of
+  every shrinkable item in proportion, and the small ones lose hardest in
+  relative terms. The engine trigger reached 61px, which renders "Chromium" as
+  "Chro…" — a control that cannot show the value it reports. `.gl-detail-engine`
+  (92px, what it measured before) and `.gl-detail-secs` (40px) move that shrink
+  onto `.gl-run-options`, which is the one item here designed to absorb it: it
+  wraps its labels, gets taller, and loses nothing.
+
+- **`.gl-detail-run` is the third floor and the least obvious.** `Stop` is 31px
+  narrower than `Run test`. Left-packed that cost nothing; right-aligned, every
+  control on the band slid 31px sideways the moment a run started and slid back
+  when it ended — a toolbar that moves exactly when somebody is reaching for it,
+  which is the failure recorded for `.gl-visual-head` on 2026-08-17. Both
+  branches carry the class, and `check:narrow-layout` counts two: one of them
+  alone still resizes, in the state nobody is reading the stylesheet in.
+
+- **The clusters are the design, the hairlines only report them.** Four
+  questions — what the test IS, how it RUNS, what the run RECORDS, and go — with
+  6px inside a cluster against 10px between them. The gap does the grouping; the
+  1px rules are legible because of it rather than instead of it.
+
+- **The visible labels did not change, and that was a real trade.** Shortening
+  the four toggles to nouns would have bought about 100px and moved the inline
+  threshold down a window size. It was rejected because six empty states across
+  the app instruct the user by naming these exact strings — "Switch on “Check
+  accessibility” beside Run test", "Turn on “Capture screenshots”" — and copy
+  that points at a control by a name it no longer has is worse than a band that
+  wraps a window size earlier.
+
+- **Where the guards live follows the usual split.** Whether the row wraps and
+  what gives when it does is CSS, so `check:narrow-layout` reads it from the
+  stylesheet — jsdom has no layout engine and the dom project runs with
+  `css: false`, so nothing measured in a rendered test would be measuring
+  anything. That the identity and the controls are siblings on one row, and that
+  every control is inside the group the rules align, is structure, so it is a
+  jsdom test. Both halves were verified to fail against the code they describe.
+
 ### 2026-08-17 — Using a variable while training, and where a password goes
 
 Variables have worked since 2026-08-08: a step value containing `${name}` is

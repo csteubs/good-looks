@@ -26,6 +26,7 @@ import {
   ToolbarActions,
   ToolbarContent,
   ToolbarDescription,
+  ToolbarRow,
   ToolbarTitle,
   toast,
 } from "@ui";
@@ -576,293 +577,319 @@ export function TestDetailView() {
           inside it, which are window behaviour rather than styling, and
           `check:clickable-chrome` is about exactly that. What changes is what is
           drawn in it. */}
-      <Toolbar className="gl-detail-head pt-2">
-        <ToolbarContent>
-          {editingName ? (
-            <Input
-              size="small"
-              variant="filled"
-              autoFocus
-              value={nameDraft}
-              onChange={(e) => setNameDraft(e.target.value)}
-              className="h-6 pl-1.5 -ml-1.5 text-[15px] font-medium"
-              onBlur={() => {
-                setEditingName(false);
-                saveName(nameDraft);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
+      <Toolbar className="gl-detail-head">
+        {/* ONE ROW: the test's identity on the left, every control on the right.
+            `ToolbarRow` rather than letting `Toolbar`'s own column stack them,
+            because a stacked head spent 94px on two lines that each half-filled
+            their own — the name ran out at a third of the width and the controls
+            sat under an empty gutter. The row wraps (`.gl-detail-head-row`), so
+            a window too narrow to hold both drops the controls to their own line
+            and lands back on exactly the layout this replaced. */}
+        <ToolbarRow className="gl-detail-head-row">
+          <ToolbarContent className="gl-detail-ident">
+            {editingName ? (
+              <Input
+                size="small"
+                variant="filled"
+                autoFocus
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                className="h-6 pl-1.5 -ml-1.5 text-[15px] font-medium"
+                onBlur={() => {
                   setEditingName(false);
                   saveName(nameDraft);
-                } else if (e.key === "Escape") {
-                  setEditingName(false);
-                }
-              }}
-            />
-          ) : (
-            <ToolbarTitle
-              className="cursor-text no-drag inline-flex items-center gap-1.5"
-              onClick={() => {
-                setNameDraft(test.name);
-                setEditingName(true);
-              }}
-            >
-              {test.name}
-              <Pencil className="size-3.5 text-tertiary" />
-            </ToolbarTitle>
-          )}
-          <ToolbarDescription>{test.url}</ToolbarDescription>
-        </ToolbarContent>
-        <ToolbarActions>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              {/* `Btn` rather than the SDK `Button`, but still inside Radix's
-                  `DropdownMenu`: that one is native-menu-backed here, and the
-                  trigger is the only part of it that is real DOM. */}
-              <Btn>
-                Edit Test
-                <ChevronDown className="size-3.5" />
-              </Btn>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent side="bottom" align="end">
-              <DropdownMenuItem onSelect={() => {
-                if (test.scriptEdited) setTrainerConfirmOpen(true);
-                else start(test.url, test.name, test.id);
-              }}>
-                Edit in Trainer
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => setEditingSteps(true)}>
-                Edit Steps
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          {test.scriptEdited ? (
-            <Dialog
-              open={trainerConfirmOpen}
-              onOpenChange={setTrainerConfirmOpen}
-              title="Edit in Trainer"
-              description="This test has manual script edits. Opening the trainer will regenerate the script from the recorded steps when you stop, overwriting those edits."
-              confirmLabel="Save & continue"
-              confirmVariant="accent"
-              onConfirm={saveAndEditInTrainer}
-              destructiveAction={{
-                label: "Continue without saving",
-                onClick: () => start(test.url, test.name, test.id),
-              }}
-            />
-          ) : null}
-          <AlertDialog
-            trigger={
-              <button type="button" className="gl-icon-btn" aria-label="Delete test">
-                <Trash2 className="size-4" />
-              </button>
-            }
-            title="Delete this test?"
-            description="This removes the recording and its generated script. This can't be undone."
-            confirmLabel="Delete"
-            confirmVariant="destructive"
-            onConfirm={async () => {
-              await api.tests.remove(id);
-              qc.invalidateQueries({ queryKey: ["tests"] });
-              navigate({ to: "/" });
-            }}
-          />
-          <Select
-            value={runBrowser}
-            onValueChange={(v) => {
-              const next = v as RunBrowser;
-              setRunBrowser(next);
-              void persistRunBrowser(qc, id, next);
-            }}
-            disabled={runInfo?.running}
-          >
-            {/* `.gl-input` on a Select trigger: it is a control that reports a
-                value and opens a NATIVE menu, so its box should read as a field
-                rather than as a button. The menu itself is drawn by AppKit and
-                never enters the DOM — nothing here can style it, which is also
-                why the engine choice is asserted at the IPC layer. */}
-            <SelectTrigger
-              variant="filled"
-              size="small"
-              className="gl-input w-32"
-              aria-label="Browser engine for this test's runs"
-            >
-              {/* No icon of ours here: SelectValue already draws the selected
-                  item's SF Symbol, so a lucide glyph beside it is the same
-                  engine twice. */}
-              <SelectValue placeholder="Chromium" />
-            </SelectTrigger>
-            <SelectContent>
-              {RUN_BROWSERS.map((b) => (
-                <SelectItem key={b} value={b} icon={BROWSER_SF_SYMBOLS[b]}>
-                  {RUN_BROWSER_LABELS[b]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <label className="gl-run-option gl-detail-timeout">
-            <span className="whitespace-nowrap">Timeout</span>
-            <Input
-              type="number"
-              min={5}
-              max={1800}
-              step={1}
-              className="gl-input w-16"
-              value={testTimeoutSec ?? ""}
-              placeholder={String(
-                Math.round((settingsQuery.data?.defaultTestTimeoutMs ?? 60_000) / 1000),
-              )}
-              disabled={runInfo?.running}
-              aria-label="Per-test timeout in seconds; leave empty to use the Settings default"
-              onChange={(e) => {
-                const raw = e.target.value.trim();
-                if (raw === "") {
-                  setTestTimeoutSec(null);
-                  api.tests.setTestTimeout(id, null).catch(() => {
-                    /* best-effort persist */
-                  });
-                  return;
-                }
-                const sec = Math.max(5, Math.min(1800, Math.round(Number(raw) || 60)));
-                setTestTimeoutSec(sec);
-                api.tests.setTestTimeout(id, sec * 1000).catch(() => {
-                  /* best-effort persist */
-                });
-              }}
-            />
-            <span className="gl-detail-unit">s</span>
-          </label>
-          {/* Imported tests only. A recorded test navigates to the absolute URL
-              the recorder watched, so a base URL would be a box that does
-              nothing; an imported spec is idiomatically relative
-              (`page.goto("/")`) and cannot run without one. It is usually filled
-              in already, from the source project's playwright.config — this is
-              where that lands, and the only repair when the config computed it
-              rather than writing it down. */}
-          {test.sourceDir ? (
-            <label className="gl-run-option gl-detail-baseurl">
-              <span className="whitespace-nowrap">Base URL</span>
-              <Input
-                type="url"
-                className="gl-input w-52"
-                value={baseUrlDraft}
-                placeholder="https://example.com"
-                disabled={runInfo?.running}
-                aria-label="Base URL that this imported test's relative navigations resolve against"
-                onChange={(e) => setBaseUrlDraft(e.target.value)}
+                }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter") e.currentTarget.blur();
+                  if (e.key === "Enter") {
+                    setEditingName(false);
+                    saveName(nameDraft);
+                  } else if (e.key === "Escape") {
+                    setEditingName(false);
+                  }
                 }}
-                onBlur={() => {
-                  const next = baseUrlDraft.trim();
-                  if (next === (test.baseUrl ?? "")) return; // nothing changed
-                  api.tests
-                    .setBaseUrl(id, next === "" ? null : next)
-                    .then(() => {
-                      // Unlike the toggles beside it, this one invalidates: the
-                      // run guard reads `baseUrl` off the RECORD, so a stale
-                      // cache would keep refusing a run the user just fixed.
-                      qc.invalidateQueries({ queryKey: ["test", id] });
-                      qc.invalidateQueries({ queryKey: ["tests"] });
-                    })
-                    .catch(() => {
-                      setBaseUrlDraft(test.baseUrl ?? "");
-                      toast.error("That isn't a valid base URL — try https://example.com");
+              />
+            ) : (
+              <ToolbarTitle
+                className="cursor-text no-drag inline-flex items-center gap-1.5"
+                onClick={() => {
+                  setNameDraft(test.name);
+                  setEditingName(true);
+                }}
+              >
+                {test.name}
+                <Pencil className="size-3.5 text-tertiary" />
+              </ToolbarTitle>
+            )}
+            <ToolbarDescription>{test.url}</ToolbarDescription>
+          </ToolbarContent>
+          <ToolbarActions className="gl-detail-tools">
+            {/* WHAT THE TEST IS — the two ways to change it. The delete lives here
+                rather than beside `Run test` on purpose: destructive and primary
+                actions at opposite ends of the same cluster is how a mis-click
+                happens. */}
+            <div className="gl-detail-tool-group">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  {/* `Btn` rather than the SDK `Button`, but still inside Radix's
+                      `DropdownMenu`: that one is native-menu-backed here, and the
+                      trigger is the only part of it that is real DOM. */}
+                  <Btn>
+                    Edit Test
+                    <ChevronDown className="size-3.5" />
+                  </Btn>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="bottom" align="end">
+                  <DropdownMenuItem onSelect={() => {
+                    if (test.scriptEdited) setTrainerConfirmOpen(true);
+                    else start(test.url, test.name, test.id);
+                  }}>
+                    Edit in Trainer
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setEditingSteps(true)}>
+                    Edit Steps
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {test.scriptEdited ? (
+                <Dialog
+                  open={trainerConfirmOpen}
+                  onOpenChange={setTrainerConfirmOpen}
+                  title="Edit in Trainer"
+                  description="This test has manual script edits. Opening the trainer will regenerate the script from the recorded steps when you stop, overwriting those edits."
+                  confirmLabel="Save & continue"
+                  confirmVariant="accent"
+                  onConfirm={saveAndEditInTrainer}
+                  destructiveAction={{
+                    label: "Continue without saving",
+                    onClick: () => start(test.url, test.name, test.id),
+                  }}
+                />
+              ) : null}
+              <AlertDialog
+                trigger={
+                  <button type="button" className="gl-icon-btn" aria-label="Delete test">
+                    <Trash2 className="size-4" />
+                  </button>
+                }
+                title="Delete this test?"
+                description="This removes the recording and its generated script. This can't be undone."
+                confirmLabel="Delete"
+                confirmVariant="destructive"
+                onConfirm={async () => {
+                  await api.tests.remove(id);
+                  qc.invalidateQueries({ queryKey: ["tests"] });
+                  navigate({ to: "/" });
+                }}
+              />
+            </div>
+            <span className="gl-detail-tool-rule" aria-hidden="true" />
+            {/* HOW IT RUNS — engine, budget, and (imported tests only) what a
+                relative navigation resolves against. */}
+            <div className="gl-detail-tool-group">
+              <Select
+                value={runBrowser}
+                onValueChange={(v) => {
+                  const next = v as RunBrowser;
+                  setRunBrowser(next);
+                  void persistRunBrowser(qc, id, next);
+                }}
+                disabled={runInfo?.running}
+              >
+                {/* `.gl-input` on a Select trigger: it is a control that reports a
+                    value and opens a NATIVE menu, so its box should read as a field
+                    rather than as a button. The menu itself is drawn by AppKit and
+                    never enters the DOM — nothing here can style it, which is also
+                    why the engine choice is asserted at the IPC layer. */}
+                <SelectTrigger
+                  variant="filled"
+                  size="small"
+                  className="gl-input gl-detail-engine w-28"
+                  aria-label="Browser engine for this test's runs"
+                >
+                  {/* No icon of ours here: SelectValue already draws the selected
+                      item's SF Symbol, so a lucide glyph beside it is the same
+                      engine twice. */}
+                  <SelectValue placeholder="Chromium" />
+                </SelectTrigger>
+                <SelectContent>
+                  {RUN_BROWSERS.map((b) => (
+                    <SelectItem key={b} value={b} icon={BROWSER_SF_SYMBOLS[b]}>
+                      {RUN_BROWSER_LABELS[b]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <label className="gl-run-option gl-detail-timeout">
+                <span className="whitespace-nowrap">Timeout</span>
+                <Input
+                  type="number"
+                  min={5}
+                  max={1800}
+                  step={1}
+                  className="gl-input gl-detail-secs w-12"
+                  value={testTimeoutSec ?? ""}
+                  placeholder={String(
+                    Math.round((settingsQuery.data?.defaultTestTimeoutMs ?? 60_000) / 1000),
+                  )}
+                  disabled={runInfo?.running}
+                  aria-label="Per-test timeout in seconds; leave empty to use the Settings default"
+                  onChange={(e) => {
+                    const raw = e.target.value.trim();
+                    if (raw === "") {
+                      setTestTimeoutSec(null);
+                      api.tests.setTestTimeout(id, null).catch(() => {
+                        /* best-effort persist */
+                      });
+                      return;
+                    }
+                    const sec = Math.max(5, Math.min(1800, Math.round(Number(raw) || 60)));
+                    setTestTimeoutSec(sec);
+                    api.tests.setTestTimeout(id, sec * 1000).catch(() => {
+                      /* best-effort persist */
                     });
-                }}
-              />
-            </label>
-          ) : null}
-          {/* The gang of four, a compact 2×2 block. The column-track rule that
-              keeps it from overlapping itself at narrow widths moved into
-              `.gl-run-options` (screens.css) in B5a — the reasoning is written
-              out there, and `check:narrow-layout` reads it from the stylesheet
-              rather than from a Tailwind class here. */}
-          <div className="gl-run-options">
-            <label className="gl-run-option">
-              <Checkbox
-                checked={runHeadless}
-                onCheckedChange={(v) => {
-                  const next = v === true;
-                  setRunHeadless(next);
-                  api.tests.setHeadless(id, next).catch(() => {
-                    /* best-effort persist; the toggle still applies to this run */
-                  });
-                }}
-                disabled={runInfo?.running}
-                aria-label="Run this test headless (no visible browser)"
-              />
-              Run headless
-            </label>
-            <label className="gl-run-option">
-              {/* Independent of "Run headless". Headless Chromium renders to an
-                  offscreen surface, so page.screenshot() works exactly the same —
-                  it's how visual regression testing is normally done. Headless is
-                  arguably the BETTER mode for it, since a headed run drags in
-                  window chrome, focus rings and whatever display it landed on,
-                  all of which read as visual changes nobody made. */}
-              <Checkbox
-                checked={captureArtifacts}
-                onCheckedChange={(v) => {
-                  const next = v === true;
-                  setCaptureArtifacts(next);
-                  api.tests.setCaptureArtifacts(id, next).catch(() => {
-                    /* best-effort persist; the toggle still applies to this run */
-                  });
-                }}
-                disabled={runInfo?.running}
-                aria-label="Capture screenshots on this run"
-              />
-              Capture screenshots
-            </label>
-            <label className="gl-run-option">
-              {/* Separate from screenshots on purpose: this writes page console
-                  output and request URLs to disk. Off by default, and the model
-                  can only ASK for the result — it is never attached automatically. */}
-              <Checkbox
-                checked={recordLogs}
-                onCheckedChange={(v) => {
-                  const next = v === true;
-                  setRecordLogs(next);
-                  api.tests.setRecordLogs(id, next).catch(() => {
-                    /* best-effort persist; the toggle still applies to this run */
-                  });
-                }}
-                disabled={runInfo?.running}
-                aria-label="Record console and network on this run"
-              />
-              Record console &amp; network
-            </label>
-            <label className="gl-run-option">
-              <Checkbox
-                checked={a11yChecks}
-                onCheckedChange={(v) => {
-                  const next = v === true;
-                  setA11yChecks(next);
-                  api.tests.setA11yChecks(id, next).catch(() => {
-                    /* best-effort persist; the toggle still applies to this run */
-                  });
-                }}
-                disabled={runInfo?.running}
-                aria-label="Check accessibility on this run"
-              />
-              Check accessibility
-            </label>
-          </div>
-          {/* `stop` and `go`, and this is the one place on the screen that earns
-              a hue: pressing it causes the thing the colour means. Everything
-              else in this toolbar is `ghost` for the same reason — a screen
-              where every button is lit spends the whole palette on chrome. */}
-          {runInfo?.running ? (
-            <Btn tone="stop" onClick={() => stopRun(id)}>
-              Stop
-            </Btn>
-          ) : (
-            <Btn tone="go" onClick={() => run(id, captureArtifacts, runHeadless, runBrowser)}>
-              Run test
-            </Btn>
-          )}
-        </ToolbarActions>
+                  }}
+                />
+                <span className="gl-detail-unit">s</span>
+              </label>
+              {/* Imported tests only. A recorded test navigates to the absolute URL
+                  the recorder watched, so a base URL would be a box that does
+                  nothing; an imported spec is idiomatically relative
+                  (`page.goto("/")`) and cannot run without one. It is usually filled
+                  in already, from the source project's playwright.config — this is
+                  where that lands, and the only repair when the config computed it
+                  rather than writing it down. */}
+              {test.sourceDir ? (
+                <label className="gl-run-option gl-detail-baseurl">
+                  <span className="whitespace-nowrap">Base URL</span>
+                  <Input
+                    type="url"
+                    className="gl-input w-52"
+                    value={baseUrlDraft}
+                    placeholder="https://example.com"
+                    disabled={runInfo?.running}
+                    aria-label="Base URL that this imported test's relative navigations resolve against"
+                    onChange={(e) => setBaseUrlDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur();
+                    }}
+                    onBlur={() => {
+                      const next = baseUrlDraft.trim();
+                      if (next === (test.baseUrl ?? "")) return; // nothing changed
+                      api.tests
+                        .setBaseUrl(id, next === "" ? null : next)
+                        .then(() => {
+                          // Unlike the toggles beside it, this one invalidates: the
+                          // run guard reads `baseUrl` off the RECORD, so a stale
+                          // cache would keep refusing a run the user just fixed.
+                          qc.invalidateQueries({ queryKey: ["test", id] });
+                          qc.invalidateQueries({ queryKey: ["tests"] });
+                        })
+                        .catch(() => {
+                          setBaseUrlDraft(test.baseUrl ?? "");
+                          toast.error("That isn't a valid base URL — try https://example.com");
+                        });
+                    }}
+                  />
+                </label>
+              ) : null}
+            </div>
+            <span className="gl-detail-tool-rule" aria-hidden="true" />
+            {/* The gang of four, a compact 2×2 block. The column-track rule that
+                keeps it from overlapping itself at narrow widths moved into
+                `.gl-run-options` (screens.css) in B5a — the reasoning is written
+                out there, and `check:narrow-layout` reads it from the stylesheet
+                rather than from a Tailwind class here. */}
+            <div className="gl-run-options">
+              <label className="gl-run-option">
+                <Checkbox
+                  checked={runHeadless}
+                  onCheckedChange={(v) => {
+                    const next = v === true;
+                    setRunHeadless(next);
+                    api.tests.setHeadless(id, next).catch(() => {
+                      /* best-effort persist; the toggle still applies to this run */
+                    });
+                  }}
+                  disabled={runInfo?.running}
+                  aria-label="Run this test headless (no visible browser)"
+                />
+                Run headless
+              </label>
+              <label className="gl-run-option">
+                {/* Independent of "Run headless". Headless Chromium renders to an
+                    offscreen surface, so page.screenshot() works exactly the same —
+                    it's how visual regression testing is normally done. Headless is
+                    arguably the BETTER mode for it, since a headed run drags in
+                    window chrome, focus rings and whatever display it landed on,
+                    all of which read as visual changes nobody made. */}
+                <Checkbox
+                  checked={captureArtifacts}
+                  onCheckedChange={(v) => {
+                    const next = v === true;
+                    setCaptureArtifacts(next);
+                    api.tests.setCaptureArtifacts(id, next).catch(() => {
+                      /* best-effort persist; the toggle still applies to this run */
+                    });
+                  }}
+                  disabled={runInfo?.running}
+                  aria-label="Capture screenshots on this run"
+                />
+                Capture screenshots
+              </label>
+              <label className="gl-run-option">
+                {/* Separate from screenshots on purpose: this writes page console
+                    output and request URLs to disk. Off by default, and the model
+                    can only ASK for the result — it is never attached automatically. */}
+                <Checkbox
+                  checked={recordLogs}
+                  onCheckedChange={(v) => {
+                    const next = v === true;
+                    setRecordLogs(next);
+                    api.tests.setRecordLogs(id, next).catch(() => {
+                      /* best-effort persist; the toggle still applies to this run */
+                    });
+                  }}
+                  disabled={runInfo?.running}
+                  aria-label="Record console and network on this run"
+                />
+                Record console &amp; network
+              </label>
+              <label className="gl-run-option">
+                <Checkbox
+                  checked={a11yChecks}
+                  onCheckedChange={(v) => {
+                    const next = v === true;
+                    setA11yChecks(next);
+                    api.tests.setA11yChecks(id, next).catch(() => {
+                      /* best-effort persist; the toggle still applies to this run */
+                    });
+                  }}
+                  disabled={runInfo?.running}
+                  aria-label="Check accessibility on this run"
+                />
+                Check accessibility
+              </label>
+            </div>
+            <span className="gl-detail-tool-rule" aria-hidden="true" />
+            {/* `stop` and `go`, and this is the one place on the screen that earns
+                a hue: pressing it causes the thing the colour means. Everything
+                else in this toolbar is `ghost` for the same reason — a screen
+                where every button is lit spends the whole palette on chrome. */}
+            {runInfo?.running ? (
+              <Btn className="gl-detail-run" tone="stop" onClick={() => stopRun(id)}>
+                Stop
+              </Btn>
+            ) : (
+              <Btn
+                className="gl-detail-run"
+                tone="go"
+                onClick={() => run(id, captureArtifacts, runHeadless, runBrowser)}
+              >
+                Run test
+              </Btn>
+            )}
+          </ToolbarActions>
+        </ToolbarRow>
       </Toolbar>
 
       {/* Dismissible, and the dismissal is persisted rather than held here: the
