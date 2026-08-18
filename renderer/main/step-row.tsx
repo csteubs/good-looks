@@ -12,14 +12,15 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@ui";
-import { Check, GripVertical, Loader2, MoreHorizontal, Pencil, Play, X } from "lucide-react";
+import { Check, GripVertical, Loader2, MoreHorizontal, Pencil, Play, Variable, X } from "lucide-react";
 import type { RunStepStatus } from "./recorder-store";
 
 import { SEL_BG, SEL_RING, TONE, Temp, TypeChip, formatDuration, insetRail } from "../theme";
 import { describeStep } from "../lib/describe-step";
 import { DEFAULT_WAIT_TIMEOUT_MS } from "../lib/recorder-types";
 import { clampViewportAxis } from "../lib/viewport-presets";
-import type { Step } from "../lib/recorder-types";
+import type { Step, TestVariable } from "../lib/recorder-types";
+import { insertAtCaret, varRef } from "../components/variable-picker";
 
 /* `badgeColor` and `badgeLabel` were here, and `TypeChip` replaces both.
  *
@@ -106,6 +107,25 @@ function editableField(
   }
 }
 
+/** Inline fields a `${var}` reference belongs in.
+ *
+ *  Only the ones the generator interpolates. The numeric fields are emitted as
+ *  bare numerals — `waitMs`, `timeoutMs`, a viewport axis — so a reference in
+ *  one would not be a variable, it would be a spec that doesn't parse. */
+const VAR_FIELD_KEYS = ["value", "text", "url"] as const;
+
+interface NativeMenu {
+  popup: (options: {
+    items: { label?: string; type?: "normal" | "separator"; commandId?: number }[];
+    x?: number;
+    y?: number;
+    coordinateSpace?: "screen" | "view";
+  }) => Promise<{ commandId?: number }>;
+}
+function nativeMenu(): NativeMenu {
+  return (window as unknown as { glazeAPI: { Menu: NativeMenu } }).glazeAPI.Menu;
+}
+
 /**
  * What the active insert cursor says when it is not at the end of the list.
  *
@@ -183,6 +203,7 @@ export function StepRow({
   replayFlash,
   indent = 0,
   trend,
+  variables = [],
 }: {
   index: number;
   step: Step;
@@ -235,10 +256,25 @@ export function StepRow({
   replayFlash?: "pass" | "fail";
   /** Nesting depth inside conditional blocks, for left indentation. */
   indent?: number;
+  /** Variables the owning test declares. Non-empty puts an insert button beside
+   *  the inline editor, which is the only way to write a `${name}` reference
+   *  without already knowing the syntax exists. Empty (the default) leaves the
+   *  read-only detail list exactly as it was. */
+  variables?: TestVariable[];
 }) {
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState("");
   const rowRef = React.useRef<HTMLDivElement | null>(null);
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
+  // Where the caret was when the variable menu was opened, and a latch that
+  // stops the input's blur from committing while it is open.
+  //
+  // The latch is load-bearing: `Menu.popup` is a real macOS menu, so opening it
+  // takes focus off the page and fires `blur` on the input — which would commit
+  // and unmount the editor before the user had picked anything, leaving the
+  // pick with nothing to insert into.
+  const menuOpen = React.useRef(false);
+  const caret = React.useRef(0);
   // `block: "nearest"` so a row already on screen is left exactly where it is —
   // a step captured at the bottom of a short list must not make the list jump
   // to prove it arrived.
@@ -279,6 +315,46 @@ export function StepRow({
           : { [field.key]: draft };
     onEdit(patch);
     setEditing(false);
+  }
+
+  // Variables are offered only for the fields that are interpolated, and only
+  // when the host supplied any — see VAR_FIELD_KEYS.
+  const canInsertVar =
+    !!field && variables.length > 0 && (VAR_FIELD_KEYS as readonly string[]).includes(field.key);
+
+  async function openVariableMenu(anchor: HTMLElement) {
+    const rect = anchor.getBoundingClientRect();
+    let picked: number | undefined;
+    try {
+      const res = await nativeMenu().popup({
+        x: Math.round(rect.left),
+        y: Math.round(rect.bottom),
+        coordinateSpace: "view",
+        items: variables.map((v, i) => ({ label: varRef(v.name), commandId: i })),
+      });
+      picked = res.commandId;
+    } finally {
+      menuOpen.current = false;
+    }
+    const chosen = typeof picked === "number" ? variables[picked] : undefined;
+    if (!chosen) {
+      // Dismissed without choosing: put the caret back rather than leaving the
+      // editor open but unfocused, which reads as a frozen field.
+      inputRef.current?.focus();
+      return;
+    }
+    const ref = varRef(chosen.name);
+    const next = insertAtCaret(draft, caret.current, ref);
+    setDraft(next);
+    const at = Math.min(caret.current, draft.length) + ref.length;
+    // After the state has landed, so the input holds `next` when the caret is
+    // placed — setting it against the old value puts it in the wrong place.
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(at, at);
+    });
   }
 
   async function doReplay() {
@@ -439,19 +515,47 @@ export function StepRow({
       ) : null}
 
       {editing && field ? (
-        <input
-          type="text"
-          autoFocus
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commitEdit}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commitEdit();
-            if (e.key === "Escape") setEditing(false);
-          }}
-          className="gl-input flex-1"
-          aria-label={`Edit ${field.label}`}
-        />
+        <span className="flex min-w-0 flex-1 items-center gap-1">
+          <input
+            ref={inputRef}
+            type="text"
+            autoFocus
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => {
+              // Not a commit: the variable menu has focus, and this editor has
+              // to still be here when it closes. See `menuOpen`.
+              if (menuOpen.current) return;
+              commitEdit();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitEdit();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            className="gl-input min-w-0 flex-1"
+            aria-label={`Edit ${field.label}`}
+          />
+          {canInsertVar ? (
+            <button
+              type="button"
+              className="gl-icon-btn shrink-0"
+              aria-label="Insert a variable"
+              title="Insert a variable"
+              // Both halves matter. `preventDefault` on mousedown keeps the
+              // browser from moving focus off the input at all, which is what
+              // lets the caret position below still be the user's; the latch
+              // covers the blur the native menu causes anyway when it opens.
+              onMouseDown={(e) => {
+                e.preventDefault();
+                menuOpen.current = true;
+                caret.current = inputRef.current?.selectionStart ?? draft.length;
+              }}
+              onClick={(e) => void openVariableMenu(e.currentTarget)}
+            >
+              <Variable className="size-3.5" />
+            </button>
+          ) : null}
+        </span>
       ) : (
         <span
           className="gl-mono-value flex-1"

@@ -10,6 +10,110 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-17 — Using a variable while training, and where a password goes
+
+Variables have worked since 2026-08-08: a step value containing `${name}` is
+compiled to `V.name`, and a secret's value reaches the Playwright child through
+`process.env.GLAZE_SECRET_<name>` without ever entering the spec, the run log or
+a hosted-model prompt. What did not exist was any way to *use* one from where
+the step is made. `${name}` was the whole interface — a syntax with no
+affordance anywhere in the trainer, discoverable by reading the generator. The
+user recording a password-protected Shopify storefront reported it exactly that
+way: "I can store a variable today, but it doesn't appear that I'm able to use
+it."
+
+- **The variables live on the SESSION, not on the record, and that is the load-
+  bearing decision.** A new recording has no `TestRecord`: `startRecording`
+  mints a UUID and nothing is written under it until the session finalizes. So
+  `tests:setVariables` — the handler the Variables tab uses — answers "Test not
+  found" for exactly the test being trained. `Session.variables` is seeded from
+  the record when continuing an existing test, empty otherwise, broadcast with
+  the rest of `RecorderState` so both trainer windows see the same list, and
+  merged into the record at finalize.
+
+- **Merged, not assigned.** `finalize` already spreads the existing record first
+  because the trainer does not know about tags, datasets or run preferences and
+  a from-scratch rebuild would discard them. Variables are now the one field the
+  trainer *does* write, so they need the same care one level down:
+  `mergeSessionVariables` upserts by name and keeps anything only the record
+  has. Without it, a variable added on the Variables tab in the main window
+  while a trainer session was open would be deleted by a save the user thinks is
+  about steps.
+
+- **A secret's value is written the moment it is typed, which creates an orphan
+  a discard has to clear.** The encrypted store is keyed by test id and needs no
+  record, so it is the one part of a declaration that can be persisted
+  immediately — and it has to be, because there is nowhere else for plaintext to
+  wait. If the recording is then discarded and no record ever exists, that value
+  would sit in `test-secrets.bin` under an id nothing will ever reference or
+  delete. `discardExit` clears it, and only when the session has no record:
+  discarding an "Edit in Trainer" session must not take the test's real secrets
+  with it.
+
+- **"Use variable…" is top-level in the right-click menu, not inside "Add
+  step".** Filling a field from a variable is the reason someone right-clicks a
+  login form, and it is the one path that keeps a password out of the spec.
+  Buried one level down it would be found only by people who already knew about
+  it. It carries **no prefill** — the element's current value is exactly what a
+  password box holds, and offering it as the default for a new variable would
+  walk the plaintext into the field the feature exists to keep it out of.
+
+- **Chips rather than a `Select`, and that is a testing decision as much as a
+  design one.** This repo's `Select` is native-menu-backed, so its options never
+  enter the DOM and no Testing Library query reaches them. A picker whose every
+  path is untestable is the wrong control for the one place a wrong pick means a
+  password in a spec file.
+
+- **The inline editor is the exception, and it needed a blur latch.** A step
+  recorded months ago already holds the typed password; replacing that value is
+  the whole remediation, and it happens in `StepRow`'s inline field, which is a
+  single input on a 360pt row with no space for a chip list. That one uses the
+  native menu — and `Menu.popup` takes focus off the page, so the input blurs
+  and a blur that commits would unmount the editor before the pick came back,
+  leaving the chosen variable with nowhere to go. `menuOpen` suppresses that one
+  blur; `preventDefault` on mousedown is what keeps the caret position the
+  user's, so the reference splices in where they were typing rather than at the
+  end.
+
+- **The per-step ▶ resolves plain variables and refuses secrets.** The injected
+  replayer fills exactly the step it is handed, so a step carrying
+  `${storePassword}` would type those seventeen characters into the field — and
+  previewing the step is the first thing anyone does after making one, so the
+  feature would appear not to work at the exact moment it was being checked.
+  `resolveStepForPreview` substitutes plain and captured defaults before the
+  script is built. A secret is deliberately not resolved: interpolating it into
+  an evaluated script would put the plaintext in the page's isolated world and
+  in the replay's own log, which is the guarantee the encrypted store exists to
+  make. The step reports that instead, which is more useful than either a
+  preview that types the wrong thing or one that types nothing and calls it a
+  pass.
+
+- **The plaintext warning is stated where the mistake is made.** "Value" is the
+  default kind and its default is written verbatim into `tests.json` and baked
+  into the generated spec; a "Secret" is encrypted and referenced by env. On the
+  Variables tab those two are indistinguishable once a row exists — same field,
+  same row, and a secret's value is hidden precisely *because* it is safe. So
+  the notice is on the panel whether or not any variable exists yet (the
+  decision it warns about is made before the first row does), on the datasets
+  section (a row cannot supply a secret — `variableHeader` spreads secrets last
+  for exactly that reason), and inside the create form itself, where it appears
+  the instant the kind is switched to Value.
+
+- **Declaring from the Edit Steps editor is about the draft, not convenience.**
+  The Variables tab is one tab away, but that editor holds an UNSAVED step list,
+  so going there costs the user every edit they have made. Declaring in place is
+  what makes "replace this recorded password with a secret" a single sitting.
+
+- **Two bugs the preview caught that the suite could not.** `createVariable`
+  appended to the record it had rendered, so two creates in a row wrote the
+  second on top of a list that predated the first, silently deleting it; it now
+  re-reads before writing. And the preview bridge returned `state.tests`
+  entries by reference, which it mutates in place — React Query's structural
+  sharing then decided nothing had changed and no subscriber re-rendered, so a
+  correct write looked like a broken feature in the only place the feature can
+  be driven in a browser. `tests:get` clones now, which is what real IPC does
+  anyway.
+
 ### 2026-08-17 — Restoring `process.env.TZ` when there was no TZ to restore
 
 `main/services/routine-schedule.test.ts`.

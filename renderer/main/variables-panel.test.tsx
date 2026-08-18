@@ -271,3 +271,50 @@ describe("creating and renaming variables (drafts stay local until valid)", () =
     );
   });
 });
+
+// ── The plaintext warning ─────────────────────────────────────────────────
+//
+// "Value" is the default kind, and the difference between it and "Secret" is
+// invisible on this panel once a row exists: same field, same row, and a
+// secret's value is hidden precisely BECAUSE it is safe. The only thing
+// telling the user that a password typed into a Value row lands in
+// tests.json and in the generated spec is this notice. It renders whether or
+// not any variable exists yet, because the decision it warns about is made
+// before the first row does.
+describe("the plaintext warning", () => {
+  /** The notice's own paragraph. Matched on the whole element rather than a
+   *  text node: the sentence is broken up by `<strong>` around each kind, so
+   *  every text-node query would match only a fragment of it. */
+  function notice(pattern: RegExp): HTMLElement {
+    return screen.getByText(
+      (_content, el) =>
+        el?.tagName === "P" && pattern.test(el.textContent ?? ""),
+    );
+  }
+
+  it("names which kinds are stored in plain text, and which is not", async () => {
+    renderPanel(makeTest());
+    await screen.findByText(/Variables/);
+    const text = notice(/plain text/i).textContent ?? "";
+    expect(text).toMatch(/Value/);
+    expect(text).toMatch(/Captured/);
+    expect(text).toMatch(/Secret/);
+    expect(text).toMatch(/encrypted/i);
+  });
+
+  it("warns before any variable exists, not once one does", async () => {
+    // The mistake happens while creating the first row. A notice that appeared
+    // only after the fact would be a description, not a warning.
+    renderPanel(makeTest({ variables: [] }));
+    await screen.findByText(/No variables yet/i);
+    expect(notice(/plain text/i)).toBeTruthy();
+  });
+
+  it("says dataset rows are plain text too", async () => {
+    // A row cannot supply a secret — `variableHeader` spreads secrets LAST for
+    // exactly that reason — so someone reaching for datasets to hold a password
+    // needs telling before they type one in.
+    renderPanel(makeTest({ variables: [{ name: "email", kind: "plain", value: "a@b.com" }] }));
+    expect(await screen.findByText(/Row values are stored as plain text/i)).toBeTruthy();
+  });
+});

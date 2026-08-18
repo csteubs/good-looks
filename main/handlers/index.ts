@@ -202,6 +202,14 @@ export function registerHandlers(): void {
     async (_e, params: { stepId: string; patch: Partial<Step> }) =>
       recorderService.updateStep(params.stepId, params.patch),
   );
+  // Declare a variable mid-session. Unvalidated on this side on purpose: the
+  // service throws a message the trainer shows verbatim, and duplicating the
+  // rule here is how the two would come to disagree about what a valid name is.
+  ipcMain.handle(
+    "recorder:addVariable",
+    async (_e, params: { name: unknown; kind?: unknown; value?: unknown }) =>
+      recorderService.addVariable(params ?? { name: undefined }),
+  );
   ipcMain.handle(
     "recorder:applyHeal",
     async (_e, params: { stepId: string; locator: Locator }) =>

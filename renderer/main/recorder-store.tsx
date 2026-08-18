@@ -25,6 +25,7 @@ import type {
   ReplayLogEvent,
   RunBrowser,
   Step,
+  VariableKind,
 } from "../lib/recorder-types";
 
 export type RunStepStatus = "running" | "passed" | "failed";
@@ -178,6 +179,11 @@ interface RecorderContextValue {
   insertGeneratedSteps: (steps: RawStep[]) => Promise<void>;
   reorderStep: (id: string, toIndex: number) => void;
   updateStep: (id: string, patch: Partial<Step>) => void;
+  /** Declare a variable on the live session, so a step composed here can
+   *  reference it. Rejects with a message meant to be shown to the user — the
+   *  backend owns the rules, and the form that called this prints what it says.
+   *  Resolves once the new declaration is in `state.variables`. */
+  addVariable: (v: { name: string; kind: VariableKind; value?: string }) => Promise<void>;
   /** Apply a user-chosen Auto-Heal candidate locator to a step. */
   applyHeal: (stepId: string, locator: Locator) => void;
   setCursor: (index: number) => void;
@@ -692,6 +698,16 @@ export function RecorderProvider({
     // diffs what actually landed instead of assuming all of `steps` did.
     setNewStepIds(computeNewStepIds(before, after));
   }, [receiveSteps]);
+  const addVariable = React.useCallback(
+    async (v: { name: string; kind: VariableKind; value?: string }) => {
+      // The reply IS the new state, applied here rather than waiting for the
+      // broadcast: the caller selects the variable it just created as soon as
+      // this resolves, and a picker that does not yet list it would drop the
+      // selection on the next render.
+      setState(await api.recorder.addVariable(v));
+    },
+    [],
+  );
   const applyHeal = React.useCallback(
     (stepId: string, locator: Locator) => void api.recorder.applyHeal(stepId, locator),
     [],
@@ -801,6 +817,7 @@ export function RecorderProvider({
     insertGeneratedSteps,
     reorderStep,
     updateStep,
+    addVariable,
     applyHeal,
     setCursor,
     replayStep,

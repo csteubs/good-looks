@@ -668,6 +668,35 @@ export function normalizeVariables(input: unknown): TestVariable[] {
 }
 
 /**
+ * Fold the variables declared during a trainer session back into the ones the
+ * stored record already had.
+ *
+ * Upsert by name, session wins. NOT a replacement: the trainer can only ADD a
+ * variable, so anything the record carries that the session doesn't know about
+ * came from the Variables tab — possibly in another window, while the session
+ * was open — and rebuilding the list from the session alone would delete it.
+ * That is the same failure `finalize` avoids by spreading the existing record
+ * first, applied to the one field the trainer now writes.
+ *
+ * Order is existing-first so a variable keeps the row it had; a name only the
+ * session has is appended. Normalized on the way out, so the cap and the
+ * secret-value strip apply to the merged list rather than to each half.
+ */
+export function mergeSessionVariables(
+  existing: TestVariable[] | undefined,
+  session: TestVariable[] | undefined,
+): TestVariable[] {
+  const fromSession = new Map((session ?? []).map((v) => [v.name, v]));
+  const merged: TestVariable[] = [];
+  for (const v of existing ?? []) {
+    merged.push(fromSession.get(v.name) ?? v);
+    fromSession.delete(v.name);
+  }
+  merged.push(...fromSession.values());
+  return normalizeVariables(merged);
+}
+
+/**
  * Canonicalize datasets: require an id and a name, keep only string values,
  * truncate over-long ones, and cap the count. Values for variables the test
  * doesn't declare are kept here (the user may be mid-edit) but ignored at
@@ -1489,6 +1518,53 @@ export function collectVarRefs(step: Step): string[] {
   return out;
 }
 
+/**
+ * Substitute a step's `${name}` references for the trainer's own preview.
+ *
+ * The injected replayer takes a step as JSON and fills exactly what it is
+ * given, so a step carrying `${storePassword}` types those seventeen characters
+ * into the field. In a real run the generator turns that into `V.storePassword`
+ * and the value comes from the record or the environment — which means the one
+ * action a user takes to check their new variable step (the per-step ▶) is the
+ * one place it would appear not to work.
+ *
+ * A SECRET cannot be resolved here and is not attempted. Its plaintext lives
+ * encrypted and reaches the Playwright child process and nowhere else;
+ * interpolating it into an evaluated script would put it in the page's isolated
+ * world and in the replay's own logs, which is the guarantee `secret-redaction`
+ * exists to hold. The names come back instead, so the caller can say why the
+ * preview stopped rather than typing something wrong and reporting success.
+ *
+ * An undeclared reference is left as literal text — the same rule `valueExpr`
+ * applies in the generator, so a price of `${9.99}` means here what it will
+ * mean in the spec.
+ */
+export function resolveStepForPreview(
+  step: Step,
+  variables: readonly TestVariable[],
+): { step: Step; secretRefs: string[] } {
+  const refs = collectVarRefs(step);
+  if (refs.length === 0) return { step, secretRefs: [] };
+  const byName = new Map(variables.map((v) => [v.name, v]));
+  const secretRefs = refs.filter((n) => byName.get(n)?.kind === "secret");
+  const sub = (text: string): string =>
+    text.replace(VAR_REF_RE, (whole, name: string) => {
+      const v = byName.get(name);
+      if (!v || v.kind === "secret") return whole;
+      return v.value ?? "";
+    });
+  const next: Step = { ...step };
+  if (typeof next.value === "string") next.value = sub(next.value);
+  if (typeof next.text === "string") next.text = sub(next.text);
+  if (typeof next.url === "string") next.url = sub(next.url);
+  if (next.flowArgs) {
+    next.flowArgs = Object.fromEntries(
+      Object.entries(next.flowArgs).map(([k, val]) => [k, sub(val)]),
+    );
+  }
+  return { step: next, secretRefs };
+}
+
 /** Bounds for `TestRecord.tags`. Generous enough to never bite in practice,
  *  tight enough that a paste accident can't write a megabyte into tests.json. */
 export const MAX_TAG_LENGTH = 32;
@@ -2154,6 +2230,14 @@ export interface RecorderState {
   cursor: number;
   /** true while the "Refine Selector" element picker is active */
   refineMode: boolean;
+  /** Variables this session can interpolate into a step value with `${name}`.
+   *
+   *  Carried on the session rather than read from the record, because for a NEW
+   *  recording there IS no record yet — the id is a UUID nothing has been saved
+   *  under. The trainer declares into this list and `finalize` merges it into
+   *  whatever the record ends up being. A secret's VALUE is never here; it goes
+   *  straight to the encrypted store and only its declaration travels. */
+  variables?: TestVariable[];
   /** true while a replay is running steps against the training window.
    *
    *  Broadcast rather than per-window React state because BOTH trainers (the

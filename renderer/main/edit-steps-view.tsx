@@ -24,9 +24,10 @@ import {
   SelectValue,
   Text,
 } from "@ui";
-import { Plus, ListPlus, TriangleAlert } from "lucide-react";
+import { Plus, ListPlus, TriangleAlert, Variable } from "lucide-react";
 
-import type { AssertKind, RawStep, Step } from "../lib/recorder-types";
+import type { AssertKind, RawStep, Step, TestVariable, VariableKind } from "../lib/recorder-types";
+import { NewVariableForm, PlaintextVariableNotice } from "../components/variable-picker";
 import { StepRow } from "./step-row";
 import { computeStepDepths } from "../lib/describe-step";
 import { clampViewportAxis, RESIZE_PRESETS } from "../lib/viewport-presets";
@@ -72,6 +73,13 @@ export interface EditStepsViewProps {
   /** True for an imported test, whose verbatim spec is never regenerated —
    *  editing steps here can only ever change the list, not the run. */
   imported?: boolean;
+  /** Variables this test declares, so a step's value can be edited to reference
+   *  one without the user having to know `${name}` is the syntax. */
+  variables?: TestVariable[];
+  /** Declare one from here. The Variables tab is one click away, but going
+   *  there means leaving this editor — and this editor holds an UNSAVED draft
+   *  of the step list, so that click costs the user their edits. */
+  onCreateVariable?: (v: { name: string; kind: VariableKind; value: string }) => Promise<void>;
   onCancel: () => void;
   onSave: (steps: Step[]) => Promise<void>;
 }
@@ -80,12 +88,15 @@ export function EditStepsView({
   steps: initialSteps,
   scriptEdited,
   imported,
+  variables = [],
+  onCreateVariable,
   onCancel,
   onSave,
 }: EditStepsViewProps) {
   const [draft, setDraft] = React.useState<Step[]>(initialSteps);
   const [saving, setSaving] = React.useState(false);
   const [addKind, setAddKind] = React.useState<EditStepKind | null>(null);
+  const [creatingVar, setCreatingVar] = React.useState(false);
   // Drag-to-reorder bookkeeping — mirrors the trainer's recording-view pattern.
   const [dragId, setDragId] = React.useState<string | null>(null);
   const [overIndex, setOverIndex] = React.useState<number | null>(null);
@@ -153,6 +164,11 @@ export function EditStepsView({
         <Text variant="small" color="tertiary" className="mr-auto">
           Reorder by dragging, click the value to edit, or remove with ✕. Element-targeted steps need the trainer.
         </Text>
+        {onCreateVariable ? (
+          <Button size="small" variant="glass" onClick={() => setCreatingVar((v) => !v)}>
+            <Variable className="size-3.5" /> New variable
+          </Button>
+        ) : null}
         <Button size="small" variant="glass" onClick={openAddMenu}>
           <Plus className="size-3.5" /> Add step
         </Button>
@@ -172,6 +188,27 @@ export function EditStepsView({
                 : "This test's script isn't generated from these steps — it was edited directly. Saving asks whether to rebuild the script from these steps or leave it as it is."}
             </Callout.Text>
           </Callout>
+        </div>
+      ) : null}
+      {creatingVar && onCreateVariable ? (
+        <div className="px-4 pt-2">
+          <NewVariableForm
+            existingNames={variables.map((v) => v.name)}
+            onCancel={() => setCreatingVar(false)}
+            onCreate={async (v) => {
+              await onCreateVariable(v);
+              setCreatingVar(false);
+            }}
+          />
+        </div>
+      ) : null}
+      {variables.length > 0 ? (
+        <div className="flex flex-col gap-1 px-4 pt-2">
+          <Text variant="small" color="secondary">
+            While editing a value, use the {"{x}"} button to insert{" "}
+            <code className="font-mono">{"${name}"}</code>.
+          </Text>
+          <PlaintextVariableNotice variables={variables} />
         </div>
       ) : null}
       {/* The editor's own scroll container, and it is load-bearing rather than
@@ -200,6 +237,7 @@ export function EditStepsView({
                   indent={depths[i]}
                   onDelete={() => deleteStep(step.id)}
                   onEdit={(patch) => updateStep(step.id, patch)}
+                  variables={variables}
                   drag={{
                     onDragStart: () => setDragId(step.id),
                     onDragEnter: () => setOverIndex(i),

@@ -94,6 +94,11 @@ const ADD_STEP_KINDS: AddStepKind[] = [
   "viewport",
   "capture",
   "runFlow",
+  // Last, and deliberately: the discoverable route to it is the training
+  // browser's right-click menu on the field being filled, which arrives here
+  // as a `fill` context action with the element already resolved. This entry is
+  // the keyboard-free fallback for someone already in the list.
+  "fill",
 ];
 
 interface MenuPopupItem {
@@ -490,6 +495,7 @@ export function RecordingView() {
     startRefine,
     endRefine,
     clearPicked,
+    addVariable,
     contextAction,
     clearContextAction,
   } = useRecorder();
@@ -788,6 +794,8 @@ export function RecordingView() {
         initialState={contextPick?.elementState}
         prefillText={contextPick?.prefillText}
         prefillValue={contextPick?.prefillValue}
+        variables={state.variables ?? []}
+        onCreateVariable={addVariable}
       />
     ) : null;
 
@@ -1012,6 +1020,7 @@ export function RecordingView() {
                     onReplay={controlsDisabled ? undefined : () => replayStep(s.id)}
                     onRefine={controlsDisabled ? undefined : () => startRefine(s.id)}
                     onEdit={controlsDisabled ? undefined : (patch) => updateStep(s.id, patch)}
+                    variables={state.variables ?? []}
                     runStatus={replayStepStatus[i]}
                     replayFlash={replayFlash[i]}
                     isNew={newStepIds.has(s.id)}

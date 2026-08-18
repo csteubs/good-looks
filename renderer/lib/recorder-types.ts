@@ -1120,7 +1120,18 @@ export interface HealSuggestion {
  *  right-click test-tools menu in the training browser. Mirrors the backend
  *  `ContextAction` in main/services/recorder-service.ts. */
 export interface ContextAction {
-  kind: "assertion" | "wait" | "goto" | "press" | "viewport" | "find" | "refine" | "elementState";
+  kind:
+    | "assertion"
+    | "wait"
+    | "goto"
+    | "press"
+    | "viewport"
+    | "find"
+    | "refine"
+    | "elementState"
+    /** "Use variable…" — opens the composer on a fill step targeting the
+     *  right-clicked element, with the variable picker in it. */
+    | "fill";
   assert?: AssertKind;
   /** pseudo-state to preselect when kind === "elementState" (mirror of main). */
   elementState?: "hover" | "focus";
@@ -1181,6 +1192,12 @@ export interface RecorderState {
   assertSoft: boolean;
   cursor: number;
   refineMode: boolean;
+  /** Variables this session's steps can interpolate with `${name}` (mirror of
+   *  main). Carried on the SESSION because a new recording has no saved record
+   *  to hang them off yet — the trainer declares into this list and the record
+   *  gets them when the session is saved. Absent on states from a backend that
+   *  predates it, hence optional; read it as an empty list. */
+  variables?: TestVariable[];
   /** true while a replay is running steps against the training window. Both
    *  trainer windows disable their controls on it — see the note on the mirror
    *  of this interface in main/recorder/types.ts. */

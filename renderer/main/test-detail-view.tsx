@@ -60,6 +60,8 @@ import {
   type ScriptChangeSource,
   type Step,
   type TestRecord,
+  type TestVariable,
+  type VariableKind,
 } from "../lib/recorder-types";
 
 /** What to say when a record admits its steps and its script disagree. Three
@@ -383,6 +385,33 @@ export function TestDetailView() {
   // Write an edited step list back. `regenerate` is what the save-time question
   // resolves to; it's ignored for a test whose script is generated from steps
   // anyway, and refused backend-side for an imported one.
+  // Declare a variable from inside the Edit Steps editor. Two writes because a
+  // secret's value never travels on the record: the declaration goes through
+  // `setVariables` like any other, and the plaintext takes the one-way trip to
+  // the encrypted store. Ordered declaration-first so a failed secret write
+  // leaves a declared-but-empty variable — visible on the Variables tab and
+  // fixable there — rather than a stored value nothing references.
+  const createVariable = React.useCallback(
+    async (v: { name: string; kind: VariableKind; value: string }) => {
+      // Re-read rather than appending to the rendered record. `setVariables`
+      // replaces the whole list, so the base has to be the CURRENT one — and
+      // the rendered copy is only as fresh as the last refetch. Two creates in
+      // a row (declare the email, then the password) would otherwise write the
+      // second on top of a list that predates the first, silently deleting it.
+      const current = await api.tests.get(id);
+      const next: TestVariable[] = [
+        ...(current?.variables ?? []),
+        { name: v.name, kind: v.kind, ...(v.kind === "secret" ? {} : { value: v.value }) },
+      ];
+      await api.tests.setVariables(id, next);
+      if (v.kind === "secret" && v.value) await api.tests.setSecret(id, v.name, v.value);
+      qc.invalidateQueries({ queryKey: ["test", id] });
+      qc.invalidateQueries({ queryKey: ["script", id] });
+      qc.invalidateQueries({ queryKey: ["secretStatus", id] });
+    },
+    [id, qc],
+  );
+
   const commitSteps = React.useCallback(
     async (steps: Step[], regenerate: boolean) => {
       await api.tests.updateSteps(id, steps, { regenerate });
@@ -862,6 +891,11 @@ export function TestDetailView() {
           steps={test.steps}
           scriptEdited={Boolean(test.scriptEdited)}
           imported={Boolean(test.sourceDir)}
+          variables={test.variables ?? []}
+          // An imported test's spec is never regenerated, so a variable
+          // declared against it would be a promise nothing keeps — the same
+          // reason the Variables tab itself is hidden for one.
+          onCreateVariable={test.sourceDir ? undefined : createVariable}
           onCancel={() => setEditingSteps(false)}
           onSave={async (steps) => {
             // A script that isn't generated from steps can't be updated behind

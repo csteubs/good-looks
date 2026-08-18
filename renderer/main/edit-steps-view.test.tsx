@@ -149,3 +149,94 @@ describe("reordering", () => {
     expect(onSave.mock.calls[0][0].map((s) => s.id)).toEqual(["a", "b", "c"]);
   });
 });
+
+// ── Variables, from the step editor ───────────────────────────────────────
+//
+// The second of the two paths to the same job. This editor is the only place a
+// step recorded MONTHS ago can be fixed — the trainer's browser is not open,
+// and the recorded password is sitting in the step list — so the insert
+// affordance has to be here too, not only where steps are first made.
+//
+// The create form is here for a narrower reason: the Variables tab is one tab
+// away, but this editor holds an UNSAVED draft of the step list, so going there
+// costs the user every edit they have made. A declare-in-place is what makes
+// "replace this password with a secret" a single sitting.
+describe("using a variable in a step", () => {
+  const VARS = [{ name: "storePassword", kind: "secret" as const }];
+
+  it("offers the insert button on a value the test can interpolate", () => {
+    render(
+      <EditStepsView steps={STEPS} variables={VARS} onCancel={() => {}} onSave={async () => {}} />,
+    );
+    // The `fill` row — click its value to edit, and the button appears beside
+    // it. Last of the edit buttons, not the third: the `click` step has no
+    // inline-editable field and so renders none.
+    const edits = screen.getAllByLabelText(/edit step/i);
+    fireEvent.click(edits[edits.length - 1]);
+    expect(screen.getByLabelText(/insert a variable/i)).toBeTruthy();
+  });
+
+  it("says how to use one, so the syntax is not something to be already known", () => {
+    render(
+      <EditStepsView steps={STEPS} variables={VARS} onCancel={() => {}} onSave={async () => {}} />,
+    );
+    expect(screen.getByText(/\$\{name\}/)).toBeTruthy();
+  });
+
+  it("warns that a plain variable is stored unencrypted", () => {
+    render(
+      <EditStepsView
+        steps={STEPS}
+        variables={[{ name: "email", kind: "plain", value: "a@b.c" }]}
+        onCancel={() => {}}
+        onSave={async () => {}}
+      />,
+    );
+    expect(screen.getByText(/stored\s+unencrypted/i)).toBeTruthy();
+  });
+
+  it("hides the create affordance when the host cannot persist one", () => {
+    // An imported test: its spec is never regenerated, so a variable declared
+    // against it would be a promise nothing keeps.
+    render(
+      <EditStepsView steps={STEPS} variables={VARS} onCancel={() => {}} onSave={async () => {}} />,
+    );
+    expect(screen.queryByRole("button", { name: /new variable/i })).toBe(null);
+  });
+
+  it("declares one without losing the step draft", async () => {
+    const onCreateVariable = vi.fn(async () => {});
+    render(
+      <EditStepsView
+        steps={STEPS}
+        variables={[]}
+        onCreateVariable={onCreateVariable}
+        onCancel={() => {}}
+        onSave={async () => {}}
+      />,
+    );
+    // Edit a step first — this is the draft that going to the Variables tab
+    // would have discarded.
+    fireEvent.click(screen.getAllByLabelText(/edit step/i)[0]);
+    const url = screen.getByLabelText(/edit url/i);
+    fireEvent.change(url, { target: { value: "https://shop.example.com" } });
+    fireEvent.keyDown(url, { key: "Enter" });
+
+    fireEvent.click(screen.getByRole("button", { name: /new variable/i }));
+    fireEvent.change(screen.getByLabelText(/new variable name/i), {
+      target: { value: "storePassword" },
+    });
+    fireEvent.change(screen.getByLabelText(/new variable value/i), {
+      target: { value: "hunter2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /create variable/i }));
+    await waitFor(() =>
+      expect(onCreateVariable).toHaveBeenCalledWith({
+        name: "storePassword",
+        kind: "secret",
+        value: "hunter2",
+      }),
+    );
+    expect(screen.getByText(/shop\.example\.com/)).toBeTruthy();
+  });
+});

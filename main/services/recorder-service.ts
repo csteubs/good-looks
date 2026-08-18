@@ -54,12 +54,17 @@ import {
 import type { CookieSpec } from "../recorder/types.js";
 import {
   initialCursor,
+  isValidVariableName,
   MAX_DRAIN_BYTES,
   MAX_STEP_STRING_LENGTH,
+  MAX_VARIABLES_PER_TEST,
+  mergeSessionVariables,
   normalizeLocator,
   normalizePickedElement,
   normalizeRawStep,
   normalizeRawSteps,
+  normalizeVariables,
+  resolveStepForPreview,
 } from "../recorder/types.js";
 import { normalizeViewport, recordedViewport, type Viewport } from "../recorder/window-size.js";
 import {
@@ -80,6 +85,8 @@ import type {
   RecorderState,
   Step,
   TestRecord,
+  TestVariable,
+  VariableKind,
 } from "../recorder/types.js";
 import { sendToMain } from "./app-window.js";
 import {
@@ -94,6 +101,8 @@ import { getWindowUrl, getPreloadPath } from "../windows/window-paths.js";
 import { runHistoryStore } from "./run-history-store.js";
 import { describeStep } from "./script-generator.js";
 import { testStore } from "./test-store.js";
+import { testSecretsStore } from "./test-secrets-store.js";
+import { refreshSecretSnapshot } from "./secret-redaction.js";
 
 /** Isolated world the recorder's scripts run in. Any id above 0 is isolated
  *  from the page's main world (0); the exact number only has to be stable so
@@ -437,9 +446,32 @@ async function runStep(
     // reading cookies from it would return the app's, not the site's.
     return applyCookieStep(cookieWc as unknown as CookieHost, step, currentPageUrl());
   }
+  // `${name}` is resolved HERE, not in the injected script. The replayer fills
+  // exactly what it is handed, so a step carrying a reference would type the
+  // reference — and the per-step ▶ is the first thing anyone does after making
+  // one. A secret is refused rather than resolved: its plaintext must not enter
+  // the page's isolated world or this replay's logs, and a preview that typed
+  // nothing and reported success would be worse than one that says why.
+  const resolved = resolveStepForPreview(step, session?.variables ?? []);
+  if (resolved.secretRefs.length > 0) {
+    const names = resolved.secretRefs.map((n) => "${" + n + "}").join(", ");
+    return {
+      ok: false,
+      error: `Fills a secret (${names}) — previewing would have to decrypt it into the page.`,
+      logs: [
+        {
+          i: 0,
+          t: Date.now(),
+          level: "warn",
+          m: `Not previewed: ${names} is a secret. Its value is supplied to the browser only when the test RUNS, and never enters the script or this log.`,
+        },
+      ],
+    };
+  }
+
   const result = (await execWithTimeout(
     wc,
-    buildReplayScript(step),
+    buildReplayScript(resolved.step),
     REPLAY_STEP_TIMEOUT_MS,
   )) as ReplayStepResult & { point?: { x: number; y: number } };
 
@@ -509,6 +541,25 @@ interface Session {
   replaying: boolean;
   /** continuing/extending an existing test rather than recording a new one */
   editing: boolean;
+  /**
+   * Variables a step in this session can interpolate with `${name}`.
+   *
+   * Seeded from the record when continuing an existing test, empty for a new
+   * one — and that is the whole reason it lives on the session rather than
+   * being read from the store on demand. A NEW recording has no record yet:
+   * `testId` is a UUID nothing has been saved under, so `tests:setVariables`
+   * would answer "Test not found" and declaring a variable while training
+   * would be impossible for exactly the test that is being trained.
+   *
+   * A secret's VALUE is never here. It goes straight to the encrypted store
+   * (which is keyed by test id and needs no record), and only the declaration
+   * travels with the session.
+   */
+  variables: TestVariable[];
+  /** true once a secret has been written under this session's id while the
+   *  record still doesn't exist — so discarding the recording knows there is
+   *  an orphan to clear. See `discardExit`. */
+  wroteSecrets: boolean;
   /** preserved from the original record when editing, else the session start time */
   createdAt: number;
   /** snapshot of the global "show URL bar" setting — whether this session's
@@ -710,6 +761,7 @@ function currentState(): RecorderState {
     assertSoft: session?.assertSoft ?? false,
     cursor: session?.cursor ?? 0,
     refineMode: session?.refineMode ?? false,
+    variables: session?.variables ?? [],
     replaying: session?.replaying ?? false,
     pageReady: session?.pageReady ?? false,
     loading: !!session && !session.pageReady && !session.loadFailed,
@@ -1045,7 +1097,16 @@ function windowLabel(): string {
  *  right-click test-tools menu in the training browser. The renderer opens the
  *  Add-step dialog prefilled with these so the user can tweak before inserting. */
 export interface ContextAction {
-  kind: "assertion" | "wait" | "goto" | "press" | "viewport" | "find" | "refine" | "elementState";
+  kind:
+    | "assertion"
+    | "wait"
+    | "goto"
+    | "press"
+    | "viewport"
+    | "find"
+    | "refine"
+    | "elementState"
+    | "fill";
   /** assert kind when kind === "assertion" */
   assert?: AssertKind;
   /** which pseudo-state to preselect when kind === "elementState". Only the
@@ -1205,6 +1266,7 @@ export const recorderService = {
     let url = normalizeUrl(params.url);
     let name = params.name?.trim() || "Recorded test";
     let existingSteps: Step[] = [];
+    let existingVariables: TestVariable[] = [];
     let editing = false;
     let createdAt = Date.now();
 
@@ -1216,6 +1278,7 @@ export const recorderService = {
         url = rec.url;
         name = rec.name;
         existingSteps = rec.steps;
+        existingVariables = rec.variables ?? [];
         createdAt = rec.createdAt;
       }
     }
@@ -1232,6 +1295,8 @@ export const recorderService = {
       replaying: false,
       cursor: initialCursor(editing, existingSteps),
       editing,
+      variables: [...existingVariables],
+      wroteSecrets: false,
       createdAt,
       showUrlBar: recorderSettingsStore.get().showUrlBar,
       // Starts at the session's start URL so the strip has something true to
@@ -1690,6 +1755,21 @@ export const recorderService = {
           { label: "Assert page", submenu: assertPageItems },
           { label: "Set element state", submenu: stateItems },
           { label: "Wait", submenu: waitItems },
+          // Deliberately top-level rather than inside "Add step": filling a
+          // field from a variable is the reason someone right-clicks a login
+          // form, and it is the one path that keeps a password out of the
+          // generated spec. Buried one level down it would be found by the
+          // people who already knew about it.
+          //
+          // No prefill. The element's current value is exactly what a password
+          // box holds, and offering it as the default for a new variable would
+          // walk the plaintext straight into the field this feature exists to
+          // keep it out of.
+          {
+            label: "Use variable…",
+            enabled: !!picked,
+            click: () => ctxAction({ kind: "fill", picked, prefillText: "", prefillValue: "" }),
+          },
           {
             label: "Refine selector for this element",
             enabled: !!picked,
@@ -2018,6 +2098,62 @@ export const recorderService = {
       broadcastSteps();
       broadcastState();
     }
+    return currentState();
+  },
+
+  /**
+   * Declare a variable from inside the trainer, so a step can reference it
+   * with `${name}` without leaving the session to visit the Variables tab.
+   *
+   * Writes to the SESSION, not the record — see `Session.variables` for why a
+   * new recording has no record to write to. The exception is a secret's
+   * value, which has only one legal home: the encrypted store, immediately,
+   * before the plaintext has anywhere else to be. Nothing hands it back.
+   *
+   * Rejections are thrown rather than swallowed. This is a form submit with a
+   * visible field, so "your name isn't a valid identifier" has somewhere to be
+   * said; the silent-return idiom the step methods use would leave the user
+   * looking at a picker that never gained the entry they just created.
+   */
+  async addVariable(input: {
+    name: unknown;
+    kind?: unknown;
+    value?: unknown;
+  }): Promise<RecorderState> {
+    if (!session) throw new Error("No recording session is running.");
+    if (!isValidVariableName(input.name)) {
+      throw new Error(
+        "Use letters, numbers and underscores, starting with a letter — the name becomes a property in the generated spec.",
+      );
+    }
+    const name = input.name;
+    if (session.variables.some((v) => v.name === name)) {
+      throw new Error(`This test already declares “${name}”.`);
+    }
+    if (session.variables.length >= MAX_VARIABLES_PER_TEST) {
+      throw new Error(`A test can declare at most ${MAX_VARIABLES_PER_TEST} variables.`);
+    }
+    // Through the same normalizer the IPC handler uses, so a variable declared
+    // here and one declared on the Variables tab cannot differ in what they
+    // allow — including the strip that keeps a secret's value off the record.
+    const [clean] = normalizeVariables([
+      { name, kind: input.kind as VariableKind, value: input.value },
+    ]);
+    if (!clean) throw new Error("That variable could not be saved.");
+
+    if (clean.kind === "secret") {
+      const value = typeof input.value === "string" ? input.value : "";
+      if (!value) throw new Error("A secret's value cannot be empty.");
+      await testSecretsStore.set(session.testId, name, value);
+      await refreshSecretSnapshot();
+      // Set AFTER the write succeeds: the flag exists to make `discardExit`
+      // clean up, and claiming a write that threw would be a lie in the
+      // direction of deleting something that isn't there.
+      session.wroteSecrets = true;
+    }
+
+    session.variables.push(clean);
+    broadcastState();
     return currentState();
   },
 
@@ -2599,6 +2735,19 @@ export const recorderService = {
       const s = session;
       session = null;
       stopPolling();
+      // A secret declared while training is written to the encrypted store the
+      // moment it is typed — it has nowhere else to live, and the store is
+      // keyed by test id rather than by a record. Discarding a recording that
+      // never became a test would therefore leave that value on disk under an
+      // id nothing will ever reference or delete. Only for a session with no
+      // record: an "Edit in Trainer" discard must not take the test's real
+      // secrets with it.
+      if (s.wroteSecrets && !testStore.get(s.testId)) {
+        void testSecretsStore
+          .clearTest(s.testId)
+          .then(() => refreshSecretSnapshot())
+          .catch(() => {});
+      }
       logger.info("recorder", "Discarded recording (no save)", { id: s.testId, steps: s.steps.length });
     }
     if (recWindow && !recWindow.isDestroyed()) {
@@ -2651,6 +2800,11 @@ async function finalize(): Promise<void> {
     createdAt: s.createdAt,
     updatedAt: Date.now(),
     steps: s.steps,
+    // Merged rather than assigned: the session was seeded from this record, but
+    // the Variables tab may have added one in another window while the trainer
+    // was open, and that row would otherwise be deleted by a save the user
+    // thinks is only about steps. See `mergeSessionVariables`.
+    variables: mergeSessionVariables(existing?.variables, s.variables),
     scriptPath: existing?.scriptPath ?? testStore.scriptPathFor(s.testId),
     // Continuing in the trainer always regenerates from steps, so a previously
     // hand-edited script is replaced and the flag no longer holds.

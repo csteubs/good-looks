@@ -7,7 +7,7 @@
 // list didn't update" is a bug users notice immediately.
 
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 import type { Step, StepType } from "../lib/recorder-types";
 import { SEL_RING, TONE, hexToRgb } from "../theme";
@@ -582,5 +582,123 @@ describe("the step's change temp", () => {
     render(<StepRow index={0} step={step({ type: "click", locator: LOCATOR })} trend={{ recentP50Ms: 2400, previousP50Ms: null }} />);
     expect(temp()?.dataset.mode).toBe("off");
     expect(temp()?.getAttribute("title")).toContain("no earlier runs to compare against");
+  });
+});
+
+// ── Inserting a variable into an inline edit ──────────────────────────────
+//
+// The path for a step that ALREADY EXISTS — a password typed during recording,
+// captured verbatim. Replacing that value with `${storePassword}` is the whole
+// remediation, and before this button the only way to do it was to know the
+// syntax existed.
+//
+// The button is offered through the app's native menu, so the pick itself is
+// not in the DOM (CLAUDE.md). What IS testable, and what matters, is that
+// opening it does not destroy the editor underneath it: `Menu.popup` takes
+// focus off the page, the input blurs, and a blur that commits would close the
+// field before the pick came back — leaving the chosen variable with nowhere
+// to go and the user looking at their unchanged step.
+
+describe("inserting a variable inline", () => {
+  const VARS = [
+    { name: "storePassword", kind: "secret" as const },
+    { name: "customerEmail", kind: "plain" as const, value: "a@b.c" },
+  ];
+
+  /** Answer the native menu with the item whose label matches. */
+  function stubMenu(label: string | null) {
+    const popup = vi.fn(async (opts: { items: { label?: string; commandId?: number }[] }) => {
+      if (label === null) return {};
+      const hit = opts.items.find((i) => i.label === label);
+      if (!hit) throw new Error(`no menu item labelled "${label}"`);
+      return { commandId: hit.commandId };
+    });
+    (window as unknown as { glazeAPI: { Menu: unknown } }).glazeAPI = { Menu: { popup } };
+    return popup;
+  }
+
+  function openEditor(s: Step, variables = VARS) {
+    const onEdit = vi.fn();
+    render(<StepRow index={0} step={s} onEdit={onEdit} variables={variables} />);
+    fireEvent.click(screen.getByLabelText(/edit step/i));
+    return { onEdit };
+  }
+
+  it("offers the button on a value field", () => {
+    openEditor(step({ type: "fill", locator: LOCATOR, value: "hunter2" }));
+    expect(screen.getByLabelText(/insert a variable/i)).toBeTruthy();
+  });
+
+  it("does not offer it on a numeric field", () => {
+    // `waitMs` is emitted as a bare numeral; a reference there is not a
+    // variable, it's a spec that doesn't parse.
+    openEditor(step({ type: "wait", waitMs: 1000 }));
+    expect(screen.queryByLabelText(/insert a variable/i)).toBe(null);
+  });
+
+  it("does not offer it when the test declares none", () => {
+    openEditor(step({ type: "fill", locator: LOCATOR, value: "hunter2" }), []);
+    expect(screen.queryByLabelText(/insert a variable/i)).toBe(null);
+  });
+
+  it("is absent entirely on a read-only row", () => {
+    // No `onEdit` — the detail view's list. Nothing here should gain a control.
+    render(
+      <StepRow index={0} step={step({ type: "fill", locator: LOCATOR, value: "x" })} variables={VARS} />,
+    );
+    expect(screen.queryByLabelText(/insert a variable/i)).toBe(null);
+  });
+
+  it("splices the reference in at the caret", async () => {
+    stubMenu("${customerEmail}");
+    openEditor(step({ type: "fill", locator: LOCATOR, value: "@example.com" }));
+    const input = screen.getByLabelText(/edit value/i) as HTMLInputElement;
+    input.setSelectionRange(0, 0);
+    const button = screen.getByLabelText(/insert a variable/i);
+    fireEvent.mouseDown(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(input.value).toBe("${customerEmail}@example.com"));
+  });
+
+  it("keeps the editor open while the menu is up", async () => {
+    // The regression this exists for: `Menu.popup` blurs the input, and a blur
+    // that commits unmounts the field mid-pick.
+    stubMenu("${storePassword}");
+    const { onEdit } = openEditor(step({ type: "fill", locator: LOCATOR, value: "" }));
+    const button = screen.getByLabelText(/insert a variable/i);
+    fireEvent.mouseDown(button);
+    fireEvent.blur(screen.getByLabelText(/edit value/i));
+    expect(onEdit).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/edit value/i)).toBeTruthy();
+    fireEvent.click(button);
+    await waitFor(() =>
+      expect((screen.getByLabelText(/edit value/i) as HTMLInputElement).value).toBe(
+        "${storePassword}",
+      ),
+    );
+  });
+
+  it("commits the reference as the step's value", async () => {
+    stubMenu("${storePassword}");
+    const { onEdit } = openEditor(step({ type: "fill", locator: LOCATOR, value: "hunter2" }));
+    const input = screen.getByLabelText(/edit value/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "" } });
+    const button = screen.getByLabelText(/insert a variable/i);
+    fireEvent.mouseDown(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(input.value).toBe("${storePassword}"));
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onEdit).toHaveBeenCalledWith({ value: "${storePassword}" });
+  });
+
+  it("leaves the draft alone when the menu is dismissed", async () => {
+    const popup = stubMenu(null);
+    openEditor(step({ type: "fill", locator: LOCATOR, value: "hunter2" }));
+    const input = screen.getByLabelText(/edit value/i) as HTMLInputElement;
+    const button = screen.getByLabelText(/insert a variable/i);
+    fireEvent.mouseDown(button);
+    fireEvent.click(button);
+    await waitFor(() => expect(popup).toHaveBeenCalled());
+    expect(input.value).toBe("hunter2");
   });
 });
