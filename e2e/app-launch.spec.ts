@@ -12,6 +12,7 @@
 //   - a main-process module that throws at import, before whenReady
 
 import { test, expect } from "./fixtures.js";
+import { fillWorkArea } from "../main/services/window-fill.js";
 
 test("the main window opens and renders the library", async ({ window }) => {
   // Served over the custom scheme, not file://. This is the regression that
@@ -24,6 +25,33 @@ test("the main window opens and renders the library", async ({ window }) => {
   // correct thing to see. Asserting it — rather than just "something rendered"
   // — is what proves the store was read rather than merely constructed.
   await expect(window.getByText(/No tests yet/)).toBeVisible();
+});
+
+test("the main window opens filling the display", async ({ app, window }) => {
+  // ONLY AN END-TO-END RUN CAN CHECK THIS. `fillWorkArea` is unit-tested, but
+  // the arithmetic being right is not the property here — the property is that
+  // the real window is created against a real display's work area. Deleting the
+  // call in main/index.ts leaves every unit test green and the app opening at
+  // 1000×700 again, which is the regression this file exists to notice.
+  // The `window` fixture is load-bearing before its first use below: it awaits
+  // the app's first window, and without it `getAllWindows()` can run against an
+  // app whose window has not been created yet and read `undefined`.
+  const geometry = await app.evaluate(({ BrowserWindow, screen }) => {
+    const bounds = BrowserWindow.getAllWindows()[0].getBounds();
+    return { bounds, workArea: screen.getDisplayMatching(bounds).workArea };
+  });
+
+  // The floor is in the expectation rather than assumed away: a headless CI
+  // display can be smaller than the main window's 960×456 minimum, and there
+  // the correct window is the floor-sized one, not the screen-sized one.
+  expect(geometry.bounds).toEqual(
+    fillWorkArea(geometry.workArea, { width: 960, height: 456 }),
+  );
+
+  // And the renderer got the room, rather than a window that merely reports it.
+  // A viewport is what the sidebar and the toolbar actually lay out against.
+  const viewport = await window.evaluate(() => document.documentElement.clientWidth);
+  expect(viewport).toBeGreaterThanOrEqual(Math.min(geometry.workArea.width, 960));
 });
 
 test("the preload bridge is exposed to the renderer", async ({ window }) => {

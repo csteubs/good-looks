@@ -14,6 +14,7 @@ import {
   globalShortcut,
   logger,
   initDevToolsButtonState,
+  screen,
 } from "@shell/backend";
 
 import { installAppProtocol, registerAppScheme } from "./shell/app-protocol.js";
@@ -24,6 +25,8 @@ import { getPreloadPath, getWindowUrl } from "./windows/window-paths.js";
 import { openSettingsWindow } from "./windows/settings-window.js";
 import { sendToMain, setMainWindow } from "./services/app-window.js";
 import { attachUiScale, scaled } from "./services/ui-scale.js";
+import { fillWorkArea } from "./services/window-fill.js";
+import type { Bounds } from "./services/panel-dock.js";
 import {
   captureWindows,
   DEBUG_CAPTURE_ACCELERATOR,
@@ -144,6 +147,24 @@ routineScheduler.start();
 let mainWindow: BrowserWindow | null = null;
 
 // ── Window creation ───────────────────────────────────────────────────
+
+/**
+ * The work area of the display the app opens on, or null if it cannot be read.
+ *
+ * Null rather than a guessed rectangle: the caller's fallback is the fixed
+ * default size, and a window at a sensible size is a better failure than a
+ * window placed against numbers that were made up. `screen` is only legal after
+ * `app.whenReady`, which is the only place this runs from.
+ */
+function primaryWorkArea(): Bounds | null {
+  try {
+    return screen.getPrimaryDisplay().workArea;
+  } catch (err) {
+    logger.warn("main", "Could not read the primary display's work area", { error: String(err) });
+    return null;
+  }
+}
+
 async function createMainWindow() {
   if (mainWindow && !mainWindow.isDestroyed()) {
     logger.debug("main", "Main window already exists, skipping creation");
@@ -174,6 +195,25 @@ async function createMainWindow() {
   const windowWidth = scaled(1000);
   const windowHeight = scaled(700);
 
+  // But the window OPENS filling the display, and the two numbers above are
+  // only what it falls back to. Every screen here is a list that grows — the
+  // library, a test's steps, a run's log, the stats board's tiles — and at
+  // 1000×700 on a modern display each of them scrolls inside a window with
+  // empty desktop around it. Nothing restores a size the user chose (Glaze's
+  // `windowKey` frame persistence has no Electron equivalent and is stripped by
+  // the shim), so the size it opens at is the size it has, every launch.
+  //
+  // The WORK AREA, not the display bounds: filling under the menu bar or behind
+  // the Dock is not filling the screen, it is putting the window's own chrome
+  // where it cannot be reached. That measurement is already in the points a
+  // window is sized in, so — unlike the four above — it is not put through
+  // `scaled()`; the floors it is clamped against still are. See
+  // services/window-fill.ts for what happens on a display narrower than them.
+  const workArea = primaryWorkArea();
+  const opening = workArea
+    ? fillWorkArea(workArea, { width: minWindowWidth, height: minWindowHeight })
+    : { width: windowWidth, height: windowHeight };
+
   // No title. The app's name is already in the menu bar and the Dock, and the
   // window's own chrome draws the view it is showing — a title bar repeating
   // "Good Looks!" above that is noise.
@@ -191,8 +231,7 @@ async function createMainWindow() {
 
   mainWindow = new BrowserWindow({
     windowKey: "main", // Stable key for frame persistence
-    width: windowWidth,
-    height: windowHeight,
+    ...opening,
     minWidth: minWindowWidth,
     minHeight: minWindowHeight,
     title: windowTitle,

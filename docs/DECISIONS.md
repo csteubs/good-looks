@@ -10,6 +10,52 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-18 — The main window opens filling the display
+
+The app opened at a fixed 1000×700 and every screen in it is a list that grows
+— the library, a test's steps, a run's log, the stats board — so each of them
+scrolled inside a small window with empty desktop around it. It now opens at the
+work area of the display it comes up on.
+
+- **The size it opens at is the size it has.** Under the SDK, `windowKey: "main"`
+  meant frame persistence: a window the user resized came back that size. The
+  Electron shim accepts the option and strips it (there is no equivalent), so
+  nothing restores anything and the default is what every launch gets. That is
+  what makes the opening size worth choosing rather than leaving at a number.
+
+- **The work area, not the display bounds.** Sizing to `display.bounds` puts the
+  title bar under the menu bar and the bottom of the window behind the Dock —
+  the app's own chrome ends up where it cannot be reached. `workArea` is the
+  rectangle the OS says is usable, and it is also where the reference screenshot
+  this was built against ends.
+
+- **Not `maximize()`**, which was the shorter change. On macOS that is the zoom
+  button's toggle, so the window carries a zoomed STATE, and the state is what
+  makes it a toggle: it is one OS behaviour to reason about on top of the
+  geometry, and it cannot be unit-tested because there is no arithmetic to test.
+  Explicit bounds are a pure function of the display, which is what let
+  `fillWorkArea` be checked against the cases a laptop cannot be arranged into
+  (a negative-origin work area, a display smaller than the window's own floor).
+
+- **The layout floor beats the display.** 960×456 is a measurement of what the
+  widest toolbar needs, not a preference, so on a work area smaller than it the
+  window is the floor's size and hangs off the screen. Electron clamps the size
+  up whatever we do here; doing it in the same place the position is decided is
+  what stops the window being centred half off two edges. It hangs off the right
+  and bottom so the title bar and the sidebar — what you grab to fix it — stay
+  on screen.
+
+- **Points, not CSS pixels, and this is the trap the file's comment names.** The
+  four constants above it are CSS-pixel measurements put through `scaled()`. A
+  work area is already in the points a window is sized in, so scaling it would
+  make the window 25% larger than the screen at 125%. The floor it is clamped
+  against still needs the conversion.
+
+The e2e assertion is in `e2e/app-launch.spec.ts` rather than the unit suite
+because the property is not the arithmetic — that is unit-tested — but that the
+real window is created against a real display's work area. Deleting the call in
+`main/index.ts` leaves every unit test green.
+
 ### 2026-08-18 — Shopify crawler signatures
 
 A Shopify storefront with crawler protection on refuses automated traffic, which
