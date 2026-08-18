@@ -71,6 +71,34 @@ describe("picking a declared variable", () => {
     ).toBe(null);
   });
 
+  it("masks the value rather than showing it, on every chip that has one", () => {
+    // The trainer never prints a variable's value. A secret it could not reach
+    // anyway; a plain one it holds (the session broadcasts declarations), and
+    // that is precisely the value the app was given to keep.
+    render(<VariableChips variables={VARS} onPick={() => {}} />);
+    const secret = screen.getByText("${storePassword}").closest("button")!;
+    const plain = screen.getByText("${customerEmail}").closest("button")!;
+    expect(secret.textContent).toContain("****");
+    expect(plain.textContent).toContain("****");
+    expect(plain.textContent).not.toContain("a@b.c");
+  });
+
+  it("shows no marker for a variable that genuinely has no value", () => {
+    // The absence is information: a captured variable has nothing until the
+    // capture runs, and a **** there would claim otherwise.
+    render(
+      <VariableChips variables={[{ name: "orderId", kind: "captured" }]} onPick={() => {}} />,
+    );
+    expect(screen.getByText("${orderId}").closest("button")!.textContent).not.toContain("****");
+  });
+
+  it("marks a secret even though this side cannot see its value", () => {
+    // "No value here" would report the encrypted store as empty rather than as
+    // unreadable, which is a claim the renderer is in no position to make.
+    render(<VariableChips variables={[{ name: "pw", kind: "secret" }]} onPick={() => {}} />);
+    expect(screen.getByText("${pw}").closest("button")!.textContent).toContain("****");
+  });
+
   it("says so when the test declares none, rather than rendering an empty row", () => {
     render(
       <VariableChips variables={[]} onPick={() => {}} emptyHint="No variables yet." />,
@@ -93,7 +121,7 @@ describe("the plaintext warning", () => {
     expect(screen.getByText(/encrypted on this mac/i)).toBeTruthy();
   });
 
-  it("masks a secret's value and shows a plain one", () => {
+  it("shows what the user is typing right now — the one exception to masking", () => {
     render(<NewVariableForm onCreate={async () => {}} onCancel={() => {}} existingNames={[]} />);
     expect(screen.getByLabelText(/new variable value/i).getAttribute("type")).toBe("password");
     fireEvent.click(screen.getByText("Value"));

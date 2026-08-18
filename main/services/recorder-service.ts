@@ -64,7 +64,7 @@ import {
   normalizeRawStep,
   normalizeRawSteps,
   normalizeVariables,
-  resolveStepForPreview,
+  resolveStepForReplay,
 } from "../recorder/types.js";
 import { normalizeViewport, recordedViewport, type Viewport } from "../recorder/window-size.js";
 import {
@@ -102,7 +102,7 @@ import { runHistoryStore } from "./run-history-store.js";
 import { describeStep } from "./script-generator.js";
 import { testStore } from "./test-store.js";
 import { testSecretsStore } from "./test-secrets-store.js";
-import { refreshSecretSnapshot } from "./secret-redaction.js";
+import { MASKED, redact, refreshSecretSnapshot } from "./secret-redaction.js";
 
 /** Isolated world the recorder's scripts run in. Any id above 0 is isolated
  *  from the page's main world (0); the exact number only has to be stable so
@@ -402,6 +402,39 @@ function currentPageTitle(): string {
 }
 
 /**
+ * Take every variable value back out of what the trainer is about to show.
+ *
+ * The replayer echoes what it did — `Value: …`, `filled value="…"` — and a
+ * failing assertion's error quotes what it compared. Those lines are the whole
+ * point of the Console tab, and after `resolveStepForReplay` they would carry
+ * the user's password verbatim into the panel, into `debug-logs.json` on disk,
+ * and into the prompt "Debug with AI" builds from that step.
+ *
+ * Applied to the RESULT rather than by teaching the injected script to log
+ * something different, because the value can appear in text this app did not
+ * write — an error thrown by the page, a diff of what a field contained. A
+ * substitution over the finished text catches those; a careful `log()` call
+ * would not.
+ *
+ * `redact` does the work, so the longest-first ordering and the "skip values
+ * under 4 characters" rule are shared with the run-log redactor rather than
+ * reimplemented one file over.
+ */
+function maskValues<T extends { error?: string; logs?: DebugEntry["logs"] }>(
+  result: T,
+  values: readonly string[],
+): T {
+  if (!result || values.length === 0) return result;
+  return {
+    ...result,
+    ...(result.error ? { error: redact(result.error, values, MASKED) } : {}),
+    ...(result.logs
+      ? { logs: result.logs.map((l) => ({ ...l, m: redact(l.m, values, MASKED) })) }
+      : {}),
+  };
+}
+
+/**
  * Run one step during trainer replay.
  *
  * Single dispatch point on purpose: three step kinds CANNOT go through the
@@ -446,34 +479,48 @@ async function runStep(
     // reading cookies from it would return the app's, not the site's.
     return applyCookieStep(cookieWc as unknown as CookieHost, step, currentPageUrl());
   }
-  // `${name}` is resolved HERE, not in the injected script. The replayer fills
-  // exactly what it is handed, so a step carrying a reference would type the
-  // reference — and the per-step ▶ is the first thing anyone does after making
-  // one. A secret is refused rather than resolved: its plaintext must not enter
-  // the page's isolated world or this replay's logs, and a preview that typed
-  // nothing and reported success would be worse than one that says why.
-  const resolved = resolveStepForPreview(step, session?.variables ?? []);
-  if (resolved.secretRefs.length > 0) {
-    const names = resolved.secretRefs.map((n) => "${" + n + "}").join(", ");
+  // `${name}` is resolved HERE, not in the injected script, which acts on
+  // exactly what it is handed — so a step carrying a reference would type the
+  // reference, and the per-step ▶ is the first thing anyone does after making
+  // one. Secrets included: their values come from the encrypted store (which
+  // `resolveStepForReplay` cannot read, being pure) and go into the page, which
+  // is where a password has to end up for a login to happen.
+  //
+  // What does NOT follow them is the trainer's own output: `usedValues` is
+  // masked out of the result below, so a value the user gave the app is never
+  // printed back at them, persisted to `debug-logs.json`, or carried into a
+  // hosted-model prompt by "Debug with AI" on the step.
+  const resolved = resolveStepForReplay(
+    step,
+    session?.variables ?? [],
+    session ? await testSecretsStore.valuesFor(session.testId) : {},
+  );
+  if (resolved.missingSecrets.length > 0) {
+    // Declared but never given a value. Filling "" would submit a blank
+    // password and fail somewhere else entirely.
+    const names = resolved.missingSecrets.map((n) => "${" + n + "}").join(", ");
     return {
       ok: false,
-      error: `Fills a secret (${names}) — previewing would have to decrypt it into the page.`,
+      error: `No value stored for ${names} — set it on the Variables tab, or declare it again in the trainer.`,
       logs: [
         {
           i: 0,
           t: Date.now(),
-          level: "warn",
-          m: `Not previewed: ${names} is a secret. Its value is supplied to the browser only when the test RUNS, and never enters the script or this log.`,
+          level: "error",
+          m: `${names} is declared as a secret but has no stored value, so there is nothing to fill. Nothing was typed.`,
         },
       ],
     };
   }
 
-  const result = (await execWithTimeout(
-    wc,
-    buildReplayScript(resolved.step),
-    REPLAY_STEP_TIMEOUT_MS,
-  )) as ReplayStepResult & { point?: { x: number; y: number } };
+  const result = maskValues(
+    (await execWithTimeout(
+      wc,
+      buildReplayScript(resolved.step),
+      REPLAY_STEP_TIMEOUT_MS,
+    )) as ReplayStepResult & { point?: { x: number; y: number } },
+    resolved.usedValues,
+  );
 
   // A `state` step is a two-part move: the PAGE resolves the locator and
   // measures the element (only it can), then the WINDOW drives the real
@@ -484,14 +531,20 @@ async function runStep(
     if (!result?.ok) return result;
     const native = applyStateStep(pageInputHost(), step, result.point ?? null);
     const offset = result.logs?.length ?? 0;
-    return {
-      ok: native.ok,
-      ...(native.error ? { error: native.error } : {}),
-      logs: [
-        ...(result.logs ?? []),
-        ...native.logs.map((l) => ({ ...l, i: l.i + offset })),
-      ],
-    };
+    // Masked as well: the native half is handed the ORIGINAL step, but its
+    // logs are appended to a result the user reads as one, and a rule that
+    // holds for one half of a step is not a rule.
+    return maskValues(
+      {
+        ok: native.ok,
+        ...(native.error ? { error: native.error } : {}),
+        logs: [
+          ...(result.logs ?? []),
+          ...native.logs.map((l) => ({ ...l, i: l.i + offset })),
+        ],
+      },
+      resolved.usedValues,
+    );
   }
   return result;
 }

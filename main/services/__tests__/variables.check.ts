@@ -19,7 +19,7 @@ import * as os from "os";
 import * as path from "path";
 
 import { setEncryptionAvailable } from "./shell-backend-stub.js";
-import { redact, REDACTED, setSecretSnapshotForTesting } from "../secret-redaction.js";
+import { MASKED, redact, REDACTED, setSecretSnapshotForTesting } from "../secret-redaction.js";
 import { testSecretsStore } from "../test-secrets-store.js";
 import { runHistoryStore } from "../run-history-store.js";
 import { buildAlertPayload, redactPayload } from "../alert-service.js";
@@ -30,7 +30,7 @@ import {
   mergeSessionVariables,
   normalizeDatasets,
   normalizeVariables,
-  resolveStepForPreview,
+  resolveStepForReplay,
   type Step,
   type TestVariable,
 } from "../../recorder/types.js";
@@ -338,55 +338,88 @@ async function main(): Promise<void> {
     "an invalid name declared in a session is dropped like any other",
   );
 
-  // ── 10. Previewing a step that references a variable ────────────────────
+  // ── 10. Replaying a step that references a variable ─────────────────────
   //
-  // The trainer's per-step ▶ hands the step to an injected replayer that fills
-  // exactly what it is given. Two outcomes have to be kept apart, and both are
-  // silent if this drifts: a plain variable must be SUBSTITUTED (or the preview
-  // types the seventeen characters `${storePassword}` into the field and the
-  // user concludes the feature does not work), and a secret must NOT be — its
-  // plaintext reaching an evaluated script would put it in the page's isolated
-  // world and in the replay log, which is precisely what section 1–5 above
-  // exist to prevent.
+  // The trainer's per-step ▶ hands the step to an injected replayer that acts
+  // on exactly what it is given, so every reference has to be substituted
+  // before it goes — or the preview types the seventeen characters
+  // `${storePassword}` into the field and the user concludes the feature does
+  // not work. Secrets included: the value has to reach the page for the login
+  // to happen. What must NOT follow it is the trainer's own output, which is
+  // what `usedValues` is for.
   const declared: TestVariable[] = [
     { name: "email", kind: "plain", value: "a@b.c" },
     { name: "pw", kind: "secret" },
     { name: "orderId", kind: "captured" },
   ];
+  const stored = { pw: "hunter2-secret" };
   assertEqual(
-    resolveStepForPreview(step({ type: "fill", value: "${email}" }), declared).step.value,
+    resolveStepForReplay(step({ type: "fill", value: "${email}" }), declared, stored).step.value,
     "a@b.c",
-    "a plain variable is substituted before the step is previewed",
+    "a plain variable is substituted before the step is replayed",
   );
   assertEqual(
-    resolveStepForPreview(step({ type: "fill", value: "${orderId}" }), declared).step.value,
+    resolveStepForReplay(step({ type: "fill", value: "${orderId}" }), declared, stored).step.value,
     "",
     "a captured variable falls back to its default, which is empty before the capture runs",
   );
-  const secretPreview = resolveStepForPreview(
+  const secretReplay = resolveStepForReplay(
     step({ type: "fill", value: "${pw}" }),
     declared,
-  );
-  assertEqual(secretPreview.secretRefs, ["pw"], "a secret reference is reported, not resolved");
-  assertEqual(
-    secretPreview.step.value,
-    "${pw}",
-    "the secret's value never enters the step handed to the injected replayer",
+    stored,
   );
   assertEqual(
-    resolveStepForPreview(step({ type: "fill", value: "costs ${9.99}" }), declared).step.value,
+    secretReplay.step.value,
+    "hunter2-secret",
+    "a secret IS resolved for the replay — the page is where the password has to end up",
+  );
+  assertEqual(
+    secretReplay.usedValues,
+    ["hunter2-secret"],
+    "the resolved value comes back so the caller can keep it out of the logs",
+  );
+  assertEqual(secretReplay.missingSecrets, [], "a secret with a stored value is not reported missing");
+
+  // Declared, never given a value. Substituting "" would fill a blank password
+  // and fail somewhere else entirely, several steps later.
+  const noValue = resolveStepForReplay(step({ type: "fill", value: "${pw}" }), declared, {});
+  assertEqual(noValue.missingSecrets, ["pw"], "a secret with no stored value is reported, not guessed");
+  assertEqual(noValue.step.value, "${pw}", "and nothing is substituted for it");
+
+  assertEqual(
+    resolveStepForReplay(step({ type: "fill", value: "costs ${9.99}" }), declared, stored).step.value,
     "costs ${9.99}",
     "a ${...} that isn't a declared identifier is left as text, as the generator leaves it",
   );
   assertEqual(
-    resolveStepForPreview(step({ type: "goto", url: "https://x/${email}" }), declared).step.url,
+    resolveStepForReplay(step({ type: "goto", url: "https://x/${email}" }), declared, stored).step.url,
     "https://x/a@b.c",
     "every interpolatable field is substituted, not just value",
   );
   assertEqual(
-    resolveStepForPreview(step({ type: "assert", text: "Hi ${email}" }), declared).step.text,
+    resolveStepForReplay(step({ type: "assert", text: "Hi ${email}" }), declared, stored).step.text,
     "Hi a@b.c",
     "an assertion's expected text is substituted too",
+  );
+  assertEqual(
+    resolveStepForReplay(step({ type: "click" }), declared, stored).usedValues,
+    [],
+    "a step with no references reports no values to mask",
+  );
+
+  // The masking half, over the same `redact` the run log uses. The trainer
+  // masks EVERY variable value, not only the secret ones — the Console echoes
+  // what it filled, and that panel is persisted to disk and fed to "Debug with
+  // AI" on the step.
+  assertEqual(
+    redact('filled value="hunter2-secret"', secretReplay.usedValues, MASKED),
+    'filled value="****"',
+    "a resolved value is masked out of what the trainer prints back",
+  );
+  assertEqual(
+    redact("Value: a@b.c", ["a@b.c"], MASKED),
+    "Value: ****",
+    "a plain variable's value is masked in the trainer too",
   );
 
   // ── 11. The trainer's route to a variable, at source level ──────────────
@@ -428,6 +461,28 @@ async function main(): Promise<void> {
   assert(
     /"fill"/.test(src("renderer/main/step-composer.tsx")),
     "the composer knows the fill kind the menu item opens",
+  );
+
+  // The replay path, which no unit test can drive — `runStep` needs a live
+  // webContents and a session. Both halves are lexical because both are silent
+  // when they go: an unresolved step types `${name}` into the field, and an
+  // unmasked result prints the user's password into the Console tab, onto disk
+  // in debug-logs.json, and into the prompt "Debug with AI" builds from it.
+  assert(
+    /buildReplayScript\(resolved\.step\)/.test(service),
+    "the injected replayer is handed the RESOLVED step, never the one holding the reference",
+  );
+  assert(
+    /maskValues\(\s*\(await execWithTimeout/.test(service),
+    "the replay result is masked before anything downstream sees it",
+  );
+  assert(
+    /valuesFor\(session\.testId\)/.test(service),
+    "a secret's value is read for the replay — the page is where a password has to end up",
+  );
+  assert(
+    !/\bredact\(l\.m, values\)/.test(service),
+    "the trainer's mask is passed explicitly, not left to default to the run log's [redacted]",
   );
 
   setEncryptionAvailable(false);

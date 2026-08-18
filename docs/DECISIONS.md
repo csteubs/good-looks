@@ -75,18 +75,49 @@ it."
   user's, so the reference splices in where they were typing rather than at the
   end.
 
-- **The per-step ▶ resolves plain variables and refuses secrets.** The injected
-  replayer fills exactly the step it is handed, so a step carrying
-  `${storePassword}` would type those seventeen characters into the field — and
-  previewing the step is the first thing anyone does after making one, so the
-  feature would appear not to work at the exact moment it was being checked.
-  `resolveStepForPreview` substitutes plain and captured defaults before the
-  script is built. A secret is deliberately not resolved: interpolating it into
-  an evaluated script would put the plaintext in the page's isolated world and
-  in the replay's own log, which is the guarantee the encrypted store exists to
-  make. The step reports that instead, which is more useful than either a
-  preview that types the wrong thing or one that types nothing and calls it a
-  pass.
+- **The per-step ▶ resolves every variable, secrets included — reversed the
+  same day, and the reversal is the interesting half.** The injected replayer
+  acts on exactly the step it is handed, so a step carrying `${storePassword}`
+  would type those seventeen characters into the field. The first version
+  substituted plain and captured defaults and REFUSED secrets, reasoning that
+  decrypting a password into an evaluated script puts the plaintext in the
+  page's isolated world. It does. But the first thing the maintainer did with
+  the finished feature was declare a secret, add a step using it, replay that
+  step, and get a red row — because the one step type this whole feature exists
+  for was the one the preview would not run. The refusal was protecting the
+  page from a value whose entire purpose is to reach that page, and which
+  recording the step by hand had put there already.
+
+  So secrets resolve now. `resolveStepForReplay` stays pure and is handed the
+  values by the service, which reads them from the encrypted store — the same
+  `valuesFor` that feeds a real run's environment. A declared secret with NO
+  stored value is still refused rather than filled with `""`: a blank password
+  submits, and the failure surfaces several steps later attached to nothing.
+
+- **What does not follow the value into the page is the trainer's own output.**
+  The replayer echoes what it did (`Value: …`, `filled value="…"`) and a failing
+  assertion quotes what it compared, so resolution alone would have printed the
+  password into the Console tab, persisted it to `debug-logs.json`, and carried
+  it into the prompt "Debug with AI" builds from that step. `maskValues` takes
+  every resolved value back out of the result — errors as well as log lines —
+  before anything downstream sees it. Applied to the finished TEXT rather than
+  by teaching the injected script to log something different, because the value
+  can appear in strings this app did not write: an error thrown by the page, a
+  diff of what a field contained. It reuses `redact` with a `****` placeholder,
+  so the longest-first ordering and the skip-values-under-four-characters rule
+  are shared with the run-log redactor rather than reimplemented one file over.
+
+- **The trainer masks EVERY variable's value, not only the secret ones.** A
+  plain variable's value is not a credential, but it is still something the user
+  handed the app to keep, and the Console is a panel that gets screenshotted,
+  screen-shared and written to disk. The chips carry `****` for any variable
+  that has a value — including a secret, where the renderer could not read one
+  if it tried, because "no value here" would report the encrypted store as empty
+  rather than as unreadable, which is a claim that side is in no position to
+  make. The absence of the marker is information too: a captured variable has
+  nothing until the capture runs. The one exception is the field the user is
+  typing into right now in `NewVariableForm` — hiding what someone is entering
+  helps nobody, and a secret's field is `type="password"` there anyway.
 
 - **The plaintext warning is stated where the mistake is made.** "Value" is the
   default kind and its default is written verbatim into `tests.json` and baked

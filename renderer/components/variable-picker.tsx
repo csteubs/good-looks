@@ -62,6 +62,31 @@ const NEW_VARIABLE_KINDS: { value: VariableKind; label: string }[] = [
   { value: "secret", label: "Secret" },
 ];
 
+/** What the trainer shows in place of a variable's value.
+ *
+ *  The trainer never displays one. A secret's value it could not reach if it
+ *  wanted to (it lives encrypted, backend-side, and no IPC handler returns it);
+ *  a plain one it does hold, because the session broadcasts the declarations —
+ *  and that is exactly the value this app was given to keep, so printing it
+ *  back into a panel that gets screen-shared, screenshotted and persisted is
+ *  not something to do by default. The one exception is the field the user is
+ *  typing into right now in `NewVariableForm`, where hiding what they are
+ *  entering would help nobody.
+ *
+ *  A marker rather than a blank, so "this variable has a value" stays visible.
+ *  The absence of one is real information too — a secret declared on the
+ *  Variables tab and never given a value is what makes a replay fail with
+ *  "nothing to fill". */
+export const MASKED_VALUE = "****";
+
+/** Does this variable carry a value the trainer is deliberately not showing? */
+export function hasMaskedValue(v: TestVariable): boolean {
+  // A secret ALWAYS masks: its value lives where this process cannot look, so
+  // "no value here" would report the encrypted store as empty rather than
+  // unreadable — a claim this side is in no position to make.
+  return v.kind === "secret" || !!v.value;
+}
+
 /**
  * The declared variables, as buttons that insert a reference.
  *
@@ -119,6 +144,11 @@ export function VariableChips({
                 <Variable className="size-3 text-tertiary" />
               )}
               <span className="font-mono">{varRef(v.name)}</span>
+              {hasMaskedValue(v) ? (
+                <span className="font-mono text-tertiary" aria-label={`${v.name} value hidden`}>
+                  {MASKED_VALUE}
+                </span>
+              ) : null}
             </button>
           );
         })}
@@ -230,8 +260,11 @@ export function NewVariableForm({
 
       {kind === "secret" ? (
         <Text variant="small" color="secondary">
-          Encrypted on this Mac and never shown again. The spec gets an environment reference, not
-          the value, and it is stripped from run logs and anything sent to a hosted model.
+          Encrypted on this Mac and never shown again — here or anywhere else in the trainer. The
+          real value IS typed into the page when a step replays or the test runs; what the trainer
+          prints back is <code className="font-mono">{MASKED_VALUE}</code>. The spec gets an
+          environment reference, not the value, and it is stripped from run logs and anything sent
+          to a hosted model.
         </Text>
       ) : (
         <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>

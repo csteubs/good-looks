@@ -1519,40 +1519,66 @@ export function collectVarRefs(step: Step): string[] {
 }
 
 /**
- * Substitute a step's `${name}` references for the trainer's own preview.
+ * Substitute a step's `${name}` references for a trainer replay.
  *
- * The injected replayer takes a step as JSON and fills exactly what it is
+ * The injected replayer takes a step as JSON and acts on exactly what it is
  * given, so a step carrying `${storePassword}` types those seventeen characters
  * into the field. In a real run the generator turns that into `V.storePassword`
- * and the value comes from the record or the environment — which means the one
- * action a user takes to check their new variable step (the per-step ▶) is the
- * one place it would appear not to work.
+ * and the value arrives from the record or the environment — which means the
+ * one action a user takes to check their new variable step (the per-step ▶) is
+ * the one place it would appear not to work.
  *
- * A SECRET cannot be resolved here and is not attempted. Its plaintext lives
- * encrypted and reaches the Playwright child process and nowhere else;
- * interpolating it into an evaluated script would put it in the page's isolated
- * world and in the replay's own logs, which is the guarantee `secret-redaction`
- * exists to hold. The names come back instead, so the caller can say why the
- * preview stopped rather than typing something wrong and reporting success.
+ * **Secrets are resolved here too, and that is a deliberate reversal.** The
+ * first version refused them, on the grounds that decrypting a password into an
+ * evaluated script puts it in the page's isolated world. It does — but the page
+ * is where the password has to end up for the login to happen, it is exactly
+ * where recording the step by hand put it, and a preview that cannot exercise
+ * the one step type this feature exists for is not a preview. The caller passes
+ * the values in (they live in the encrypted store, which this pure module
+ * cannot read) and gets `usedValues` back, which is what keeps them out of the
+ * trainer's logs. See DECISIONS 2026-08-17.
+ *
+ * A declared secret with NO stored value comes back in `missingSecrets` rather
+ * than being substituted for an empty string: filling a login form with "" and
+ * reporting success is how a step passes here and fails in the run, several
+ * steps later, for a reason nothing connects back to this one.
  *
  * An undeclared reference is left as literal text — the same rule `valueExpr`
  * applies in the generator, so a price of `${9.99}` means here what it will
  * mean in the spec.
  */
-export function resolveStepForPreview(
+export function resolveStepForReplay(
   step: Step,
   variables: readonly TestVariable[],
-): { step: Step; secretRefs: string[] } {
+  secretValues: Readonly<Record<string, string>> = {},
+): { step: Step; usedValues: string[]; missingSecrets: string[] } {
   const refs = collectVarRefs(step);
-  if (refs.length === 0) return { step, secretRefs: [] };
+  if (refs.length === 0) return { step, usedValues: [], missingSecrets: [] };
   const byName = new Map(variables.map((v) => [v.name, v]));
-  const secretRefs = refs.filter((n) => byName.get(n)?.kind === "secret");
+  const missingSecrets: string[] = [];
+  const usedValues: string[] = [];
+
+  /** The text a reference resolves to, or null to leave it alone. */
+  const valueOf = (name: string): string | null => {
+    const v = byName.get(name);
+    if (!v) return null;
+    if (v.kind !== "secret") return v.value ?? "";
+    const stored = secretValues[name];
+    if (typeof stored !== "string" || stored === "") {
+      if (!missingSecrets.includes(name)) missingSecrets.push(name);
+      return null;
+    }
+    return stored;
+  };
+
   const sub = (text: string): string =>
     text.replace(VAR_REF_RE, (whole, name: string) => {
-      const v = byName.get(name);
-      if (!v || v.kind === "secret") return whole;
-      return v.value ?? "";
+      const value = valueOf(name);
+      if (value === null) return whole;
+      if (value && !usedValues.includes(value)) usedValues.push(value);
+      return value;
     });
+
   const next: Step = { ...step };
   if (typeof next.value === "string") next.value = sub(next.value);
   if (typeof next.text === "string") next.text = sub(next.text);
@@ -1562,7 +1588,7 @@ export function resolveStepForPreview(
       Object.entries(next.flowArgs).map(([k, val]) => [k, sub(val)]),
     );
   }
-  return { step: next, secretRefs };
+  return { step: next, usedValues, missingSecrets };
 }
 
 /** Bounds for `TestRecord.tags`. Generous enough to never bite in practice,
