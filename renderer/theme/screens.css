@@ -2360,12 +2360,56 @@
 }
 
 /* ── Stats: the category board (docs/plans/stats-categories.md) ────────
-   A verdict band over a row of compact tiles. The band's sentence counts
-   CATEGORIES IN A STATE and never merges their numbers — see the plan's §3.1
-   and the header of `renderer/lib/stats-categories.ts`. */
+   A row of compact tiles under a verdict that sits IN THE PANEL'S HEADER. The
+   verdict's sentence counts CATEGORIES IN A STATE and never merges their
+   numbers — see the plan's §3.1 and the header of
+   `renderer/lib/stats-categories.ts`. */
+
+/* The header slot has to be allowed to shrink. `.gl-panel-right` is
+   `flex: 0 0 auto` by default — correct for the buttons it usually holds,
+   wrong for a sentence, which would otherwise push the "N of N reporting"
+   subtitle and eventually the title itself out of a header whose 32px is
+   fixed. Scoped to this panel so no other panel's controls start shrinking. */
+.gl-categories .gl-panel-right {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* And the subtitle does NOT shrink here. Both header items shrink by default,
+   so a narrow window took the ellipsis out of BOTH — "7 of 7 rep…" beside a
+   truncated sentence, two clipped strings where one would do. The subtitle is
+   short and its length is fixed; the sentence is neither, so the sentence is
+   the one that gives. */
+.gl-categories .gl-panel-id {
+  flex: 0 0 auto;
+}
 
 .gl-band {
-  border-bottom: 1px solid var(--gl-line-2);
+  min-width: 0;
+}
+
+/* Centred rather than top-aligned, and a hair smaller: in a 32px strip there
+   is only ever one line, so the 5px the dot drops to meet a paragraph's first
+   baseline is 5px off centre here. */
+.gl-band .gl-verdict {
+  align-items: center;
+  gap: 7px;
+}
+
+.gl-band .gl-verdict-dot {
+  margin-top: 0;
+}
+
+/* One line, truncating. The full sentence is on the wrapper's `title` — same
+   contract as `.gl-panel-id` beside it, and for the same reason: a header is
+   a fixed height, so the only alternative to an ellipsis is text that wraps
+   out of it. */
+.gl-band .gl-verdict-text {
+  font-size: 11.5px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* FLEX-WRAP RATHER THAN AUTO-FIT GRID, and the reason is the count. There are

@@ -10,6 +10,54 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-17 — The category verdict moved into the Categories header
+
+`renderer/main/stats/category-board.tsx`, `renderer/theme/screens.css`.
+
+The board's verdict — "6 categories need attention, and 1 is clean." — was a
+full-width band between the panel's header and its tiles. It is one short
+sentence, and giving it a row of its own cost about 30px at the top of the
+app's landing screen while putting a horizontal rule between the "CATEGORIES"
+title and the categories it titles. The sentence is a fact about the BOARD, the
+same kind of thing as the "N of N reporting" subtitle already in that header, so
+it moved there — into `Panel`'s existing `right` slot, pinned to the trailing
+edge.
+
+Three things had to be true for a sentence to live in a header whose 32px is
+fixed on purpose (two panels side by side must start their bodies on the same
+line):
+
+- **`.gl-panel-right` had to be allowed to shrink.** It is `flex: 0 0 auto` by
+  default, which is right for the buttons it usually holds and wrong for prose —
+  a long reading would have pushed the subtitle and then the title itself out of
+  the header. Scoped to `.gl-categories` so no other panel's controls start
+  shrinking.
+- **The sentence truncates; the subtitle does not.** Both header items shrink by
+  default, so the first narrow window clipped BOTH — "8 of 8 rep…" beside a
+  truncated sentence, two ellipses where one would do. The subtitle is short and
+  fixed-length, the sentence is neither, so the subtitle is pinned and the
+  sentence is the one that gives. The full text is on the wrapper's `title`,
+  the same contract `.gl-panel-id` beside it already ships under.
+- **The dot centres.** `.gl-verdict-dot` drops 5px to meet a paragraph's first
+  baseline, which is 5px off centre in a strip that only ever has one line.
+
+Measured at 1440/900/680/520 against the LONGEST reading the summariser can
+produce ("6 categories need attention, 1 is clean, and 1 has never been
+measured."): the header stays 32px, and the title and the subtitle both stay
+whole at every width — the sentence is the only thing that ever gives.
+
+The band's rule is untouched and is the reason the treatment is allowed at all:
+it counts CATEGORIES IN A STATE and never merges their numbers, which
+`check:stats-categories` still proves. `renderer/main/stats/category-board.test.tsx`
+gained the placement test, because which parent the verdict has is not something
+lint, type-check or a source-level check can see — verified by moving it back
+and watching that test alone fail.
+
+This is the second time this shape has been fixed on this screen: the Visual
+view's change count moved into its panel header for the same reason on
+2026-08-17, and `check:narrow-layout` records why — a band whose width depends
+on the run's outcome reflows when a run starts failing.
+
 ### 2026-08-17 — Counting AI Debug meant a second store, because the first one is built to forget
 
 `main/services/ai-debug-history-store.ts`, `main/recorder/types.ts`,
