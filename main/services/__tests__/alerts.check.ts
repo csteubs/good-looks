@@ -14,8 +14,21 @@
 // a non-zero exit code on failure stand in for one. Run with:
 //   npm run check:alerts
 
-import { buildAlertPayload, redactPayload, type Alert } from "../alert-service.js";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
+// Before any store resolves a path. The stub's `app.getPath` reads this lazily
+// on every call, so setting it here (after the imports initialize, before any
+// store function runs) is what keeps this check off the real userData dir.
+process.env.GLAZE_TEST_USERDATA = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-alerts-check-"));
+
+import { buildAlertPayload, redactPayload, sendAlert, type Alert } from "../alert-service.js";
+import { setEncryptionAvailable } from "./shell-backend-stub.js";
+import { recorderSettingsStore } from "../recorder-settings-store.js";
+import { shopifySignatureStore } from "../shopify-signature-store.js";
 import { hostOfUrl, validateWebhookUrl } from "../webhook-url-store.js";
+import { webhookUrlStore } from "../webhook-url-store.js";
 
 let failures = 0;
 
@@ -230,8 +243,67 @@ assert(hostOfUrl("nonsense") === null, "hostOfUrl returns null for junk");
   );
 }
 
-if (failures > 0) {
-  console.error(`\n${failures} check(s) failed`);
-  process.exit(1);
+// Everything below needs `await`, and this bundle is CJS — so it runs inside
+// a main() the exit check hangs off, rather than at the top level.
+async function checkSendAlertRedaction(): Promise<void> {
+  // ── What `sendAlert` actually redacts with ────────────────────────────
+  //
+  // Every other redaction assertion here calls `redactPayload` with a list this
+  // file hands it, which proves the function works and NOTHING about the list the
+  // real send uses. That gap was a live leak: `sendAlert` read
+  // `testSecretsStore.allValues()` directly rather than going through the
+  // snapshot, so widening the snapshot to cover Shopify crawler signatures would
+  // have left the one path that sends data off the machine still carrying them.
+  //
+  // So this drives the real `sendAlert`, with a real registered signature, and
+  // looks at the bytes that reach `fetch`.
+  {
+    setEncryptionAvailable(true);
+    const SIGNATURE_VALUE = "sig1=:dGhpcy1pcy10aGUtc2lnbmF0dXJl:";
+    const SIGNATURE_INPUT =
+      'sig1=("@authority");created=1735689600;expires=4102444799;keyid="kkk";alg="ed25519"';
+
+    await shopifySignatureStore.upsert({
+      host: "shop.example.com",
+      signatureInput: SIGNATURE_INPUT,
+      signature: SIGNATURE_VALUE,
+    });
+    await webhookUrlStore.setUrl("https://hooks.example.test/services/abc");
+    recorderSettingsStore.set({ alertWebhookEnabled: true });
+
+    const realFetch = globalThis.fetch;
+    let sent = "";
+    globalThis.fetch = (async (_url: string, init: { body?: string }) => {
+      sent = String(init?.body ?? "");
+      return { ok: true, status: 200, statusText: "OK" };
+    }) as unknown as typeof fetch;
+    try {
+      // A notify message is text the user typed, which is the only payload that
+      // carries free text — so it is the only one that can demonstrate WHICH
+      // values the send redacts with.
+      await sendAlert({
+        kind: "routineNotify",
+        message: `Crawl finished ${SIGNATURE_VALUE} ${SIGNATURE_INPUT}`,
+        routineName: "Nightly",
+      });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    assert(sent.length > 0, "sendAlert posted a payload");
+    assert(
+      sent.indexOf("dGhpcy1pcy10aGUtc2lnbmF0dXJl") < 0,
+      "a Shopify signature value is redacted by the real send path",
+    );
+    assert(sent.indexOf("keyid") < 0, "…and so is the Signature-Input it came with");
+    assert(sent.indexOf("Nightly") >= 0, "…while the rest of the payload survives");
+  }
 }
-console.log("\nAll alerts checks passed");
+
+void checkSendAlertRedaction().then(() => {
+  if (failures > 0) {
+    console.error(`\n${failures} check(s) failed`);
+    process.exit(1);
+  }
+  console.log("\nAll alerts checks passed");
+});

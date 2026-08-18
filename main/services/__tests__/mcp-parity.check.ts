@@ -64,6 +64,7 @@ import {
   runEnv,
   sanitizeOutput,
   secretVariableNames,
+  signatureHostFor,
 } from "../../../mcp/run-plan.mjs";
 import { compareReplays } from "../../../shared/run-comparison.mjs";
 import { generateSpec, secretEnvName } from "../script-generator.js";
@@ -224,6 +225,69 @@ function codeOnly(source: string): string {
   assert(
     secretVariableNames(testWith({ variables: [{ name: "token", kind: "captured" }] })).length === 0,
     "mcp: a captured variable is not mistaken for a secret",
+  );
+}
+
+// ── 2b. Shopify crawler signatures: the same pairing again ────────────
+//
+// The MCP has no Electron and therefore no safeStorage, so it can no more read
+// a signature than it can a secret variable. The guarantee is the same PAIR: the
+// env carries no signature, and a run that should have carried one says so.
+//
+// It matters more here than the shape suggests. An unsigned run against a store
+// with bot protection does not fail at a login form where the cause is obvious
+// — it fails somewhere further down as a timeout or a missing element, which
+// reads as a flaky test. Without the note, an MCP run can FAIL where an app run
+// of the same test passes, and nothing anywhere connects the two.
+
+{
+  const env = runEnv({
+    base: {},
+    browsersPath: "/b",
+    nodeModules: "/n",
+    speed: "fast",
+    testTimeoutMs: 60_000,
+  });
+  assert(
+    Object.keys(env).every((k) => !k.startsWith("GLAZE_SIG_")),
+    "mcp: the run env carries no GLAZE_SIG_* key (it cannot — the values are encrypted to the app)",
+  );
+
+  const NOW = Date.UTC(2026, 7, 18);
+  const DAY = 24 * 60 * 60;
+  const onShop = testWith({ url: "https://shop.example.com/products" });
+  const live = [{ host: "shop.example.com", expiresAt: Math.floor(NOW / 1000) + 60 * DAY }];
+
+  // The honest half — without this the env assertion above is just silence.
+  assert(
+    signatureHostFor(onShop, live, NOW) === "shop.example.com",
+    "mcp: a test whose origin has a registered signature is identified before it runs",
+  );
+  const report = describeRun(onShop, {}, { speed: "fast", signatures: live, nowMs: NOW });
+  assert(
+    (report.skipped ?? []).some((line) => line.includes("Shopify crawler signature")),
+    "mcp: …and the run report names it as something an app run would have done",
+  );
+
+  // Three cases that must NOT produce a note, because a note nobody can act on
+  // is the noise that trains people to ignore the ones that matter.
+  assert(
+    signatureHostFor(testWith({ url: "https://other.example.com/" }), live, NOW) === null,
+    "mcp: a test at an unregistered origin is not warned about",
+  );
+  assert(
+    signatureHostFor(
+      onShop,
+      [{ host: "shop.example.com", expiresAt: Math.floor(NOW / 1000) - 1 }],
+      NOW,
+    ) === null,
+    "mcp: an EXPIRED signature is not reported as missed — the app would not have sent it either",
+  );
+  assert(
+    (describeRun(onShop, {}, { speed: "fast", signatures: [], nowMs: NOW }).skipped ?? []).every(
+      (line) => !line.includes("Shopify"),
+    ),
+    "mcp: a machine with no signature registered is told nothing",
   );
 }
 

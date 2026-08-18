@@ -85,6 +85,23 @@ assert(
   "outputDir is never hard-coded (every run needs its own)",
 );
 
+// ── The one option that must never appear here ───────────────────────
+//
+// `use.extraHTTPHeaders` is CONTEXT-WIDE, so putting the Shopify crawler
+// signature (or any other credential) here would send it to every host the page
+// touches — a storefront's CDN, its analytics, its chat widget. Headers that
+// belong to one host are attached per request by glaze-signature.mjs instead.
+//
+// It is also the drift this file exists to stop: the MCP server writes this
+// same config and can never set an env var it cannot decrypt, so an
+// env-driven header here would work in the app and silently not in the MCP.
+// check:mcp-parity would not catch it — that scans the generated SPEC's
+// `process.env` references, and this file is not a spec.
+assert(
+  !playwrightConfigSource.includes("extraHTTPHeaders"),
+  "the shared config sets no extraHTTPHeaders — per-host headers go through the run fixture",
+);
+
 // Both writers have to actually SET the per-run output dir, or the config's
 // fallback puts every concurrent run back in one shared folder.
 for (const [label, relPath] of [

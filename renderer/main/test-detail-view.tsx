@@ -18,6 +18,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Status,
   Tabs,
   TabsContent,
   TabsRoot,
@@ -34,6 +35,7 @@ import { ChevronDown, Pencil, TriangleAlert, Trash2 } from "lucide-react";
 
 import { Btn } from "../theme";
 import { api } from "../lib/api";
+import { normalizeSignatureHost } from "../../shared/shopify-signature.mjs";
 import { useRecorder } from "./recorder-store";
 import {
   runSessionKey,
@@ -185,6 +187,11 @@ export function TestDetailView() {
   // count is visible without opening the tab — an unreviewed heal means the
   // test may already have been changed underneath the user.
   const healsQuery = useQuery({ queryKey: ["heals", id], queryFn: () => api.heals.list(id) });
+  // Shopify crawler signatures. Read here so this screen can say, BEFORE the
+  // Run button is pressed, that the run will go out unsigned — the run output
+  // says so too, but a line in a log somebody scrolls past is not a disclosure,
+  // and this is the screen they are looking at when they decide to run.
+  const signaturesQuery = useQuery({ queryKey: ["shopify-signatures"], queryFn: () => api.shopify.list() });
   // The other half of that badge: whole-script changes. Fetched here for the
   // same reason, and it is what decides whether an IMPORTED test gets the tab
   // at all — see the trigger below.
@@ -203,6 +210,39 @@ export function TestDetailView() {
   });
   const test = testQuery.data;
   const scriptChanges = scriptChangesQuery.data ?? [];
+  // What this test's runs will do about its store's crawler signature — and it
+  // only ever reports the cases where the answer is "nothing". A chip saying a
+  // working signature is working would be noise on every run of every test
+  // against a registered store; the two that need saying are the ones where the
+  // user thinks they are covered and are not.
+  const signatureWarning = ((): { text: string; title: string } | null => {
+    if (!test) return null;
+    const host = normalizeSignatureHost(test.sourceDir ? (test.baseUrl ?? "") : (test.url ?? ""));
+    if (!host) return null;
+    const entry = (signaturesQuery.data ?? []).find((s) => s.host === host);
+    if (!entry) return null;
+    if (entry.state === "expired") {
+      return {
+        text: "Signature expired",
+        title: `The Shopify crawler signature for ${host} has expired, so runs of this test go out unsigned. An expired signature fails verification, which is worse than sending none — create a new one in your Shopify admin.`,
+      };
+    }
+    if (entry.state === "unreadable") {
+      return {
+        text: "Signature unreadable",
+        title: `A Shopify crawler signature is registered for ${host} but can't be decrypted on this Mac, so runs of this test go out unsigned.`,
+      };
+    }
+    if (test.sourceDir) {
+      // The gap the fixture cannot close, said on the screen where the run is
+      // started rather than discovered in the output afterwards.
+      return {
+        text: "Signature not sent",
+        title: `The Shopify crawler signature for ${host} is not sent for imported tests — it travels on the same fixture as screenshots and Auto-Heal, which needs the spec to import @playwright/test directly.`,
+      };
+    }
+    return null;
+  })();
   // One badge for both stores. They are two routes to the same hazard — the
   // stored test changed and nobody has looked — and two numbers on one tab
   // would be asking the user to add them up.
@@ -791,6 +831,11 @@ export function TestDetailView() {
                     }}
                   />
                 </label>
+              ) : null}
+              {signatureWarning ? (
+                <span title={signatureWarning.title}>
+                  <Status variant="error">{signatureWarning.text}</Status>
+                </span>
               ) : null}
             </div>
             <span className="gl-detail-tool-rule" aria-hidden="true" />

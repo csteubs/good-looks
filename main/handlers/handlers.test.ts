@@ -374,6 +374,53 @@ describe("alerts — the webhook URL is validated and never read back", () => {
   });
 });
 
+describe("shopify — a signature crosses IPC once, in one direction", () => {
+  const INPUT =
+    'sig1=("@authority");created=1735689600;expires=4102444799;keyid="kkk";alg="ed25519"';
+  const VALUE = "sig1=:dGhpcy1pcy1zZWNyZXQ=:";
+
+  it("reports host, expiry and state — never a header value", async () => {
+    const saved = await invokeHandler<{ id: string; host: string; expiresAt: number | null }>(
+      "shopify:add",
+      { host: "https://Shop.Example.com/collections", signatureInput: INPUT, signature: VALUE },
+    );
+    expect(saved.host).toBe("shop.example.com");
+    expect(saved.expiresAt).toBe(4102444799);
+    // The values are a bearer credential for the store: they go in, and nothing
+    // that comes back may carry them.
+    expect(JSON.stringify(saved)).not.toContain("dGhpcy1pcy1zZWNyZXQ=");
+    expect(JSON.stringify(saved)).not.toContain("keyid");
+
+    const list = await invokeHandler<unknown[]>("shopify:list");
+    expect(list).toHaveLength(1);
+    expect(JSON.stringify(list)).not.toContain("dGhpcy1pcy1zZWNyZXQ=");
+    expect(JSON.stringify(list)).not.toContain("ed25519");
+
+    await invokeHandler("shopify:remove", { id: saved.id });
+    expect(await invokeHandler<unknown[]>("shopify:list")).toEqual([]);
+  });
+
+  it("refuses a paste it cannot use, saying which field was wrong", async () => {
+    await expect(
+      invokeHandler("shopify:add", {
+        host: "not a domain",
+        signatureInput: INPUT,
+        signature: VALUE,
+      }),
+    ).rejects.toThrow(/domain/i);
+    // A CRLF in a header value is header injection, and this value ends up
+    // concatenated into a request by both the trainer and the run fixture.
+    await expect(
+      invokeHandler("shopify:add", {
+        host: "shop.example.com",
+        signatureInput: INPUT,
+        signature: "sig1=:a:\r\nX-Injected: 1",
+      }),
+    ).rejects.toThrow(/line break|can't appear/i);
+    expect(await invokeHandler<unknown[]>("shopify:list")).toEqual([]);
+  });
+});
+
 describe("issues — the key never comes back, and the patch keeps its shape", () => {
   // `connect` verifies, and verification is a network call. Stubbed so this
   // suite makes no outbound request: a unit test that reaches api.linear.app is

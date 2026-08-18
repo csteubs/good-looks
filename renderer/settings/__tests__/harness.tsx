@@ -56,6 +56,11 @@ export function makeController(overrides: Partial<SettingsController> = {}): Set
     testConnection: vi.fn(async () => {}),
     changeModel: vi.fn(async () => {}),
 
+    signatures: [],
+    signaturesBusy: false,
+    addSignature: vi.fn(async () => true),
+    removeSignature: vi.fn(async () => {}),
+
     webhookStatus: { hasUrl: false, host: null },
     webhookBusy: false,
     saveWebhookUrl: vi.fn(async () => true),

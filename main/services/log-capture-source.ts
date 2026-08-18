@@ -17,6 +17,8 @@
 // Cookie, ?token=) from ever being written; read-time redaction catches the
 // specific values the user has told the app about.
 
+import { SIGNATURE_HEADER_NAMES } from "../../shared/shopify-signature.mjs";
+
 /** Response/request headers worth keeping, lowercase.
  *
  *  An ALLOWLIST, not a denylist. The user asked for headers to debug CORS and
@@ -60,6 +62,24 @@ export const HEADER_ALLOWLIST: readonly string[] = [
   "x-correlation-id",
   "x-trace-id",
 ];
+
+/** Headers whose values are elided even when the user has asked for all of
+ *  them, because THIS APP put them there.
+ *
+ *  `recordAllHeaders` is documented as a deliberate opt-out for headers *the
+ *  page* sends: the user is choosing to record their own traffic, credentials
+ *  and all, into their own artifact. These three are different in kind — they
+ *  are a credential the app injected on the user's behalf, and the artifact
+ *  they land in is read back into the Visual tab and fed to a hosted LLM by
+ *  Debug with AI. An app recording its own injected credential is not something
+ *  the user opted into by asking to see the page's headers.
+ *
+ *  That is also why the line stops here and does not grow to cover
+ *  `authorization` and `cookie`: those the escape hatch is FOR.
+ *
+ *  Spelled in shared/shopify-signature.mjs so the injector and the filter
+ *  cannot disagree about a header name. */
+export const HEADER_NEVER_RECORD: readonly string[] = [...SIGNATURE_HEADER_NAMES];
 
 /** Query parameters whose VALUES are masked in recorded URLs.
  *
@@ -109,6 +129,7 @@ export const ELIDED = "<omitted>";
  *  evaluated directly by log-capture.check.ts. */
 export const LOG_CAPTURE_HELPERS = `
 const GLAZE_HEADER_ALLOWLIST = ${JSON.stringify(HEADER_ALLOWLIST)};
+const GLAZE_HEADER_NEVER = ${JSON.stringify(HEADER_NEVER_RECORD)};
 const GLAZE_SENSITIVE_PARAMS = ${JSON.stringify(SENSITIVE_QUERY_PARAMS)};
 const GLAZE_ELIDED = ${JSON.stringify(ELIDED)};
 const GLAZE_MAX_TEXT = ${MAX_TEXT_CHARS};
@@ -121,7 +142,12 @@ function glazeFilterHeaders(headers, allowAll) {
   if (!headers || typeof headers !== "object") return out;
   for (const rawName of Object.keys(headers)) {
     const name = String(rawName).toLowerCase();
-    if (allowAll || GLAZE_HEADER_ALLOWLIST.indexOf(name) >= 0) {
+    // BEFORE the allowAll branch, not after. The never-list is the one rule
+    // the escape hatch does not override, and moving this test to the far side
+    // of that || is a one-token change that is completely silent.
+    if (GLAZE_HEADER_NEVER.indexOf(name) >= 0) {
+      out[name] = GLAZE_ELIDED;
+    } else if (allowAll || GLAZE_HEADER_ALLOWLIST.indexOf(name) >= 0) {
       out[name] = glazeTruncate(String(headers[rawName]));
     } else {
       out[name] = GLAZE_ELIDED;

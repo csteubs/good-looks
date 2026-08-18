@@ -28,6 +28,13 @@ export interface EncryptedSecretStore {
   get(): Promise<string | null>;
   /** Whether a value is stored, without decrypting or returning it. */
   has(): Promise<boolean>;
+  /** Test seam — drops the in-process cache so the next read hits disk.
+   *
+   *  Same seam `testSecretsStore` has, and needed for the same reason: a test
+   *  that deletes the file behind the store's back is otherwise answered from
+   *  the cache, so the case it meant to set up never happens and it passes for
+   *  the wrong reason. */
+  resetCache(): void;
 }
 
 export function createEncryptedSecretStore(opts: {
@@ -102,6 +109,10 @@ export function createEncryptedSecretStore(opts: {
       } catch {
         return false;
       }
+    },
+
+    resetCache(): void {
+      cached = undefined;
     },
   };
 }

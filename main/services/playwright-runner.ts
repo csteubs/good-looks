@@ -18,6 +18,15 @@ import { runHistoryStore } from "./run-history-store.js";
 import { stepReporterSource } from "./step-reporter-source.js";
 import { splitStepMarkers } from "./step-marker.js";
 import { captureFixtureSource } from "./capture-fixture-source.js";
+import {
+  SIGNATURE_COUNT_ENV,
+  SIGNATURE_FIXTURE_FILE,
+  signatureEnvNames,
+  signatureFixtureSource,
+} from "./signature-fixture-source.js";
+import { shopifySignatureStore } from "./shopify-signature-store.js";
+import type { ShopifySignatureEntry } from "./shopify-signature-store.js";
+import { normalizeSignatureHost } from "../../shared/shopify-signature.mjs";
 import { artifactStore, DEFAULT_RETAINED_RUNS } from "./artifact-store.js";
 import type { HealFailure } from "./artifact-store.js";
 import { metricsStore } from "./metrics-store.js";
@@ -272,6 +281,122 @@ function ensureHealFixture(scriptsDir: string): void {
 // a run with settling OFF still has to be able to resolve the file.
 function ensureSettleFixture(scriptsDir: string): void {
   writeIfChanged(path.join(scriptsDir, SETTLE_FIXTURE_FILE), settleFixtureSource);
+}
+
+/**
+ * Say, in the run output, what happened to the Shopify crawler signature.
+ *
+ * Every branch here exists because the alternative is silence, and the failure
+ * this feature has is silent by construction: an unsigned run against a store
+ * that throttles automated traffic fails somewhere further down, as a timeout
+ * or a missing element, with nothing connecting it to the signature.
+ *
+ * Emitted through `emitOutput(runId, "system", …)`, the same surface that
+ * already carries "Crawl: page-settling is skipped for imported tests".
+ */
+async function announceSignatureState(args: {
+  runId: string;
+  testHost: string | null;
+  originEntry: ShopifySignatureEntry | null;
+  entries: readonly ShopifySignatureEntry[];
+  imported: boolean;
+}): Promise<void> {
+  const { runId, testHost, originEntry, entries, imported } = args;
+  const say = (text: string): void => emitOutput(runId, "system", `${text}\n`);
+
+  if (originEntry) {
+    // The positive case gets a line too. "It is being sent" and "it silently is
+    // not" are otherwise indistinguishable until the store starts refusing.
+    say(`Sending the Shopify crawler signature for ${originEntry.host} on this run.`);
+    return;
+  }
+
+  // Everything below is a run that will NOT present a signature. Reading the
+  // register (rather than the decrypted entries) is what separates "none is
+  // configured" from "one is, and could not be read".
+  let statuses: Awaited<ReturnType<typeof shopifySignatureStore.list>>;
+  try {
+    statuses = await shopifySignatureStore.list();
+  } catch {
+    return;
+  }
+  if (statuses.length === 0) return;
+
+  const forHost = testHost ? statuses.find((entry) => entry.host === testHost) : undefined;
+
+  if (forHost?.state === "unreadable") {
+    say(
+      `A Shopify crawler signature is registered for ${forHost.host} but couldn't be decrypted on ` +
+        "this Mac, so it wasn't sent.",
+    );
+    return;
+  }
+
+  if (forHost?.state === "expired") {
+    // Ran unsigned rather than refused: the test may still pass at low volume,
+    // and refusing would turn a degraded run into no run. Sending it anyway is
+    // the one option that is affirmatively worse than both — an expired
+    // signature fails verification, which is a spoofing signal.
+    const on = forHost.expiresAt ? new Date(forHost.expiresAt * 1000).toISOString().slice(0, 10) : null;
+    say(
+      `The Shopify crawler signature for ${forHost.host}${on ? ` expired on ${on}` : " has expired"}` +
+        " and was NOT sent — an expired signature fails verification, which is worse than sending " +
+        "none. Shopify signatures last at most three months and can't be renewed; create a new one " +
+        "in your Shopify admin.",
+    );
+    return;
+  }
+
+  if (imported) {
+    // The gap this feature cannot close, stated rather than discovered. The
+    // headers travel on the same fixture as screenshots and Auto-Heal, and that
+    // fixture reaches a spec by rewriting its `@playwright/test` import — which
+    // an imported project's own spec may not even have.
+    if (forHost) {
+      say(
+        `The Shopify crawler signature for ${forHost.host} is not sent for imported tests — it ` +
+          "travels on the same fixture as screenshots and Auto-Heal, which needs the spec to " +
+          "import @playwright/test directly.",
+      );
+    }
+    return;
+  }
+
+  if (!forHost && testHost && entries.length > 0) {
+    // Named rather than left as silence, because "I registered a signature and
+    // it isn't working" is the same experience as "I registered it for the
+    // other domain" — and a signature is bound to exactly one.
+    say(
+      `No Shopify crawler signature for ${testHost}. One is registered for ` +
+        `${entries.map((entry) => entry.host).join(", ")} — a signature is bound to one domain and ` +
+        "can't be used for another.",
+    );
+  }
+}
+
+// Write the Shopify crawler-signature fixture. Unconditional for the same
+// reason again: the capture fixture imports it at the top of the module, so a
+// run with no signature registered still has to be able to resolve the file.
+function ensureSignatureFixture(scriptsDir: string): void {
+  writeIfChanged(path.join(scriptsDir, SIGNATURE_FIXTURE_FILE), signatureFixtureSource);
+}
+
+/**
+ * The env carrying this run's signatures — one variable per value.
+ *
+ * Never a JSON blob, for the reason `variableEnv` states about secrets: a blob
+ * is a single string that shows up whole in a crash dump or a process listing.
+ */
+function signatureEnv(entries: readonly ShopifySignatureEntry[]): Record<string, string> {
+  const out: Record<string, string> = { [SIGNATURE_COUNT_ENV]: String(entries.length) };
+  entries.forEach((entry, index) => {
+    const names = signatureEnvNames(index);
+    out[names.host] = entry.host;
+    out[names.input] = entry.signatureInput;
+    out[names.value] = entry.signature;
+    out[names.agent] = entry.signatureAgent;
+  });
+  return out;
 }
 
 /** One factory call's key. MUST match the `FACTORIES` table in
@@ -1007,6 +1132,32 @@ export const playwrightRunner = {
             "Crawl: page-settling is skipped for imported tests — only the slower step delay applies.\n",
           );
         }
+
+        // ── The Shopify crawler signature ────────────────────────────────
+        //
+        // TWO different rules, deliberately.
+        //
+        // Whether to ARM is narrow: only when this test's OWN origin has a
+        // registered, readable, unexpired signature. Routing disables the
+        // browser's HTTP cache for the context, which changes timing and can
+        // move a screenshot, so a machine with a signature registered must not
+        // pay that on every unrelated test.
+        //
+        // What gets INSTALLED once armed is complete: a route for every
+        // registered host, each scoped to its own. A test that starts at one
+        // registered store and navigates to another signs both.
+        const signatureEntries = rec.sourceDir ? [] : await shopifySignatureStore.entries();
+        const testOrigin = rec.sourceDir ? (rec.baseUrl ?? "") : (rec.url ?? "");
+        const testHost = normalizeSignatureHost(testOrigin);
+        const originEntry = signatureEntries.find((entry) => entry.host === testHost) ?? null;
+        let signing = originEntry !== null;
+        await announceSignatureState({
+          runId,
+          testHost,
+          originEntry,
+          entries: signatureEntries,
+          imported: !!rec.sourceDir,
+        });
         if (healing) {
           ensureHealFixture(scriptsDir);
           healDir = path.join(getScriptsDir(), `${recordId}.heal`);
@@ -1037,10 +1188,14 @@ export const playwrightRunner = {
         // The redirect is what puts the fixture in the spec's import path, and
         // the fixture is where capture, healing AND crawl's page-settling live
         // — so a heal-only or crawl-only run needs it too.
-        if ((captureArtifacts || healing || a11y || recordLogs || settling) && !rec.sourceDir) {
+        if (
+          (captureArtifacts || healing || a11y || recordLogs || settling || signing) &&
+          !rec.sourceDir
+        ) {
           ensureCaptureFixture(scriptsDir);
           ensureHealFixture(scriptsDir);
           ensureSettleFixture(scriptsDir);
+          ensureSignatureFixture(scriptsDir);
           const prepared = prepareCaptureSpec(scriptsDir, specToRun, recordId);
           if (prepared) {
             tempSpecPath = prepared;
@@ -1055,6 +1210,11 @@ export const playwrightRunner = {
             // to crawl would make every run prune the artifact history and
             // create an empty run dir — paying the storage bookkeeping for a
             // feature that never writes an artifact.
+            //
+            // `signing` is NOT here, for the same reason `settling` is not:
+            // it writes nothing to disk. Including it would make a run that
+            // only attaches a header prune the artifact history and create an
+            // empty run dir — the exact bug settling shipped once.
             const artifactRun = captureArtifacts || healing || a11y || recordLogs;
             capturingRun = artifactRun;
             if (artifactRun) {
@@ -1085,12 +1245,14 @@ export const playwrightRunner = {
               healing ? "Auto-Heal" : null,
               recordLogs ? "Console and network recording" : null,
               settling ? "Crawl page-settling" : null,
+              signing ? "The Shopify crawler signature" : null,
             ]
               .filter(Boolean)
               .join(" and ");
             // Keep the env var honest about what actually happens: the fixture
             // that reads it was never loaded.
             settling = false;
+            signing = false;
             emitOutput(
               runId,
               "system",
@@ -1242,6 +1404,7 @@ export const playwrightRunner = {
             GLAZE_ARTIFACT_DIR: artifactDir,
             GLAZE_TEST_ID: rec.id,
             GLAZE_RUN_ID: recordId,
+            ...signatureEnv(signing ? signatureEntries : []),
           },
           processTimeoutMs,
         );

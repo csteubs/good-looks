@@ -25,6 +25,7 @@ import {
 } from "./log-capture-source.js";
 import { actionsLiteral, LOCATOR_ACTIONS, PAGE_ACTIONS } from "./page-actions.js";
 import { SETTLE_FIXTURE_FILE } from "./settle-fixture-source.js";
+import { SIGNATURE_COUNT_ENV, SIGNATURE_FIXTURE_FILE } from "./signature-fixture-source.js";
 import { STEP_MARKER } from "./step-marker.js";
 
 export const captureFixtureSource = `import { test as base, expect } from "@playwright/test";
@@ -32,6 +33,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { installHealing } from "./glaze-heal.mjs";
 import { installSettle } from "./${SETTLE_FIXTURE_FILE}";
+import { installSignatureHeaders, reportSignedRequests } from "./${SIGNATURE_FIXTURE_FILE}";
 
 export { expect };
 
@@ -54,6 +56,10 @@ const SETTLE_ON = process.env.GLAZE_SETTLE === "1";
 // than either screenshots or axe, but it writes page-controlled text and
 // request URLs to disk, so nobody should get it by asking for something else.
 const LOGS_ON = process.env.GLAZE_RECORD_LOGS === "1";
+// Shopify crawler signatures, gated independently again. Unlike every other
+// flag here this one is a COUNT rather than a "1": the runner passes one env
+// var per value, so the count is what says whether there is anything to send.
+const SIG_ON = Number(process.env.${SIGNATURE_COUNT_ENV} || 0) > 0;
 // The user's explicit "record all headers (may include credentials)" opt-out
 // from the allowlist.
 const ALL_HEADERS = process.env.GLAZE_RECORD_ALL_HEADERS === "1";
@@ -415,9 +421,18 @@ function patchOnce(page) {
   }
 }
 
-export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON) ? base.extend({
+export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON || SIG_ON) ? base.extend({
   page: async ({ page }, use, testInfo) => {
-    // Healing is installed FIRST so its retry sits inside the capture wrapper:
+    // The signature goes on FIRST, and is the only one of these that is not an
+    // action patch — it routes the network. Installed ahead of the three
+    // wrappers so it can never end up inside one of them, where a heal retry
+    // would re-enter it.
+    if (SIG_ON) {
+      try { installSignatureHeaders(page); } catch (e) {
+        process.stderr.write("[glaze-signature] install failed: " + String(e) + "\\n");
+      }
+    }
+    // Healing is installed next so its retry sits inside the capture wrapper:
     // a healed action should produce one screenshot of the successful result,
     // not one per failed attempt.
     if (HEAL_ON) {
@@ -459,7 +474,14 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
     // The manifest is what carries BOTH screenshots and violations, so it is
     // written whenever either is on — an a11y-only run still needs one.
     if ((!ON && !A11Y_ON && !LOGS_ON) || !DIR) {
-      await use(page);
+      // A signing-only run lands here — no artifact dir, no manifest — so the
+      // signed-request count has to be reported from this path too, or the one
+      // run that is ONLY about signatures is the one that says nothing.
+      try {
+        await use(page);
+      } finally {
+        reportSignedRequests();
+      }
       return;
     }
     try { fs.mkdirSync(DIR, { recursive: true }); } catch (e) { /* ignore */ }
@@ -472,6 +494,7 @@ export const test = (((ON || A11Y_ON || LOGS_ON) && DIR) || HEAL_ON || SETTLE_ON
     try {
       await use(page);
     } finally {
+      reportSignedRequests();
       // Persist the manifest: the per-step artifact + outcome model for this run.
       try {
         const manifest = {

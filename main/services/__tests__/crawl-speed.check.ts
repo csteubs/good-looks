@@ -219,10 +219,22 @@ assert(
   /const SETTLE_ON = process\.env\.GLAZE_SETTLE === "1"/.test(captureFixtureSource),
   "capture fixture: gates settling on GLAZE_SETTLE",
 );
-assert(
-  /\|\| SETTLE_ON\) \? base\.extend/.test(captureFixtureSource),
-  "capture fixture: a crawl-only run still gets the extended test (not bare `base`)",
-);
+{
+  // The PROPERTY, not the spelling: settling has to be one of the reasons the
+  // fixture extends `test` at all, or a crawl-only run silently gets bare
+  // `base` and settles nothing. Matched by pulling the gate expression out and
+  // asking whether SETTLE_ON is in it, so that adding another independent
+  // reason to extend (as the Shopify signature did) does not read as this
+  // property being lost.
+  const gate = /export const test = \(([\s\S]*?)\)\s*\?\s*base\.extend/.exec(
+    captureFixtureSource,
+  );
+  assert(gate !== null, "capture fixture: the `test` export is still a gated base.extend");
+  assert(
+    (gate?.[1] ?? "").includes("SETTLE_ON"),
+    "capture fixture: a crawl-only run still gets the extended test (not bare `base`)",
+  );
+}
 
 {
   // Install ORDER is the contract: each patch wraps the previous one, so

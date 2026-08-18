@@ -59,8 +59,29 @@ export interface RunFixtureReport {
   skipped?: string[];
 }
 
+/** One row of the app's plaintext signature register. No header value — that
+ *  half is encrypted and unreadable from this process. */
+export interface SignatureRegisterEntry {
+  host: string;
+  /** Unix SECONDS. */
+  expiresAt?: number | null;
+}
+
+/** The host this test would present a signature at, or null. */
+export declare function signatureHostFor(
+  test: PlannedTest | undefined,
+  signatures?: readonly SignatureRegisterEntry[],
+  nowMs?: number,
+): string | null;
+
 export declare function describeRun(
   test: PlannedTest | undefined,
   settings?: Partial<RecorderSettings>,
-  opts?: { speed?: TestSpeed | string; timeoutMs?: number; timeoutRaised?: boolean },
+  opts?: {
+    speed?: TestSpeed | string;
+    timeoutMs?: number;
+    timeoutRaised?: boolean;
+    signatures?: readonly SignatureRegisterEntry[];
+    nowMs?: number;
+  },
 ): RunFixtureReport;

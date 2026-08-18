@@ -17,6 +17,7 @@ import { describe, it, expect, vi } from "vitest";
 import { screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 import { makeController, renderPane, savedPatch } from "../__tests__/harness";
+import type { ShopifySignatureStatus } from "../../lib/recorder-types";
 import type { SettingsController } from "../settings-controller";
 import { IntegrationsPane } from "./integrations-pane";
 
@@ -692,5 +693,185 @@ describe("counting destinations uses the provider's own plural", () => {
     });
     renderPane(<IntegrationsPane />, { controller });
     expect(row("linear-default-team").textContent).toMatch(/1 team available/i);
+  });
+});
+
+// ── Shopify crawler signatures ────────────────────────────────────────
+//
+// The row's job is to answer "why did my crawl start failing?", and it can only
+// do that if the two BAD states are distinguishable from each other and from
+// "nothing configured". An expired signature and one that cannot be decrypted
+// need different actions — create a new one in the admin, versus re-paste the
+// one you have — so a row that rendered them the same would send half its
+// readers to the wrong place.
+
+const NOW_MS = Date.UTC(2026, 7, 18);
+const NOW_S = Math.floor(NOW_MS / 1000);
+const DAY_S = 24 * 60 * 60;
+
+function signature(over: Partial<ShopifySignatureStatus> = {}): ShopifySignatureStatus {
+  return {
+    id: "sig-1",
+    host: "shop.example.com",
+    expiresAt: NOW_S + 60 * DAY_S,
+    createdAt: NOW_S - DAY_S,
+    addedAt: NOW_MS,
+    state: "valid",
+    ...over,
+  };
+}
+
+/** Type into the three fields of the add form. */
+function fillSignatureForm(scope: HTMLElement, host: string, input: string, value: string): void {
+  fireEvent.change(fieldById("shopify-signatures"), { target: { value: host } });
+  fireEvent.change(within(scope).getByLabelText("Signature-Input"), { target: { value: input } });
+  fireEvent.change(within(scope).getByLabelText("Signature"), { target: { value } });
+}
+
+describe("the Shopify signature row", () => {
+  it("masks both secret fields so a pasted signature isn't shoulder-readable", () => {
+    renderPane(<IntegrationsPane />);
+    const scope = row("shopify-signatures");
+    // The domain is deliberately NOT masked: it is the field most likely to be
+    // wrong, and a signature at the wrong authority is worse than none. Asserted
+    // on the PROPERTY — React omits the attribute entirely for a default-type
+    // input, so `getAttribute("type")` is null here rather than "text".
+    expect(fieldById("shopify-signatures").type).toBe("text");
+    expect(within(scope).getByLabelText("Signature-Input").getAttribute("type")).toBe("password");
+    expect(within(scope).getByLabelText("Signature").getAttribute("type")).toBe("password");
+  });
+
+  it("sends all three values to the backend on save", () => {
+    const addSignature = vi.fn(async () => true);
+    renderPane(<IntegrationsPane />, { controller: makeController({ addSignature }) });
+    const scope = row("shopify-signatures");
+    fillSignatureForm(scope, "shop.example.com", 'sig1=("@authority");expires=1', "sig1=:abc:");
+    fireEvent.click(within(scope).getByRole("button", { name: /save shopify signature/i }));
+    expect(addSignature).toHaveBeenCalledWith({
+      host: "shop.example.com",
+      signatureInput: 'sig1=("@authority");expires=1',
+      signature: "sig1=:abc:",
+    });
+  });
+
+  it("cannot be saved until all three fields are filled", () => {
+    renderPane(<IntegrationsPane />);
+    const scope = row("shopify-signatures");
+    const save = within(scope).getByRole("button", {
+      name: /save shopify signature/i,
+    }) as HTMLButtonElement;
+    expect(save.disabled).toBe(true);
+    fillSignatureForm(scope, "shop.example.com", "sig1=(...)", "");
+    expect(save.disabled).toBe(true);
+    fillSignatureForm(scope, "shop.example.com", "sig1=(...)", "sig1=:abc:");
+    expect(save.disabled).toBe(false);
+  });
+
+  it("keeps the paste when the save is refused", async () => {
+    // A signature is a long paste out of another window. Clearing on failure
+    // would mean a typo'd domain costs a trip back to the Shopify admin.
+    renderPane(<IntegrationsPane />, {
+      controller: makeController({ addSignature: vi.fn(async () => false) }),
+    });
+    const scope = row("shopify-signatures");
+    const value = within(scope).getByLabelText("Signature") as HTMLInputElement;
+    fillSignatureForm(scope, "nope", "a", "sig1=:keep-me:");
+    fireEvent.click(within(scope).getByRole("button", { name: /save shopify signature/i }));
+    await waitFor(() => expect(value.value).toBe("sig1=:keep-me:"));
+  });
+
+  it("clears the fields once the signature is saved", async () => {
+    renderPane(<IntegrationsPane />, {
+      controller: makeController({ addSignature: vi.fn(async () => true) }),
+    });
+    const scope = row("shopify-signatures");
+    const value = within(scope).getByLabelText("Signature") as HTMLInputElement;
+    fillSignatureForm(scope, "shop.example.com", "a", "sig1=:abc:");
+    fireEvent.click(within(scope).getByRole("button", { name: /save shopify signature/i }));
+    await waitFor(() => expect(value.value).toBe(""));
+  });
+
+  it("renders each state as its own claim", () => {
+    // `vi.setSystemTime`, not `process.env.TZ` — see the CLAUDE.md gotcha. The
+    // clock has to be fixed because four of these five labels are relative.
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW_MS);
+    try {
+      renderPane(<IntegrationsPane />, {
+        controller: makeController({
+          signatures: [
+            signature({ id: "a", host: "valid.example.com" }),
+            signature({
+              id: "b",
+              host: "soon.example.com",
+              state: "expiring",
+              expiresAt: NOW_S + 3 * DAY_S,
+            }),
+            signature({
+              id: "c",
+              host: "gone.example.com",
+              state: "expired",
+              // NOON UTC on the 17th, not midnight. The date is rendered in the
+              // reader's own zone, so a midnight-UTC expiry reads as the 16th
+              // anywhere west of Greenwich and the assertion below would pin
+              // the test to the machine that wrote it.
+              expiresAt: NOW_S - DAY_S + 12 * 60 * 60,
+            }),
+            signature({ id: "d", host: "locked.example.com", state: "unreadable" }),
+            signature({
+              id: "e",
+              host: "nodate.example.com",
+              state: "unknown",
+              expiresAt: null,
+            }),
+          ],
+        }),
+      });
+      const scope = row("shopify-signatures");
+      expect(within(scope).getByText(/Valid — expires in 60 days/)).toBeTruthy();
+      expect(within(scope).getByText(/^Expires in 3 days$/)).toBeTruthy();
+      // Locale-agnostic: the date is formatted for whoever is looking, and
+      // pinning en-US here would fail on a machine set to anything else.
+      const expired = within(scope).getByText(/^Expired on /);
+      expect(expired.textContent).toMatch(/17/);
+      expect(expired.textContent).toMatch(/2026/);
+      // Never collapsed into "nothing configured" — the user registered this
+      // one, and a pane that said nothing would be why they never find out that
+      // their crawl is running unsigned.
+      expect(within(scope).getByText(/unreadable on this Mac/i)).toBeTruthy();
+      expect(within(scope).getByText(/Expiry unknown/)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers Remove per host, naming which one", () => {
+    const removeSignature = vi.fn(async () => {});
+    renderPane(<IntegrationsPane />, {
+      controller: makeController({
+        signatures: [
+          signature({ id: "a", host: "keep.example.com" }),
+          signature({ id: "b", host: "gone.example.com", state: "expired", expiresAt: NOW_S - 1 }),
+        ],
+        removeSignature,
+      }),
+    });
+    const scope = row("shopify-signatures");
+    // An expired row keeps its place rather than vanishing: the row saying
+    // "expired" is how the user learns why the crawl started failing.
+    fireEvent.click(
+      within(scope).getByRole("button", { name: /remove the signature for gone\.example\.com/i }),
+    );
+    expect(removeSignature).toHaveBeenCalledWith("b");
+  });
+
+  it("says what leaves this Mac and where it goes", () => {
+    // The pane's subject is what this app talks to, so the row states its own
+    // egress rather than leaving it to the docs.
+    renderPane(<IntegrationsPane />);
+    const scope = row("shopify-signatures");
+    expect(scope.textContent).toMatch(/stored encrypted on this Mac/i);
+    expect(scope.textContent).toMatch(/sent only to the domain they name/i);
+    expect(scope.textContent).toMatch(/bound to a single domain/i);
   });
 });

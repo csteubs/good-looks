@@ -1573,3 +1573,25 @@ export interface AiDebugHistoryRecord {
   answerChars: number;
   runKey: string | null;
 }
+
+/** A registered Shopify crawler signature, as the renderer is allowed to see it.
+ *
+ *  Mirrors `ShopifySignatureStatus` in main/services/shopify-signature-store.ts.
+ *  Hand-kept in sync, like everything else in this file.
+ *
+ *  NO HEADER VALUE, and there is no shape that carries one: the signature itself
+ *  stays in the main process, encrypted, and the renderer only ever learns that
+ *  one exists and whether it still works. */
+export interface ShopifySignatureStatus {
+  id: string;
+  host: string;
+  /** Unix SECONDS, as the header carries it — not milliseconds. */
+  expiresAt: number | null;
+  /** Unix SECONDS, from the header's `created`. */
+  createdAt: number | null;
+  /** Milliseconds — when the user pasted it. */
+  addedAt: number;
+  /** `unreadable` is a real state, not an error: the register says a signature
+   *  is here and the encrypted half could not be decrypted on this machine. */
+  state: "valid" | "expiring" | "expired" | "unknown" | "unreadable";
+}

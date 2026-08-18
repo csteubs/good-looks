@@ -15,6 +15,7 @@
 // writes. Every one of them failed quietly — the run executed, passed or
 // failed, and said nothing about what it had skipped.
 
+import { normalizeSignatureHost, signatureState } from "../shared/shopify-signature.mjs";
 import { slowMoFor } from "../shared/run-pacing.mjs";
 import { stripAnsi } from "../shared/strip-ansi.mjs";
 
@@ -34,6 +35,23 @@ import { stripAnsi } from "../shared/strip-ansi.mjs";
  */
 export function secretVariableNames(test) {
   return (test?.variables ?? []).filter((v) => v?.kind === "secret").map((v) => v.name);
+}
+
+/**
+ * The host this test would present a Shopify crawler signature at, or null.
+ *
+ * Exact host match and an expiry re-check, both delegated to the shared module
+ * — the app decides where a signature may be sent, and a second opinion here
+ * would be a second rule to keep in step.
+ */
+export function signatureHostFor(test, signatures = [], nowMs = Date.now()) {
+  const host = normalizeSignatureHost(test?.url || test?.baseUrl || "");
+  if (!host || !Array.isArray(signatures)) return null;
+  const entry = signatures.find((s) => s?.host === host);
+  if (!entry) return null;
+  // An expired signature would not have been sent by the app either, so
+  // reporting it as something this run missed would be false.
+  return signatureState({ expiresAt: entry.expiresAt, nowMs }) === "expired" ? null : host;
 }
 
 /** The dataset row `datasetId` names, or null. */
@@ -162,7 +180,11 @@ export function sanitizeOutput(output) {
  * with "Capture screenshots" switched on very much does, because its runs are
  * the ones that silently stopped appearing in the Visual tab.
  */
-export function describeRun(test, settings = {}, { speed, timeoutMs, timeoutRaised } = {}) {
+export function describeRun(
+  test,
+  settings = {},
+  { speed, timeoutMs, timeoutRaised, signatures = [], nowMs = Date.now() } = {},
+) {
   const wants = {
     screenshots: test?.captureArtifacts ?? settings.defaultCaptureArtifacts ?? false,
     accessibility: test?.a11yChecks ?? settings.defaultA11yChecks ?? false,
@@ -200,6 +222,20 @@ export function describeRun(test, settings = {}, { speed, timeoutMs, timeoutRais
     skipped.push(
       `Secret variables (${secrets.join(", ")}) — their values are encrypted to the app and ` +
         "unreadable from here, so the spec resolved them to empty strings.",
+    );
+  }
+  // The same shape as the secrets note above, and for the same reason: this
+  // server has no Electron and therefore no safeStorage, so it cannot read the
+  // signature's value however much it would like to. What it CAN read is the
+  // plaintext register beside it, which is the whole reason that file exists —
+  // without it "no signature configured" and "one is configured and I can't
+  // read it" are the same silence.
+  const signedHost = signatureHostFor(test, signatures, nowMs);
+  if (signedHost) {
+    skipped.push(
+      `The Shopify crawler signature (${signedHost}) — its value is encrypted to the app and ` +
+        "unreadable from here, so this run was made unsigned. The store may throttle or block it, " +
+        "which means a failure here can be a pass from the app. Run it from the app.",
     );
   }
   return {

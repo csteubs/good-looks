@@ -35,6 +35,7 @@ import {
   Switch,
 } from "@ui";
 
+import type { ShopifySignatureStatus } from "../../lib/recorder-types";
 import { useSettingsController } from "../settings-controller";
 import { SettingRow, useRowVisible } from "../setting-row";
 import { PaneSection } from "../pane-section";
@@ -44,10 +45,54 @@ import { PaneSection } from "../pane-section";
  *  would render its placeholder instead of the choice the user made. */
 const NONE = "__none__";
 
+/** What one registered signature's state reads as, and how loudly.
+ *
+ *  Five renderings for five facts, and the two that look like errors are the
+ *  point of the row existing: an expired or unreadable signature is why a crawl
+ *  that used to work has started being throttled, and nothing else in the app
+ *  is in a position to say so.
+ *
+ *  `expiresAt` is unix SECONDS — as the header carries it — against a
+ *  millisecond clock. */
+export function signatureStatusLabel(
+  entry: ShopifySignatureStatus,
+  nowMs: number,
+): { variant: "success" | "warning" | "error" | "neutral"; text: string } {
+  if (entry.state === "unreadable") {
+    return { variant: "error", text: "Registered but unreadable on this Mac" };
+  }
+  if (entry.state === "unknown" || entry.expiresAt === null) {
+    return { variant: "neutral", text: "Expiry unknown" };
+  }
+  const expiresMs = entry.expiresAt * 1000;
+  if (entry.state === "expired") {
+    return {
+      variant: "error",
+      text: `Expired on ${new Date(expiresMs).toLocaleDateString(undefined, {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })}`,
+    };
+  }
+  // Rounded UP, so a signature with eight hours left reads "1 day" rather than
+  // "0 days" — which reads as expired, at the exact moment the distinction
+  // matters most.
+  const days = Math.ceil((expiresMs - nowMs) / (24 * 60 * 60 * 1000));
+  const rest = `expires in ${days} ${days === 1 ? "day" : "days"}`;
+  return entry.state === "expiring"
+    ? { variant: "warning", text: rest.charAt(0).toUpperCase() + rest.slice(1) }
+    : { variant: "success", text: `Valid — ${rest}` };
+}
+
 export function IntegrationsPane() {
   const {
     settings,
     save,
+    signatures,
+    signaturesBusy,
+    addSignature,
+    removeSignature,
     webhookStatus,
     webhookBusy,
     saveWebhookUrl,
@@ -74,7 +119,27 @@ export function IntegrationsPane() {
   const [keyInput, setKeyInput] = useState("");
   const [webhookInput, setWebhookInput] = useState("");
   const [githubInput, setGithubInput] = useState("");
+  // Held HERE rather than in shared state, like every other credential field on
+  // this pane: a pasted signature should not linger for the rest of the session.
+  const [sigHost, setSigHost] = useState("");
+  const [sigInput, setSigInput] = useState("");
+  const [sigValue, setSigValue] = useState("");
   const [confirmEnableOpen, setConfirmEnableOpen] = useState(false);
+  const onSaveSignature = async (): Promise<void> => {
+    const ok = await addSignature({
+      host: sigHost,
+      signatureInput: sigInput,
+      signature: sigValue,
+    });
+    // Cleared only on success. A signature is a long paste out of another
+    // window, and losing it to a typo'd domain would mean going back for it.
+    if (ok) {
+      setSigHost("");
+      setSigInput("");
+      setSigValue("");
+    }
+  };
+
   const urlRowVisible = useRowVisible("alert-webhook-url");
   const teamRowVisible = useRowVisible("linear-default-team");
   const projectRowVisible = useRowVisible("linear-default-project");
@@ -456,6 +521,98 @@ export function IntegrationsPane() {
               Remove
             </Button>
           ) : null}
+        </div>
+      </SettingRow>
+
+      <SettingRow
+        id="shopify-signatures"
+        label="Shopify crawler signatures"
+        flag="leaves this Mac"
+        stacked
+        summary={
+          <>
+            Lets the training browser and test runs reach a Shopify store that would otherwise
+            throttle or block automated traffic. Create a signature in your Shopify admin, then
+            paste its three values here. Each one is <strong>bound to a single domain</strong> — a
+            store answering on both <code>example.com</code> and <code>www.example.com</code> needs
+            two — and expires within three months, after which Shopify cannot renew it. The values
+            are stored encrypted on this Mac, are sent only to the domain they name, and are kept
+            out of recorded request headers even when “record all headers” is on.
+          </>
+        }
+      >
+        <div className="flex w-full flex-col gap-3">
+          {signatures.length > 0 ? (
+            <ul className="flex flex-col gap-2">
+              {signatures.map((entry) => {
+                const label = signatureStatusLabel(entry, Date.now());
+                return (
+                  <li key={entry.id} className="flex items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate text-sm">{entry.host}</span>
+                    <Status variant={label.variant}>{label.text}</Status>
+                    <Button
+                      variant="secondary"
+                      aria-label={`Remove the signature for ${entry.host}`}
+                      onClick={() => void removeSignature(entry.id)}
+                      disabled={signaturesBusy}
+                    >
+                      Remove
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+
+          <div className="flex w-full flex-col gap-2">
+            <Input
+              id="shopify-signatures"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              value={sigHost}
+              onChange={(e) => setSigHost(e.target.value)}
+              placeholder="shop.example.com"
+              aria-label="Store domain"
+              disabled={signaturesBusy}
+              className="min-w-0"
+            />
+            <Input
+              type="password"
+              spellCheck={false}
+              value={sigInput}
+              onChange={(e) => setSigInput(e.target.value)}
+              placeholder="Signature-Input"
+              aria-label="Signature-Input"
+              disabled={signaturesBusy}
+              className="min-w-0"
+            />
+            <Input
+              type="password"
+              spellCheck={false}
+              value={sigValue}
+              onChange={(e) => setSigValue(e.target.value)}
+              placeholder="Signature"
+              aria-label="Signature"
+              disabled={signaturesBusy}
+              className="min-w-0"
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                aria-label="Save Shopify signature"
+                onClick={() => void onSaveSignature()}
+                disabled={
+                  signaturesBusy ||
+                  sigHost.trim().length === 0 ||
+                  sigInput.trim().length === 0 ||
+                  sigValue.trim().length === 0
+                }
+              >
+                Save
+              </Button>
+            </div>
+          </div>
         </div>
       </SettingRow>
     </PaneSection>

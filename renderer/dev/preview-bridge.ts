@@ -1100,6 +1100,45 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "llm:isActive": () => ({ active: false }),
     "alerts:status": () => ({ hasUrl: false, host: null }),
 
+    // Shopify crawler signatures. Three entries rather than none, because the
+    // whole reason the row exists is that its states look different — and the
+    // two that read as errors are the ones worth being able to look at. Expiry
+    // is relative to now so the labels stay meaningful whenever this is opened.
+    "shopify:list": () => {
+      const day = 24 * 60 * 60;
+      const nowS = Math.floor(Date.now() / 1000);
+      return [
+        {
+          id: "sig-live",
+          host: "northwind-supply.com",
+          expiresAt: nowS + 47 * day,
+          createdAt: nowS - 43 * day,
+          addedAt: Date.now() - 43 * day * 1000,
+          state: "valid",
+        },
+        {
+          id: "sig-soon",
+          host: "northwind-supply.myshopify.com",
+          expiresAt: nowS + 5 * day,
+          createdAt: nowS - 85 * day,
+          addedAt: Date.now() - 85 * day * 1000,
+          state: "expiring",
+        },
+        {
+          id: "sig-gone",
+          // Deliberately the host `t-checkout` navigates to, so the expired
+          // chip on the test detail toolbar is reachable in a tab. A fixture
+          // set whose hosts match nothing in the library would render the
+          // settings row and leave the other half of the feature invisible.
+          host: "shop.example.com",
+          expiresAt: nowS - 9 * day,
+          createdAt: nowS - 99 * day,
+          addedAt: Date.now() - 99 * day * 1000,
+          state: "expired",
+        },
+      ];
+    },
+
     // The Documentation pane's one piece of live state. A preview has no
     // filesystem to check, so it answers with the shape a real checkout gives —
     // the interesting half of the pane to look at is the copyable command, and

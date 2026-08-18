@@ -29,6 +29,17 @@ let routeId = "t1";
 // Records reachable by id, for those navigation tests. `test_` still answers
 // for any id the map doesn't hold, so single-test suites are unaffected.
 let library: Record<string, TestRecord> = {};
+/** What `api.shopify.list()` answers with. Empty for every test that isn't
+ *  about the signature chip, which is the state a machine with no Shopify
+ *  store registered is in. */
+let signatures: {
+  id: string;
+  host: string;
+  expiresAt: number | null;
+  createdAt: number | null;
+  addedAt: number;
+  state: "valid" | "expiring" | "expired" | "unknown" | "unreadable";
+}[] = [];
 
 const run = vi.fn();
 const setHeadless = vi.fn(async () => ({}) as TestRecord);
@@ -112,6 +123,7 @@ vi.mock("../lib/api", () => ({
       list: async () => runs,
     },
     heals: { list: async () => [] },
+    shopify: { list: async () => signatures },
     artifacts: { getReplay: async () => null },
     aiDebug: {
       list: async () => [],
@@ -171,6 +183,7 @@ beforeEach(() => {
   routeId = "t1";
   library = {};
   runs = [];
+  signatures = [];
   settings = {
     defaultRunBrowser: "chromium",
     defaultRunHeadless: false,
@@ -1127,5 +1140,100 @@ describe("applying an AI-debug fix, in the Steps tab", () => {
     const selected = screen.getAllByRole("tab").filter((t) => t.getAttribute("data-state") === "active");
     expect(selected).toHaveLength(1);
     expect(selected[0].textContent).toMatch(/Script/);
+  });
+});
+
+// ── The Shopify crawler-signature chip ────────────────────────────────
+//
+// Everything this chip says is about a run that will go out UNSIGNED. The run
+// output says so too, but it says it afterwards, in a log people scroll past —
+// and this is the screen someone is looking at when they press Run. So the two
+// properties that matter are that it appears for the states where the user
+// believes they are covered and are not, and that it stays QUIET otherwise: a
+// chip that also announced a working signature would be on screen for every run
+// of every test against a registered store, and would stop being read.
+
+const NOW_S = Math.floor(Date.UTC(2026, 7, 18) / 1000);
+const DAY_S = 24 * 60 * 60;
+
+function sig(over: Partial<(typeof signatures)[number]> = {}): (typeof signatures)[number] {
+  return {
+    id: "s1",
+    host: "shop.example.com",
+    expiresAt: NOW_S + 60 * DAY_S,
+    createdAt: null,
+    addedAt: 0,
+    state: "valid",
+    ...over,
+  };
+}
+
+describe("the Shopify signature chip", () => {
+  beforeEach(() => {
+    test_ = {
+      id: "t1",
+      name: "Checkout",
+      url: "https://shop.example.com/products/hat",
+      steps: [],
+      createdAt: 0,
+      updatedAt: 0,
+    } as unknown as TestRecord;
+  });
+
+  it("says nothing when the signature is working", async () => {
+    signatures = [sig()];
+    renderView();
+    await screen.findAllByRole("tab");
+    expect(screen.queryByText(/Signature/)).toBeNull();
+  });
+
+  it("says nothing when no signature is registered for this store", async () => {
+    signatures = [];
+    renderView();
+    await screen.findAllByRole("tab");
+    expect(screen.queryByText(/Signature/)).toBeNull();
+  });
+
+  it("warns when the signature for this store has expired", async () => {
+    signatures = [sig({ state: "expired", expiresAt: NOW_S - DAY_S })];
+    renderView();
+    await waitFor(() => expect(screen.getByText("Signature expired")).toBeTruthy());
+    expect(screen.getByText("Signature expired").closest("[title]")?.getAttribute("title")).toMatch(
+      /worse than sending none/,
+    );
+  });
+
+  it("warns when the signature cannot be decrypted on this Mac", async () => {
+    // A different problem with a different fix — re-paste the one you have,
+    // rather than go and create a new one — so it must not read as "expired".
+    signatures = [sig({ state: "unreadable" })];
+    renderView();
+    await waitFor(() => expect(screen.getByText("Signature unreadable")).toBeTruthy());
+  });
+
+  it("warns an imported test that its runs cannot carry the signature", async () => {
+    // The gap the fixture cannot close: an imported spec never imports it.
+    test_ = {
+      id: "t1",
+      name: "Imported checkout",
+      url: "",
+      baseUrl: "https://shop.example.com",
+      sourceDir: "/tmp/imported",
+      steps: [],
+      createdAt: 0,
+      updatedAt: 0,
+    } as unknown as TestRecord;
+    signatures = [sig()];
+    renderView();
+    await waitFor(() => expect(screen.getByText("Signature not sent")).toBeTruthy());
+  });
+
+  it("does not warn a test at a neighbouring host", async () => {
+    // `www.` and the apex are different authorities and get different
+    // signatures — warning here would be claiming a fact about the wrong one.
+    signatures = [sig({ host: "www.shop.example.com", state: "expired", expiresAt: NOW_S - 1 })];
+    renderView();
+    await screen.findAllByRole("tab");
+    expect(screen.queryByText(/Signature/)).toBeNull();
   });
 });
