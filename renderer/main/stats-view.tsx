@@ -39,7 +39,12 @@ import { StepHealthPanel } from "./step-health-panel";
 import { SuiteCostPanel } from "./suite-cost-panel";
 import { CostPanel } from "./cost-panel";
 import { assumptionsFromSettings } from "../lib/cost-model";
-import { DEFAULT_COST_CURRENCY } from "../../shared/cost-units.mjs";
+import { buildAiDebugReport } from "../lib/ai-debug-stats";
+import {
+  COST_DEFAULT_HOURLY_RATE,
+  COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG,
+  DEFAULT_COST_CURRENCY,
+} from "../../shared/cost-units.mjs";
 import { ReportPanel } from "./report-panel";
 import { DigestPanel } from "./digest-panel";
 import { DivergencePanel } from "./divergence-panel";
@@ -185,6 +190,20 @@ export function StatsView() {
   const healsQuery = useQuery({ queryKey: ["heals", "all"], queryFn: () => api.heals.listAll() });
   const replaysQuery = useQuery({ queryKey: ["replays"], queryFn: api.artifacts.list });
 
+  // The AI Debug tile's three sources. `["ai-debug-history"]` is its own key
+  // and NOT in RUN_DERIVED_KEYS — nothing a run does writes that file; the AI
+  // debug store does, and `RecorderProvider` invalidates it on
+  // `aiDebug:historyChanged`. The other two are already cached by the Heals
+  // view and by this page, so the tile costs one round trip on a cold start.
+  const aiHistoryQuery = useQuery({
+    queryKey: ["ai-debug-history"],
+    queryFn: () => api.aiDebug.history(),
+  });
+  const scriptChangesQuery = useQuery({
+    queryKey: ["script-changes", "all"],
+    queryFn: () => api.scriptChanges.listAll(),
+  });
+
   // The Cost panel's two assumptions and its currency, persisted. Same key the
   // Batch view and the library sidebar already use, so this is one cache entry
   // rather than a third round trip — and `root-view` invalidates it when the
@@ -194,6 +213,32 @@ export function StatsView() {
     queryKey: ["recorder-settings"],
     queryFn: () => api.recorder.getSettings(),
   });
+
+  // The AI Debug report, built once here and again on the category screen from
+  // the same three inputs — see `buildAiDebugReport`. The tile and its
+  // dashboard read one arithmetic, never two.
+  const aiDebugReport = React.useMemo(() => {
+    const records = aiHistoryQuery.data;
+    const changes = scriptChangesQuery.data;
+    if (!records || !changes || !runsQuery.data) return undefined;
+    return buildAiDebugReport({
+      records,
+      scriptChanges: changes,
+      runs: runsQuery.data,
+      assumptions: {
+        minutesPerManualDebug:
+          settingsQuery.data?.costMinutesPerManualDebug ?? COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG,
+        hourlyRate: settingsQuery.data?.costHourlyRate ?? COST_DEFAULT_HOURLY_RATE,
+      },
+      now: Date.now(),
+    });
+  }, [
+    aiHistoryQuery.data,
+    scriptChangesQuery.data,
+    runsQuery.data,
+    settingsQuery.data?.costMinutesPerManualDebug,
+    settingsQuery.data?.costHourlyRate,
+  ]);
 
   // Every category that has an answer yet. One that has not resolved is OMITTED
   // rather than given a state — see the note in stats-categories.ts on why
@@ -208,6 +253,7 @@ export function StatsView() {
         replays: replaysQuery.data,
         stepHealth: stepHealthQuery.data,
         slowness: slownessQuery.data,
+        aiDebug: aiDebugReport,
       }),
     [
       runsQuery.data,
@@ -217,6 +263,7 @@ export function StatsView() {
       replaysQuery.data,
       stepHealthQuery.data,
       slownessQuery.data,
+      aiDebugReport,
     ],
   );
 
@@ -321,10 +368,14 @@ export function StatsView() {
         const { removed } = await api.runs.deleteAll();
         toast.success(`Deleted ${removed} run${removed === 1 ? "" : "s"} and their logs.`);
       } else if (confirm === "aiDebug") {
-        const { removed } = await api.aiDebug.clear();
+        const { removed, historyRemoved } = await api.aiDebug.clear();
         toast.success(
-          `Deleted ${removed} saved AI debug session${removed === 1 ? "" : "s"}.`,
+          `Deleted ${removed} saved AI debug session${removed === 1 ? "" : "s"} and ${historyRemoved} history record${historyRemoved === 1 ? "" : "s"}.`,
         );
+        // The AI Debug tile counts that history, so it is now stale — and this
+        // is the one caller that changes it without going through the store's
+        // own push.
+        qc.invalidateQueries({ queryKey: ["ai-debug-history"] });
       }
       refresh();
     } catch (err) {
@@ -836,7 +887,7 @@ export function StatsView() {
           confirm === "all"
             ? "Permanently deletes all run history and every raw log file. This can't be undone."
             : confirm === "aiDebug"
-              ? "Permanently deletes every saved AI diagnosis, including any still minimized. Running jobs are unaffected until they finish. This can't be undone."
+              ? "Permanently deletes every saved AI diagnosis, including any still minimized, and the session history the Stats board counts. Running jobs are unaffected until they finish. This can't be undone."
               : "Clears the run history and charts. The raw log files stay on disk (reveal them from the Manage menu)."
         }
         confirmLabel={

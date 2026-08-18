@@ -37,6 +37,7 @@ import { routineScheduler } from "./services/routine-scheduler.js";
 import { recorderSettingsStore } from "./services/recorder-settings-store.js";
 import { testStore } from "./services/test-store.js";
 import { aiDebugStore } from "./services/ai-debug-store.js";
+import { aiDebugHistoryStore } from "./services/ai-debug-history-store.js";
 import { metricsStore } from "./services/metrics-store.js";
 import { setPrunePreflight } from "./services/artifact-store.js";
 
@@ -120,6 +121,22 @@ routineScheduler.start();
   const { reconciled } = aiDebugStore.reconcileInterrupted();
   if (reconciled > 0) {
     logger.info("ai-debug", "Reconciled interrupted AI debug sessions at startup", { reconciled });
+  }
+  // The same reconciliation over the history the Stats board counts, and for a
+  // sharper reason: an attempt left open would be counted as either still
+  // running or as zero-length, and both answers corrupt "time spent in AI
+  // debug". Then seed the history from whatever sessions survive, ONCE — a
+  // board that opened at zero for a user who has been using this feature for
+  // months would be a wrong answer wearing a new feature's clothes.
+  const { reconciled: staleAttempts } = aiDebugHistoryStore.reconcileInterrupted();
+  if (staleAttempts > 0) {
+    logger.info("ai-debug", "Reconciled interrupted AI debug attempts at startup", {
+      reconciled: staleAttempts,
+    });
+  }
+  const { added } = aiDebugHistoryStore.backfillFrom(aiDebugStore.list());
+  if (added > 0) {
+    logger.info("ai-debug", "Seeded AI debug history from retained sessions", { added });
   }
 }
 

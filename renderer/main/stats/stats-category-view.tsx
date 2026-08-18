@@ -41,10 +41,18 @@ import { A11yDashboard, A11yLeaf } from "./a11y-dashboard";
 import { VisualDashboard, VisualLeaf } from "./visual-dashboard";
 import { SpeedDashboard, SpeedLeaf } from "./speed-dashboard";
 import { StepsDashboard, StepsLeaf } from "./steps-dashboard";
+import { AiDebugDashboard, AiDebugLeaf } from "./ai-debug-dashboard";
+import { buildAiDebugReport } from "../../lib/ai-debug-stats";
+import {
+  COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG,
+  COST_DEFAULT_HOURLY_RATE,
+  DEFAULT_COST_CURRENCY,
+} from "../../../shared/cost-units.mjs";
+import type { CostCurrency } from "../../../shared/cost-units.mjs";
 
 /** The categories with a dashboard built.
  *
- *  ALL SEVEN as of 2026-08-14. It stays a list rather than becoming
+ *  ALL EIGHT as of 2026-08-17. It stays a list rather than becoming
  *  `CATEGORIES.map(c => c.id)`, because the next category added to the registry
  *  will not have a dashboard on the day it is added, and a tile that opens a
  *  screen saying "not built yet" is worse than one that says so up front.
@@ -57,6 +65,7 @@ export const BUILT = [
   "visual",
   "speed",
   "steps",
+  "ai-debug",
 ] as const;
 
 // ── The header block ──────────────────────────────────────────────────
@@ -339,8 +348,56 @@ export function StatsCategoryView(): React.ReactElement {
     queryFn: () => api.a11y.rollup(),
     enabled: meta?.id === "a11y",
   });
+  // THE THREE THE AI DEBUG CATEGORY JOINS. The history is its own key — nothing
+  // a run does writes it, so it is not run-derived; it goes stale on
+  // `aiDebug:historyChanged`, which `RecorderProvider` subscribes to. The other
+  // two are already warm: `["runs"]` from the board, and `["script-changes"]`
+  // from the Heals view. Fetched unconditionally rather than gated on the
+  // category, because the BOARD's tile needs them too and this view is also
+  // where a direct link to /stats/ai-debug lands.
+  const aiHistoryQuery = useQuery({
+    queryKey: ["ai-debug-history"],
+    queryFn: () => api.aiDebug.history(),
+  });
+  const scriptChangesQuery = useQuery({
+    queryKey: ["script-changes", "all"],
+    queryFn: () => api.scriptChanges.listAll(),
+  });
+  const settingsQuery = useQuery({
+    queryKey: ["recorder-settings"],
+    queryFn: () => api.recorder.getSettings(),
+  });
 
   const openTest = (id: string) => navigate({ to: "/test/$id", params: { id } });
+
+  const minutesPerManualDebug =
+    settingsQuery.data?.costMinutesPerManualDebug ?? COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG;
+  const hourlyRate = settingsQuery.data?.costHourlyRate ?? COST_DEFAULT_HOURLY_RATE;
+  // ABOVE THE EARLY RETURN BELOW, because it is a hook: an unknown category
+  // takes that branch, and a `useMemo` after it would change the hook order
+  // between renders. Built once and handed BOTH to the summariser (for the
+  // head) and to the dashboard — recomputing it there, even "the same way", is
+  // how a category comes to state one number in its headline and another in
+  // the panel underneath it.
+  const aiDebugReport = React.useMemo(() => {
+    const records = aiHistoryQuery.data;
+    const changes = scriptChangesQuery.data;
+    const runList = runsQuery.data;
+    if (!records || !changes || !runList) return undefined;
+    return buildAiDebugReport({
+      records,
+      scriptChanges: changes,
+      runs: runList,
+      assumptions: { minutesPerManualDebug, hourlyRate },
+      now: Date.now(),
+    });
+  }, [
+    aiHistoryQuery.data,
+    scriptChangesQuery.data,
+    runsQuery.data,
+    minutesPerManualDebug,
+    hourlyRate,
+  ]);
 
   // An unknown category. Route params are strings out of history, so this is
   // reachable, and it must explain rather than crash or render blank.
@@ -382,6 +439,7 @@ export function StatsCategoryView(): React.ReactElement {
       replays,
       stepHealth,
       slowness,
+      aiDebug: aiDebugReport,
     }).find(
       (s) => s.id === (meta.id as CategoryId),
     ) ?? null;
@@ -452,6 +510,19 @@ export function StatsCategoryView(): React.ReactElement {
         <SpeedLeaf facet={facet} slowness={slowness} onOpenTest={openTest} />
       ) : (
         <SpeedDashboard slowness={slowness} onDrill={drill} />
+      );
+    }
+    if (meta.id === "ai-debug") {
+      if (!aiDebugReport) return <p className="gl-panel-note">Loading…</p>;
+      return facet ? (
+        <AiDebugLeaf facet={facet} report={aiDebugReport} onOpenTest={openTest} />
+      ) : (
+        <AiDebugDashboard
+          report={aiDebugReport}
+          minutesPerManualDebug={minutesPerManualDebug}
+          currency={(settingsQuery.data?.costCurrency ?? DEFAULT_COST_CURRENCY) as CostCurrency}
+          onDrill={drill}
+        />
       );
     }
     if (meta.id === "steps") {

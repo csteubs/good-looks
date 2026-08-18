@@ -14,6 +14,7 @@
 // file was first written against an older copy of the app.
 
 import type {
+  AiDebugHistoryRecord,
   BatchRecord,
   Routine,
   BatchTestResult,
@@ -544,6 +545,132 @@ export const SCRIPT_CHANGES: ScriptChangeListEntry[] = [
   },
 ];
 
+/**
+ * AI debug history — the rows the Stats board's AI Debug category counts.
+ *
+ * SHAPED TO EXERCISE THE PANELS RATHER THAN TO BE TYPICAL, which is this
+ * file's standing rule. Between them these rows produce: all four outcomes, a
+ * local/hosted split with one pre-provider unknown, two error kinds, an
+ * attempt that never produced a first token, and records in both trend windows
+ * so "the week before" has something to compare against. `ad-1` is the fix
+ * `SCRIPT_CHANGES` above applied and nobody reviewed, which is what makes the
+ * tile amber in the preview.
+ */
+export const AI_DEBUG_HISTORY: AiDebugHistoryRecord[] = [
+  {
+    id: "ad-1",
+    key: "run:t-login",
+    kind: "run",
+    testId: "t-login",
+    testName: "Login — wrong password shows an error",
+    trigger: "manual",
+    provider: "anthropic",
+    model: "claude-sonnet-4",
+    status: "done",
+    errorKind: null,
+    startedAt: NOW - 22 * MINUTE,
+    endedAt: NOW - 22 * MINUTE + 41_000,
+    firstTokenMs: 2_100,
+    promptChars: 9_200,
+    answerChars: 3_400,
+    runKey: "r-2",
+  },
+  {
+    id: "ad-2",
+    key: "step:t-login:3",
+    kind: "step",
+    testId: "t-login",
+    testName: "Login — wrong password shows an error",
+    trigger: "manual",
+    provider: "ollama",
+    model: "qwen2.5-coder:7b",
+    status: "done",
+    errorKind: null,
+    startedAt: NOW - 3 * HOUR,
+    endedAt: NOW - 3 * HOUR + 96_000,
+    firstTokenMs: 8_400,
+    promptChars: 6_100,
+    answerChars: 2_800,
+    runKey: null,
+  },
+  {
+    id: "ad-3",
+    key: "run:t-checkout",
+    kind: "run",
+    testId: "t-checkout",
+    testName: "Checkout — happy path",
+    trigger: "manual",
+    provider: "ollama",
+    model: "qwen2.5-coder:7b",
+    // Never got an answer, and never got a token either — the state the
+    // "First token" card has to report as "nothing ever arrived".
+    status: "error",
+    errorKind: "connection",
+    startedAt: NOW - 26 * HOUR,
+    endedAt: NOW - 26 * HOUR + 12_000,
+    firstTokenMs: null,
+    promptChars: 11_800,
+    answerChars: 0,
+    runKey: "r-1",
+  },
+  {
+    id: "ad-4",
+    key: "run:t-checkout",
+    kind: "run",
+    testId: "t-checkout",
+    testName: "Checkout — happy path",
+    trigger: "manual",
+    provider: "lmstudio",
+    model: "llama-3.1-8b",
+    status: "cancelled",
+    errorKind: null,
+    startedAt: NOW - 2 * DAY,
+    endedAt: NOW - 2 * DAY + 21_000,
+    firstTokenMs: 3_900,
+    promptChars: 10_400,
+    answerChars: 900,
+    runKey: "r-1",
+  },
+  {
+    id: "ad-5",
+    key: "run:t-search",
+    kind: "run",
+    testId: "t-search",
+    testName: "Search — results render",
+    trigger: "manual",
+    provider: "ollama",
+    model: "qwen2.5-coder:7b",
+    status: "error",
+    errorKind: "empty-response",
+    startedAt: NOW - 9 * DAY,
+    endedAt: NOW - 9 * DAY + 33_000,
+    firstTokenMs: null,
+    promptChars: 24_000,
+    answerChars: 0,
+    runKey: null,
+  },
+  {
+    id: "ad-6",
+    key: "run:t-search",
+    kind: "run",
+    testId: "t-search",
+    testName: "Search — results render",
+    trigger: "manual",
+    // Written before the provider was stamped: counted as neither local nor
+    // hosted, and the panel says so out loud.
+    provider: null,
+    model: null,
+    status: "interrupted",
+    errorKind: null,
+    startedAt: NOW - 10 * DAY,
+    endedAt: NOW - 10 * DAY + 5_000,
+    firstTokenMs: null,
+    promptChars: 0,
+    answerChars: 1_200,
+    runKey: null,
+  },
+];
+
 /** The full settings record, because `RecorderSettings` has no optional fields
  *  and the panes read straight off it. Values are the app's own defaults except
  *  where a non-default makes a pane more interesting to look at. */
@@ -633,6 +760,11 @@ export const SETTINGS: RecorderSettings = {
   costCurrency: "usd",
   costPerCiMinute: 0.008,
   costMinutesPerManualRun: 12,
+  costMinutesPerManualDebug: 15,
+  // A rate IS stated here, unlike the app's own default of 0 — the preview is
+  // the only place the money half of the AI Debug savings panel can be looked
+  // at, and a fixture that leaves it off makes a whole card unreachable.
+  costHourlyRate: 90,
 };
 
 export const LLM_CONFIG: LlmConfig = {

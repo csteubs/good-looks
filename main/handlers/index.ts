@@ -58,6 +58,7 @@ import { parseSpecDetailed } from "../services/spec-parser.js";
 import { llmService } from "../services/llm-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
 import { aiDebugStore } from "../services/ai-debug-store.js";
+import { aiDebugHistoryStore } from "../services/ai-debug-history-store.js";
 import { recorderDebugStore } from "../services/recorder-debug-store.js";
 import { anthropicKeyStore } from "../services/anthropic-key-store.js";
 import { lmStudioTokenStore } from "../services/lm-studio-token-store.js";
@@ -359,6 +360,11 @@ export function registerHandlers(): void {
     // Really deleted — the model's answers quote the script and the run output,
     // and with the test gone there is no route left to reach or remove them.
     aiDebugStore.deleteTest(params.id);
+    // The HISTORY of those sessions is tombstoned instead, like run records
+    // directly above: it holds no quotes, only the fact that a diagnosis
+    // happened and what it cost. Deleting it would make every lifetime total on
+    // the Stats board walk backwards when a test is removed.
+    aiDebugHistoryStore.markTestDeleted(params.id);
     recorderDebugStore.clear(params.id);
     // Stale ids in the Batch view's stored order and per-row options. Both
     // tolerate an unknown id, so this is housekeeping rather than a fix — but
@@ -1104,13 +1110,15 @@ export function registerHandlers(): void {
       _e,
       params: { messages?: unknown; provider?: unknown; model?: unknown; temperature?: unknown },
     ) => {
-      const requestId = llmService.chat({
+      // The resolved provider and model come back with the id: both default to
+      // the configured values, which only this side knows, and a caller that
+      // read them from settings later would read whatever is selected THEN.
+      return llmService.chat({
         messages: asMessages(params?.messages),
         provider: params?.provider === undefined ? undefined : asProvider(params.provider),
         model: params?.model === undefined ? undefined : String(params.model),
         temperature: typeof params?.temperature === "number" ? params.temperature : undefined,
       });
-      return { requestId };
     },
   );
   ipcMain.handle("llm:cancel", async (_e, params: { requestId?: unknown }) => {
@@ -1192,7 +1200,37 @@ export function registerHandlers(): void {
   ipcMain.handle("aiDebug:remove", async (_e, params: { key?: unknown }) =>
     aiDebugStore.remove(String(params?.key ?? "")),
   );
-  ipcMain.handle("aiDebug:clear", async () => aiDebugStore.clear());
+  // CLEARS BOTH STORES. The menu item this sits behind says "Delete AI debug
+  // history", and a user asking for that does not expect the app to keep a
+  // shadow index of what they deleted — even one holding no content. The Stats
+  // board's AI Debug category goes back to "not measured", which is the honest
+  // reading afterwards.
+  ipcMain.handle("aiDebug:clear", async () => {
+    const { removed } = aiDebugStore.clear();
+    const history = aiDebugHistoryStore.clear();
+    return { removed, historyRemoved: history.removed };
+  });
+
+  // ── AI debug history (the aggregate behind Stats → AI Debug) ────────
+  // Facts about attempts, with no content in them — see
+  // main/services/ai-debug-history-store.ts for why that is what lets these
+  // rows outlive both the twenty-session cap and the test itself.
+  ipcMain.handle("aiDebug:history", async () => aiDebugHistoryStore.list());
+  // ONE INGEST, called twice per attempt (sent, then settled). The record is
+  // rebuilt field by field on the way in rather than spread, so a renderer
+  // holding a fuller object cannot smuggle content into a store whose whole
+  // premise is that it holds none.
+  ipcMain.handle("aiDebug:record", async (_e, params: { record?: unknown }) => {
+    const saved = aiDebugHistoryStore.record(params?.record);
+    // Pushed rather than left to a refetch-on-mount, because the reader this
+    // is for is somebody STANDING on the Stats board while a minimized job
+    // finishes — and the whole point of minimizing is to go and look at
+    // something else. The one subscriber is `RecorderProvider`, mounted for the
+    // session; a route component subscribing here would be the "refresh this if
+    // the user happens to be looking" bug `run-derived-cache.ts` documents.
+    if (saved) sendToMain("aiDebug:historyChanged", {});
+    return saved;
+  });
   // Completion lives in the RENDERER's session store (the LLM stream terminates
   // there), so the desktop notification is renderer-triggered. The setting gate
   // stays HERE: the renderer fires unconditionally and this handler decides,
