@@ -346,6 +346,61 @@ describe("run controls", () => {
     expect(screen.queryByText(/adds ~/)).toBeNull();
   });
 
+  // The head is ONE row: what the test IS on the left, everything that acts on
+  // it on the right.
+  //
+  // It used to be two — `Toolbar` stacks its content over its actions — and
+  // both lines half-filled their own: the name ran out a third of the way
+  // across while the controls sat under an empty gutter, and the band spent
+  // 94px saying what fits in 54.
+  //
+  // WHAT THIS TEST OWNS IS THE STRUCTURE, NOT THE GEOMETRY. Whether the row
+  // actually wraps at a narrow window, and what gives when it does, is CSS that
+  // `check:narrow-layout` reads from the stylesheet — it has to, because jsdom
+  // has no layout engine and the dom project runs with `css: false`, so nothing
+  // measured here would be measuring anything. What jsdom CAN answer is the
+  // half the stylesheet cannot: that the identity and the controls are siblings
+  // on one row rather than two stacked boxes, and that every control the
+  // toolbar owns is inside the group the rules right-align. A control that
+  // escapes back out to the toolbar's own level would still render — just no
+  // longer aligned with the others, and no longer wrapping with them.
+  it("lays the identity and the controls out as one row", async () => {
+    renderView();
+    await screen.findByText("Checkout");
+    const row = document.querySelector(".gl-detail-head-row");
+    expect(row).not.toBeNull();
+    const ident = row!.querySelector(".gl-detail-ident");
+    const tools = row!.querySelector(".gl-detail-tools");
+    // Siblings, in this order — not one nested in the other, and not stacked by
+    // `Toolbar`'s own column.
+    expect(ident?.parentElement).toBe(row);
+    expect(tools?.parentElement).toBe(row);
+    expect(ident!.compareDocumentPosition(tools!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The name and the URL are the identity; both are inside it.
+    expect(ident!.textContent).toContain("Checkout");
+    expect(ident!.textContent).toContain("https://example.com");
+  });
+
+  it("keeps every control inside the right-aligned group", async () => {
+    renderView();
+    await screen.findByText("Checkout");
+    const tools = document.querySelector(".gl-detail-tools") as HTMLElement | null;
+    expect(tools).not.toBeNull();
+    for (const el of [
+      screen.getByRole("button", { name: /edit test/i }),
+      screen.getByLabelText("Delete test"),
+      screen.getByRole("combobox", { name: /browser engine for this test/i }),
+      screen.getByLabelText(/per-test timeout/i),
+      screen.getByLabelText(/run this test headless/i),
+      screen.getByLabelText(/capture screenshots on this run/i),
+      screen.getByLabelText(/record console and network/i),
+      screen.getByLabelText(/check accessibility/i),
+      screen.getByRole("button", { name: /^run test$/i }),
+    ]) {
+      expect(tools!.contains(el)).toBe(true);
+    }
+  });
+
   it("stacks the four run toggles as one two-column block", async () => {
     renderView();
     await screen.findByText("Checkout");

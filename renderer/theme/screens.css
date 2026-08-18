@@ -3089,6 +3089,41 @@
   color: var(--gl-tx-3);
 }
 
+/*
+ * FLOORS UNDER THE TWO FIELDS IN THE TOOLBAR, and they exist because
+ * `.gl-input` sets `min-width: 0` — which is right for a field inside a step
+ * row and wrong for one inside a flex group that has more content than line.
+ *
+ * Without them the flex algorithm takes its shrink out of every shrinkable item
+ * in proportion, and the small ones lose first in relative terms: at this app's
+ * minimum window the engine trigger fell to 61px, which renders "Chromium" as
+ * "Chro…" — a control reporting a value it cannot show. The floors move that
+ * shrink onto `.gl-run-options`, which is the one item here designed to absorb
+ * it (it wraps its labels and gets taller, and nothing it says is lost).
+ *
+ * 92px is what the trigger measured at before the head became one row, so a
+ * narrow window lands on the same reading it always had.
+ */
+.gl-detail-engine {
+  min-width: 92px;
+}
+
+.gl-detail-secs {
+  min-width: 40px;
+}
+
+/* `Run test` and `Stop` are the same box.
+ *
+ * They are not the same WORD, and `Stop` is 31px narrower — so with the group
+ * right-aligned, starting a run pulled every control on the band 31px to the
+ * right and stopping it pushed them back. A toolbar that moves when a run
+ * starts moves exactly when somebody is reaching for it, which is the failure
+ * `.gl-visual-head` records for the same reason one screen over. Pinning the
+ * width at what the longer label needs makes the swap invisible. */
+.gl-detail-run {
+  min-width: 88px;
+}
+
 /* The screen's own column. `min-height: 0` is what lets the run panel's
    expanded state actually take space instead of pushing the log off the bottom
    of the window — the same failure `check:scroll-layout` exists for, one level
@@ -3098,12 +3133,93 @@
   background: var(--gl-ink);
 }
 
-/* The toolbar band. Not `--gl-strip-h`: this one holds two lines of title plus a
-   row of controls, so matching the top strip's height would crush it. What it
-   does share is the hairline, so the two read as the same kind of edge. */
+/* The toolbar band. Not `--gl-strip-h`: this one holds a two-line identity beside
+   a row of controls, so matching the top strip's height would crush it. What it
+   does share is the hairline, so the two read as the same kind of edge.
+   Vertical padding is `Toolbar`'s own `py-2` and nothing here adds to one side —
+   the band's 8px above and 8px below its content is what makes the controls sit
+   on the row's axis rather than hanging off the top of it. */
 .gl-detail-head {
   flex: 0 0 auto;
   border-bottom: 1px solid var(--gl-line);
+}
+
+/*
+ * The head's single row: identity left, controls right.
+ *
+ * IT WRAPS, AND THE WRAP IS THE NARROW-WINDOW CONTRACT. The controls need about
+ * 800px at their comfortable width and this app's own minimum window leaves the
+ * detail pane 656px, so on a small window they cannot share a line with the name
+ * — the row breaks and they take one of their own, which is the two-line layout
+ * this replaced. Above roughly a 1260px window everything is on one line and the
+ * band halves in height. Neither state is a special case in the markup.
+ *
+ * `row-gap` is 4px rather than the row's own `gap-2`, so the wrapped state lands
+ * on the same two-line rhythm the stacked head had — a wrap that also grows the
+ * gap reads as a different screen rather than the same one at a smaller size.
+ */
+.gl-detail-head-row {
+  flex-wrap: wrap;
+  row-gap: 4px;
+  column-gap: 16px;
+}
+
+/*
+ * The name and URL. `flex: 1 1 180px` — it ABSORBS the slack (a long test name
+ * gets every pixel the controls do not want) and it has a real floor, which is
+ * what decides WHEN the row breaks: the controls drop to their own line once
+ * they would squeeze the name under 180px, instead of shrinking it to nothing
+ * and staying beside it. Same reasoning as `.gl-batch-name` — a cell allowed to
+ * reach zero does not truncate, it vanishes.
+ */
+.gl-detail-ident {
+  flex: 1 1 180px;
+  min-width: 180px;
+}
+
+/*
+ * The controls. `flex: 0 1 auto` — never grows (a control group stretched across
+ * a wide window is dead space between its own buttons), shrinks when it has to.
+ *
+ * NO `flex-wrap` HERE, deliberately, and it is the opposite choice from
+ * `.gl-visual-head-tools`. That band's items are rigid, so wrapping is the only
+ * way to keep its last control on screen. These are not: the run-options grid
+ * wraps its own labels and the fields carry `min-width: 0`, so the group answers
+ * a narrow line by getting SHORTER rather than TALLER, and `Run test` stays on
+ * the same line as the toggles it applies to. Their minimums add up to about
+ * 550px against the 656px this app's smallest window leaves.
+ */
+.gl-detail-tools {
+  flex: 0 1 auto;
+  min-width: 0;
+  /* Right-aligned in BOTH states, and the auto margin is what buys the second
+     one. Beside the name the identity column's `flex-grow` already pushes the
+     controls to the edge; on a line of their own there is nothing to push
+     against, and without this they would ragged-left under the name. */
+  margin-inline-start: auto;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* One cluster: controls that answer the same question. The gap inside a cluster
+   is deliberately tighter than the gap between clusters — that difference is
+   what does the grouping, and it is why the hairlines below can be as faint as
+   they are. */
+.gl-detail-tool-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The hairline between clusters. Fixed height rather than `align-self: stretch`:
+   stretched, it takes the height of the tallest item on the line (the 2×2 toggle
+   block), and a 37px rule between two 30px buttons reads as a table border. */
+.gl-detail-tool-rule {
+  flex: 0 0 auto;
+  width: 1px;
+  height: 20px;
+  background: var(--gl-line);
 }
 
 /* ── Trainer / recorder (B6) ───────────────────────────────────────────── */
