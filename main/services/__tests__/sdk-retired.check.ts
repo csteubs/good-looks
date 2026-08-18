@@ -84,6 +84,12 @@ const RETIRED = [
   // a retired surface is one whose SDK imports are invisible from that
   // surface's own line in this list.
   "renderer/main/a11y-violations.tsx",
+  // B10 — the four creation flows. They were absent from the redesign plan
+  // entirely (no B-number, no pending entry), which is how the first surface a
+  // new user meets stayed the least finished one. Listed as each converts.
+  "renderer/main/import-git-dialog.tsx",
+  "renderer/main/new-recording-dialog.tsx",
+  "renderer/main/generate-test-dialog.tsx",
 ];
 
 /**
@@ -143,7 +149,20 @@ const KEEP_FAMILIES: { reason: string; members: string[] }[] = [
   },
   {
     reason: "native-menu-backed picker; the redesign draws the box, the OS draws the menu",
-    members: ["Select", "SelectItem", "SelectContent", "SelectTrigger", "SelectValue"],
+    // `SelectGroup` / `SelectLabel` are the same ONE decision — the sectioned
+    // model picker in the generate dialog is still a native menu, and its
+    // headings are drawn by the OS like the rest of it. Enumerated here rather
+    // than counted as a second decision, which is what the family note asks
+    // for: a flat set would make the cap fire on a screen that decided nothing.
+    members: [
+      "Select",
+      "SelectItem",
+      "SelectContent",
+      "SelectTrigger",
+      "SelectValue",
+      "SelectGroup",
+      "SelectLabel",
+    ],
   },
   {
     reason: "native date picker — there is no web control to replace it with",

@@ -27,6 +27,7 @@ import { GenerateTestDialog } from "./generate-test-dialog";
 const chat = vi.fn(async (_params: unknown) => ({ requestId: "req-1" }));
 
 let config: LlmConfig = { provider: "lmstudio", model: "qwen3-8b", baseUrls: {} };
+let recorderSettings: { defaultRunBrowser?: string } = {};
 let status: LlmProviderStatus = {
   provider: "lmstudio",
   reachable: true,
@@ -46,6 +47,7 @@ vi.mock("../lib/api", () => ({
       cancel: async () => {},
     },
     tests: { createFromPrompt: vi.fn() },
+    recorder: { getSettings: async () => recorderSettings },
     on: () => () => {},
   },
 }));
@@ -58,6 +60,7 @@ function withModels(models: LlmModel[], overrides: Partial<LlmProviderStatus> = 
 beforeEach(() => {
   vi.clearAllMocks();
   config = { provider: "lmstudio", model: "qwen3-8b", baseUrls: {} };
+  recorderSettings = {};
   status = {
     provider: "lmstudio",
     reachable: true,
@@ -163,5 +166,18 @@ describe("load state", () => {
     await waitFor(() => expect(screen.getByText("llama3.2")).toBeTruthy());
     expect(screen.queryByText("Loaded")).toBeNull();
     expect(screen.queryByText("Not loaded")).toBeNull();
+  });
+});
+
+// ── The browser picker ────────────────────────────────────────────────────
+describe("browser picker", () => {
+  it("offers an engine, seeded from the global default", async () => {
+    recorderSettings = { defaultRunBrowser: "webkit" };
+    render(<GenerateTestDialog open onOpenChange={vi.fn()} />);
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "WebKit" }).getAttribute("aria-pressed")).toBe(
+        "true",
+      ),
+    );
   });
 });

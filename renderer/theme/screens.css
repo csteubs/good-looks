@@ -4940,3 +4940,158 @@
 .gl-digest-line {
   min-width: 0;
 }
+
+/* ── Test creation (B10) ───────────────────────────────────────────────
+   The four creation flows — record, generate, import from files, import from a
+   URL — were the last un-themed surface in the app and were absent from the
+   redesign plan entirely (no B-number, no pending entry). They are also the
+   first thing a new user meets, which is the argument for doing them at all.
+
+   THERE IS DELIBERATELY NO THEMED DIALOG PRIMITIVE. `Dialog` and `AlertDialog`
+   are allow-listed in `check:sdk-retired` — "focus trap and escape handling;
+   the visible surface is ours" — so what is themed is the CONTENT, in
+   screen-local classes, exactly as `schedule-picker.tsx` does it. A themed
+   shell would be re-implementing a focus trap for the look of it. */
+
+.gl-clone {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* The protocol row sits above the field it describes and takes its own line:
+   GitHub puts the tabs and the URL side by side in a wide popover, and this
+   dialog is narrower than that popover at every window size the app allows. */
+.gl-clone-tabs {
+  align-self: flex-start;
+}
+
+.gl-clone-url {
+  width: 100%;
+}
+
+/* The branch field is optional and reads that way: a label above a field whose
+   placeholder states the default, rather than a required-looking empty box. */
+.gl-clone-branch {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* RED, and it replaces the caption rather than joining it — two lines of small
+   print where one of them is an error is how an error gets skimmed past. */
+.gl-clone-error {
+  color: var(--gl-red);
+}
+
+/* The creation dialogs' form column. One class for all of them, because the
+   four flows ask overlapping questions (name, URL, viewport, speed) and four
+   spellings of the same stack is how they drifted apart in the first place. */
+.gl-create {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* A LABEL ABOVE ITS FIELD, never beside it. The SDK `Field` offered both and
+   these dialogs used the vertical one anyway; stating it here is what stops a
+   two-column variant appearing in one of the four and making the set look
+   unrelated. */
+.gl-create-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* Two fields sharing a line, for the pairs that are genuinely one question
+   (name + URL, speed + viewport). Collapses to one column below the width where
+   two 10.5px mono fields stop being readable side by side. */
+.gl-create-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+@media (max-width: 520px) {
+  .gl-create-pair {
+    grid-template-columns: 1fr;
+  }
+}
+
+.gl-create-error {
+  color: var(--gl-red);
+}
+
+/* A SEGMENTED ROW IS AS WIDE AS ITS CHOICES, never as wide as the dialog.
+   `.gl-create-field` is a flex column and `.gl-create-pair` a grid, so both
+   stretch their children by default — which drew the control's hairline box
+   across the full width with the four labels huddled at the left end and a
+   third of the border enclosing nothing. The box is the control; a box wider
+   than the thing inside it reads as a container waiting to be filled.
+
+   Stated here rather than on the primitive: `Segmented` is used ~12 times
+   across the app, and elsewhere (the visual compare row, the stats ranges) a
+   full-width row is the right answer. This is the creation dialogs' rule. */
+.gl-create-field > .gl-segmented,
+.gl-create-pair .gl-segmented {
+  align-self: flex-start;
+}
+
+/* The generate dialog's leading sentence. Bold on the first clause only — it is
+   a tip, not a warning, so it takes no colour. */
+.gl-create-tip-lead {
+  color: var(--gl-tx-1);
+  font-weight: 700;
+}
+
+/* The model row: the picker takes the slack, the load-state chip does not. */
+.gl-create-model {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.gl-create-prompt {
+  min-height: 92px;
+}
+
+/* The action row. Status on the left, actions on the right, and the gap in
+   between is an element rather than `justify-content` because the row is a
+   wrapping one — space-between on a wrapped row puts the surplus INSIDE the
+   second line. */
+.gl-create-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.gl-create-actions-gap {
+  flex: 1 1 auto;
+}
+
+/* The streamed response. Capped rather than free-growing: this sits under a
+   form the user is still filling in, and a spec is long enough to push every
+   field off the screen. */
+.gl-create-result {
+  max-height: 40vh;
+  min-height: 0;
+  border: 1px solid var(--gl-line);
+}
+
+.gl-create-result-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+}
+
+/* The model's prose between code blocks. `--gl-tx-2`, a step brighter than a
+   caption: it is the answer, not an annotation on one. */
+.gl-create-said {
+  color: var(--gl-tx-2);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}

@@ -13,7 +13,9 @@ import { randomUUID } from "crypto";
 
 import { dialog, logger } from "@shell/backend";
 
-import type { TestRecord } from "../recorder/types.js";
+import { branchNameProblem } from "../../shared/branch-paths.mjs";
+
+import type { RunBrowser, TestRecord } from "../recorder/types.js";
 import { getScriptsDir, testStore } from "./test-store.js";
 import { parseSpec } from "./spec-parser.js";
 import {
@@ -284,7 +286,10 @@ export function extractName(content: string, filePath: string): string {
   return path.basename(filePath).replace(TEST_FILE_RE, "");
 }
 
-function importFound(found: FoundTest[]): ImportResult {
+/** @param runBrowser engine for every test in this import, or undefined to let
+ *  each one inherit the global default. Set from the git dialog's picker; the
+ *  folder import has no dialog to ask in. */
+function importFound(found: FoundTest[], runBrowser?: RunBrowser): ImportResult {
   const created: TestRecord[] = [];
   const needsBaseUrl: string[] = [];
   const unsupported = new Set<string>();
@@ -359,6 +364,8 @@ function importFound(found: FoundTest[]): ImportResult {
       // reasons that have nothing to do with the test. It lands in the Timeout
       // box on the toolbar, so it is visible and can be changed like any other.
       ...(config?.timeoutMs ? { testTimeoutMs: config.timeoutMs } : {}),
+      // Absent unless the dialog's picker was moved off the global default.
+      ...(runBrowser ? { runBrowser } : {}),
     };
     testStore.save(record);
     created.push(record);
@@ -458,19 +465,47 @@ export const importService = {
     return importFound(found);
   },
 
-  /** Shallow-clone a git repository to a temp dir, import its tests, clean up. */
-  async importFromGit(url: string): Promise<ImportResult> {
+  /** Shallow-clone a git repository to a temp dir, import its tests, clean up.
+   *
+   *  `ref` is an optional branch or tag. It is validated rather than escaped,
+   *  for the reason the branch switcher's own rule states: `execFile` spawns no
+   *  shell, so quoting is not the risk — a ref called `--upload-pack=…` is not
+   *  injection, it is an option git honours. Rejecting a leading `-` is what
+   *  stops it, and `--` before the URL is the second belt at the same call
+   *  site. Both, because only one of them can be forgotten. */
+  async importFromGit(url: string, ref?: string, runBrowser?: RunBrowser): Promise<ImportResult> {
     const clean = (url ?? "").trim();
     if (!clean) throw new Error("A git repository URL is required.");
     if (!/^(https?:\/\/|git@|ssh:\/\/|git:\/\/)/i.test(clean)) {
       throw new Error("Enter a valid git URL (https://, git@, ssh:// or git://).");
     }
 
+    // The SAME rule the branch switcher applies, from the one module that
+    // spells it — a transcribed copy is right the day it is written and
+    // silently divergent afterwards.
+    const branch = (ref ?? "").trim();
+    if (branch) {
+      const problem = branchNameProblem(branch);
+      if (problem) throw new Error(problem);
+    }
+
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pw-import-"));
     try {
       // execFile does not spawn a shell, so the URL cannot inject extra args.
-      await execFileAsync("git", ["clone", "--depth", "1", clean, tmp], {
+      // `--` is what keeps that true of the URL's own leading characters.
+      const args = ["clone", "--depth", "1"];
+      if (branch) args.push("--branch", branch);
+      args.push("--", clean, tmp);
+      await execFileAsync("git", args, {
         timeout: CLONE_TIMEOUT_MS,
+        // A private repository over HTTPS otherwise sits on git's credential
+        // PROMPT — invisible in a child process — until the 120s timeout, and
+        // reports as "timed out. Check the URL and your connection", which
+        // sends the user to debug their network. Non-interactive turns that
+        // into an immediate, accurate authentication failure. Ambient
+        // credentials (a helper, an SSH agent) still work: this refuses to ASK,
+        // it does not refuse to authenticate.
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
       });
     } catch (err: unknown) {
       const e = err as { code?: string; stderr?: string; killed?: boolean };
@@ -480,7 +515,16 @@ export const importService = {
       if (e.killed) {
         throw new Error("Cloning the repository timed out. Check the URL and your connection.");
       }
-      const detail = (e.stderr || "").trim().split("\n").pop() || String(err);
+      const stderr = (e.stderr || "").trim();
+      if (/could not read Username|Authentication failed|terminal prompts disabled|Permission denied \(publickey/i.test(stderr)) {
+        throw new Error(
+          "Authentication required. This app clones anonymously or with your ambient git credentials (a credential helper, or an SSH key already loaded) — it cannot prompt for a password.",
+        );
+      }
+      if (branch && /Remote branch .* not found|couldn't find remote ref/i.test(stderr)) {
+        throw new Error(`The repository has no branch or tag called “${branch}”.`);
+      }
+      const detail = stderr.split("\n").pop() || String(err);
       throw new Error("Failed to clone repository: " + detail);
     }
 
@@ -489,7 +533,7 @@ export const importService = {
       if (found.length === 0) {
         throw new Error("No Playwright test files (*.spec.ts / *.test.ts) were found in that repository.");
       }
-      return importFound(found);
+      return importFound(found, runBrowser);
     } finally {
       try {
         fs.rmSync(tmp, { recursive: true, force: true });

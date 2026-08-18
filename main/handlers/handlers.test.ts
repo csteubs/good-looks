@@ -793,6 +793,47 @@ describe("test creation paths", () => {
     }
   });
 
+  // ── The browser chosen at creation ──────────────────────────────────────
+  //
+  // The engine was settable only from the test-detail toolbar, i.e. only after
+  // the test existed. The renderer tests prove what the dialog SENDS; these
+  // prove what the record ends up carrying, which is the half that decides
+  // which browser a run actually spawns.
+  //
+  // An ABSENT field is the meaningful case, not the empty one: it is the
+  // model's documented "inherit `defaultRunBrowser`", so a handler that
+  // helpfully filled it in would quietly retire the Settings default.
+  it("pins the engine a generated test was created with", async () => {
+    const rec = await invokeHandler<TestRecord>("tests:createFromPrompt", {
+      name: "On WebKit",
+      url: "https://example.com",
+      source: 'import { test } from "@playwright/test";\ntest("x", async () => {});\n',
+      runBrowser: "webkit",
+    });
+    expect(rec.runBrowser).toBe("webkit");
+  });
+
+  it("leaves a generated test inheriting the default when none was chosen", async () => {
+    const rec = await invokeHandler<TestRecord>("tests:createFromPrompt", {
+      name: "Inherits",
+      url: "https://example.com",
+      source: 'import { test } from "@playwright/test";\ntest("x", async () => {});\n',
+    });
+    expect(rec.runBrowser).toBeUndefined();
+  });
+
+  it("refuses an engine that is not one of the three", async () => {
+    // The field reaches the runner and decides which Playwright project is
+    // spawned. It arrives over IPC, so a TypeScript type is not a check.
+    const rec = await invokeHandler<TestRecord>("tests:createFromPrompt", {
+      name: "Nonsense",
+      url: "https://example.com",
+      source: 'import { test } from "@playwright/test";\ntest("x", async () => {});\n',
+      runBrowser: "netscape",
+    });
+    expect(rec.runBrowser).toBeUndefined();
+  });
+
   it("creates a runnable record from a generated script", async () => {
     const rec = await invokeHandler<TestRecord>("tests:createFromPrompt", {
       name: "  Generated checkout  ",

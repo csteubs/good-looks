@@ -17,14 +17,8 @@ import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  Badge,
-  Button,
   Dialog,
-  Field,
-  Input,
   ScrollArea,
-  SegmentedControl,
-  SegmentedControlItem,
   Select,
   SelectContent,
   SelectGroup,
@@ -32,12 +26,18 @@ import {
   SelectLabel,
   SelectTrigger,
   SelectValue,
-  Status,
-  Text,
-  Textarea,
   toast,
 } from "@ui";
 import { Check, Copy, Square, Wand2 } from "lucide-react";
+
+// B10. `Select` and `ScrollArea` stay — the first is native-menu-backed, the
+// second owns follow-the-bottom scrolling — and `Dialog` keeps the focus trap.
+// Everything else is the theme's own vocabulary. `CodeBlock` is imported rather
+// than re-declared: this file hand-copied it, so B9's re-theme of the AI debug
+// panel left the same block looking like two different components.
+import { Btn, Segmented, StatusChip } from "../theme";
+import { CodeBlock } from "./ai-debug-panel";
+import { RunBrowserField, useRunBrowserChoice } from "./run-browser-field";
 
 import { api } from "../lib/api";
 import { friendlyError } from "../lib/llm-errors";
@@ -89,28 +89,6 @@ const MODEL_GROUPS = [
   },
 ] as const;
 
-// Reuse the AI debug panel's code-block rendering: fenced code in a bordered
-// card with a language label and per-block copy.
-function CodeBlock({ lang, content }: { lang: string; content: string }) {
-  const [copied, setCopied] = React.useState(false);
-  const copy = async () => {
-    await window.glazeAPI.clipboard.writeText(content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-  return (
-    <div className="my-1 overflow-hidden rounded-md border border-separator">
-      <div className="flex items-center justify-between border-b border-separator bg-control-subtle px-3 py-1">
-        <span className="text-small text-secondary">{lang || "code"}</span>
-        <Button iconOnly size="small" variant="transparent" onClick={copy} aria-label="Copy code" title="Copy code">
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </Button>
-      </div>
-      <pre className="text-small-mono overflow-x-auto whitespace-pre-wrap break-words p-3 text-primary">{content}</pre>
-    </div>
-  );
-}
-
 export function GenerateTestDialog({
   open,
   onOpenChange,
@@ -140,6 +118,7 @@ export function GenerateTestDialog({
   // unreachable provider and a provider with no models look identical: an empty
   // picker that gives the user nothing to act on.
   const [modelsError, setModelsError] = React.useState<string | null>(null);
+  const browser = useRunBrowserChoice(open);
 
   React.useEffect(() => {
     if (!open) return;
@@ -230,6 +209,7 @@ export function GenerateTestDialog({
         url: url.trim(),
         speed,
         source: generatedScript,
+        runBrowser: browser.toStore,
       });
       setCreated(true);
       qc.invalidateQueries({ queryKey: ["tests"] });
@@ -264,202 +244,187 @@ export function GenerateTestDialog({
       description="Describe the test in plain language. The local LLM writes a complete Playwright spec you can save and run."
       size="xl"
     >
-      <div className="flex flex-col gap-4">
-        {/* Prompt-formatting guidance */}
-        <div className="rounded-md border border-separator bg-control-subtle p-3">
-          <Text variant="small" color="secondary">
-            <strong className="font-medium text-primary">Tips for a good prompt:</strong> name the page and the user
-            flow step by step. Mention the elements to interact with by their visible label or role (e.g. “the
-            ‘Sign in’ button”), the values to type, and what should be true at the end (e.g. “the dashboard heading
-            ‘Welcome’ appears”). One test per prompt works best.
-          </Text>
+      <div className="gl-create">
+        <p className="gl-note">
+          <strong className="gl-create-tip-lead">Tips for a good prompt:</strong> name the page and
+          the user flow step by step. Mention the elements to interact with by their visible label
+          or role (e.g. “the ‘Sign in’ button”), the values to type, and what should be true at the
+          end (e.g. “the dashboard heading ‘Welcome’ appears”). One test per prompt works best.
+        </p>
+
+        <div className="gl-create-pair">
+          <label className="gl-create-field">
+            <span className="gl-section-title">Test name</span>
+            <input
+              className="gl-input"
+              placeholder="My generated test"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+          <label className="gl-create-field">
+            <span className="gl-section-title">Starting URL</span>
+            <input
+              className="gl-input"
+              placeholder="https://example.com"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+          </label>
         </div>
 
-        {/* Common test options */}
-        <div className="flex flex-col gap-3">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Test name" orientation="vertical">
-              <Input
-                placeholder="My generated test"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </Field>
-            <Field label="Starting URL" orientation="vertical">
-              <Input
-                placeholder="https://example.com"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-              />
-            </Field>
+        <div className="gl-create-pair">
+          <div className="gl-create-field">
+            <span className="gl-section-title">Execution speed</span>
+            <Segmented
+              options={SPEEDS.map((sp) => ({ value: sp, label: TEST_SPEED_LABELS[sp] }))}
+              value={speed}
+              onChange={setSpeed}
+              label="Execution speed"
+            />
           </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Execution speed" orientation="vertical">
-              <SegmentedControl
-                value={speed}
-                onValueChange={(v) => setSpeed(v as TestSpeed)}
-                variant="filled"
-                size="small"
-              >
-                {SPEEDS.map((s) => (
-                  <SegmentedControlItem key={s} value={s}>
-                    {TEST_SPEED_LABELS[s]}
-                  </SegmentedControlItem>
+          <div className="gl-create-field">
+            <span className="gl-section-title" id="generate-viewport">
+              Browser viewport
+            </span>
+            <Select value={viewportId} onValueChange={setViewportId}>
+              <SelectTrigger size="small" aria-labelledby="generate-viewport">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {VIEWPORT_PRESETS.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.label}
+                  </SelectItem>
                 ))}
-              </SegmentedControl>
-            </Field>
-            <Field label="Browser viewport" orientation="vertical">
-              <Select value={viewportId} onValueChange={setViewportId}>
-                <SelectTrigger size="small">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {VIEWPORT_PRESETS.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>
-                      {p.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </Field>
+              </SelectContent>
+            </Select>
           </div>
-
-          {/* Which model writes the spec. Long model ids get the full row. */}
-          <Field label="Model" orientation="vertical">
-            <div className="flex min-w-0 items-center gap-2">
-              <Select
-                value={model ?? ""}
-                onValueChange={setModel}
-                disabled={models.length === 0}
-              >
-                <SelectTrigger size="small" className="min-w-0 flex-1">
-                  <SelectValue
-                    placeholder={loadingModels ? "Loading models…" : "No models available"}
-                  />
-                </SelectTrigger>
-                <SelectContent>
-                  {groupByLoadState
-                    ? MODEL_GROUPS.map((g) => {
-                        const inGroup = models.filter(g.has);
-                        if (inGroup.length === 0) return null;
-                        return (
-                          <SelectGroup key={g.id}>
-                            <SelectLabel>{g.label}</SelectLabel>
-                            {inGroup.map((m) => (
-                              <SelectItem
-                                key={m.id}
-                                value={m.id}
-                                icon={g.icon}
-                                sublabel={g.sublabel}
-                              >
-                                {m.label}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        );
-                      })
-                    : models.map((m) => (
-                        <SelectItem key={m.id} value={m.id}>
-                          {m.label}
-                        </SelectItem>
-                      ))}
-                </SelectContent>
-              </Select>
-              {selectedModel?.loaded === true ? (
-                <Badge color="green" className="shrink-0">
-                  Loaded
-                </Badge>
-              ) : null}
-              {selectedModel?.loaded === false ? (
-                <Badge color="secondary" className="shrink-0">
-                  Not loaded
-                </Badge>
-              ) : null}
-            </div>
-            {modelsError ? (
-              <Text variant="small" color="secondary">
-                {modelsError}
-              </Text>
-            ) : selectedModel?.loaded === false ? (
-              <Text variant="small" color="secondary">
-                This model isn’t in memory yet — it loads on the first request, which can take a
-                while before any output appears.
-              </Text>
-            ) : null}
-          </Field>
         </div>
 
-        {/* Prompt */}
-        <Field label="Prompt" orientation="vertical">
-          <Textarea
-            size="medium"
+        <RunBrowserField value={browser.value} onChange={browser.onChange} />
+
+        {/* Which model writes the spec. Long model ids get the full row. */}
+        <div className="gl-create-field">
+          <span className="gl-section-title" id="generate-model">
+            Model
+          </span>
+          <div className="gl-create-model">
+            <Select value={model ?? ""} onValueChange={setModel} disabled={models.length === 0}>
+              <SelectTrigger size="small" className="min-w-0 flex-1" aria-labelledby="generate-model">
+                <SelectValue
+                  placeholder={loadingModels ? "Loading models…" : "No models available"}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {groupByLoadState
+                  ? MODEL_GROUPS.map((g) => {
+                      const inGroup = models.filter(g.has);
+                      if (inGroup.length === 0) return null;
+                      return (
+                        <SelectGroup key={g.id}>
+                          <SelectLabel>{g.label}</SelectLabel>
+                          {inGroup.map((m) => (
+                            <SelectItem key={m.id} value={m.id} icon={g.icon} sublabel={g.sublabel}>
+                              {m.label}
+                            </SelectItem>
+                          ))}
+                        </SelectGroup>
+                      );
+                    })
+                  : models.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.label}
+                      </SelectItem>
+                    ))}
+              </SelectContent>
+            </Select>
+            {/* NEUTRAL, both of them. "Loaded" is a fact about the provider's
+                memory, not an outcome — a green chip here would be the loudest
+                thing on a dialog that has not run anything yet. */}
+            {selectedModel?.loaded === true ? <StatusChip>Loaded</StatusChip> : null}
+            {selectedModel?.loaded === false ? <StatusChip>Not loaded</StatusChip> : null}
+          </div>
+          {modelsError ? (
+            <p className="gl-note gl-create-error">{modelsError}</p>
+          ) : selectedModel?.loaded === false ? (
+            <p className="gl-note">
+              This model isn’t in memory yet — it loads on the first request, which can take a while
+              before any output appears.
+            </p>
+          ) : null}
+        </div>
+
+        <label className="gl-create-field">
+          <span className="gl-section-title">Prompt</span>
+          <textarea
+            className="gl-textarea gl-create-prompt"
             placeholder={"e.g. Go to the URL, click “Log in”, fill the email field with “test@example.com” and the password with “secret123”, then click “Sign in”. Assert the “Welcome” heading is visible."}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             autoFocus
           />
-        </Field>
+        </label>
 
-        {/* Action row */}
-        <div className="flex items-center gap-2">
+        <div className="gl-create-actions">
           {status === "streaming" ? (
-            <Status variant="loading">{model ? `Thinking with ${model}` : "Thinking"}</Status>
+            <StatusChip running>{model ? `Thinking with ${model}` : "Thinking"}</StatusChip>
           ) : null}
-          {status === "error" ? <Status variant="error">Error</Status> : null}
-          {status === "done" ? <Status variant="success">Done</Status> : null}
-          {status === "cancelled" ? <Status variant="neutral">Stopped</Status> : null}
-          <div className="flex-1" />
+          {status === "error" ? <StatusChip tone="red">Error</StatusChip> : null}
+          {status === "done" ? <StatusChip tone="phos">Done</StatusChip> : null}
+          {status === "cancelled" ? <StatusChip>Stopped</StatusChip> : null}
+          <span className="gl-create-actions-gap" />
           {status === "streaming" ? (
-            <Button size="small" variant="muted" onClick={stop}>
-              <Square className="size-3.5" /> Stop
-            </Button>
+            <Btn onClick={stop}>
+              <Square aria-hidden="true" /> Stop
+            </Btn>
           ) : (
-            <Button size="small" variant="accent" onClick={generate} disabled={!canGenerate}>
-              <Wand2 className="size-3.5" /> {content ? "Regenerate" : "Generate"}
-            </Button>
+            <Btn tone="ai" onClick={generate} disabled={!canGenerate}>
+              <Wand2 aria-hidden="true" /> {content ? "Regenerate" : "Generate"}
+            </Btn>
           )}
+          {/* `go` is the ONE affirmative action on this dialog — the thing that
+              actually makes a test. Generate is `ai`, which is a treatment
+              rather than a hue, so the two do not compete. */}
           {generatedScript ? (
-            <Button size="small" variant="accent" onClick={createTest} disabled={created}>
-              <Check className="size-3.5" /> {created ? "Created" : "Create test"}
-            </Button>
+            <Btn tone="go" onClick={createTest} disabled={created}>
+              <Check aria-hidden="true" /> {created ? "Created" : "Create test"}
+            </Btn>
           ) : null}
           {content ? (
-            <Button
-              iconOnly
-              size="small"
-              variant="transparent"
+            <button
+              type="button"
+              className="gl-icon-btn"
               onClick={copyResponse}
               aria-label="Copy response"
               title="Copy response"
             >
-              {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-            </Button>
+              {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
+            </button>
           ) : null}
         </div>
 
-        {/* Streaming result */}
         {showResult ? (
           <ScrollArea
-            className="max-h-[40vh] min-h-0 rounded-md border border-separator"
+            className="gl-create-result"
             autoScrollToBottom
             autoScrollDeps={[content.length]}
           >
-            <div className="flex flex-col gap-1 p-3">
+            <div className="gl-create-result-body">
               {status === "error" && error ? (
-                <pre className="text-small whitespace-pre-wrap break-words text-primary">{friendlyError(error, errorKind)}</pre>
+                <pre className="gl-console">{friendlyError(error, errorKind)}</pre>
               ) : content ? (
                 segments.map((seg, i) =>
                   seg.type === "code" ? (
                     <CodeBlock key={i} lang={seg.lang} content={seg.content} />
                   ) : (
-                    <p key={i} className="text-small whitespace-pre-wrap break-words text-primary">
+                    <p key={i} className="gl-note gl-create-said">
                       {seg.content}
                     </p>
                   ),
                 )
               ) : (
-                <p className="text-small text-secondary">
+                <p className="gl-note">
                   {status === "streaming" ? (model ? `Thinking with ${model}…` : "Thinking…") : ""}
                 </p>
               )}

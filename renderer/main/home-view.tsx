@@ -28,11 +28,14 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { Btn, WORDMARK } from "../theme";
 import { api } from "../lib/api";
 import { BlackHoleLoader } from "./black-hole-loader";
 import { NewRecordingDialog } from "./new-recording-dialog";
+import { ImportGitDialog } from "./import-git-dialog";
+import { importFromFiles as runFolderImport } from "../lib/import-from-files";
 import { GenerateTestDialog } from "./generate-test-dialog";
 import { useDisabledEnhancements } from "../lib/use-disabled-enhancements";
 
@@ -118,10 +121,21 @@ function Stat({
 
 export function HomeView() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const disabledEnhancements = useDisabledEnhancements();
   const animationEnabled = !disabledEnhancements.has("homeBlackHole");
   const [recordOpen, setRecordOpen] = React.useState(false);
   const [generateOpen, setGenerateOpen] = React.useState(false);
+  const [importGitOpen, setImportGitOpen] = React.useState(false);
+  // Shared with the library rail, which is the point: one folder import, three
+  // entry points, no second copy of the toast rules.
+  const importDeps = React.useMemo(
+    () => ({
+      invalidateTests: () => qc.invalidateQueries({ queryKey: ["tests"] }),
+      goToTest: (id: string) => navigate({ to: "/test/$id", params: { id } }),
+    }),
+    [qc, navigate],
+  );
 
   // All three share the caches the rail and the views already fill, so on any
   // navigation back to home they are already resolved.
@@ -208,16 +222,29 @@ export function HomeView() {
           <Btn tone="ghost" onClick={() => setGenerateOpen(true)}>
             Generate from prompt
           </Btn>
+          {/* THE TWO IMPORT METHODS, which were reachable only from the library
+              rail's `+` — a native menu — so a user arriving with an existing
+              Playwright suite was shown two ways to write a NEW test and no way
+              to bring in the tests they already have. Ghost, both of them:
+              colour here means outcome, and the affirmative action on this
+              screen is recording. */}
+          <Btn tone="ghost" onClick={() => void runFolderImport(importDeps)}>
+            Import from a folder
+          </Btn>
+          <Btn tone="ghost" onClick={() => setImportGitOpen(true)}>
+            Import from a git URL
+          </Btn>
         </div>
       </div>
 
-      {/* The same two dialogs the rail's + menu opens. Mounted again rather
+      {/* The same three dialogs the rail's + menu opens. Mounted again rather
           than lifted to a provider: both are fully controlled and render
           nothing while closed, so a second instance costs one boolean, and
           hoisting them would put two screens' state in a component that is
           neither. */}
       <NewRecordingDialog open={recordOpen} onOpenChange={setRecordOpen} />
       <GenerateTestDialog open={generateOpen} onOpenChange={setGenerateOpen} />
+      <ImportGitDialog open={importGitOpen} onOpenChange={setImportGitOpen} />
     </div>
   );
 }

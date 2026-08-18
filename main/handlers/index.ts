@@ -111,7 +111,7 @@ import {
   normalizeVariables,
   RUN_BROWSERS,
 } from "../recorder/types.js";
-import type { AiDebugSession, AssertKind, CookieSpec, Locator, RawStep, RecorderSettings, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
+import type { AiDebugSession, AssertKind, CookieSpec, Locator, RawStep, RecorderSettings, RunBrowser, Step, TestRecord, TestSpeed, VisualMask } from "../recorder/types.js";
 import type { LlmConfig, LlmMessage, LlmProvider } from "../services/llm/types.js";
 import type { EmitterId } from "../../shared/emitters.mjs";
 
@@ -177,6 +177,7 @@ export function registerHandlers(): void {
         name?: string;
         testId?: string;
         viewport?: { width: number; height: number } | null;
+        runBrowser?: RunBrowser;
       },
     ) => recorderService.start(params),
   );
@@ -1034,7 +1035,13 @@ export function registerHandlers(): void {
     "tests:createFromPrompt",
     async (
       _e,
-      params: { name: string; url: string; speed?: TestSpeed; source: string },
+      params: {
+        name: string;
+        url: string;
+        speed?: TestSpeed;
+        source: string;
+        runBrowser?: RunBrowser;
+      },
     ) => {
       const { randomUUID } = await import("crypto");
       const id = randomUUID();
@@ -1073,6 +1080,10 @@ export function registerHandlers(): void {
         scriptEdited: true,
         speed: params.speed ?? "fast",
         captureArtifacts: recorderSettingsStore.get().defaultCaptureArtifacts,
+        // Absent unless the dialog's picker was moved off the global default —
+        // the model's own rule for this field, and what keeps the Settings
+        // default live for a test that made no choice.
+        ...(isRunBrowser(params.runBrowser) ? { runBrowser: params.runBrowser } : {}),
       };
       testStore.save(rec);
       logger.info("handlers", "Created test from prompt", { id, name, steps: steps.length });
@@ -1082,8 +1093,14 @@ export function registerHandlers(): void {
 
   // ── Import handlers ─────────────────────────────────────────────────
   ipcMain.handle("tests:importFiles", async () => importService.importFromFiles());
-  ipcMain.handle("tests:importGit", async (_e, params: { url: string }) =>
-    importService.importFromGit(params?.url ?? ""),
+  ipcMain.handle(
+    "tests:importGit",
+    async (_e, params: { url: string; ref?: string; runBrowser?: RunBrowser }) =>
+      importService.importFromGit(
+        params?.url ?? "",
+        params?.ref ?? undefined,
+        isRunBrowser(params?.runBrowser) ? params.runBrowser : undefined,
+      ),
   );
   ipcMain.handle("tests:repairImports", async (_e, params: { id: string }) => {
     const copied = importService.repairImports(params.id);

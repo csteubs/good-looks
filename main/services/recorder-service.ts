@@ -54,8 +54,10 @@ import {
   DENIED_RECORDER_PERMISSIONS,
 } from "./recorder-navigation.js";
 import type { CookieSpec } from "../recorder/types.js";
+import type { RunBrowser } from "../recorder/types.js";
 import {
   initialCursor,
+  isRunBrowser,
   isValidVariableName,
   MAX_DRAIN_BYTES,
   MAX_STEP_STRING_LENGTH,
@@ -617,6 +619,17 @@ interface Session {
   wroteSecrets: boolean;
   /** preserved from the original record when editing, else the session start time */
   createdAt: number;
+  /**
+   * The engine this test's RUNS should use, chosen in the New Recording dialog.
+   *
+   * `undefined` means "inherit the global default", which is the model's own
+   * rule for an absent `TestRecord.runBrowser` — so leaving the picker alone
+   * keeps the Settings default live for this test.
+   *
+   * It has nothing to do with the trainer, which always records in Chromium.
+   * It rides on the session because the record is not written until `finalize`.
+   */
+  runBrowser?: RunBrowser;
   /** snapshot of the global "show URL bar" setting — whether this session's
    *  window gets the app-owned URL strip above the page */
   showUrlBar: boolean;
@@ -1311,6 +1324,9 @@ export const recorderService = {
     /** page size to record at, from the New Recording dialog's preset picker.
      *  Omitted (or null) keeps the trainer's default window size. */
     viewport?: { width: number; height: number } | null;
+    /** engine for this test's RUNS, from the same dialog's browser picker.
+     *  Omitted means inherit the global default. Never affects the trainer. */
+    runBrowser?: RunBrowser;
   }): Promise<RecorderState> {
     if (session) {
       recWindow?.focus();
@@ -1353,6 +1369,10 @@ export const recorderService = {
       variables: [...existingVariables],
       wroteSecrets: false,
       createdAt,
+      // Only honoured for a NEW recording: `finalize` spreads the existing
+      // record over this, so continuing a test in the trainer cannot silently
+      // re-engine it from a dialog the user did not see.
+      runBrowser: isRunBrowser(params.runBrowser) ? params.runBrowser : undefined,
       showUrlBar: recorderSettingsStore.get().showUrlBar,
       // Starts at the session's start URL so the strip has something true to
       // show during the first load, rather than a blank bar that fills in.
@@ -2929,6 +2949,9 @@ async function finalize(): Promise<void> {
     // menu and the per-test toggle still override per test.
     speed: recorderSettingsStore.get().defaultRunSpeed,
     captureArtifacts: recorderSettingsStore.get().defaultCaptureArtifacts,
+    // Before the spread, like the two above: a chosen engine seeds a NEW test,
+    // and an existing one keeps whatever its own toolbar says.
+    ...(s.runBrowser ? { runBrowser: s.runBrowser } : {}),
     ...(existing ?? {}),
     id: s.testId,
     name: s.name,
