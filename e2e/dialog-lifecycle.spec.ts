@@ -48,19 +48,31 @@ async function serveSite(): Promise<{ url: string; close: () => Promise<void> }>
 test("the New recording dialog is gone once the recording has started", async ({ app, window }) => {
   const site = await serveSite();
   try {
-    // The palette chord, then the "Record a test" row. The row is picked with
-    // `mouseDown` rather than a click on purpose (the palette closes on blur,
-    // so a click would dismiss the row out from under the pointer) — `click()`
-    // here dispatches the full sequence, mousedown included.
+    // The palette is opened by CLICKING the top strip's ⌘K cap, not by pressing
+    // the chord. The cap exists precisely so the palette is reachable without
+    // the keyboard, and it lands in the same place.
     //
-    // `ControlOrMeta`, NOT `Meta`. On Linux "Meta" is the Super key and sets
-    // neither `metaKey` nor `ctrlKey` the app looks at, so a `Meta+k` here
-    // opens nothing and the failure reads as a missing palette row rather than
-    // a chord that was never pressed — which is exactly how it read on CI,
-    // where every job runs on Linux while this suite is usually run on macOS.
-    // `isPaletteChord` accepts either modifier, so this matches the app on
-    // both platforms rather than asserting one developer's keyboard.
-    await window.keyboard.press("ControlOrMeta+k");
+    // Two attempts at the chord failed on CI before this. `Meta+k` was wrong on
+    // its own terms — on Linux "Meta" is the Super key and sets neither
+    // modifier `isPaletteChord` reads — but `ControlOrMeta+k` failed there too,
+    // so the keystroke is not reaching the renderer's `window` keydown listener
+    // at all under xvfb, where nothing has given the window focus. That is a
+    // property of the harness, not of the app, and it is not what this test is
+    // about: the subject is what happens to the DIALOG after the recording
+    // starts. Driving the app's own button keeps the test on its subject and
+    // off a headless focus quirk. (The chord itself is covered in
+    // `command-palette.test.tsx`, where `isPaletteChord` is called directly.)
+    await window.getByRole("button", { name: /Run a command/i }).click();
+
+    // Asserted before the row, so a palette that did not open says so. Both CI
+    // failures above reported "option not found", which reads as a missing
+    // command and sent the diagnosis to the wrong place twice.
+    await expect(window.getByRole("combobox", { name: "Run a command" })).toBeVisible();
+
+    // The row is picked with `mouseDown` rather than a click on purpose (the
+    // palette closes on blur, so a click would dismiss the row out from under
+    // the pointer) — `click()` here dispatches the full sequence, mousedown
+    // included.
     const record = window.getByRole("option", { name: /Record a test/i });
     await expect(record).toBeVisible();
     await record.click();
