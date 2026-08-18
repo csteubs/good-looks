@@ -164,6 +164,7 @@ interface RecorderContextValue {
     name: string,
     testId?: string,
     viewport?: { width: number; height: number } | null,
+    runBrowser?: RunBrowser,
   ) => Promise<void>;
   pause: () => void;
   resume: () => void;
@@ -638,13 +639,14 @@ export function RecorderProvider({
       name: string,
       testId?: string,
       viewport?: { width: number; height: number } | null,
+      runBrowser?: RunBrowser,
     ) => {
       setLiveSteps([]);
       // A new session's list has nothing to do with the last one's highlight.
       setNewStepIds(new Set());
       setLastAddedStepId(null);
       prevStepsRef.current = null;
-      await api.recorder.start(url, name, testId, viewport);
+      await api.recorder.start(url, name, testId, viewport, runBrowser);
     },
     [],
   );

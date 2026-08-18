@@ -149,6 +149,54 @@ and cannot be renewed.
   slot per session, and a callback that must fire on every path or the request
   hangs forever — plus a manual pass, are the proportionate answer.
 
+### 2026-08-18 — Choosing the browser at creation, and why an untouched picker stores nothing
+
+The engine was settable only from the test-detail toolbar — only AFTER the test
+existed. Every test was therefore born on the global default, and a user who
+wanted WebKit found that out from the first red run. All three creation windows
+with a form (record, generate, import-from-URL) now ask.
+
+- **The picker writes the TEST, not the setting.** It is seeded from
+  `RecorderSettings.defaultRunBrowser` and never writes back to it. The New
+  Recording dialog's speed and window-size pickers do write back — a one-off
+  choice for one recording silently retargets every future one — and
+  `docs/plans/test-creation-and-charter.md` §2.1 names that as a defect rather
+  than a pattern to follow.
+
+- **An untouched picker stores NOTHING, and that asymmetry is the design.**
+  `TestRecord.runBrowser` is already documented as "when absent, the global
+  `defaultRunBrowser` applies", so storing the seeded value on every new test
+  would quietly retire the Settings default: changing it later would move
+  nothing, because every test would be carrying its own copy of what it used to
+  be. Leaving the control alone keeps the test inheriting; moving it off the
+  default pins that test and only that test. Moving it back un-pins it — the
+  field's meaning is about the value, not about whether a control was touched.
+
+- **One component for three dialogs** (`run-browser-field.tsx`), carrying its own
+  settings read. The seeding rule is the part worth having in exactly one place;
+  three copies would be three chances to seed it differently, which is the shape
+  the folder importer's duplicated toast rules already had.
+
+- **The git import's caption is different on purpose.** There the choice applies
+  to every test in the repository, not to one test, and a caption that said
+  "this test" would be wrong about all of them.
+
+- **It never touches the trainer**, which always records in Chromium. The field
+  is about runs, and the session carries it only so `finalize` can put it on the
+  record — placed before the spread, so continuing an existing test in the
+  trainer cannot re-engine it from a dialog the user did not see.
+
+- **Validated at the IPC boundary, not just typed.** `isRunBrowser` guards all
+  three handlers: the value decides which Playwright project the runner spawns,
+  it arrives over IPC, and a TypeScript type is not a runtime check.
+
+- **A test the new control broke, and what it taught.** `speed-picker.test.tsx`
+  found its selected segment with an unscoped
+  `document.querySelector('[aria-pressed="true"]')`. With two segmented rows in
+  the dialog it took the browser row's and reported the engine's label as the
+  speed — a failure that reads as a broken preset. It is now scoped to the
+  control by its accessible name.
+
 ### 2026-08-18 — Import from a URL, and the first three creation flows get their chrome (B10)
 
 The four creation methods were the least finished surface in the app and were

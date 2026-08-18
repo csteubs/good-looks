@@ -21,7 +21,9 @@ import { ImportGitDialog, protocolOf } from "./import-git-dialog";
 
 const navigate = vi.fn();
 const invalidateQueries = vi.fn();
-const importGit = vi.fn(async (_url: string, _ref?: string): Promise<ImportResult> => result);
+const importGit = vi.fn(
+  async (_url: string, _ref?: string, _browser?: string): Promise<ImportResult> => result,
+);
 
 let result: ImportResult = {
   imported: 1,
@@ -40,15 +42,20 @@ vi.mock("@tanstack/react-query", () => ({
 }));
 
 vi.mock("../lib/api", () => ({
-  api: { tests: { importGit: (url: string, ref?: string) => importGit(url, ref) } },
+  api: {
+    tests: { importGit: (url: string, ref?: string, b?: string) => importGit(url, ref, b) },
+    recorder: { getSettings: async () => settings },
+  },
 }));
 
 const onOpenChange = vi.fn();
+let settings: { defaultRunBrowser?: string } = {};
 
 beforeEach(() => {
   vi.clearAllMocks();
   clearToastCalls();
   result = { imported: 1, names: ["login"], ids: ["t-1"], needsBaseUrl: [], unsupported: [] };
+  settings = {};
 });
 
 function open() {
@@ -163,7 +170,11 @@ describe("the branch field", () => {
     open();
     fireEvent.change(screen.getByLabelText("Branch or tag"), { target: { value: "release/2.0" } });
     await importFrom();
-    expect(importGit).toHaveBeenCalledWith("https://github.com/user/repo.git", "release/2.0");
+    expect(importGit).toHaveBeenCalledWith(
+      "https://github.com/user/repo.git",
+      "release/2.0",
+      undefined,
+    );
   });
 
   it("sends no ref when it is left blank, so the default branch is cloned", async () => {
@@ -171,6 +182,48 @@ describe("the branch field", () => {
     // and fail on, which would turn "I didn't fill this in" into a clone error.
     open();
     await importFrom();
-    expect(importGit).toHaveBeenCalledWith("https://github.com/user/repo.git", undefined);
+    expect(importGit).toHaveBeenCalledWith(
+      "https://github.com/user/repo.git",
+      undefined,
+      undefined,
+    );
+  });
+});
+
+describe("the browser picker", () => {
+  it("applies the chosen engine to every test the import brings in", async () => {
+    open();
+    await waitFor(() => expect(screen.getByRole("button", { name: "WebKit" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "WebKit" }));
+    await importFrom();
+    expect(importGit).toHaveBeenCalledWith(
+      "https://github.com/user/repo.git",
+      undefined,
+      "webkit",
+    );
+  });
+
+  it("says the choice covers the whole repository", () => {
+    // The one place this control means something different: a repo import
+    // creates N tests, not one, and a caption that said "this test" would be
+    // wrong about all of them.
+    open();
+    expect(screen.getByText(/every test this import brings in/i)).toBeTruthy();
+  });
+
+  it("stores nothing when it is left on the global default", async () => {
+    settings = { defaultRunBrowser: "firefox" };
+    open();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Firefox" }).getAttribute("aria-pressed")).toBe(
+        "true",
+      ),
+    );
+    await importFrom();
+    expect(importGit).toHaveBeenCalledWith(
+      "https://github.com/user/repo.git",
+      undefined,
+      undefined,
+    );
   });
 });

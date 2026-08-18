@@ -119,7 +119,18 @@ export const api = {
       name: string,
       testId?: string,
       viewport?: { width: number; height: number } | null,
-    ) => ipc().invoke<RecorderState>("recorder:start", { url, name, testId, viewport }),
+      /** Engine for this test's RUNS, from the New Recording dialog. Omitted
+       *  means inherit the global default. Never affects the trainer, which
+       *  always records in Chromium. */
+      runBrowser?: RunBrowser,
+    ) =>
+      ipc().invoke<RecorderState>("recorder:start", {
+        url,
+        name,
+        testId,
+        viewport,
+        runBrowser,
+      }),
     pause: () => ipc().invoke<RecorderState>("recorder:pause"),
     resume: () => ipc().invoke<RecorderState>("recorder:resume"),
     setAssert: (mode: AssertKind | null, soft = false) =>
@@ -231,6 +242,7 @@ export const api = {
       url: string;
       speed?: TestSpeed;
       source: string;
+      runBrowser?: RunBrowser;
     }) => ipc().invoke<TestRecord>("tests:createFromPrompt", params),
     setSpeed: (id: string, speed: TestSpeed) =>
       ipc().invoke<TestRecord>("tests:setSpeed", { id, speed }),
@@ -297,8 +309,8 @@ export const api = {
     /** `ref` is an optional branch or tag. Validated in the main process with
      *  the branch switcher's own rule (`shared/branch-paths.mjs`) — a ref
      *  starting with `-` is an option git honours, not a name. */
-    importGit: (url: string, ref?: string) =>
-      ipc().invoke<ImportResult>("tests:importGit", { url, ref }),
+    importGit: (url: string, ref?: string, runBrowser?: RunBrowser) =>
+      ipc().invoke<ImportResult>("tests:importGit", { url, ref, runBrowser }),
   },
   debug: {
     /** Capture every open app window now. */

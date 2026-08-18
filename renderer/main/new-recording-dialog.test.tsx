@@ -26,6 +26,7 @@ const start = vi.fn(
     _name: string,
     _testId?: string,
     _viewport?: { width: number; height: number } | null,
+    _runBrowser?: string,
   ) => {},
 );
 const setSettings = vi.fn(async (_update: Partial<RecorderSettings>) => ({}) as RecorderSettings);
@@ -64,6 +65,11 @@ async function startRecording(url = "https://example.com") {
   fireEvent.change(screen.getByPlaceholderText("https://example.com"), { target: { value: url } });
   fireEvent.click(screen.getByRole("button", { name: /start recording/i }));
   await waitFor(() => expect(start).toHaveBeenCalled());
+}
+
+/** The runBrowser argument `start` was called with (5th). */
+function startedBrowser() {
+  return start.mock.calls[0]?.[4];
 }
 
 /** The viewport argument `start` was called with. */
@@ -119,17 +125,23 @@ describe("window size preset", () => {
   });
 
   it("starts a new recording rather than editing an existing test", async () => {
-    // The viewport is the 4th argument; passing it must not shift the testId
-    // into the wrong slot, which would silently turn Start into Edit.
+    // The viewport is the 4th argument and the engine the 5th; passing either
+    // must not shift the testId into the wrong slot, which would silently turn
+    // Start into Edit. Spelled as an exhaustive argument list for that reason —
+    // a positional bug here is invisible in every other assertion.
     settings = { defaultWindowSize: { width: 768, height: 1024 } };
     open();
     await waitFor(() => expect(screen.getByText("Tablet 768×1024")).toBeTruthy());
     fireEvent.change(screen.getByPlaceholderText("My test"), { target: { value: "My run" } });
     await startRecording();
-    expect(start).toHaveBeenCalledWith("https://example.com", "My run", undefined, {
-      width: 768,
-      height: 1024,
-    });
+    expect(start).toHaveBeenCalledWith(
+      "https://example.com",
+      "My run",
+      undefined,
+      { width: 768, height: 1024 },
+      // Untouched picker → nothing stored, so the test inherits the default.
+      undefined,
+    );
   });
 });
 
@@ -163,5 +175,76 @@ describe("dialog lifecycle", () => {
     await waitFor(() => expect(start).toHaveBeenCalled());
 
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+});
+
+// ── The browser picker ────────────────────────────────────────────────────
+//
+// The engine was settable only from the test-detail toolbar — only AFTER the
+// test existed — so every test was born on the global default and a user who
+// wanted WebKit discovered that from the first red run.
+//
+// What is pinned here is the ASYMMETRY, which is the whole design: an untouched
+// picker stores NOTHING, so the test keeps inheriting `defaultRunBrowser` and
+// changing that setting later still moves it. Storing the seeded value on every
+// new test would quietly retire the Settings default, since nothing would be
+// left inheriting it.
+describe("browser picker", () => {
+  it("offers an engine to run in", async () => {
+    open();
+    await waitFor(() => expect(screen.getByText("Browser")).toBeTruthy());
+  });
+
+  it("starts on the global default", async () => {
+    settings = { defaultRunBrowser: "firefox" };
+    open();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Firefox" }).getAttribute("aria-pressed")).toBe(
+        "true",
+      ),
+    );
+  });
+
+  it("stores nothing when the picker is left alone", async () => {
+    // The inheritance case, and the one a "just store what the control shows"
+    // implementation gets wrong.
+    settings = { defaultRunBrowser: "firefox" };
+    open();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Firefox" }).getAttribute("aria-pressed")).toBe(
+        "true",
+      ),
+    );
+    await startRecording();
+    expect(startedBrowser()).toBeUndefined();
+  });
+
+  it("pins the engine when the picker is moved off the default", async () => {
+    settings = { defaultRunBrowser: "chromium" };
+    open();
+    await waitFor(() => expect(screen.getByRole("button", { name: "WebKit" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "WebKit" }));
+    await startRecording();
+    expect(startedBrowser()).toBe("webkit");
+  });
+
+  it("stores nothing again when the picker is moved back to the default", async () => {
+    // Off and back is not the same as never touched to a store that latches on
+    // the first change — but it IS the same to the user, and the field's
+    // meaning is about the value, not the history.
+    settings = { defaultRunBrowser: "chromium" };
+    open();
+    await waitFor(() => expect(screen.getByRole("button", { name: "WebKit" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("button", { name: "WebKit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Chromium" }));
+    await startRecording();
+    expect(startedBrowser()).toBeUndefined();
+  });
+
+  it("still records, on the inherited engine, when settings can't be read", async () => {
+    settingsReadable = false;
+    open();
+    await startRecording();
+    expect(startedBrowser()).toBeUndefined();
   });
 });

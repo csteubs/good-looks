@@ -24,6 +24,7 @@ import { Dialog, toast } from "@ui";
 import { Segmented } from "../theme";
 import { api } from "../lib/api";
 import { importWarnings } from "../lib/import-warnings";
+import { RunBrowserField, useRunBrowserChoice } from "./run-browser-field";
 
 type Protocol = "https" | "ssh";
 
@@ -59,6 +60,7 @@ export function ImportGitDialog({
   const [url, setUrl] = React.useState("");
   const [branch, setBranch] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
+  const browser = useRunBrowserChoice(open);
 
   const reset = () => {
     setUrl("");
@@ -80,7 +82,11 @@ export function ImportGitDialog({
       onConfirm={async () => {
         setError(null);
         try {
-          const res = await api.tests.importGit(url.trim(), branch.trim() || undefined);
+          const res = await api.tests.importGit(
+            url.trim(),
+            branch.trim() || undefined,
+            browser.toStore,
+          );
           qc.invalidateQueries({ queryKey: ["tests"] });
           toast.success(
             res.imported === 1
@@ -146,6 +152,12 @@ export function ImportGitDialog({
             onChange={(e) => setBranch(e.target.value)}
           />
         </div>
+
+        <RunBrowserField
+          value={browser.value}
+          onChange={browser.onChange}
+          hint="The engine runs use, applied to every test this import brings in."
+        />
 
         {error ? (
           <p className="gl-note gl-clone-error">{error}</p>

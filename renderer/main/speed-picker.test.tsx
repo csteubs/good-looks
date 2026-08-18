@@ -84,10 +84,14 @@ describe("speed pickers offer every speed", () => {
     settings = { defaultRunSpeed: "crawl" };
     render(<NewRecordingDialog open onOpenChange={vi.fn()} />);
     await waitFor(() => {
-      // `aria-pressed` as well as the SDK's two spellings: B10 moved this row
-      // to the theme's `Segmented`, which is real buttons with `aria-pressed`
-      // — chosen so the visual state cannot disagree with the announced one.
-      const checked = document.querySelector(
+      // SCOPED TO THE RUN-SPEED CONTROL, not the document. B10 moved this row
+      // to the theme's `Segmented` — real buttons with `aria-pressed`, chosen
+      // so the visual state cannot disagree with the announced one — and this
+      // dialog now has TWO of them, since the browser picker is one too. An
+      // unscoped query took whichever came first in the DOM and reported the
+      // engine's label as the speed, which reads as a broken preset.
+      const row = screen.getByRole("group", { name: "Run speed" });
+      const checked = row.querySelector(
         '[data-state="checked"], [aria-checked="true"], [aria-pressed="true"]',
       );
       // NOT `checked?.textContent`. With the optional chain a miss produces

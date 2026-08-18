@@ -15,7 +15,7 @@ import { dialog, logger } from "@shell/backend";
 
 import { branchNameProblem } from "../../shared/branch-paths.mjs";
 
-import type { TestRecord } from "../recorder/types.js";
+import type { RunBrowser, TestRecord } from "../recorder/types.js";
 import { getScriptsDir, testStore } from "./test-store.js";
 import { parseSpec } from "./spec-parser.js";
 import {
@@ -286,7 +286,10 @@ export function extractName(content: string, filePath: string): string {
   return path.basename(filePath).replace(TEST_FILE_RE, "");
 }
 
-function importFound(found: FoundTest[]): ImportResult {
+/** @param runBrowser engine for every test in this import, or undefined to let
+ *  each one inherit the global default. Set from the git dialog's picker; the
+ *  folder import has no dialog to ask in. */
+function importFound(found: FoundTest[], runBrowser?: RunBrowser): ImportResult {
   const created: TestRecord[] = [];
   const needsBaseUrl: string[] = [];
   const unsupported = new Set<string>();
@@ -361,6 +364,8 @@ function importFound(found: FoundTest[]): ImportResult {
       // reasons that have nothing to do with the test. It lands in the Timeout
       // box on the toolbar, so it is visible and can be changed like any other.
       ...(config?.timeoutMs ? { testTimeoutMs: config.timeoutMs } : {}),
+      // Absent unless the dialog's picker was moved off the global default.
+      ...(runBrowser ? { runBrowser } : {}),
     };
     testStore.save(record);
     created.push(record);
@@ -468,7 +473,7 @@ export const importService = {
    *  injection, it is an option git honours. Rejecting a leading `-` is what
    *  stops it, and `--` before the URL is the second belt at the same call
    *  site. Both, because only one of them can be forgotten. */
-  async importFromGit(url: string, ref?: string): Promise<ImportResult> {
+  async importFromGit(url: string, ref?: string, runBrowser?: RunBrowser): Promise<ImportResult> {
     const clean = (url ?? "").trim();
     if (!clean) throw new Error("A git repository URL is required.");
     if (!/^(https?:\/\/|git@|ssh:\/\/|git:\/\/)/i.test(clean)) {
@@ -528,7 +533,7 @@ export const importService = {
       if (found.length === 0) {
         throw new Error("No Playwright test files (*.spec.ts / *.test.ts) were found in that repository.");
       }
-      return importFound(found);
+      return importFound(found, runBrowser);
     } finally {
       try {
         fs.rmSync(tmp, { recursive: true, force: true });

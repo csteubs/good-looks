@@ -13,6 +13,7 @@ import {
 // vocabulary: there is no themed dialog PRIMITIVE (the SDK `Dialog` is
 // allow-listed for its focus trap), so what gets themed is the content.
 import { Segmented } from "../theme";
+import { RunBrowserField, useRunBrowserChoice } from "./run-browser-field";
 
 import { api } from "../lib/api";
 import type { TestSpeed } from "../lib/recorder-types";
@@ -46,6 +47,7 @@ export function NewRecordingDialog({
   // it was recorded at instead of the runner's own default.
   const [windowSize, setWindowSize] = React.useState<string>(DEFAULT_VIEWPORT_PRESET_ID);
   const [error, setError] = React.useState<string | null>(null);
+  const browser = useRunBrowserChoice(open);
   const canStart = url.trim().length > 0;
 
   // Load the persisted defaults when the dialog opens.
@@ -93,6 +95,7 @@ export function NewRecordingDialog({
             name.trim() || "Recorded test",
             undefined,
             viewportForPresetId(windowSize),
+            browser.toStore,
           );
         } catch (err) {
           // A start that failed leaves the dialog up with the reason on it, the
@@ -154,6 +157,8 @@ export function NewRecordingDialog({
             Size of the browser window this records in. The test replays at this size too.
           </p>
         </div>
+
+        <RunBrowserField value={browser.value} onChange={browser.onChange} />
 
         <div className="gl-create-field">
           <span className="gl-section-title">Run speed</span>

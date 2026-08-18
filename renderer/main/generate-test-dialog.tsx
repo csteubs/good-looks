@@ -37,6 +37,7 @@ import { Check, Copy, Square, Wand2 } from "lucide-react";
 // panel left the same block looking like two different components.
 import { Btn, Segmented, StatusChip } from "../theme";
 import { CodeBlock } from "./ai-debug-panel";
+import { RunBrowserField, useRunBrowserChoice } from "./run-browser-field";
 
 import { api } from "../lib/api";
 import { friendlyError } from "../lib/llm-errors";
@@ -117,6 +118,7 @@ export function GenerateTestDialog({
   // unreachable provider and a provider with no models look identical: an empty
   // picker that gives the user nothing to act on.
   const [modelsError, setModelsError] = React.useState<string | null>(null);
+  const browser = useRunBrowserChoice(open);
 
   React.useEffect(() => {
     if (!open) return;
@@ -207,6 +209,7 @@ export function GenerateTestDialog({
         url: url.trim(),
         speed,
         source: generatedScript,
+        runBrowser: browser.toStore,
       });
       setCreated(true);
       qc.invalidateQueries({ queryKey: ["tests"] });
@@ -298,6 +301,8 @@ export function GenerateTestDialog({
             </Select>
           </div>
         </div>
+
+        <RunBrowserField value={browser.value} onChange={browser.onChange} />
 
         {/* Which model writes the spec. Long model ids get the full row. */}
         <div className="gl-create-field">
