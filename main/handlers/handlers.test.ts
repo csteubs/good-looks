@@ -27,6 +27,7 @@ import { testStore } from "../services/test-store.js";
 import { runHistoryStore } from "../services/run-history-store.js";
 import { batchHistoryStore } from "../services/batch-history-store.js";
 import { aiDebugStore } from "../services/ai-debug-store.js";
+import { aiDebugHistoryStore } from "../services/ai-debug-history-store.js";
 import { recorderDebugStore } from "../services/recorder-debug-store.js";
 import { recorderSettingsStore } from "../services/recorder-settings-store.js";
 import { annotationStore } from "../services/annotation-store.js";
@@ -1332,6 +1333,103 @@ describe("tests:delete — what a deleted test leaves behind", () => {
 
     expect(aiDebugStore.get(`run:${id}`)).toBeNull();
     expect(aiDebugStore.list().filter((s) => s.testId === id)).toEqual([]);
+  });
+
+  it("records an AI debug attempt through the IPC boundary", async () => {
+    // The channel exists, is registered, and rebuilds the record rather than
+    // storing what it was handed — the property that keeps the model's answer
+    // out of a store whose whole premise is that it holds none.
+    await invokeHandler("aiDebug:record", {
+      record: {
+        id: "ipc-1",
+        key: "run:t-ipc",
+        kind: "run",
+        testId: "t-ipc",
+        testName: "Alpha",
+        trigger: "manual",
+        provider: "anthropic",
+        model: "claude",
+        status: "done",
+        startedAt: 5,
+        endedAt: 10,
+        firstTokenMs: 2,
+        promptChars: 100,
+        answerChars: 50,
+        runKey: null,
+        content: "the model's answer",
+      },
+    });
+
+    const rows = await invokeHandler<Array<Record<string, unknown>>>("aiDebug:history");
+    const row = rows.find((r) => r.id === "ipc-1")!;
+    expect(row).toBeTruthy();
+    expect(row.provider).toBe("anthropic");
+    expect(Object.keys(row)).not.toContain("content");
+  });
+
+  it("clears the sessions AND the history together", async () => {
+    // "Delete AI debug history…" means what it says: a user asking for that
+    // does not expect a shadow index of what they deleted to survive.
+    await invokeHandler("aiDebug:record", {
+      record: {
+        id: "clear-1",
+        key: "run:t-clear",
+        kind: "run",
+        testId: "t-clear",
+        testName: "Alpha",
+        trigger: "manual",
+        provider: "ollama",
+        model: "qwen",
+        status: "done",
+        startedAt: 1,
+        endedAt: 2,
+        firstTokenMs: null,
+        promptChars: 0,
+        answerChars: 0,
+        runKey: null,
+      },
+    });
+
+    const res = await invokeHandler<{ removed: number; historyRemoved: number }>("aiDebug:clear");
+
+    expect(res.historyRemoved).toBeGreaterThan(0);
+    expect(aiDebugHistoryStore.list()).toEqual([]);
+  });
+
+  it("TOMBSTONES the AI debug history rather than deleting it", async () => {
+    // The opposite of the sessions above, and deliberately: a history row holds
+    // no quotes, only the fact that a diagnosis happened and what it cost.
+    // Deleting it would make every lifetime total on the Stats board walk
+    // backwards the moment a test is removed.
+    const id = "t-del-ai-history";
+    seedFullTest(id);
+    await invokeHandler("aiDebug:record", {
+      record: {
+        id: `run:${id}@1`,
+        key: `run:${id}`,
+        kind: "run",
+        testId: id,
+        testName: "Checkout",
+        trigger: "manual",
+        provider: "ollama",
+        model: "qwen",
+        status: "done",
+        startedAt: 1,
+        endedAt: 2,
+        firstTokenMs: 1,
+        promptChars: 10,
+        answerChars: 10,
+        runKey: null,
+      },
+    });
+
+    await invokeHandler("tests:delete", { id });
+
+    const rows = aiDebugHistoryStore.list().filter((r) => r.testId === id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].testDeleted).toBe(true);
+    // And it can still name the test it belonged to, or no panel could list it.
+    expect(rows[0].testName).toBe("Checkout");
   });
 
   it("removes the recorder debug logs", async () => {

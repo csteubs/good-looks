@@ -127,6 +127,8 @@ vi.mock("../lib/api", () => ({
       remove: async () => ({ removed: 0 }),
       clear: async () => ({ removed: 0 }),
       notifyDone: async () => ({ ok: true }),
+      history: async () => [],
+      record: async (r: unknown) => r,
     },
     on: () => () => {},
   },

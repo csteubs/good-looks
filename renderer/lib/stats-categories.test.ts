@@ -17,6 +17,7 @@ import {
   isCategoryId,
   isMeasured,
   summariseA11y,
+  summariseAiDebug,
   summariseAll,
   summariseHeals,
   summariseOutcomes,
@@ -26,9 +27,71 @@ import {
   summariseVisual,
   type CategorySummary,
 } from "./stats-categories";
-import type { FlakeReport, HealListEntry, RunRecord, RunReplaySummary } from "./recorder-types";
+import type {
+  AiDebugHistoryRecord,
+  FlakeReport,
+  HealListEntry,
+  RunRecord,
+  RunReplaySummary,
+  ScriptChangeListEntry,
+} from "./recorder-types";
+import { buildAiDebugReport } from "./ai-debug-stats";
 
 // ── Fixtures ──────────────────────────────────────────────────────────
+
+function aiRec(over: Partial<AiDebugHistoryRecord> & { id: string }): AiDebugHistoryRecord {
+  return {
+    key: "run:t1",
+    kind: "run",
+    testId: "t1",
+    testName: "Alpha",
+    trigger: "manual",
+    provider: "ollama",
+    model: "qwen",
+    status: "done",
+    errorKind: null,
+    startedAt: 1_700_000_000_000,
+    endedAt: 1_700_000_030_000,
+    firstTokenMs: 1_000,
+    promptChars: 100,
+    answerChars: 100,
+    runKey: null,
+    ...over,
+  };
+}
+
+function aiChange(
+  over: Partial<ScriptChangeListEntry> & { id: string },
+): ScriptChangeListEntry {
+  return {
+    testId: "t1",
+    testName: "Alpha",
+    origin: "ai-debug",
+    reviewed: true,
+    before: "a",
+    after: "b",
+    addedLines: 1,
+    removedLines: 1,
+    status: "pending",
+    at: 1_700_000_000_000,
+    ...over,
+  } as ScriptChangeListEntry;
+}
+
+/** The AI Debug tile reads a REPORT rather than raw rows — the same object its
+ *  dashboard reads, which is what keeps the two from disagreeing. */
+function aiDebugReport(
+  records: AiDebugHistoryRecord[] = [aiRec({ id: "a" })],
+  changes: ScriptChangeListEntry[] = [],
+) {
+  return buildAiDebugReport({
+    records,
+    scriptChanges: changes,
+    runs: [],
+    assumptions: { minutesPerManualDebug: 15, hourlyRate: 0 },
+    now: 1_700_000_100_000,
+  });
+}
 
 function run(over: Partial<RunRecord> & { id: string }): RunRecord {
   return {
@@ -412,6 +475,52 @@ describe("the numbers themselves", () => {
   });
 });
 
+describe("the AI Debug tile", () => {
+  it("says what to do rather than 0 before anything has been asked", () => {
+    const summary = summariseAiDebug(aiDebugReport([]));
+    expect(summary.state).toBe("unmeasured");
+    expect(summary.display).toBeNull();
+    expect(summary.say).toMatch(/Debug with AI/);
+  });
+
+  it("headlines the number of attempts, not the number of problems", () => {
+    // The one tile on this board whose figure is a VOLUME. Every other category
+    // counts things that are wrong; this counts diagnoses asked for, because
+    // that is the question a reader arrives with — and the colour beside it
+    // answers the other one.
+    const summary = summariseAiDebug(
+      aiDebugReport([aiRec({ id: "a" }), aiRec({ id: "b", status: "error" })]),
+    );
+    expect(summary.display).toBe("2");
+    expect(summary.state).toBe("clean");
+    expect(summary.tone).toBe("phos");
+  });
+
+  it("goes amber over fixes nobody has read", () => {
+    const summary = summariseAiDebug(
+      aiDebugReport(
+        [aiRec({ id: "a" })],
+        [aiChange({ id: "c1", reviewed: false, status: "pending" })],
+      ),
+    );
+    expect(summary.state).toBe("findings");
+    expect(summary.tone).toBe("amber");
+    expect(summary.say).toMatch(/not been reviewed/);
+    // Still a volume while reporting a finding: the number and the colour
+    // answer two different questions.
+    expect(summary.display).toBe("1");
+  });
+
+  it("is never red, because nothing here decides whether a test passes", () => {
+    const failing = Array.from({ length: 6 }, (_, i) =>
+      aiRec({ id: `e${i}`, status: i < 5 ? ("error" as const) : ("done" as const) }),
+    );
+    const summary = summariseAiDebug(aiDebugReport(failing));
+    expect(summary.state).toBe("findings");
+    expect(summary.tone).toBe("amber");
+  });
+});
+
 describe("the registry", () => {
   it("gives every category an unmeasured sentence", () => {
     // The type already requires it; this proves none is an empty string, which
@@ -456,6 +565,7 @@ describe("the registry", () => {
       replays: [],
       stepHealth: { available: true, rows: [] },
       slowness: { available: true, cost: COST, rows: [], slowed: [] },
+      aiDebug: aiDebugReport(),
     });
     expect(all.map((s) => s.id)).toEqual(CATEGORIES.map((c) => c.id));
   });

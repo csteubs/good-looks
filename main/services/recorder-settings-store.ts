@@ -19,7 +19,11 @@ import type { BatchRowOptions, RecorderSettings } from "../recorder/types.js";
 import { normalizeViewport } from "../recorder/window-size.js";
 import {
   clampCostPerCiMinute,
+  clampHourlyRate,
+  clampMinutesPerManualDebug,
   clampMinutesPerManualRun,
+  COST_DEFAULT_HOURLY_RATE,
+  COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG,
   COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
   COST_DEFAULT_PER_CI_MINUTE,
   DEFAULT_COST_CURRENCY,
@@ -193,6 +197,11 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   costCurrency: DEFAULT_COST_CURRENCY,
   costPerCiMinute: COST_DEFAULT_PER_CI_MINUTE,
   costMinutesPerManualRun: COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
+  costMinutesPerManualDebug: COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG,
+  // 0 = no hourly rate stated. Not a price, and never rendered as one: the app
+  // declines to guess what an hour of the user's time is worth, so every money
+  // figure derived from saved time stays hidden until they say.
+  costHourlyRate: COST_DEFAULT_HOURLY_RATE,
 };
 
 
@@ -342,6 +351,8 @@ function read(): RecorderSettings {
         : DEFAULT_SETTINGS.costCurrency,
       costPerCiMinute: clampCostPerCiMinute(parsed.costPerCiMinute),
       costMinutesPerManualRun: clampMinutesPerManualRun(parsed.costMinutesPerManualRun),
+      costMinutesPerManualDebug: clampMinutesPerManualDebug(parsed.costMinutesPerManualDebug),
+      costHourlyRate: clampHourlyRate(parsed.costHourlyRate),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -505,6 +516,14 @@ export const recorderSettingsStore = {
         update.costMinutesPerManualRun !== undefined
           ? clampMinutesPerManualRun(update.costMinutesPerManualRun)
           : current.costMinutesPerManualRun,
+      costMinutesPerManualDebug:
+        update.costMinutesPerManualDebug !== undefined
+          ? clampMinutesPerManualDebug(update.costMinutesPerManualDebug)
+          : current.costMinutesPerManualDebug,
+      costHourlyRate:
+        update.costHourlyRate !== undefined
+          ? clampHourlyRate(update.costHourlyRate)
+          : current.costHourlyRate,
     };
     fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
     fs.writeFileSync(settingsFile(), JSON.stringify(next, null, 2), "utf-8");
@@ -544,6 +563,8 @@ export const recorderSettingsStore = {
       costCurrency: next.costCurrency,
       costPerCiMinute: next.costPerCiMinute,
       costMinutesPerManualRun: next.costMinutesPerManualRun,
+      costMinutesPerManualDebug: next.costMinutesPerManualDebug,
+      costHourlyRate: next.costHourlyRate,
     });
     return next;
   },

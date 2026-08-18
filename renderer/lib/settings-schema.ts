@@ -15,6 +15,8 @@ import type { RecorderSettings } from "./recorder-types";
 import { blockText } from "./doc-blocks";
 import { APP_DOCS, docRowId } from "./docs";
 import {
+  COST_DEFAULT_HOURLY_RATE,
+  COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG,
   COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
   COST_DEFAULT_PER_CI_MINUTE,
   DEFAULT_COST_CURRENCY,
@@ -102,11 +104,11 @@ export const PANES: readonly PaneDef[] = [
   {
     // Its own pane rather than a section of Test defaults: nothing here is a
     // starting value for a new test, and nothing here changes what a run DOES.
-    // These are the two numbers the Stats → Cost panel multiplies by, and the
-    // pane exists so the panel can stop guessing.
+    // These are the numbers the Stats → Cost panel and the AI Debug category
+    // multiply by, and the pane exists so those screens can stop guessing.
     id: "cost",
     title: "Cost",
-    subtitle: "What a CI minute costs, and what one manual test run costs in time.",
+    subtitle: "What a CI minute costs, and what doing this by hand would cost in time.",
     group: "Testing",
   },
   {
@@ -502,6 +504,20 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "manual testing time saved avoided hours by hand human",
     key: "costMinutesPerManualRun",
   },
+  {
+    id: "cost-minutes-per-manual-debug",
+    pane: "cost",
+    label: "Minutes to debug one failure by hand",
+    keywords: "ai debug diagnosis time saved avoided troubleshoot investigate failure",
+    key: "costMinutesPerManualDebug",
+  },
+  {
+    id: "cost-hourly-rate",
+    pane: "cost",
+    label: "Value of an hour of your time",
+    keywords: "hourly rate money salary wage worth value time saved optional blank",
+    key: "costHourlyRate",
+  },
 
   // AI
   {
@@ -722,6 +738,8 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   costCurrency: DEFAULT_COST_CURRENCY,
   costPerCiMinute: COST_DEFAULT_PER_CI_MINUTE,
   costMinutesPerManualRun: COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
+  costMinutesPerManualDebug: COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG,
+  costHourlyRate: COST_DEFAULT_HOURLY_RATE,
 };
 
 /** Structural equality for the three shapes a setting value actually takes:

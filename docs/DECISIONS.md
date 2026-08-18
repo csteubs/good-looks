@@ -10,6 +10,119 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-17 — Counting AI Debug meant a second store, because the first one is built to forget
+
+`main/services/ai-debug-history-store.ts`, `main/recorder/types.ts`,
+`renderer/lib/ai-debug-stats.ts`, `renderer/main/stats/ai-debug-dashboard.tsx`,
+`renderer/lib/stats-categories.ts`, `shared/cost-units.mjs`, and the Cost
+settings pane.
+
+**The ask was a Stats category for AI Debug: total sessions, effectiveness,
+what it saves, why it fails, how it is trending.** Almost none of that could be
+answered from what was on disk.
+
+**`ai-debug-sessions.json` is a reading list, not a history.** It keeps the
+twenty newest and hard-deletes every session belonging to a deleted test, and
+both rules are right for what it holds — the model's answer, quoting the script
+and excerpts of run output. The entry justifying that hard delete
+says a session "contributes to no aggregate anybody looks at". This
+feature is what changed that premise, and the honest response was to change the
+premise rather than to weaken the rule: a store capped at twenty cannot say how
+many diagnoses there have ever been, and one that erases a deleted test's rows
+gives a lifetime total that walks backwards.
+
+**So the facts were split from the content.** `ai-debug-history.json` holds one
+row per ATTEMPT with no answer, no reasoning, no error message and no script —
+ids, trigger, provider, model, status, error KIND, timings and sizes. That
+absence is not squeamishness, it is what buys the two properties the feature
+needs: the rows are not sensitive, so they can outlive the twenty-session cap,
+and a deleted test can TOMBSTONE them the way run history is tombstoned instead
+of erasing them. `normalizeAiDebugHistoryRecord` rebuilds each record field by
+field in both directions, so neither a renderer holding a fuller object nor a
+hand-edited file can put content back in.
+
+**An attempt, not a session.** Re-sending after a connection error is a second
+wait and a second chance at an answer; folding it into the first would
+under-count both the failures and the time. Session keys are per test, so the
+id is minted per send.
+
+**Interrupted attempts are ended at the last moment they were known alive.** A
+row left `streaming` is reconciled at startup like the session store's, but
+stamped at `startedAt + firstTokenMs` rather than `Date.now()` — the app may
+have been closed for a week, and charging that week to a forty-second session
+would make "time spent in AI debug" absurd while looking like data.
+
+**Effectiveness is not asked of the model.** Whether a diagnosis was any good
+is answered by what the user did with it (the script-change journal's
+`accepted` / `reverted`) and by what the test did next (the run after the fix,
+inside a 24h window). Asking the answer to grade itself is how a panel comes to
+report a 100% success rate for a feature nobody trusts. `kept` is counted PER
+FIX rather than as `accepted + confirmed` — the naive sum reports one fix as
+two and drifts the savings figure upwards by exactly the number of times the
+feature worked properly, which is the most flattering possible bug.
+
+**The savings figure is allowed to be negative, and the wait is subtracted.** A
+suite where the model is asked constantly and its answers are rarely kept is
+genuinely costing time. Flooring that at zero would hide the single most useful
+thing this screen can tell someone.
+
+**`cost-model.ts`'s refusal to price an hour was kept, and made askable.** That
+file states the rule — an hourly rate varies by an order of magnitude between
+users, nobody would notice a bad default, and a currency figure carries more
+authority than the guess behind it deserves — so spend is money and value is
+time. The new `costHourlyRate` ships as **0, meaning "not stated"**, and every
+money figure derived from saved time is SUPPRESSED rather than rendered as
+zero. Set it and the app multiplies a number the user typed, which is a
+calculation they can check; leave it and nothing is hidden, it is simply
+reported in hours. `costMinutesPerManualDebug` (15) is the other assumption and
+is stated in prose under the figure it produces, per the Cost panel's own rule.
+
+**The tile's headline is a VOLUME and its colour is a FINDING.** Every other
+category on the board counts things that are wrong; this one counts diagnoses
+asked for, because that is the question a reader arrives with — and a large
+number here is the healthy case. What turns it amber is `aiDebugFinding`, an
+ORDERED LIST of named conditions rather than a boolean: unreviewed applied
+fixes first (changes to the user's own tests that nobody has read), then a
+failure rate high enough to be a provider problem rather than an anecdote. The
+list shape is the part written for what this feature is becoming. When failing
+tests diagnose and fix themselves by default, the unreviewed queue stops being
+an edge case behind an opt-in setting and becomes the normal state — this
+screen is then the supervision surface, and drift against a test's charter is a
+third condition of exactly the same shape. A list absorbs that; a boolean has
+to be rewritten along with every test that pins it.
+
+**`trigger` is recorded now although every session is `manual`.** Nothing in
+the app raises a diagnosis by itself yet. The field costs one string today and
+cannot be backfilled: on the day tests start debugging themselves, "I asked for
+this" versus "it decided" is the first filter every panel here needs, and every
+row written before the field existed would be unclassifiable forever.
+
+**The failure rate divides by SETTLED attempts, not by all of them.** Live jobs
+have neither failed nor succeeded, and counting them in the denominator dilutes
+a real provider problem out of existence exactly while somebody is sitting
+there waiting on it.
+
+**`llm:chat` now reports which provider and model it resolved to.** Both
+default to the configured values, which only the backend knows; a renderer
+reading the setting afterwards would be answering "what is selected now", which
+is the wrong question for any session that outlived a settings change — and the
+local-versus-hosted split is precisely the figure that guess would corrupt. A
+record written before the stamp existed is `null` and is reported as neither
+local nor hosted, never as one of them.
+
+**The history is invalidated by a push, not by a refetch on mount.** The reader
+this exists for is somebody standing on the Stats board while a minimized job
+finishes, which is the whole point of minimizing. `aiDebug:historyChanged` is
+consumed in `RecorderProvider` — mounted for the session — because a route-level
+subscription would be unmounted at exactly that moment, which is the bug
+`run-derived-cache.ts` was written against. The key itself stays OUT of
+`RUN_DERIVED_KEYS`: nothing a run does writes that file.
+
+**"Delete AI debug history…" now clears both stores.** A user asking for that
+does not expect the app to keep a shadow index of what they deleted, even one
+holding no content. The category then reads "not measured", which is the honest
+state afterwards.
+
 ### 2026-08-17 — Minimize replaces the AI debug dialog's close button
 
 `renderer/ui/overlays.tsx`, `renderer/main/ai-debug-panel.tsx`.

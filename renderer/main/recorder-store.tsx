@@ -433,6 +433,15 @@ export function RecorderProvider({
     const offRunsChanged = api.on("runs:changed", () => {
       invalidateRunDerived(qc);
     });
+    // An AI debug attempt started or settled. NOT in RUN_DERIVED_KEYS: nothing
+    // a run does writes this file — the AI debug store does, on its own
+    // schedule — so it goes stale on its own event. It is subscribed HERE for
+    // the same reason everything above it is: the reader is somebody standing
+    // on the Stats board while a minimized job finishes, which is precisely
+    // when a route-level subscription would be unmounted.
+    const offAiDebugHistory = api.on("aiDebug:historyChanged", () => {
+      void qc.invalidateQueries({ queryKey: ["ai-debug-history"] });
+    });
     // A batch already running when this window opened. `batch:progress` fires
     // on every test transition so it would self-seed within seconds, but "the
     // ticker is blank until the next test finishes" is a blank ticker during
@@ -580,6 +589,7 @@ export function RecorderProvider({
       offStep();
       offDone();
       offRunsChanged();
+      offAiDebugHistory();
       offBatchProgress();
       offBatchDone();
       offDebug();

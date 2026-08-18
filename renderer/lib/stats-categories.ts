@@ -35,6 +35,7 @@ import type {
   RunTotals,
 } from "./recorder-types";
 import { selectLatestA11yRuns } from "../../shared/a11y-rollup.mjs";
+import { aiDebugFinding, type AiDebugReport } from "./ai-debug-stats";
 import type { StepDurationRow, StepHealthRow } from "../../shared/metrics-query.mjs";
 import type { CostBreakdown } from "../../shared/step-insights.mjs";
 
@@ -47,7 +48,8 @@ export type CategoryId =
   | "a11y"
   | "visual"
   | "speed"
-  | "steps";
+  | "steps"
+  | "ai-debug";
 
 export interface CategoryMeta {
   id: CategoryId;
@@ -69,12 +71,14 @@ export interface CategoryMeta {
 }
 
 /**
- * The seven, in the order the board draws them.
+ * The eight, in the order the board draws them.
  *
  * ORDERED BY HOW OFTEN THEY HAVE SOMETHING TO SAY, not alphabetically and not
  * by importance. Outcomes is first because it is the only one that says
- * something after a single run; Step health is last because it is the one most
- * often unavailable (it needs the metrics DB).
+ * something after a single run; Step health is near the end because it is the
+ * one most often unavailable (it needs the metrics DB), and AI Debug is last
+ * because it is the only one that stays silent until the user opts into a
+ * feature that costs a model call.
  */
 export const CATEGORIES: readonly CategoryMeta[] = [
   {
@@ -125,6 +129,20 @@ export const CATEGORIES: readonly CategoryMeta[] = [
     short: "Steps",
     unit: "steps are failing, healing or throwing",
     unmeasured: "No steps recorded yet. Run a test and history accumulates here.",
+  },
+  {
+    // THE ONE TILE WHOSE HEADLINE IS A VOLUME RATHER THAN A FINDING. Every
+    // other category counts things that are wrong; this one counts diagnoses
+    // asked for, because "how much have I leaned on this" is the question
+    // people actually arrive with. What makes it amber is separate and lives in
+    // `aiDebugFinding` — an ordered list of conditions rather than a boolean,
+    // because the day tests start diagnosing themselves this tile becomes the
+    // supervision surface and grows a third condition.
+    id: "ai-debug",
+    label: "AI Debug",
+    short: "AI Debug",
+    unit: "diagnoses asked for",
+    unmeasured: "Press “Debug with AI” on a failed run and what it costs and saves is tracked here.",
   },
 ] as const;
 
@@ -185,6 +203,19 @@ export const FACET_LABELS: Partial<Record<CategoryId, Record<string, string>>> =
     failing: "Failing",
     healing: "Healing",
     throwing: "Throwing page errors",
+  },
+  // The four ways an attempt ends, plus the two drills that are about what came
+  // out of them rather than how they finished.
+  "ai-debug": {
+    done: "Answered",
+    error: "Failed",
+    cancelled: "Stopped by you",
+    interrupted: "Interrupted",
+    fixes: "Fixes applied",
+    // "Tests debugged" and not "Most debugged tests": it is a row label in a
+    // column sized for the four outcome names above it, and the longer phrase
+    // was the only one on the screen that wrapped to two lines.
+    tests: "Tests debugged",
   },
 };
 
@@ -297,6 +328,11 @@ export interface CategoryInputs {
     rows: StepDurationRow[];
     slowed: StepDurationRow[];
   };
+  /** The AI Debug report, already built by `buildAiDebugReport`. Passed whole
+   *  rather than as its three sources, because the tile and the dashboard must
+   *  be looking at the same arithmetic — the same rule `latestA11yRuns` exists
+   *  for, one category over. */
+  aiDebug?: AiDebugReport;
 }
 
 function plural(n: number, one: string, many = `${one}s`): string {
@@ -483,6 +519,36 @@ export function summariseSpeed(slowness: NonNullable<CategoryInputs["slowness"]>
   );
 }
 
+/**
+ * The AI Debug tile.
+ *
+ * ITS HEADLINE IS A VOLUME AND ITS TONE IS A FINDING, and those are two
+ * different questions on purpose. "How many diagnoses have I asked for" is what
+ * a reader arrives with; whether anything needs attention is answered by
+ * `aiDebugFinding`, which is an ordered list of conditions rather than a count
+ * of anything on screen. That split is what lets the tile stay green while
+ * showing a large number — which is the normal, healthy case — and go amber
+ * over changes to the user's tests that nobody has read.
+ */
+export function summariseAiDebug(report: AiDebugReport): CategorySummary {
+  if (report.attempts === 0) return unmeasured("ai-debug");
+  const finding = aiDebugFinding(report);
+  const answered = report.outcomes.done;
+  return {
+    id: "ai-debug",
+    state: finding ? "findings" : "clean",
+    display: String(report.attempts),
+    say:
+      finding?.say ??
+      `${answered} of ${report.attempts} ${plural(report.attempts, "attempt")} produced an answer`,
+    window: `${report.fixes.applied} ${plural(report.fixes.applied, "fix", "fixes")} applied`,
+    // Amber, never red, and for the reason the a11y tile is never red: nothing
+    // here decides whether a test passes. An unreviewed fix is a decision
+    // waiting on the user, not a broken suite.
+    tone: finding ? "amber" : "phos",
+  };
+}
+
 export function summariseSteps(
   stepHealth: NonNullable<CategoryInputs["stepHealth"]>,
 ): CategorySummary {
@@ -533,6 +599,9 @@ export function summariseAll(inputs: CategoryInputs): CategorySummary[] {
         break;
       case "steps":
         if (inputs.stepHealth) out.push(summariseSteps(inputs.stepHealth));
+        break;
+      case "ai-debug":
+        if (inputs.aiDebug) out.push(summariseAiDebug(inputs.aiDebug));
         break;
     }
   }

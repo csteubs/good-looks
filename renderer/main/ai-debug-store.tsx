@@ -29,9 +29,11 @@ import {
 } from "../lib/ai-debug-sessions";
 import { extractCorrectedScript } from "../lib/parse-llm-response";
 import type {
+  AiDebugHistoryRecord,
   AiDebugKind,
   AiDebugSession,
   AiDebugStatus,
+  AiDebugTrigger,
   ScriptChangeSource,
   TestSpeed,
 } from "../lib/recorder-types";
@@ -122,11 +124,17 @@ export interface AiDebugContextValue {
    *  surface must then say the answer is about earlier output. */
   markSuperseded: (key: string) => void;
   /** Begin (or restart) a stream. `scriptHash` records the script the prompt
-   *  was built from, stamped at SEND time. Returns why it was refused, if it was. */
+   *  was built from, stamped at SEND time. Returns why it was refused, if it was.
+   *
+   *  `trigger` says who asked, and defaults to `manual` because today everything
+   *  does. It is threaded through to the history the Stats board counts, where
+   *  it is the one fact that cannot be reconstructed later: the day a failing
+   *  test raises its own diagnosis, every row written before this existed would
+   *  be unclassifiable. */
   startStream: (
     key: string,
     messages: LlmMessage[],
-    options?: { model?: string; scriptHash?: string },
+    options?: { model?: string; scriptHash?: string; trigger?: AiDebugTrigger },
   ) => Promise<StartDecision>;
   /** Whether starting `key` right now would be refused, and by which session. */
   capacityFor: (key: string) => StartDecision;
@@ -219,6 +227,22 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
   // Readable from the llm:done/llm:error handlers, whose closures outlive any
   // one render: "is this session's dialog on screen right now?"
   const expandedRef = React.useRef<string | null>(null);
+  // The OPEN history attempt per session key — the row the Stats board counts.
+  // A ref rather than state: nothing renders from it, and a re-render per
+  // recorded attempt is exactly the cost the two-context split above exists to
+  // avoid. Opened in `startStream`, updated by `patchAttempt`, closed by
+  // `settleAttempt` or by the terminal stream events.
+  const attemptRef = React.useRef<Record<string, AiDebugHistoryRecord>>({});
+  // How much ANSWER has arrived for the open attempt, counted as it streams.
+  //
+  // A COUNTER RATHER THAN A READ OF THE TEXT, and that is not a micro-
+  // optimisation. Chunks are buffered in `pendingRef` and committed to React
+  // state on a 60ms timer, so at the moment a stream ends neither
+  // `pendingRef` (just emptied by the flush) nor `contentRef` (updated inside
+  // a state updater that has not run yet) reliably holds the whole answer —
+  // reading either one recorded a completed 3KB diagnosis as 0 characters, and
+  // the token estimate built on it as zero with it.
+  const answerCharsRef = React.useRef<Record<string, number>>({});
 
   metaRef.current = metas;
   expandedRef.current = expandedKey;
@@ -236,6 +260,65 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
         // Persistence is best-effort; the live session is unaffected.
       });
   }, []);
+
+  // ── The history attempt (what Stats counts) ────────────────────────
+  //
+  // A SECOND, MUCH SMALLER RECORD, written twice per send rather than per
+  // token. `persist` above keeps the ANSWER, capped at twenty and deleted with
+  // its test; this keeps the FACTS of the attempt, which outlive both. See
+  // main/services/ai-debug-history-store.ts.
+  //
+  // AN ATTEMPT, NOT A SESSION. Re-sending after a connection error is a second
+  // wait and a second chance at an answer; folding it into the first would
+  // under-count both the failures and the time. Session keys are per test, so
+  // the id is minted per send.
+
+  /** Write the open attempt for `key`, patched. A no-op when nothing is open,
+   *  which is the common case for every terminal event that did not come from
+   *  a send this store made (a restored session, a foreign requestId).
+   *
+   *  IT CANNOT THROW, AND THAT IS LOAD-BEARING RATHER THAN DEFENSIVE. This runs
+   *  inside the `llm:chunk` handler, ahead of `appendChunk` — so a throw here
+   *  would swallow the token that triggered it and, in the terminal handlers,
+   *  could leave the status icon advertising a job that has already finished.
+   *  Recording history is a footnote to the answer the user is waiting for and
+   *  must never be able to cost them one. The `catch` covers a rejected
+   *  promise; the `try` covers a synchronous throw, which is what an api
+   *  surface missing this method actually produces. */
+  const patchAttempt = React.useCallback(
+    (key: string, patch: Partial<AiDebugHistoryRecord>) => {
+      const open = attemptRef.current[key];
+      if (!open) return;
+      const next = { ...open, ...patch };
+      // Settled — stop tracking it, so a later terminal event for the same
+      // session cannot reopen and rewrite a row that is already history.
+      if (next.endedAt !== null) delete attemptRef.current[key];
+      else attemptRef.current[key] = next;
+      try {
+        void api.aiDebug.record(next).catch(() => {});
+      } catch {
+        // Same rule as `persist`: losing a row costs a point on a chart.
+      }
+    },
+    [],
+  );
+
+  /** Close whatever attempt is open for `key`, if any. Used where the store
+   *  cancels a request itself and therefore will never see its `llm:done` —
+   *  discarding a session, and resetting one for a new run. Without this the
+   *  row would sit `streaming` until the next launch reconciled it, and count
+   *  as neither finished nor failed in between. */
+  const settleAttempt = React.useCallback(
+    (key: string, status: AiDebugStatus) => {
+      if (!attemptRef.current[key]) return;
+      patchAttempt(key, {
+        status,
+        endedAt: Date.now(),
+        answerChars: answerCharsRef.current[key] ?? 0,
+      });
+    },
+    [patchAttempt],
+  );
 
   const patchMeta = React.useCallback(
     (key: string, patch: Partial<AiDebugMeta>, opts?: { persist?: boolean }) => {
@@ -277,6 +360,12 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
 
   const appendChunk = React.useCallback(
     (key: string, delta: string, isReasoning: boolean) => {
+      // Counted here, where every chunk passes exactly once, and only for
+      // ANSWER text — reasoning tokens are a different thing the history does
+      // not claim to measure.
+      if (!isReasoning) {
+        answerCharsRef.current[key] = (answerCharsRef.current[key] ?? 0) + delta.length;
+      }
       const base = pendingRef.current[key] ?? contentRef.current[key] ?? EMPTY_CONTENT;
       pendingRef.current[key] = isReasoning
         ? { content: base.content, reasoning: base.reasoning + delta }
@@ -369,6 +458,13 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
       ({ requestId, delta, reasoning }) => {
         const key = routeRef.current[requestId];
         if (!key) return;
+        // The first token is the moment the model started answering, and it is
+        // recorded immediately rather than at the end: an attempt the app dies
+        // during would otherwise have no evidence it was ever alive, and its
+        // reconciled duration would be zero.
+        if (attemptRef.current[key]?.firstTokenMs === null) {
+          patchAttempt(key, { firstTokenMs: Date.now() - attemptRef.current[key].startedAt });
+        }
         appendChunk(key, delta, Boolean(reasoning));
       },
     );
@@ -385,6 +481,9 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
           status: cancelled ? "cancelled" : "done",
           requestId: null,
         });
+        // Flushed first, so the recorded answer SIZE is the whole answer rather
+        // than everything bar the last 60ms.
+        settleAttempt(key, cancelled ? "cancelled" : "done");
         // A cancel is the user's own act — nothing to announce.
         if (!cancelled) announceFinished(key, "done");
       },
@@ -397,6 +496,14 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
         delete routeRef.current[requestId];
         flushPending();
         patchMeta(key, { status: "error", error: message, errorKind: kind ?? null, requestId: null });
+        // The KIND, never the message: the history holds no text from the
+        // provider, and the kind is what "why did sessions fail" is counted by.
+        patchAttempt(key, {
+          status: "error",
+          errorKind: kind ?? null,
+          endedAt: Date.now(),
+          answerChars: answerCharsRef.current[key] ?? 0,
+        });
         announceFinished(key, "error");
       },
     );
@@ -405,7 +512,7 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
       offDone();
       offError();
     };
-  }, [announceFinished, appendChunk, flushPending, patchMeta]);
+  }, [announceFinished, appendChunk, flushPending, patchAttempt, patchMeta, settleAttempt]);
 
   // Flush any buffered chunk on unmount so a pending timer can't drop the tail
   // of an answer.
@@ -538,6 +645,7 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
         // by key — leaving it alive would stream them into the new session.
         void api.llm.cancel(prior.requestId).catch(() => {});
         delete routeRef.current[prior.requestId];
+        settleAttempt(prior.key, "cancelled");
       }
       if (isNewRun) {
         delete pendingRef.current[init.key];
@@ -622,6 +730,9 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
     if (meta?.requestId) {
       void api.llm.cancel(meta.requestId).catch(() => {});
       delete routeRef.current[meta.requestId];
+      // Same reason as in startStream: the route entry is gone, so the cancel's
+      // own llm:done will not reach this key and the row would never settle.
+      settleAttempt(key, "cancelled");
     }
     delete ctxRef.current[key];
     delete pendingRef.current[key];
@@ -662,7 +773,11 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
   );
 
   const startStream = React.useCallback(
-    async (key: string, messages: LlmMessage[], options?: { model?: string; scriptHash?: string }) => {
+    async (
+      key: string,
+      messages: LlmMessage[],
+      options?: { model?: string; scriptHash?: string; trigger?: AiDebugTrigger },
+    ) => {
       const decision = canStartStream(Object.values(metaRef.current), key);
       if (!decision.ok) return decision;
 
@@ -673,9 +788,17 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
       if (existing?.requestId) {
         void api.llm.cancel(existing.requestId).catch(() => {});
         delete routeRef.current[existing.requestId];
+        // Its history row is closed here rather than left to the `llm:done`
+        // that cancel will produce — the route entry is already gone, so that
+        // event will not find this key and the row would never settle.
+        settleAttempt(key, "cancelled");
       }
 
       pendingRef.current[key] = EMPTY_CONTENT;
+      // A re-send starts a new attempt, and its size starts at zero — carrying
+      // the previous one's count over would inflate every token figure by the
+      // whole history of that session.
+      answerCharsRef.current[key] = 0;
       setContents((prev) => {
         const next = { ...prev, [key]: EMPTY_CONTENT };
         contentRef.current = next;
@@ -701,10 +824,47 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
         { persist: false },
       );
 
+      // The attempt's own clock, and its id. Strictly increasing (see
+      // `nextStamp`), so two sends in the same millisecond are two rows rather
+      // than one overwriting the other.
+      const attemptStartedAt = nextStamp();
+      const meta = metaRef.current[key];
+      const promptChars = messages.reduce((n, m) => n + m.content.length, 0);
+
       try {
-        const { requestId } = await api.llm.chat({ messages, model: options?.model });
+        const { requestId, provider, model } = await api.llm.chat({
+          messages,
+          model: options?.model,
+        });
         routeRef.current[requestId] = key;
         patchMeta(key, { status: "streaming", requestId });
+        // Opened only once the request exists, and stamped with the provider
+        // the BACKEND resolved — reading the setting here would name whichever
+        // provider is selected now, which is a different question for any
+        // session that outlives a settings change.
+        attemptRef.current[key] = {
+          id: `${key}@${attemptStartedAt}`,
+          key,
+          kind: meta?.kind ?? "run",
+          testId: meta?.testId ?? "",
+          testName: meta?.testName ?? "",
+          trigger: options?.trigger ?? "manual",
+          provider,
+          model: model || options?.model || null,
+          status: "streaming",
+          errorKind: null,
+          startedAt: attemptStartedAt,
+          endedAt: null,
+          firstTokenMs: null,
+          promptChars,
+          answerChars: 0,
+          runKey: meta?.runKey ?? null,
+        };
+        try {
+          void api.aiDebug.record(attemptRef.current[key]).catch(() => {});
+        } catch {
+          // See `patchAttempt`: the history must never cost an answer.
+        }
       } catch (err) {
         patchMeta(key, {
           status: "error",
@@ -712,10 +872,37 @@ export function AiDebugProvider({ children }: { children: React.ReactNode }) {
           errorKind: null,
           requestId: null,
         });
+        // A send that never started is still an attempt, and one of the more
+        // interesting ones: it is what "the provider was unreachable all
+        // afternoon" looks like in the history. Written closed, in one call.
+        try {
+          void api.aiDebug
+            .record({
+              id: `${key}@${attemptStartedAt}`,
+              key,
+              kind: meta?.kind ?? "run",
+              testId: meta?.testId ?? "",
+              testName: meta?.testName ?? "",
+              trigger: options?.trigger ?? "manual",
+              provider: null,
+              model: options?.model ?? null,
+              status: "error",
+              errorKind: null,
+              startedAt: attemptStartedAt,
+              endedAt: Date.now(),
+              firstTokenMs: null,
+              promptChars,
+              answerChars: 0,
+              runKey: meta?.runKey ?? null,
+            })
+            .catch(() => {});
+        } catch {
+          // See `patchAttempt`: the history must never cost an answer.
+        }
       }
       return decision;
     },
-    [patchMeta],
+    [patchMeta, settleAttempt],
   );
 
   const getContext = React.useCallback((key: string) => ctxRef.current[key] ?? null, []);

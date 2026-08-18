@@ -169,14 +169,19 @@ describe("currency", () => {
     await waitFor(() => expect(savedPatch(controller)).toEqual({ costCurrency: "gbp" }));
   });
 
-  it("shows the chosen symbol on the price field", () => {
+  it("shows the chosen symbol on both money fields", () => {
     // The pane and the panel must agree about what the number is denominated
     // in — a price field reading "$" beside figures reading "£" is worse than
     // neither carrying a symbol at all.
+    //
+    // BOTH fields, and that is the assertion rather than an accident of the
+    // query: the CI price and the hourly rate are the two money inputs on this
+    // pane, and one of them silently keeping a stale symbol is exactly the
+    // half-applied change this test exists to catch.
     const controller = makeController();
     controller.settings.costCurrency = "eur";
     renderPane(<CostPane />, { controller });
-    expect(screen.getByText("€")).toBeTruthy();
+    expect(screen.getAllByText("€")).toHaveLength(2);
   });
 
   it("shows no symbol under `No symbol`", () => {
@@ -190,7 +195,7 @@ describe("currency", () => {
     const controller = makeController();
     controller.settings.costCurrency = "cad";
     renderPane(<CostPane />, { controller });
-    expect(screen.getByText("CA$")).toBeTruthy();
+    expect(screen.getAllByText("CA$")).toHaveLength(2);
   });
 });
 

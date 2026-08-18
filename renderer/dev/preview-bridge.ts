@@ -34,6 +34,7 @@ import {
   BATCHES,
   ROUTINES,
   HEALS,
+  AI_DEBUG_HISTORY,
   SCRIPT_CHANGES,
   LLM_CONFIG,
   LLM_STATUS,
@@ -195,6 +196,7 @@ function seed() {
     runs: [...structuredClone(RUNS), ...costFiller()],
     heals: structuredClone(HEALS),
     scriptChanges: structuredClone(SCRIPT_CHANGES),
+    aiDebugHistory: structuredClone(AI_DEBUG_HISTORY),
     // Edited in place, so a save made in the preview STICKS for the session — a
     // bridge that forgot every save would make the Routine editor look broken
     // in the one place a person can actually drive it.
@@ -1239,6 +1241,17 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
 
     // ── AI debug and annotations ─────────────────────────────────────────
     "aiDebug:list": () => [],
+    /** The history the Stats board's AI Debug category counts. Fixtures rather
+     *  than `[]`, because an empty history renders the "never used" tile — and
+     *  the whole dashboard behind it then has no way of being looked at. */
+    "aiDebug:history": () => state.aiDebugHistory,
+    "aiDebug:record": (p) => {
+      // The preview has no store to write to, so this reflects the record back
+      // and leaves the list alone: nothing here can start a real stream, so a
+      // row appended by this path would be a row about nothing.
+      return (p as { record?: unknown } | undefined)?.record ?? null;
+    },
+    "aiDebug:clear": () => ({ removed: 0, historyRemoved: 0 }),
     /** Fire-and-forget in the app; the backend gates on the setting itself.
      *  Answering `{ ok: true }` keeps the renderer's post-completion path on
      *  its normal branch instead of its error one. */

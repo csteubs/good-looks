@@ -2048,6 +2048,18 @@ export interface RecorderSettings {
   /** How long one run of one test would take a person, by hand, in minutes
    *  (default 12). The other half of every "manual testing avoided" figure. */
   costMinutesPerManualRun: number;
+  /** How long working out why a test failed would take a person, in minutes
+   *  (default 15). The Stats → AI Debug category multiplies this by diagnoses
+   *  that were KEPT, then subtracts the time actually spent waiting on the
+   *  model — so the figure is a net saving rather than a gross one. */
+  costMinutesPerManualDebug: number;
+  /** What an hour of that person's time is worth (default 0).
+   *
+   *  ZERO IS NOT A PRICE. It is "you have not told me", and every money figure
+   *  derived from saved time is SUPPRESSED at 0 rather than rendered as free.
+   *  The app declines to guess this — see `shared/cost-units.mjs` — so saved
+   *  time stays in hours until the user states a rate of their own. */
+  costHourlyRate: number;
 }
 
 /** What a successful Auto-Heal is allowed to do to the stored test. */
@@ -2679,6 +2691,172 @@ export const AI_DEBUG_SESSIONS_VERSION = 1;
 export interface AiDebugSessionsFile {
   version: number;
   sessions: AiDebugSession[];
+}
+
+// ── AI debug history (what the Stats board counts) ───────────────────
+//
+// A SECOND, SEPARATE STORE, and the split is the whole point. `AiDebugSession`
+// above is the ANSWER — the model's text, quoting the script and the run
+// output — and it is kept for reading: newest twenty only, hard-deleted with
+// its test, because with the test gone there is no route to it and no reason to
+// keep the quotes. That is a good rule for content and a useless one for
+// counting: it cannot say how many sessions there have ever been, how long they
+// took, or whether last month was better than this one.
+//
+// So the FACTS about a session live here instead, with no content at all: no
+// answer, no reasoning, no script, no error message — only its shape (see
+// `AiDebugHistoryRecord`). Nothing in this record quotes the page or the test,
+// which is what lets it outlive both the twenty-session cap and the test
+// itself. A deleted test TOMBSTONES its rows the way run records are
+// tombstoned, rather than erasing them: the sessions really happened, and
+// rewriting the totals to pretend otherwise is what makes an aggregate stop
+// being worth reading.
+
+/** Whether a person asked for this diagnosis, or the app started it on its own.
+ *
+ *  EVERY SESSION IS `manual` TODAY — nothing in the app starts one by itself.
+ *  It is recorded anyway because the field cannot be backfilled: the day
+ *  failing tests debug themselves, "I asked for this" versus "it decided" is
+ *  the first filter every panel here needs, and every record written before the
+ *  field existed would be unclassifiable forever. */
+export type AiDebugTrigger = "manual" | "auto";
+
+/**
+ * One ATTEMPT at one diagnosis — the unit the Stats board counts.
+ *
+ * An attempt, not a session: re-sending after a connection error is a second
+ * request, a second wait and a second chance at an answer, and folding it into
+ * the first would quietly under-count both the failures and the time. Sessions
+ * are keyed by test (`run:<testId>`), so the key alone cannot separate them;
+ * `id` is minted per send.
+ *
+ * NO CONTENT, EVER. `answerChars` is the SIZE of the answer, not the answer;
+ * `errorKind` is which class of failure it was, not the message. See the header
+ * above for why that constraint is what makes this store outlive its subject.
+ */
+export interface AiDebugHistoryRecord {
+  /** Unique per attempt. Minted by the renderer at send time. */
+  id: string;
+  /** The session key this attempt belonged to (`run:<id>` / `step:<id>:<n>`). */
+  key: string;
+  kind: AiDebugKind;
+  testId: string;
+  /** The test's name AS IT WAS. Copied rather than joined, because the join
+   *  stops resolving the moment the test is deleted — and a tombstoned row that
+   *  cannot name its test is a row no panel can list. */
+  testName: string;
+  /** The test has since been deleted. The record stays and still counts; every
+   *  surface that offers to OPEN the test must skip it. */
+  testDeleted?: boolean;
+  trigger: AiDebugTrigger;
+  /** Which provider answered. Null means UNKNOWN — a record written before the
+   *  provider was stamped — and must never be reported as local or as hosted:
+   *  the local-model savings figure is exactly the number a guess here would
+   *  corrupt. */
+  provider: string | null;
+  model: string | null;
+  /** How it ended. `streaming` while live, and rewritten to `interrupted` at
+   *  startup if the app exited first — same reconciliation the session store
+   *  does, and for the same reason: a permanently-live row would inflate every
+   *  duration on the board. */
+  status: AiDebugStatus;
+  errorKind?: LlmErrorKind | null;
+  startedAt: number;
+  /** Null while the attempt is still live. */
+  endedAt: number | null;
+  /** Wait before the first token arrived. Null when nothing arrived at all,
+   *  which is a different fact from a long wait and reads as one. */
+  firstTokenMs: number | null;
+  /** Size of the prompt and of the answer, in characters. The only basis this
+   *  app has for a token figure (~4 chars/token, the approximation
+   *  `provider-errors.ts` already uses on screen), and it is labelled as an
+   *  approximation everywhere it is shown. */
+  promptChars: number;
+  answerChars: number;
+  /** Which run this attempt was about, so a fix can be matched to the run that
+   *  followed it. Null for step sessions and for anything predating run keys. */
+  runKey: string | null;
+}
+
+/** Bumped when the persisted shape changes; an unrecognized version reads as
+ *  empty rather than half-parsing. */
+export const AI_DEBUG_HISTORY_VERSION = 1;
+
+export interface AiDebugHistoryFile {
+  version: number;
+  records: AiDebugHistoryRecord[];
+}
+
+/** The statuses a record can hold. Anything else read off disk is not a status
+ *  this app produces, and is filed as `interrupted` rather than trusted. */
+const AI_DEBUG_STATUSES: AiDebugStatus[] = [
+  "idle",
+  "streaming",
+  "done",
+  "error",
+  "cancelled",
+  "interrupted",
+];
+
+const LLM_ERROR_KINDS: LlmErrorKind[] = [
+  "no-model",
+  "auth",
+  "model-unavailable",
+  "provider",
+  "empty-response",
+  "connection",
+];
+
+function finiteOr(v: unknown, fallback: number): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+}
+
+function nullableFinite(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
+/**
+ * Rebuild a history record from whatever arrived.
+ *
+ * REBUILT, NOT FILTERED — the rule the capture boundary is held to, applied
+ * here for the same reason. Spreading the input and overwriting known keys
+ * carries every unknown key straight into the file, so the next field wired in
+ * would silently become a hole. This lists what a record is and takes nothing
+ * else, which also means a record read back from a hand-edited file cannot
+ * carry the one thing this store promises never to hold: content.
+ */
+export function normalizeAiDebugHistoryRecord(input: unknown): AiDebugHistoryRecord | null {
+  if (!input || typeof input !== "object") return null;
+  const raw = input as Record<string, unknown>;
+  const id = String(raw.id ?? "");
+  const key = String(raw.key ?? "");
+  const testId = String(raw.testId ?? "");
+  // An id-less or test-less record can be neither found, updated nor attributed
+  // — dropping it beats storing a row nothing can ever reach.
+  if (!id || !key || !testId) return null;
+  const status = raw.status as AiDebugStatus;
+  const errorKind = raw.errorKind as LlmErrorKind;
+  return {
+    id,
+    key,
+    kind: raw.kind === "step" ? "step" : "run",
+    testId,
+    testName: String(raw.testName ?? ""),
+    ...(raw.testDeleted ? { testDeleted: true } : {}),
+    trigger: raw.trigger === "auto" ? "auto" : "manual",
+    provider: typeof raw.provider === "string" && raw.provider ? raw.provider : null,
+    model: typeof raw.model === "string" && raw.model ? raw.model : null,
+    status: AI_DEBUG_STATUSES.includes(status) ? status : "interrupted",
+    errorKind: LLM_ERROR_KINDS.includes(errorKind) ? errorKind : null,
+    startedAt: finiteOr(raw.startedAt, 0),
+    endedAt: nullableFinite(raw.endedAt),
+    firstTokenMs: nullableFinite(raw.firstTokenMs),
+    // Negative sizes are not a thing; clamping beats trusting, because these
+    // are multiplied into a token estimate the panel puts on screen.
+    promptChars: Math.max(0, Math.round(finiteOr(raw.promptChars, 0))),
+    answerChars: Math.max(0, Math.round(finiteOr(raw.answerChars, 0))),
+    runKey: typeof raw.runKey === "string" && raw.runKey ? raw.runKey : null,
+  };
 }
 
 /**

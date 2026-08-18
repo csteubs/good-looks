@@ -152,6 +152,8 @@ export function rateForRunner(id) {
 export const COST_LIMITS = {
   costPerCiMinute: { min: 0, max: 100 },
   minutesPerManualRun: { min: 0.5, max: 480 },
+  minutesPerManualDebug: { min: 1, max: 480 },
+  hourlyRate: { min: 0, max: 10000 },
 };
 
 /** The shipped guesses. Deliberately conservative: every headline figure on the
@@ -160,6 +162,32 @@ export const COST_LIMITS = {
  *  "Custom" and the panel keeps saying the numbers are its own guess. */
 export const COST_DEFAULT_PER_CI_MINUTE = 0.008;
 export const COST_DEFAULT_MINUTES_PER_MANUAL_RUN = 12;
+
+/**
+ * How long a person would take to work out why a test failed, without the model.
+ *
+ * The AI Debug category multiplies this by diagnoses that were actually kept —
+ * not by every session — and then subtracts the time spent waiting on the
+ * model. Fifteen minutes is a deliberately unflattering figure for reading a
+ * stack trace, finding the step, and checking the page: the number is on screen
+ * and editable precisely because a failure you already understand costs two
+ * minutes and one you don't can cost an afternoon.
+ */
+export const COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG = 15;
+
+/**
+ * What an hour of that person's time is worth. ZERO MEANS "DON'T SAY".
+ *
+ * `cost-model.mjs`'s sibling comment explains the rule this bends: spend is
+ * money because a CI minute has a published price, and value is TIME because an
+ * hourly rate varies by an order of magnitude between users, nobody would
+ * notice a bad default, and a currency figure carries far more authority than
+ * the guess behind it deserves. So the default is 0 and 0 renders NOTHING —
+ * every saving stays in hours until a user states their own rate. The panel
+ * then shows a figure derived from a number they typed, which is a calculation
+ * they can check, rather than one the app invented on their behalf.
+ */
+export const COST_DEFAULT_HOURLY_RATE = 0;
 
 function clamp(n, fallback, bounds) {
   if (typeof n !== "number" || !Number.isFinite(n)) return fallback;
@@ -174,4 +202,16 @@ export function clampCostPerCiMinute(n) {
 /** Clamp minutes per manual run, falling back to the shipped guess. */
 export function clampMinutesPerManualRun(n) {
   return clamp(n, COST_DEFAULT_MINUTES_PER_MANUAL_RUN, COST_LIMITS.minutesPerManualRun);
+}
+
+/** Clamp minutes per manual debug, falling back to the shipped guess. */
+export function clampMinutesPerManualDebug(n) {
+  return clamp(n, COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG, COST_LIMITS.minutesPerManualDebug);
+}
+
+/** Clamp an hourly rate. Falls back to 0, which is not a price — it is the
+ *  app's "you have not told me", and every money figure derived from it is
+ *  suppressed rather than rendered as free. */
+export function clampHourlyRate(n) {
+  return clamp(n, COST_DEFAULT_HOURLY_RATE, COST_LIMITS.hourlyRate);
 }

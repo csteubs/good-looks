@@ -38,6 +38,10 @@ const h = vi.hoisted(() => {
     remove: vi.fn(),
     clear: vi.fn(),
     notifyDone: vi.fn(),
+    // Every history row this store writes, in order. The store writes these
+    // twice per attempt (sent, then settled), so a test asserting on them is
+    // asserting on the attempt's whole life rather than on a snapshot.
+    record: vi.fn(),
   };
 });
 
@@ -61,12 +65,20 @@ vi.mock("../lib/api", () => ({
         h.notifyDone(p);
         return { ok: true };
       },
+      history: async () => [],
+      record: async (record: unknown) => {
+        h.record(record);
+        return record;
+      },
     },
     recorder: { getSettings: async () => h.settings },
     llm: {
       chat: async (params: unknown) => {
         h.chat(params);
-        return { requestId: h.nextRequestId };
+        // The real handler reports which provider and model it resolved to —
+        // the AI debug history stamps both, and a mock returning only the id
+        // would let a regression that drops them pass here.
+        return { requestId: h.nextRequestId, provider: "ollama", model: "test-model" };
       },
       cancel: async (requestId: string) => {
         h.cancel(requestId);
@@ -977,5 +989,139 @@ describe("finishing while minimized", () => {
       expect(toastTexts().some((t) => t.title.includes("AI debug finished — Checkout"))).toBe(true),
     );
     expect(onApplyScript).not.toHaveBeenCalled();
+  });
+});
+
+// ── The history attempt ───────────────────────────────────────────────
+//
+// The rows the Stats board counts. Everything here is silent when it breaks: a
+// row that never settles reads as a job still running weeks later, a row that
+// is never opened makes an app crash look like a session that never happened,
+// and a provider read from the wrong place is a local-versus-hosted split that
+// is quietly wrong rather than absent.
+
+describe("the history attempt", () => {
+  /** Every record written for `key`, in the order it was written. */
+  function rows(key: string) {
+    return h.record.mock.calls
+      .map((c) => c[0] as { key: string } & Record<string, unknown>)
+      .filter((r) => r.key === key);
+  }
+
+  /** The most recent one. Not `.at(-1)`: this project targets ES2020. */
+  function lastRow(key: string) {
+    const all = rows(key);
+    return all[all.length - 1];
+  }
+
+  it("opens a row when the stream starts and closes it when it ends", async () => {
+    render(<Harness sessionKey={KEY} />);
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    await startStream(KEY);
+
+    expect(rows(KEY)).toHaveLength(1);
+    expect(rows(KEY)[0]).toMatchObject({ status: "streaming", endedAt: null });
+
+    emit("llm:chunk", { requestId: "req-1", delta: "an answer" });
+    emit("llm:done", { requestId: "req-1" });
+
+    const settled = lastRow(KEY);
+    expect(settled.status).toBe("done");
+    expect(settled.endedAt).not.toBeNull();
+    // The SIZE of the answer, never the answer.
+    expect(settled.answerChars).toBe("an answer".length);
+    expect(JSON.stringify(settled)).not.toContain("an answer");
+  });
+
+  it("stamps the provider the backend resolved, not the current setting", async () => {
+    render(<Harness sessionKey={KEY} />);
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    await startStream(KEY);
+    expect(rows(KEY)[0]).toMatchObject({ provider: "ollama", model: "test-model" });
+  });
+
+  it("records the first token as soon as it arrives", async () => {
+    // Not at the end: an attempt the app dies during would otherwise carry no
+    // evidence it was ever alive, and startup would reconcile it to zero length.
+    render(<Harness sessionKey={KEY} />);
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    await startStream(KEY);
+    emit("llm:chunk", { requestId: "req-1", delta: "hi" });
+
+    const withToken = rows(KEY).find((r) => r.firstTokenMs !== null);
+    expect(withToken).toBeTruthy();
+    expect(withToken!.status).toBe("streaming");
+  });
+
+  it("files a failure by KIND, never by message", async () => {
+    render(<Harness sessionKey={KEY} />);
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    await startStream(KEY);
+    emit("llm:error", {
+      requestId: "req-1",
+      message: "connect ECONNREFUSED 127.0.0.1:11434",
+      kind: "connection",
+    });
+
+    const settled = lastRow(KEY);
+    expect(settled).toMatchObject({ status: "error", errorKind: "connection" });
+    expect(JSON.stringify(settled)).not.toContain("ECONNREFUSED");
+  });
+
+  it("closes the row when the user discards a live session", async () => {
+    // The store cancels the request itself and drops the route entry, so the
+    // `llm:done` that cancel produces will never reach this key. Without an
+    // explicit close the row would sit `streaming` until the next launch.
+    render(<Harness sessionKey={KEY} />);
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    await startStream(KEY);
+    act(() => store.discard(KEY));
+
+    expect(lastRow(KEY)).toMatchObject({ status: "cancelled" });
+    expect(lastRow(KEY).endedAt).not.toBeNull();
+  });
+
+  it("gives a re-send its own row rather than overwriting the first", async () => {
+    // An attempt, not a session: a second send is a second wait and a second
+    // chance at an answer, and folding them together would under-count both the
+    // failures and the time.
+    render(<Harness sessionKey={KEY} />);
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    await startStream(KEY);
+    emit("llm:error", { requestId: "req-1", message: "no", kind: "connection" });
+    h.nextRequestId = "req-2";
+    await startStream(KEY);
+
+    const ids = new Set(rows(KEY).map((r) => r.id));
+    expect(ids.size).toBe(2);
+  });
+
+  it("records an attempt that never reached a provider", async () => {
+    // "The server was down all afternoon" has to be visible as attempts, not as
+    // an absence of them.
+    h.chat.mockImplementationOnce(() => {
+      throw new Error("backend is gone");
+    });
+    render(<Harness sessionKey={KEY} />);
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    await startStream(KEY);
+
+    const only = lastRow(KEY);
+    expect(only).toMatchObject({ status: "error", provider: null });
+    expect(only.endedAt).not.toBeNull();
+  });
+
+  it("defaults the trigger to manual, and carries an automatic one through", async () => {
+    render(<Harness sessionKey={KEY} />);
+    await waitFor(() => expect(store.sessions).toHaveLength(1));
+    await startStream(KEY);
+    expect(rows(KEY)[0].trigger).toBe("manual");
+
+    emit("llm:done", { requestId: "req-1" });
+    h.nextRequestId = "req-2";
+    await act(async () => {
+      await store.startStream(KEY, [{ role: "user", content: "hi" }], { trigger: "auto" });
+    });
+    expect(lastRow(KEY).trigger).toBe("auto");
   });
 });
