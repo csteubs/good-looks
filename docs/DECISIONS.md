@@ -10,6 +10,35 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-17 — Restoring `process.env.TZ` when there was no TZ to restore
+
+`main/services/routine-schedule.test.ts`.
+
+Two one-off scheduling tests failed on a laptop and passed in CI, which is the
+signature of a clock question answered in two different zones inside one file.
+
+`describe("an interval across a clock change")` sets `process.env.TZ` to
+`Europe/London` for real, because the DST property it tests does not exist in
+UTC — where the suite otherwise runs, every day is 24 hours and the right and
+the wrong arithmetic agree. Its `afterAll` put the old value back with
+`process.env.TZ = original`. `process.env` coerces, so when `original` is
+`undefined` — the usual case on a machine that has never exported TZ — that
+assigns the **string** `"undefined"`, Node reads it as an unknown zone, and
+every test after that block runs in UTC. On a CI runner where TZ is exported as
+`UTC` the same line restores correctly, which is why nothing here ever went red.
+
+The damage is specific to how these tests are written, and worth spelling out
+because it will recur: a `describe`'s `const moment = at(...)` is evaluated at
+COLLECTION time, in the process's real zone, while the `at(...)` calls inside an
+`it` body run later under whatever zone the hooks have left behind. A one-off at
+09:00 local (16:00 UTC) was therefore compared against 09:01 *UTC*, so
+`nextOccurrence` reported the moment as still ahead and `isDue` reported a fired
+one-off as still owed — both of them true statements about two different clocks.
+
+The fix is to `delete process.env.TZ` when there was none, and only assign when
+there was. No production code was wrong: `nextOccurrence` and `isDue` answer
+correctly in every zone, which the same file's 54 other cases already said.
+
 ### 2026-08-17 — The category verdict moved into the Categories header
 
 `renderer/main/stats/category-board.tsx`, `renderer/theme/screens.css`.

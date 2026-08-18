@@ -211,7 +211,15 @@ describe("an interval across a clock change", () => {
     process.env.TZ = "Europe/London";
   });
   afterAll(() => {
-    process.env.TZ = original;
+    // `process.env.TZ = undefined` assigns the STRING "undefined", which Node
+    // reads as an unknown zone and falls back to UTC — for the REST OF THE
+    // FILE. The tests below this block then build their `at(...)` moments in
+    // UTC while the `const`s beside them were built at collection time in the
+    // real local zone, so a one-off at 09:00 local compares as still ahead of
+    // 09:01 "local". Deleting the key is the only restore that works when
+    // there was no TZ to begin with, which is the usual case on a laptop.
+    if (original === undefined) delete process.env.TZ;
+    else process.env.TZ = original;
   });
 
   it("confirms the timezone actually took effect", () => {
