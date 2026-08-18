@@ -609,6 +609,12 @@ export function TestDetailView() {
       setEditingScript(false);
     }
     start(test.url, test.name, test.id);
+    // The composed `Dialog` never closes itself on a resolved confirm — callers
+    // close themselves (see `dialog-actions.test.tsx`). Test detail is inside
+    // the outlet, so the swap to RecordingView unmounts this dialog and hides
+    // the omission; closing explicitly keeps it correct if that ever changes,
+    // and keeps this dialog honest with its two siblings.
+    setTrainerConfirmOpen(false);
   };
 
   return (
@@ -701,7 +707,10 @@ export function TestDetailView() {
                   onConfirm={saveAndEditInTrainer}
                   destructiveAction={{
                     label: "Continue without saving",
-                    onClick: () => start(test.url, test.name, test.id),
+                    onClick: () => {
+                      start(test.url, test.name, test.id);
+                      setTrainerConfirmOpen(false);
+                    },
                   }}
                 />
               ) : null}

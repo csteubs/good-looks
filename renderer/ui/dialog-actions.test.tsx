@@ -25,7 +25,7 @@
 // as a proxy; `e2e/dialog-footer.spec.ts` is the one that lays this out in a
 // real browser and checks nothing escapes the panel.
 
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { Dialog, DialogActions } from "./index";
@@ -108,6 +108,38 @@ describe("the composed dialog's footer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save & Exit" }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(onDiscard).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT close itself when the confirm resolves — callers close themselves", async () => {
+    // THE CONTRACT, stated once. Every caller of `Dialog` was written against
+    // an auto-close that does not exist in this tree, which is how a modal and
+    // its full-viewport overlay came to sit on top of a started recording for
+    // the rest of the session. Restoring auto-close here is not the fix:
+    // `IssueComposeDialog` deliberately swallows its errors and must stay open,
+    // so a global close would break it. Callers close themselves instead —
+    // `check:dialog-close` enumerates the ones that must.
+    //
+    // Whichever future change flips this contract has to come through this
+    // test, and then through every caller that no longer needs its own close.
+    const onOpenChange = vi.fn();
+    const onConfirm = vi.fn(async () => {});
+    render(
+      <Dialog
+        open
+        onOpenChange={onOpenChange}
+        title="Start something"
+        description="Confirming here does something that outlives the dialog."
+        confirmLabel="Start"
+        onConfirm={onConfirm}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledTimes(1));
+
+    // Stated as "never with false" rather than "not called at all": the point
+    // is that nothing dismissed the dialog, whatever else it may have done.
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
   it("lays its buttons out in a row that is allowed to wrap", () => {

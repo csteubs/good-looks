@@ -1,16 +1,18 @@
 import * as React from "react";
 import {
   Dialog,
-  Field,
-  Input,
-  SegmentedControl,
-  SegmentedControlItem,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@ui";
+
+// B10. `Select` stays — it is native-menu-backed, so the OS draws the menu and
+// the redesign draws only the box. Everything else here is the theme's own
+// vocabulary: there is no themed dialog PRIMITIVE (the SDK `Dialog` is
+// allow-listed for its focus trap), so what gets themed is the content.
+import { Segmented } from "../theme";
 
 import { api } from "../lib/api";
 import type { TestSpeed } from "../lib/recorder-types";
@@ -43,6 +45,7 @@ export function NewRecordingDialog({
   // recorded as the test's first viewport step, so the test replays at the size
   // it was recorded at instead of the runner's own default.
   const [windowSize, setWindowSize] = React.useState<string>(DEFAULT_VIEWPORT_PRESET_ID);
+  const [error, setError] = React.useState<string | null>(null);
   const canStart = url.trim().length > 0;
 
   // Load the persisted defaults when the dialog opens.
@@ -59,8 +62,7 @@ export function NewRecordingDialog({
       });
   }, [open]);
 
-  const handleSpeedChange = (v: string) => {
-    const next = v as TestSpeed;
+  const handleSpeedChange = (next: TestSpeed) => {
     setSpeed(next);
     // Persist so Settings stays in sync and the next recording remembers it.
     void api.recorder.setSettings({ defaultRunSpeed: next }).catch(() => {
@@ -84,35 +86,60 @@ export function NewRecordingDialog({
       confirmLabel="Start recording"
       confirmDisabled={!canStart}
       onConfirm={async () => {
-        await start(
-          url.trim(),
-          name.trim() || "Recorded test",
-          undefined,
-          viewportForPresetId(windowSize),
-        );
+        setError(null);
+        try {
+          await start(
+            url.trim(),
+            name.trim() || "Recorded test",
+            undefined,
+            viewportForPresetId(windowSize),
+          );
+        } catch (err) {
+          // A start that failed leaves the dialog up with the reason on it, the
+          // same shape as the git import. Before this the rejection escaped
+          // `void onConfirm()` unhandled and the dialog just sat there saying
+          // nothing, which reads as a dead button.
+          setError(err instanceof Error ? err.message : String(err));
+          return;
+        }
         setUrl("");
         setName("");
+        // The composed `Dialog` never closes itself on a resolved confirm —
+        // callers close themselves (see `dialog-actions.test.tsx`). This one is
+        // mounted by the library rail and the ⌘K palette, both OUTSIDE the
+        // outlet RootShell swaps while recording, so without this the dialog
+        // and its full-viewport overlay sit over the app for the whole session.
+        onOpenChange(false);
       }}
     >
-      <div className="flex flex-col gap-3">
-        <Field label="URL" orientation="vertical">
-          <Input
+      <div className="gl-create">
+        <label className="gl-create-field">
+          <span className="gl-section-title">URL</span>
+          <input
+            className="gl-input"
             placeholder="https://example.com"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             autoFocus
           />
-        </Field>
-        <Field label="Test name" orientation="vertical">
-          <Input placeholder="My test" value={name} onChange={(e) => setName(e.target.value)} />
-        </Field>
-        <Field
-          label="Window size"
-          orientation="vertical"
-          description="Size of the browser window this records in. The test replays at this size too."
-        >
+        </label>
+
+        <label className="gl-create-field">
+          <span className="gl-section-title">Test name</span>
+          <input
+            className="gl-input"
+            placeholder="My test"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </label>
+
+        <div className="gl-create-field">
+          <span className="gl-section-title" id="new-recording-size">
+            Window size
+          </span>
           <Select value={windowSize} onValueChange={handleWindowSizeChange}>
-            <SelectTrigger size="small">
+            <SelectTrigger size="small" aria-labelledby="new-recording-size">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -123,21 +150,22 @@ export function NewRecordingDialog({
               ))}
             </SelectContent>
           </Select>
-        </Field>
-        <Field label="Run speed" orientation="vertical">
-          <SegmentedControl
+          <p className="gl-note">
+            Size of the browser window this records in. The test replays at this size too.
+          </p>
+        </div>
+
+        <div className="gl-create-field">
+          <span className="gl-section-title">Run speed</span>
+          <Segmented
+            options={TEST_SPEEDS.map((s) => ({ value: s, label: TEST_SPEED_LABELS[s] }))}
             value={speed}
-            onValueChange={handleSpeedChange}
-            variant="filled"
-            size="small"
-          >
-            {TEST_SPEEDS.map((s) => (
-              <SegmentedControlItem key={s} value={s}>
-                {TEST_SPEED_LABELS[s]}
-              </SegmentedControlItem>
-            ))}
-          </SegmentedControl>
-        </Field>
+            onChange={handleSpeedChange}
+            label="Run speed"
+          />
+        </div>
+
+        {error ? <p className="gl-note gl-create-error">{error}</p> : null}
       </div>
     </Dialog>
   );

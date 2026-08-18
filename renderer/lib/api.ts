@@ -294,7 +294,11 @@ export const api = {
         fromId,
       }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),
-    importGit: (url: string) => ipc().invoke<ImportResult>("tests:importGit", { url }),
+    /** `ref` is an optional branch or tag. Validated in the main process with
+     *  the branch switcher's own rule (`shared/branch-paths.mjs`) — a ref
+     *  starting with `-` is an option git honours, not a name. */
+    importGit: (url: string, ref?: string) =>
+      ipc().invoke<ImportResult>("tests:importGit", { url, ref }),
   },
   debug: {
     /** Capture every open app window now. */

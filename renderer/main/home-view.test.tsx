@@ -352,11 +352,24 @@ describe("the readouts navigate", () => {
   });
 
   it("keeps the readouts out of the entry-point buttons' way", () => {
-    // The three readouts sit directly above two buttons, and `getByRole` does
-    // not care about layout. If a readout ever took the name of an action, the
-    // entry-point tests above would start passing against the wrong control.
+    // The three readouts sit directly above the action row, and `getByRole`
+    // does not care about layout. If a readout ever took the name of an action,
+    // the entry-point tests above would start passing against the wrong
+    // control. Seven: three readouts and four ways in — record, generate, and
+    // the two imports, which used to be reachable only from the rail's native
+    // `+` menu.
     renderHome();
     expect(screen.getByRole("button", { name: "Record a test" })).not.toBe(stat("Tests"));
-    expect(screen.getAllByRole("button")).toHaveLength(5);
+    expect(screen.getAllByRole("button")).toHaveLength(7);
+  });
+
+  it("offers both import methods, not just the two ways to write a new test", () => {
+    // The gap this closes: a user arriving with an existing Playwright suite
+    // was shown "Record" and "Generate" and no way to bring in what they
+    // already have — both importers lived behind the library rail's `+`, which
+    // is a native macOS menu.
+    renderHome();
+    expect(screen.getByRole("button", { name: "Import from a folder" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Import from a git URL" })).toBeTruthy();
   });
 });

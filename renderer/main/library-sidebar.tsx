@@ -33,7 +33,7 @@ import type { LlmProvider } from "../lib/llm-types";
 import type { RecorderSettings, TestRecord } from "../lib/recorder-types";
 import { TEST_SPEEDS, TEST_SPEED_LABELS } from "../lib/recorder-types";
 import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/duplicate-warnings";
-import { importWarnings } from "../lib/import-warnings";
+import { importFromFiles as runFolderImport } from "../lib/import-from-files";
 import { nativeShell } from "../lib/native-shell";
 import { BranchesRailRow } from "./branches-rail-row";
 import { useAiDebug } from "./ai-debug-store";
@@ -482,20 +482,14 @@ export function LibrarySidebar() {
     setPendingCopy({ test, warnings });
   };
 
-  const importFromFiles = async () => {
-    try {
-      const res = await api.tests.importFiles();
-      if (res.imported === 0) return; // user cancelled the picker
-      qc.invalidateQueries({ queryKey: ["tests"] });
-      toast.success(
-        res.imported === 1 ? "Imported 1 test." : `Imported ${res.imported} tests.`,
-      );
-      for (const w of importWarnings(res)) toast.warning(w);
-      if (res.ids[0]) navigate({ to: "/test/$id", params: { id: res.ids[0] } });
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to import tests.");
-    }
-  };
+  // The body lives in `renderer/lib/import-from-files.ts` so Home and the ⌘K
+  // palette can offer the same action — it was inline here, which is why the
+  // folder importer was reachable from this menu and nowhere else.
+  const importFromFiles = () =>
+    runFolderImport({
+      invalidateTests: () => qc.invalidateQueries({ queryKey: ["tests"] }),
+      goToTest: (id) => navigate({ to: "/test/$id", params: { id } }),
+    });
 
   // ── Folders (REDESIGN §7.2) ──────────────────────────────────────────
   //

@@ -54,8 +54,10 @@ beforeEach(() => {
   settingsReadable = true;
 });
 
+const onOpenChange = vi.fn();
+
 function open() {
-  render(<NewRecordingDialog open onOpenChange={vi.fn()} />);
+  render(<NewRecordingDialog open onOpenChange={onOpenChange} />);
 }
 
 async function startRecording(url = "https://example.com") {
@@ -128,5 +130,38 @@ describe("window size preset", () => {
       width: 768,
       height: 1024,
     });
+  });
+});
+
+// ── The dialog closes once the recording has started ──────────────────────
+//
+// The bug this pins (docs/issue-audit/fix-137.md): the composed `Dialog`'s
+// confirm calls `onConfirm()` and nothing else — it never closes. This dialog
+// is mounted by the library rail's `+` menu and the ⌘K palette, both OUTSIDE
+// the outlet `RootShell` swaps for `RecordingView`, so the modal and its
+// full-viewport Radix overlay stayed over the main window for the rest of the
+// session, pointer-blocking everything behind them. The Home-view path unmounts
+// its own copy with the swap, which is why the path most people test is the one
+// path that looks fixed.
+describe("dialog lifecycle", () => {
+  it("closes once the recording has started", async () => {
+    open();
+    await startRecording();
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+  });
+
+  it("stays open when start fails", async () => {
+    // The other half, and the reason this is a per-caller close rather than a
+    // restored auto-close: a recording that could not start must leave the URL
+    // on screen to correct, not vanish behind a dialog that closed anyway.
+    start.mockRejectedValueOnce(new Error("no such host"));
+    open();
+    fireEvent.change(screen.getByPlaceholderText("https://example.com"), {
+      target: { value: "https://example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /start recording/i }));
+    await waitFor(() => expect(start).toHaveBeenCalled());
+
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 });

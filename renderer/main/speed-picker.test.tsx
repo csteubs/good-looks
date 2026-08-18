@@ -84,8 +84,17 @@ describe("speed pickers offer every speed", () => {
     settings = { defaultRunSpeed: "crawl" };
     render(<NewRecordingDialog open onOpenChange={vi.fn()} />);
     await waitFor(() => {
-      const checked = document.querySelector('[data-state="checked"], [aria-checked="true"]');
-      expect(checked?.textContent).toContain(TEST_SPEED_LABELS.crawl);
+      // `aria-pressed` as well as the SDK's two spellings: B10 moved this row
+      // to the theme's `Segmented`, which is real buttons with `aria-pressed`
+      // — chosen so the visual state cannot disagree with the announced one.
+      const checked = document.querySelector(
+        '[data-state="checked"], [aria-checked="true"], [aria-pressed="true"]',
+      );
+      // NOT `checked?.textContent`. With the optional chain a miss produces
+      // `undefined` and `toContain` fails on the ARGUMENT TYPE, which reads as
+      // a broken test rather than a control that never came up selected.
+      expect(checked).not.toBeNull();
+      expect(checked!.textContent).toContain(TEST_SPEED_LABELS.crawl);
     });
   });
 });

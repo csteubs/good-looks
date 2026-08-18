@@ -149,6 +149,112 @@ and cannot be renewed.
   slot per session, and a callback that must fire on every path or the request
   hangs forever — plus a manual pass, are the proportionate answer.
 
+### 2026-08-18 — Import from a URL, and the first three creation flows get their chrome (B10)
+
+The four creation methods were the least finished surface in the app and were
+absent from the redesign plan entirely — no B-number, no pending entry — which
+is how the first thing a new user meets stayed the last thing to be touched.
+Two of the four were also reachable only from the library rail's `+`, a native
+macOS menu.
+
+- **The import dialog is GitHub's clone widget**, because that is the control
+  every user of this feature has already used: a protocol tab row, a monospace
+  URL field, a one-line caption. No "GitHub CLI" tab — it means nothing to an
+  importer, and two working protocols beat a decorative third.
+
+- **The tabs are a HINT, not a validator.** The backend accepts https, git@,
+  ssh:// and git:// whatever the row says, so pasting an SSH URL under HTTPS
+  flips the tab instead of erroring. A control that rejects a URL the app would
+  have cloned is worse than no control. It only flips on text that actually
+  names a protocol, so the row does not twitch while somebody types.
+
+- **`Segmented`, not Radix `Tabs`.** Plain buttons with `aria-pressed`, so
+  `fireEvent.click` drives them — a `TabsTrigger` activates on pointer-down and
+  leaves the assertion running against the previous tab — and the active item
+  stays neutral, which `check:selection-neutral` requires and which matters here
+  because a coloured protocol tab would be claiming to report an outcome.
+
+- **The branch field is validated, not escaped, and by the branch switcher's own
+  rule.** `execFile` spawns no shell, so quoting is not the risk: a ref called
+  `--upload-pack=…` is not injection, it is an option git honours. So the ref
+  goes through `branchNameProblem` from `shared/branch-paths.mjs` — the module
+  that already spells this rule, rather than a transcribed copy that is right
+  the day it is written — and `--` separates the arguments from the URL. Both
+  belts, because only one of them can be forgotten at a call site.
+
+- **`GIT_TERMINAL_PROMPT=0`.** A private HTTPS repository used to sit on git's
+  invisible credential prompt for the full 120-second timeout and then report
+  "timed out. Check the URL and your connection", sending the user to debug
+  their network. It now fails in seconds saying authentication is required and
+  what this app can and cannot do about it. This refuses to ASK for credentials;
+  it does not refuse to USE them, so a credential helper or a loaded SSH key
+  still works.
+
+- **Both importers are now on Home and in the ⌘K palette.** The folder import's
+  body moved to `renderer/lib/import-from-files.ts` to make that possible
+  without three copies of the toast rules — it was inline in the sidebar, which
+  is exactly why it had one entry point. A user arriving with an existing
+  Playwright suite was being shown two ways to write a NEW test and no way to
+  bring in the tests they already have.
+
+- **What B10 did NOT do.** The trainer's `generate-steps-dialog` is still on the
+  SDK, and there is still no specimen panel for a themed dialog form. Three of
+  the four flows are converted and listed in `sdk-retired.check.ts`; the fourth
+  is not, and that is a stated gap rather than an oversight.
+
+- **`SelectGroup` and `SelectLabel` joined the native-menu keep-family** rather
+  than counting as a new decision. The sectioned model picker is the same one
+  choice the family already states — the picker stays native-menu-backed — and
+  the check's own note says the unit is a decision, not a symbol.
+
+### 2026-08-18 — The composed dialog does not close itself; its callers do
+
+Confirming "Start recording" opened the trainer and left the modal on top of the
+main window, along with a full-viewport Radix overlay that swallowed every
+pointer event behind it. The app looked hung. Same on the git import, which
+navigated to the freshly imported test and then covered it.
+
+- **The root cause is a semantic lost in the SDK port.** `DialogActions`' confirm
+  calls `onConfirm()` and reads nothing back — no close, no await, no branch on
+  the result. Every caller was written against an auto-close that this tree does
+  not have, and `import-git-dialog.tsx` even carried a comment citing "Dialog
+  semantics" to explain a re-throw whose only effect was an unhandled rejection.
+
+- **Restoring auto-close was rejected.** `IssueComposeDialog` deliberately
+  swallows its own errors and must stay open on a resolved confirm; a global
+  close breaks it. So the callers close themselves. That distributes the
+  decision, which is why it comes with an enumeration (below) rather than a
+  comment.
+
+- **Why it kept looking fixed, and this is the load-bearing part.** Whether the
+  stuck dialog is VISIBLE depends on who mounted it. `RootShell` swaps only the
+  OUTLET while recording, so the Home-view copy is unmounted by the swap and the
+  bug disappears there — while the library rail's `+` and the ⌘K palette mount
+  theirs outside the outlet and hold them for the whole session. The one path
+  most people test is the one path that hides it.
+
+- **Four guards, because they fail independently.** Unit tests per dialog pin
+  closes-on-success and stays-open-on-failure. `dialog-actions.test.tsx` states
+  the contract itself, so a future change that flips it has to come through that
+  test. `check:dialog-close` is source-level: it enumerates the dialogs that
+  start something outliving themselves from outside the outlet and asserts each
+  closes, and — the part that keeps the enumeration honest — pins the
+  `root-view.tsx` swap shape the enumeration is derived from. `e2e/dialog-lifecycle.spec.ts`
+  drives the real ⌘K path in the real app and asserts the centre of the window
+  is not covered. Each was verified to fail with the fix reverted.
+
+- **The e2e spec exists because the existing one could not see this.**
+  `record-then-run.spec.ts` starts a recording by invoking `recorder:start` over
+  IPC directly — correct for a test about capture and generation, and exactly
+  why it was green against a bug about a dialog that was never opened.
+
+- **Two changes beyond the close.** The git dialog's re-throw is gone: it kept
+  nothing open (nothing was closing it) and only produced an unhandled
+  rejection. And `NewRecordingDialog` gained the inline error its sibling
+  already had — before this, a `start()` that rejected escaped `void onConfirm()`
+  unhandled and the dialog sat there saying nothing, which reads as a dead
+  button.
+
 ### 2026-08-17 — The test detail head becomes one row
 
 The band above the Steps tabs was two lines, because that is what `Toolbar`

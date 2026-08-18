@@ -41,6 +41,8 @@ import {
 } from "../lib/command-palette";
 import { useRecorder } from "./recorder-store";
 import { NewRecordingDialog } from "./new-recording-dialog";
+import { ImportGitDialog } from "./import-git-dialog";
+import { importFromFiles } from "../lib/import-from-files";
 import { GenerateTestDialog } from "./generate-test-dialog";
 
 /** The views the palette can reach, in the rail's own order. Kept here rather
@@ -107,6 +109,30 @@ function useCommands(close: () => void): Command[] {
       keywords: "ai llm write new",
       hint: "AI",
       run: go(() => setRecordOpen("generate")),
+    });
+    // The two IMPORT methods. Both were reachable only from the library rail's
+    // `+` — a native menu — so half the app's four creation methods were
+    // effectively undiscoverable, and neither was on Home either.
+    out.push({
+      id: "import-files",
+      title: "Import tests from a folder",
+      group: "Actions",
+      keywords: "import open existing playwright spec folder files",
+      hint: "Files",
+      run: go(() =>
+        void importFromFiles({
+          invalidateTests: () => queryClient.invalidateQueries({ queryKey: ["tests"] }),
+          goToTest: (id) => navigate({ to: "/test/$id", params: { id } }),
+        }),
+      ),
+    });
+    out.push({
+      id: "import-git",
+      title: "Import tests from a git URL",
+      group: "Actions",
+      keywords: "import clone repository github git url existing",
+      hint: "Git",
+      run: go(() => setRecordOpen("import-git")),
     });
 
     // The most recent FAILED run of a test that still exists. Tombstoned runs
@@ -206,11 +232,11 @@ function useCommands(close: () => void): Command[] {
   }, [tests, runs, navigate, run, close, setRecordOpen, queryClient]);
 }
 
-/** Which of the palette's two dialogs is open. A module-level pair of hooks
+/** Which of the palette's three dialogs is open. A module-level pair of hooks
  *  rather than props, so `useCommands` can stay a hook the component calls
  *  once — threading two setters through it buys nothing and makes the command
  *  list's signature about dialog plumbing. */
-type DialogKind = "record" | "generate" | null;
+type DialogKind = "record" | "generate" | "import-git" | null;
 const DialogContext = React.createContext<
   [DialogKind, (kind: DialogKind) => void] | null
 >(null);
@@ -375,6 +401,10 @@ export function CommandPalette({
         <GenerateTestDialog
           open={dialog === "generate"}
           onOpenChange={(o) => setDialog(o ? "generate" : null)}
+        />
+        <ImportGitDialog
+          open={dialog === "import-git"}
+          onOpenChange={(o) => setDialog(o ? "import-git" : null)}
         />
       </DialogContext.Provider>
     </OpenContext.Provider>

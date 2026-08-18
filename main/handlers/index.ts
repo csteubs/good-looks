@@ -1082,8 +1082,8 @@ export function registerHandlers(): void {
 
   // ── Import handlers ─────────────────────────────────────────────────
   ipcMain.handle("tests:importFiles", async () => importService.importFromFiles());
-  ipcMain.handle("tests:importGit", async (_e, params: { url: string }) =>
-    importService.importFromGit(params?.url ?? ""),
+  ipcMain.handle("tests:importGit", async (_e, params: { url: string; ref?: string }) =>
+    importService.importFromGit(params?.url ?? "", params?.ref ?? undefined),
   );
   ipcMain.handle("tests:repairImports", async (_e, params: { id: string }) => {
     const copied = importService.repairImports(params.id);
