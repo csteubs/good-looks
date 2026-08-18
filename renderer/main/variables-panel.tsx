@@ -21,6 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Badge,
   Button,
+  Callout,
   Input,
   ScrollArea,
   Select,
@@ -31,7 +32,7 @@ import {
   Text,
   toast,
 } from "@ui";
-import { KeyRound, Play, Plus, Trash2, Variable } from "lucide-react";
+import { KeyRound, Play, Plus, Trash2, TriangleAlert, Variable } from "lucide-react";
 
 import { api } from "../lib/api";
 import {
@@ -319,8 +320,26 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
           </div>
           <Text size="small" className="text-secondary">
             Reference a variable from any step value with{" "}
-            <code className="font-mono">{"${name}"}</code>.
+            <code className="font-mono">{"${name}"}</code> — or pick one from the trainer, where
+            the training browser&apos;s right-click menu offers <em>Use variable…</em> on the field
+            you are filling.
           </Text>
+
+          {/* Stated here rather than only on the row that has it, because the
+              decision this warns about is made BEFORE any row exists: "Value"
+              is the default kind, and a password typed into one is on disk in
+              two places (the record, and the generated spec) before there is
+              anything to warn about. Secrets are the exception, so the notice
+              says which is which rather than just "be careful". */}
+          <Callout color="yellow" icon={<TriangleAlert className="size-4" />}>
+            <Callout.Text>
+              <strong>Value</strong> and <strong>Captured</strong> variables — and every dataset row
+              below — are stored as <strong>plain text</strong>, in this test&apos;s record on disk
+              and in the generated spec. Only a <strong>Secret</strong> is encrypted, kept out of
+              the spec, and stripped from run logs and anything sent to a hosted model. Use one for
+              a password.
+            </Callout.Text>
+          </Callout>
 
           {variables.length === 0 ? (
             <Text size="small" className="text-tertiary">
@@ -380,7 +399,9 @@ export function VariablesPanel({ test }: { test: TestRecord }) {
           </div>
           <Text size="small" className="text-secondary">
             Each row runs the test once with its own values, and is recorded as its own run — so a
-            failure points at a row rather than looking like flake.
+            failure points at a row rather than looking like flake. Row values are stored as plain
+            text — a row cannot supply a secret, and one naming a secret variable is ignored at run
+            time rather than allowed to substitute a plaintext value for the encrypted one.
           </Text>
 
           {columns.length === 0 ? (

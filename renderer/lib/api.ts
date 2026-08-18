@@ -14,6 +14,7 @@ import type {
   ScriptChangeSource,
   SecretStatus,
   TestVariable,
+  VariableKind,
   AiDebugHistoryRecord,
   AiDebugSession,
   DebugEntry,
@@ -137,6 +138,13 @@ export const api = {
       ipc().invoke<RecorderState>("recorder:reorderStep", { stepId, toIndex }),
     updateStep: (stepId: string, patch: Partial<Step>) =>
       ipc().invoke<RecorderState>("recorder:updateStep", { stepId, patch }),
+    /** Declare a variable on the LIVE session, so a step can reference it with
+     *  `${name}` before the test has ever been saved. A secret's value crosses
+     *  once and never comes back, the same one-way trip `tests:setSecret` makes.
+     *  Rejects with a message meant to be shown — an invalid name, a duplicate,
+     *  or an empty secret. */
+    addVariable: (v: { name: string; kind: VariableKind; value?: string }) =>
+      ipc().invoke<RecorderState>("recorder:addVariable", v),
     setCursor: (index: number) =>
       ipc().invoke<RecorderState>("recorder:setCursor", { index }),
     replayStep: (stepId: string) =>

@@ -70,6 +70,7 @@ const actions = {
   clearPicked: vi.fn(),
   clearDebugEntry: vi.fn(),
   clearContextAction: vi.fn(),
+  addVariable: vi.fn(async () => {}),
 };
 
 let store: Record<string, unknown> = {};
@@ -376,6 +377,71 @@ describe("context actions are addressed", () => {
     setStore({ contextAction: ctx({ target: undefined }) });
     renderPanel();
     await waitFor(() => expect(composer()).toBeTruthy());
+  });
+});
+
+describe("filling a field with a variable, from the panel", () => {
+  // The panel is the trainer that sits BESIDE the training browser, so it is
+  // the one that receives a right-click "Use variable…" whenever it is open.
+  // Both halves are pinned: that the composer opens on the fill kind, and that
+  // the variables it offers are the SESSION's — the panel has no test record to
+  // read them from, and a picker with nothing in it makes the feature look
+  // unavailable exactly where it is most reachable.
+  const ctxFill = () => ({
+    kind: "fill" as const,
+    picked: {
+      tag: "input",
+      description: "input#password",
+      candidates: [{ k: "css" as const, v: "#password" }],
+      css: {},
+      attributes: {},
+      ambiguous: false,
+      contextBaseCount: 1,
+      contextSignals: [],
+    },
+    prefillText: "",
+    prefillValue: "",
+    target: "panel" as const,
+  });
+
+  it("opens on the fill kind and offers the session's variables", async () => {
+    setStore({
+      state: state({ variables: [{ name: "storePassword", kind: "secret" }] }),
+      contextAction: ctxFill(),
+    });
+    renderPanel();
+    await waitFor(() =>
+      expect(screen.getByRole("form", { name: /fill with a variable/i })).toBeTruthy(),
+    );
+    expect(screen.getByText("${storePassword}")).toBeTruthy();
+  });
+
+  it("offers to declare one, since the panel cannot reach the Variables tab", async () => {
+    setStore({ state: state({ variables: [] }), contextAction: ctxFill() });
+    renderPanel();
+    await waitFor(() => screen.getByRole("form", { name: /fill with a variable/i }));
+    expect(screen.getByRole("button", { name: /new variable/i })).toBeTruthy();
+  });
+
+  it("declares through the store, so both trainers see the new variable", async () => {
+    setStore({ state: state({ variables: [] }), contextAction: ctxFill() });
+    renderPanel();
+    await waitFor(() => screen.getByRole("form", { name: /fill with a variable/i }));
+    fireEvent.click(screen.getByRole("button", { name: /new variable/i }));
+    fireEvent.change(screen.getByLabelText(/new variable name/i), {
+      target: { value: "storePassword" },
+    });
+    fireEvent.change(screen.getByLabelText(/new variable value/i), {
+      target: { value: "hunter2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /create variable/i }));
+    await waitFor(() =>
+      expect(actions.addVariable).toHaveBeenCalledWith({
+        name: "storePassword",
+        kind: "secret",
+        value: "hunter2",
+      }),
+    );
   });
 });
 

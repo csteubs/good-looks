@@ -10,7 +10,7 @@
 // and a partial mock fails at render with an unrelated TypeError.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 import type { RecorderState, Step, StepType } from "../lib/recorder-types";
 import { RecordingView } from "./recording-view";
@@ -61,6 +61,7 @@ const actions = {
   clearPicked: vi.fn(),
   clearDebugEntry: vi.fn(),
   clearContextAction: vi.fn(),
+  addVariable: vi.fn(async () => {}),
 };
 
 let store: Record<string, unknown> = {};
@@ -686,5 +687,86 @@ describe("continuing an existing test: where a captured step goes", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+// ── "Use variable…" from the training browser ─────────────────────────────
+//
+// The right-click item is a backend menu, so the only half reachable from here
+// is the half that matters: a `fill` context action must open the composer on
+// the fill kind, with the right-clicked element already the target. If it
+// doesn't, the menu item is a click that appears to do nothing at all — the
+// browser is a separate window, so there is nowhere else for the user to look.
+describe("the fill context action", () => {
+  const PICKED = {
+    tag: "input",
+    description: "input#password",
+    candidates: [{ k: "css", v: "#password" } as const],
+    css: {},
+    attributes: {},
+    ambiguous: false,
+    contextBaseCount: 1,
+    contextSignals: [],
+  };
+
+  it("opens the composer on the fill kind, targeting the right-clicked element", async () => {
+    setStore({
+      state: state({ variables: [{ name: "storePassword", kind: "secret" }] }),
+      contextAction: {
+        kind: "fill",
+        picked: PICKED,
+        prefillText: "",
+        prefillValue: "",
+        target: "main",
+      },
+    });
+    render(withAiDebug(<RecordingView />));
+    await waitFor(() =>
+      expect(screen.getByRole("form", { name: /fill with a variable/i })).toBeTruthy(),
+    );
+    expect(screen.getByText("input#password")).toBeTruthy();
+    expect(screen.getByText("${storePassword}")).toBeTruthy();
+  });
+
+  it("ignores one addressed to the docked panel", () => {
+    // Both windows receive the broadcast. Without the address check, one
+    // right-click opens two composers.
+    setStore({
+      contextAction: {
+        kind: "fill",
+        picked: PICKED,
+        prefillText: "",
+        prefillValue: "",
+        target: "panel",
+      },
+    });
+    render(withAiDebug(<RecordingView />));
+    expect(screen.queryByRole("form", { name: /fill with a variable/i })).toBe(null);
+  });
+
+  it("inserts a fill step carrying the reference", async () => {
+    setStore({
+      state: state({ variables: [{ name: "storePassword", kind: "secret" }] }),
+      contextAction: {
+        kind: "fill",
+        picked: PICKED,
+        prefillText: "",
+        prefillValue: "",
+        target: "main",
+      },
+    });
+    render(withAiDebug(<RecordingView />));
+    const form = await waitFor(() =>
+      screen.getByRole("form", { name: /fill with a variable/i }),
+    );
+    fireEvent.click(screen.getByText("${storePassword}"));
+    // Scoped to the composer: the toolbar has an "Add step" button too, and an
+    // ambiguous query reports as "never rendered".
+    fireEvent.click(within(form).getByRole("button", { name: /add step/i }));
+    expect(actions.insertStep).toHaveBeenCalledWith({
+      type: "fill",
+      locator: { k: "css", v: "#password" },
+      value: "${storePassword}",
+    });
   });
 });

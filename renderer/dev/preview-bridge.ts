@@ -73,6 +73,7 @@ import type {
   RunReplaySummary,
   SecretStatus,
   TestRecord,
+  TestVariable,
   VisualMask,
 } from "../lib/recorder-types";
 import type { LlmConfig, LlmModel, LlmProviderStatus } from "../lib/llm-types";
@@ -125,6 +126,69 @@ function recorderPreview(): boolean {
   // renders its "Loading…" state forever, which is not the screen anyone opened
   // it to look at.
   return view === "recorder" || view === "recorder-editing" || view === "trainer-panel";
+}
+
+/** Variables the previewed session declares.
+ *
+ *  Module-level and mutable because the real ones live on the backend session,
+ *  which the preview has no equivalent of — and because the create form is only
+ *  worth previewing if what it creates then shows up in the picker. Seeded with
+ *  one of each kind so the chips can be seen without typing anything. */
+/** Secrets stored during a preview session. Names only — the value is never
+ *  held here, for the same reason the real store never hands one back. */
+const previewSecrets = new Set<string>();
+
+const previewVariables: TestVariable[] = [
+  { name: "storePassword", kind: "secret" },
+  { name: "customerEmail", kind: "plain", value: "shopper@example.com" },
+];
+
+/** The previewed session's state.
+ *
+ *  Hoisted out of the handler map because two handlers now answer with it — a
+ *  created variable has to come back in the same shape a push would deliver, or
+ *  the picker that asked for it would not list what it just made. */
+function recorderState(): RecorderState {
+  if (!recorderPreview()) {
+    return {
+      recording: false,
+      paused: false,
+      assertMode: null,
+      stepCount: 0,
+      testId: null,
+      url: null,
+      liveUrl: null,
+      name: null,
+      editing: false,
+      assertSoft: false,
+      cursor: 0,
+      refineMode: false,
+      replaying: false,
+      pageReady: false,
+      loading: false,
+    };
+  }
+  return {
+    recording: true,
+    paused: false,
+    assertMode: null,
+    stepCount: TESTS[0].steps.length,
+    testId: TESTS[0].id,
+    url: TESTS[0].url,
+    // Deliberately a DEEPER url than `url` above: the two fields mean different
+    // things (start vs. now), and a fixture where they match would hide a view
+    // that renders the wrong one.
+    liveUrl: TESTS[0].url.replace(/\/*$/, "") + "/cart",
+    name: TESTS[0].name,
+    editing: editingPreview(),
+    assertSoft: false,
+    cursor: previewCursor(),
+    refineMode: false,
+    variables: previewVariables,
+    replaying: false,
+    pageReady: true,
+    loading: false,
+  };
 }
 
 /** `?view=recorder-editing` — a session CONTINUING an existing test.
@@ -414,7 +478,17 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       state.tests
         .filter((t) => t.isFlow)
         .map((t) => ({ id: t.id, name: t.name, flowParams: t.flowParams ?? [] })),
-    "tests:get": (p): TestRecord | null => findTest(p?.id),
+    // CLONED, and that is what makes the preview behave like the app rather
+    // than merely answer like it. The fixture handlers mutate `state.tests` in
+    // place, so returning the live object hands React Query the SAME reference
+    // it already holds — structural sharing then decides nothing changed and
+    // no subscriber re-renders. A write lands, the record is correct, and the
+    // screen does not move: exactly the symptom of the bug a reviewer would be
+    // looking for. Real IPC serializes every reply, so the app never sees this.
+    "tests:get": (p): TestRecord | null => {
+      const test = findTest(p?.id);
+      return test ? structuredClone(test) : null;
+    },
     "tests:getScript": (p) => {
       const test = findTest(p?.id);
       if (!test) return "";
@@ -524,9 +598,34 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
       }
       return { from, to, changed };
     },
-    /** One row per declared variable, not a single boolean. Empty is honest:
-     *  no fixture test declares a secret. */
-    "tests:secretStatus": (): SecretStatus[] => [],
+    /** Declaring a variable, from the Variables tab or from either step
+     *  editor. Mutates the fixture in place — a bridge that accepted the write
+     *  and answered with the record unchanged would make every create look
+     *  like a silent failure, which is the one outcome the form is built to
+     *  distinguish itself from. */
+    "tests:setVariables": (p) => {
+      const test = findTest(p?.id);
+      if (test && Array.isArray(p?.variables)) {
+        test.variables = p.variables as NonNullable<TestRecord["variables"]>;
+      }
+      return test;
+    },
+    /** One-way, like the real handler: the value crosses and is never read
+     *  back. The preview holds only the NAME, which is all `secretStatus`
+     *  answers with anyway. */
+    "tests:setSecret": (p) => {
+      previewSecrets.add(String(p?.name ?? ""));
+      return { name: String(p?.name ?? ""), hasValue: true };
+    },
+    "tests:clearSecret": (p) => {
+      previewSecrets.delete(String(p?.name ?? ""));
+      return { name: String(p?.name ?? ""), hasValue: false };
+    },
+    /** One row per declared secret that has a value stored this session. */
+    "tests:secretStatus": (p): SecretStatus[] =>
+      (findTest(p?.id)?.variables ?? [])
+        .filter((v) => v.kind === "secret")
+        .map((v) => ({ name: v.name, hasValue: previewSecrets.has(v.name) })),
 
     // ── Runs and artifacts ───────────────────────────────────────────────
     "runs:list": (): RunRecord[] => state.runs,
@@ -1294,45 +1393,25 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
         : PICKED_ELEMENT.contextBaseCount;
     },
     "recorder:listCookies": () => [],
-    "recorder:getState": (): RecorderState =>
-      recorderPreview()
-        ? {
-            recording: true,
-            paused: false,
-            assertMode: null,
-            stepCount: TESTS[0].steps.length,
-            testId: TESTS[0].id,
-            url: TESTS[0].url,
-            // Deliberately a DEEPER url than `url` above: the two fields mean
-            // different things (start vs. now), and a fixture where they match
-            // would hide a view that renders the wrong one.
-            liveUrl: TESTS[0].url.replace(/\/*$/, "") + "/cart",
-            name: TESTS[0].name,
-            editing: editingPreview(),
-            assertSoft: false,
-            cursor: previewCursor(),
-            refineMode: false,
-            replaying: false,
-            pageReady: true,
-            loading: false,
-          }
-        : {
-      recording: false,
-      paused: false,
-      assertMode: null,
-      stepCount: 0,
-      testId: null,
-      url: null,
-      liveUrl: null,
-      name: null,
-      editing: false,
-      assertSoft: false,
-      cursor: 0,
-      refineMode: false,
-      replaying: false,
-      pageReady: false,
-      loading: false,
-          },
+    // Variables declared during the previewed session. Held in the bridge for
+    // the same reason the real ones are held on the session: the preview's
+    // recording has no saved record behind it either, so a created variable
+    // has nowhere else to live — and without this the composer's create form
+    // could not be exercised in a tab at all.
+    "recorder:addVariable": (p: Payload) => {
+      const name = String(p?.name ?? "");
+      const kind = (p?.kind as TestVariable["kind"]) ?? "plain";
+      if (previewVariables.some((v) => v.name === name)) {
+        throw new Error(`This test already declares “${name}”.`);
+      }
+      previewVariables.push({
+        name,
+        kind,
+        ...(kind === "secret" ? {} : { value: String(p?.value ?? "") }),
+      });
+      return recorderState();
+    },
+    "recorder:getState": (): RecorderState => recorderState(),
 
     // ── Batch ────────────────────────────────────────────────────────────
     // REDESIGN §6.5. The preview has no filesystem and no save dialog, so it

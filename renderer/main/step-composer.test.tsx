@@ -16,7 +16,7 @@
 // it — which boxes are ticked, what each one contributes, and in what order.
 
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 
 import type { PickedElement, RawStep, WaitDialogMode } from "../lib/recorder-types";
 import { StepComposer } from "./step-composer";
@@ -395,5 +395,119 @@ describe("the composer panel", () => {
       />,
     );
     expect(panel()?.getAttribute("aria-label")).toBe("Add assertion");
+  });
+});
+
+// ── Fill with a variable ──────────────────────────────────────────────────
+//
+// The kind the right-click "Use variable…" item opens on, and the one place in
+// the app where a password can be put into a test without it being written down
+// anywhere. Two things about it are silent when wrong.
+//
+// The step must carry a REFERENCE, not a value. `${name}` is what the generator
+// turns into `V.name`, and a step holding the literal password instead would
+// run identically and look identical in the list — while writing the password
+// into the spec file, the run log and anything sent to a hosted model.
+//
+// And it must refuse to build with half its inputs. A fill with no target types
+// into nothing; a fill with no variable would fill the literal text "${}". Both
+// pass as steps and fail as tests.
+
+describe("filling a field with a variable", () => {
+  const VARS = [
+    { name: "storePassword", kind: "secret" as const },
+    { name: "customerEmail", kind: "plain" as const, value: "a@b.c" },
+  ];
+
+  function renderFill(
+    opts: {
+      picked?: PickedElement | null;
+      variables?: typeof VARS;
+      onCreateVariable?: (v: { name: string; kind: "plain" | "secret" | "captured"; value: string }) => Promise<void>;
+    } = {},
+  ) {
+    const onAdd = vi.fn((_steps: RawStep[]) => {});
+    render(
+      <StepComposer
+        kind="fill"
+        onCancel={() => {}}
+        onAdd={onAdd}
+        picked={opts.picked === undefined ? PICKED : opts.picked}
+        onStartPick={() => {}}
+        onClearPick={() => {}}
+        variables={opts.variables ?? VARS}
+        onCreateVariable={opts.onCreateVariable}
+      />,
+    );
+    return { onAdd };
+  }
+
+  it("emits a fill carrying the reference, never a value", () => {
+    const { onAdd } = renderFill();
+    fireEvent.click(screen.getByText("${storePassword}"));
+    submit();
+    expect(emitted(onAdd)).toEqual([
+      {
+        type: "fill",
+        locator: { k: "role", role: "button", name: "Submit" },
+        value: "${storePassword}",
+      },
+    ]);
+  });
+
+  it("will not build without a variable chosen", () => {
+    // Emitting anyway would fill the field with the literal text "${}".
+    renderFill();
+    expect(
+      (screen.getByRole("button", { name: /add step/i }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("will not build without a target element", () => {
+    renderFill({ picked: null });
+    expect(
+      (screen.getByRole("button", { name: /add step/i }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+
+  it("says where to declare one when the test has none and it cannot create", () => {
+    renderFill({ variables: [] });
+    expect(screen.getByText(/variables tab/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /new variable/i })).toBe(null);
+  });
+
+  it("offers to declare one when the host can persist it", () => {
+    renderFill({ variables: [], onCreateVariable: async () => {} });
+    expect(screen.getByRole("button", { name: /new variable/i })).toBeTruthy();
+  });
+
+  it("selects the variable it just created, so the create reads as having worked", async () => {
+    // The user opened this form in order to use the variable here. Leaving the
+    // choice empty afterwards makes a successful create look like a no-op.
+    const created: string[] = [];
+    const { onAdd } = renderFill({
+      variables: [],
+      onCreateVariable: async (v) => {
+        created.push(v.name);
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /new variable/i }));
+    fireEvent.change(screen.getByLabelText(/new variable name/i), {
+      target: { value: "storePassword" },
+    });
+    fireEvent.change(screen.getByLabelText(/new variable value/i), {
+      target: { value: "hunter2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /create variable/i }));
+    await waitFor(() => expect(created).toEqual(["storePassword"]));
+    // The chip list is fed by the host's `variables` prop, which this test does
+    // not re-supply — so what proves the selection landed is the step itself.
+    await waitFor(() =>
+      expect(
+        (screen.getByRole("button", { name: /add step/i }) as HTMLButtonElement).disabled,
+      ).toBe(false),
+    );
+    submit();
+    expect(emitted(onAdd)[0].value).toBe("${storePassword}");
   });
 });

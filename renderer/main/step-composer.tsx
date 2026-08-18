@@ -49,6 +49,8 @@ import {
 import type {
   AssertKind,
   CaptureSource,
+  TestVariable,
+  VariableKind,
   ConditionKind,
   CssMatch,
   Locator,
@@ -61,6 +63,12 @@ import { api } from "../lib/api";
 import { buildStateSteps, type StatePick } from "../lib/element-states";
 import { clampViewportAxis, RESIZE_PRESETS } from "../lib/viewport-presets";
 import { ElementContextPicker } from "./element-context-picker";
+import {
+  NewVariableButton,
+  NewVariableForm,
+  VariableChips,
+  varRef,
+} from "../components/variable-picker";
 import { formatLocator, KIND_LABEL } from "./refine-selector-dialog";
 
 export type AddStepKind =
@@ -73,7 +81,8 @@ export type AddStepKind =
   | "viewport"
   | "capture"
   | "runFlow"
-  | "elementState";
+  | "elementState"
+  | "fill";
 
 export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   assertion: "Add assertion",
@@ -86,6 +95,7 @@ export const ADD_STEP_LABEL: Record<AddStepKind, string> = {
   capture: "Capture a value",
   runFlow: "Run a flow",
   elementState: "Set element state",
+  fill: "Fill with a variable",
 };
 
 /**
@@ -517,6 +527,8 @@ export function StepComposer({
   prefillText,
   prefillValue,
   currentTestId,
+  variables = [],
+  onCreateVariable,
 }: {
   kind: AddStepKind;
   /** The test being edited, so it can't be offered as a flow to call itself. */
@@ -545,6 +557,14 @@ export function StepComposer({
   /** When opened from the right-click menu: prefilled value (the element's
    *  current value) for value asserts. */
   prefillValue?: string;
+  /** Variables the owning test declares, for the "Fill with a variable" kind.
+   *  Supplied by the host because the three of them read it from different
+   *  places — the trainer from the live session, Edit Steps from the record. */
+  variables?: TestVariable[];
+  /** Declare a new variable from here. Absent where the host cannot persist one
+   *  (no live session, no saved test), which hides the create affordance rather
+   *  than offering a button that fails. */
+  onCreateVariable?: (v: { name: string; kind: VariableKind; value: string }) => Promise<void>;
 }) {
   const [locator, setLocator] = React.useState<Locator | null>(null);
   const [assert, setAssert] = React.useState<AssertKind>("visible");
@@ -578,6 +598,12 @@ export function StepComposer({
   const [captureFrom, setCaptureFrom] = React.useState<CaptureSource>("text");
   const [captureAttr, setCaptureAttr] = React.useState("");
   const [flowId, setFlowId] = React.useState("");
+  // Which declared variable a `fill` step will use, and whether the inline
+  // "declare one" form is open. The name rather than an index: the list can
+  // gain an entry while this panel is open (that is the whole point of the
+  // create form), and an index would then point at a different variable.
+  const [fillVar, setFillVar] = React.useState("");
+  const [creatingVar, setCreatingVar] = React.useState(false);
 
   // Seed the fields from whatever the caller preselected.
   //
@@ -626,6 +652,8 @@ export function StepComposer({
       setCaptureFrom("text");
       setCaptureAttr("");
       setFlowId("");
+      setFillVar("");
+      setCreatingVar(false);
     }
   }, [kind, initialAssert, initialWaitMode, initialState, prefillText, prefillValue]);
 
@@ -710,6 +738,14 @@ export function StepComposer({
       }
       case "find":
         return locator ? [{ type: "assert", assert: "visible", locator }] : null;
+      case "fill": {
+        // Both halves are required, and neither degrades usefully: a fill with
+        // no target types into nothing, and a fill with no variable would write
+        // the literal text "${}" into the field. The panel says which is
+        // missing rather than disabling the button with no explanation.
+        if (!locator || !fillVar) return null;
+        return [{ type: "fill", locator, value: varRef(fillVar) }];
+      }
       case "capture": {
         const name = captureVar.trim();
         if (!name) return null;
@@ -1005,6 +1041,57 @@ export function StepComposer({
               onStartPick={onStartPick}
               onClearPick={onClearPick}
             />
+          </>
+        ) : null}
+
+        {kind === "fill" ? (
+          <>
+            <Text variant="small" color="secondary">
+              Type a variable&apos;s value into a field (Playwright <code>fill</code>). The step
+              stores the reference, not the value — so a <strong>Secret</strong> reaches the browser
+              from the encrypted store at run time and never enters the generated spec.
+            </Text>
+            <TargetElementPicker
+              picked={picked}
+              onChange={setLocator}
+              onStartPick={onStartPick}
+              onClearPick={onClearPick}
+            />
+            <Field label="Variable" orientation="vertical">
+              <VariableChips
+                variables={variables}
+                selected={fillVar}
+                onPick={(name) => setFillVar(name)}
+                emptyHint={
+                  onCreateVariable
+                    ? "This test declares no variables yet. Create one below."
+                    : "This test declares no variables yet. Add one on the Variables tab."
+                }
+              />
+            </Field>
+            {onCreateVariable ? (
+              creatingVar ? (
+                <NewVariableForm
+                  existingNames={variables.map((v) => v.name)}
+                  onCancel={() => setCreatingVar(false)}
+                  onCreate={async (v) => {
+                    await onCreateVariable(v);
+                    // Select it: the user created this variable in order to use
+                    // it here, and leaving the choice empty would make the
+                    // create button look like it had done nothing.
+                    setFillVar(v.name);
+                    setCreatingVar(false);
+                  }}
+                />
+              ) : (
+                <NewVariableButton onClick={() => setCreatingVar(true)} />
+              )
+            ) : null}
+            {fillVar ? (
+              <Text variant="small" color="secondary">
+                Fills with <code className="font-mono">{varRef(fillVar)}</code>.
+              </Text>
+            ) : null}
           </>
         ) : null}
 
