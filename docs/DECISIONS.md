@@ -54,7 +54,12 @@ work area of the display it comes up on.
 The e2e assertion is in `e2e/app-launch.spec.ts` rather than the unit suite
 because the property is not the arithmetic — that is unit-tested — but that the
 real window is created against a real display's work area. Deleting the call in
-`main/index.ts` leaves every unit test green.
+`main/index.ts` leaves every unit test green. It compares within two points
+rather than exactly, which CI taught us: an X11 window manager grants a frame a
+point smaller than the one asked for (1279×1023 on a 1280×1024 work area) where
+macOS gives the rectangle exactly. The slack is a platform difference, not room
+for the app to be wrong — the failure being guarded is a window at the 1000×700
+fallback, 280 points shy of the display.
 
 ### 2026-08-18 — Shopify crawler signatures
 
