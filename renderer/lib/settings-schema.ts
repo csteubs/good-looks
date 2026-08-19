@@ -21,6 +21,7 @@ import {
   COST_DEFAULT_PER_CI_MINUTE,
   DEFAULT_COST_CURRENCY,
 } from "../../shared/cost-units.mjs";
+import { PROXY_DEFAULTS } from "../../shared/proxy-config.mjs";
 
 // ── Panes ────────────────────────────────────────────────────────────────────
 
@@ -36,6 +37,7 @@ export type PaneId =
   | "ai"
   | "alerts"
   | "integrations"
+  | "proxy"
   | "documentation"
   | "diagnostics"
   | "experiments";
@@ -152,6 +154,16 @@ export const PANES: readonly PaneDef[] = [
     id: "integrations",
     title: "Integrations",
     subtitle: "Services this app connects to, and what leaves this Mac.",
+    group: "Connections",
+  },
+  {
+    // Modelled on the mabl Desktop App's proxy settings: which traffic, from
+    // where (OS or manual fields), and a validate dialog. In Connections
+    // because that group is "what does this app talk to" — this pane is HOW
+    // it talks to everything.
+    id: "proxy",
+    title: "Proxy",
+    subtitle: "Send the app's own traffic, test traffic, or both through a proxy.",
     group: "Connections",
   },
   {
@@ -699,6 +711,63 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
       "shopify crawler signature bot protection blocked throttled storefront credential domain expires web-bot-auth",
   },
 
+  // Proxy
+  //
+  // Keywords name the SITUATION, not just the controls: someone reaching for
+  // this pane is behind a corporate network, so "firewall", "corporate",
+  // "network" and "vpn" are what they type. The credential rows carry
+  // "credential"/"secret" like every other credential in this window.
+  {
+    id: "proxy-traffic",
+    pane: "proxy",
+    label: "Traffic to proxy",
+    keywords: "proxy network corporate firewall vpn route none app test both traffic",
+    key: "proxyTraffic",
+  },
+  {
+    id: "proxy-source",
+    pane: "proxy",
+    label: "Proxy settings source",
+    keywords: "automatic manual system os detect network configuration pac",
+    key: "proxySource",
+  },
+  {
+    id: "proxy-url",
+    pane: "proxy",
+    label: "Proxy URL",
+    keywords: "server host port http https socks socks5 address manual",
+    key: "proxyUrl",
+  },
+  {
+    id: "proxy-username",
+    pane: "proxy",
+    label: "Username",
+    keywords: "proxy auth authentication credential login user manual",
+    key: "proxyUsername",
+  },
+  {
+    // No `key`, deliberately: backed by the encrypted credential store, so
+    // "reset section" must leave it alone — same rule as the API key and the
+    // Shopify signatures.
+    id: "proxy-password",
+    pane: "proxy",
+    label: "Password",
+    keywords: "proxy auth authentication credential secret login manual",
+  },
+  {
+    id: "proxy-ssl-verify",
+    pane: "proxy",
+    label: "SSL Verify",
+    keywords: "certificate tls https mitm self-signed verify re-sign intercept",
+    key: "proxySslVerify",
+  },
+  {
+    id: "proxy-validate",
+    pane: "proxy",
+    label: "Validate proxy settings",
+    keywords: "test verify check connectivity connection working reachable validate",
+  },
+
   // Diagnostics
   {
     id: "debug-screenshots",
@@ -829,6 +898,11 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   costMinutesPerManualRun: COST_DEFAULT_MINUTES_PER_MANUAL_RUN,
   costMinutesPerManualDebug: COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG,
   costHourlyRate: COST_DEFAULT_HOURLY_RATE,
+  proxyTraffic: PROXY_DEFAULTS.proxyTraffic,
+  proxySource: PROXY_DEFAULTS.proxySource,
+  proxyUrl: PROXY_DEFAULTS.proxyUrl,
+  proxyUsername: PROXY_DEFAULTS.proxyUsername,
+  proxySslVerify: PROXY_DEFAULTS.proxySslVerify,
 };
 
 /** Structural equality for the three shapes a setting value actually takes:

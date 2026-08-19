@@ -191,6 +191,14 @@ app. Run it from the app.
 secret.** The app redacts secrets when it reads those files; this server can't,
 and any run's log can contain any test's secret.
 
+**A proxy configured in Settings → Proxy applies to runs started from here too
+— minus its password.** The server reads the same settings and hands a run the
+same proxy the app would, so both take the same network path. The password is
+encrypted to the app in the same way secret values are, so a proxy that
+requires the login refuses the run at the tunnel — deliberately, rather than
+the run silently going direct and passing on a path the settings forbid. The
+run's `fixtures` field says so. Run it from the app.
+
 **Nothing here edits anything.** No tool changes a test, accepts a baseline,
 edits a Routine (not even its schedule), changes a setting, or prunes anything.
 

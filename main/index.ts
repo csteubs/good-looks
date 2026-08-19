@@ -38,6 +38,7 @@ import { batchHistoryStore } from "./services/batch-history-store.js";
 import { routineStore } from "./services/routine-store.js";
 import { routineScheduler } from "./services/routine-scheduler.js";
 import { recorderSettingsStore } from "./services/recorder-settings-store.js";
+import { initProxyService } from "./services/proxy-service.js";
 import { testStore } from "./services/test-store.js";
 import { aiDebugStore } from "./services/ai-debug-store.js";
 import { aiDebugHistoryStore } from "./services/ai-debug-history-store.js";
@@ -456,6 +457,12 @@ app.whenReady().then(async () => {
 
   // Before any window loads: the renderer is served over app://.
   installAppProtocol();
+
+  // Also before any window loads, and for the same class of reason: the
+  // default session carries the renderer's own web fetches (site icons), so
+  // its proxy state has to be right before the first one goes out. This is
+  // also what registers the `login` answerer for authenticating proxies.
+  await initProxyService();
 
   // ── Metrics ────────────────────────────────────────────────────────
   // Opened BEFORE the prune preflight is registered and before any run can

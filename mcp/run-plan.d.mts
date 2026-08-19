@@ -37,6 +37,10 @@ export declare function runEnv(params: {
   /** an imported test's base URL, which its relative navigations resolve
    *  against; absent for recorded tests, which navigate absolutely */
   baseUrl?: string;
+  /** the raw recorder-settings.json contents; when present, the shared proxy
+   *  rule contributes PW_PROXY_* (password always absent — encrypted to the
+   *  app, see describeRun's skipped note) */
+  settings?: unknown;
 }): NodeJS.ProcessEnv;
 
 export declare function runArgs(params: {

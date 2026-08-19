@@ -29,9 +29,11 @@ import {
   globalShortcut,
   ipcMain,
   Menu,
+  net,
   Notification,
   safeStorage,
   screen,
+  session,
   WebContentsView,
 } from "electron";
 import type { BrowserWindowConstructorOptions } from "electron";
@@ -42,9 +44,18 @@ export {
   globalShortcut,
   ipcMain,
   Menu,
+  // `net` and `session` arrived with the proxy settings (proxy-service.ts):
+  // applying a proxy is `session.setProxy` / `setCertificateVerifyProc`, OS
+  // detection is `session.resolveProxy`, and validating test traffic is a
+  // `net.request` through a throwaway session — the one request shape whose
+  // `login` event lets stored credentials answer an authenticating proxy.
+  // Re-exported raw, like WebContentsView: the rule that only this directory
+  // imports `electron` is what makes the re-export necessary at all.
+  net,
   Notification,
   safeStorage,
   screen,
+  session,
   WebContentsView,
 };
 export { logger } from "./logger.js";

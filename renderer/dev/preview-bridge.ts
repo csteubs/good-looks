@@ -285,6 +285,9 @@ function seed() {
     routines: structuredClone(ROUTINES),
     settings: structuredClone(SETTINGS),
     llmConfig: structuredClone(LLM_CONFIG),
+    // Starts absent so the Proxy pane opens on the save-a-password state;
+    // saving one sticks for the session, same rule as the issues connection.
+    proxyHasPassword: false,
     // Starts DISCONNECTED, so the preview opens on the state that actually
     // needs looking at: the empty pane someone sees before they have a key.
     // Connecting works and persists for the session, so both halves of the
@@ -1163,6 +1166,40 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "llm:hasLmStudioToken": () => ({ hasToken: false }),
     "llm:isActive": () => ({ active: false }),
     "alerts:status": () => ({ hasUrl: false, host: null }),
+
+    // ── Proxy (Settings → Proxy) ─────────────────────────────────────────
+    // Password presence is real state so Save/Remove round-trip in the
+    // preview; the validators answer one success and one failure so BOTH
+    // outcome renderings of the validate dialog can be looked at — a canned
+    // pair of greens would leave the failure layout unreviewable.
+    "proxy:hasPassword": () => ({ hasPassword: state.proxyHasPassword }),
+    "proxy:setPassword": () => {
+      state.proxyHasPassword = true;
+      return { hasPassword: true };
+    },
+    "proxy:clearPassword": () => {
+      state.proxyHasPassword = false;
+      return { hasPassword: false };
+    },
+    "proxy:verifyApp": () => ({
+      ok: true,
+      url: "http://127.0.0.1:11434",
+      via: "direct — loopback never proxies",
+      detail: "Reached 127.0.0.1:11434 (HTTP 200, direct — loopback never proxies).",
+    }),
+    "proxy:verifyTest": (p) => {
+      const url = typeof (p as { url?: unknown })?.url === "string" ? (p as { url: string }).url : "";
+      if (!url) {
+        return { ok: false, url, via: "—", detail: "Enter a full URL, like https://staging.example.com." };
+      }
+      return {
+        ok: false,
+        url,
+        via: `proxy ${state.settings.proxyUrl || "http://192.168.0.10:8080"}`,
+        detail:
+          "ERR_TUNNEL_CONNECTION_FAILED — could not connect through the proxy. Check the proxy URL and port.",
+      };
+    },
 
     // Shopify crawler signatures. Three entries rather than none, because the
     // whole reason the row exists is that its states look different — and the

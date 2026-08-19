@@ -36,6 +36,12 @@ import {
   DEFAULT_TEST_TIMEOUT_MS,
   isTestTimeoutMs,
 } from "../../shared/run-pacing.mjs";
+import {
+  isProxySource,
+  isProxyTraffic,
+  normalizeProxyUrl,
+  PROXY_DEFAULTS,
+} from "../../shared/proxy-config.mjs";
 
 /** Bounds for `artifactRetainedRuns`. 1 keeps only the newest run (the pinned
  *  baseline is stored separately and is never pruned); 50 is a generous ceiling
@@ -219,7 +225,27 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   // declines to guess what an hour of the user's time is worth, so every money
   // figure derived from saved time stays hidden until they say.
   costHourlyRate: COST_DEFAULT_HOURLY_RATE,
+  // "none": the proxy feature is inert until asked for — nothing about how
+  // this app reaches the network changes on the strength of a default. The
+  // rest of the configuration is kept even at "none" (that is what "none"
+  // means — ignored, not erased). Defaults defined in shared/proxy-config.mjs
+  // because the MCP server reads this same file and must land on the same
+  // answers for the same bytes.
+  proxyTraffic: PROXY_DEFAULTS.proxyTraffic,
+  proxySource: PROXY_DEFAULTS.proxySource,
+  proxyUrl: PROXY_DEFAULTS.proxyUrl,
+  proxyUsername: PROXY_DEFAULTS.proxyUsername,
+  proxySslVerify: PROXY_DEFAULTS.proxySslVerify,
 };
+
+/** A stored or incoming proxy URL, canonicalised — or "" for anything that
+ *  fails validation, INCLUDING a URL carrying credentials. Blank is the
+ *  recoverable outcome: the proxy simply never applies, where "repairing" a
+ *  hand-edited value would send traffic somewhere the user didn't write. */
+function normalizeProxyUrlOrBlank(value: unknown): string {
+  const result = normalizeProxyUrl(value);
+  return result.ok ? result.url : "";
+}
 
 
 function settingsFile(): string {
@@ -389,6 +415,26 @@ function read(): RecorderSettings {
       costMinutesPerManualRun: clampMinutesPerManualRun(parsed.costMinutesPerManualRun),
       costMinutesPerManualDebug: clampMinutesPerManualDebug(parsed.costMinutesPerManualDebug),
       costHourlyRate: clampHourlyRate(parsed.costHourlyRate),
+      // Validated with the shared guards, because the MCP server reads this
+      // same file through the same module: two readers, one rule. The URL is
+      // re-canonicalised on every read so a hand-edited value that smuggles
+      // credentials in (`http://user:pw@host`) is blanked rather than carried
+      // into a run's environment or a session's proxy rules.
+      proxyTraffic: isProxyTraffic(parsed.proxyTraffic)
+        ? parsed.proxyTraffic
+        : DEFAULT_SETTINGS.proxyTraffic,
+      proxySource: isProxySource(parsed.proxySource)
+        ? parsed.proxySource
+        : DEFAULT_SETTINGS.proxySource,
+      proxyUrl: normalizeProxyUrlOrBlank(parsed.proxyUrl),
+      proxyUsername:
+        typeof parsed.proxyUsername === "string"
+          ? parsed.proxyUsername
+          : DEFAULT_SETTINGS.proxyUsername,
+      proxySslVerify:
+        typeof parsed.proxySslVerify === "boolean"
+          ? parsed.proxySslVerify
+          : DEFAULT_SETTINGS.proxySslVerify,
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -580,6 +626,22 @@ export const recorderSettingsStore = {
         update.costHourlyRate !== undefined
           ? clampHourlyRate(update.costHourlyRate)
           : current.costHourlyRate,
+      // Same guards as `read()`, on the standing principle above. The URL is
+      // the one that matters: this is an IPC boundary, and whatever arrives is
+      // canonicalised or blanked — never written through. Blank is a real
+      // choice (clearing the field), which is why an invalid value degrades to
+      // it rather than keeping the old one: both paths agree an unusable URL
+      // means "no proxy".
+      proxyTraffic: isProxyTraffic(update.proxyTraffic) ? update.proxyTraffic : current.proxyTraffic,
+      proxySource: isProxySource(update.proxySource) ? update.proxySource : current.proxySource,
+      proxyUrl:
+        update.proxyUrl !== undefined ? normalizeProxyUrlOrBlank(update.proxyUrl) : current.proxyUrl,
+      proxyUsername:
+        update.proxyUsername !== undefined && typeof update.proxyUsername === "string"
+          ? update.proxyUsername
+          : current.proxyUsername,
+      proxySslVerify:
+        update.proxySslVerify !== undefined ? update.proxySslVerify : current.proxySslVerify,
     };
     fs.mkdirSync(path.dirname(settingsFile()), { recursive: true });
     fs.writeFileSync(settingsFile(), JSON.stringify(next, null, 2), "utf-8");
@@ -626,6 +688,14 @@ export const recorderSettingsStore = {
       costMinutesPerManualRun: next.costMinutesPerManualRun,
       costMinutesPerManualDebug: next.costMinutesPerManualDebug,
       costHourlyRate: next.costHourlyRate,
+      proxyTraffic: next.proxyTraffic,
+      proxySource: next.proxySource,
+      // The URL and the presence of a username, never the username itself: it
+      // is half of a credential, and this log line is exactly the kind of
+      // place a copied value outlives the reason it was written.
+      proxyUrl: next.proxyUrl,
+      proxyHasUsername: next.proxyUsername.length > 0,
+      proxySslVerify: next.proxySslVerify,
     });
     return next;
   },

@@ -16,6 +16,7 @@
 // failed, and said nothing about what it had skipped.
 
 import { normalizeSignatureHost, signatureState } from "../shared/shopify-signature.mjs";
+import { manualProxyFor, playwrightProxyEnv, proxySettingsFrom } from "../shared/proxy-config.mjs";
 import { slowMoFor } from "../shared/run-pacing.mjs";
 import { stripAnsi } from "../shared/strip-ansi.mjs";
 
@@ -115,6 +116,7 @@ export function runEnv({
   outputDir,
   vars,
   baseUrl,
+  settings,
 }) {
   return {
     ...base,
@@ -136,6 +138,13 @@ export function runEnv({
     // passed, which is exactly the app/MCP drift check:mcp-parity exists for.
     ...(baseUrl ? { PW_BASE_URL: baseUrl } : {}),
     ...(vars && Object.keys(vars).length > 0 ? { GLAZE_VARS: JSON.stringify(vars) } : {}),
+    // Settings → Proxy, when it covers test traffic — the SAME shared rule the
+    // app's runner applies, which is what keeps a run's network path identical
+    // whichever process spawned it. The password argument is null and always
+    // will be: it is encrypted to the app (the secrets argument again), so a
+    // run through an authenticating proxy goes without credentials and
+    // describeRun says so up front rather than letting the 407 speak for it.
+    ...(settings ? playwrightProxyEnv(proxySettingsFrom(settings), null) : {}),
   };
 }
 
@@ -236,6 +245,20 @@ export function describeRun(
       `The Shopify crawler signature (${signedHost}) — its value is encrypted to the app and ` +
         "unreadable from here, so this run was made unsigned. The store may throttle or block it, " +
         "which means a failure here can be a pass from the app. Run it from the app.",
+    );
+  }
+  // The same shape a fourth time. The proxy itself DID apply (runEnv hands the
+  // shared rule's PW_PROXY_* through), but its password is encrypted to the
+  // app — so a proxy that authenticates will refuse this run at the tunnel.
+  // Going through the proxy without credentials is deliberate: going direct
+  // instead could SUCCEED on an open network, and a run that quietly took a
+  // network path the settings forbid is this file's least favourite failure.
+  const testProxy = manualProxyFor(proxySettingsFrom(settings), "test");
+  if (testProxy && testProxy.username) {
+    skipped.push(
+      `Proxy credentials (${testProxy.url}) — the proxy password is encrypted to the app and ` +
+        "unreadable from here, so this run went through the proxy unauthenticated. A proxy that " +
+        "requires the login will refuse the run; run it from the app.",
     );
   }
   return {

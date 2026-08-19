@@ -17,6 +17,7 @@
 import { logger } from "@shell/backend";
 
 import { webhookUrlStore } from "./webhook-url-store.js";
+import { appFetch } from "./proxy-service.js";
 import { insightsSlackUrlStore } from "./insights/insights-slack-url-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { allRedactableValues, redact } from "./secret-redaction.js";
@@ -264,7 +265,7 @@ export async function postWebhook(url: string, payload: AlertPayload): Promise<v
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ALERT_TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
+    const res = await appFetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),

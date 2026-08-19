@@ -3,8 +3,10 @@
 import type { LlmErrorKind } from "./llm-types";
 import type { FlakeReport as SharedFlakeReport } from "../../shared/flake-analysis.mjs";
 import type { CostCurrency } from "../../shared/cost-units.mjs";
+import type { ProxySource, ProxyTraffic } from "../../shared/proxy-config.mjs";
 
 export type { CostCurrency };
+export type { ProxySource, ProxyTraffic };
 
 export type StepType =
   | "goto"
@@ -1214,6 +1216,38 @@ export interface RecorderSettings {
    *  stated", and suppresses every money figure derived from saved time — the
    *  app does not guess this. */
   costHourlyRate: number;
+  /** Which traffic goes through the proxy (default "none"). "app" = the app's
+   *  own traffic, "test" = the training browser and test runs, "none" ignores
+   *  the configuration without erasing it. Vocabulary and rules in
+   *  `shared/proxy-config.mjs` (mirror of main types). */
+  proxyTraffic: ProxyTraffic;
+  /** "automatic" = the OS decides; "manual" = the URL and credentials below
+   *  (default "automatic"). */
+  proxySource: ProxySource;
+  /** The manual proxy as `scheme://host:port` (default "" = none). Credentials
+   *  are refused in the URL — it is stored in plain JSON; the password is not. */
+  proxyUrl: string;
+  /** Username for the manual proxy (default ""). The password half never
+   *  appears on this object — it is write-only over `proxy:setPassword`. */
+  proxyUsername: string;
+  /** Verify TLS certificates on proxied connections (default true). Off is
+   *  for proxies that re-sign traffic; direct connections stay verified. */
+  proxySslVerify: boolean;
+}
+
+/** One proxy validation's outcome (mirror of main/services/proxy-service.ts).
+ *  Never a rejection — an unreachable network is the ANSWER, and the validate
+ *  dialog renders it. */
+export interface ProxyVerifyResult {
+  ok: boolean;
+  /** What was checked. */
+  url: string;
+  /** How the connection was made ("proxy http://…", "system settings",
+   *  "direct — loopback never proxies"), so a green result can't silently
+   *  mean the proxy was never in the path. */
+  via: string;
+  /** One human sentence about what happened. */
+  detail: string;
 }
 
 /** A single alternative locator the Auto-Heal engine found for a failed step.

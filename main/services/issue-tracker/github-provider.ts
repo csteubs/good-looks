@@ -31,6 +31,8 @@
 
 import { logger } from "@shell/backend";
 
+import { appFetch } from "../proxy-service.js";
+
 import {
   IssueProviderError,
   type CreatedIssue,
@@ -247,7 +249,9 @@ function withNote(body: string, images: UploadImage[]): string {
  * registry constructed this at module load.
  */
 export function createGithubProvider(fetchImpl?: FetchLike): IssueProvider {
-  const doFetch: FetchLike = (url, init) => (fetchImpl ? fetchImpl(url, init) : fetch(url, init));
+  // appFetch is global fetch until Settings → Proxy covers app traffic, and
+  // it resolves globalThis.fetch per call — so the stubbing story above holds.
+  const doFetch: FetchLike = (url, init) => (fetchImpl ? fetchImpl(url, init) : appFetch(url, init));
 
   return {
     id: "github",

@@ -14,6 +14,10 @@ import { anthropicKeyStore } from "./anthropic-key-store.js";
 import { sendToMain } from "./app-window.js";
 import { llmConfigStore } from "./llm-config-store.js";
 import { lmStudioTokenStore } from "./lm-studio-token-store.js";
+// Every provider request goes through appFetch: identical to global fetch
+// until Settings → Proxy covers app traffic. Local providers stay direct
+// regardless — loopback never proxies.
+import { appFetch } from "./proxy-service.js";
 import {
   ProviderError,
   describeEmptyResponse,
@@ -87,6 +91,14 @@ function baseUrlFor(provider: LlmProvider): string {
   return (override && override.trim()) || DEFAULT_BASE_URLS[provider];
 }
 
+/** The active provider and the URL its requests go to — what the proxy
+ *  validator's "Verify app connectivity" checks, so the verification exercises
+ *  the endpoint the app actually talks to rather than one invented for it. */
+export function activeProviderEndpoint(): { provider: LlmProvider; url: string } {
+  const provider = llmConfigStore.get().provider;
+  return { provider, url: baseUrlFor(provider) };
+}
+
 async function fetchModels(provider: LlmProvider, base: string): Promise<LlmModel[]> {
   if (provider === "anthropic") {
     const key = await anthropicKeyStore.getKey();
@@ -98,7 +110,7 @@ async function fetchModels(provider: LlmProvider, base: string): Promise<LlmMode
     // no error: a green "connected" dot for a provider that cannot
     // authenticate, followed by every chat failing with a confusing message.
     if (!key) throw new Error("Add an Anthropic API key to connect to Claude.");
-    const res = await fetch(`${base}/v1/models`, {
+    const res = await appFetch(`${base}/v1/models`, {
       headers: anthropicHeaders(key),
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
     });
@@ -118,7 +130,7 @@ async function fetchModels(provider: LlmProvider, base: string): Promise<LlmMode
       .sort((a, b) => familyRank(a.id) - familyRank(b.id));
   }
   if (provider === "ollama") {
-    const res = await fetch(`${base}/api/tags`, {
+    const res = await appFetch(`${base}/api/tags`, {
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
     });
     if (!res.ok) throw new Error(`Ollama returned HTTP ${res.status}`);
@@ -130,7 +142,7 @@ async function fetchModels(provider: LlmProvider, base: string): Promise<LlmMode
   }
   // LM Studio (OpenAI-compatible)
   const headers = await localAuthHeaders(provider);
-  const res = await fetch(`${base}/v1/models`, {
+  const res = await appFetch(`${base}/v1/models`, {
     headers,
     signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
   });
@@ -171,7 +183,7 @@ async function fetchLmStudioLoadState(
 ): Promise<Map<string, boolean>> {
   const states = new Map<string, boolean>();
   try {
-    const res = await fetch(`${base}/api/v0/models`, {
+    const res = await appFetch(`${base}/api/v0/models`, {
       headers,
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
     });
@@ -239,7 +251,7 @@ async function streamChatOnce(
       throw new ProviderError("Add your Anthropic API key.", "auth");
     }
     const { system, messages } = toAnthropicPayload(params.messages);
-    res = await fetch(`${base}/v1/messages`, {
+    res = await appFetch(`${base}/v1/messages`, {
       method: "POST",
       headers: anthropicHeaders(key),
       body: JSON.stringify({
@@ -254,7 +266,7 @@ async function streamChatOnce(
     });
   } else {
     authHeaders = await localAuthHeaders(provider);
-    res = await fetch(`${base}/v1/chat/completions`, {
+    res = await appFetch(`${base}/v1/chat/completions`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders },
       body: JSON.stringify({

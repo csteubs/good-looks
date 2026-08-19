@@ -22,6 +22,7 @@ import { logger } from "@shell/backend";
 import { branchNameProblem, type RepoRef } from "../../shared/branch-paths.mjs";
 import type { PullRequestSummary } from "../../renderer/lib/branch-types.js";
 import { githubTokenStore } from "./github-token-store.js";
+import { appFetch } from "./proxy-service.js";
 
 export type { PullRequestSummary };
 
@@ -81,7 +82,7 @@ export async function listOpenPullRequests(repo: RepoRef): Promise<PullRequestSu
 
   let response: Response;
   try {
-    response = await fetch(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    response = await appFetch(url, { headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`Could not reach api.github.com: ${message}`);

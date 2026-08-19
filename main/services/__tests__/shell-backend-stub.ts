@@ -57,6 +57,9 @@ export const app = {
   quit(): void {
     quitCalls++;
   },
+  /** Inert event surface. proxy-service registers a `login` listener at init;
+   *  nothing in a check ever emits one. */
+  on(_event: string, _listener: (...args: unknown[]) => void): void {},
 };
 
 let appPathOverride: string | null = null;
@@ -197,6 +200,16 @@ export class WebContentsView {
     session: {
       setPermissionRequestHandler(): void {},
       setPermissionCheckHandler(): void {},
+      // The proxy trio, recorded like the standalone stub sessions above —
+      // recorder-service applies the proxy to this session before the first
+      // navigation, and a check that constructs a session must not throw there.
+      async setProxy(config: unknown): Promise<void> {
+        proxyCalls.push(config);
+      },
+      setCertificateVerifyProc(_proc: unknown): void {},
+      async resolveProxy(_url: string): Promise<string> {
+        return "DIRECT";
+      },
       cookies: {
         async get() {
           return [];
@@ -209,6 +222,57 @@ export class WebContentsView {
   setBounds(_bounds?: unknown): void {}
   setBackgroundColor(_color?: string): void {}
 }
+
+/**
+ * Inert `session` stand-in, one shared shape for the default session and any
+ * partition. `setProxy` calls are RECORDED (see `sessionProxyCalls`) so a test
+ * can assert what configuration would have reached Chromium; `resolveProxy`
+ * answers DIRECT, which is what a machine with no OS proxy says.
+ */
+interface StubSession {
+  setProxy(config: unknown): Promise<void>;
+  setCertificateVerifyProc(proc: unknown): void;
+  resolveProxy(url: string): Promise<string>;
+  closeAllConnections(): Promise<void>;
+}
+
+const proxyCalls: unknown[] = [];
+
+function makeStubSession(): StubSession {
+  return {
+    async setProxy(config: unknown): Promise<void> {
+      proxyCalls.push(config);
+    },
+    setCertificateVerifyProc(_proc: unknown): void {},
+    async resolveProxy(_url: string): Promise<string> {
+      return "DIRECT";
+    },
+    async closeAllConnections(): Promise<void> {},
+  };
+}
+
+export const session = {
+  defaultSession: makeStubSession(),
+  fromPartition: (_partition: string): StubSession => makeStubSession(),
+};
+
+/** Every `setProxy` config any stub session has been handed, oldest first. */
+export function sessionProxyCalls(): unknown[] {
+  return [...proxyCalls];
+}
+
+export function clearSessionProxyCalls(): void {
+  proxyCalls.length = 0;
+}
+
+/** `net.request` has no inert stand-in that wouldn't lie — a check that
+ *  reaches it should know it did. The proxy validators are exercised through
+ *  their pure decision helpers instead. */
+export const net = {
+  request(_options: unknown): never {
+    throw new Error("net.request is not available in the shell-backend stub");
+  },
+};
 
 const STUB_DISPLAY = {
   id: 1,

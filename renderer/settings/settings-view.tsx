@@ -39,6 +39,7 @@ import { AiPane } from "./panes/ai-pane";
 import { ExperimentsPane } from "./panes/experiments-pane";
 import { AlertsPane } from "./panes/alerts-pane";
 import { IntegrationsPane } from "./panes/integrations-pane";
+import { ProxyPane } from "./panes/proxy-pane";
 import { AppearancePane } from "./panes/appearance-pane";
 import { AutoHealPane } from "./panes/auto-heal-pane";
 import { RecordingPane } from "./panes/recording-pane";
@@ -60,6 +61,7 @@ const PANE_COMPONENTS: Record<PaneId, ComponentType> = {
   ai: AiPane,
   alerts: AlertsPane,
   integrations: IntegrationsPane,
+  proxy: ProxyPane,
   documentation: DocumentationPane,
   diagnostics: DiagnosticsPane,
   experiments: ExperimentsPane,

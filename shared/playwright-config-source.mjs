@@ -31,6 +31,19 @@
 //  • PW_SLOWMO_MS — the test CLI has no --slow-mo flag; launchOptions.slowMo
 //    only ever comes from config, which is why this file has to exist at all.
 //  • PW_EXPECT_TIMEOUT_MS — see DEFAULT_EXPECT_TIMEOUT_MS below.
+//  • PW_PROXY_SERVER / PW_PROXY_USERNAME / PW_PROXY_PASSWORD — the Settings →
+//    Proxy manual configuration, when it covers test traffic. Built by
+//    playwrightProxyEnv in proxy-config.mjs, which is the ONE rule for when a
+//    run gets these — the app's runner and the MCP server both call it, so a
+//    run of the same test takes the same network path whichever process
+//    spawned it (minus the password, which is encrypted to the app; the MCP
+//    says so in its run description). Absent entirely in automatic mode: no
+//    proxy in the config is exactly how the browsers are told to detect the
+//    OS configuration themselves.
+//  • PW_IGNORE_HTTPS_ERRORS — "SSL Verify" unchecked alongside a manual proxy.
+//    Scoped to that: a proxy that re-signs traffic breaks every certificate,
+//    and this is the switch mabl-style setups expect. Unset, the line
+//    evaluates to undefined and the config behaves as if it weren't there.
 
 import { DEFAULT_TEST_TIMEOUT_MS } from "./run-pacing.mjs";
 
@@ -87,6 +100,21 @@ export const playwrightConfigSource =
   // it is a feature with real storage and retention consequences, not a config
   // line; see DECISIONS 2026-08-14.
   '    trace: "retain-on-failure",\n' +
+  // The Settings → Proxy manual configuration, per run via the environment
+  // like everything else here. `undefined` when unset, so a config with no
+  // proxy vars is byte-for-byte the behaviour this file always had. The
+  // credentials ride the same env the run's variables already do; username
+  // and password only ever arrive as a pair (playwrightProxyEnv builds them).
+  "    proxy: process.env.PW_PROXY_SERVER\n" +
+  "      ? {\n" +
+  "          server: process.env.PW_PROXY_SERVER,\n" +
+  "          username: process.env.PW_PROXY_USERNAME || undefined,\n" +
+  "          password: process.env.PW_PROXY_PASSWORD || undefined,\n" +
+  "        }\n" +
+  "      : undefined,\n" +
+  // "SSL Verify" unchecked in Settings → Proxy. Only ever set alongside a
+  // manual proxy — the switch exists for proxies that re-sign traffic.
+  '    ignoreHTTPSErrors: process.env.PW_IGNORE_HTTPS_ERRORS === "1" ? true : undefined,\n' +
   "    launchOptions: {\n" +
   "      slowMo: Number(process.env.PW_SLOWMO_MS || 0),\n" +
   "    },\n" +
