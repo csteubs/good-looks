@@ -81,9 +81,9 @@ import { applyRetention } from "../services/retention.js";
 import { compareRuns } from "../services/run-comparison.js";
 import { analyseFlake } from "../services/flake-analysis.js";
 import { metricsStore } from "../services/metrics-store.js";
+import { failureReasonStore } from "../services/failure-reason-store.js";
+import { DEFAULT_FAILURE_REASONS, resolveFailureReason } from "../../shared/failure-reasons.mjs";
 import {
-  runEvidence,
-  siblingRuns,
   stepBrowserMatrix,
   stepDurations,
   testDurationTrend,
@@ -91,7 +91,6 @@ import {
   suiteCost,
 } from "../../shared/metrics-query.mjs";
 import { costBreakdown, divergentSteps, slowdowns } from "../../shared/step-insights.mjs";
-import { TRIAGE_COHORT, triageRun } from "../../shared/triage.mjs";
 import {
   captureWindows,
   debugDir,
@@ -1857,21 +1856,32 @@ export function registerHandlers(): void {
     steps: divergentSteps(stepBrowserMatrix(metricsStore.handle(), { testId: params?.testId })),
   }));
 
-  ipcMain.handle("runs:triage", async (_e, params: { id: string }) => {
-    const db = metricsStore.handle();
-    const evidence = runEvidence(db, params?.id ?? "");
-    if (!evidence) return null;
-    const { run, steps } = evidence;
-    const failingStepId =
-      run.failed_step_id ?? steps.find((s) => s.status === "failed")?.step_id;
-    return triageRun({
-      run,
-      steps,
-      siblings: siblingRuns(db, run.test_id, { limit: TRIAGE_COHORT, excludeRunId: run.id }),
-      stepHistory:
-        stepHealth(db, { testId: run.test_id }).find((s) => s.stepId === failingStepId) ?? null,
-    });
-  });
+  ipcMain.handle("runs:triage", async (_e, params: { id: string }) =>
+    metricsStore.triage(params?.id ?? ""),
+  );
+  // Label WHY a failed run failed. The reason id is validated HERE, against
+  // the whole vocabulary — the run store deliberately doesn't know the
+  // definitions, and the renderer's picker is not a trust boundary. A disabled
+  // custom reason is refused for NEW assignments (that is what disabling
+  // means) while runs already carrying it keep resolving.
+  ipcMain.handle(
+    "runs:setFailureReason",
+    async (_e, params: { id: string; reasonId: string | null }) => {
+      const reasonId = params?.reasonId ?? null;
+      if (reasonId !== null) {
+        const custom = failureReasonStore.list();
+        const def = resolveFailureReason(reasonId, custom);
+        if (!def) throw new Error("No such failure reason: " + reasonId);
+        if (custom.find((r) => r.id === reasonId)?.disabled) {
+          throw new Error(`"${def.name}" is disabled and can't be assigned to new runs.`);
+        }
+      }
+      const rec = runHistoryStore.setFailureReason(params?.id ?? "", reasonId, "user");
+      if (!rec) throw new Error("Only a failed run can carry a failure reason.");
+      sendToMain("runs:changed", {});
+      return rec;
+    },
+  );
   // What screenshot capture costs, measured from run history (optionally for
   // one test — the fair comparison, since different tests do different work).
   ipcMain.handle("runs:captureOverhead", async (_e, params?: { testId?: string }) =>
@@ -2153,6 +2163,38 @@ export function registerHandlers(): void {
     "annotations:upsert",
     async (_e, params: { testId: string; runId: string; stepId: string; text: string }) =>
       annotationStore.upsert(params.testId, params.runId, params.stepId, params.text),
+  );
+
+  // ── Failure-reason handlers ──────────────────────────────────────────
+  // The whole vocabulary in one answer, because every consumer needs both
+  // halves: the picker offers built-ins plus ENABLED customs, and display
+  // resolution needs disabled ones too.
+  ipcMain.handle("failureReasons:list", async () => ({
+    builtin: DEFAULT_FAILURE_REASONS,
+    custom: failureReasonStore.list(),
+  }));
+  // Both mutations push `failureReasons:changed`: the editor lives in the
+  // Settings window, and the labels it renames are on screen in the MAIN
+  // window — without the push a rename would show only where it was typed.
+  ipcMain.handle(
+    "failureReasons:create",
+    async (_e, params: { name: unknown; description?: unknown }) => {
+      const rec = failureReasonStore.create(params?.name, params?.description);
+      sendToMain("failureReasons:changed", {});
+      return rec;
+    },
+  );
+  ipcMain.handle(
+    "failureReasons:update",
+    async (_e, params: { id: string; name?: unknown; description?: unknown; disabled?: unknown }) => {
+      const rec = failureReasonStore.update(params?.id ?? "", {
+        name: params?.name,
+        description: params?.description,
+        disabled: params?.disabled,
+      });
+      sendToMain("failureReasons:changed", {});
+      return rec;
+    },
   );
 
   logger.info("handlers", "✓ IPC handlers registered");

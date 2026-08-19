@@ -649,6 +649,54 @@ export const runHistoryStore = {
     return record;
   },
 
+  /**
+   * Label WHY a failed run failed, or clear the label.
+   *
+   * Returns the record (updated or not), or null when the run cannot carry a
+   * reason at all — unknown id, a baseline-update event, or a run that passed.
+   * Reasons are failure metadata by definition; labelling a pass would invent
+   * a failure that did not happen.
+   *
+   * MANUAL WINS, in both directions of time. An automatic assignment refuses
+   * to touch a record that already carries ANY reason: the auto path runs once
+   * at run end, so an existing value is either a user's answer (which must
+   * never be overwritten) or an earlier auto answer (which had the same
+   * evidence). A user assignment overwrites anything, and `reasonId: null`
+   * from a user clears the label — "uncategorized" is a state the picker
+   * offers, not an error.
+   *
+   * The reason id's EXISTENCE is the caller's problem (the handler validates
+   * against the vocabulary; the auto path maps only onto built-ins). This
+   * store deliberately does not import the definitions — a run store that
+   * refuses to read history because a definitions file went missing would be
+   * backwards.
+   */
+  setFailureReason(
+    runId: string,
+    reasonId: string | null,
+    by: "user" | "auto",
+    signal?: string,
+  ): RunRecord | null {
+    const all = readAll();
+    const rec = all.find((r) => r.id === runId);
+    if (!rec || rec.kind === "baseline-update" || rec.status !== "failed") return null;
+    if (by === "auto" && (rec.failureReasonId || rec.failureReasonBy)) return rec;
+    if (by === "auto" && !reasonId) return rec; // auto never clears
+    if (reasonId) {
+      rec.failureReasonId = reasonId;
+      rec.failureReasonBy = by;
+      if (by === "auto" && signal) rec.failureReasonSignal = signal;
+      else delete rec.failureReasonSignal;
+    } else {
+      delete rec.failureReasonId;
+      delete rec.failureReasonBy;
+      delete rec.failureReasonSignal;
+    }
+    writeAll(all);
+    logger.info("recorder", "Set run failure reason", { runId, reasonId, by });
+    return rec;
+  },
+
   /** Read the raw console output for a run. */
   readLog(id: string): string {
     const rec = readAll().find((r) => r.id === id);

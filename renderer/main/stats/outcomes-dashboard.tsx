@@ -234,10 +234,50 @@ export function executions(runs: RunRecord[]): RunRecord[] {
   return runs.filter((r) => r.kind !== "baseline-update");
 }
 
+/** The facet a reason id drills into. Prefixed rather than the bare id so a
+ *  future outcome facet cannot collide with a custom reason's uuid. */
+export function reasonFacet(reasonId: string | null): string {
+  return reasonId === null ? "reason-none" : `reason-${reasonId}`;
+}
+
+/** The reason id a facet names, `null` for the uncategorized bucket, or
+ *  undefined when the facet is not a reason facet at all. */
+function reasonIdOf(facet: string): string | null | undefined {
+  if (facet === "reason-none") return null;
+  if (facet.startsWith("reason-")) return facet.slice("reason-".length);
+  return undefined;
+}
+
 export function runsIn(runs: RunRecord[], facet: string): RunRecord[] {
   if (facet === "failed") return executions(runs).filter((r) => r.status === "failed");
   if (facet === "passed") return executions(runs).filter((r) => r.status === "passed");
+  const reasonId = reasonIdOf(facet);
+  if (reasonId !== undefined) {
+    return executions(runs).filter(
+      (r) => r.status === "failed" && (r.failureReasonId ?? null) === reasonId,
+    );
+  }
   return [];
+}
+
+/** The minimal definitions slice the two components below resolve names from —
+ *  what `api.failureReasons.list` answers, flattened. */
+export interface ReasonDefs {
+  builtin: { id: string; name: string; description: string }[];
+  custom: { id: string; name: string; description: string }[];
+}
+
+/** The facet's title: the reason's CURRENT name, "Uncategorized", or — for an
+ *  id the catalog no longer knows — the raw facet, same honesty rule as
+ *  `facetLabel`'s fallback. */
+function reasonTitle(facet: string, reasons?: ReasonDefs): string {
+  const reasonId = reasonIdOf(facet);
+  if (reasonId === null) return "Uncategorized failures";
+  if (reasonId === undefined) return facetLabel("outcomes", facet);
+  const def = [...(reasons?.builtin ?? []), ...(reasons?.custom ?? [])].find(
+    (r) => r.id === reasonId,
+  );
+  return def?.name ?? facet;
 }
 
 /** en-GB-agnostic thousands grouping. Four figures is where an ungrouped count
@@ -250,6 +290,7 @@ export function OutcomesDashboard({
   runs,
   totals,
   overhead,
+  reasons,
   onDrill,
 }: {
   runs: RunRecord[];
@@ -258,6 +299,9 @@ export function OutcomesDashboard({
    *  is drawn from run RECORDS, and the pruned ones no longer exist to draw. */
   totals?: RunTotals;
   overhead?: CaptureOverheadSummary;
+  /** The reason vocabulary, for the failures breakdown. Optional because it
+   *  arrives on its own query — the breakdown waits, the rest doesn't. */
+  reasons?: ReasonDefs;
   onDrill: (facet: string) => void;
 }) {
   const real = executions(runs);
@@ -340,21 +384,87 @@ export function OutcomesDashboard({
         />
       </Panel>
 
+      {/* WHY the failures failed, only once there are failures to sort and a
+          vocabulary to sort them into. Rows are counts of retained runs, like
+          the panel above; no tone on any of them — every row here is already
+          about failures, and re-stating red per row says nothing. */}
+      {retainedFailed > 0 && reasons ? (
+        <FailuresByReasonPanel runs={runs} reasons={reasons} onDrill={onDrill} />
+      ) : null}
+
       {overhead ? <CaptureOverheadPanel summary={overhead} /> : null}
     </>
+  );
+}
+
+function FailuresByReasonPanel({
+  runs,
+  reasons,
+  onDrill,
+}: {
+  runs: RunRecord[];
+  reasons: ReasonDefs;
+  onDrill: (facet: string) => void;
+}) {
+  const failed = runsIn(runs, "failed");
+  const counts = new Map<string | null, number>();
+  for (const r of failed) {
+    const key = r.failureReasonId ?? null;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const defs = [...reasons.builtin, ...reasons.custom];
+  // Labelled reasons by count, then the uncategorized bucket LAST regardless
+  // of size — it is the to-do pile, not a category, and sorting it to the top
+  // would crown "nobody has looked yet" the leading cause of failure.
+  const rows = [...counts.entries()]
+    .filter((e): e is [string, number] => e[0] !== null)
+    .map(([id, count]) => ({
+      id,
+      count,
+      def: defs.find((d) => d.id === id),
+    }))
+    .sort((a, b) => b.count - a.count || (a.def?.name ?? a.id).localeCompare(b.def?.name ?? b.id));
+  const uncategorized = counts.get(null) ?? 0;
+
+  return (
+    <Panel title="Failures by reason">
+      {rows.map((row) => (
+        <DrillRow
+          key={row.id}
+          // An id the catalog no longer knows shows raw — same honesty rule
+          // as facetLabel: show what was asked for, don't invent a label.
+          label={row.def?.name ?? row.id}
+          count={row.count}
+          detail={row.def?.description ?? ""}
+          onClick={() => onDrill(reasonFacet(row.id))}
+        />
+      ))}
+      {uncategorized > 0 ? (
+        <DrillRow
+          label="Uncategorized"
+          count={uncategorized}
+          detail="Failed runs no reason has been assigned to yet"
+          onClick={() => onDrill(reasonFacet(null))}
+        />
+      ) : null}
+    </Panel>
   );
 }
 
 export function OutcomesLeaf({
   facet,
   runs,
+  reasons,
   onOpenTest,
 }: {
   facet: string;
   runs: RunRecord[];
+  /** Needed only for reason facets, to title the list with the reason's name. */
+  reasons?: ReasonDefs;
   onOpenTest: (id: string) => void;
 }) {
-  if (facet !== "failed" && facet !== "passed") {
+  const isReasonFacet = reasonIdOf(facet) !== undefined;
+  if (facet !== "failed" && facet !== "passed" && !isReasonFacet) {
     return (
       <Panel title="Unknown outcome">
         <p className="gl-panel-note">
@@ -366,10 +476,13 @@ export function OutcomesLeaf({
   // Newest first: the run you are looking for after a failure is almost always
   // the one that just happened.
   const rows = [...runsIn(runs, facet)].sort((a, b) => b.startedAt - a.startedAt);
+  const title = isReasonFacet ? reasonTitle(facet, reasons) : facetLabel("outcomes", facet);
   return (
-    <Panel title={facetLabel("outcomes", facet)} id={`${rows.length}`}>
+    <Panel title={title} id={`${rows.length}`}>
       {rows.length === 0 ? (
-        <p className="gl-panel-note">No run has this outcome.</p>
+        <p className="gl-panel-note">
+          {isReasonFacet ? "No failed run carries this reason." : "No run has this outcome."}
+        </p>
       ) : (
         rows.map((r) => (
           <ExitRow

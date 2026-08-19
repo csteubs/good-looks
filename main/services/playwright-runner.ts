@@ -50,6 +50,8 @@ import { backfillBaseUrl, importedSandboxDir } from "./import-service.js";
 import { shouldRefuseForMissingBaseUrl } from "./imported-config.js";
 import { refreshSecretSnapshot, redactWithSnapshot } from "./secret-redaction.js";
 import { stripAnsi } from "../../shared/strip-ansi.mjs";
+import { firstErrorLine } from "../../shared/error-signature.mjs";
+import { suggestFailureReason } from "../../shared/failure-reasons.mjs";
 import {
   PLAYWRIGHT_CONFIG_FILE,
   playwrightConfigSource,
@@ -1563,6 +1565,41 @@ export const playwrightRunner = {
           metricsStore.ingest(recordId, "app");
         } catch (err) {
           logger.warn("runner", "Failed to persist run history", { err: String(err) });
+        }
+        // Label WHY the run failed, while the evidence is fresh. AFTER ingest,
+        // because the mapping reads triage, and triage reads the metric rows
+        // ingest just wrote (both synchronous). Deterministic — the triage
+        // classifier's strongest signal, or a connect-level error line — and
+        // best-effort like everything else on this path: a run that cannot be
+        // categorized stays uncategorized, which the run panel offers as a
+        // state, not an error. setFailureReason itself refuses to touch a
+        // label a user already set.
+        //
+        // Compared as `!== "passed"` on purpose: a11y-diff.test.ts pins
+        // "runStatus is assigned exactly once" with a source regex crude
+        // enough to read an equality comparison of this variable as an
+        // assignment. The two spellings are the same claim over a two-value
+        // union.
+        if (runStatus !== "passed") {
+          try {
+            if (recorderSettingsStore.get().autoFailureReasons) {
+              const suggestion = suggestFailureReason(
+                metricsStore.triage(recordId),
+                firstErrorLine(stripAnsi(logText)),
+              );
+              if (suggestion) {
+                runHistoryStore.setFailureReason(
+                  recordId,
+                  suggestion.reasonId,
+                  "auto",
+                  suggestion.signal,
+                );
+                sendToMain("runs:changed", {});
+              }
+            }
+          } catch (err) {
+            logger.warn("runner", "Could not auto-categorize the failure", { err: String(err) });
+          }
         }
         // Sweep artifacts against retention after every run — including
         // non-capture ones, so the rules apply even when this test isn't the

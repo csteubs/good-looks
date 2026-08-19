@@ -763,6 +763,14 @@ export interface RunRecord {
   shotCount?: number;
   /** id of the run this one re-executed, when it's a re-run. */
   replayOfRunId?: string;
+  /** why this failed run failed — a reason id resolved against the built-in
+   *  and custom reason definitions at display time (mirrors main types). */
+  failureReasonId?: string;
+  /** "auto" = the deterministic triage mapping at run end; "user" = the run
+   *  panel's picker. A user assignment is never overwritten by an auto one. */
+  failureReasonBy?: "user" | "auto";
+  /** the triage signal an automatic assignment argued from. */
+  failureReasonSignal?: string;
   kind?: RunRecordKind;
   note?: string;
   /** The test this run belonged to has been deleted (mirrors main types). The
@@ -965,6 +973,26 @@ export interface ArtifactUsage {
   tests: number;
 }
 
+/** A user-defined failure reason. Mirror of
+ *  main/services/failure-reason-store.ts CustomFailureReason. */
+export interface CustomFailureReason {
+  id: string;
+  name: string;
+  description: string;
+  /** hidden from the picker and refused for NEW assignments; runs already
+   *  labelled with it keep resolving. */
+  disabled?: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** What `failureReasons:list` answers: the whole vocabulary, both halves.
+ *  Built-ins come from shared/failure-reasons.mjs (id/name/description). */
+export interface FailureReasonCatalog {
+  builtin: { id: string; name: string; description: string }[];
+  custom: CustomFailureReason[];
+}
+
 /** A user-authored note on a replay step (Phase 4). Mirror of
  *  main/services/annotation-store.ts Annotation. */
 export interface Annotation {
@@ -1150,6 +1178,10 @@ export interface RecorderSettings {
    *  webhook (default false). Inert until a URL is stored — see the
    *  Integrations pane. */
   insightsSlackEnabled: boolean;
+  /** automatically label failed runs with a failure reason mapped from the
+   *  triage classifier's strongest signal (default true). Deterministic and
+   *  local — no AI, no egress. Manual labels are never overwritten. */
+  autoFailureReasons: boolean;
   /** EXPERIMENTAL. Auto-apply a finished AI debug job's script fix while its
    *  dialog is minimized, only when the script hasn't changed since the prompt
    *  was sent (default false). */

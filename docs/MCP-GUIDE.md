@@ -129,7 +129,9 @@ up in the Batch view, exactly as if you had started them from the UI.
 `triage_run` is the one worth knowing by name. It reads the evidence already on
 disk and attributes a failure to the **site** or to the **test/runner**, and it
 reports what it *couldn't* see alongside what it could. Ask for the evidence, not
-just the verdict.
+just the verdict. It also suggests the failure-reason label the evidence argues
+for, and `list_runs` shows the label each failed run already carries — assigning
+or changing one is done in the app's run panel, not from here.
 
 ### Health of the suite over time
 

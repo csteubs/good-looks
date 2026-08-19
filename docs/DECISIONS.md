@@ -10,6 +10,68 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-19 — Failure reasons: deterministic auto-categorization, and where the label lives
+
+`shared/failure-reasons.mjs`, `main/services/failure-reason-store.ts`, three
+fields on `RunRecord`, the run panel's reason row, the Outcomes board's
+"Failures by reason" panel, the Failure reasons Settings pane, and the MCP's
+`list_runs`/`triage_run` enrichment. Failed runs can now be labelled with WHY
+they failed — six built-in reasons plus user-defined custom ones — assigned
+automatically at run end and correctable from the run panel.
+
+**The feature is adapted from mabl's failure reasons, and the largest
+adaptation is that automatic assignment is not an LLM.** mabl's agent
+evaluates each failed run; here that would be a second unattended LLM egress,
+and the first one (insights, 2026-08-18) is built on the rule that its payload
+can never contain a log or a script — which is precisely the evidence a
+failure categorizer needs. Rather than weaken that fence, automatic
+assignment maps the triage classifier's strongest signal to a built-in reason
+(`suggestFailureReason`), with one addition triage doesn't cover: a
+connect-level error line (net::ERR_*, ECONNREFUSED, DNS) maps to "Network
+issue" and is checked first, because a failed connection prevents every other
+kind of evidence from existing. The mapping is local, explainable, and free,
+so the toggle (`autoFailureReasons`) defaults ON where every AI toggle
+defaults off. Two consequences follow. Custom reasons are manual-only — a
+deterministic mapper cannot read a prose definition — so mabl's "agent
+guidelines" field (1,000 chars of prompt steering) has no counterpart: a
+field nothing reads would be UI that lies. And when no signal fires the run
+stays uncategorized rather than being filed under "Other issue", because a
+guessed label reads as an answered question.
+
+**Two of mabl's default reasons were dropped for contradicting this app's own
+rules.** "Accessibility issue" would label a failure that cannot happen —
+a11y findings are reported, never fatal, pinned by a11y-diff's source-level
+assertion — and "Performance issue" describes tests this app doesn't have
+("Timing issue" is the budget-exhaustion case it does).
+
+**The assignment lives on the RunRecord, not in metrics.db and not in a
+sidecar file.** A label is primary data (a manual recategorization cannot be
+replayed from anything), and metrics.db is a derived shadow that drops and
+replays — a reason rolled up at ingest would also go stale the moment a user
+recategorized, since rollup happens before any manual touch. A sidecar keyed
+by run id (the annotation-store shape) was considered and rejected: every
+consumer of a run already holds the record, and the sidecar would add a join
+to the run table, the Stats breakdown, and the MCP for no gain — run records
+are already mutated in place by `markTestDeleted`, so an update method is not
+a new kind of write. Runs store the reason's ID; names resolve at display
+time, which is what makes renaming a custom reason reach every historical
+run without rewriting run-history.json. Same reasoning behind
+disable-not-delete: a deleted definition would strand a bare uuid where a
+label was.
+
+**Manual wins, structurally.** `setFailureReason` refuses an `"auto"` write
+onto a record that carries any reason, and auto never clears — so the
+automatic pass can only fill blanks, exactly once, at run end. An `"auto"`
+assignment stores the triage signal it argued from and renders with a
+provenance tag, so a reader can tell an unreviewed label from a human one.
+
+**The MCP stays read-only.** Its README pins "no mutation surface" for app
+data, so reasons surface there as resolved fields on `list_runs` and as
+`suggestedFailureReason` on `triage_run` — advisory, with assignment done in
+the app. The triage gathering itself moved into `metricsStore.triage(runId)`
+so the handler and the runner's auto-assign hook cannot assemble the
+evidence differently.
+
 ### 2026-08-18 — The insights report leaves the app: PDF, the issue tracker, and Slack
 
 Three exits for a report, each riding a machine that already existed rather

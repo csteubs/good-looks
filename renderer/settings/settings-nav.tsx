@@ -43,6 +43,7 @@ import {
   Palette,
   Settings2,
   Sparkles,
+  Tags,
   Video,
   Wrench,
 } from "lucide-react";
@@ -61,6 +62,7 @@ const PANE_ICONS: Record<PaneId, ComponentType<{ className?: string }>> = {
   "auto-heal": Bandage,
   storage: HardDrive,
   stats: BarChart3,
+  "failure-reasons": Tags,
   cost: Coins,
   ai: Sparkles,
   alerts: Bell,

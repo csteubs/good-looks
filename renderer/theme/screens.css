@@ -2735,6 +2735,46 @@
  * The triage line. It sits between the verdict chip and the log, which is the
  * order the question is actually asked in: what happened, why, then the proof.
  */
+/* The failure-reason row above the triage line: a label, the picker, and the
+   provenance tag. One row, never wrapping — the picker truncates before the
+   panel grows. */
+.gl-failure-reason {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--gl-line);
+}
+
+.gl-failure-reason-label {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+}
+
+.gl-failure-reason-trigger {
+  min-width: 0;
+  max-width: 220px;
+}
+
+/* Provenance, not an outcome — so no tone, same rule as the neutral verdict
+   dot: a colour here would read as a judgement about the label. */
+.gl-failure-reason-auto {
+  font-family: var(--gl-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: var(--gl-track-label);
+  text-transform: uppercase;
+  color: var(--gl-tx-3);
+  border: 1px solid var(--gl-line);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
 .gl-triage {
   flex: 0 0 auto;
   padding: 8px 12px;
