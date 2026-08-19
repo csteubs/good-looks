@@ -1146,6 +1146,10 @@ export interface RecorderSettings {
    *  true). The report generates unattended, so "it's ready" is the whole
    *  point; the notification itself is local to this Mac. */
   notifyOnInsightsReady: boolean;
+  /** post a summary of each new insights report to the configured Slack
+   *  webhook (default false). Inert until a URL is stored — see the
+   *  Integrations pane. */
+  insightsSlackEnabled: boolean;
   /** EXPERIMENTAL. Auto-apply a finished AI debug job's script fix while its
    *  dialog is minimized, only when the script hasn't changed since the prompt
    *  was sent (default false). */

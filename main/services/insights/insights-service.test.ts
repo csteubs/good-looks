@@ -61,6 +61,7 @@ interface Harness {
   saved: InsightReport[];
   notices: { cadence: string; headline: string }[];
   noticeEnabled: boolean[];
+  slacked: InsightReport[];
   completeCalls: number;
   advance(ms: number): void;
   set enabled(v: boolean);
@@ -76,6 +77,7 @@ function makeHarness(overrides: Partial<InsightsDeps> = {}) {
   const saved: InsightReport[] = [];
   const notices: { cadence: string; headline: string }[] = [];
   const noticeEnabled: boolean[] = [];
+  const slacked: InsightReport[] = [];
   let now = NOON_TUESDAY;
   let enabled = true;
   const h = {
@@ -83,6 +85,7 @@ function makeHarness(overrides: Partial<InsightsDeps> = {}) {
     saved,
     notices,
     noticeEnabled,
+    slacked,
     completeCalls: 0,
     advance: (ms: number) => {
       now += ms;
@@ -135,6 +138,9 @@ function makeHarness(overrides: Partial<InsightsDeps> = {}) {
       notices.push(n);
       noticeEnabled.push(on);
     },
+    slack: (report) => {
+      slacked.push(report);
+    },
     appVersion: () => "1.0.0",
     ...overrides,
   };
@@ -179,6 +185,27 @@ describe("insightsService firing decisions", () => {
     await svc.tick();
     expect(h.notices).toEqual([{ cadence: "weekly", headline: "One failure worth a look." }]);
     expect(h.noticeEnabled).toEqual([true]);
+  });
+
+  it("announces the SAVED report to Slack on success, and only then", async () => {
+    const h = makeHarness();
+    const svc = createInsightsService(h.deps);
+    await svc.tick();
+    // The saved report, not the raw parse — what the channel describes must be
+    // what the app stored. The gate itself lives inside the announcer.
+    expect(h.slacked).toHaveLength(1);
+    expect(h.slacked[0]).toBe(h.saved[0]);
+  });
+
+  it("a failed generation announces nothing to Slack", async () => {
+    const h = makeHarness({
+      complete: async () => {
+        throw new LlmCompletionError("down", "connection");
+      },
+    });
+    const svc = createInsightsService(h.deps);
+    await svc.tick();
+    expect(h.slacked).toHaveLength(0);
   });
 
   it("a failure stamps the backoff at SETTLE and holds the next hour's ticks", async () => {

@@ -560,11 +560,15 @@ describe("turning the webhook on asks first", () => {
 
 describe("the off-this-Mac warning", () => {
   it("is on screen with no disclosure to open", () => {
-    // This is the only thing in the app that sends data off the Mac
-    // automatically. Behind a "More" link, most users never read it.
+    // The copy used to claim this was "the only thing that sends data off
+    // this Mac automatically" — true until AI insights landed, false after,
+    // and an inaccurate disclosure is worse than none. What is pinned now is
+    // the honest version: the summary-only promise, and that it NAMES the
+    // other opt-in automatic sends instead of denying them.
     const { container } = renderPane(<IntegrationsPane />);
     const el = container.querySelector('[data-setting-row="alert-webhook-enabled"]');
-    expect(el?.textContent).toMatch(/only thing that sends data off this Mac/i);
+    expect(el?.textContent).toMatch(/other automatic sends are opt-in/i);
+    expect(el?.textContent).not.toMatch(/only thing that sends data off this Mac/i);
     expect(el?.querySelector("button[aria-expanded]")).toBeNull();
   });
 

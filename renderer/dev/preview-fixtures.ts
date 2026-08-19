@@ -772,6 +772,7 @@ export const SETTINGS: RecorderSettings = {
   aiInsightsEnabled: true,
   aiInsightsCadence: "weekly",
   notifyOnInsightsReady: true,
+  insightsSlackEnabled: false,
   autoAcceptAiDebugFixes: false,
   disabledAestheticEnhancements: [],
   // Both at their defaults. `uiScale` does nothing in the preview — there is no

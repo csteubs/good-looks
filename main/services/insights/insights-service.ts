@@ -54,6 +54,7 @@ import { scriptChangeStore } from "../script-change-store.js";
 import { routineStore } from "../routine-store.js";
 import { shopifySignatureStore } from "../shopify-signature-store.js";
 import { redactWithSnapshot, refreshSecretSnapshot } from "../secret-redaction.js";
+import { sendInsightReportAlert } from "../alert-service.js";
 import { sendToMain } from "../app-window.js";
 import { contentWindow, isDue } from "./insight-schedule.js";
 import { buildInsightFacts, type InsightFacts } from "./facts-builder.js";
@@ -90,6 +91,9 @@ export interface InsightsDeps {
   saveReport(report: InsightReport): InsightReport | null;
   push(): void;
   notify(notice: { cadence: InsightsSettings["aiInsightsCadence"]; headline: string }, enabled: boolean): void;
+  /** Announce the saved report to its configured Slack channel. Fire-and-
+   *  forget with its own gate and URL inside — see sendInsightReportAlert. */
+  slack(report: InsightReport): void;
   appVersion(): string;
 }
 
@@ -166,6 +170,9 @@ export function createInsightsService(deps: InsightsDeps) {
           { cadence, headline: saved.headline },
           deps.settings().notifyOnInsightsReady,
         );
+        // The Slack announcement carries its own enabled gate and URL check —
+        // called unconditionally here so the gate lives in exactly one place.
+        deps.slack(saved);
       }
       logger.info("insights", "Generated insights report", {
         cadence,
@@ -288,5 +295,6 @@ export const insightsService: InsightsService = createInsightsService({
   saveReport: (report) => insightReportStore.save(report),
   push: () => sendToMain("insights:changed", null),
   notify: (notice, enabled) => notifyInsightsReady(notice, enabled),
+  slack: (report) => void sendInsightReportAlert(report),
   appVersion: () => app.getVersion(),
 });

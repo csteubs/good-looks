@@ -37,6 +37,7 @@ const { mocks } = vi.hoisted(() => ({
     markRead: vi.fn(async () => ({ changed: true })),
     delete: vi.fn(async () => ({ removed: true })),
     generateNow: vi.fn(async () => ({ started: true as const })),
+    exportPdf: vi.fn(async (): Promise<{ path: string; bytes: number } | null> => null),
     getSettings: vi.fn(async (): Promise<unknown> => ({ aiInsightsEnabled: true })),
     testsList: vi.fn(async (): Promise<TestRecord[]> => []),
   },
@@ -51,6 +52,7 @@ vi.mock("../lib/api", () => ({
       markRead: mocks.markRead,
       delete: mocks.delete,
       generateNow: mocks.generateNow,
+      exportPdf: mocks.exportPdf,
     },
     recorder: { getSettings: mocks.getSettings },
     tests: { list: mocks.testsList },
@@ -58,6 +60,14 @@ vi.mock("../lib/api", () => ({
 }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => navigate }));
 vi.mock("./recorder-store", () => ({ useRecorder: () => ({ run }) }));
+// The real dialog drags in the whole issues pipeline; what THIS file owns is
+// that the button opens it with the right source. The stub reports its props.
+vi.mock("../components/issue-compose-dialog", () => ({
+  IssueComposeDialog: (props: { open: boolean; source: { kind: string } | null }) =>
+    props.open && props.source ? (
+      <div data-testid="compose-dialog">{props.source.kind}</div>
+    ) : null,
+}));
 
 function test_(id: string, name: string): TestRecord {
   return { id, name, url: "https://example.com", createdAt: 1, steps: [] } as unknown as TestRecord;
@@ -227,6 +237,21 @@ describe("a rendered report", () => {
     mocks.get.mockResolvedValue(r);
     renderView();
     expect(await screen.findByText(/didn't follow the report format/i)).toBeTruthy();
+  });
+
+  it("PDF asks the backend by id and stays silent on a cancelled save", async () => {
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: /pdf/i }));
+    await waitFor(() => expect(mocks.exportPdf).toHaveBeenCalledWith("ins-1"));
+  });
+
+  it("File issue opens the shared compose dialog with the report source", async () => {
+    renderView();
+    fireEvent.click(await screen.findByRole("button", { name: /file issue/i }));
+    const dialog = await screen.findByTestId("compose-dialog");
+    // The same dialog visual/a11y defects file through, pointed at the report
+    // — parse-time and render-time validation come with it.
+    expect(dialog.textContent).toBe("insight-report");
   });
 });
 

@@ -1247,6 +1247,19 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "issues:buildDraft": (p): IssueDraft | null => {
       const source = (p?.source ?? null) as IssueDraft["source"] | null;
       if (!source) return null;
+      // A report files its own stored content, so the fixture draft comes
+      // from the insight fixtures rather than the canned defect strings.
+      if (source.kind === "insight-report") {
+        const report = state.insightReports.find((r) => r.id === source.reportId);
+        if (!report) return null;
+        return {
+          source,
+          title: `Weekly testing report — ${report.headline.slice(0, 60)}`,
+          body: `**${report.headline}**\n\n${report.sections.map((s) => s.body).join("\n\n")}`,
+          attachments: [],
+          notices: [],
+        };
+      }
       const png =
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
       const visual = source.kind === "visual";
@@ -1420,6 +1433,13 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     /** Nothing can complete an LLM call here, so the honest preview answer is
      *  a refusal the pane already knows how to word. */
     "insights:generateNow": () => ({ started: false, reason: "alreadyRunning" }),
+    /** No native save dialog in a browser tab — answered as a cancel, which
+     *  the view treats silently. */
+    "insights:exportPdf": () => null,
+    "insightsSlack:status": () => ({ hasUrl: false, host: null }),
+    "insightsSlack:setUrl": () => ({ hasUrl: true, host: "hooks.slack.com" }),
+    "insightsSlack:clearUrl": () => ({ hasUrl: false, host: null }),
+    "insightsSlack:test": () => ({ ok: true }),
     "insights:markRead": (p) => {
       const report = state.insightReports.find(
         (r) => r.id === (p as { id?: string } | undefined)?.id,

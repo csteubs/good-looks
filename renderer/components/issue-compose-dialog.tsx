@@ -44,7 +44,14 @@ const NONE = "__none__";
  * than asking the backend per defect keeps it to one read for a whole list.
  */
 function matchingLink(links: IssueLink[], source: DefectSource): IssueLink | null {
-  const stepId = source.kind === "failure" ? (source.stepId ?? "") : source.stepId;
+  // A report link stores its report id where a step id goes — the same slot
+  // mapping `linkKey` uses, so this read matches what that write produced.
+  const stepId =
+    source.kind === "insight-report"
+      ? source.reportId
+      : source.kind === "failure"
+        ? (source.stepId ?? "")
+        : source.stepId;
   const ruleId = source.kind === "a11y" ? source.ruleId : "";
   return (
     links.find(
@@ -122,7 +129,11 @@ export function IssueComposeDialog({
           api.issues.buildDraft(source),
           api.issues.vocabulary().catch(() => null),
           api.issues.getDefaults().catch(() => ({ containerId: null, subContainerId: null })),
-          api.issues.linksForTest(source.testId).catch(() => [] as IssueLink[]),
+          api.issues
+            // Report links store an empty testId — the query still returns
+            // them, and matchingLink narrows to the one report.
+            .linksForTest(source.kind === "insight-report" ? "" : source.testId)
+            .catch(() => [] as IssueLink[]),
         ]);
         if (cancelled) return;
         // Checked BEFORE anything else is rendered. The same defect reappears on

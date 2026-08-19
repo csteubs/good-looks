@@ -193,6 +193,9 @@ const DEFAULT_SETTINGS: RecorderSettings = {
   // in practice: a report that generates unattended and announces nothing is
   // one nobody finds.
   notifyOnInsightsReady: true,
+  // OFF by default — a send off the machine the user has to switch on, and
+  // inert until they also store a webhook URL for it.
+  insightsSlackEnabled: false,
   autoAcceptAiDebugFixes: false,
   disabledAestheticEnhancements: [],
   // 100%. The theme is drawn at these exact pixel sizes, so the default has to
@@ -345,6 +348,10 @@ function read(): RecorderSettings {
         typeof parsed.notifyOnInsightsReady === "boolean"
           ? parsed.notifyOnInsightsReady
           : DEFAULT_SETTINGS.notifyOnInsightsReady,
+      insightsSlackEnabled:
+        typeof parsed.insightsSlackEnabled === "boolean"
+          ? parsed.insightsSlackEnabled
+          : DEFAULT_SETTINGS.insightsSlackEnabled,
       autoAcceptAiDebugFixes:
         typeof parsed.autoAcceptAiDebugFixes === "boolean"
           ? parsed.autoAcceptAiDebugFixes
@@ -520,6 +527,10 @@ export const recorderSettingsStore = {
         update.notifyOnInsightsReady !== undefined
           ? update.notifyOnInsightsReady
           : current.notifyOnInsightsReady,
+      insightsSlackEnabled:
+        update.insightsSlackEnabled !== undefined
+          ? update.insightsSlackEnabled
+          : current.insightsSlackEnabled,
       autoAcceptAiDebugFixes:
         update.autoAcceptAiDebugFixes !== undefined
           ? update.autoAcceptAiDebugFixes
@@ -591,6 +602,7 @@ export const recorderSettingsStore = {
       aiInsightsEnabled: next.aiInsightsEnabled,
       aiInsightsCadence: next.aiInsightsCadence,
       notifyOnInsightsReady: next.notifyOnInsightsReady,
+      insightsSlackEnabled: next.insightsSlackEnabled,
       autoAcceptAiDebugFixes: next.autoAcceptAiDebugFixes,
       disabledAestheticEnhancements: next.disabledAestheticEnhancements,
       uiScale: next.uiScale,

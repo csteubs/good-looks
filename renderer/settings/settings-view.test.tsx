@@ -309,9 +309,9 @@ describe("the reset footer", () => {
   });
 
   it("never touches a credential on the Integrations pane either", async () => {
-    // The pane the guarantee matters most on: it holds THREE credentials — the
-    // Linear key, the webhook URL and the GitHub token — and none of them is a
-    // `RecorderSettings` key, so none may appear in a reset patch. The
+    // The pane the guarantee matters most on: it holds FOUR credentials — the
+    // Linear key, two webhook URLs and the GitHub token — and none of them is
+    // a `RecorderSettings` key, so none may appear in a reset patch. The
     // exhaustive list is the point: a credential wired up as a setting later
     // fails here rather than becoming quietly resettable from a window that
     // cannot even read it back.
@@ -321,7 +321,10 @@ describe("the reset footer", () => {
     fireEvent.click(await screen.findByRole("button", { name: /reset section/i }));
     await waitFor(() => expect(setSettings).toHaveBeenCalled());
     const patch = setSettings.mock.calls[0][0];
-    expect(Object.keys(patch)).toEqual(["alertWebhookEnabled"]);
+    expect(Object.keys(patch).slice().sort()).toEqual([
+      "alertWebhookEnabled",
+      "insightsSlackEnabled",
+    ]);
   });
 
   it("is hidden while a search is running", async () => {

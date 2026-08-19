@@ -638,6 +638,19 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
     keywords: "slack discord secret credential https endpoint alerts",
   },
   {
+    id: "insights-slack-enabled",
+    pane: "integrations",
+    label: "Post insights reports to Slack",
+    keywords: "slack channel insights report digest webhook",
+    key: "insightsSlackEnabled",
+  },
+  {
+    id: "insights-slack-url",
+    pane: "integrations",
+    label: "Insights Slack webhook URL",
+    keywords: "slack channel secret credential https endpoint insights",
+  },
+  {
     id: "github-token",
     pane: "integrations",
     label: "GitHub token",
@@ -767,6 +780,7 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   aiInsightsEnabled: false,
   aiInsightsCadence: "weekly",
   notifyOnInsightsReady: true,
+  insightsSlackEnabled: false,
   autoAcceptAiDebugFixes: false,
   alertWebhookEnabled: false,
   autoHealEnabled: true,

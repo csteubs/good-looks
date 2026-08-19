@@ -139,7 +139,10 @@ export interface FailureDefect {
 export type Defect = A11yDefect | VisualDefect | FailureDefect;
 
 export interface BuildInput {
-  source: DefectSource;
+  /** Defect coordinates only — an insight-report source never reaches this
+   *  builder (the loader assembles that draft from the stored report itself),
+   *  and the type is what keeps the deep-link block below honest about it. */
+  source: Exclude<DefectSource, { kind: "insight-report" }>;
   context: DraftContext;
   defect: Defect;
 }

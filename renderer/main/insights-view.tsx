@@ -21,10 +21,11 @@ import * as React from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ScrollArea, toast } from "@ui";
-import { Bug, ChartColumn, ExternalLink, Images, Newspaper, Play, Settings2, Trash2, Wand2 } from "lucide-react";
+import { Bug, ChartColumn, CircleDot, ExternalLink, FileDown, Images, Newspaper, Play, Settings2, Trash2, Wand2 } from "lucide-react";
 
 import { Btn, Panel } from "../theme";
 import { api } from "../lib/api";
+import { IssueComposeDialog } from "../components/issue-compose-dialog";
 import type {
   InsightAction,
   InsightActionKind,
@@ -299,6 +300,21 @@ export function InsightsView() {
     onError: (err: unknown) => toast.error(String(err)),
   });
 
+  const exportPdf = useMutation({
+    mutationFn: (id: string) => api.insights.exportPdf(id),
+    onSuccess: (res) => {
+      // Null = the save dialog was cancelled — the user closed a dialog, and
+      // telling them what they just did reads as the app not having noticed.
+      if (res) toast.success(`Saved ${res.path}`);
+    },
+    onError: (err: unknown) => toast.error(err instanceof Error ? err.message : String(err)),
+  });
+
+  // The report being filed as an issue. The dialog is the SAME one visual and
+  // a11y defects file through — destination pickers, consent, dedup — with the
+  // report as the body instead of evidence.
+  const [filingReportId, setFilingReportId] = React.useState<string | null>(null);
+
   const testsById = React.useMemo(
     () => new Map((tests.data ?? []).map((t) => [t.id, t])),
     [tests.data],
@@ -417,10 +433,29 @@ export function InsightsView() {
         id={shown ? `${INSIGHTS_CADENCE_LABELS[shown.cadence]} · ${fmtWhen(shown.generatedAt)}` : undefined}
         right={
           shown ? (
-            <Btn tone="ghost" disabled={remove.isPending} onClick={() => remove.mutate(shown.id)}>
-              <Trash2 aria-hidden="true" />
-              Delete
-            </Btn>
+            <>
+              <Btn
+                tone="ghost"
+                disabled={exportPdf.isPending}
+                title="Save this report as a PDF"
+                onClick={() => exportPdf.mutate(shown.id)}
+              >
+                <FileDown aria-hidden="true" />
+                PDF
+              </Btn>
+              <Btn
+                tone="ghost"
+                title="File this report as an issue in the configured tracker"
+                onClick={() => setFilingReportId(shown.id)}
+              >
+                <CircleDot aria-hidden="true" />
+                File issue
+              </Btn>
+              <Btn tone="ghost" disabled={remove.isPending} onClick={() => remove.mutate(shown.id)}>
+                <Trash2 aria-hidden="true" />
+                Delete
+              </Btn>
+            </>
           ) : undefined
         }
         className="gl-insights-detail"
@@ -433,6 +468,14 @@ export function InsightsView() {
           <ReportDetail report={shown} testsById={testsById} onAction={onAction} />
         )}
       </Panel>
+
+      <IssueComposeDialog
+        source={filingReportId ? { kind: "insight-report", reportId: filingReportId } : null}
+        open={filingReportId !== null}
+        onOpenChange={(isOpen) => {
+          if (!isOpen) setFilingReportId(null);
+        }}
+      />
     </div>
   );
 }

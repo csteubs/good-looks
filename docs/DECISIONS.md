@@ -10,6 +10,54 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-18 — The insights report leaves the app: PDF, the issue tracker, and Slack
+
+Three exits for a report, each riding a machine that already existed rather
+than growing a new one.
+
+**PDF is a main-side verb in the report-emitter shape.** `insights:exportPdf`
+answers with a path and a byte count and the renderer never holds the bytes —
+same contract as `report:emit`, kept even though this content has no secrets
+store behind it, because two shapes for "save a file" is one too many. The
+page is built by a pure module (`insight-report-html.ts`) and printed from a
+hidden sandboxed BrowserWindow, dialog FIRST so a cancelled save costs no
+window and no layout pass. The builder's load-bearing test is the ESCAPING
+one: its input is model output and test names — text a page can influence —
+and this is the join where that text becomes markup. The page is also pinned
+self-contained (no external URL), since a print window fetching assets would
+be a network call nobody asked for.
+
+**"Send a PDF to the tracker" became "the report IS the issue body", and
+that is a capability fact, not a preference.** Neither GitHub's issue API nor
+Linear's accepts a PDF attachment (images only, for Linear), so the honest
+version of the ask is the report as markdown, filed through the SAME pipeline
+visual and a11y defects use: a fourth `DefectSource` kind
+(`insight-report`, addressed by report id alone), the same compose dialog
+with its destination pickers and dedup, the same `createIssue` redaction on
+the way out. The kind maps onto the ONE link-key derivation with its report
+id in the step slot rather than adding a second spelling — this store's
+separator history is exactly why. `buildIssueDraft`'s input type now
+EXCLUDES the kind (the loader assembles a report draft from the stored
+report directly), so the deep-link block that reads test coordinates stays
+honest at compile time.
+
+**Slack rides alert-service — the webhook egress stays one family.** A new
+`insightReport` alert kind whose builder input is the HEADLINE and the
+deterministic COUNTS: there is no parameter a section, a log or a script
+could arrive through, the same structural guarantee the run/batch builders
+carry, and `check:alerts` now drives the real send and asserts the sections
+never reach the channel. The destination is its own encrypted URL
+(`insights-slack-webhook.bin`) rather than the alert webhook — the incident
+channel and the report channel are different subscriptions, and one URL doing
+both jobs makes turning one off turn both off. `webhook-url-store` became a
+factory for exactly this reason: a hand-copied second store is the drift
+`shared/` exists to prevent. A Slack incoming webhook is channel-bound, so
+"send it to a specific channel" is precisely "paste that channel's webhook
+URL", which the Integrations pane now offers beside the alert webhook — same
+enable-asks-first confirmation, same write-only credential treatment. The
+auto-send fires from the insights service on save, through a deps seam whose
+gate lives in one place, and a failed announcement can never fail the report.
+
 ### 2026-08-18 — AI insights: the first unattended send, and everything that constrains it
 
 `main/services/insights/`, `main/services/insight-report-store.ts`,

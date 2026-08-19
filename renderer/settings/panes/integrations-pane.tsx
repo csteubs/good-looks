@@ -22,6 +22,7 @@
 // while offline, or keep saying Connected after the key was revoked.
 
 import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertDialog,
   Button,
@@ -33,7 +34,10 @@ import {
   SelectValue,
   Status,
   Switch,
+  toast,
 } from "@ui";
+
+import { api } from "../../lib/api";
 
 import type { ShopifySignatureStatus } from "../../lib/recorder-types";
 import { useSettingsController } from "../settings-controller";
@@ -141,8 +145,50 @@ export function IntegrationsPane() {
   };
 
   const urlRowVisible = useRowVisible("alert-webhook-url");
+  const slackUrlRowVisible = useRowVisible("insights-slack-url");
   const teamRowVisible = useRowVisible("linear-default-team");
   const projectRowVisible = useRowVisible("linear-default-project");
+
+  // The insights Slack destination. Its own credential and its own read, not
+  // the controller's webhook state — see insights-slack-url-store.ts for why
+  // the two destinations are deliberately separate.
+  const qc = useQueryClient();
+  const [slackInput, setSlackInput] = useState("");
+  const [confirmSlackOpen, setConfirmSlackOpen] = useState(false);
+  const slackStatusQuery = useQuery({
+    queryKey: ["insights-slack-status"],
+    queryFn: () => api.insightsSlack.status(),
+  });
+  const slackStatus = slackStatusQuery.data ?? { hasUrl: false, host: null };
+  const saveSlack = useMutation({
+    mutationFn: (url: string) => api.insightsSlack.setUrl(url),
+    onSuccess: (status) => {
+      qc.setQueryData(["insights-slack-status"], status);
+      setSlackInput("");
+      toast.success(`Saved — reports will go to ${status.host ?? "that host"}.`);
+    },
+    onError: (err: unknown) => toast.error(err instanceof Error ? err.message : String(err)),
+  });
+  const clearSlack = useMutation({
+    mutationFn: () => api.insightsSlack.clearUrl(),
+    onSuccess: (status) => {
+      qc.setQueryData(["insights-slack-status"], status);
+      // The URL is what the toggle is gated on; clearing it leaves the
+      // setting behind as a dead switch, so it goes too.
+      void save({ insightsSlackEnabled: false });
+      toast.success("Removed the insights Slack URL.");
+    },
+    onError: (err: unknown) => toast.error(err instanceof Error ? err.message : String(err)),
+  });
+  const testSlack = useMutation({
+    mutationFn: () => api.insightsSlack.test(),
+    onSuccess: () => toast.success("Test message sent."),
+    onError: (err: unknown) => toast.error(err instanceof Error ? err.message : String(err)),
+  });
+  const slackBusy = saveSlack.isPending || clearSlack.isPending || testSlack.isPending;
+  const onSaveSlack = async () => saveSlack.mutateAsync(slackInput).catch(() => {});
+  const onClearSlack = async () => clearSlack.mutateAsync().catch(() => {});
+  const onTestSlack = async () => testSlack.mutateAsync().catch(() => {});
 
   // Falls back rather than rendering "undefined Team" during the first paint.
   //
@@ -382,13 +428,14 @@ export function IntegrationsPane() {
         summary={
           <>
             POSTs a short summary to a URL you choose when a run fails, a step changes visually, or a
-            batch finishes with failures. Works with Slack and Discord incoming webhooks. This is the
-            only thing that sends data off this Mac <strong>automatically</strong> — and it sends a{" "}
+            batch finishes with failures. Works with Slack and Discord incoming webhooks. It sends a{" "}
             <strong>summary only</strong>: test name, status, the failing step&apos;s label, counts
             and timing. Run logs are never included, since they can contain page content and values
-            typed during recording. (Separately, if you pick Claude as the AI provider, &ldquo;Debug
-            with AI&rdquo; sends the test script and the failing run&apos;s output to Anthropic — but
-            only when you click it.)
+            typed during recording. The other automatic sends are opt-in like this one: AI insights
+            (Settings → Alerts) sends its summary to your AI provider on a schedule, and the row
+            below can post each report&apos;s headline to Slack. (Separately, if you pick Claude as
+            the AI provider, &ldquo;Debug with AI&rdquo; sends the test script and the failing
+            run&apos;s output to Anthropic — but only when you click it.)
           </>
         }
       >
@@ -470,6 +517,99 @@ export function IntegrationsPane() {
                   aria-label="Remove webhook URL"
                   onClick={() => void clearWebhookUrl()}
                   disabled={webhookBusy}
+                >
+                  Remove
+                </Button>
+              </>
+            ) : null}
+          </div>
+        </SettingRow>
+      ) : null}
+
+      <SettingRow
+        id="insights-slack-enabled"
+        label="Post insights reports to Slack"
+        flag="leaves this Mac"
+        summary={
+          <>
+            POSTs a short summary — the report&apos;s headline and its counts, never the full text —
+            to a Slack incoming webhook whenever a new AI insights report is generated (Settings →
+            Alerts). Its own destination, separate from the alert webhook above: an incoming webhook
+            is bound to one channel on Slack&apos;s side, so pasting a channel&apos;s webhook URL is
+            how you pick the channel.
+          </>
+        }
+      >
+        <Switch
+          id="insights-slack-enabled"
+          checked={settings.insightsSlackEnabled ?? false}
+          // Same shape as the alert webhook above: ON asks first, because it
+          // starts unattended sends off the Mac; OFF just stops them.
+          onCheckedChange={(checked) => {
+            if (checked) setConfirmSlackOpen(true);
+            else void save({ insightsSlackEnabled: false });
+          }}
+          disabled={!slackStatus.hasUrl}
+        />
+        <AlertDialog
+          open={confirmSlackOpen}
+          onOpenChange={setConfirmSlackOpen}
+          size="medium"
+          title="Start posting reports to Slack?"
+          description={`Each new insights report will POST its headline and counts to ${
+            slackStatus.host ?? "the configured host"
+          } automatically — you won't be asked per report. The report's full text is never sent; it stays in the app.`}
+          confirmLabel="Post reports"
+          confirmVariant="accent"
+          onConfirm={() => save({ insightsSlackEnabled: true })}
+        />
+      </SettingRow>
+
+      {slackUrlRowVisible ? (
+        <SettingRow
+          id="insights-slack-url"
+          label="Insights Slack webhook URL"
+          nested
+          stacked
+          summary={
+            slackStatus.hasUrl
+              ? `Saved — reports go to ${slackStatus.host ?? "the configured host"}. The URL is stored encrypted and never shown again; paste a new one to replace it.`
+              : "Paste the incoming-webhook URL for the channel that should receive reports (https://). It's treated as a secret: stored encrypted on this Mac and never read back into this window."
+          }
+        >
+          <div className="flex w-full items-center gap-2">
+            <Input
+              id="insights-slack-url"
+              type="password"
+              value={slackInput}
+              onChange={(e) => setSlackInput(e.target.value)}
+              placeholder="https://hooks.slack.com/services/…"
+              disabled={slackBusy}
+              className="min-w-0 flex-1"
+            />
+            <Button
+              variant="secondary"
+              aria-label="Save insights Slack URL"
+              onClick={() => void onSaveSlack()}
+              disabled={slackBusy || slackInput.trim().length === 0}
+            >
+              Save
+            </Button>
+            {slackStatus.hasUrl ? (
+              <>
+                <Button
+                  variant="secondary"
+                  aria-label="Send a test message to the insights channel"
+                  onClick={() => void onTestSlack()}
+                  disabled={slackBusy}
+                >
+                  Send test
+                </Button>
+                <Button
+                  variant="secondary"
+                  aria-label="Remove insights Slack URL"
+                  onClick={() => void onClearSlack()}
+                  disabled={slackBusy}
                 >
                   Remove
                 </Button>

@@ -2116,6 +2116,11 @@ export interface RecorderSettings {
    *  "it's ready" is the message being waited for. The notification itself is
    *  local to this Mac. */
   notifyOnInsightsReady: boolean;
+  /** Post a summary of each new insights report — the headline and the
+   *  deterministic counts, never the sections — to the Slack incoming webhook
+   *  stored for it (default false). Inert until that URL is configured; the
+   *  send goes through alert-service, the app's one webhook egress. */
+  insightsSlackEnabled: boolean;
   /** EXPERIMENTAL. Apply an AI debug job's suggested script fix automatically
    *  the moment the job completes (default false). Guarded: only a run-scoped
    *  job, only while its dialog is minimized, and only when the script is

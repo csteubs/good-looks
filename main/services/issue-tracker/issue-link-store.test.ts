@@ -146,3 +146,26 @@ describe("degrading rather than throwing", () => {
     expect(typeof link?.lastCommentedAt).toBe("number");
   });
 });
+
+describe("an insight report's link", () => {
+  const reportSource: DefectSource = { kind: "insight-report", reportId: "ins-1" };
+
+  it("round-trips through the one key derivation", () => {
+    // The report source maps onto the same keyFor slots the defects use (the
+    // report id where a step id goes), so the write and the read cannot spell
+    // the key differently — the exact failure this store's separator history
+    // is about.
+    store.save("linear", reportSource, ISSUE);
+    expect(store.find("linear", reportSource)?.identifier).toBe("ENG-42");
+    expect(store.find("linear", { kind: "insight-report", reportId: "ins-2" })).toBeNull();
+  });
+
+  it("never collides with a defect link, and claims no test", () => {
+    store.save("linear", visualOn("run-1"), ISSUE);
+    store.save("linear", reportSource, { id: "iss-2", identifier: "ENG-43", url: "https://x/43" });
+    expect(store.find("linear", visualOn("run-9"))?.identifier).toBe("ENG-42");
+    expect(store.find("linear", reportSource)?.identifier).toBe("ENG-43");
+    // A report link badges no test row.
+    expect(store.forTest("t1").map((l) => l.identifier)).toEqual(["ENG-42"]);
+  });
+});
