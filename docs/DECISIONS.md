@@ -8130,3 +8130,38 @@ overrides land in `flowArgs`. Storing `""` would pin the call to an empty
 string and make a later default change silently not apply. Secret and captured
 parameters take no textual override at all — an override is a plaintext value
 on a step record, which is exactly where a secret must not go.
+
+## 2026-08-19 — Flows phase 2: the library surface (used-by, guarded delete, unwrap)
+
+**Deleting a called test is blocked, not cascaded.** A test other tests call
+has its steps baked into their specs; after a delete each caller regenerates
+with a "flow not found" comment where the steps were. The handler refuses with
+the caller names, and the detail view's delete dialog says so before the
+attempt. The alternative — silently rewriting or breaking N other tests on one
+delete — is the bigger surprise. The guard keys on CALLERS (a step scan), not
+on `isFlow`: turning the flag off must not make a depended-on test deletable.
+
+**Unwrap goes through the generator's own binding.** `tests:unwrapFlow`
+replaces one `runFlow` step with copies of the flow's steps bound by the
+exported `flowCallBindings`/`bindFlowStep` — the same functions `expandSteps`
+uses — so the unwrapped test does exactly what the call did. One level only
+(a nested `runFlow` inside the flow stays a call), fresh ids on every copy,
+and the call site's disabled/continue-on-failure propagate to the whole block,
+mirroring the inliner. Unwrap is offered on the detail view's Steps tab with a
+confirm that says the copies stop following the flow; it is deliberately NOT
+offered inside Edit Steps, which holds an unsaved draft — a record write from
+inside a draft is a save-ordering trap (the same reason extraction is
+trainer-only).
+
+**Flows get a rail section and leave their folders.** A flow is a building
+block rather than a test someone runs, so it lists under a "Flows" section at
+the bottom of the rail (mabl's Tests > Flows in this rail's vocabulary) instead
+of among the tests. While flagged, a flow's `group` is not rendered — the
+section is its place — though the field survives on the record for when the
+flag comes off. A synthetic folder named "Flows" was rejected: it would collide
+with a user folder of that name and put one test in two places.
+
+**The used-by strip is computed, never stored.** `tests:flowUsage` scans steps
+(`testStore.callersOf`, hidden tests included — a hidden caller still has a
+spec on disk). A stored reverse index would be one more thing to keep true;
+the scan is a JSON read the library's size makes free.

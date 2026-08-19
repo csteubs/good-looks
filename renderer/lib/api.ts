@@ -315,6 +315,12 @@ export const api = {
       ipc().invoke<FlowSummary[]>("tests:listFlows", {
         fromId,
       }),
+    /** Which tests call this flow directly — the "Used by" list. */
+    flowUsage: (id: string) =>
+      ipc().invoke<{ id: string; name: string }[]>("tests:flowUsage", { id }),
+    /** Replace one runFlow step with the flow's steps, bound as a run would. */
+    unwrapFlow: (id: string, stepId: string) =>
+      ipc().invoke<TestRecord>("tests:unwrapFlow", { id, stepId }),
     importFiles: () => ipc().invoke<ImportResult>("tests:importFiles"),
     /** `ref` is an optional branch or tag. Validated in the main process with
      *  the branch switcher's own rule (`shared/branch-paths.mjs`) — a ref

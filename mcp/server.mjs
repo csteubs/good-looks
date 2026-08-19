@@ -411,12 +411,13 @@ server.registerTool(
   {
     title: "List recorded tests",
     description:
-      "List the recorded Playwright tests: id, name, target URL, step count, tags, the library folder each is in, and timestamps. Newest-updated first, capped at 200. `group` is absent on a test that is in no folder — there is no separate folder record, so the set of folders is whatever these names say it is.",
-    inputSchema: {},
+      "List the recorded Playwright tests: id, name, target URL, step count, tags, the library folder each is in, and timestamps. Newest-updated first, capped at 200. `group` is absent on a test that is in no folder — there is no separate folder record, so the set of folders is whatever these names say it is. `isFlow` marks a reusable flow (a step sequence other tests inline with a runFlow step); pass isFlow to filter to flows only (true) or exclude them (false).",
+    inputSchema: { isFlow: z.boolean().optional() },
   },
-  async () => {
+  async ({ isFlow } = {}) => {
     const tests = listTests()
       .filter((t) => !t.hidden)
+      .filter((t) => (isFlow === undefined ? true : Boolean(t.isFlow) === isFlow))
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, 200)
       .map((t) => ({
@@ -432,6 +433,7 @@ server.registerTool(
         speed: t.speed ?? "fast",
         runBrowser: t.runBrowser ?? "chromium",
         scriptEdited: Boolean(t.scriptEdited),
+        ...(t.isFlow ? { isFlow: true, flowParams: t.flowParams ?? [] } : {}),
         createdAt: t.createdAt,
         updatedAt: t.updatedAt,
       }));
@@ -486,6 +488,7 @@ server.registerTool(
       a11yChecks: test.a11yChecks,
       recordLogs: test.recordLogs,
       isFlow: Boolean(test.isFlow),
+      ...(test.isFlow ? { flowParams: test.flowParams ?? [] } : {}),
       imported: Boolean(test.sourceDir),
       specSource,
     };

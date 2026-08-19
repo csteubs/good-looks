@@ -43,6 +43,7 @@ import { sendToMain } from "../services/app-window.js";
 import { applyUiScaleToAllWindows } from "../services/ui-scale.js";
 import { annotationStore } from "../services/annotation-store.js";
 import { testStore } from "../services/test-store.js";
+import { bindFlowStep, flowCallBindings } from "../services/script-generator.js";
 import { duplicateTest } from "../services/duplicate-test.js";
 import { importService } from "../services/import-service.js";
 import { normalizeBaseUrl } from "../services/imported-config.js";
@@ -370,6 +371,19 @@ export function registerHandlers(): void {
   // fails silently: nothing errors, the test is gone from the library, and its
   // leftovers surface weeks later under a name nobody recognises.
   ipcMain.handle("tests:delete", async (_e, params: { id: string }) => {
+    // A test other tests still CALL cannot be deleted — their specs inline its
+    // steps, and the day after the delete every one of them regenerates with a
+    // "flow not found" comment where the steps were. Blocked with the caller
+    // names rather than cascaded: silently rewriting N other tests on a delete
+    // is a bigger surprise than a refusal. Unwrap or remove the calls first.
+    const callers = testStore.callersOf(params.id);
+    if (callers.length > 0) {
+      const names = callers.map((t) => `“${t.name}”`).join(", ");
+      throw new Error(
+        `This test is used as a flow by ${callers.length === 1 ? "" : `${callers.length} tests: `}${names}. ` +
+          "Remove or unwrap those flow calls first.",
+      );
+    }
     testStore.remove(params.id);
     // Drop any captured visual-testing artifacts + pinned baselines for this test.
     artifactStore.deleteTest(params.id);
@@ -754,6 +768,56 @@ export function registerHandlers(): void {
         }
         return { id: t.id, name: t.name, flowParams, defaults };
       });
+  });
+
+  /** Which tests call this flow directly — the reverse index the library has
+   *  no stored form of. Computed by scanning steps (through hidden tests too:
+   *  a hidden caller still has a spec on disk that inlines the flow). */
+  ipcMain.handle("tests:flowUsage", async (_e, params: { id: string }) => {
+    return testStore.callersOf(params.id).map((t) => ({ id: t.id, name: t.name }));
+  });
+
+  /** Replace one `runFlow` step with the flow's steps, bound exactly as the
+   *  generator would bind them — the exported helpers ARE the generator's, so
+   *  unwrapping cannot mean something different from running.
+   *
+   *  One level only: a nested `runFlow` inside the flow stays a call. Fresh
+   *  ids on every copied step (two steps sharing an id would confuse every
+   *  id-keyed feature: selection, heals, replay flashes), and the call site's
+   *  disabled/continue-on-failure propagate to the whole block, the same rule
+   *  `expandSteps` applies. */
+  ipcMain.handle("tests:unwrapFlow", async (_e, params: { id: string; stepId: string }) => {
+    const rec = testStore.get(params.id);
+    if (!rec) throw new Error("Test not found: " + params.id);
+    const at = rec.steps.findIndex((s) => s.id === params.stepId);
+    if (at < 0) throw new Error("Step not found: " + params.stepId);
+    const call = rec.steps[at];
+    if (call.type !== "runFlow" || !call.flowId) {
+      throw new Error("That step is not a flow call.");
+    }
+    if (call.flowId === rec.id) throw new Error("A test cannot unwrap itself.");
+    const flow = testStore.get(call.flowId);
+    if (!flow) {
+      throw new Error("This flow can't be found — it may have been deleted.");
+    }
+    if (flow.steps.length === 0) {
+      throw new Error(`“${flow.name}” has no steps to unwrap.`);
+    }
+    const { randomUUID } = await import("crypto");
+    const args = flowCallBindings(flow, call.flowArgs);
+    const now = Date.now();
+    const inline = flow.steps.map((s) => {
+      const bound = bindFlowStep(s, args);
+      const copy: Step = { ...bound, id: randomUUID(), timestamp: now };
+      if (call.disabled) copy.disabled = true;
+      if (call.continueOnFailure) copy.continueOnFailure = true;
+      return copy;
+    });
+    rec.steps = [...rec.steps.slice(0, at), ...inline, ...rec.steps.slice(at + 1)];
+    rec.updatedAt = now;
+    if (!rec.scriptEdited) rec.scriptPath = testStore.regenerateScript(rec);
+    testStore.save(rec);
+    return rec;
   });
 
   // ── Heal journal ─────────────────────────────────────────────────────────

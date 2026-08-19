@@ -509,6 +509,36 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
           }
           return { id: t.id, name: t.name, flowParams, defaults };
         }),
+    /** The "Used by" list on a flow's detail view. Same scan the real handler
+     *  does: direct `runFlow` callers, hidden tests included. */
+    "tests:flowUsage": (p): { id: string; name: string }[] =>
+      state.tests
+        .filter(
+          (t) =>
+            t.id !== p?.id &&
+            t.steps.some((s) => s.type === "runFlow" && s.flowId === p?.id),
+        )
+        .map((t) => ({ id: t.id, name: t.name })),
+    /** Unwrap a flow call into a copy of the flow's steps. The preview's
+     *  binding is a simplification (no `${param}` substitution — that lives in
+     *  the generator, which the preview doesn't ship) but the SHAPE matches:
+     *  the call row disappears and the flow's steps take its place. */
+    "tests:unwrapFlow": (p): TestRecord | null => {
+      const test = findTest(p?.id);
+      if (!test) return null;
+      const at = test.steps.findIndex((s) => s.id === p?.stepId);
+      const call = at >= 0 ? test.steps[at] : undefined;
+      if (!call || call.type !== "runFlow" || !call.flowId) return structuredClone(test);
+      const flow = findTest(call.flowId);
+      if (!flow || flow.steps.length === 0) return structuredClone(test);
+      const inline = flow.steps.map((s, i) => ({
+        ...structuredClone(s),
+        id: `${call.id}-u${i}`,
+        timestamp: Date.now(),
+      }));
+      test.steps = [...test.steps.slice(0, at), ...inline, ...test.steps.slice(at + 1)];
+      return structuredClone(test);
+    },
     /** The flow toggle + parameter manager on the Variables tab. Mirrors the
      *  real handler's auto-declare: a parameter with no variable gets an empty
      *  plain one, so the manager's checkbox round-trips visibly. */

@@ -779,3 +779,33 @@ describe("LibrarySidebar folders (REDESIGN §7.2)", () => {
     expect(setGroup).not.toHaveBeenCalled();
   });
 });
+
+describe("LibrarySidebar — the Flows section", () => {
+  it("lists a flow under its own section instead of among the tests", async () => {
+    tests = [
+      record({ id: "t1", name: "Checkout" }),
+      record({ id: "f1", name: "Sign in", isFlow: true, group: "Storefront" }),
+    ];
+    renderSidebar();
+    // The section exists and carries the flow's row.
+    expect(await screen.findByText("Flows")).toBeTruthy();
+    expect(await screen.findByText("Sign in")).toBeTruthy();
+    // The flow left its folder — its place is the section, so its old group
+    // has no remaining member and must not be drawn as an empty folder.
+    expect(screen.queryByText("Storefront")).toBeNull();
+  });
+
+  it("marks a flow's row with the Workflow glyph", async () => {
+    tests = [record({ id: "f1", name: "Sign in", isFlow: true })];
+    renderSidebar();
+    await screen.findByText("Sign in");
+    expect(screen.getByLabelText("Reusable flow")).toBeTruthy();
+  });
+
+  it("draws no Flows section when the library has no flows", async () => {
+    tests = [record({ id: "t1", name: "Checkout" })];
+    renderSidebar();
+    await screen.findByText("Checkout");
+    expect(screen.queryByText("Flows")).toBeNull();
+  });
+});

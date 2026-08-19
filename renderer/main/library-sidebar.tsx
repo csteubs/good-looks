@@ -510,16 +510,23 @@ export function LibrarySidebar() {
   // the set of groups IS whatever the library says it is. See
   // renderer/lib/library-groups.ts.
   const collapsedGroups = settingsQuery.data?.collapsedTestGroups ?? [];
+  // Flows get their own section at the bottom of the rail (mabl's Tests >
+  // Flows, in this rail's vocabulary): a flow is a building block rather than
+  // a test someone runs, so listing it among the tests makes the library read
+  // longer than the suite is. A flow therefore leaves its folder while
+  // flagged — the section IS its place, the way the Views group is a place.
+  const flowTests = React.useMemo(() => tests.filter((t) => t.isFlow === true), [tests]);
+  const nonFlowTests = React.useMemo(() => tests.filter((t) => t.isFlow !== true), [tests]);
   const rows = React.useMemo(
     () =>
       libraryRows(
-        tests,
+        nonFlowTests,
         collapsedGroups,
         // Verdicts, not tones: a folder counts its members' outcomes, and a
         // tone is a colour plus a sentence about runs.
         new Map([...testVerdicts(runsQuery.data ?? [])].map(([id, v]) => [id, v.verdict])),
       ),
-    [tests, collapsedGroups, runsQuery.data],
+    [nonFlowTests, collapsedGroups, runsQuery.data],
   );
   const names = React.useMemo(() => groupNames(tests), [tests]);
 
@@ -782,6 +789,9 @@ export function LibrarySidebar() {
               renderTest(row.test, false)
             ),
           )}
+          {flowTests.length > 0 ? (
+            <RailGroup label="Flows">{flowTests.map((t) => renderTest(t, false))}</RailGroup>
+          ) : null}
         </>
       )}
       <NewRecordingDialog open={dialogOpen} onOpenChange={setDialogOpen} />

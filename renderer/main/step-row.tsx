@@ -197,6 +197,8 @@ export function StepRow({
   onReplay,
   onRefine,
   onEdit,
+  onOpenFlow,
+  onUnwrapFlow,
   drag,
   runStatus,
   isNew,
@@ -214,6 +216,12 @@ export function StepRow({
   onReplay?: () => Promise<{ ok: boolean; error?: string }>;
   onRefine?: () => void;
   onEdit?: (patch: Partial<Step>) => void;
+  /** Navigate to the flow a `runFlow` step calls. Only meaningful on hosts
+   *  that can navigate (the detail view); ignored for other step types. */
+  onOpenFlow?: (flowId: string) => void;
+  /** Replace this `runFlow` step with the flow's steps, bound as a run would
+   *  bind them. The host owns the confirm and the actual write. */
+  onUnwrapFlow?: () => void;
   drag?: StepDragProps;
   /** Live run status of this step during a test run, for highlight. */
   runStatus?: RunStepStatus;
@@ -676,8 +684,12 @@ export function StepRow({
             // only renders when at least one utility applies to this step.
             const canRefine = onRefine && step.locator;
             const canContinue = onEdit && step.type !== "if" && step.type !== "endif";
-            const canFlowCall = onEdit && step.type === "runFlow" && step.flowId;
-            if (!canRefine && !canContinue && !canFlowCall) return null;
+            const isFlowCall = step.type === "runFlow" && !!step.flowId;
+            const canFlowCall = onEdit && isFlowCall;
+            const canOpenFlow = onOpenFlow && isFlowCall;
+            const canUnwrap = onUnwrapFlow && isFlowCall;
+            if (!canRefine && !canContinue && !canFlowCall && !canOpenFlow && !canUnwrap)
+              return null;
             return (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -691,12 +703,24 @@ export function StepRow({
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent side="bottom" align="end">
+                  {canOpenFlow ? (
+                    <DropdownMenuItem onSelect={() => onOpenFlow?.(step.flowId!)}>
+                      Go to Flow
+                    </DropdownMenuItem>
+                  ) : null}
                   {canFlowCall ? (
                     <DropdownMenuItem onSelect={() => setFlowCallOpen(true)}>
                       Flow Parameters…
                     </DropdownMenuItem>
                   ) : null}
-                  {canFlowCall && (canRefine || canContinue) ? <DropdownMenuSeparator /> : null}
+                  {canUnwrap ? (
+                    <DropdownMenuItem onSelect={onUnwrapFlow}>
+                      Unwrap Flow…
+                    </DropdownMenuItem>
+                  ) : null}
+                  {(canOpenFlow || canFlowCall || canUnwrap) && (canRefine || canContinue) ? (
+                    <DropdownMenuSeparator />
+                  ) : null}
                   {canRefine ? (
                     <DropdownMenuItem onSelect={onRefine} icon="crosshair">
                       Refine Selection

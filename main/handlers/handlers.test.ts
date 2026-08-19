@@ -1111,6 +1111,100 @@ describe("tests:setFlow / tests:listFlows — the flow product surface", () => {
   });
 });
 
+describe("tests:flowUsage / tests:unwrapFlow / the delete guard", () => {
+  it("reports direct callers, hidden ones included", async () => {
+    seedTest("t-use-flow", { isFlow: true });
+    seedTest("t-use-a", {
+      steps: [{ id: "s1", type: "runFlow", flowId: "t-use-flow", timestamp: 1 }] as Step[],
+    });
+    seedTest("t-use-b", {
+      hidden: true,
+      steps: [{ id: "s1", type: "runFlow", flowId: "t-use-flow", timestamp: 1 }] as Step[],
+    });
+    seedTest("t-use-c"); // no call — must not appear
+    const usage = await invokeHandler<{ id: string; name: string }[]>("tests:flowUsage", {
+      id: "t-use-flow",
+    });
+    expect(usage.map((u) => u.id).sort()).toEqual(["t-use-a", "t-use-b"]);
+  });
+
+  it("refuses to delete a test something still calls, naming the caller", async () => {
+    seedTest("t-del-flow", { isFlow: true });
+    seedTest("t-del-caller", {
+      steps: [{ id: "s1", type: "runFlow", flowId: "t-del-flow", timestamp: 1 }] as Step[],
+    });
+    await expect(invokeHandler("tests:delete", { id: "t-del-flow" })).rejects.toThrow(
+      /Test t-del-caller/,
+    );
+    // Still there — a refused delete must not half-run its cleanup.
+    expect(testStore.get("t-del-flow")).not.toBeNull();
+    // Remove the call and the delete goes through.
+    const caller = testStore.get("t-del-caller")!;
+    caller.steps = [];
+    testStore.save(caller);
+    await invokeHandler("tests:delete", { id: "t-del-flow" });
+    expect(testStore.get("t-del-flow")).toBeNull();
+  });
+
+  it("unwraps a call into bound copies of the flow's steps, in place", async () => {
+    seedTest("t-un-flow", {
+      isFlow: true,
+      flowParams: ["email"],
+      variables: [{ name: "email", kind: "plain", value: "default@example.com" }],
+      steps: [
+        { id: "f-s1", type: "fill", locator: { k: "label", v: "Email" }, value: "${email}", timestamp: 1 },
+        { id: "f-s2", type: "click", locator: { k: "role", role: "button", name: "Go" }, timestamp: 1 },
+      ] as Step[],
+    });
+    seedTest("t-un-caller", {
+      steps: [
+        { id: "c-s1", type: "goto", url: "https://example.com", timestamp: 1 },
+        {
+          id: "c-s2",
+          type: "runFlow",
+          flowId: "t-un-flow",
+          label: "Login",
+          flowArgs: { email: "override@x.com" },
+          disabled: true,
+          timestamp: 1,
+        },
+        { id: "c-s3", type: "press", value: "Enter", timestamp: 1 },
+      ] as Step[],
+    });
+    const rec = await invokeHandler<TestRecord>("tests:unwrapFlow", {
+      id: "t-un-caller",
+      stepId: "c-s2",
+    });
+    expect(rec.steps.map((s) => s.type)).toEqual(["goto", "fill", "click", "press"]);
+    // The call's argument was bound into the copy — unwrapping means what
+    // running meant.
+    expect(rec.steps[1].value).toBe("override@x.com");
+    // Fresh ids, so nothing id-keyed can confuse the copy with the original.
+    expect(rec.steps[1].id).not.toBe("f-s1");
+    // The call site's disabled covers the whole block, as the generator's
+    // inlining would have.
+    expect(rec.steps[1].disabled).toBe(true);
+    expect(rec.steps[2].disabled).toBe(true);
+    // And the flow record itself is untouched.
+    expect(testStore.get("t-un-flow")?.steps.map((s) => s.id)).toEqual(["f-s1", "f-s2"]);
+  });
+
+  it("refuses to unwrap a missing flow, and a step that is not a call", async () => {
+    seedTest("t-un-bad", {
+      steps: [
+        { id: "s1", type: "goto", url: "https://example.com", timestamp: 1 },
+        { id: "s2", type: "runFlow", flowId: "gone", label: "Gone", timestamp: 1 },
+      ] as Step[],
+    });
+    await expect(
+      invokeHandler("tests:unwrapFlow", { id: "t-un-bad", stepId: "s2" }),
+    ).rejects.toThrow(/can't be found/i);
+    await expect(
+      invokeHandler("tests:unwrapFlow", { id: "t-un-bad", stepId: "s1" }),
+    ).rejects.toThrow(/not a flow call/i);
+  });
+});
+
 describe("tests:updateSteps — steps, script, and whether they agree", () => {
   const HAND_EDITED = "// hand-written by the user, not generated\n";
 
