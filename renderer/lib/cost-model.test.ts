@@ -18,6 +18,7 @@ import {
   flakeRuns,
   formatHours,
   formatMinutes,
+  formatNetMinutes,
   formatRate,
   formatSpend,
   reviewReason,
@@ -165,11 +166,6 @@ describe("computeCost", () => {
     expect(computeCost(runs, A).manualHoursAvoided).toBe(1);
   });
 
-  it("reports no ratio at all when nothing has been spent", () => {
-    // A ratio over zero is not "infinite value", it is no measurement.
-    expect(computeCost([], A).hoursPerUnitSpent).toBeNull();
-  });
-
   it("excludes baseline-update rows and tombstoned runs", () => {
     const runs = [
       run({ id: "r1", startedAt: 1 }),
@@ -277,6 +273,14 @@ describe("the verdict", () => {
 });
 
 describe("formatting", () => {
+  it("formatNetMinutes keeps the sign — a net saving can be a net cost", () => {
+    expect(formatNetMinutes(12)).toBe("12 min");
+    expect(formatNetMinutes(-12)).toBe("−12 min");
+    expect(formatNetMinutes(90)).toBe("1.5 h");
+    expect(formatNetMinutes(-90)).toBe("−1.5 h");
+  });
+
+
   it("prints the symbol of the currency the user picked", () => {
     expect(formatSpend(12.5, "usd")).toBe("$12.50");
     expect(formatSpend(12.5, "eur")).toBe("€12.50");

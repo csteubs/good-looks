@@ -17,7 +17,8 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import type { RunRecord } from "../lib/recorder-types";
 import { COST_DEFAULTS } from "../lib/cost-model";
 import { DENSE_PAGE_SIZE } from "../lib/paginate";
-import { CostPanel, REVIEW_COPY } from "./cost-panel";
+import type { SavingsSummary } from "../lib/ai-debug-stats";
+import { CostPanel, DEBUG_TILE_COPY, REVIEW_COPY } from "./cost-panel";
 
 const MIN = 60_000;
 
@@ -34,6 +35,33 @@ function run(over: Partial<RunRecord> & { id: string; startedAt: number }): RunR
     logBytes: 1,
     ...over,
   };
+}
+
+/** A debug-savings summary with the arithmetic already done, as
+ *  `summariseSavings` would hand it over. `netValue` defaults to null — the
+ *  no-hourly-rate state, which is the shipped one. */
+function savings(over: Partial<SavingsSummary>): SavingsSummary {
+  const countedFixes = over.countedFixes ?? 0;
+  const grossMinutes = over.grossMinutes ?? countedFixes * 15;
+  const waitedMinutes = over.waitedMinutes ?? 0;
+  return {
+    countedFixes,
+    grossMinutes,
+    waitedMinutes,
+    netMinutes: over.netMinutes ?? grossMinutes - waitedMinutes,
+    netValue: over.netValue ?? null,
+    ...over,
+  };
+}
+
+/** The whole card for a named figure — the math assertions need the card, not
+ *  just its value. */
+function card(label: RegExp): HTMLElement {
+  const el = [...document.querySelectorAll(".gl-cost-figure")].find((f) =>
+    label.test(f.querySelector(".gl-cost-figure-label")?.textContent ?? ""),
+  ) as HTMLElement | undefined;
+  if (!el) throw new Error(`no figure labelled ${label}`);
+  return el;
 }
 
 /** The value under a named figure.
@@ -126,13 +154,11 @@ describe("currency", () => {
 
   it("leaves the time figures alone", () => {
     // Value is TIME here, not money — converting hours to cash needs an hourly
-    // rate this app was never told. Only the ratio's denominator is a price.
+    // rate, and none of these figures has been given one.
     render(<CostPanel runs={runs} assumptions={A} currency="usd" />);
     expect(figure(/Manual testing avoided/i)).toBe("10h");
     expect(figure(/Manual testing avoided/i)).not.toContain("$");
     expect(figure(/Failures caught/i)).not.toContain("$");
-    const ratio = document.querySelector(".gl-cost-figure-unit")?.textContent ?? "";
-    expect(ratio).toContain("per $1 of CI");
   });
 
   it("prints no symbol at all under `none`", () => {
@@ -141,8 +167,6 @@ describe("currency", () => {
     render(<CostPanel runs={runs} assumptions={A} currency="none" />);
     expect(figure(/CI cost savings/i)).toBe("10.00");
     expect(screen.getByText(/Assumes/).textContent).not.toMatch(/[$£€¥]/);
-    const ratio = document.querySelector(".gl-cost-figure-unit")?.textContent ?? "";
-    expect(ratio).toBe(" per 1 of CI");
   });
 
   it("puts the symbol in the spend column too", () => {
@@ -161,9 +185,79 @@ describe("the figures", () => {
     expect(document.querySelector(".gl-cost-figures")).toBeNull();
   });
 
-  it("reports no return at all rather than a ratio over zero", () => {
-    render(<CostPanel runs={[run({ id: "r1", startedAt: 1, durationMs: 0 })]} />);
-    expect(figure(/Hours per CI cost/i)).toBe("—");
+  it("shows a dash and the rule, never a zero, when no fix was kept", () => {
+    // "Never used" and "used, found nothing" both land here, and neither is
+    // "the feature saved you 0h". The hover math states the RULE rather than
+    // an equation, because a dash whose derivation is invisible reads broken.
+    render(
+      <CostPanel
+        runs={[run({ id: "r1", startedAt: 1 })]}
+        debugSavings={savings({ countedFixes: 0, waitedMinutes: 5 })}
+      />,
+    );
+    expect(figure(/Debugging avoided/i)).toBe("—");
+    expect(screen.getByText(DEBUG_TILE_COPY.noneKept)).toBeTruthy();
+    expect(card(/Debugging avoided/i).textContent).toContain(
+      "kept fixes × 15 min − time waiting on the model",
+    );
+  });
+
+  it("reports the debug saving in TIME while no hourly rate is stated", () => {
+    // 2 kept × 15 min − 6 min waiting = 24 min. Zero rate is "don't say"
+    // (shared/cost-units.mjs), so the value stays in the unit the app can
+    // stand behind.
+    render(
+      <CostPanel
+        runs={[run({ id: "r1", startedAt: 1 })]}
+        debugSavings={savings({ countedFixes: 2, waitedMinutes: 6 })}
+      />,
+    );
+    expect(figure(/Debugging avoided/i)).toBe("24 min");
+    expect(screen.getByText(DEBUG_TILE_COPY.kept(2))).toBeTruthy();
+    expect(card(/Debugging avoided/i).textContent).toContain(
+      "2 × 15 min − 6.0 min wait = 24 min",
+    );
+  });
+
+  it("prices the debug saving once the user has stated their hour", () => {
+    // The same 24 minutes at $50/h. This is the one figure on the panel where
+    // saved time becomes money, and only because the rate is the user's own.
+    render(
+      <CostPanel
+        runs={[run({ id: "r1", startedAt: 1 })]}
+        debugAssumptions={{ minutesPerManualDebug: 15, hourlyRate: 50 }}
+        debugSavings={savings({ countedFixes: 2, waitedMinutes: 6, netValue: 20 })}
+      />,
+    );
+    expect(figure(/Debugging avoided/i)).toBe("$20.00");
+    expect(card(/Debugging avoided/i).textContent).toContain(
+      "(2 × 15 min − 6.0 min wait) × $50/h = $20.00",
+    );
+  });
+
+  it("turns amber and says so when the model cost more time than it saved", () => {
+    // 1 kept × 15 min − 60 min waiting = −45 min. Left negative rather than
+    // floored — the dashboard's rule, worth the same honesty here.
+    render(
+      <CostPanel
+        runs={[run({ id: "r1", startedAt: 1 })]}
+        debugSavings={savings({ countedFixes: 1, waitedMinutes: 60 })}
+      />,
+    );
+    expect(figure(/Debugging avoided/i)).toBe("−45 min");
+    expect(screen.getByText(DEBUG_TILE_COPY.negative)).toBeTruthy();
+    const value = card(/Debugging avoided/i).querySelector(
+      ".gl-cost-figure-value",
+    ) as HTMLElement;
+    expect(value.style.color).not.toBe("");
+  });
+
+  it("holds the debug tile at a dash while its history is still loading", () => {
+    // Undefined savings means the queries have not resolved — rendering that
+    // gap as a zero would tell the user the feature wasted their time.
+    render(<CostPanel runs={[run({ id: "r1", startedAt: 1 })]} />);
+    expect(figure(/Debugging avoided/i)).toBe("—");
+    expect(screen.getByText(DEBUG_TILE_COPY.waiting)).toBeTruthy();
   });
 
   it("puts the flake figure in amber, and only when there is flake", () => {
@@ -186,6 +280,48 @@ describe("the figures", () => {
     // Amber is what this app spends on "worth your attention", and this is the
     // one figure that is a cost with nothing bought.
     expect(value().style.color).not.toBe("");
+  });
+});
+
+describe("the derivation on hover", () => {
+  // THE STAT-CARD CONVENTION: a derived figure carries its own arithmetic, with
+  // live operands, in a `gl-cost-figure-math` span the CSS swaps in for the
+  // note on hover or focus. jsdom cannot hover and has no layout, so what is
+  // pinned here is the CONTRACT the swap depends on: the math string is in the
+  // DOM, exact, and the card is focusable so a keyboard reaches it too. The
+  // fixture is 10 passing runs of 1 minute at $1/min and 60 min per manual run,
+  // so every equation below is one a reader can check in their head.
+  const runs = Array.from({ length: 10 }, (_, i) => run({ id: `r${i}`, startedAt: i }));
+  const A = { costPerCiMinute: 1, minutesPerManualRun: 60 };
+
+  it("states each figure's arithmetic with its live operands", () => {
+    render(<CostPanel runs={runs} assumptions={A} currency="usd" />);
+    expect(card(/CI cost savings/i).textContent).toContain("10 min × $1/min = $10.00");
+    expect(card(/Manual testing avoided/i).textContent).toContain("10 passes × 60 min = 10h");
+    expect(card(/Failures caught/i).textContent).toContain("0 of 10 runs failed");
+    expect(card(/Spent on flake/i).textContent).toContain("0 min re-run × $1/min = $0.00");
+  });
+
+  it("makes every card with math reachable by keyboard", () => {
+    // Hover-only would owe a keyboard user nothing. The CSS reveals the math
+    // on :focus-visible as well, which needs the card in the tab order.
+    render(<CostPanel runs={runs} assumptions={A} currency="usd" />);
+    for (const label of [/CI cost savings/i, /Manual testing avoided/i, /Failures caught/i, /Spent on flake/i]) {
+      expect(card(label).tabIndex).toBe(0);
+      expect(card(label).className).toContain("gl-cost-figure-derives");
+    }
+  });
+
+  it("keeps the note and the math as separate spans, both present", () => {
+    // The swap is CSS. If the two strings shared an element, the hover state
+    // could never be tested at all — and a regression that dropped the note
+    // would leave the math showing permanently, or vice versa.
+    render(<CostPanel runs={runs} assumptions={A} currency="usd" />);
+    const ci = card(/CI cost savings/i);
+    expect(ci.querySelector(".gl-cost-figure-note")?.textContent).toBe("10 minutes of CI");
+    expect(ci.querySelector(".gl-cost-figure-math")?.textContent).toBe(
+      "10 min × $1/min = $10.00",
+    );
   });
 });
 

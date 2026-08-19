@@ -26,7 +26,11 @@ import {
   type AiDebugReport,
   type OutcomeFacet,
 } from "../../lib/ai-debug-stats";
-import { formatSpend } from "../../lib/cost-model";
+import { formatNetMinutes, formatSpend } from "../../lib/cost-model";
+
+// Moved to `cost-model.ts` when the Cost panel became its second reader;
+// re-exported so this file stays the address its own tests and readers know.
+export { formatNetMinutes };
 import type { CostCurrency } from "../../../shared/cost-units.mjs";
 import { StatCard } from "./outcomes-dashboard";
 import { DrillRow, ExitRow } from "./rows";
@@ -57,15 +61,6 @@ export function formatWait(ms: number): string {
   const minutes = ms / 60_000;
   if (minutes < 60) return `${minutes.toFixed(1)} min`;
   return `${(minutes / 60).toFixed(1)} h`;
-}
-
-/** Minutes at the precision the assumption behind them deserves. SIGNED,
- *  because a net saving CAN be negative and flooring it at zero would hide the
- *  single most useful thing this screen can tell someone. */
-export function formatNetMinutes(minutes: number): string {
-  const abs = Math.abs(minutes);
-  const body = abs < 60 ? `${Math.round(abs)} min` : `${(abs / 60).toFixed(1)} h`;
-  return minutes < 0 ? `−${body}` : body;
 }
 
 /** Approximate tokens, in the units people quote them in. */

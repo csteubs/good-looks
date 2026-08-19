@@ -4394,17 +4394,58 @@
   color: var(--gl-tx-1);
 }
 
-.gl-cost-figure-unit {
-  margin-inline-start: 3px;
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--gl-tx-3);
-}
-
 .gl-cost-figure-note {
   font-family: var(--gl-sans);
   font-size: 10px;
   color: var(--gl-tx-3);
+}
+
+/* ── The derivation hover — the stat-card convention ──────────────────────
+   A card carrying its own arithmetic (`gl-cost-figure-derives`) swaps its note
+   for the math on hover or keyboard focus, IN PLACE: nothing moves and nothing
+   overlays a neighbour. The caption is ONE GRID CELL both spans occupy, sized
+   by the taller of the two from first paint, and the swap is `visibility`
+   rather than `display` — a display swap re-measures, and a math line that
+   wraps where the note did not then grows the row under the pointer, which is
+   the layout shift this design was chosen for not having. Both spans are
+   always in the DOM, which is also what lets jsdom tests assert the math
+   string directly instead of trying to hover, which jsdom cannot.
+   The math is mono where the note is sans: the note is read, the math is
+   checked. Hover tint and focus ring are the Home readouts' idiom (neutral,
+   never a status colour). */
+.gl-cost-figure-cap {
+  display: grid;
+}
+
+.gl-cost-figure-cap > * {
+  grid-area: 1 / 1;
+}
+
+.gl-cost-figure-math {
+  visibility: hidden;
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  color: var(--gl-tx-2);
+}
+
+.gl-cost-figure-derives:hover {
+  background: var(--gl-sel-bg);
+}
+
+.gl-cost-figure-derives:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+  background: var(--gl-sel-bg);
+}
+
+.gl-cost-figure-derives:hover .gl-cost-figure-math,
+.gl-cost-figure-derives:focus-visible .gl-cost-figure-math {
+  visibility: visible;
+}
+
+.gl-cost-figure-derives:hover .gl-cost-figure-note,
+.gl-cost-figure-derives:focus-visible .gl-cost-figure-note {
+  visibility: hidden;
 }
 
 /* Sans and prose, not the mono label register the rest of the panel uses. This

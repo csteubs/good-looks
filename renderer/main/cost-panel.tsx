@@ -31,12 +31,17 @@ import {
   computeCost,
   formatHours,
   formatMinutes,
+  formatNetMinutes,
   formatRate,
   formatSpend,
   reviewReason,
   type CostAssumptions,
 } from "../lib/cost-model";
-import { currencySymbol } from "../../shared/cost-units.mjs";
+import type { SavingsAssumptions, SavingsSummary } from "../lib/ai-debug-stats";
+import {
+  COST_DEFAULT_HOURLY_RATE,
+  COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG,
+} from "../../shared/cost-units.mjs";
 
 /** The sentence under a called-out row. Exported so the test asserts the string
  *  the user reads — a verdict with no reason is an assertion, and this table's
@@ -46,32 +51,106 @@ export const REVIEW_COPY = {
   "never-caught": `Run ${MIN_RUNS_FOR_NEVER_CAUGHT}+ times and never failed. Not a bug, but worth asking what it guards.`,
 } as const;
 
+/** One figure, and — when `math` is given — the arithmetic behind it.
+ *
+ *  HOVER (OR FOCUS) SWAPS THE NOTE FOR THE MATH, in place. This is the stat-card
+ *  derivation convention: every derived figure should be able to show, on the
+ *  card itself, the calculation that produced it with its live operands — the
+ *  panel-wide assumptions sentence tells the reader the inputs, this tells them
+ *  the multiplication. Both spans are always in the DOM (CSS does the swap), so
+ *  tests assert the derivation string directly rather than simulating hover —
+ *  which jsdom cannot do anyway. A card with math is focusable, because a
+ *  keyboard user is owed the same answer a mouse hover gets. */
 function Figure({
   label,
   value,
-  unit,
   note,
+  math,
   tone,
 }: {
   label: string;
   value: string;
-  unit?: string;
   note?: string;
+  math?: string;
   tone?: "amber";
 }) {
   return (
-    <div className="gl-cost-figure">
+    <div
+      className={math ? "gl-cost-figure gl-cost-figure-derives" : "gl-cost-figure"}
+      tabIndex={math ? 0 : undefined}
+    >
       <span className="gl-cost-figure-label">{label}</span>
       <span
         className="gl-cost-figure-value"
         style={tone === "amber" ? { color: TONE.amber } : undefined}
       >
         {value}
-        {unit ? <span className="gl-cost-figure-unit">{unit}</span> : null}
       </span>
-      {note ? <span className="gl-cost-figure-note">{note}</span> : null}
+      {/* One grid cell, two occupants: the slot is sized by the TALLER of the
+          two from first paint, so the swap moves nothing — the convention's
+          whole promise. `visibility`, not `display`, is what makes that true. */}
+      {note || math ? (
+        <span className="gl-cost-figure-cap">
+          {note ? <span className="gl-cost-figure-note">{note}</span> : null}
+          {math ? <span className="gl-cost-figure-math">{math}</span> : null}
+        </span>
+      ) : null}
     </div>
   );
+}
+
+/** The debug-savings tile's copy, exported for the same reason `REVIEW_COPY`
+ *  is: these strings are the tile's whole contract in its empty and negative
+ *  states, and a test that asserts them asserts what the user actually reads.
+ *  `noneKept` is the AI Debug dashboard's own phrase — two surfaces describing
+ *  one rule should not describe it in two vocabularies. */
+export const DEBUG_TILE_COPY = {
+  waiting: "waiting on the debug history",
+  noneKept: "no kept fix to claim time for",
+  kept: (n: number) => `${n} kept ${n === 1 ? "fix" : "fixes"}, minus the wait`,
+  negative: "net cost, not saving",
+} as const;
+
+/** The Debugging avoided tile's whole state, derived in one place so its four
+ *  cases can be read together. The order is the honesty ladder: still loading
+ *  ("—", waiting), nothing kept ("—", nothing to claim — with the RULE as its
+ *  hover math, because a dash whose derivation is invisible reads as broken),
+ *  a net figure in time (no hourly rate stated), a net figure in money (the
+ *  user priced their hour). Negative goes amber in both units. */
+export function debugTileFrom(
+  savings: SavingsSummary | undefined,
+  assumptions: SavingsAssumptions,
+  currency: CostCurrency,
+): { value: string; note: string; math?: string; tone?: "amber" } {
+  if (!savings) return { value: "—", note: DEBUG_TILE_COPY.waiting };
+  const { countedFixes, waitedMinutes, netMinutes, netValue } = savings;
+  if (countedFixes === 0) {
+    return {
+      value: "—",
+      note: DEBUG_TILE_COPY.noneKept,
+      math: `kept fixes × ${assumptions.minutesPerManualDebug} min − time waiting on the model`,
+    };
+  }
+  const negative = netMinutes < 0;
+  const note = negative ? DEBUG_TILE_COPY.negative : DEBUG_TILE_COPY.kept(countedFixes);
+  const tone = negative ? ("amber" as const) : undefined;
+  // No "kept" in the equation — the note directly above it says "N kept
+  // fixes", and the repeated word is what pushed this math to a third line,
+  // which sizes the whole row (the caption slot reserves the math's height).
+  const gross = `${countedFixes} × ${assumptions.minutesPerManualDebug} min − ${formatMinutes(waitedMinutes)} min wait`;
+  if (netValue === null) {
+    return { value: formatNetMinutes(netMinutes), note, tone, math: `${gross} = ${formatNetMinutes(netMinutes)}` };
+  }
+  // The money value is ABSOLUTE with the note carrying the sign — the AI Debug
+  // dashboard's spelling, matched so the two surfaces print one number one way.
+  // The math line keeps the sign, because it is the arithmetic.
+  const money = formatSpend(Math.abs(netValue), currency);
+  return {
+    value: money,
+    note,
+    tone,
+    math: `(${gross}) × ${formatRate(assumptions.hourlyRate, currency)}/h = ${negative ? "−" : ""}${money}`,
+  };
 }
 
 /** Opens the Settings window on the Cost pane.
@@ -84,26 +163,44 @@ function openCostSettings(): void {
   void window.glazeAPI.glaze.ipc.invoke("window:openSettings", "cost");
 }
 
-/** The two assumptions, stated in prose under the figures they produce. */
+/** The assumptions, stated in prose under the figures they produce. The hourly
+ *  rate joins the sentence ONLY when the user has stated one — zero means
+ *  "don't say" (`shared/cost-units.mjs`), and a sentence that read "and your
+ *  hour at $0" would be the app inventing a wage. */
 export function Assumptions({
   assumptions,
+  debugAssumptions,
   currency,
 }: {
   assumptions: CostAssumptions;
+  debugAssumptions: SavingsAssumptions;
   currency: CostCurrency;
 }) {
+  // The blanket claim drops the moment ANY number here is the user's own —
+  // including the hourly rate, which is never a guess: zero is "unset" and
+  // anything else was typed. "All are this app's guesses" over a wage the user
+  // stated would be the sentence disowning the one number it did not invent.
   const isDefault =
     assumptions.costPerCiMinute === COST_DEFAULTS.costPerCiMinute &&
-    assumptions.minutesPerManualRun === COST_DEFAULTS.minutesPerManualRun;
+    assumptions.minutesPerManualRun === COST_DEFAULTS.minutesPerManualRun &&
+    debugAssumptions.minutesPerManualDebug === COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG &&
+    debugAssumptions.hourlyRate === COST_DEFAULT_HOURLY_RATE;
 
   return (
     <p className="gl-cost-assume">
       {/* `formatRate`, not `formatSpend`: the rate is 0.008 and two decimals
           would render it as "<$0.01" — a sentence that exists to make the
           figures checkable, withholding the number. */}
-      Assumes <strong>{formatRate(assumptions.costPerCiMinute, currency)}</strong> per CI minute
-      and <strong>{assumptions.minutesPerManualRun}</strong> minutes to run one test by hand.
-      {isDefault ? " Both are this app's guesses." : null}{" "}
+      Assumes <strong>{formatRate(assumptions.costPerCiMinute, currency)}</strong> per CI minute,{" "}
+      <strong>{assumptions.minutesPerManualRun}</strong> minutes to run one test by hand, and{" "}
+      <strong>{debugAssumptions.minutesPerManualDebug}</strong> minutes to debug one failure
+      {debugAssumptions.hourlyRate > 0 ? (
+        <>
+          , with your hour at{" "}
+          <strong>{formatRate(debugAssumptions.hourlyRate, currency)}</strong>
+        </>
+      ) : null}
+      .{isDefault ? " All are this app's guesses." : null}{" "}
       <button type="button" className="gl-cost-edit" onClick={openCostSettings}>
         <SlidersHorizontal className="size-3" aria-hidden />
         Edit in Settings
@@ -114,14 +211,24 @@ export function Assumptions({
 
 export function CostPanel({
   runs,
-  // Both come from persisted settings, and both have a default so the panel
+  // All come from persisted settings, and all have a default so the panel
   // renders honestly while the settings query is still in flight — the shipped
   // guesses are exactly what it would show anyway.
   assumptions = COST_DEFAULTS,
+  debugAssumptions = {
+    minutesPerManualDebug: COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG,
+    hourlyRate: COST_DEFAULT_HOURLY_RATE,
+  },
+  // UNDEFINED MEANS "STILL LOADING", never "nothing saved" — the debug history
+  // and script-change queries resolve after the run history does, and rendering
+  // their gap as a zero would tell the user the feature wasted their time.
+  debugSavings,
   currency = "usd",
 }: {
   runs: readonly RunRecord[];
   assumptions?: CostAssumptions;
+  debugAssumptions?: SavingsAssumptions;
+  debugSavings?: SavingsSummary;
   currency?: CostCurrency;
 }) {
   const [page, setPage] = React.useState(1);
@@ -132,6 +239,8 @@ export function CostPanel({
   // page renders an empty table, which reads as "my history vanished".
   const safePage = clampPage(page, cost.byTest.length, DENSE_PAGE_SIZE);
   const visible = pageSlice(cost.byTest, safePage, DENSE_PAGE_SIZE);
+
+  const debugTile = debugTileFrom(debugSavings, debugAssumptions, currency);
 
   if (cost.runs === 0) {
     return (
@@ -155,45 +264,36 @@ export function CostPanel({
           label="CI cost savings"
           value={formatSpend(cost.spend, currency)}
           note={`${formatMinutes(cost.ciMinutes)} minutes of CI`}
+          math={`${formatMinutes(cost.ciMinutes)} min × ${formatRate(assumptions.costPerCiMinute, currency)}/min = ${formatSpend(cost.spend, currency)}`}
         />
         <Figure
           label="Manual testing avoided"
           value={formatHours(cost.manualHoursAvoided)}
           note={`${cost.runs - cost.failures} passed runs`}
+          math={`${cost.runs - cost.failures} passes × ${assumptions.minutesPerManualRun} min = ${formatHours(cost.manualHoursAvoided)}`}
         />
-        {/* "RETURN ON SPEND" NAMED THE ARITHMETIC AND NOT THE QUESTION. It is
-            manual hours avoided divided by CI cost, which answers "how much
-            hand-testing does each unit of CI cost stand in for" — so the label
-            asks that, and the unit spells the denominator out. SHORT because
-            the label is uppercased and letter-spaced in a fifth of the panel's
-            width: "Manual hours per CI cost" wraps to two lines even at 1900px
-            and drops this tile's value out of line with the other four. The
-            note carries the word "hand-testing" that the label gave up.
-
-            THE VALUE IS STILL TIME, not money, and a currency picker does not
-            change that: converting saved hours into cash needs an hourly rate
-            this app was never told. The currency reaches only the DENOMINATOR
-            — "per $1 of CI" — which is a price the user did give it. The note
-            says so out loud, because a big number beside a currency symbol
-            reads as money to anyone who does not stop to check. */}
+        {/* WHAT AI DEBUG GAVE BACK, priced only if the user said what an hour
+            is worth. This tile surfaces `summariseSavings` — the AI Debug
+            dashboard's own figure, one arithmetic with two readers, never a
+            re-derivation — and inherits its two refusals: only a KEPT fix
+            counts (a diagnosis nobody applied saved nothing, and a reverted
+            one cost time), and the wait on the model is subtracted. With no
+            hourly rate the value stays in time; with one it is money, which is
+            what makes this the panel's one figure where savings turn into a
+            number a manager recognises. It CAN be negative, and amber is how
+            this panel already says "cost with nothing bought". */}
         <Figure
-          label="Hours per CI cost"
-          value={cost.hoursPerUnitSpent === null ? "—" : formatHours(cost.hoursPerUnitSpent)}
-          unit={
-            cost.hoursPerUnitSpent === null
-              ? undefined
-              : ` per ${currencySymbol(currency)}1 of CI`
-          }
-          note={
-            cost.hoursPerUnitSpent === null
-              ? "no CI time yet"
-              : "hand-testing time, not money"
-          }
+          label="Debugging avoided"
+          value={debugTile.value}
+          note={debugTile.note}
+          math={debugTile.math}
+          tone={debugTile.tone}
         />
         <Figure
           label="Failures caught"
           value={String(cost.failures)}
           note={cost.failures === 0 ? "none yet" : `${cost.flakeRuns} of them look like flake`}
+          math={`${cost.failures} of ${cost.runs} runs failed`}
         />
         {/* Amber, because it is the one figure here that is a cost with nothing
             bought — and amber is what this app spends on "worth your attention"
@@ -202,11 +302,16 @@ export function CostPanel({
           label="Spent on flake"
           value={formatSpend(cost.flakeSpend, currency)}
           note={`${formatMinutes(cost.flakeMinutes)} minutes re-running`}
+          math={`${formatMinutes(cost.flakeMinutes)} min re-run × ${formatRate(assumptions.costPerCiMinute, currency)}/min = ${formatSpend(cost.flakeSpend, currency)}`}
           tone={cost.flakeSpend > 0 ? "amber" : undefined}
         />
       </div>
 
-      <Assumptions assumptions={assumptions} currency={currency} />
+      <Assumptions
+        assumptions={assumptions}
+        debugAssumptions={debugAssumptions}
+        currency={currency}
+      />
 
       <div className="gl-table-wrap">
         <table className="gl-table" aria-label="Spend by test">

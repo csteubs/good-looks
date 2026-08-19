@@ -217,6 +217,19 @@ export function StatsView() {
   // The AI Debug report, built once here and again on the category screen from
   // the same three inputs — see `buildAiDebugReport`. The tile and its
   // dashboard read one arithmetic, never two.
+  // Hoisted out of the report so the Cost panel's Debugging avoided tile and
+  // its assumptions sentence read the SAME object the report was built from —
+  // two spellings of one assumption is how a tile and its own hover math would
+  // come to disagree.
+  const debugAssumptions = React.useMemo(
+    () => ({
+      minutesPerManualDebug:
+        settingsQuery.data?.costMinutesPerManualDebug ?? COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG,
+      hourlyRate: settingsQuery.data?.costHourlyRate ?? COST_DEFAULT_HOURLY_RATE,
+    }),
+    [settingsQuery.data?.costMinutesPerManualDebug, settingsQuery.data?.costHourlyRate],
+  );
+
   const aiDebugReport = React.useMemo(() => {
     const records = aiHistoryQuery.data;
     const changes = scriptChangesQuery.data;
@@ -225,20 +238,10 @@ export function StatsView() {
       records,
       scriptChanges: changes,
       runs: runsQuery.data,
-      assumptions: {
-        minutesPerManualDebug:
-          settingsQuery.data?.costMinutesPerManualDebug ?? COST_DEFAULT_MINUTES_PER_MANUAL_DEBUG,
-        hourlyRate: settingsQuery.data?.costHourlyRate ?? COST_DEFAULT_HOURLY_RATE,
-      },
+      assumptions: debugAssumptions,
       now: Date.now(),
     });
-  }, [
-    aiHistoryQuery.data,
-    scriptChangesQuery.data,
-    runsQuery.data,
-    settingsQuery.data?.costMinutesPerManualDebug,
-    settingsQuery.data?.costHourlyRate,
-  ]);
+  }, [aiHistoryQuery.data, scriptChangesQuery.data, runsQuery.data, debugAssumptions]);
 
   // Every category that has an answer yet. One that has not resolved is OMITTED
   // rather than given a state — see the note in stats-categories.ts on why
@@ -496,6 +499,8 @@ export function StatsView() {
               <CostPanel
                 runs={realRuns}
                 assumptions={assumptionsFromSettings(settingsQuery.data ?? {})}
+                debugAssumptions={debugAssumptions}
+                debugSavings={aiDebugReport?.savings}
                 currency={settingsQuery.data?.costCurrency ?? DEFAULT_COST_CURRENCY}
               />
 
