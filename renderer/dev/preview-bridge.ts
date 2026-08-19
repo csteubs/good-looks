@@ -495,10 +495,36 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     // that does not exist.
     "tests:list": (): TestRecord[] => state.tests,
     /** Not `TestRecord[]` — the flow picker takes a narrowed row. */
-    "tests:listFlows": (): { id: string; name: string; flowParams: string[] }[] =>
+    "tests:listFlows": (
+      p,
+    ): { id: string; name: string; flowParams: string[]; paramDefaults: Record<string, string> }[] =>
       state.tests
-        .filter((t) => t.isFlow)
-        .map((t) => ({ id: t.id, name: t.name, flowParams: t.flowParams ?? [] })),
+        .filter((t) => t.isFlow && t.id !== (p?.fromId as string | undefined))
+        .map((t) => ({
+          id: t.id,
+          name: t.name,
+          flowParams: t.flowParams ?? [],
+          paramDefaults: Object.fromEntries(
+            (t.flowParams ?? []).map((name) => [
+              name,
+              (t.variables ?? []).find((v) => v.name === name)?.value ?? "",
+            ]),
+          ),
+        })),
+    "tests:setFlow": (p) => {
+      const test = findTest(p?.id);
+      if (!test) return null;
+      test.isFlow = p?.isFlow === true;
+      // Same filter as the backend: parameter names become object keys in the
+      // generated spec, so an invalid one is dropped rather than stored.
+      test.flowParams = Array.isArray(p?.flowParams)
+        ? (p.flowParams as unknown[]).filter(
+            (n): n is string => typeof n === "string" && /^[A-Za-z_][A-Za-z0-9_]*$/.test(n) && n.length <= 40,
+          )
+        : [];
+      test.updatedAt = Date.now();
+      return structuredClone(test);
+    },
     // CLONED, and that is what makes the preview behave like the app rather
     // than merely answer like it. The fixture handlers mutate `state.tests` in
     // place, so returning the live object hands React Query the SAME reference

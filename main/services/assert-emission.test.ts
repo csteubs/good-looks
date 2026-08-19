@@ -295,6 +295,10 @@ describe("the UNGENERATABLE comment is not a code sink", () => {
     return [
       { id: "c1", type: "capture", captureVar: "v" + payload, captureFrom: "attribute", captureAttr: "href" + payload },
       { id: "k1", type: "cookie", cookieAction: "set", cookie: { name: "sid" + payload, value: "1" + payload } },
+      // A runFlow step nobody can resolve emits its `problem` comment, which
+      // embeds the LABEL — user text, reachable from the capture channel, and
+      // the one comment that was written raw until 2026-08-19.
+      { id: "f1", type: "runFlow", flowId: "missing", label: "Login" + payload },
     ] as unknown as Step[];
   }
 

@@ -54,15 +54,19 @@ import type {
   ConditionKind,
   CssMatch,
   Locator,
+  LocatorContext,
   PickedElement,
   RawStep,
   WaitDialogMode,
   WaitUntilKind,
 } from "../lib/recorder-types";
-import { api } from "../lib/api";
+import { api, type FlowInfo } from "../lib/api";
 import { buildStateSteps, type StatePick } from "../lib/element-states";
+import { collectFlowArgs, FlowArgsFields } from "./flow-args-fields";
 import { clampViewportAxis, RESIZE_PRESETS } from "../lib/viewport-presets";
+import { CustomLocatorField } from "./custom-locator-field";
 import { ElementContextPicker } from "./element-context-picker";
+import { PositionField } from "./position-field";
 import {
   NewVariableButton,
   NewVariableForm,
@@ -371,32 +375,70 @@ function TargetElementPicker({
   onClearPick,
 }: {
   picked: PickedElement | null;
-  onChange: (loc: Locator) => void;
+  /** null when the current choice is a custom draft that isn't valid (yet) —
+   *  the composer's Add button keys off it. */
+  onChange: (loc: Locator | null) => void;
   onStartPick: () => void;
   onClearPick: () => void;
 }) {
-  const [selected, setSelected] = React.useState(0);
+  const [selected, setSelected] = React.useState<number | "custom">(0);
+  const [customLoc, setCustomLoc] = React.useState<Locator | null>(null);
+  const [ctx, setCtx] = React.useState<LocatorContext | null>(null);
+  const [nth, setNth] = React.useState<number | null>(null);
   const candidates = picked?.candidates ?? [];
+
+  /** One exit for every path, so context and position always ride the emitted
+   *  locator — including across candidate switches, where the old inline
+   *  composition silently dropped a configured context until it was next
+   *  edited. `nth` composes last, matching the emitted chain's order. */
+  const emit = React.useCallback(
+    (base: Locator | null, c: LocatorContext | null, n: number | null) => {
+      if (!base) {
+        onChange(null);
+        return;
+      }
+      const next: Locator = { ...base };
+      if (c) next.ctx = c;
+      else delete next.ctx;
+      if (n !== null) next.nth = n;
+      else delete next.nth;
+      onChange(next);
+    },
+    [onChange],
+  );
 
   // Seed the locator from the best candidate when a fresh element arrives.
   React.useEffect(() => {
     setSelected(0);
+    setCustomLoc(null);
+    setCtx(null);
+    setNth(null);
     if (candidates[0]) onChange(candidates[0]);
     // onChange/candidates derive from picked; re-seed only on a new pick.
   }, [picked]);
 
   if (!picked || candidates.length === 0) {
+    // No element picked (or none derivable): the crosshair is the first ask,
+    // and the custom field is the standing alternative — it is also the ONLY
+    // route to an element the picker cannot reach, like one that is hidden
+    // until a hover the pick mode itself disturbs.
     return (
       <Field label="Target element" orientation="vertical">
-        <Button variant="secondary" size="small" onClick={onStartPick} className="w-fit">
-          <Crosshair className="size-3.5" />
-          {picked ? "No locator found — pick another" : "Pick element in browser"}
-        </Button>
-        {picked ? (
+        <div className="flex min-w-0 flex-col gap-2">
+          <Button variant="secondary" size="small" onClick={onStartPick} className="w-fit">
+            <Crosshair className="size-3.5" />
+            {picked ? "No locator found — pick another" : "Pick element in browser"}
+          </Button>
+          {picked ? (
+            <Text variant="small" color="tertiary">
+              No locator could be derived for the picked element. Try another element.
+            </Text>
+          ) : null}
           <Text variant="small" color="tertiary">
-            No locator could be derived for the picked element. Try another element.
+            Or write a locator by hand:
           </Text>
-        ) : null}
+          <CustomLocatorField ctx={null} onLocator={(l) => onChange(l)} />
+        </div>
       </Field>
     );
   }
@@ -448,7 +490,7 @@ function TargetElementPicker({
                 type="button"
                 onClick={() => {
                   setSelected(i);
-                  onChange(l);
+                  emit(l, ctx, nth);
                 }}
                 className={`flex min-w-0 items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
                   active ? "border-accent bg-accent/10" : "border-separator hover:bg-background-secondary"
@@ -468,21 +510,60 @@ function TargetElementPicker({
               </button>
             );
           })}
+          {/* The escape hatch, LAST — same placement and same reasoning as the
+              Refine dialog's row: picked candidates first, a hand-written
+              locator when they can't express the intent. */}
+          <button
+            type="button"
+            onClick={() => {
+              setSelected("custom");
+              emit(customLoc, ctx, nth);
+            }}
+            className={`flex min-w-0 items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
+              selected === "custom"
+                ? "border-accent bg-accent/10"
+                : "border-separator hover:bg-background-secondary"
+            }`}
+          >
+            <span
+              className={`size-3.5 shrink-0 rounded-full border ${
+                selected === "custom" ? "border-accent bg-accent" : "border-separator"
+              }`}
+            />
+            <Badge color={selected === "custom" ? "blue" : "secondary"} className="shrink-0">
+              Custom
+            </Badge>
+            <Text variant="small" color="secondary" className="min-w-0 flex-1 truncate">
+              Write a CSS selector or XPath by hand
+            </Text>
+          </button>
+          {selected === "custom" ? (
+            <CustomLocatorField
+              ctx={ctx}
+              onLocator={(l) => {
+                setCustomLoc(l);
+                emit(l, ctx, nth);
+              }}
+            />
+          ) : null}
         </div>
         {/* The context picker sits UNDER the candidate list, because it answers
             the next question rather than the same one: the list is "how should
             this element be addressed", this is "which of the several it matches
-            did you mean". It re-applies the current candidate with the new
-            context so the caller only ever sees one locator. */}
+            did you mean". It re-applies the current base with the new context
+            so the caller only ever sees one locator. */}
         <ElementContextPicker
           picked={picked}
-          onChange={(ctx) => {
-            const base = candidates[selected];
-            if (!base) return;
-            const next: Locator = { ...base };
-            if (ctx) next.ctx = ctx;
-            else delete next.ctx;
-            onChange(next);
+          onChange={(c) => {
+            setCtx(c);
+            emit(selected === "custom" ? customLoc : (candidates[selected] ?? null), c, nth);
+          }}
+        />
+        <PositionField
+          value={nth}
+          onChange={(n) => {
+            setNth(n);
+            emit(selected === "custom" ? customLoc : (candidates[selected] ?? null), ctx, n);
           }}
         />
         <Button variant="ghost" size="small" onClick={onStartPick} className="w-fit">
@@ -614,6 +695,10 @@ export function StepComposer({
   const [captureFrom, setCaptureFrom] = React.useState<CaptureSource>("text");
   const [captureAttr, setCaptureAttr] = React.useState("");
   const [flowId, setFlowId] = React.useState("");
+  // Draft values for the selected flow's parameters, keyed by parameter name.
+  // Reset when the flow changes: two flows sharing a parameter name is a
+  // coincidence, not a reason to carry a value across.
+  const [flowArgVals, setFlowArgVals] = React.useState<Record<string, string>>({});
   // Which declared variable a `fill` step will use, and whether the inline
   // "declare one" form is open. The name rather than an index: the list can
   // gain an entry while this panel is open (that is the whole point of the
@@ -675,7 +760,7 @@ export function StepComposer({
 
   // Flows available to call from here. Fetched on mount rather than held by the
   // parent, so a flow created in another window shows up without a reload.
-  const [flows, setFlows] = React.useState<{ id: string; name: string; flowParams: string[] }[]>([]);
+  const [flows, setFlows] = React.useState<FlowInfo[]>([]);
   React.useEffect(() => {
     if (kind !== "runFlow") return;
     let live = true;
@@ -782,6 +867,10 @@ export function StepComposer({
       case "runFlow": {
         if (!flowId) return null;
         const flow = flows.find((f) => f.id === flowId);
+        // Only filled-in arguments are stored: a blank field means "use the
+        // flow's default", which requires the KEY to be absent — an empty
+        // string would override the default (see collectFlowArgs).
+        const args = collectFlowArgs(flow?.flowParams ?? [], flowArgVals);
         return [
           {
             type: "runFlow",
@@ -789,6 +878,7 @@ export function StepComposer({
             // The name is stored on the step so the list stays readable even if
             // the flow is later renamed or deleted.
             label: flow?.name ?? flowId,
+            ...(Object.keys(args).length > 0 ? { flowArgs: args } : {}),
           },
         ];
       }
@@ -1200,7 +1290,13 @@ export function StepComposer({
         {kind === "runFlow" ? (
           <>
             <Field label="Flow" orientation="vertical">
-              <Select value={flowId} onValueChange={setFlowId}>
+              <Select
+                value={flowId}
+                onValueChange={(id) => {
+                  setFlowId(id);
+                  setFlowArgVals({});
+                }}
+              >
                 <SelectTrigger size="small">
                   <SelectValue placeholder="Choose a flow" />
                 </SelectTrigger>
@@ -1213,9 +1309,22 @@ export function StepComposer({
                 </SelectContent>
               </Select>
             </Field>
+            {(() => {
+              const selected = flows.find((f) => f.id === flowId);
+              if (!selected || selected.flowParams.length === 0) return null;
+              return (
+                <FlowArgsFields
+                  params={selected.flowParams}
+                  defaults={selected.paramDefaults}
+                  values={flowArgVals}
+                  onChange={setFlowArgVals}
+                />
+              );
+            })()}
             {flows.length === 0 ? (
               <Text size="small" className="text-tertiary">
-                No flows yet. Mark a test as a reusable flow to call it from here.
+                No flows yet. Mark a test as a reusable flow on its Variables tab to call it from
+                here.
               </Text>
             ) : (
               <Text size="small" className="text-secondary">

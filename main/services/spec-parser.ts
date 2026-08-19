@@ -432,7 +432,11 @@ function parseLocator(expr: string): { locator: Locator; rest: string } | null {
   // storing the base locator would regenerate a selector matching the wrong
   // element and they stay counted-as-unclassified (see the note on the refined
   // chain below). `nth` has a field, `Locator.nth`, with the same meaning.
-  const nthM = rest.match(/^\s*\.nth\(\s*(\d+)\s*\)/);
+  // `-1` alongside the naturals: Playwright's "last match", the one negative
+  // the model admits. Deeper negatives stay unmatched on purpose — the step
+  // goes unclassified rather than round-tripping an index the generator would
+  // refuse to re-emit.
+  const nthM = rest.match(/^\s*\.nth\(\s*(-1|\d+)\s*\)/);
   if (nthM) {
     locator = { ...locator, nth: parseInt(nthM[1], 10) };
     rest = rest.slice(nthM[0].length);

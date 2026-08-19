@@ -779,3 +779,24 @@ describe("LibrarySidebar folders (REDESIGN §7.2)", () => {
     expect(setGroup).not.toHaveBeenCalled();
   });
 });
+
+describe("LibrarySidebar — the reusable-flow glyph", () => {
+  it("marks flow rows and only flow rows", async () => {
+    // A flow behaves oddly as a plain test (hidden from the Batch checklist,
+    // callable from the composer), and this glyph is the only thing in the
+    // rail that says why. Both directions matter: a missing glyph hides the
+    // explanation, a glyph on every row would stop meaning anything.
+    tests = [record({ isFlow: true }), record({ id: "t2", name: "Plain checkout" })];
+    renderSidebar();
+    await screen.findByText("Plain checkout");
+    const glyphs = await screen.findAllByRole("img", { name: "Reusable flow" });
+    expect(glyphs).toHaveLength(1);
+  });
+
+  it("shows no flow glyph when nothing is a flow", async () => {
+    tests = [record()];
+    renderSidebar();
+    await screen.findByText("Login");
+    expect(screen.queryByRole("img", { name: "Reusable flow" })).toBeNull();
+  });
+});

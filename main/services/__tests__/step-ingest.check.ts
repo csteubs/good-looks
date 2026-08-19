@@ -176,6 +176,28 @@ function main(): void {
       { k: "testid", v: "x" },
       "a test-id attribute outside the allowlist is dropped",
     );
+    // `nth` admits exactly one negative: -1, Playwright's "last match". The
+    // bound is the boundary half of the pair; the generator independently
+    // floors anything deeper to 0 (see locatorExpr), because a forged index
+    // can also arrive through `recorder:updateStep`'s raw locator copy.
+    assertEqual(
+      normalizeRawStep({ type: "click", locator: { k: "text", v: "x", nth: -1 } })?.locator,
+      { k: "text", v: "x", nth: -1 },
+      "nth -1 (last) survives ingest",
+    );
+    assertEqual(
+      normalizeRawStep({ type: "click", locator: { k: "text", v: "x", nth: -2 } })?.locator,
+      { k: "text", v: "x" },
+      "a deeper negative nth is dropped at the boundary",
+    );
+    {
+      const forged = { type: "click", locator: { k: "text", v: "x", nth: -7 } };
+      const spec = specFor([forged as unknown as Step]);
+      assert(
+        spec.includes(".nth(0)") && !spec.includes(".nth(-7)"),
+        "…and the generator floors a forged deep negative on its own",
+      );
+    }
     assertEqual(
       normalizeRawStep({
         type: "click",

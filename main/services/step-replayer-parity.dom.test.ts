@@ -114,6 +114,24 @@ describe("nth: the trainer acted on a different element than the spec", () => {
     expect(r.ok).toBe(false);
     expect(why(r)).toMatch(/out of range/i);
   });
+
+  it("previews nth(-1) against the LAST match, same as the emitted .nth(-1)", () => {
+    // "Last" is the stable ordinal for a set whose size changes between runs,
+    // and the trainer previewing it against anything but the tail would be
+    // the same trainer-vs-run divergence the describe above records for
+    // positive indexes.
+    document.body.innerHTML =
+      '<button id="a">Save</button><button id="b">Save</button><button id="c">Save</button>';
+    let clicked = "";
+    for (const id of ["a", "b", "c"]) {
+      document.getElementById(id)!.addEventListener("click", () => {
+        clicked = id;
+      });
+    }
+    const r = run(step({ type: "click", locator: { k: "text", v: "Save", nth: -1 } }));
+    expect(r.ok).toBe(true);
+    expect(clicked).toBe("c");
+  });
 });
 
 describe("URL and title: the assertions that could not pass", () => {

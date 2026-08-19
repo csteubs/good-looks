@@ -140,7 +140,7 @@ function locatorBase(loc: Locator): string {
  * built below, and `check:locator-roundtrip`, which holds the property that
  * makes emitting one safe: everything written here can be read back.
  */
-function locatorExpr(loc: Locator): string {
+export function locatorExpr(loc: Locator): string {
   let base = locatorBase(loc);
 
   // ── The user's pinned context ────────────────────────────────────────────
@@ -185,7 +185,15 @@ function locatorExpr(loc: Locator): string {
   // follows for every numeric field — this lands in the source as a bare
   // numeral, which is precisely the hole a `count` of `"0); …; ("` went through
   // once.
-  return typeof loc.nth === "number" ? base + ".nth(" + num(loc.nth, 0) + ")" : base;
+  // -1 is Playwright's "last match" and the one negative the model admits
+  // (`normalizeLocator` bounds it). The generator guards independently of the
+  // boundary — the ternary is what stands between a forged deeper negative
+  // (reachable through `updateStep`'s raw copy, which never re-normalizes) and
+  // a `.nth(-7)` Playwright would refuse at run time; anything below -1 falls
+  // back to 0, exactly as a non-numeric always has.
+  return typeof loc.nth === "number"
+    ? base + ".nth(" + num(loc.nth >= -1 ? loc.nth : 0, 0) + ")"
+    : base;
 }
 
 function assertLine(step: Step, target: string | null, vars: ReadonlySet<string>): string | null {
@@ -741,8 +749,15 @@ export function describeCapture(step: Step): string {
  *  renderer/lib/describe-step.ts. */
 export function describeFlow(step: Step): string {
   const name = step.label || step.flowId || "flow";
-  const args = step.flowArgs ? Object.keys(step.flowArgs) : [];
-  return args.length > 0 ? `run flow ${name} (${args.join(", ")})` : `run flow ${name}`;
+  // name=value rather than the bare names: a bound flow call's meaning IS its
+  // arguments, and two calls to the same flow differ only here. Values are
+  // clipped for the step list; the only spec-side sink is a comment, and both
+  // comment emitters run through `commentSafe`, so a hostile value cannot
+  // escape (pinned in assert-emission.test.ts).
+  const entries = Object.entries(step.flowArgs ?? {});
+  if (entries.length === 0) return `run flow ${name}`;
+  const args = entries.map(([k, v]) => `${k}=${v.length > 18 ? v.slice(0, 17) + "…" : v}`);
+  return `run flow ${name} (${args.join(", ")})`;
 }
 
 /** Readable phrasing of a cookie step for the trainer's step list. Kept in
@@ -1033,7 +1048,14 @@ export function generateSpecDetailed(
 
   for (const { step, sourceIndex, problem } of expanded) {
     if (problem) {
-      body.push("  // " + problem);
+      // Through `commentSafe` like every other comment: `problem` embeds the
+      // step's LABEL, which is user text that `str()` length-caps but does not
+      // strip line terminators from. Raw, a label containing a newline ended
+      // the comment early and its remainder became a statement in the spec —
+      // reachable from the capture channel with an unresolvable flowId, which
+      // made it page input compiled into executed code. Pinned alongside the
+      // other comment sinks in assert-emission.test.ts.
+      body.push(commentSafe("  // " + problem));
       continue;
     }
     const line = stepLine(step, vars);

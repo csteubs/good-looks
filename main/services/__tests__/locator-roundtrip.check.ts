@@ -112,6 +112,11 @@ function main(): void {
   roundTrip({ k: "text", v: "Save" }, "text");
   roundTrip({ k: "css", v: "#app > button" }, "css");
   roundTrip({ k: "text", v: "Save", nth: 2 }, "text + nth");
+  // -1 is "the last match" — the one negative the model admits, the stable way
+  // to index a set whose size changes between runs. The parser's regex names
+  // it explicitly, so this is the row that notices if it ever narrows back.
+  roundTrip({ k: "text", v: "Save", nth: -1 }, "text + nth(-1)");
+  roundTrip({ k: "text", v: "Save", nth: 0 }, "text + nth(0) — first, and 0 must survive falsiness");
 
   // A generated css path contains BALANCED parens, which the builder scan has
   // to walk past rather than stopping at the first `)`.

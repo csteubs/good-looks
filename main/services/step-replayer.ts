@@ -185,7 +185,10 @@ export function buildReplayScript(step: Step): string {
   function resolveOne(loc) {
     var all = resolveAll(loc);
     if (loc && typeof loc.nth === "number") {
-      var picked = all[loc.nth] || null;
+      // -1 is "the last match", same as the emitted .nth(-1) — resolved off
+      // the end so the trainer's preview and the run agree about which
+      // element an ordinal step means.
+      var picked = (loc.nth === -1 ? all[all.length - 1] : all[loc.nth]) || null;
       log(picked ? "info" : "warn", ".nth(" + loc.nth + ") of " + all.length + " match(es)" + (picked ? "" : " — index out of range"));
       return { el: picked };
     }

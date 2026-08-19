@@ -725,7 +725,21 @@ export function registerHandlers(): void {
     return testStore
       .list()
       .filter((t) => t.isFlow && t.id !== params.fromId)
-      .map((t) => ({ id: t.id, name: t.name, flowParams: t.flowParams ?? [] }));
+      .map((t) => ({
+        id: t.id,
+        name: t.name,
+        flowParams: t.flowParams ?? [],
+        // The default each parameter falls back to when a caller leaves it
+        // blank — the flow's own variable value. Sent along so the composer can
+        // show it as the placeholder; a secret has no stored value, so its
+        // default reads as empty here without touching the secret store.
+        paramDefaults: Object.fromEntries(
+          (t.flowParams ?? []).map((p) => [
+            p,
+            (t.variables ?? []).find((v) => v.name === p)?.value ?? "",
+          ]),
+        ),
+      }));
   });
 
   // ── Heal journal ─────────────────────────────────────────────────────────

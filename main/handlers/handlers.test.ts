@@ -173,6 +173,59 @@ describe("tests:setTags — normalization at the boundary", () => {
   });
 });
 
+describe("tests:setFlow / tests:listFlows — the flows UI's contract", () => {
+  it("marks a test as a flow and keeps only valid parameter names", async () => {
+    seedTest("t-flow");
+    const rec = await invokeHandler<TestRecord>("tests:setFlow", {
+      id: "t-flow",
+      isFlow: true,
+      flowParams: ["email", "not a name", "", "count2", 7],
+    });
+    expect(rec.isFlow).toBe(true);
+    expect(rec.flowParams).toEqual(["email", "count2"]);
+  });
+
+  it("reports each parameter's default from the flow's own variables", async () => {
+    // The composer renders these as placeholders: the value a blank argument
+    // falls back to. A secret has no stored value, so its default reads empty
+    // WITHOUT the handler touching the secret store.
+    seedTest("t-flow-defaults", {
+      isFlow: true,
+      flowParams: ["email", "token", "ghost"],
+      variables: [
+        { name: "email", kind: "plain", value: "a@b.com" },
+        { name: "token", kind: "secret" },
+      ],
+    });
+    const flows = await invokeHandler<{ id: string; paramDefaults: Record<string, string> }[]>(
+      "tests:listFlows",
+      {},
+    );
+    const flow = flows.find((f) => f.id === "t-flow-defaults");
+    expect(flow?.paramDefaults).toEqual({ email: "a@b.com", token: "", ghost: "" });
+  });
+
+  it("excludes the asking test so a flow cannot offer itself", async () => {
+    seedTest("t-flow-self", { isFlow: true });
+    const flows = await invokeHandler<{ id: string }[]>("tests:listFlows", {
+      fromId: "t-flow-self",
+    });
+    expect(flows.map((f) => f.id)).not.toContain("t-flow-self");
+  });
+
+  it("unmarking keeps the record listable as a plain test", async () => {
+    seedTest("t-flow-off", { isFlow: true, flowParams: ["a"] });
+    const rec = await invokeHandler<TestRecord>("tests:setFlow", {
+      id: "t-flow-off",
+      isFlow: false,
+      flowParams: ["a"],
+    });
+    expect(rec.isFlow).toBe(false);
+    const flows = await invokeHandler<{ id: string }[]>("tests:listFlows", {});
+    expect(flows.map((f) => f.id)).not.toContain("t-flow-off");
+  });
+});
+
 describe("tests:setGroup / tests:renameGroup — the library rail's folders", () => {
   // Group names here are unique to this block: the store is shared across the
   // whole file, so a name another describe seeded would be counted too.

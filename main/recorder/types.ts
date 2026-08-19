@@ -972,8 +972,10 @@ export function normalizeLocator(input: unknown, allowContext = true): Locator |
   // right TypeScript type (see `num` in script-generator.ts). The upper bound is
   // MAX_MATCH_INDEX rather than something enormous because a page with more
   // than that many matches for one locator is not a page anyone is indexing
-  // into on purpose.
-  const nth = int(l.nth, 0, MAX_MATCH_INDEX);
+  // into on purpose. -1 is the one negative Playwright honours — `.nth(-1)` is
+  // "the last match", the stable way to index a set whose size changes between
+  // runs — so the bound admits exactly it and nothing below.
+  const nth = int(l.nth, -1, MAX_MATCH_INDEX);
   if (nth !== undefined) out.nth = nth;
   if (allowContext) {
     const ctx = normalizeLocatorContext(l.ctx);
@@ -1083,7 +1085,10 @@ function normalizeCookieSpec(input: unknown): CookieSpec | undefined {
   return out;
 }
 
-function normalizeFlowArgs(input: unknown): Record<string, string> | undefined {
+/** Exported for `recorder-service.updateStep`: `flowArgs` is the one map-valued
+ *  field a step patch can carry, so it gets the same rebuild `insertStep` gives
+ *  it rather than the allowlist's raw copy. */
+export function normalizeFlowArgs(input: unknown): Record<string, string> | undefined {
   if (!input || typeof input !== "object") return undefined;
   const out: Record<string, string> = {};
   let n = 0;
