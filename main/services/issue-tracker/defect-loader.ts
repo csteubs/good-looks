@@ -23,6 +23,11 @@ import { baselineStore } from "../baseline-store.js";
 import { firstErrorLine } from "../../../shared/error-signature.mjs";
 import { runHistoryStore } from "../run-history-store.js";
 import { testStore } from "../test-store.js";
+import { insightReportStore } from "../insight-report-store.js";
+import {
+  insightReportIssueTitle,
+  insightReportMarkdown,
+} from "../insights/insight-report-markdown.js";
 import type { DefectSource, DraftAttachment, IssueDraft } from "../../../renderer/lib/issue-types.js";
 import type { UploadImage } from "./types.js";
 import { buildIssueDraft, type BuildInput, type DraftContext, type FailureConsoleLine, type FailureRequest } from "./payload.js";
@@ -110,6 +115,7 @@ export const defectLoader = {
     try {
       if (source.kind === "a11y") return buildA11y(source);
       if (source.kind === "visual") return buildVisual(source);
+      if (source.kind === "insight-report") return buildInsightReport(source);
       return buildFailure(source);
     } catch (err) {
       logger.warn("issues", "Could not assemble an issue draft", {
@@ -138,6 +144,9 @@ export const defectLoader = {
    */
   readImages(source: DefectSource, files: readonly string[]): UploadImage[] {
     if (files.length === 0) return [];
+    // A report draft offers no attachments, so any filename arriving here for
+    // one is a name the draft never offered — refused wholesale.
+    if (source.kind === "insight-report") return [];
     const offered = new Map(
       (defectLoader.build(source)?.attachments ?? []).map((a) => [a.file, a.label]),
     );
@@ -163,6 +172,29 @@ export const defectLoader = {
     return out;
   },
 };
+
+/**
+ * An insights report, filed whole. Everything in the body comes from the
+ * STORED report — content that was summary-shaped and secret-redacted at
+ * generation — so unlike the defect builders there is no log to withhold and
+ * no image to consent to. A missing id answers null like a pruned run does:
+ * the report was deleted, and the dialog says the evidence is gone.
+ */
+function buildInsightReport(
+  source: Extract<DefectSource, { kind: "insight-report" }>,
+): IssueDraft | null {
+  const report = insightReportStore.get(source.reportId);
+  if (!report) return null;
+  return {
+    source,
+    title: insightReportIssueTitle(report),
+    body: insightReportMarkdown(report),
+    attachments: [],
+    notices: report.degraded
+      ? ["The model's answer didn't follow the report format, so the body is unstructured text."]
+      : [],
+  };
+}
 
 function buildA11y(source: Extract<DefectSource, { kind: "a11y" }>): IssueDraft | null {
   const step = stepOf(source.testId, source.runId, source.stepId);

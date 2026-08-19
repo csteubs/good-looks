@@ -209,6 +209,8 @@ describe("search", () => {
     ["disk", "artifact-retained-runs"],
     ["mcp", "debug-screenshots"],
     ["notification", "notify-run-issues"],
+    ["insights", "ai-insights-enabled"],
+    ["monthly", "ai-insights-cadence"],
     ["black hole", "home-black-hole"],
   ];
 

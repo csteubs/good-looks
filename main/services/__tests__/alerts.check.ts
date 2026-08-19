@@ -23,7 +23,14 @@ import * as path from "node:path";
 // store function runs) is what keeps this check off the real userData dir.
 process.env.GLAZE_TEST_USERDATA = fs.mkdtempSync(path.join(os.tmpdir(), "glaze-alerts-check-"));
 
-import { buildAlertPayload, redactPayload, sendAlert, type Alert } from "../alert-service.js";
+import {
+  buildAlertPayload,
+  redactPayload,
+  sendAlert,
+  sendInsightReportAlert,
+  type Alert,
+} from "../alert-service.js";
+import { insightsSlackUrlStore } from "../insights/insights-slack-url-store.js";
 import { setEncryptionAvailable } from "./shell-backend-stub.js";
 import { recorderSettingsStore } from "../recorder-settings-store.js";
 import { shopifySignatureStore } from "../shopify-signature-store.js";
@@ -243,6 +250,62 @@ assert(hostOfUrl("nonsense") === null, "hostOfUrl returns null for junk");
   );
 }
 
+// ── The insights-report announcement ─────────────────────────────────
+// Same split as the notify above. STRUCTURAL: the builder's input is the
+// headline and the deterministic counts — there is no field a section, a log
+// or a script could arrive through, so the full report text cannot leak
+// because it cannot be handed in. REDACTION: the headline is MODEL OUTPUT
+// (steered by test names a page can influence), so like the notify message it
+// is scrubbed before the send.
+{
+  const report = buildAlertPayload({
+    kind: "insightReport",
+    cadence: "weekly",
+    headline: "One failure worth a look.",
+    runs: 12,
+    failed: 3,
+    previousRuns: 9,
+    healedSteps: 2,
+    visualChanges: 4,
+    newClusters: 1,
+  });
+  assert(report !== null, "a report announcement always sends — the report IS the event");
+  assert(
+    report!.text.includes("Weekly") && report!.text.includes("One failure worth a look."),
+    "the message names the cadence and carries the headline",
+  );
+  // The detail's key set is closed: counts and the headline, nothing shaped
+  // like prose sections, and no passthrough of arbitrary report fields.
+  assert(
+    Object.keys(report!.detail).sort().join(",") ===
+      "cadence,failed,headline,healedSteps,newClusters,previousRuns,runs,visualChanges",
+    `insightReport detail carries only the headline and counts (got ${Object.keys(report!.detail).join(",")})`,
+  );
+
+  const withSecret = buildAlertPayload({
+    kind: "insightReport",
+    cadence: "daily",
+    headline: `Login with ${SECRET} keeps failing.`,
+    runs: 1,
+    failed: 1,
+    previousRuns: 0,
+    healedSteps: 0,
+    visualChanges: null,
+    newClusters: null,
+  });
+  const scrubbed = redactPayload(withSecret!, [SECRET]);
+  assert(
+    !JSON.stringify(scrubbed).includes(SECRET),
+    "a secret riding in a report headline is redacted before it leaves",
+  );
+  // Null metrics fields stay OUT of the detail rather than arriving as null —
+  // absence of evidence is not a value to publish.
+  assert(
+    !("visualChanges" in withSecret!.detail) && !("newClusters" in withSecret!.detail),
+    "metrics-unavailable fields are omitted from the detail, never sent as null",
+  );
+}
+
 // Everything below needs `await`, and this bundle is CJS — so it runs inside
 // a main() the exit check hangs off, rather than at the top level.
 async function checkSendAlertRedaction(): Promise<void> {
@@ -297,6 +360,73 @@ async function checkSendAlertRedaction(): Promise<void> {
     );
     assert(sent.indexOf("keyid") < 0, "…and so is the Signature-Input it came with");
     assert(sent.indexOf("Nightly") >= 0, "…while the rest of the payload survives");
+  }
+
+  // ── The real insights → Slack send ────────────────────────────────────
+  // Its own gate and its own URL: with the setting off nothing posts, however
+  // configured the URL is; with it on, the send goes to the INSIGHTS URL and
+  // is redacted with the same live values as sendAlert.
+  {
+    await insightsSlackUrlStore.setUrl("https://hooks.slack.example.test/services/xyz");
+    const report = {
+      id: "r-check",
+      cadence: "weekly",
+      periodStart: 1,
+      periodEnd: 2,
+      generatedAt: 2,
+      provider: "ollama",
+      model: "m",
+      headline: "Checkout with sig1=:dGhpcy1pcy10aGUtc2lnbmF0dXJl: failing.",
+      sections: [{ title: "S", body: "never sent" }],
+      actions: [],
+      stats: {
+        runs: 1,
+        failed: 1,
+        previousRuns: 0,
+        flakyRuns: 0,
+        healedSteps: 0,
+        healFailures: 0,
+        visualChanges: null,
+        newClusters: null,
+        a11yNewSteps: 0,
+        testsCreated: 0,
+        unreviewedScriptChanges: 0,
+        expiringSignatures: 0,
+      },
+      sending: [],
+      promptChars: 1,
+      answerChars: 1,
+      durationMs: 1,
+      firstTokenMs: null,
+      read: false,
+    } as Parameters<typeof sendInsightReportAlert>[0];
+
+    const realFetch = globalThis.fetch;
+    let sent = "";
+    let calls = 0;
+    globalThis.fetch = (async (_url: string, init: { body?: string }) => {
+      calls++;
+      sent = String(init?.body ?? "");
+      return { ok: true, status: 200, statusText: "OK" };
+    }) as unknown as typeof fetch;
+    try {
+      recorderSettingsStore.set({ insightsSlackEnabled: false });
+      await sendInsightReportAlert(report);
+      assert(calls === 0, "with the setting off, a configured URL still sends nothing");
+
+      recorderSettingsStore.set({ insightsSlackEnabled: true });
+      await sendInsightReportAlert(report);
+    } finally {
+      globalThis.fetch = realFetch;
+      recorderSettingsStore.set({ insightsSlackEnabled: false });
+    }
+
+    assert(calls === 1 && sent.length > 0, "with the setting on, the report announcement posts");
+    assert(
+      sent.indexOf("dGhpcy1pcy10aGUtc2lnbmF0dXJl") < 0,
+      "a signature value riding in the headline is redacted by the real send path",
+    );
+    assert(sent.indexOf("never sent") < 0, "the report's sections never reach the channel");
   }
 }
 

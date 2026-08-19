@@ -33,6 +33,14 @@ main/services/      business logic (recorder, playwright-runner, llm, spec-parse
                     and hard-deleted with its test), the second holds facts about each attempt
                     and no content at all — which is what lets it outlive both the cap and the
                     test, and tombstone rather than erase when a test is deleted
+main/services/insights/  the scheduled AI report (Settings → Alerts, off by default) — the
+                    app's only UNATTENDED LLM egress, which is why its facts builder reads
+                    only indexes and aggregates (never a log, script or header value) and
+                    `check:insights-egress` pins that with a planted secret. Release notes
+                    ship as typed data in release-notes.ts: bump `package.json` version ⇒
+                    add an entry there, same commit. Reports persist in
+                    insight-report-store.ts (primary data — never metrics.db, which drops
+                    and replays)
 main/services/llm/  local + hosted LLM chat integration (Ollama, LM Studio, Claude)
 main/recorder/       recording-session logic (script injection, step capture)
 main/windows/        BrowserWindow creation/config

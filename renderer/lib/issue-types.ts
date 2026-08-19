@@ -147,7 +147,12 @@ export type DefectSource =
       ruleId: string;
     }
   | { kind: "visual"; testId: string; runId: string; stepId: string }
-  | { kind: "failure"; testId: string; runId: string; stepId: string | null };
+  | { kind: "failure"; testId: string; runId: string; stepId: string | null }
+  /** An AI insights report, filed whole. Not a defect, but it rides the same
+   *  pipeline for the same reason the pipeline exists: the renderer names a
+   *  coordinate and the BACKEND assembles what is sent — here from the stored
+   *  report, which was already summary-shaped and redacted at generation. */
+  | { kind: "insight-report"; reportId: string };
 
 /** An image that will be attached, described for the confirmation strip. The
  *  renderer renders these BEFORE the send, because a screenshot cannot be

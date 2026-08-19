@@ -19,6 +19,8 @@ import type {
   Routine,
   BatchTestResult,
   HealListEntry,
+  InsightReport,
+  InsightsState,
   PickedElement,
   ScriptChangeListEntry,
   RecorderSettings,
@@ -764,6 +766,13 @@ export const SETTINGS: RecorderSettings = {
   notifyOnRunIssues: false,
   notifyOnBatchDone: true,
   notifyOnAiDebugDone: false,
+  // ON in the preview, unlike the shipped default: the enabled state is the
+  // one with surface to review (Generate now, the dependent Alerts rows), and
+  // the off-state explainer is covered by insights-view.test.tsx.
+  aiInsightsEnabled: true,
+  aiInsightsCadence: "weekly",
+  notifyOnInsightsReady: true,
+  insightsSlackEnabled: false,
   autoAcceptAiDebugFixes: false,
   disabledAestheticEnhancements: [],
   // Both at their defaults. `uiScale` does nothing in the preview — there is no
@@ -1070,4 +1079,163 @@ export const PICKED_ELEMENT: PickedElement = {
   ],
   text: "Edit",
   neighborText: "Billing",
+};
+
+/** Shared numbers strip for the insight fixtures — kept plausible against the
+ *  RUNS fixture rather than exact, since the reports are canned prose. */
+const INSIGHT_STATS_BASE = {
+  runs: 12,
+  failed: 3,
+  previousRuns: 9,
+  flakyRuns: 1,
+  healedSteps: 2,
+  healFailures: 1,
+  visualChanges: 4,
+  newClusters: 1,
+  a11yNewSteps: 0,
+  testsCreated: 1,
+  unreviewedScriptChanges: 1,
+  expiringSignatures: 1,
+};
+
+const INSIGHT_SENDING = [
+  { label: "Report period", chars: 120 },
+  { label: "Run and failure counts, worst tests by name", chars: 640 },
+  { label: "Failure signatures", chars: 380 },
+  { label: "Auto-Heal activity, test names", chars: 210 },
+  { label: "Test ids and names", chars: 260 },
+];
+
+/** Three reports, three states the view has to get right: a healthy period; a
+ *  rough one whose recommendations carry actions — including one pointing at a
+ *  test that no longer exists, so the disabled-button path is drivable; and a
+ *  DEGRADED one where the model ignored the JSON contract. The middle one is
+ *  unread, so the rail dot has something to show. */
+export const INSIGHT_REPORTS: InsightReport[] = [
+  {
+    id: "ins-3",
+    cadence: "weekly",
+    periodStart: NOW - 7 * DAY,
+    periodEnd: NOW - 2 * HOUR,
+    generatedAt: NOW - 2 * HOUR,
+    provider: "ollama",
+    model: "qwen2.5-coder:14b",
+    headline: "Login is failing on a selector that changed Tuesday — everything else held steady.",
+    sections: [
+      {
+        title: "How the week went",
+        body: "12 runs this week against 9 the week before, with 3 failures — all of them Login. The failures share one error signature that first appeared on Tuesday, which points at the site changing rather than the test decaying.\n\nCheckout and Search passed every run, and Search's median duration is unchanged.",
+      },
+      {
+        title: "Worth watching",
+        body: "Auto-Heal substituted a locator twice on Login before it started failing outright — a step that heals repeatedly is usually a selector one release away from breaking. One heal could not find any candidate at all, which usually means the element is gone.\n\nThe crawler signature for shop.example.com expires in 5 days; scheduled runs against it will start failing silently when it does.",
+      },
+      {
+        title: "In the app",
+        body: "This is the first report from this install. Reports generate on your weekly schedule while the app is open, and after launch when one was missed.",
+      },
+    ],
+    actions: [
+      {
+        kind: "debug-test",
+        testId: "t-login",
+        testName: "Login — wrong password shows an error",
+        label: "Login has failed 3 times on the same new signature — worth a diagnosis.",
+      },
+      {
+        kind: "run-test",
+        testId: "t-deleted",
+        testName: "Legacy signup flow",
+        label: "This test hasn't run since the failures started.",
+      },
+      {
+        kind: "open-settings-integrations",
+        label: "The shop.example.com crawler signature expires in 5 days.",
+      },
+    ],
+    stats: INSIGHT_STATS_BASE,
+    sending: INSIGHT_SENDING,
+    promptChars: 6480,
+    answerChars: 1910,
+    durationMs: 41_000,
+    firstTokenMs: 900,
+    read: false,
+  },
+  {
+    id: "ins-2",
+    cadence: "weekly",
+    periodStart: NOW - 14 * DAY,
+    periodEnd: NOW - 7 * DAY,
+    generatedAt: NOW - 7 * DAY,
+    provider: "ollama",
+    model: "qwen2.5-coder:14b",
+    headline: "A quiet week: 9 runs, all passed, nothing new to watch.",
+    sections: [
+      {
+        title: "How the week went",
+        body: "9 runs, all passed — up 4 on the week before. No new failure signatures, no visual changes over threshold, and no heals.",
+      },
+    ],
+    actions: [],
+    stats: {
+      ...INSIGHT_STATS_BASE,
+      runs: 9,
+      failed: 0,
+      previousRuns: 5,
+      flakyRuns: 0,
+      healedSteps: 0,
+      healFailures: 0,
+      visualChanges: 0,
+      newClusters: 0,
+      unreviewedScriptChanges: 0,
+      expiringSignatures: 0,
+    },
+    sending: INSIGHT_SENDING,
+    promptChars: 5220,
+    answerChars: 640,
+    durationMs: 28_000,
+    firstTokenMs: 700,
+    read: true,
+  },
+  {
+    id: "ins-1",
+    cadence: "weekly",
+    periodStart: NOW - 21 * DAY,
+    periodEnd: NOW - 14 * DAY,
+    generatedAt: NOW - 14 * DAY,
+    provider: "lmstudio",
+    model: "bonsai-27b",
+    headline: "Sure! Here's a summary of your testing week.",
+    sections: [
+      {
+        title: "Report",
+        body: "Sure! Here's a summary of your testing week.\n\nYou ran your tests 7 times and most of them passed. The checkout test is doing great. I'd suggest keeping an eye on the login test as it seems a bit unstable.\n\nLet me know if you'd like more detail on any of these!",
+      },
+    ],
+    actions: [],
+    stats: {
+      ...INSIGHT_STATS_BASE,
+      runs: 7,
+      failed: 1,
+      previousRuns: 0,
+      newClusters: null,
+      visualChanges: null,
+    },
+    sending: INSIGHT_SENDING,
+    degraded: true,
+    promptChars: 5100,
+    answerChars: 320,
+    durationMs: 64_000,
+    firstTokenMs: 12_000,
+    read: true,
+  },
+];
+
+/** The scheduler's readout beside the fixtures above: last success two hours
+ *  ago, no pending failure. The bridge derives `generating: false`. */
+export const INSIGHTS_STATE: InsightsState = {
+  lastGeneratedAt: NOW - 2 * HOUR,
+  lastAttemptAt: null,
+  lastError: null,
+  lastSeenAppVersion: "1.0.0",
 };

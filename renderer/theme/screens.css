@@ -5139,3 +5139,245 @@
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }
+
+/* ── Insights (route /insights) ─────────────────────────────────────────
+ *
+ * Same two-panel shape as Heals, and the same panel-body rule: the list is a
+ * fixed rail, the report takes the rest. */
+
+.gl-insights {
+  display: flex;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+  padding: 10px;
+}
+
+.gl-insights-list {
+  flex: 0 0 300px;
+  min-width: 0;
+}
+
+.gl-insights-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Not `Panel`'s own `flex` prop, for the reason .gl-heals-journal documents:
+   its inline style would beat the fixed 300px above. */
+.gl-insights-list > .gl-panel-body,
+.gl-insights-detail > .gl-panel-body {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.gl-insights-empty {
+  padding: 10px;
+}
+
+/* The failure line above the list. Amber, not red: the schedule retries on
+   its own, and this is a caution to glance at rather than a verdict. */
+.gl-insights-error {
+  padding: 8px 10px;
+  color: var(--gl-amber);
+  border-bottom: 1px solid var(--gl-line-2);
+}
+
+.gl-insights-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--gl-line-2);
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+}
+
+.gl-insights-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Selection is neutral, per the app-wide rule check:selection-neutral pins. */
+.gl-insights-row[data-selected] {
+  background: var(--gl-sel-bg);
+  box-shadow: inset 0 0 0 1px var(--gl-sel-ring);
+}
+
+.gl-insights-row:focus-visible {
+  outline: 1px solid var(--gl-cyan);
+  outline-offset: -1px;
+}
+
+/* Violet like the heal glyph: the report is AI-adjacent machinery. */
+.gl-insights-row-icon {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  margin-top: 2px;
+  color: var(--gl-violet);
+}
+
+.gl-insights-row-icon svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* The unread dot. Cyan — "live / waiting on you" — never phos: an unread
+   report has not passed anything. Presence is the whole signal. */
+.gl-insights-unread {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--gl-cyan);
+}
+
+/* The same dot in the rail row's accessory slot, which lays out in-flow. */
+.gl-insights-unread-rail {
+  position: static;
+  display: inline-block;
+}
+
+.gl-insights-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.gl-insights-row-title {
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  color: var(--gl-tx-1);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.gl-insights-row-sub {
+  font-family: var(--gl-mono);
+  font-size: 10px;
+  color: var(--gl-tx-3);
+}
+
+.gl-insights-report {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 14px;
+  max-width: 720px;
+}
+
+.gl-insights-headline {
+  font-family: var(--gl-sans);
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--gl-tx-1);
+}
+
+.gl-insights-degraded {
+  padding: 8px 10px;
+  border: 1px solid var(--gl-amber);
+  color: var(--gl-amber);
+  font-family: var(--gl-mono);
+  font-size: 11px;
+}
+
+/* The deterministic numbers. A dense grid of label/value pairs, mono, so it
+   reads as instrumentation rather than as more prose. */
+.gl-insights-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px 14px;
+  padding: 10px;
+  border: 1px solid var(--gl-line);
+}
+
+.gl-insights-stat {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-family: var(--gl-mono);
+  font-size: 11px;
+}
+
+.gl-insights-stat dt {
+  color: var(--gl-tx-3);
+}
+
+.gl-insights-stat dd {
+  color: var(--gl-tx-1);
+}
+
+.gl-insights-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gl-insights-section h3 {
+  font-family: var(--gl-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: var(--gl-track-label);
+  color: var(--gl-tx-3);
+}
+
+.gl-insights-section p {
+  font-family: var(--gl-sans);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--gl-tx-2);
+  overflow-wrap: break-word;
+}
+
+.gl-insights-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gl-insights-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--gl-line);
+}
+
+.gl-insights-action-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--gl-sans);
+  font-size: 12px;
+  color: var(--gl-tx-2);
+  min-width: 0;
+}
+
+.gl-insights-action-test {
+  font-family: var(--gl-mono);
+  font-size: 10.5px;
+  color: var(--gl-tx-3);
+}
+
+.gl-insights-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--gl-line-2);
+}
+
+.gl-insights-sending ul {
+  margin: 0;
+  padding-left: 16px;
+}

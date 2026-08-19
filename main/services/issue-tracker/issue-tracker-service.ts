@@ -238,6 +238,13 @@ export const issueTrackerService = {
       if (t.includes("/") || t.includes("\\") || t === "." || t === "..") return null;
       return t;
     };
+    // The report source carries no test/run coordinate — its whole address is
+    // the report id, resolved against the insights store by the loader.
+    if (r.kind === "insight-report") {
+      const reportId = id(r.reportId);
+      return reportId ? { kind: "insight-report", reportId } : null;
+    }
+
     const testId = id(r.testId);
     const runId = id(r.runId);
     if (!testId || !runId) return null;

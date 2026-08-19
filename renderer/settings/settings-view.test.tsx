@@ -13,6 +13,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { RecorderSettings } from "../lib/recorder-types";
 import { SETTINGS_DEFAULTS } from "../lib/settings-schema";
@@ -68,9 +69,17 @@ beforeEach(() => {
 });
 
 /** Settings runs six async loads on mount. Anchor on the sidebar, which is
- *  rendered before any of them resolve, then let the pane settle. */
+ *  rendered before any of them resolve, then let the pane settle.
+ *
+ *  Wrapped in a QueryClient like the real window (renderer/settings/index.tsx)
+ *  — the Alerts pane reads the insights status through react-query. */
 async function renderSettings() {
-  render(<SettingsView />);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
+      <SettingsView />
+    </QueryClientProvider>,
+  );
   await screen.findByText("Test defaults");
   // The default pane is Appearance; wait for a control it owns.
   await screen.findByRole("switch", { name: /ai thinking gif/i });
@@ -171,7 +180,12 @@ describe("a control still reaches the backend", () => {
     // sidebar still rendered, so the failure looked like a blank content area
     // rather than an error.
     settings = null as unknown as Partial<RecorderSettings>;
-    render(<SettingsView />);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <SettingsView />
+      </QueryClientProvider>,
+    );
     expect(await screen.findByText("Test defaults")).toBeTruthy();
     // The PANE, not just the sidebar.
     expect(await screen.findByRole("switch", { name: /ai thinking gif/i })).toBeTruthy();
@@ -285,16 +299,19 @@ describe("the reset footer", () => {
     // exhaustive key list precisely so a credential added here later fails
     // loudly rather than being quietly resettable.
     expect(Object.keys(patch).slice().sort()).toEqual([
+      "aiInsightsCadence",
+      "aiInsightsEnabled",
       "notifyOnAiDebugDone",
       "notifyOnBatchDone",
+      "notifyOnInsightsReady",
       "notifyOnRunIssues",
     ]);
   });
 
   it("never touches a credential on the Integrations pane either", async () => {
-    // The pane the guarantee matters most on: it holds THREE credentials — the
-    // Linear key, the webhook URL and the GitHub token — and none of them is a
-    // `RecorderSettings` key, so none may appear in a reset patch. The
+    // The pane the guarantee matters most on: it holds FOUR credentials — the
+    // Linear key, two webhook URLs and the GitHub token — and none of them is
+    // a `RecorderSettings` key, so none may appear in a reset patch. The
     // exhaustive list is the point: a credential wired up as a setting later
     // fails here rather than becoming quietly resettable from a window that
     // cannot even read it back.
@@ -304,7 +321,10 @@ describe("the reset footer", () => {
     fireEvent.click(await screen.findByRole("button", { name: /reset section/i }));
     await waitFor(() => expect(setSettings).toHaveBeenCalled());
     const patch = setSettings.mock.calls[0][0];
-    expect(Object.keys(patch)).toEqual(["alertWebhookEnabled"]);
+    expect(Object.keys(patch).slice().sort()).toEqual([
+      "alertWebhookEnabled",
+      "insightsSlackEnabled",
+    ]);
   });
 
   it("is hidden while a search is running", async () => {

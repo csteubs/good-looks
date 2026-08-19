@@ -10,6 +10,161 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-18 — The insights report leaves the app: PDF, the issue tracker, and Slack
+
+Three exits for a report, each riding a machine that already existed rather
+than growing a new one.
+
+**PDF is a main-side verb in the report-emitter shape.** `insights:exportPdf`
+answers with a path and a byte count and the renderer never holds the bytes —
+same contract as `report:emit`, kept even though this content has no secrets
+store behind it, because two shapes for "save a file" is one too many. The
+page is built by a pure module (`insight-report-html.ts`) and printed from a
+hidden sandboxed BrowserWindow, dialog FIRST so a cancelled save costs no
+window and no layout pass. The builder's load-bearing test is the ESCAPING
+one: its input is model output and test names — text a page can influence —
+and this is the join where that text becomes markup. The page is also pinned
+self-contained (no external URL), since a print window fetching assets would
+be a network call nobody asked for.
+
+**"Send a PDF to the tracker" became "the report IS the issue body", and
+that is a capability fact, not a preference.** Neither GitHub's issue API nor
+Linear's accepts a PDF attachment (images only, for Linear), so the honest
+version of the ask is the report as markdown, filed through the SAME pipeline
+visual and a11y defects use: a fourth `DefectSource` kind
+(`insight-report`, addressed by report id alone), the same compose dialog
+with its destination pickers and dedup, the same `createIssue` redaction on
+the way out. The kind maps onto the ONE link-key derivation with its report
+id in the step slot rather than adding a second spelling — this store's
+separator history is exactly why. `buildIssueDraft`'s input type now
+EXCLUDES the kind (the loader assembles a report draft from the stored
+report directly), so the deep-link block that reads test coordinates stays
+honest at compile time.
+
+**Slack rides alert-service — the webhook egress stays one family.** A new
+`insightReport` alert kind whose builder input is the HEADLINE and the
+deterministic COUNTS: there is no parameter a section, a log or a script
+could arrive through, the same structural guarantee the run/batch builders
+carry, and `check:alerts` now drives the real send and asserts the sections
+never reach the channel. The destination is its own encrypted URL
+(`insights-slack-webhook.bin`) rather than the alert webhook — the incident
+channel and the report channel are different subscriptions, and one URL doing
+both jobs makes turning one off turn both off. `webhook-url-store` became a
+factory for exactly this reason: a hand-copied second store is the drift
+`shared/` exists to prevent. A Slack incoming webhook is channel-bound, so
+"send it to a specific channel" is precisely "paste that channel's webhook
+URL", which the Integrations pane now offers beside the alert webhook — same
+enable-asks-first confirmation, same write-only credential treatment. The
+auto-send fires from the insights service on save, through a deps seam whose
+gate lives in one place, and a failed announcement can never fail the report.
+
+### 2026-08-18 — AI insights: the first unattended send, and everything that constrains it
+
+`main/services/insights/`, `main/services/insight-report-store.ts`,
+`renderer/main/insights-view.tsx`, the Alerts pane, `shared/period-digest.mjs`,
+and `llm-service.ts`'s new `complete()`. A scheduled report
+(daily/weekly/monthly) written by the configured LLM provider: how the period
+went, what to watch, site-change signals, expiring crawler signatures, stalled
+routine schedules, app release notes, and recommended fixes with one-click
+actions.
+
+**This is the app's only unattended egress with an AI on the other end, and
+the design starts from that.** Every AI send until now was human-reviewed —
+the Sending strip, then an explicit click. A scheduled report has nobody at
+the keyboard, so the review moved into structure: off by default (the toggle
+is the consent, and its `risk` copy names the destination, provider-aware);
+the payload is summary-shaped BY CONSTRUCTION (the facts builder reads
+indexes and aggregates and cannot reach a log, a script, a console capture or
+a Shopify header value — `check:insights-egress` pins that at source level and
+with a planted secret); and the messages pass through `redactWithSnapshot` on
+the send path, position-checked by the same check. The per-report "what was
+sent" disclosure is DERIVED from the payload object the prompt serializes and
+STORED with the report — a maintained list eventually describes a send the
+app no longer makes, and a disclosure about last month's send should describe
+last month's send.
+
+**The debug action opens the dialog; it does not send.** The user chose
+one-click actions, and "Run test" runs immediately — a local Playwright run
+has no egress. "Debug with AI" instead records a one-shot intent
+(`insight-intents.ts`), navigates, and the detail view opens the SAME dialog
+its own button opens once the run context exists. Auto-sending would have
+deleted the app's one remaining AI review gate to save one click; opening the
+prepared dialog keeps the Sending strip and the manual send while still
+starting the session from the report.
+
+**Model output is narrative; numbers and buttons are ours.** The stats strip
+renders from builder-computed `stats` (null when the metrics DB was
+unavailable, and SKIPPED rather than zeroed — absence of evidence stays
+absent). Actions are a closed kind enum mapped to hard-coded behaviors;
+verbs are fixed per kind so model text cannot relabel a button; a `testId`
+must name a test the model was SHOWN (parse time) and still exist (render
+time — a deleted test's action renders its recorded name, disabled). The
+prompt interpolates the kinds from `INSIGHT_ACTION_KINDS` and a property test
+pins that every offered kind survives the parser — the llm-knowledge drift,
+prevented the same way. An answer that fails the JSON contract persists as a
+`degraded` prose report with no actions, because a scheduled feature that
+discards a paid completion reads as "it didn't run".
+
+**Due is a calendar fact, the content window is rolling, and catch-up is the
+absence of a mechanism.** The routine scheduler bounds its timer to the
+session and OFFERS missed occurrences, because a routine seizes the machine;
+a report is a background HTTP call, so its due-rule is just "a new local
+day / ISO week / month started since `lastGeneratedAt`" — a period missed
+while the app was closed is still due at the first tick and generates
+quietly. Never-generated-and-enabled is due, inverting routine-schedule's
+"with no last fire nothing is owed": for a Routine that rule stops every
+suite running the moment a schedule is saved; here the toggle IS the request,
+and a first report within a minute is the feature demonstrating itself. The
+content window is the trailing period from generation, so a Wednesday
+catch-up honestly covers Wednesday-to-Wednesday. `monthlyOn` stays
+inexpressible in routine-schedule; this cadence needed calendar buckets, not
+clock promises, so it got its own thirty-line rule module rather than a
+schedule kind Routines would then have to render.
+
+**`lastAttemptAt` is stamped when a FAILED attempt settles — never at start.**
+That one choice reconciles three requirements: quit-safety (a killed
+generation persists nothing, the period stays due), backoff (a failing
+provider is retried hourly, not per-tick — and every attempt settles, because
+`complete()` has a hard timeout chat() never had), and honesty (a deferral
+while the user's own AI request is in flight is NOT an attempt and stamps
+nothing). Toggle-off mid-generation discards at settle and stamps nothing —
+the user said stop, and re-enabling should regenerate.
+
+**`complete()` exists because `sendToMain` drops events with no window,
+silently.** The streaming path is renderer-consumed by design; an unattended
+job may run with every window closed. The provider round trip was extracted
+behind a sink (`streamChatOnce`) so both consumers share one parser, and the
+extraction's tests caught a real shipped bug: the Anthropic branch never fed
+`sawContent`, so every successful Claude stream ended in `empty-response`
+instead of `done` — the answer on screen with an error under it.
+`complete()` deliberately never enters `activeRequests`: `llm:cancel` keeps
+meaning "cancel an interactive stream", and `activeCount()` is exactly the
+busy-guard the insights tick defers on, because local runtimes serve one
+request at a time and a scheduled job must never starve a person.
+
+**Reports are primary data in a JSON store; the Alerts pane's claim changed
+deliberately.** An LLM answer cannot be replayed from history, so
+`insight-reports.json` is a store of record (cap 24), never rows in the
+drop-and-replay metrics DB — and state lives in the same file as the reports
+because a report write always advances the state, and two tmp+rename cycles
+can disagree after a crash. Reports are not cascade-deleted with tests (they
+are period history, like tombstoned runs). The Alerts pane's whole claim was
+"deliberately ALL local"; the insights rows made that subtitle false, so the
+claim was rewritten rather than worked around — the three notification rows
+still say local per-row, the pane no longer does, and the pane tests now pin
+both halves. Release notes ship as typed data
+(`main/services/insights/release-notes.ts`) rather than a packaged markdown
+file: no packaging rules, no parser, type-checked, and "unseen" is positional
+— a first-ever report gets the current version's entry, never the whole
+history.
+
+**Weekly-digest moved to `shared/period-digest.mjs` rather than growing a
+twin.** The report asks "how was the period" from the main process; the Stats
+panel asks it from the renderer; two spellings is how two surfaces disagree
+about the same seven days (the a11y-rollup lesson, third time). `flakeRuns`
+travelled with it and `cost-model` re-exports it, so §6.4's flake rule still
+has one definition.
+
 ### 2026-08-18 — Where work happens: session worktrees, and a root checkout that only pulls
 
 CLAUDE.md gains a "Where work happens" section under "Making a change",
@@ -70,6 +225,7 @@ sharing the `whenReady` callback with `metricsStore.init` and
 `setPrunePreflight`, in that order. Both new sections were run against the
 pre-fix file and against reordered mutations of `artifact-store.ts` to confirm
 they go red.
+
 ### 2026-08-18 — The Cost panel reads as savings, and every stat card carries its own math
 
 The first tile read **CI spend**, and every run it counts executed on this

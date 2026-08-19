@@ -192,8 +192,236 @@ async function fetchLmStudioLoadState(
   return states;
 }
 
-// In-flight chat requests keyed by requestId, so llm:cancel can abort them.
+// In-flight INTERACTIVE chat requests keyed by requestId, so llm:cancel can
+// abort them. `complete()` deliberately never enters this map — see its doc.
 const activeRequests = new Map<string, AbortController>();
+
+/** One streamed delta, answer or reasoning. The provider round trip reports
+ *  through this rather than pushing to a window, so the streaming `chat()`
+ *  path and the awaited `complete()` path share one parser. */
+interface ChatSink {
+  chunk(delta: string, reasoning: boolean): void;
+}
+
+/** What a cleanly-ended stream can testify about itself. The caller applies
+ *  the empty-response rule from these — the rule is policy, the facts are not. */
+interface StreamFacts {
+  sawContent: boolean;
+  sawReasoning: boolean;
+  eventCount: number;
+  finishReason: string | null;
+  deltaFields: string[];
+  promptChars: number;
+}
+
+/**
+ * The provider round trip: auth, fetch, SSE parse. THROWS on failure
+ * (ProviderError for decoded failures, the transport error otherwise) and
+ * returns facts on a cleanly-ended stream. It never touches sendToMain,
+ * activeRequests or the logger — the wrappers own those, which is what keeps
+ * the streaming path's observable behavior byte-identical.
+ */
+async function streamChatOnce(
+  provider: LlmProvider,
+  model: string,
+  base: string,
+  params: LlmChatParams,
+  controller: AbortController,
+  sink: ChatSink,
+): Promise<StreamFacts> {
+  let res: Response;
+  // Kept so the 401 branch can say whether a token was actually sent, rather
+  // than re-reading the store and possibly answering about a different one.
+  let authHeaders: Record<string, string> = {};
+  if (provider === "anthropic") {
+    const key = await anthropicKeyStore.getKey();
+    if (!key) {
+      throw new ProviderError("Add your Anthropic API key.", "auth");
+    }
+    const { system, messages } = toAnthropicPayload(params.messages);
+    res = await fetch(`${base}/v1/messages`, {
+      method: "POST",
+      headers: anthropicHeaders(key),
+      body: JSON.stringify({
+        model,
+        max_tokens: ANTHROPIC_MAX_TOKENS,
+        ...(system ? { system } : {}),
+        messages,
+        temperature: params.temperature ?? 0.2,
+        stream: true,
+      }),
+      signal: controller.signal,
+    });
+  } else {
+    authHeaders = await localAuthHeaders(provider);
+    res = await fetch(`${base}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({
+        model,
+        messages: params.messages,
+        temperature: params.temperature ?? 0.2,
+        stream: true,
+      }),
+      signal: controller.signal,
+    });
+  }
+  if (!res.ok || !res.body) {
+    // The provider's own body is JSON meant for a client, not a person —
+    // decode it into one actionable sentence rather than pasting it through.
+    const text = await res.text().catch(() => "");
+    const failure = describeHttpFailure({
+      status: res.status,
+      body: text,
+      provider,
+      model,
+      hasToken: Boolean(authHeaders.Authorization),
+    });
+    throw new ProviderError(failure.message, failure.kind);
+  }
+
+  // Both providers stream Server-Sent Events as `data: {json}` lines; only the
+  // JSON shape differs (OpenAI: choices[].delta.content ending in [DONE];
+  // Anthropic: content_block_delta / error events), so we share the line
+  // reader and branch on extraction.
+  const decoder = new TextDecoder();
+  let buffer = "";
+  // Whether the stream produced anything at all, so an empty one can be
+  // reported rather than ending as a silent, indistinguishable success.
+  let sawContent = false;
+  let sawReasoning = false;
+  // Evidence for diagnosing a stream that ends with no answer. Without it the
+  // only honest thing we could say was "something returned nothing", which is
+  // where the misleading "prompt may have been too long" guess came from.
+  let eventCount = 0;
+  let finishReason: string | null = null;
+  const deltaFields = new Set<string>();
+  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+    buffer += decoder.decode(chunk, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        const json = JSON.parse(data) as Record<string, unknown>;
+        if (provider === "anthropic") {
+          const type = json.type as string | undefined;
+          if (type === "content_block_delta") {
+            const delta = (json.delta as { text?: string } | undefined)?.text;
+            if (delta) {
+              // Feeds the same flag the OpenAI branch feeds. It didn't until
+              // 2026-08-18, and the miss was silent in the worst way: a
+              // successful Claude stream delivered every chunk and then ended
+              // in "empty response" instead of done — the answer on screen,
+              // an error under it.
+              sawContent = true;
+              sink.chunk(delta, false);
+            }
+          } else if (type === "error") {
+            const msg = (json.error as { message?: string } | undefined)?.message;
+            throw new ProviderError(msg || "Anthropic streaming error.", "provider");
+          }
+        } else {
+          eventCount++;
+          const first = (
+            json as {
+              choices?: Array<{
+                finish_reason?: string | null;
+                delta?: {
+                  content?: string;
+                  reasoning_content?: string;
+                  reasoning?: string;
+                  [key: string]: unknown;
+                };
+              }>;
+            }
+          ).choices?.[0];
+          if (first?.finish_reason) finishReason = first.finish_reason;
+          const choice = first?.delta;
+          // Record every field that actually carried something. A model
+          // streaming its answer under a name we don't read looks exactly
+          // like a model that said nothing — this is what tells them apart.
+          if (choice) {
+            for (const [k, v] of Object.entries(choice)) {
+              if (typeof v === "string" ? v.length > 0 : v != null) deltaFields.add(k);
+            }
+          }
+          const delta = choice?.content;
+          if (delta) {
+            sawContent = true;
+            sink.chunk(delta, false);
+          }
+          // A REASONING model streams its thinking in a separate field and
+          // puts only the final answer in `content`. Reading content alone
+          // meant every thinking token was silently discarded — and since a
+          // model can spend its whole budget reasoning, the stream could end
+          // having emitted nothing at all. The UI then showed "thinking",
+          // received `done`, and collapsed with no output and no error.
+          //
+          // Two spellings in the wild: `reasoning_content` (DeepSeek's, which
+          // LM Studio and vLLM follow) and `reasoning` (OpenRouter and
+          // others). Both are handled because the cost of guessing wrong is
+          // this exact silent failure.
+          const thinking = choice?.reasoning_content ?? choice?.reasoning;
+          if (thinking) {
+            sawReasoning = true;
+            // Flagged, not merged: thinking is not the answer, and appending
+            // it to the answer would present a model's scratchpad as its
+            // conclusion.
+            sink.chunk(thinking, true);
+          }
+        }
+      } catch (parseErr) {
+        // Re-throw genuine Anthropic error events; ignore keep-alive lines /
+        // partial JSON split across chunks (which fail as SyntaxError).
+        if (parseErr instanceof Error && !(parseErr instanceof SyntaxError)) {
+          throw parseErr;
+        }
+      }
+    }
+  }
+  return {
+    sawContent,
+    sawReasoning,
+    eventCount,
+    finishReason,
+    deltaFields: [...deltaFields],
+    promptChars: params.messages.reduce((n, m) => n + m.content.length, 0),
+  };
+}
+
+/**
+ * Classify a chat failure into the sentence and kind the renderer routes on.
+ * Extracted so the streaming and awaited paths cannot drift in how they decode
+ * the same failure.
+ *
+ * The instanceof check matters rather than matching on text, because a
+ * decoded message quotes the provider verbatim: a body mentioning e.g. a
+ * "network error while fetching weights" would match the patterns below
+ * and replace a correct, actionable message with "Make sure LM Studio is
+ * running" — sending the user after a server that is up and answering.
+ */
+function decodeChatFailure(
+  err: unknown,
+  provider: LlmProvider,
+  base: string,
+): { message: string; kind: LlmErrorKind } {
+  const raw = err instanceof Error ? err.message : String(err);
+  const decoded = err instanceof ProviderError ? err : null;
+  const isConnError = !decoded && /abort|timeout|econnrefused|fetch failed|network/i.test(raw);
+  const message = isConnError
+    ? provider === "anthropic"
+      ? `Could not reach Claude (${base}). Check your internet connection and try again.`
+      : `Could not reach ${providerLabel(provider)} at ${base}. Make sure it is running.`
+    : raw;
+  // A decoded provider failure keeps its own kind; anything else is either
+  // a recognized transport failure or genuinely unclassified.
+  const kind: LlmErrorKind = decoded ? decoded.kind : isConnError ? "connection" : "provider";
+  return { message, kind };
+}
 
 async function runChat(
   requestId: string,
@@ -205,162 +433,21 @@ async function runChat(
     sendToMain("llm:error", { requestId, message: "No model selected.", kind: "no-model" });
     return;
   }
+  // Everything up to the first `await` inside streamChatOnce runs in chat()'s
+  // synchronous call frame, and two of its effects are load-bearing there: the
+  // no-model error above is on the wire before chat() returns, and the request
+  // is registered below before it returns — the AI debug store's hydrate
+  // re-adopt asks isActive() immediately.
   const base = baseUrlFor(provider);
   const controller = new AbortController();
   activeRequests.set(requestId, controller);
   try {
-    let res: Response;
-    // Kept so the 401 branch can say whether a token was actually sent, rather
-    // than re-reading the store and possibly answering about a different one.
-    let authHeaders: Record<string, string> = {};
-    if (provider === "anthropic") {
-      const key = await anthropicKeyStore.getKey();
-      if (!key) {
-        sendToMain("llm:error", {
-          requestId,
-          message: "Add your Anthropic API key.",
-          kind: "auth" satisfies LlmErrorKind,
-        });
-        return;
-      }
-      const { system, messages } = toAnthropicPayload(params.messages);
-      res = await fetch(`${base}/v1/messages`, {
-        method: "POST",
-        headers: anthropicHeaders(key),
-        body: JSON.stringify({
-          model,
-          max_tokens: ANTHROPIC_MAX_TOKENS,
-          ...(system ? { system } : {}),
-          messages,
-          temperature: params.temperature ?? 0.2,
-          stream: true,
-        }),
-        signal: controller.signal,
-      });
-    } else {
-      authHeaders = await localAuthHeaders(provider);
-      res = await fetch(`${base}/v1/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...authHeaders },
-        body: JSON.stringify({
-          model,
-          messages: params.messages,
-          temperature: params.temperature ?? 0.2,
-          stream: true,
-        }),
-        signal: controller.signal,
-      });
-    }
-    if (!res.ok || !res.body) {
-      // The provider's own body is JSON meant for a client, not a person —
-      // decode it into one actionable sentence rather than pasting it through.
-      const text = await res.text().catch(() => "");
-      const failure = describeHttpFailure({
-        status: res.status,
-        body: text,
-        provider,
-        model,
-        hasToken: Boolean(authHeaders.Authorization),
-      });
-      throw new ProviderError(failure.message, failure.kind);
-    }
-
-    // Both providers stream Server-Sent Events as `data: {json}` lines; only the
-    // JSON shape differs (OpenAI: choices[].delta.content ending in [DONE];
-    // Anthropic: content_block_delta / error events), so we share the line
-    // reader and branch on extraction.
-    const decoder = new TextDecoder();
-    let buffer = "";
-    // Whether the stream produced anything at all, so an empty one can be
-    // reported rather than ending as a silent, indistinguishable success.
-    let sawContent = false;
-    let sawReasoning = false;
-    // Evidence for diagnosing a stream that ends with no answer. Without it the
-    // only honest thing we could say was "something returned nothing", which is
-    // where the misleading "prompt may have been too long" guess came from.
-    let eventCount = 0;
-    let finishReason: string | null = null;
-    const deltaFields = new Set<string>();
-    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
-      buffer += decoder.decode(chunk, { stream: true });
-      let nl: number;
-      while ((nl = buffer.indexOf("\n")) >= 0) {
-        const line = buffer.slice(0, nl).trim();
-        buffer = buffer.slice(nl + 1);
-        if (!line.startsWith("data:")) continue;
-        const data = line.slice(5).trim();
-        if (!data || data === "[DONE]") continue;
-        try {
-          const json = JSON.parse(data) as Record<string, unknown>;
-          if (provider === "anthropic") {
-            const type = json.type as string | undefined;
-            if (type === "content_block_delta") {
-              const delta = (json.delta as { text?: string } | undefined)?.text;
-              if (delta) sendToMain("llm:chunk", { requestId, delta });
-            } else if (type === "error") {
-              const msg = (json.error as { message?: string } | undefined)?.message;
-              throw new ProviderError(msg || "Anthropic streaming error.", "provider");
-            }
-          } else {
-            eventCount++;
-            const first = (
-              json as {
-                choices?: Array<{
-                  finish_reason?: string | null;
-                  delta?: {
-                    content?: string;
-                    reasoning_content?: string;
-                    reasoning?: string;
-                    [key: string]: unknown;
-                  };
-                }>;
-              }
-            ).choices?.[0];
-            if (first?.finish_reason) finishReason = first.finish_reason;
-            const choice = first?.delta;
-            // Record every field that actually carried something. A model
-            // streaming its answer under a name we don't read looks exactly
-            // like a model that said nothing — this is what tells them apart.
-            if (choice) {
-              for (const [k, v] of Object.entries(choice)) {
-                if (typeof v === "string" ? v.length > 0 : v != null) deltaFields.add(k);
-              }
-            }
-            const delta = choice?.content;
-            if (delta) {
-              sawContent = true;
-              sendToMain("llm:chunk", { requestId, delta });
-            }
-            // A REASONING model streams its thinking in a separate field and
-            // puts only the final answer in `content`. Reading content alone
-            // meant every thinking token was silently discarded — and since a
-            // model can spend its whole budget reasoning, the stream could end
-            // having emitted nothing at all. The UI then showed "thinking",
-            // received `done`, and collapsed with no output and no error.
-            //
-            // Two spellings in the wild: `reasoning_content` (DeepSeek's, which
-            // LM Studio and vLLM follow) and `reasoning` (OpenRouter and
-            // others). Both are handled because the cost of guessing wrong is
-            // this exact silent failure.
-            const thinking = choice?.reasoning_content ?? choice?.reasoning;
-            if (thinking) {
-              sawReasoning = true;
-              // Flagged, not merged: thinking is not the answer, and appending
-              // it to the answer would present a model's scratchpad as its
-              // conclusion.
-              sendToMain("llm:chunk", { requestId, delta: thinking, reasoning: true });
-            }
-          }
-        } catch (parseErr) {
-          // Re-throw genuine Anthropic error events; ignore keep-alive lines /
-          // partial JSON split across chunks (which fail as SyntaxError).
-          if (parseErr instanceof Error && !(parseErr instanceof SyntaxError)) {
-            throw parseErr;
-          }
-        }
-      }
-    }
-    if (!sawContent) {
+    const facts = await streamChatOnce(provider, model, base, params, controller, {
+      chunk(delta, reasoning) {
+        sendToMain("llm:chunk", reasoning ? { requestId, delta, reasoning: true } : { requestId, delta });
+      },
+    });
+    if (!facts.sawContent) {
       // The stream finished without a single token of ANSWER. Ending on a plain
       // `done` here is what made this look like the feature was broken: the
       // panel collapsed with nothing in it and nothing to explain why.
@@ -370,19 +457,19 @@ async function runChat(
       const message = describeEmptyResponse({
         provider,
         model,
-        promptChars: params.messages.reduce((n, m) => n + m.content.length, 0),
-        eventCount,
-        finishReason,
-        deltaFields: [...deltaFields],
-        sawReasoning,
+        promptChars: facts.promptChars,
+        eventCount: facts.eventCount,
+        finishReason: facts.finishReason,
+        deltaFields: facts.deltaFields,
+        sawReasoning: facts.sawReasoning,
       });
       logger.warn("llm", "Chat stream produced no answer", {
         requestId,
         model,
-        eventCount,
-        finishReason,
-        deltaFields: [...deltaFields],
-        sawReasoning,
+        eventCount: facts.eventCount,
+        finishReason: facts.finishReason,
+        deltaFields: facts.deltaFields,
+        sawReasoning: facts.sawReasoning,
       });
       sendToMain("llm:error", { requestId, message, kind: "empty-response" satisfies LlmErrorKind });
       return;
@@ -392,33 +479,40 @@ async function runChat(
     if (controller.signal.aborted) {
       sendToMain("llm:done", { requestId, cancelled: true });
     } else {
-      const raw = err instanceof Error ? err.message : String(err);
-      // A ProviderError has already been decoded into an actionable sentence;
-      // anything else is a low-level transport failure that would otherwise
-      // reach the renderer as a bare "fetch failed", so it gets the "is it
-      // running?" hint (local) or a network hint (cloud).
-      //
-      // The instanceof check matters rather than matching on text, because a
-      // decoded message quotes the provider verbatim: a body mentioning e.g. a
-      // "network error while fetching weights" would match the patterns below
-      // and replace a correct, actionable message with "Make sure LM Studio is
-      // running" — sending the user after a server that is up and answering.
-      const decoded = err instanceof ProviderError ? err : null;
-      const isConnError =
-        !decoded && /abort|timeout|econnrefused|fetch failed|network/i.test(raw);
-      const message = isConnError
-        ? provider === "anthropic"
-          ? `Could not reach Claude (${base}). Check your internet connection and try again.`
-          : `Could not reach ${providerLabel(provider)} at ${base}. Make sure it is running.`
-        : raw;
-      // A decoded provider failure keeps its own kind; anything else is either
-      // a recognized transport failure or genuinely unclassified.
-      const kind: LlmErrorKind = decoded ? decoded.kind : isConnError ? "connection" : "provider";
+      const { message, kind } = decodeChatFailure(err, provider, base);
       logger.warn("llm", "Chat request failed", { requestId, message, kind });
       sendToMain("llm:error", { requestId, message, kind });
     }
   } finally {
     activeRequests.delete(requestId);
+  }
+}
+
+/** What `complete()` resolves with. Character counts, not tokens — a token
+ *  count is a guess dressed as a measurement (it depends on the tokenizer,
+ *  which depends on the provider), the same rule the AI debug history follows. */
+export interface LlmCompletion {
+  /** Answer deltas only — a reasoning model's thinking is excluded, for the
+   *  same reason the streaming path flags rather than merges it. */
+  text: string;
+  provider: LlmProvider;
+  model: string;
+  promptChars: number;
+  answerChars: number;
+  /** ms until the first delta of EITHER kind — liveness, matching the AI
+   *  debug history's "first token proves alive" reading. Null: none arrived. */
+  firstTokenMs: number | null;
+  durationMs: number;
+}
+
+/** A `complete()` failure, carrying the same kind vocabulary the streaming
+ *  path's `llm:error` events use so callers store one vocabulary. */
+export class LlmCompletionError extends Error {
+  readonly kind: LlmErrorKind;
+  constructor(message: string, kind: LlmErrorKind) {
+    super(message);
+    this.name = "LlmCompletionError";
+    this.kind = kind;
   }
 }
 
@@ -521,6 +615,108 @@ export const llmService = {
    *  permanently-thinking icon for a request that ended. */
   isActive(requestId: string): boolean {
     return activeRequests.has(requestId);
+  },
+
+  /** How many INTERACTIVE requests are in flight.
+   *
+   *  `complete()` calls are deliberately not counted: they never enter the
+   *  request map, so this is exactly "is a user waiting on an answer right
+   *  now" with no filtering. A background caller (the insights report) defers
+   *  while this is non-zero, because the local runtimes serve one request at a
+   *  time and a scheduled job must never starve an interactive one. */
+  activeCount(): number {
+    return activeRequests.size;
+  },
+
+  /**
+   * One awaited chat completion, for MAIN-PROCESS callers.
+   *
+   * The streaming path reports exclusively through `sendToMain`, which drops
+   * every event silently when no window exists — exactly the situation an
+   * unattended background job runs in. This collects the same stream in
+   * process instead. Three deliberate differences from `chat()`:
+   *
+   * - It never enters `activeRequests`: `llm:cancel` keeps meaning "cancel an
+   *   interactive stream" and can't reach a background job, `isActive()`
+   *   semantics are unchanged, and `activeCount()` stays an interactive count.
+   *   The only aborts are the timeout here and the caller's own signal.
+   * - It has a REAL timeout, which chat() has never had — an unattended call
+   *   against a wedged provider would otherwise hang forever.
+   * - Failure is a rejection (`LlmCompletionError` carrying the same kind
+   *   vocabulary as `llm:error`), not an event.
+   *
+   * Provider/model resolve exactly as chat() resolves them, and for the same
+   * reason: the configured values are read here, so the caller records what
+   * was actually used rather than what is selected later.
+   */
+  async complete(
+    params: LlmChatParams,
+    opts: { timeoutMs: number; signal?: AbortSignal },
+  ): Promise<LlmCompletion> {
+    const config = llmConfigStore.get();
+    const provider = params.provider ?? config.provider;
+    const model = params.model ?? config.model ?? "";
+    if (!model) throw new LlmCompletionError("No model selected.", "no-model");
+    const base = baseUrlFor(provider);
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, opts.timeoutMs);
+    timer.unref?.();
+    const onExternalAbort = () => controller.abort();
+    opts.signal?.addEventListener("abort", onExternalAbort, { once: true });
+    const startedAt = Date.now();
+    let text = "";
+    let firstTokenMs: number | null = null;
+    try {
+      const facts = await streamChatOnce(provider, model, base, params, controller, {
+        chunk(delta, reasoning) {
+          if (firstTokenMs === null) firstTokenMs = Date.now() - startedAt;
+          if (!reasoning) text += delta;
+        },
+      });
+      if (!facts.sawContent) {
+        // Same rule as the streaming path, or a reasoning-only stream would
+        // "succeed" here with an empty string.
+        throw new LlmCompletionError(
+          describeEmptyResponse({
+            provider,
+            model,
+            promptChars: facts.promptChars,
+            eventCount: facts.eventCount,
+            finishReason: facts.finishReason,
+            deltaFields: facts.deltaFields,
+            sawReasoning: facts.sawReasoning,
+          }),
+          "empty-response",
+        );
+      }
+      return {
+        text,
+        provider,
+        model,
+        promptChars: facts.promptChars,
+        answerChars: text.length,
+        firstTokenMs,
+        durationMs: Date.now() - startedAt,
+      };
+    } catch (err) {
+      if (timedOut) {
+        throw new LlmCompletionError(
+          `Timed out after ${Math.round(opts.timeoutMs / 1000)}s waiting for ${providerLabel(provider)}.`,
+          "connection",
+        );
+      }
+      if (opts.signal?.aborted) throw err instanceof Error ? err : new Error(String(err));
+      if (err instanceof LlmCompletionError) throw err;
+      const { message, kind } = decodeChatFailure(err, provider, base);
+      throw new LlmCompletionError(message, kind);
+    } finally {
+      clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", onExternalAbort);
+    }
   },
 };
 

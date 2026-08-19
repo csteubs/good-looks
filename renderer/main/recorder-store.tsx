@@ -463,6 +463,18 @@ export function RecorderProvider({
     const offAiDebugHistory = api.on("aiDebug:historyChanged", () => {
       void qc.invalidateQueries({ queryKey: ["ai-debug-history"] });
     });
+    // An insights report was generated, read, or deleted — or a generation
+    // started or failed. NOT in RUN_DERIVED_KEYS: the insights service writes
+    // its own store on its own schedule, nothing a run does touches it. It is
+    // subscribed HERE and not in the Insights view because the reader that
+    // matters is the rail's unread dot, which renders on EVERY route — a
+    // view-level subscription is the "refresh this if the user happens to be
+    // looking" bug run-derived-cache.ts documents.
+    const offInsights = api.on("insights:changed", () => {
+      void qc.invalidateQueries({ queryKey: ["insight-reports"] });
+      void qc.invalidateQueries({ queryKey: ["insight-report"] });
+      void qc.invalidateQueries({ queryKey: ["insights-status"] });
+    });
     // A batch already running when this window opened. `batch:progress` fires
     // on every test transition so it would self-seed within seconds, but "the
     // ticker is blank until the next test finishes" is a blank ticker during
@@ -612,6 +624,7 @@ export function RecorderProvider({
       offDone();
       offRunsChanged();
       offAiDebugHistory();
+      offInsights();
       offBatchProgress();
       offBatchDone();
       offDebug();

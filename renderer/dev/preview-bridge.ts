@@ -35,6 +35,8 @@ import {
   ROUTINES,
   HEALS,
   AI_DEBUG_HISTORY,
+  INSIGHT_REPORTS,
+  INSIGHTS_STATE,
   SCRIPT_CHANGES,
   LLM_CONFIG,
   LLM_STATUS,
@@ -261,6 +263,8 @@ function seed() {
     heals: structuredClone(HEALS),
     scriptChanges: structuredClone(SCRIPT_CHANGES),
     aiDebugHistory: structuredClone(AI_DEBUG_HISTORY),
+    insightReports: structuredClone(INSIGHT_REPORTS),
+    insightsState: structuredClone(INSIGHTS_STATE),
     // Edited in place, so a save made in the preview STICKS for the session — a
     // bridge that forgot every save would make the Routine editor look broken
     // in the one place a person can actually drive it.
@@ -1243,6 +1247,19 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "issues:buildDraft": (p): IssueDraft | null => {
       const source = (p?.source ?? null) as IssueDraft["source"] | null;
       if (!source) return null;
+      // A report files its own stored content, so the fixture draft comes
+      // from the insight fixtures rather than the canned defect strings.
+      if (source.kind === "insight-report") {
+        const report = state.insightReports.find((r) => r.id === source.reportId);
+        if (!report) return null;
+        return {
+          source,
+          title: `Weekly testing report — ${report.headline.slice(0, 60)}`,
+          body: `**${report.headline}**\n\n${report.sections.map((s) => s.body).join("\n\n")}`,
+          attachments: [],
+          notices: [],
+        };
+      }
       const png =
         "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
       const visual = source.kind === "visual";
@@ -1395,6 +1412,53 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
      *  its normal branch instead of its error one. */
     "aiDebug:notifyDone": () => ({ ok: true }),
     "annotations:list": () => [],
+
+    // ── AI insights ──────────────────────────────────────────────────────
+    // Three canned reports — healthy, rough-with-actions (one action names a
+    // deleted test, so the disabled button is drivable), and degraded prose.
+    // Mutations edit the session copy, like routines: read-marking has to
+    // actually clear the rail dot or the preview shows the feature broken.
+    "insights:list": () =>
+      state.insightReports.map((r) => ({
+        id: r.id,
+        cadence: r.cadence,
+        generatedAt: r.generatedAt,
+        headline: r.headline,
+        read: r.read,
+        ...(r.degraded ? { degraded: true } : {}),
+      })),
+    "insights:get": (p) =>
+      state.insightReports.find((r) => r.id === (p as { id?: string } | undefined)?.id) ?? null,
+    "insights:status": () => ({ ...state.insightsState, generating: false }),
+    /** Nothing can complete an LLM call here, so the honest preview answer is
+     *  a refusal the pane already knows how to word. */
+    "insights:generateNow": () => ({ started: false, reason: "alreadyRunning" }),
+    /** No native save dialog in a browser tab — answered as a cancel, which
+     *  the view treats silently. */
+    "insights:exportPdf": () => null,
+    "insightsSlack:status": () => ({ hasUrl: false, host: null }),
+    "insightsSlack:setUrl": () => ({ hasUrl: true, host: "hooks.slack.com" }),
+    "insightsSlack:clearUrl": () => ({ hasUrl: false, host: null }),
+    "insightsSlack:test": () => ({ ok: true }),
+    "insights:markRead": (p) => {
+      const report = state.insightReports.find(
+        (r) => r.id === (p as { id?: string } | undefined)?.id,
+      );
+      if (!report || report.read) return { changed: false };
+      report.read = true;
+      return { changed: true };
+    },
+    "insights:delete": (p) => {
+      const id = (p as { id?: string } | undefined)?.id;
+      const before = state.insightReports.length;
+      state.insightReports = state.insightReports.filter((r) => r.id !== id);
+      return { removed: state.insightReports.length !== before };
+    },
+    "insights:clearAll": () => {
+      const removed = state.insightReports.length;
+      state.insightReports = [];
+      return { removed };
+    },
 
     // ── Recorder ─────────────────────────────────────────────────────────
     // Nothing can actually record here; reporting an idle recorder is honest

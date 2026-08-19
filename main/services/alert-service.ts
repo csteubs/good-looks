@@ -17,9 +17,10 @@
 import { logger } from "@shell/backend";
 
 import { webhookUrlStore } from "./webhook-url-store.js";
+import { insightsSlackUrlStore } from "./insights/insights-slack-url-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
 import { allRedactableValues, redact } from "./secret-redaction.js";
-import type { BatchSummary } from "../recorder/types.js";
+import type { BatchSummary, InsightReport, InsightsCadence } from "../recorder/types.js";
 
 /** A webhook that hangs must not hold a batch open. */
 const ALERT_TIMEOUT_MS = 10_000;
@@ -66,12 +67,36 @@ export interface RoutineNotifyAlert {
   routineName: string;
 }
 
-export type Alert = RunAlert | BatchAlert | RoutineNotifyAlert;
+/**
+ * A finished insights report, announced to the channel the user configured
+ * for it.
+ *
+ * The input is the report's HEADLINE and its deterministic STATS — never the
+ * sections. That is a structural guarantee in the builder's signature, same
+ * shape as the run/batch alerts taking no log parameter: the report body is
+ * pages of model prose, and a chat channel gets the one-line read plus counts,
+ * with the full text living in the app, the PDF, or the filed issue. The
+ * headline is model output, so `redactPayload` scrubs it before the send like
+ * every other text field.
+ */
+export interface InsightReportAlert {
+  kind: "insightReport";
+  cadence: InsightsCadence;
+  headline: string;
+  runs: number;
+  failed: number;
+  previousRuns: number;
+  healedSteps: number;
+  visualChanges: number | null;
+  newClusters: number | null;
+}
+
+export type Alert = RunAlert | BatchAlert | RoutineNotifyAlert | InsightReportAlert;
 
 export interface AlertPayload {
   /** rendered by Slack/Discord; also the human-readable line for anything else */
   text: string;
-  event: "run" | "batch";
+  event: "run" | "batch" | "insights";
   status: "failed" | "changed" | "passed";
   /** machine-readable detail — deliberately a fixed, log-free shape */
   detail: Record<string, unknown>;
@@ -111,6 +136,36 @@ export function redactPayload(payload: AlertPayload, secrets: readonly string[])
  * guarantee above is enforceable by a regression check.
  */
 export function buildAlertPayload(alert: Alert): AlertPayload | null {
+  if (alert.kind === "insightReport") {
+    // Always sends, like routineNotify: the report existing IS the event the
+    // user subscribed the channel to, so a clean period is not suppressed.
+    const cadenceWord =
+      alert.cadence === "daily" ? "Daily" : alert.cadence === "weekly" ? "Weekly" : "Monthly";
+    const parts = [`${alert.runs} run${alert.runs === 1 ? "" : "s"}, ${alert.failed} failed`];
+    if (alert.healedSteps > 0) parts.push(`${alert.healedSteps} healed`);
+    if (alert.visualChanges !== null && alert.visualChanges > 0) {
+      parts.push(`${alert.visualChanges} visual change${alert.visualChanges === 1 ? "" : "s"}`);
+    }
+    if (alert.newClusters !== null && alert.newClusters > 0) {
+      parts.push(`${alert.newClusters} new failure signature${alert.newClusters === 1 ? "" : "s"}`);
+    }
+    return {
+      text: `📈 ${cadenceWord} testing report — ${alert.headline}\n${parts.join(" · ")} · full report in Good Looks! → Insights`,
+      event: "insights",
+      status: alert.failed > 0 ? "failed" : "passed",
+      detail: {
+        cadence: alert.cadence,
+        headline: alert.headline,
+        runs: alert.runs,
+        failed: alert.failed,
+        previousRuns: alert.previousRuns,
+        healedSteps: alert.healedSteps,
+        ...(alert.visualChanges !== null ? { visualChanges: alert.visualChanges } : {}),
+        ...(alert.newClusters !== null ? { newClusters: alert.newClusters } : {}),
+      },
+      source: "Good Looks!",
+    };
+  }
   if (alert.kind === "routineNotify") {
     // The ONLY alert that always sends — the other two are conditional on a
     // failure, because they report on something. This one IS the thing the
@@ -227,6 +282,48 @@ export async function postWebhook(url: string, payload: AlertPayload): Promise<v
  * Fire-and-forget alert for a finished run or batch. Never throws and never
  * rejects — callers sit on the run-completion path.
  */
+/**
+ * Announce a finished insights report to its configured Slack channel.
+ *
+ * Its own gate (`insightsSlackEnabled`) and its own URL store, never the
+ * alert webhook's: the incident channel and the report channel are different
+ * subscriptions. Takes the REPORT and maps it onto the alert input here, in
+ * one visible place — the mapping reads the headline and the stats and
+ * nothing else, which is what keeps the payload chat-sized and inside the
+ * summary-only guarantee `check:alerts` holds. Fire-and-forget like
+ * `sendAlert`: this sits on the generation path, and announcing a report must
+ * never fail the report.
+ */
+export async function sendInsightReportAlert(report: InsightReport): Promise<void> {
+  try {
+    if (!recorderSettingsStore.get().insightsSlackEnabled) return;
+    const url = await insightsSlackUrlStore.getUrl();
+    if (!url) return;
+    const built = buildAlertPayload({
+      kind: "insightReport",
+      cadence: report.cadence,
+      headline: report.headline,
+      runs: report.stats.runs,
+      failed: report.stats.failed,
+      previousRuns: report.stats.previousRuns,
+      healedSteps: report.stats.healedSteps,
+      visualChanges: report.stats.visualChanges,
+      newClusters: report.stats.newClusters,
+    });
+    if (!built) return;
+    // Same late redaction as sendAlert, for the same reason — and the same
+    // `allRedactableValues()` rather than the snapshot, since this call site
+    // is async too.
+    const payload = redactPayload(built, await allRedactableValues());
+    await postWebhook(url, payload);
+    logger.info("alerts", "Sent insights report to Slack", { status: payload.status });
+  } catch (err) {
+    logger.warn("alerts", "Failed to send insights report to Slack", {
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 export async function sendAlert(alert: Alert): Promise<void> {
   try {
     if (!recorderSettingsStore.get().alertWebhookEnabled) return;

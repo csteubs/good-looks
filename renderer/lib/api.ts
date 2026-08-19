@@ -65,6 +65,12 @@ import type { TriageResult } from "../../shared/triage.mjs";
 import type { EmitterId } from "../../shared/emitters.mjs";
 import type { EmitResult, ShopifySignatureStatus } from "./recorder-types";
 import type {
+  InsightReport,
+  InsightReportSummary,
+  InsightsGenerateNowResult,
+  InsightsStatus,
+} from "./recorder-types";
+import type {
   StepDurationRow,
   StepHealthRow,
   TestDurationTrend,
@@ -456,6 +462,30 @@ export const api = {
       ipc().invoke<{ hasUrl: boolean; host: string | null }>("alerts:clearWebhookUrl"),
     status: () => ipc().invoke<{ hasUrl: boolean; host: string | null }>("alerts:status"),
     test: () => ipc().invoke<{ ok: boolean }>("alerts:test"),
+  },
+  insights: {
+    list: () => ipc().invoke<InsightReportSummary[]>("insights:list"),
+    get: (id: string) => ipc().invoke<InsightReport | null>("insights:get", { id }),
+    status: () => ipc().invoke<InsightsStatus>("insights:status"),
+    /** Skips the schedule and the retry backoff (the user asked), but never
+     *  the overlap guard — a second press while one is writing reports
+     *  `alreadyRunning` rather than starting a second send. */
+    generateNow: () => ipc().invoke<InsightsGenerateNowResult>("insights:generateNow"),
+    markRead: (id: string) => ipc().invoke<{ changed: boolean }>("insights:markRead", { id }),
+    delete: (id: string) => ipc().invoke<{ removed: boolean }>("insights:delete", { id }),
+    clearAll: () => ipc().invoke<{ removed: number }>("insights:clearAll"),
+    /** A verb answering with a path and byte count, never the bytes — the
+     *  report:emit shape. Null = the save dialog was cancelled. */
+    exportPdf: (id: string) =>
+      ipc().invoke<{ path: string; bytes: number } | null>("insights:exportPdf", { id }),
+  },
+  insightsSlack: {
+    setUrl: (url: string) =>
+      ipc().invoke<{ hasUrl: boolean; host: string | null }>("insightsSlack:setUrl", { url }),
+    clearUrl: () =>
+      ipc().invoke<{ hasUrl: boolean; host: string | null }>("insightsSlack:clearUrl"),
+    status: () => ipc().invoke<{ hasUrl: boolean; host: string | null }>("insightsSlack:status"),
+    test: () => ipc().invoke<{ ok: boolean }>("insightsSlack:test"),
   },
   issues: {
     /** Local and cheap — never touches the network. Pair with `verify` when the

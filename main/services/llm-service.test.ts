@@ -357,6 +357,33 @@ describe("chat() streaming", () => {
   const chunk = (delta: Record<string, string>) =>
     `data: ${JSON.stringify({ choices: [{ index: 0, delta, finish_reason: null }] })}`;
 
+  it("ends an Anthropic stream that answered in llm:done, not empty-response", async () => {
+    // The Anthropic branch parses a different SSE shape, and its delta handler
+    // has to feed the same `sawContent` flag the OpenAI branch feeds — a
+    // successful Claude stream that skips it delivers every chunk and then
+    // reports "empty response", which is a stream that plainly wasn't.
+    vi.spyOn(anthropicKeyStore, "getKey").mockResolvedValue("sk-test");
+    sentEvents.length = 0;
+    sseFetch([
+      `data: ${JSON.stringify({ type: "content_block_delta", delta: { text: "The selector " } })}`,
+      `data: ${JSON.stringify({ type: "content_block_delta", delta: { text: "is stale." } })}`,
+      `data: ${JSON.stringify({ type: "message_stop" })}`,
+    ]);
+    await llmService.chat({
+      messages: [{ role: "user", content: "hi" }],
+      provider: "anthropic",
+      model: "claude-sonnet-5",
+    });
+    for (let i = 0; i < 200; i++) {
+      if (sentEvents.some((e) => e.channel === "llm:done" || e.channel === "llm:error")) break;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const events = [...sentEvents];
+    const answer = events.filter((e) => e.channel === "llm:chunk" && !e.payload.reasoning);
+    expect(answer.map((c) => c.payload.delta).join("")).toBe("The selector is stale.");
+    expect(last(events)?.channel).toBe("llm:done");
+  });
+
   it("streams a reasoning model's thinking instead of discarding it", async () => {
     const { events } = await collect([
       chunk({ reasoning_content: "Let me " }),
@@ -514,6 +541,122 @@ describe("chat() streaming", () => {
     expect(chunks.every((c) => c.payload.reasoning === undefined)).toBe(true);
     expect(chunks.map((c) => c.payload.delta).join("")).toBe("Hello world");
     expect(last(events)?.channel).toBe("llm:done");
+  });
+
+  // ── complete(): the awaited path for main-process callers ─────────────────
+  //
+  // Same parser, different consumption: an unattended caller (the insights
+  // report) cannot ride sendToMain, which drops every event when no window
+  // exists. These pin the properties that differ from chat(): a promise
+  // instead of events, a REAL timeout, and staying out of the interactive
+  // request map so cancel()/activeCount() cannot see it.
+  describe("complete()", () => {
+    const params = { messages: [{ role: "user" as const, content: "hi" }] };
+
+    it("collects the answer and excludes a reasoning model's thinking", async () => {
+      sseFetch([
+        chunk({ reasoning_content: "Let me think. " }),
+        chunk({ content: "Use " }),
+        chunk({ content: "getByRole." }),
+        "data: [DONE]",
+      ]);
+      const out = await llmService.complete(
+        { ...params, provider: "lmstudio", model: "test-model" },
+        { timeoutMs: 5000 },
+      );
+      expect(out.text).toBe("Use getByRole.");
+      expect(out.answerChars).toBe("Use getByRole.".length);
+      expect(out.promptChars).toBe(2);
+      expect(out.provider).toBe("lmstudio");
+      expect(out.model).toBe("test-model");
+      // The first token was the REASONING delta — liveness, not answer.
+      expect(out.firstTokenMs).not.toBeNull();
+    });
+
+    it("rejects a reasoning-only stream as empty-response, not an empty success", async () => {
+      sseFetch([chunk({ reasoning_content: "thinking forever" }), "data: [DONE]"]);
+      await expect(
+        llmService.complete({ ...params, provider: "lmstudio", model: "test-model" }, { timeoutMs: 5000 }),
+      ).rejects.toMatchObject({ kind: "empty-response" });
+    });
+
+    it("rejects a completely empty stream", async () => {
+      sseFetch(["data: [DONE]"]);
+      await expect(
+        llmService.complete({ ...params, provider: "lmstudio", model: "test-model" }, { timeoutMs: 5000 }),
+      ).rejects.toMatchObject({ kind: "empty-response" });
+    });
+
+    it("rejects with no-model when no model resolves", async () => {
+      await expect(
+        llmService.complete({ ...params, provider: "lmstudio", model: "" }, { timeoutMs: 5000 }),
+      ).rejects.toMatchObject({ kind: "no-model" });
+    });
+
+    it("times out against a provider that never answers", async () => {
+      // A fetch that hangs until its signal aborts — the shape of a wedged
+      // server. chat() would wait on this forever; complete() must not.
+      globalThis.fetch = vi.fn(
+        (_url: unknown, init?: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("The operation was aborted.", "AbortError")),
+            );
+          }),
+      ) as unknown as typeof fetch;
+      const start = Date.now();
+      await expect(
+        llmService.complete({ ...params, provider: "lmstudio", model: "test-model" }, { timeoutMs: 60 }),
+      ).rejects.toMatchObject({ kind: "connection" });
+      expect(Date.now() - start).toBeLessThan(3000);
+      await expect(
+        llmService
+          .complete({ ...params, provider: "lmstudio", model: "test-model" }, { timeoutMs: 60 })
+          .catch((e: Error) => Promise.reject(e.message)),
+      ).rejects.toMatch(/timed out/i);
+    });
+
+    it("stays invisible to cancel() and activeCount()", async () => {
+      // Hold the stream open behind a gate so the completion is in flight
+      // while we probe the interactive bookkeeping.
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const body = [chunk({ content: "ok" }), "data: [DONE]"].map((l) => `${l}\n`).join("");
+      globalThis.fetch = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        body: (async function* () {
+          await gate;
+          yield new TextEncoder().encode(body);
+        })(),
+      })) as unknown as typeof fetch;
+
+      const pending = llmService.complete(
+        { ...params, provider: "lmstudio", model: "test-model" },
+        { timeoutMs: 5000 },
+      );
+      // In flight, and the interactive map doesn't know: a renderer llm:cancel
+      // has nothing to reach, and a background caller's own busy check reads 0.
+      expect(llmService.activeCount()).toBe(0);
+      llmService.cancel("any-request-id");
+      release();
+      const out = await pending;
+      expect(out.text).toBe("ok");
+    });
+
+    it("counts an interactive chat() in activeCount()", async () => {
+      sentEvents.length = 0;
+      sseFetch([chunk({ content: "hi" }), "data: [DONE]"]);
+      llmService.chat({ ...params, provider: "lmstudio", model: "test-model" });
+      // Registered in chat()'s synchronous call frame — pinned here because the
+      // hydrate re-adopt path depends on exactly this timing.
+      expect(llmService.activeCount()).toBe(1);
+      for (let i = 0; i < 200; i++) {
+        if (sentEvents.some((e) => e.channel === "llm:done" || e.channel === "llm:error")) break;
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      expect(llmService.activeCount()).toBe(0);
+    });
   });
 });
 

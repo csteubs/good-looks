@@ -86,6 +86,12 @@ describe("preview bridge channel coverage", () => {
       // Same reason: the view destructures `{ available, reason }` to decide
       // whether to render at all. `defaultFor` would hand it null.
       "branches:status",
+      // The Insights view maps over the list and the rail row counts unread —
+      // a `*:list` default of [] would render only the empty state, which is
+      // the least interesting screen the fixtures exist to avoid.
+      "insights:list",
+      "insights:get",
+      "insights:status",
     ];
 
     const handled = new Set(handledChannels());

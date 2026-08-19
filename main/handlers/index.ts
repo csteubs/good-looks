@@ -72,6 +72,10 @@ import {
   recorderSettingsStore,
 } from "../services/recorder-settings-store.js";
 import { notifyAiDebugOutcome } from "../services/ai-debug-notifier.js";
+import { insightReportStore } from "../services/insight-report-store.js";
+import { insightsService } from "../services/insights/insights-service.js";
+import { insightsSlackUrlStore } from "../services/insights/insights-slack-url-store.js";
+import { exportInsightReportPdf } from "../services/insight-report-pdf.js";
 import { summarizeCaptureOverhead } from "../services/capture-overhead.js";
 import { applyRetention } from "../services/retention.js";
 import { compareRuns } from "../services/run-comparison.js";
@@ -1268,6 +1272,41 @@ export function registerHandlers(): void {
     return { ok: true };
   });
 
+  // ── AI insights (the scheduled report) ──────────────────────────────
+  // Generation itself lives in the MAIN process (insights-service.ts) — the
+  // renderer only reads reports and asks for one. Mutations push
+  // `insights:changed` so the rail's unread dot updates from any route; the
+  // one subscriber is `RecorderProvider`, for the run-derived-cache reason.
+  ipcMain.handle("insights:list", async () => insightReportStore.list());
+  ipcMain.handle("insights:get", async (_e, params: { id?: unknown }) =>
+    insightReportStore.get(String(params?.id ?? "")),
+  );
+  ipcMain.handle("insights:status", async () => insightsService.status());
+  ipcMain.handle("insights:generateNow", async () => insightsService.generateNow());
+  // PDF export is a VERB answering with a path and a byte count — the same
+  // shape as report:emit, and for the same reason: the renderer never holds
+  // the produced bytes. Null = the user cancelled the save dialog.
+  ipcMain.handle("insights:exportPdf", async (_e, params: { id?: unknown }) => {
+    const report = insightReportStore.get(String(params?.id ?? ""));
+    if (!report) throw new Error("That report no longer exists.");
+    return exportInsightReportPdf(report);
+  });
+  ipcMain.handle("insights:markRead", async (_e, params: { id?: unknown }) => {
+    const changed = insightReportStore.markRead(String(params?.id ?? ""));
+    if (changed) sendToMain("insights:changed", null);
+    return { changed };
+  });
+  ipcMain.handle("insights:delete", async (_e, params: { id?: unknown }) => {
+    const removed = insightReportStore.delete(String(params?.id ?? ""));
+    if (removed) sendToMain("insights:changed", null);
+    return { removed };
+  });
+  ipcMain.handle("insights:clearAll", async () => {
+    const removed = insightReportStore.clearAll();
+    if (removed > 0) sendToMain("insights:changed", null);
+    return { removed };
+  });
+
   // ── Alert (outgoing webhook) handlers ───────────────────────────────
   // The URL is a bearer credential, so it only ever travels renderer→backend.
   // The renderer can read back whether one exists and its host, never the URL.
@@ -1326,6 +1365,33 @@ export function registerHandlers(): void {
     await postWebhook(url, {
       text: "✅ Good Looks! test alert — your webhook is configured correctly.",
       event: "run",
+      status: "passed",
+      detail: { test: true },
+      source: "Good Looks!",
+    });
+    return { ok: true };
+  });
+
+  // ── Insights → Slack ────────────────────────────────────────────────
+  // The channel that receives new insights reports. Same credential contract
+  // as the alert webhook: the URL travels renderer→backend only, and only
+  // {hasUrl, host} ever comes back.
+  ipcMain.handle("insightsSlack:setUrl", async (_e, params: { url?: unknown }) => {
+    await insightsSlackUrlStore.setUrl(String(params?.url ?? ""));
+    return insightsSlackUrlStore.status();
+  });
+  ipcMain.handle("insightsSlack:clearUrl", async () => {
+    await insightsSlackUrlStore.clear();
+    return insightsSlackUrlStore.status();
+  });
+  ipcMain.handle("insightsSlack:status", async () => insightsSlackUrlStore.status());
+  // Rethrows like alerts:test — the point of a test button is to find out.
+  ipcMain.handle("insightsSlack:test", async () => {
+    const url = await insightsSlackUrlStore.getUrl();
+    if (!url) throw new Error("No Slack webhook URL is configured.");
+    await postWebhook(url, {
+      text: "📈 Good Looks! test message — new insights reports will be posted here.",
+      event: "insights",
       status: "passed",
       detail: { test: true },
       source: "Good Looks!",

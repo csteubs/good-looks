@@ -56,7 +56,8 @@ function mountPreviewBanner(): void {
  *  job. So the preview asks the router directly instead of fighting it:
  *
  *      /?view=stats            /?view=visual      /?view=batch
- *      /?view=heals            /?view=branches    /?test=t-checkout
+ *      /?view=heals            /?view=insights    /?view=branches
+ *      /?test=t-checkout
  *
  *  `branches` is reachable here even though the branch switcher cannot work in
  *  a browser: what it shows is the view's UNAVAILABLE state, which is a real
@@ -75,7 +76,9 @@ async function openRequestedView(): Promise<void> {
   await router.navigate(
     testId
       ? { to: "/test/$id", params: { id: testId } }
-      : { to: `/${view}` as "/stats" | "/visual" | "/batch" | "/heals" | "/branches" },
+      : {
+          to: `/${view}` as "/stats" | "/visual" | "/batch" | "/heals" | "/insights" | "/branches",
+        },
   );
 }
 

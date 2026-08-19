@@ -36,6 +36,7 @@ import { describeDuplicationWarnings, type DuplicationWarning } from "../lib/dup
 import { importFromFiles as runFolderImport } from "../lib/import-from-files";
 import { nativeShell } from "../lib/native-shell";
 import { BranchesRailRow } from "./branches-rail-row";
+import { InsightsRailRow } from "./insights-rail-row";
 import { useAiDebug } from "./ai-debug-store";
 import { NewRecordingDialog } from "./new-recording-dialog";
 import { GenerateTestDialog } from "./generate-test-dialog";
@@ -721,6 +722,10 @@ export function LibrarySidebar() {
             subtitle="Locators Auto-Heal changed"
             selected={pathname === "/heals"}
             onClick={() => navigate({ to: "/heals" })}
+          />
+          <InsightsRailRow
+            selected={pathname === "/insights"}
+            onOpen={() => navigate({ to: "/insights" })}
           />
           {/* Only when the app is running from a git checkout of its own
               repository — never in a packaged build, never in the browser

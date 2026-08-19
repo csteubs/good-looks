@@ -71,8 +71,23 @@ function keyFor(parts: {
   return [parts.provider, parts.testId, parts.kind, step, parts.ruleId].join("::");
 }
 
-/** The key for a defect being filed. */
+/** The key for a defect being filed.
+ *
+ *  The insight-report source has no test/run coordinate; it maps onto the SAME
+ *  derivation with the report id in the step slot and the rest empty, so
+ *  `keyOf` below reproduces it from a stored link with no second spelling —
+ *  which is the whole lesson this file's separator carries. */
 export function linkKey(provider: ProviderId, source: DefectSource): string {
+  if (source.kind === "insight-report") {
+    return keyFor({
+      provider,
+      testId: "",
+      kind: source.kind,
+      stepId: source.reportId,
+      runId: "",
+      ruleId: "",
+    });
+  }
   return keyFor({
     provider,
     testId: source.testId,
@@ -143,14 +158,18 @@ export const issueLinkStore = {
     issue: { id: string; identifier: string; url: string },
   ): IssueLink {
     const want = linkKey(provider, source);
+    const report = source.kind === "insight-report";
     const link: IssueLink = {
       provider,
-      testId: source.testId,
-      stepId: source.stepId ?? "",
+      // The report source stores the same slots `linkKey` mapped it onto —
+      // empty test/run, the report id where a step id goes — so `keyOf`
+      // rebuilds the identical key through the one derivation.
+      testId: report ? "" : source.testId,
+      stepId: report ? source.reportId : (source.stepId ?? ""),
       // Recorded so the read side can rebuild the same key. Only load-bearing
       // for a step-less failure, but stored always — a field present only
       // sometimes is one every reader has to remember to guard.
-      runId: source.runId,
+      runId: report ? "" : source.runId,
       kind: source.kind,
       ruleId: source.kind === "a11y" ? source.ruleId : "",
       issueId: issue.id,
