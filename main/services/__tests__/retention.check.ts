@@ -5,7 +5,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 
-import { artifactStore } from "../artifact-store.js";
+import { artifactStore, setPrunePreflight } from "../artifact-store.js";
 import { recorderSettingsStore } from "../recorder-settings-store.js";
 
 // Both stores resolve `app.getPath("userData")` lazily per call (see
@@ -201,6 +201,50 @@ for (let i = 0; i < 5; i++) {
 }
 artifactStore.pruneAllTests(2, 0);
 eq(artifactStore.listRuns(IDLE).length, 2, "a lowered run limit applies without a new run");
+
+// 9. The prune preflight — the seam the metrics rollup hangs off. Registered,
+// it must fire once per removed run BEFORE that run's files go; after them is
+// a rollup of evidence that no longer exists. Note every section above pruned
+// with NO preflight registered and was allowed to: the store skips an
+// unregistered preflight rather than waiting for one, by design (a metrics
+// failure must never block retention) — which is exactly why the launch order
+// in main/index.ts matters, and check:metrics-db pins it.
+const PREF = "test-preflight";
+const seen: Array<{ testId: string; runId: string; evidenceOnDisk: boolean }> = [];
+setPrunePreflight((testId, runId) => {
+  seen.push({
+    testId,
+    runId,
+    evidenceOnDisk: fs.existsSync(path.join(artifactStore.rootPath(), testId, runId, "0.png")),
+  });
+});
+
+const doomed = artifactStore.ensureRunDir(PREF, "doomed-run");
+const kept = artifactStore.ensureRunDir(PREF, "kept-run");
+fs.writeFileSync(path.join(doomed, "0.png"), Buffer.alloc(10));
+fs.writeFileSync(path.join(kept, "0.png"), Buffer.alloc(10));
+const stale = new Date(Date.now() - 30 * DAY_MS);
+fs.utimesSync(doomed, stale, stale);
+
+const sweptWithPreflight = artifactStore.pruneAllTests(10, 7 * DAY_MS);
+eq(sweptWithPreflight.removedRuns, 1, "the preflight sweep removes only the stale run");
+eq(
+  seen,
+  [{ testId: PREF, runId: "doomed-run", evidenceOnDisk: true }],
+  "the preflight fires once per removed run, while its files are still on disk",
+);
+eq(artifactStore.listRuns(PREF), ["kept-run"], "surviving runs are never preflighted");
+
+// A preflight that throws must not save the run from retention: the disk
+// filling up is a worse failure than a gap in the metrics.
+const doomed2 = artifactStore.ensureRunDir(PREF, "doomed-run-2");
+fs.writeFileSync(path.join(doomed2, "0.png"), Buffer.alloc(10));
+fs.utimesSync(doomed2, stale, stale);
+setPrunePreflight(() => {
+  throw new Error("metrics unavailable");
+});
+artifactStore.pruneAllTests(10, 7 * DAY_MS);
+eq(artifactStore.listRuns(PREF), ["kept-run"], "a throwing preflight cannot stop the prune");
 
 fs.rmSync(userData, { recursive: true, force: true });
 console.log(failures === 0 ? "\nAll retention checks passed" : `\n${failures} check(s) FAILED`);

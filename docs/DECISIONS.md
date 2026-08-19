@@ -117,6 +117,67 @@ about the same seven days (the a11y-rollup lesson, third time). `flakeRuns`
 travelled with it and `cost-model` re-exports it, so §6.4's flake rule still
 has one definition.
 
+### 2026-08-18 — Where work happens: session worktrees, and a root checkout that only pulls
+
+CLAUDE.md gains a "Where work happens" section under "Making a change",
+because the session that fixed the startup retention sweep found the root
+checkout four commits behind `origin/main` with fourteen files of uncommitted
+changes — duplicates of work other sessions had already merged as PRs. That
+tree could neither pull nor switch branches, and the fix had to be committed
+by filtering its own hunks out of three files that also carried the leftovers.
+
+The section encodes the split that already exists in practice: local sessions
+work in git worktrees under `.claude/worktrees/`, which share the repo's
+`.git` — a branch committed in one is visible to GitHub Desktop and every
+other local tree with no push and no copying; cloud sessions reach the repo
+only as pushed branches and PRs; and the root checkout is the tree GitHub
+Desktop pulls `origin/main` into, which only fast-forwards while it stays on
+`main` and clean. The rule underneath all three: work leaves a session as a
+committed branch or it does not leave — parked uncommitted edits are how the
+same change ended up both merged on `main` and blocking the pull of it.
+
+### 2026-08-18 — The startup retention sweep runs after the prune preflight is registered
+
+The metrics DB's contract is that a run is rolled up before retention deletes
+its artifacts (rule 3 in `metrics-store.ts`). The mechanism is a registered
+hook: `artifact-store.ts` calls `prunePreflight` for each run directory it is
+about to remove, and `main/index.ts` registers `metricsStore.ingestBeforePrune`
+as that hook inside `app.whenReady()`, right after `metricsStore.init()`. But
+the launch sweep — `applyRetention()`, which exists so "older than N days"
+applies to tests you no longer run — sat at module scope, which executes before
+`whenReady` resolves. At that moment the preflight is still null, and the store
+deliberately skips a missing preflight rather than waiting for one (a metrics
+failure must never block pruning). So every run the startup sweep removed was
+deleted without being rolled up.
+
+The runs this hit are the ones the preflight exists for. The other prune paths
+(after a run, on demand from Settings) all execute long after `whenReady`, so
+the only preflight-less deletions were the startup sweep's — runs old enough to
+age out, whose only remaining chance of ingestion *was* the preflight:
+pre-metrics-DB runs, runs whose ingest failed, runs from sessions where the DB
+was unavailable. A run already ingested at completion lost nothing (the rollup
+is idempotent and its rows were already stored); the sweep destroyed evidence
+for exactly the runs that had nothing in the DB yet.
+
+The fix is ordering, not mechanism: the sweep moved inside `whenReady`, after
+`metricsStore.init()` and `setPrunePreflight(...)`. The "first statement"
+constraint on `installUserDataPath()` never required module scope for the sweep
+— it constrains what may run *before* the sweep, not where the sweep runs.
+
+Two guards, because the two halves fail independently. `check:retention` §9 now
+covers the preflight seam itself, which had no coverage anywhere: registered,
+it fires once per removed run while that run's files are still on disk, and a
+throwing preflight cannot stop the prune. `check:metrics-db` §7 pins the launch
+ordering — source-level, against the real TypeScript AST, because
+`main/index.ts` is the Electron entry and nothing can execute it under a check,
+and because the property is structural: the old broken layout also sat indented
+inside a bare `{}` block, so text position and indentation cannot tell the two
+shapes apart. It asserts one `applyRetention` call site, not at module scope,
+sharing the `whenReady` callback with `metricsStore.init` and
+`setPrunePreflight`, in that order. Both new sections were run against the
+pre-fix file and against reordered mutations of `artifact-store.ts` to confirm
+they go red.
+
 ### 2026-08-18 — The Cost panel reads as savings, and every stat card carries its own math
 
 The first tile read **CI spend**, and every run it counts executed on this
