@@ -72,7 +72,7 @@ function Figure({
   value: string;
   note?: string;
   math?: string;
-  tone?: "amber";
+  tone?: "amber" | "green";
 }) {
   return (
     <div
@@ -82,7 +82,13 @@ function Figure({
       <span className="gl-cost-figure-label">{label}</span>
       <span
         className="gl-cost-figure-value"
-        style={tone === "amber" ? { color: TONE.amber } : undefined}
+        style={
+          tone === "amber"
+            ? { color: TONE.amber }
+            : tone === "green"
+              ? { color: TONE.phos }
+              : undefined
+        }
       >
         {value}
       </span>
@@ -121,7 +127,7 @@ export function debugTileFrom(
   savings: SavingsSummary | undefined,
   assumptions: SavingsAssumptions,
   currency: CostCurrency,
-): { value: string; note: string; math?: string; tone?: "amber" } {
+): { value: string; note: string; math?: string; tone?: "amber" | "green" } {
   if (!savings) return { value: "—", note: DEBUG_TILE_COPY.waiting };
   const { countedFixes, waitedMinutes, netMinutes, netValue } = savings;
   if (countedFixes === 0) {
@@ -148,7 +154,10 @@ export function debugTileFrom(
   return {
     value: money,
     note,
-    tone,
+    // Green on a positive money saving, matching the CI savings tile — the
+    // panel's two dollar figures that are savings read in one colour. The
+    // time-mode value stays neutral: green is spent on money here, for now.
+    tone: tone ?? "green",
     math: `(${gross}) × ${formatRate(assumptions.hourlyRate, currency)}/h = ${negative ? "−" : ""}${money}`,
   };
 }
@@ -263,6 +272,7 @@ export function CostPanel({
         <Figure
           label="CI cost savings"
           value={formatSpend(cost.spend, currency)}
+          tone="green"
           note={`${formatMinutes(cost.ciMinutes)} minutes of CI`}
           math={`${formatMinutes(cost.ciMinutes)} min × ${formatRate(assumptions.costPerCiMinute, currency)}/min = ${formatSpend(cost.spend, currency)}`}
         />

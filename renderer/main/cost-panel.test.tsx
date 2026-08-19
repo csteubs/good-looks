@@ -18,6 +18,7 @@ import type { RunRecord } from "../lib/recorder-types";
 import { COST_DEFAULTS } from "../lib/cost-model";
 import { DENSE_PAGE_SIZE } from "../lib/paginate";
 import type { SavingsSummary } from "../lib/ai-debug-stats";
+import { TONE } from "../theme";
 import { CostPanel, DEBUG_TILE_COPY, REVIEW_COPY } from "./cost-panel";
 
 const MIN = 60_000;
@@ -35,6 +36,15 @@ function run(over: Partial<RunRecord> & { id: string; startedAt: number }): RunR
     logBytes: 1,
     ...over,
   };
+}
+
+/** A hex colour as jsdom reads it back from an inline style — `color` is
+ *  normalised to rgb() on the way out, so comparing against the raw TONE hex
+ *  can never match and a green-vs-amber assertion would pass against either. */
+function cssColor(hex: string): string {
+  const el = document.createElement("div");
+  el.style.color = hex;
+  return el.style.color;
 }
 
 /** A debug-savings summary with the arithmetic already done, as
@@ -249,7 +259,38 @@ describe("the figures", () => {
     const value = card(/Debugging avoided/i).querySelector(
       ".gl-cost-figure-value",
     ) as HTMLElement;
-    expect(value.style.color).not.toBe("");
+    expect(value.style.color).toBe(cssColor(TONE.amber));
+  });
+
+  it("shows the two dollar savings in green", () => {
+    // Provisional styling, but styling with a meaning: green is this design's
+    // "pass / go", and these are the panel's two figures that are money SAVED.
+    // The time-mode debug value stays neutral — green is spent on money here.
+    render(
+      <CostPanel
+        runs={[run({ id: "r1", startedAt: 1 })]}
+        debugAssumptions={{ minutesPerManualDebug: 15, hourlyRate: 50 }}
+        debugSavings={savings({ countedFixes: 2, waitedMinutes: 6, netValue: 20 })}
+      />,
+    );
+    const value = (label: RegExp) =>
+      (card(label).querySelector(".gl-cost-figure-value") as HTMLElement).style.color;
+    expect(value(/CI cost savings/i)).toBe(cssColor(TONE.phos));
+    expect(value(/Debugging avoided/i)).toBe(cssColor(TONE.phos));
+    expect(value(/Spent on flake/i)).toBe("");
+  });
+
+  it("keeps the time-mode debug value neutral", () => {
+    render(
+      <CostPanel
+        runs={[run({ id: "r1", startedAt: 1 })]}
+        debugSavings={savings({ countedFixes: 2, waitedMinutes: 6 })}
+      />,
+    );
+    const value = card(/Debugging avoided/i).querySelector(
+      ".gl-cost-figure-value",
+    ) as HTMLElement;
+    expect(value.style.color).toBe("");
   });
 
   it("holds the debug tile at a dash while its history is still loading", () => {

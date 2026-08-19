@@ -4428,14 +4428,17 @@
   color: var(--gl-tx-2);
 }
 
+/* Darker than the selection tint on purpose — the row is a hairline grid of
+   five, and at --gl-sel-bg strength a hovered card read brighter than the
+   selection idiom it borrowed from. Same weight the heals rows use. */
 .gl-cost-figure-derives:hover {
-  background: var(--gl-sel-bg);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .gl-cost-figure-derives:focus-visible {
   outline: 1px solid var(--gl-cyan);
   outline-offset: -1px;
-  background: var(--gl-sel-bg);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .gl-cost-figure-derives:hover .gl-cost-figure-math,
