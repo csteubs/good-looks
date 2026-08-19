@@ -12,7 +12,7 @@ import type { Locator, TestSpeed } from "./recorder-types";
 // the wrong one. Deriving it means a kind added to the app is a kind the model
 // can reach on the same commit.
 import { ASSERT_SEMANTICS } from "../../shared/step-semantics.mjs";
-import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
+import { locatorExpr } from "./describe-step";
 import { logRequestProtocol, type LogRequestNeed } from "./ai-log-request";
 // The runner's own table, not a copy of it. The model is told what the run
 // ACTUALLY did, so a stale number here is the app confidently stating a wrong
@@ -433,40 +433,31 @@ export interface GenerateStepsContext {
  *    `.nth(3)` step on a page that now has three matches reports zero — and
  *    with the index hidden, "matched nothing" reads as "the element is gone"
  *    rather than "the index is one past the end".
+ *
+ * `ctx` — the user's pinned context — was the same bug a second time: a step
+ * whose spec line is
+ * `page.getByTestId("billing").filter({ hasText: "Billing" }).getByRole("button", …)`
+ * was shown as the bare `getByRole("button", …)`. The commonest failure such a
+ * step has is the CONTAINER or its hasText no longer matching, and the model
+ * cannot name a clause it was never shown — while the bare target, matching
+ * more than the chain does, makes the match report contradict the error being
+ * diagnosed.
+ *
+ * The rendering is `locatorExpr` from describe-step.ts — the step list's
+ * mirror of the generator's `locatorExpr` — rather than a copy kept here.
+ * This function used to carry its own `locatorBase` transcription and
+ * under-rendered on top of it twice (`.nth`, then the `ctx` chain), and the
+ * step list grew its full-chain mirror independently in the same release;
+ * two renderer copies of the chain grammar is exactly the drift that keeps
+ * shipping, so now there is one. Pinned twice: `describe-mirror.test.ts`
+ * diffs the mirror against the generator's function, and
+ * main/services/__tests__/locator-prompt-parity.test.ts pins THIS function
+ * against the line `generateSpec` actually emits, so a prompt-specific
+ * rendering added here later inherits the same guard. See DECISIONS
+ * 2026-08-21.
  */
 export function locatorToPrompt(l: Locator): string {
-  const base = locatorBase(l);
-  return typeof l.nth === "number" ? `${base}.nth(${l.nth})` : base;
-}
-
-function locatorBase(l: Locator): string {
-  switch (l.k) {
-    case "testid": {
-      // Mirrors locatorBase in script-generator.ts: the prompt must name the
-      // call the failing spec actually contains, and for a testid on a
-      // non-default attribute that is an attribute selector, not getByTestId.
-      const attr = testIdOverride(l.attr);
-      return attr
-        ? `locator(${JSON.stringify(testIdSelector(attr, l.v ?? ""))})`
-        : `getByTestId(${JSON.stringify(l.v ?? "")})`;
-    }
-    case "role":
-      return l.name
-        ? `getByRole(${JSON.stringify(l.role ?? "")}, { name: ${JSON.stringify(l.name)} })`
-        : `getByRole(${JSON.stringify(l.role ?? "")})`;
-    case "label":
-      return `getByLabel(${JSON.stringify(l.v ?? "")})`;
-    case "placeholder":
-      return `getByPlaceholder(${JSON.stringify(l.v ?? "")})`;
-    case "text":
-      return `getByText(${JSON.stringify(l.v ?? "")})`;
-    case "css":
-      return `locator(${JSON.stringify(l.v ?? "")})`;
-    case "xpath":
-      return `locator(${JSON.stringify("xpath=" + (l.v ?? ""))})`;
-    default:
-      return JSON.stringify(l);
-  }
+  return locatorExpr(l);
 }
 
 export function buildGenerateStepsMessages(ctx: GenerateStepsContext): LlmMessage[] {
