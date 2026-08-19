@@ -124,3 +124,37 @@ describe("with a picked element", () => {
     });
   });
 });
+
+describe("position among matches", () => {
+  it("rides the submitted locator, composed after context", async () => {
+    const { onAdd } = renderComposer(picked({ ambiguous: true, contextBaseCount: 2 }));
+    const rows = await screen.findAllByRole("checkbox");
+    fireEvent.click(rows[0]);
+    fireEvent.click(screen.getByRole("radio", { name: "Last" }));
+    submit();
+    const s = (onAdd.mock.calls[0][0] as RawStep[])[0];
+    expect(s.locator).toEqual({
+      k: "role",
+      role: "button",
+      name: "Edit",
+      ctx: { within: { k: "testid", v: "billing-card" } },
+      nth: -1,
+    });
+  });
+
+  it("composes with a custom locator too", async () => {
+    const { onAdd } = renderComposer(picked());
+    fireEvent.click(screen.getByText(/write a css selector or xpath by hand/i));
+    fireEvent.change(screen.getByLabelText("Custom locator"), {
+      target: { value: "table tr" },
+    });
+    await waitFor(() => {
+      const add = screen.getByRole("button", { name: /add step/i }) as HTMLButtonElement;
+      expect(add.disabled).toBe(false);
+    });
+    fireEvent.click(screen.getByRole("radio", { name: "First" }));
+    submit();
+    const s = (onAdd.mock.calls[0][0] as RawStep[])[0];
+    expect(s.locator).toEqual({ k: "css", v: "table tr", nth: 0 });
+  });
+});

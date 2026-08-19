@@ -66,6 +66,7 @@ import { collectFlowArgs, FlowArgsFields } from "./flow-args-fields";
 import { clampViewportAxis, RESIZE_PRESETS } from "../lib/viewport-presets";
 import { CustomLocatorField } from "./custom-locator-field";
 import { ElementContextPicker } from "./element-context-picker";
+import { PositionField } from "./position-field";
 import {
   NewVariableButton,
   NewVariableForm,
@@ -378,13 +379,15 @@ function TargetElementPicker({
   const [selected, setSelected] = React.useState<number | "custom">(0);
   const [customLoc, setCustomLoc] = React.useState<Locator | null>(null);
   const [ctx, setCtx] = React.useState<LocatorContext | null>(null);
+  const [nth, setNth] = React.useState<number | null>(null);
   const candidates = picked?.candidates ?? [];
 
-  /** One exit for every path, so context always rides the emitted locator —
-   *  including across candidate switches, where the old inline composition
-   *  silently dropped a configured context until it was next edited. */
+  /** One exit for every path, so context and position always ride the emitted
+   *  locator — including across candidate switches, where the old inline
+   *  composition silently dropped a configured context until it was next
+   *  edited. `nth` composes last, matching the emitted chain's order. */
   const emit = React.useCallback(
-    (base: Locator | null, c: LocatorContext | null) => {
+    (base: Locator | null, c: LocatorContext | null, n: number | null) => {
       if (!base) {
         onChange(null);
         return;
@@ -392,6 +395,8 @@ function TargetElementPicker({
       const next: Locator = { ...base };
       if (c) next.ctx = c;
       else delete next.ctx;
+      if (n !== null) next.nth = n;
+      else delete next.nth;
       onChange(next);
     },
     [onChange],
@@ -402,6 +407,7 @@ function TargetElementPicker({
     setSelected(0);
     setCustomLoc(null);
     setCtx(null);
+    setNth(null);
     if (candidates[0]) onChange(candidates[0]);
     // onChange/candidates derive from picked; re-seed only on a new pick.
   }, [picked]);
@@ -479,7 +485,7 @@ function TargetElementPicker({
                 type="button"
                 onClick={() => {
                   setSelected(i);
-                  emit(l, ctx);
+                  emit(l, ctx, nth);
                 }}
                 className={`flex min-w-0 items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
                   active ? "border-accent bg-accent/10" : "border-separator hover:bg-background-secondary"
@@ -506,7 +512,7 @@ function TargetElementPicker({
             type="button"
             onClick={() => {
               setSelected("custom");
-              emit(customLoc, ctx);
+              emit(customLoc, ctx, nth);
             }}
             className={`flex min-w-0 items-center gap-2 rounded-md border px-2.5 py-2 text-left transition-colors ${
               selected === "custom"
@@ -531,7 +537,7 @@ function TargetElementPicker({
               ctx={ctx}
               onLocator={(l) => {
                 setCustomLoc(l);
-                emit(l, ctx);
+                emit(l, ctx, nth);
               }}
             />
           ) : null}
@@ -545,7 +551,14 @@ function TargetElementPicker({
           picked={picked}
           onChange={(c) => {
             setCtx(c);
-            emit(selected === "custom" ? customLoc : (candidates[selected] ?? null), c);
+            emit(selected === "custom" ? customLoc : (candidates[selected] ?? null), c, nth);
+          }}
+        />
+        <PositionField
+          value={nth}
+          onChange={(n) => {
+            setNth(n);
+            emit(selected === "custom" ? customLoc : (candidates[selected] ?? null), ctx, n);
           }}
         />
         <Button variant="ghost" size="small" onClick={onStartPick} className="w-fit">

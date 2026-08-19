@@ -8,6 +8,7 @@ import { Badge, Dialog, Text } from "@ui";
 
 import { CustomLocatorField } from "./custom-locator-field";
 import { ElementContextPicker } from "./element-context-picker";
+import { PositionField } from "./position-field";
 import { testIdOverride, testIdSelector } from "../../shared/testid-attr.mjs";
 import type { Locator, LocatorContext, PickedElement } from "../lib/recorder-types";
 
@@ -68,12 +69,16 @@ export function RefineSelectorDialog({
   // The hand-typed alternative, valid or null. Held separately from `selected`
   // so switching to a candidate and back keeps the draft's validity state.
   const [customLoc, setCustomLoc] = React.useState<Locator | null>(null);
+  // Position among matches (`nth`), or null for strict-unique. Composed LAST,
+  // like the emitted chain — it indexes whatever the context leaves.
+  const [nth, setNth] = React.useState<number | null>(null);
 
   // Reset selection whenever a new element is picked.
   React.useEffect(() => {
     setSelected(0);
     setCtx(null);
     setCustomLoc(null);
+    setNth(null);
   }, [picked]);
 
   const candidates = picked.candidates ?? [];
@@ -91,6 +96,8 @@ export function RefineSelectorDialog({
     const next: Locator = { ...loc };
     if (ctx) next.ctx = ctx;
     else delete next.ctx;
+    if (nth !== null) next.nth = nth;
+    else delete next.nth;
     onApply(next);
     onClose();
   }
@@ -195,6 +202,8 @@ export function RefineSelectorDialog({
         {candidates.length > 0 ? (
           <ElementContextPicker picked={picked} onChange={setCtx} />
         ) : null}
+
+        <PositionField value={nth} onChange={setNth} />
 
         {cssEntries.length > 0 ? (
           <div className="flex flex-col gap-2">
