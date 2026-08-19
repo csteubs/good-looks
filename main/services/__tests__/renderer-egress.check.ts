@@ -69,6 +69,14 @@ const ALLOWED: Array<{ needle: string; why: string }> = [
     why: "placeholder text in the import dialog; shown to the user, never fetched",
   },
   {
+    needle: "http://192.168.0.1:8080",
+    why: "placeholder text in the proxy pane's URL field (an RFC 1918 example, like mabl's own); shown to the user, never fetched — the field saves nothing that fails normalizeProxyUrl",
+  },
+  {
+    needle: "https://staging.example.com",
+    why: "placeholder text in the proxy validate dialog's URL-to-test field; the only URL checked is one the user types",
+  },
+  {
     needle: "https://icons.duckduckgo.com/ip3/",
     why: "SiteIcon's favicon source, which is OPT-IN and off by default (REDESIGN §3.5) — the component sends nothing unless a setting turns it on",
   },

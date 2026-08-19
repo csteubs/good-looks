@@ -791,6 +791,16 @@ export const SETTINGS: RecorderSettings = {
   // the only place the money half of the AI Debug savings panel can be looked
   // at, and a fixture that leaves it off makes a whole card unreachable.
   costHourlyRate: 90,
+  // A CONFIGURED manual proxy, unlike the shipped defaults, for the same
+  // reason the insights fixture ships enabled: manual mode is the state with
+  // surface to review — the URL/credential rows, SSL Verify and the validate
+  // dialog all render only there, and the preview is the only place to look
+  // at them without a corporate proxy to hand.
+  proxyTraffic: "test",
+  proxySource: "manual",
+  proxyUrl: "http://192.168.0.10:8080",
+  proxyUsername: "",
+  proxySslVerify: true,
 };
 
 export const LLM_CONFIG: LlmConfig = {

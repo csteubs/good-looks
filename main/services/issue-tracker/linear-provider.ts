@@ -22,6 +22,8 @@
 
 import { logger } from "@shell/backend";
 
+import { appFetch } from "../proxy-service.js";
+
 import {
   IssueProviderError,
   type CreatedIssue,
@@ -316,8 +318,10 @@ const VOCABULARY: ProviderVocabulary = {
  * imports the registry and quietly pins the binding for the process.
  */
 export function createLinearProvider(fetchImpl?: FetchLike): IssueProvider {
+  // appFetch is global fetch until Settings → Proxy covers app traffic, and
+  // it resolves globalThis.fetch per call — so the binding note above holds.
   const doFetch: FetchLike = (url, init) =>
-    fetchImpl ? fetchImpl(url, init) : fetch(url, init);
+    fetchImpl ? fetchImpl(url, init) : appFetch(url, init);
   return {
     id: "linear",
     vocabulary: VOCABULARY,

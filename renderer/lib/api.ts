@@ -23,6 +23,7 @@ import type {
   LogSearchResult,
   Locator,
   RawStep,
+  ProxyVerifyResult,
   RecorderSettings,
   RecorderState,
   RunRecord,
@@ -721,6 +722,22 @@ export const api = {
     /** Fire-and-forget: the backend gates on notifyOnAiDebugDone itself. */
     notifyDone: (p: { testName: string; status: "done" | "error" }) =>
       ipc().invoke<{ ok: boolean }>("aiDebug:notifyDone", p),
+  },
+  /** Settings → Proxy. The settings themselves ride `recorder.getSettings`/
+   *  `setSettings` like every other row; this namespace is the password (same
+   *  write-only contract as the API key) and the two validators. */
+  proxy: {
+    setPassword: (password: string) =>
+      ipc().invoke<{ hasPassword: boolean }>("proxy:setPassword", { password }),
+    clearPassword: () => ipc().invoke<{ hasPassword: boolean }>("proxy:clearPassword"),
+    hasPassword: () => ipc().invoke<{ hasPassword: boolean }>("proxy:hasPassword"),
+    /** One request to the active AI provider's endpoint through the app-traffic
+     *  path. NEVER throws on an unreachable network — the failure IS the
+     *  answer, and the validate dialog renders it. */
+    verifyApp: () => ipc().invoke<ProxyVerifyResult>("proxy:verifyApp"),
+    /** One request to a user-typed URL through a throwaway session configured
+     *  exactly as the training browser's would be. Same no-throw contract. */
+    verifyTest: (url: string) => ipc().invoke<ProxyVerifyResult>("proxy:verifyTest", { url }),
   },
   /** The branch switcher — a testing tool for whoever is building this app.
    *

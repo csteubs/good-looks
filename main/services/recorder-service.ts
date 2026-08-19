@@ -100,6 +100,7 @@ import {
 } from "../windows/trainer-panel-window.js";
 import { recorderDebugStore } from "./recorder-debug-store.js";
 import { recorderSettingsStore } from "./recorder-settings-store.js";
+import { applyTestSessionProxy } from "./proxy-service.js";
 import { scaled, uiScale } from "./ui-scale.js";
 import { getWindowUrl, getPreloadPath } from "../windows/window-paths.js";
 import { runHistoryStore } from "./run-history-store.js";
@@ -1501,6 +1502,13 @@ export const recorderService = {
       },
     });
     recWindow.contentView.addChildView(pageView);
+
+    // The proxy, BEFORE the first navigation: the partition above is brand new
+    // and a proxy applied after the load starts is a recording whose first
+    // page took the wrong network path. Awaited for the same reason —
+    // `setProxy` resolves when Chromium has it. Settings changed mid-recording
+    // deliberately don't reach this session; the next recording gets them.
+    await applyTestSessionProxy(pageView.webContents.session);
 
     // ── The URL strip, above it ──────────────────────────────────────────
     if (session.showUrlBar) {

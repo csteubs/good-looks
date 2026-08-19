@@ -10,6 +10,92 @@ looks over-built, the entry usually explains which failure it was built against.
 Companion documents: [ARCHITECTURE.md](ARCHITECTURE.md) for the current per-file
 map, and [../CLAUDE.md](../CLAUDE.md) for the working rules and conventions.
 
+### 2026-08-19 — Proxy settings: two traffic classes, one shared rule, one encrypted half
+
+Settings → Proxy, modelled on the mabl Desktop App's proxy settings (traffic
+to proxy: none/app/test/both; source: automatic/manual; manual URL +
+credentials; SSL Verify; a validate dialog with one check per class). What
+follows is where this app's version had to make its own decisions.
+
+**The password is encrypted; everything else deliberately is not.** The
+traffic choice, source, URL, username and SSL Verify live as ordinary
+`RecorderSettings` keys in plain `recorder-settings.json` — because the MCP
+server reads that file and spawns runs of the same tests, and a run's network
+path must not depend on which process spawned it. The password goes to
+safeStorage (`proxy-password-store.ts`, the API-key contract: write-only,
+`hasPassword` is all the renderer learns). That split is only real if nothing
+can route around it, so `normalizeProxyUrl` REFUSES a URL carrying
+credentials rather than stripping them — stripping would save a password
+somewhere the user didn't put it and lose it from where they did — and the
+store re-canonicalises the URL on read AND on write, so a hand-edited
+`http://user:pw@host` is blanked before it can reach a run's environment or
+a session's proxy rules.
+
+**An MCP run goes through the proxy unauthenticated, not around it.** The MCP
+cannot decrypt the password (no Electron, no safeStorage — the secrets
+argument again). Two honest options: apply the proxy without credentials and
+fail AT the proxy, or skip the proxy and go direct. Direct can silently
+SUCCEED on an open network — a passing run that took a network path the
+settings forbid, which is this repo's least favourite failure shape. So the
+proxy applies, the 407 names the proxy when it comes, and `describeRun` says
+up front that the password could not be supplied — the exact contract secret
+variables set. `playwrightProxyEnv` in `shared/proxy-config.mjs` is the one
+rule both spawners call (the app adds the password; the MCP passes null),
+and `check:mcp-parity` §3b pins the agreement.
+
+**"SSL Verify" off only relaxes connections that go through the configured
+manual proxy.** The tempting reading — "off means ignore certificate errors
+while the feature is on" — has a foot-gun: both/automatic with no OS proxy
+configured and the box unchecked would disable verification on DIRECT
+traffic, silent MITM exposure bought by a checkbox that appeared to be about
+a proxy. So: manual mode only, loopback keeps verification even then (the
+session cert proc checks the hostname), and automatic-mode OS proxies keep
+full verification — Chromium reads the system trust store, which is where an
+enterprise MITM root actually lives.
+
+**App traffic proxies at two layers because it travels on two stacks.** The
+renderer's own web fetches (site icons) ride the default Chromium session —
+`setProxy` covers them, and `mode: "system"` is automatic for free. The main
+process's fetches (LLM providers, GitHub, webhooks, Slack) are Node/undici,
+which has no OS-proxy story — so `appFetch` wraps global fetch and, when the
+settings say so, dispatches through undici's ProxyAgent/Socks5ProxyAgent. In
+automatic mode it asks Electron's `session.resolveProxy` PER URL, which is
+the real OS answer (PAC files included) rather than the env-var convention
+GUI apps never have set. undici enters as a real dependency and is imported
+DYNAMICALLY — statically, its CJS `require("node:assert")` throws at module
+load in every esm-format `check:*` bundle, which have no `createRequire`
+banner; the failure was found by `check:routine-scheduler`, three imports
+away from anything named proxy. Loopback never proxies at either layer:
+Chromium bypasses it implicitly, undici would happily hand the user's local
+Ollama to a corporate proxy that has never heard of it.
+
+**Validation is a connectivity check, not a browser run, and it says which
+path it took.** "Verify app connectivity" fetches the ACTIVE AI provider's
+endpoint through `appFetch` — the endpoint the app actually talks to, not one
+invented for the test — and any HTTP status is reachability (a 401 proves the
+network path as well as a 200). "Verify test connectivity" does one
+`net.request` through a throwaway in-memory session configured exactly as the
+training browser's would be, including the credential answer on the
+request-level `login` event; it shares Chromium's network stack with the
+trainer and the Playwright browsers without launching one, and the dialog
+carries mabl's own caveat that a validation can disagree with a real run.
+Every result names its `via` ("proxy …", "system settings", "direct —
+loopback never proxies") because a green check that silently went direct
+would tell the user their proxy works when it was never in the path.
+
+**Dropped from the mabl original:** the Save/Cancel bar (this window saves
+per row; mabl's Reset is the standard Reset-section footer, which excludes
+the credential like every other), and "Apply to app view" — mabl's app view
+is a remote web app in Electron; this app's windows are served over `app://`
+from disk, so there is no app-view traffic for the checkbox to govern.
+
+**Mid-recording settings changes don't reach a live training session.** The
+per-recording partition gets its proxy once, before the first navigation
+(applied and awaited between view creation and `loadURL` — a proxy applied
+after the load starts is a first page on the wrong network path). A recording
+is short, and re-pointing a session under a half-recorded flow is a worse
+behaviour than the next recording picking up the change.
+
 ### 2026-08-18 — The insights report leaves the app: PDF, the issue tracker, and Slack
 
 Three exits for a report, each riding a machine that already existed rather

@@ -337,6 +337,66 @@ function codeOnly(source: string): string {
   );
 }
 
+// ── 3b. The proxy settings reach an MCP run the way they reach an app run ──
+//
+// Same drift family as everything above: the app's runner and this server
+// both call playwrightProxyEnv, and the config file reads what it emits. An
+// MCP run that ignored the proxy would go straight to the network and pass
+// (or fail) on a path the settings forbid — invisible in its output.
+
+{
+  const settings = {
+    proxyTraffic: "test",
+    proxySource: "manual",
+    proxyUrl: "http://proxy.corp:8080",
+    proxyUsername: "svc",
+    proxySslVerify: false,
+  } as const;
+  const env = runEnv({
+    base: {},
+    browsersPath: "/b",
+    nodeModules: "/n",
+    speed: "fast",
+    testTimeoutMs: 60_000,
+    settings,
+  });
+  assert(
+    env.PW_PROXY_SERVER === "http://proxy.corp:8080",
+    "mcp: a manual test proxy reaches the run as PW_PROXY_SERVER",
+  );
+  assert(
+    env.PW_PROXY_USERNAME === "svc" && env.PW_PROXY_PASSWORD === undefined,
+    "mcp: the username goes, the password cannot (encrypted to the app)",
+  );
+  assert(
+    env.PW_IGNORE_HTTPS_ERRORS === "1",
+    "mcp: SSL Verify off reaches the run as PW_IGNORE_HTTPS_ERRORS",
+  );
+  const fixtures = describeRun({ id: "t1", steps: [] }, settings, { speed: "fast" });
+  assert(
+    (fixtures.skipped ?? []).some((s) => s.includes("Proxy credentials")),
+    "mcp: describeRun says up front that the proxy password could not be supplied",
+  );
+
+  const off = runEnv({
+    base: {},
+    browsersPath: "/b",
+    nodeModules: "/n",
+    speed: "fast",
+    testTimeoutMs: 60_000,
+    settings: { ...settings, proxyTraffic: "app" },
+  });
+  assert(
+    off.PW_PROXY_SERVER === undefined,
+    "mcp: a proxy covering only app traffic stays out of a run's environment",
+  );
+  assert(
+    playwrightConfigSource.includes("PW_PROXY_SERVER") &&
+      playwrightConfigSource.includes("PW_IGNORE_HTTPS_ERRORS"),
+    "shared config: reads the proxy from the environment both writers set",
+  );
+}
+
 // ── 4. One config, one spelling ───────────────────────────────────────
 //
 // Both processes write playwright.config.ts into the SAME scripts directory, so

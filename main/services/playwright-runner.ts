@@ -24,6 +24,7 @@ import {
   signatureEnvNames,
   signatureFixtureSource,
 } from "./signature-fixture-source.js";
+import { downloadProxyEnv, runProxyEnv } from "./proxy-service.js";
 import { shopifySignatureStore } from "./shopify-signature-store.js";
 import type { ShopifySignatureEntry } from "./shopify-signature-store.js";
 import { normalizeSignatureHost } from "../../shared/shopify-signature.mjs";
@@ -1272,9 +1273,16 @@ export const playwrightRunner = {
         );
 
         // Each engine is downloaded on its own first use — switching browsers
-        // costs one install, not a re-download of everything.
+        // costs one install, not a re-download of everything. The download is
+        // APP traffic (the app fetching its own tooling), so it gets the
+        // conventional HTTPS_PROXY variables when Settings → Proxy covers it —
+        // behind a mandatory proxy this download is otherwise the one thing
+        // that still can't reach the network.
         if (!isBrowserInstalled(runBrowser)) {
-          await installBrowser(runId, runBrowser, cliPath, scriptsDir, env);
+          await installBrowser(runId, runBrowser, cliPath, scriptsDir, {
+            ...env,
+            ...(await downloadProxyEnv()),
+          });
         }
 
         const slowMo = SLOW_MO_MS[speed];
@@ -1384,6 +1392,12 @@ export const playwrightRunner = {
           {
             ...env,
             ...varEnv,
+            // The Settings → Proxy manual configuration, when it covers test
+            // traffic — the config file reads these. Empty in automatic mode:
+            // the browsers detect the OS configuration themselves. Built by
+            // the same shared rule the MCP server uses, password added here
+            // because only this process can decrypt it.
+            ...(await runProxyEnv()),
             GLAZE_HEAL: healing ? "1" : "0",
             GLAZE_SETTLE: settling ? "1" : "0",
             GLAZE_A11Y: a11y ? "1" : "0",

@@ -101,9 +101,40 @@ describe("handler registration", () => {
       "recorder:setCookie",
       "recorder:getSettings",
       "runs:list",
+      "proxy:hasPassword",
+      "proxy:verifyApp",
+      "proxy:verifyTest",
     ]) {
       expect(channels.has(c), `missing channel: ${c}`).toBe(true);
     }
+  });
+});
+
+describe("proxy handlers — the password's write-only contract, over real stores", () => {
+  it("stores and clears the password; only presence ever crosses", async () => {
+    expect(await invokeHandler("proxy:hasPassword")).toEqual({ hasPassword: false });
+    expect(await invokeHandler("proxy:setPassword", { password: "s3cret" })).toEqual({
+      hasPassword: true,
+    });
+    expect(await invokeHandler("proxy:hasPassword")).toEqual({ hasPassword: true });
+    expect(await invokeHandler("proxy:clearPassword")).toEqual({ hasPassword: false });
+    expect(await invokeHandler("proxy:hasPassword")).toEqual({ hasPassword: false });
+  });
+
+  it("canonicalises a proxy URL through recorder:setSettings and blanks a credentialed one", async () => {
+    const saved = await invokeHandler<{ proxySource: string; proxyUrl: string }>(
+      "recorder:setSettings",
+      { proxySource: "manual", proxyUrl: "http://proxy.corp:8080/" },
+    );
+    expect(saved.proxySource).toBe("manual");
+    expect(saved.proxyUrl).toBe("http://proxy.corp:8080");
+    // The IPC boundary is one of the two entrances the credential-refusal rule
+    // guards (the other is the file on disk) — a URL smuggling a password must
+    // not survive the trip.
+    const smuggled = await invokeHandler<{ proxyUrl: string }>("recorder:setSettings", {
+      proxyUrl: "http://user:pw@proxy.corp:8080",
+    });
+    expect(smuggled.proxyUrl).toBe("");
   });
 });
 

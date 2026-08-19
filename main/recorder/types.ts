@@ -5,8 +5,13 @@ import type { LlmErrorKind } from "../services/llm/types.js";
 // list the Settings pane offers and the Cost panel formats with — see the
 // header of `shared/cost-units.mjs`.
 import type { CostCurrency } from "../../shared/cost-units.mjs";
+// Same arrangement for the proxy vocabulary: the store validates with the
+// same guards the Settings pane offers options from, and the MCP server
+// applies the same rules to the runs it spawns.
+import type { ProxySource, ProxyTraffic } from "../../shared/proxy-config.mjs";
 
 export type { CostCurrency };
+export type { ProxySource, ProxyTraffic };
 
 export type StepType =
   | "goto"
@@ -2194,6 +2199,43 @@ export interface RecorderSettings {
    *  The app declines to guess this — see `shared/cost-units.mjs` — so saved
    *  time stays in hours until the user states a rate of their own. */
   costHourlyRate: number;
+  /** Which traffic goes through the proxy (default "none").
+   *
+   *  "app" is traffic from Good Looks! itself — the AI provider, GitHub,
+   *  webhooks, site icons, browser downloads. "test" is the system under
+   *  test's traffic — the training browser and every test run, whichever
+   *  process spawns it. "none" IGNORES the rest of this configuration without
+   *  erasing it, so turning the proxy off for a check doesn't mean retyping
+   *  it. Modelled on the mabl Desktop App's proxy settings; the vocabulary
+   *  and every rule about it live in `shared/proxy-config.mjs`, because the
+   *  MCP server reads these same settings when it spawns runs. */
+  proxyTraffic: ProxyTraffic;
+  /** Where the proxy configuration comes from (default "automatic").
+   *
+   *  "automatic" means the OS decides: the training browser and the app's
+   *  Chromium-side requests ask the system resolver, test runs let the
+   *  browsers detect it themselves, and the app's own Node-side requests
+   *  resolve per-URL through the same system rules. "manual" uses the URL and
+   *  credentials below instead. */
+  proxySource: ProxySource;
+  /** The manual proxy, as `scheme://host:port` (default "" = none).
+   *
+   *  Canonicalised through `normalizeProxyUrl`, which REFUSES credentials in
+   *  the URL: this value is stored in the plain settings JSON, and the split
+   *  between it and the encrypted password is the point. http://, https://
+   *  and socks5:// all reach every consumer. */
+  proxyUrl: string;
+  /** Username for the manual proxy (default ""). Stored plain — it names an
+   *  account, it does not open it. The password half lives encrypted in
+   *  `proxy-password-store.ts` and never appears on this object. */
+  proxyUsername: string;
+  /** Verify TLS certificates on proxied connections (default true).
+   *
+   *  Off is for proxies that re-sign traffic with their own certificate. It
+   *  only relaxes connections that actually go through the configured manual
+   *  proxy — direct traffic keeps full verification, and loopback keeps it
+   *  even in manual mode. */
+  proxySslVerify: boolean;
 }
 
 /** What a successful Auto-Heal is allowed to do to the stored test. */

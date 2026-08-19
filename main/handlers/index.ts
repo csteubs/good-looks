@@ -56,7 +56,13 @@ import {
 import { refreshSecretSnapshot } from "../services/secret-redaction.js";
 import { shopifySignatureStore } from "../services/shopify-signature-store.js";
 import { parseSpecDetailed } from "../services/spec-parser.js";
-import { llmService } from "../services/llm-service.js";
+import { activeProviderEndpoint, llmService } from "../services/llm-service.js";
+import { proxyPasswordStore } from "../services/proxy-password-store.js";
+import {
+  refreshProxy,
+  verifyAppConnectivity,
+  verifyTestConnectivity,
+} from "../services/proxy-service.js";
 import { llmConfigStore } from "../services/llm-config-store.js";
 import { aiDebugStore } from "../services/ai-debug-store.js";
 import { aiDebugHistoryStore } from "../services/ai-debug-history-store.js";
@@ -303,6 +309,20 @@ export function registerHandlers(): void {
       // Bring the debug watcher into line immediately. Deferring to the next
       // launch would make the toggle look broken to the person who just used it.
       syncRequestWatcher();
+      // Same immediacy for the proxy: the cached app-traffic dispatchers and
+      // the default session's rules embed these settings, so they refresh the
+      // moment any proxy key changes. Fire-and-forget with its own logging —
+      // a settings save must not fail because Chromium was slow to re-point.
+      if (
+        params &&
+        ("proxyTraffic" in params ||
+          "proxySource" in params ||
+          "proxyUrl" in params ||
+          "proxyUsername" in params ||
+          "proxySslVerify" in params)
+      ) {
+        void refreshProxy();
+      }
       // The same argument, twice more, for the two appearance settings.
       //
       // Zoom is applied here in the backend because that is the only place it
@@ -1184,6 +1204,38 @@ export function registerHandlers(): void {
   ipcMain.handle("llm:hasLmStudioToken", async () => ({
     hasToken: await lmStudioTokenStore.hasToken(),
   }));
+
+  // ── Proxy (Settings → Proxy) ─────────────────────────────────────────
+  // The password: same contract as the Anthropic key — write-only from the
+  // renderer, which can read back only whether one is stored. Set/clear also
+  // refresh the live proxy state, because the cached dispatchers embed it.
+  ipcMain.handle("proxy:setPassword", async (_e, params: { password?: unknown }) => {
+    const password = typeof params?.password === "string" ? params.password : "";
+    await proxyPasswordStore.set(password);
+    await refreshProxy();
+    return { hasPassword: true };
+  });
+  ipcMain.handle("proxy:clearPassword", async () => {
+    await proxyPasswordStore.clear();
+    await refreshProxy();
+    return { hasPassword: false };
+  });
+  ipcMain.handle("proxy:hasPassword", async () => ({
+    hasPassword: await proxyPasswordStore.has(),
+  }));
+  // Validation, mabl-style: one button per traffic class. App connectivity
+  // checks the endpoint the app actually talks to (the active AI provider);
+  // test connectivity checks a user-typed URL through a session configured
+  // exactly as the training browser's would be. Neither throws — a failed
+  // check is the ANSWER, and the dialog renders it.
+  ipcMain.handle("proxy:verifyApp", async () => {
+    const { url } = activeProviderEndpoint();
+    return verifyAppConnectivity(url);
+  });
+  ipcMain.handle("proxy:verifyTest", async (_e, params: { url?: unknown }) => {
+    const url = typeof params?.url === "string" ? params.url.trim() : "";
+    return verifyTestConnectivity(url);
+  });
 
   // ── Branch switcher (a testing tool, Electron-only) ─────────────────
   // Build another branch of THIS app and relaunch onto it. See
