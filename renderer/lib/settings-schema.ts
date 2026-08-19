@@ -31,6 +31,7 @@ export type PaneId =
   | "auto-heal"
   | "storage"
   | "stats"
+  | "failure-reasons"
   | "cost"
   | "ai"
   | "alerts"
@@ -99,6 +100,15 @@ export const PANES: readonly PaneDef[] = [
     id: "stats",
     title: "Stats",
     subtitle: "The run history behind the Stats screen: what is kept, and how to clear it.",
+    group: "Testing",
+  },
+  {
+    // Beside Stats, because reasons are about run HISTORY: the vocabulary
+    // failed runs get filed under, read back by the run panel's picker and
+    // the Stats → Outcomes breakdown.
+    id: "failure-reasons",
+    title: "Failure reasons",
+    subtitle: "The labels failed runs are filed under, and who assigns them.",
     group: "Testing",
   },
   {
@@ -538,6 +548,27 @@ export const SETTING_INDEX: readonly SettingIndexEntry[] = [
   },
   { id: "llm-model", pane: "ai", label: "Model", keywords: "llm ollama claude sonnet opus haiku" },
 
+  // Failure reasons
+  {
+    id: "auto-failure-reasons",
+    pane: "failure-reasons",
+    label: "Categorize failures automatically",
+    keywords: "failure reason label categorize triage automatic classify",
+    key: "autoFailureReasons",
+  },
+  {
+    id: "builtin-failure-reasons",
+    pane: "failure-reasons",
+    label: "Built-in reasons",
+    keywords: "failure reason regression environment network timing built-in default",
+  },
+  {
+    id: "custom-failure-reasons",
+    pane: "failure-reasons",
+    label: "Custom reasons",
+    keywords: "failure reason custom label rename disable vocabulary",
+  },
+
   // Alerts
   {
     id: "notify-run-issues",
@@ -781,6 +812,7 @@ export const SETTINGS_DEFAULTS: Partial<RecorderSettings> = {
   aiInsightsCadence: "weekly",
   notifyOnInsightsReady: true,
   insightsSlackEnabled: false,
+  autoFailureReasons: true,
   autoAcceptAiDebugFixes: false,
   alertWebhookEnabled: false,
   autoHealEnabled: true,

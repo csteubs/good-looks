@@ -222,6 +222,11 @@ export const RUNS: RunRecord[] = [
     runBrowser: "webkit",
     speed: "slow",
     healedSteps: 1,
+    // Auto-categorized, so `?test=t-login` shows the run panel's reason row in
+    // the state the runner actually produces — a label with its evidence tag.
+    failureReasonId: "regression",
+    failureReasonBy: "auto",
+    failureReasonSignal: "page-error",
   },
   {
     id: "r-3",
@@ -773,6 +778,7 @@ export const SETTINGS: RecorderSettings = {
   aiInsightsCadence: "weekly",
   notifyOnInsightsReady: true,
   insightsSlackEnabled: false,
+  autoFailureReasons: true,
   autoAcceptAiDebugFixes: false,
   disabledAestheticEnhancements: [],
   // Both at their defaults. `uiScale` does nothing in the preview — there is no

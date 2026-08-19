@@ -46,6 +46,7 @@ import { toneFor } from "../lib/ai-debug-status";
 import type { RunSummary } from "../lib/run-summary";
 import type { AiDebugStatus } from "../lib/recorder-types";
 import type { RunInfo } from "./recorder-store";
+import { RunFailureReason } from "./run-failure-reason";
 import { RunSummaryPanel } from "./run-summary-panel";
 import { RunTriage } from "./run-triage";
 
@@ -202,9 +203,14 @@ export function RunOutput({
           to explain until there is one. Keyed on recordId, which only exists
           once the run has been written to history — which is also when its
           metrics row exists for triage to read. Every OTHER state gets the
-          panel its own question deserves (§6.1). */}
+          panel its own question deserves (§6.1). The reason row sits above the
+          triage line: the label is the answer someone files, the triage line
+          is the evidence for (or against) it. */}
       {failed ? (
-        <RunTriage runId={summary.state === "failed" ? summary.recordId : undefined} />
+        <>
+          <RunFailureReason runId={summary.state === "failed" ? summary.recordId : undefined} />
+          <RunTriage runId={summary.state === "failed" ? summary.recordId : undefined} />
+        </>
       ) : (
         <RunSummaryPanel summary={summary} onReview={onReview} />
       )}

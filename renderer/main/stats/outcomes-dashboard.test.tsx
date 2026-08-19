@@ -187,7 +187,101 @@ describe("OutcomesDashboard", () => {
   });
 });
 
+const REASONS = {
+  builtin: [
+    { id: "regression", name: "Site regression", description: "The site broke." },
+    { id: "timing", name: "Timing issue", description: "Slower than the budget." },
+  ],
+  custom: [{ id: "c1", name: "Vendor outage", description: "Third party down." }],
+};
+
+describe("the failures-by-reason panel", () => {
+  const LABELLED = [
+    run({ id: "r1", status: "failed", failureReasonId: "regression", failureReasonBy: "auto" }),
+    run({ id: "r2", status: "failed", failureReasonId: "regression", failureReasonBy: "user" }),
+    run({ id: "r3", status: "failed", failureReasonId: "c1", failureReasonBy: "user" }),
+    run({ id: "r4", status: "failed" }),
+    run({ id: "r5", status: "passed" }),
+  ];
+
+  it("counts failed runs per reason, resolving custom names, uncategorized last", () => {
+    render(<OutcomesDashboard runs={LABELLED} reasons={REASONS} onDrill={vi.fn()} />);
+    const panel = screen.getByText("Failures by reason").closest(".gl-panel") as HTMLElement;
+    const labels = within(panel)
+      .getAllByRole("button")
+      .map((b) => b.querySelector(".gl-drill-label")?.textContent);
+    // Biggest first; the uncategorized bucket last regardless of size — it is
+    // the to-do pile, not a leading cause.
+    expect(labels).toEqual(["Site regression", "Vendor outage", "Uncategorized"]);
+    expect(within(panel).getByText("2")).toBeTruthy();
+  });
+
+  it("drills into a reason facet, and into the uncategorized bucket", () => {
+    const onDrill = vi.fn();
+    render(<OutcomesDashboard runs={LABELLED} reasons={REASONS} onDrill={onDrill} />);
+    fireEvent.click(screen.getByRole("button", { name: /site regression/i }));
+    expect(onDrill).toHaveBeenCalledWith("reason-regression");
+    fireEvent.click(screen.getByRole("button", { name: /uncategorized/i }));
+    expect(onDrill).toHaveBeenCalledWith("reason-none");
+  });
+
+  it("shows a raw id the catalog no longer knows rather than dropping the runs", () => {
+    render(
+      <OutcomesDashboard
+        runs={[run({ id: "r1", status: "failed", failureReasonId: "gone-id" })]}
+        reasons={REASONS}
+        onDrill={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("gone-id")).toBeTruthy();
+  });
+
+  it("renders no reason panel without failures, or before the vocabulary loads", () => {
+    render(
+      <OutcomesDashboard runs={[run({ id: "r1" })]} reasons={REASONS} onDrill={vi.fn()} />,
+    );
+    expect(screen.queryByText("Failures by reason")).toBeNull();
+    render(
+      <OutcomesDashboard runs={[run({ id: "r2", status: "failed" })]} onDrill={vi.fn()} />,
+    );
+    expect(screen.queryByText("Failures by reason")).toBeNull();
+  });
+});
+
 describe("OutcomesLeaf", () => {
+  it("lists one reason's failed runs under the reason's name", () => {
+    render(
+      <OutcomesLeaf
+        facet="reason-c1"
+        runs={[
+          run({ id: "r1", status: "failed", failureReasonId: "c1", testName: "Labelled" }),
+          run({ id: "r2", status: "failed", testName: "Unlabelled" }),
+        ]}
+        reasons={REASONS}
+        onOpenTest={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Vendor outage")).toBeTruthy();
+    expect(screen.getByText("Labelled")).toBeTruthy();
+    expect(screen.queryByText("Unlabelled")).toBeNull();
+  });
+
+  it("lists the uncategorized bucket under its own title", () => {
+    render(
+      <OutcomesLeaf
+        facet="reason-none"
+        runs={[
+          run({ id: "r1", status: "failed", testName: "Unlabelled" }),
+          run({ id: "r2", status: "failed", failureReasonId: "timing", testName: "Labelled" }),
+        ]}
+        reasons={REASONS}
+        onOpenTest={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Uncategorized failures")).toBeTruthy();
+    expect(screen.getByText("Unlabelled")).toBeTruthy();
+    expect(screen.queryByText("Labelled")).toBeNull();
+  });
   it("lists the runs of one outcome, newest first, each exiting to its test", () => {
     const onOpenTest = vi.fn();
     render(

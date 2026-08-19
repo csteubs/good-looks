@@ -463,6 +463,15 @@ export function RecorderProvider({
     const offAiDebugHistory = api.on("aiDebug:historyChanged", () => {
       void qc.invalidateQueries({ queryKey: ["ai-debug-history"] });
     });
+    // A failure reason was created, renamed or disabled — in the Settings
+    // window, which is why it cannot be a route-level subscription here: the
+    // reader is whatever run label or Stats breakdown is on screen in THIS
+    // window when the rename happens. NOT in RUN_DERIVED_KEYS: nothing a run
+    // does writes the definitions; assignments live on run records and ride
+    // `runs:changed` above.
+    const offFailureReasons = api.on("failureReasons:changed", () => {
+      void qc.invalidateQueries({ queryKey: ["failure-reasons"] });
+    });
     // An insights report was generated, read, or deleted — or a generation
     // started or failed. NOT in RUN_DERIVED_KEYS: the insights service writes
     // its own store on its own schedule, nothing a run does touches it. It is
@@ -624,6 +633,7 @@ export function RecorderProvider({
       offDone();
       offRunsChanged();
       offAiDebugHistory();
+      offFailureReasons();
       offInsights();
       offBatchProgress();
       offBatchDone();

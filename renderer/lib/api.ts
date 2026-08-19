@@ -3,6 +3,8 @@
 
 import type {
   Annotation,
+  CustomFailureReason,
+  FailureReasonCatalog,
   AssertKind,
   Dataset,
   DebugCaptureSession,
@@ -585,6 +587,21 @@ export const api = {
     triage: (id: string) => ipc().invoke<TriageResult | null>("runs:triage", { id }),
     captureOverhead: (testId?: string) =>
       ipc().invoke<CaptureOverheadSummary>("runs:captureOverhead", { testId }),
+    /** Label WHY a failed run failed (null clears the label). Throws for a
+     *  run that isn't a recorded failure or a reason that doesn't exist. */
+    setFailureReason: (id: string, reasonId: string | null) =>
+      ipc().invoke<RunRecord>("runs:setFailureReason", { id, reasonId }),
+  },
+  failureReasons: {
+    /** The whole vocabulary — built-ins plus every custom reason, disabled
+     *  ones included (display resolution needs them; the picker filters). */
+    list: () => ipc().invoke<FailureReasonCatalog>("failureReasons:list"),
+    create: (name: string, description?: string) =>
+      ipc().invoke<CustomFailureReason>("failureReasons:create", { name, description }),
+    update: (
+      id: string,
+      patch: { name?: string; description?: string; disabled?: boolean },
+    ) => ipc().invoke<CustomFailureReason>("failureReasons:update", { id, ...patch }),
   },
   /** The metrics views. Every response carries `available`, because "metrics
    *  are off on this runtime" and "you have no history" must not render alike. */

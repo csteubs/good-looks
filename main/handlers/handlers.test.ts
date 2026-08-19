@@ -1848,3 +1848,97 @@ describe("the script-change journal — recording a whole-spec change, and undoi
     expect(after.some((e) => e.testId === rec.id)).toBe(false);
   });
 });
+
+describe("failure reasons — the vocabulary and the per-run label", () => {
+  function seedFailedRun(id: string): string {
+    seedTest(id);
+    return runHistoryStore.append(
+      {
+        testId: id,
+        testName: `Test ${id}`,
+        url: "https://example.com",
+        status: "failed",
+        exitCode: 1,
+        startedAt: 1_000,
+        finishedAt: 2_000,
+      },
+      "log",
+    ).id;
+  }
+
+  it("lists both halves of the vocabulary from one call", async () => {
+    const created = await invokeHandler<{ id: string }>("failureReasons:create", {
+      name: "Vendor outage (handlers)",
+      description: "Third party down.",
+    });
+    const catalog = await invokeHandler<{
+      builtin: { id: string }[];
+      custom: { id: string }[];
+    }>("failureReasons:list");
+    expect(catalog.builtin.some((r) => r.id === "regression")).toBe(true);
+    expect(catalog.custom.some((r) => r.id === created.id)).toBe(true);
+  });
+
+  it("normalizes creation input backend-side — the renderer is not a trust boundary", async () => {
+    await expect(invokeHandler("failureReasons:create", { name: "   " })).rejects.toThrow(
+      /needs a name/,
+    );
+    await expect(
+      invokeHandler("failureReasons:create", { name: "Site regression" }),
+    ).rejects.toThrow(/built-in/);
+  });
+
+  it("labels a failed run, and validates the reason id against the vocabulary", async () => {
+    const runId = seedFailedRun("t-reason-set");
+    const rec = await invokeHandler<{ failureReasonId?: string; failureReasonBy?: string }>(
+      "runs:setFailureReason",
+      { id: runId, reasonId: "timing" },
+    );
+    expect(rec.failureReasonId).toBe("timing");
+    expect(rec.failureReasonBy).toBe("user");
+
+    await expect(
+      invokeHandler("runs:setFailureReason", { id: runId, reasonId: "not-a-reason" }),
+    ).rejects.toThrow(/No such failure reason/);
+  });
+
+  it("refuses a disabled custom reason for NEW assignments", async () => {
+    const runId = seedFailedRun("t-reason-disabled");
+    const created = await invokeHandler<{ id: string }>("failureReasons:create", {
+      name: "Retired reason (handlers)",
+    });
+    await invokeHandler("failureReasons:update", { id: created.id, disabled: true });
+    await expect(
+      invokeHandler("runs:setFailureReason", { id: runId, reasonId: created.id }),
+    ).rejects.toThrow(/disabled/);
+  });
+
+  it("refuses to label anything that is not a recorded failure", async () => {
+    seedTest("t-reason-pass");
+    const run = runHistoryStore.append(
+      {
+        testId: "t-reason-pass",
+        testName: "Test t-reason-pass",
+        url: "https://example.com",
+        status: "passed",
+        exitCode: 0,
+        startedAt: 1_000,
+        finishedAt: 2_000,
+      },
+      "log",
+    );
+    await expect(
+      invokeHandler("runs:setFailureReason", { id: run.id, reasonId: "timing" }),
+    ).rejects.toThrow(/failed run/);
+  });
+
+  it("clears with null — uncategorized is a state, not an error", async () => {
+    const runId = seedFailedRun("t-reason-clear");
+    await invokeHandler("runs:setFailureReason", { id: runId, reasonId: "timing" });
+    const rec = await invokeHandler<{ failureReasonId?: string }>("runs:setFailureReason", {
+      id: runId,
+      reasonId: null,
+    });
+    expect(rec.failureReasonId).toBeUndefined();
+  });
+});

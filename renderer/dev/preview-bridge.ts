@@ -30,6 +30,7 @@
 
 import { missedRoutines } from "../../shared/routine-schedule.mjs";
 import { rollupA11y } from "../../shared/a11y-rollup.mjs";
+import { DEFAULT_FAILURE_REASONS } from "../../shared/failure-reasons.mjs";
 import {
   BATCHES,
   ROUTINES,
@@ -63,6 +64,8 @@ import type {
   BatchState,
   EmitResult,
   CaptureOverheadSummary,
+  CustomFailureReason,
+  FailureReasonCatalog,
   FlakeReport,
   Locator,
   RecorderState,
@@ -263,6 +266,17 @@ function seed() {
     heals: structuredClone(HEALS),
     scriptChanges: structuredClone(SCRIPT_CHANGES),
     aiDebugHistory: structuredClone(AI_DEBUG_HISTORY),
+    // One custom reason, so the picker, the Settings editor and the Stats
+    // breakdown all have a non-built-in row to show.
+    failureReasons: [
+      {
+        id: "fr-vendor",
+        name: "Vendor outage",
+        description: "A third-party service the site depends on was down.",
+        createdAt: Date.now() - 86_400_000,
+        updatedAt: Date.now() - 86_400_000,
+      },
+    ] as CustomFailureReason[],
     insightReports: structuredClone(INSIGHT_REPORTS),
     insightsState: structuredClone(INSIGHTS_STATE),
     // Edited in place, so a save made in the preview STICKS for the session — a
@@ -668,6 +682,52 @@ function buildHandlers(state: ReturnType<typeof seed>): Record<string, Handler> 
     "runs:getLog": (): string => RUN_LOG,
     "runs:logsDir": (): string => "/preview/runs",
     "runs:searchLogs": () => [],
+    /** Mutates the fixture list in place so the picker's optimistic write and
+     *  the requery agree — a stub that answered without storing would make the
+     *  label revert on the next `runs:changed`. */
+    "runs:setFailureReason": (p): RunRecord => {
+      const rec = state.runs.find((r) => r.id === String(p?.id ?? ""));
+      if (!rec || rec.status !== "failed") throw new Error("Only a failed run can carry a failure reason.");
+      const reasonId = (p?.reasonId ?? null) as string | null;
+      if (reasonId) {
+        rec.failureReasonId = reasonId;
+        rec.failureReasonBy = "user";
+        delete rec.failureReasonSignal;
+      } else {
+        delete rec.failureReasonId;
+        delete rec.failureReasonBy;
+        delete rec.failureReasonSignal;
+      }
+      return rec;
+    },
+    // ── Failure reasons ──────────────────────────────────────────────────
+    "failureReasons:list": (): FailureReasonCatalog => ({
+      builtin: [...DEFAULT_FAILURE_REASONS],
+      custom: state.failureReasons,
+    }),
+    "failureReasons:create": (p): CustomFailureReason => {
+      const rec: CustomFailureReason = {
+        id: `fr-${state.failureReasons.length + 1}`,
+        name: String(p?.name ?? "").trim(),
+        description: String(p?.description ?? "").trim(),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+      state.failureReasons.push(rec);
+      return rec;
+    },
+    "failureReasons:update": (p): CustomFailureReason => {
+      const rec = state.failureReasons.find((r) => r.id === String(p?.id ?? ""));
+      if (!rec) throw new Error("No such custom reason: " + String(p?.id ?? ""));
+      if (p?.name !== undefined) rec.name = String(p.name).trim();
+      if (p?.description !== undefined) rec.description = String(p.description).trim();
+      if (p?.disabled !== undefined) {
+        if (p.disabled === true) rec.disabled = true;
+        else delete rec.disabled;
+      }
+      rec.updatedAt = Date.now();
+      return rec;
+    },
     /** Site or runner. A real verdict rather than null, because the whole
      *  point of the panel is the evidence list and `null` renders none of it.
      *  `limits` is deliberately non-empty: the real triage never claims to
