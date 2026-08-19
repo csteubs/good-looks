@@ -135,7 +135,7 @@ const STATE_OPTIONS: {
 
 // What a `capture` step reads. url/title read the page and need no element,
 // which is why the target picker is hidden for them.
-const CAPTURE_OPTIONS: { value: CaptureSource; label: string; page?: boolean }[] = [
+export const CAPTURE_OPTIONS: { value: CaptureSource; label: string; page?: boolean }[] = [
   { value: "text", label: "Element text" },
   { value: "value", label: "Input value" },
   { value: "attribute", label: "Element attribute" },
@@ -145,7 +145,7 @@ const CAPTURE_OPTIONS: { value: CaptureSource; label: string; page?: boolean }[]
 
 // Condition predicates for an `if` block. Element conditions resolve a picked
 // locator; page conditions match a substring of the current URL / title.
-const CONDITION_OPTIONS: { value: ConditionKind; label: string; page?: boolean }[] = [
+export const CONDITION_OPTIONS: { value: ConditionKind; label: string; page?: boolean }[] = [
   { value: "visible", label: "Element is visible" },
   { value: "hidden", label: "Element is hidden" },
   { value: "exists", label: "Element exists" },
@@ -161,7 +161,7 @@ const CONDITION_OPTIONS: { value: ConditionKind; label: string; page?: boolean }
 // two page predicates match a substring of the live URL / title. Mirrors the
 // assertion list deliberately — a user who knows the assertion vocabulary
 // already knows this one.
-const WAIT_UNTIL_OPTIONS: {
+export const WAIT_UNTIL_OPTIONS: {
   value: WaitUntilKind;
   label: string;
   need: "none" | "text" | "value" | "count";
@@ -182,8 +182,18 @@ const WAIT_UNTIL_OPTIONS: {
 ];
 
 // assert kind → what operands it needs.
+//
+// Exported — with the capture, condition and wait lists above — so the test
+// can pin each list against the model's kind list. Nothing rendered can do
+// that: these feed native-menu-backed Selects, so a forgotten kind never
+// enters the DOM of any test. And a kind missing HERE is worse than one menu
+// row short: every other assert menu (recording view, trainer panel, the
+// browser right-click menu) opens this composer with the kind preselected,
+// and the `find` below is looked up with a non-null assertion — so
+// `titleContains`, which shipped missing from this list alone, crashed the
+// whole panel from three working menus.
 type Need = "none" | "text" | "value" | "attr" | "count" | "css";
-const ASSERT_OPTIONS: {
+export const ASSERT_OPTIONS: {
   value: AssertKind;
   label: string;
   need: Need;
@@ -205,6 +215,7 @@ const ASSERT_OPTIONS: {
   { value: "urlEndsWith", label: "URL ends with", need: "value", pageLevel: true },
   { value: "urlIs", label: "URL is", need: "value", pageLevel: true },
   { value: "title", label: "Page title is", need: "value", pageLevel: true },
+  { value: "titleContains", label: "Page title contains", need: "value", pageLevel: true },
 ];
 
 /**
